@@ -44,11 +44,14 @@ import pandas as pd
 from backtesting import Backtest, Strategy
 from dotenv import load_dotenv
 
-# Make sibling imports work even when this file is imported from outside the
-# strategy folder during tests or tooling.
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, SCRIPT_DIR)
+# Strategy logic lives in the sibling `Signal Generators/` folder. Adding it
+# to sys.path here (computed from __file__, not cwd) lets the import below
+# resolve regardless of which directory the backtest is launched from.
+_SIGNAL_GENERATORS_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Signal Generators")
+)
+if _SIGNAL_GENERATORS_DIR not in sys.path:
+    sys.path.insert(0, _SIGNAL_GENERATORS_DIR)
 
 from profit_shooter_strategy_logic import (
     ProfitShooterConfig,
