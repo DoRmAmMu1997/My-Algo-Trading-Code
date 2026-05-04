@@ -25,12 +25,19 @@ import os
 from index_1m_5y_data_fetch_dhan_common import IndexFetchDefaults, run_index_fetcher
 
 
+# Anchor the default output to <repo_root>/Backtest Outputs/ so the CSV
+# always lands in the repo's shared output folder regardless of the cwd
+# the script is launched from. `__file__` is at <repo>/Data Extractors/...
+# so dirname(dirname(__file__)) == <repo_root>.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 # These defaults make the shared helper behave like a NIFTY-specific downloader.
 NIFTY_DEFAULTS = IndexFetchDefaults(
     display_name="NIFTY",
     security_id="13",
     default_output=os.path.join(
-        "Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv"
+        _REPO_ROOT, "Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv"
     ),
 )
 

@@ -36,12 +36,15 @@ import pandas as pd
 from backtesting import Backtest, Strategy
 from dotenv import load_dotenv
 
+# Anchor everything to the repo root (parent of `My Backtest Files (For
+# Reference)/`) so paths resolve regardless of cwd. `__file__` lives at
+# <repo>/My Backtest Files (For Reference)/..., so dirname(dirname(__file__))
+# == <repo_root>.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Strategy logic lives in the sibling `Signal Generators/` folder. Adding it
-# to sys.path here (computed from __file__, not cwd) lets the import below
-# resolve regardless of which directory the backtest is launched from.
-_SIGNAL_GENERATORS_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Signal Generators")
-)
+# to sys.path here lets the import below resolve regardless of cwd.
+_SIGNAL_GENERATORS_DIR = os.path.join(_REPO_ROOT, "Signal Generators")
 if _SIGNAL_GENERATORS_DIR not in sys.path:
     sys.path.insert(0, _SIGNAL_GENERATORS_DIR)
 
@@ -57,8 +60,8 @@ from ema_trend_strategy_logic import (
 # User configuration
 # -----------------------------
 # Reuses the same 1-minute OHLC dataset used by the Renko backtest by default.
-DATA_PATH = os.path.join("Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv")
-OUTPUT_DIR = "Backtest Outputs"
+DATA_PATH = os.path.join(_REPO_ROOT, "Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv")
+OUTPUT_DIR = os.path.join(_REPO_ROOT, "Backtest Outputs")
 LOG_FILE = os.path.join(OUTPUT_DIR, "nifty_ema_trend_futures_5y_backtest.log")
 
 # Starting capital: 6 lakh INR

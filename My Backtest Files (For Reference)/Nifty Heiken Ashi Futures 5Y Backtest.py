@@ -21,11 +21,18 @@ import pandas as pd
 from backtesting import Backtest, Strategy
 
 
+# Anchor everything to the repo root (parent of `My Backtest Files (For
+# Reference)/`) so paths resolve regardless of cwd. `__file__` lives at
+# <repo>/My Backtest Files (For Reference)/..., so dirname(dirname(__file__))
+# == <repo_root>.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 # -----------------------------
 # User configuration
 # -----------------------------
-DATA_PATH = os.path.join("Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv")
-OUTPUT_DIR = "Backtest Outputs"
+DATA_PATH = os.path.join(_REPO_ROOT, "Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv")
+OUTPUT_DIR = os.path.join(_REPO_ROOT, "Backtest Outputs")
 LOG_FILE = os.path.join(OUTPUT_DIR, "nifty_heiken_ashi_futures_5y_backtest.log")
 
 # Starting capital: 2 lakh INR
