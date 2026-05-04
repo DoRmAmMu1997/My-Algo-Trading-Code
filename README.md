@@ -11,4 +11,4 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - The main front test file which uses miltithreading to execute all strategies together
 
 # Pro Tip
-You might have to adjust the import addresses from which the files are to be imported because the files are in different directories in my local machine
+You might have to adjust the import addresses from which the files are to be imported because the files are in different directories in my local machine(fixed in the latest Claude commit)
