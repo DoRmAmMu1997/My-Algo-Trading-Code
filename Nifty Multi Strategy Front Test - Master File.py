@@ -1422,11 +1422,21 @@ class DhanBrokerClient:
             if isinstance(expiry, date)
             else str(expiry)
         )
-        return self.dhan.option_chain(
+        resp = self.dhan.option_chain(
             under_security_id=int(under_security_id),
             under_exchange_segment=str(under_exchange_segment),
             expiry=expiry_str,
         )
+        # The SDK wraps every API response in an outer envelope of the form
+        # {"status", "remarks", "data": <api_response>}. Unwrap it so callers
+        # see the /optionchain shape documented above (status + data.oc)
+        # rather than a doubly-nested dict where data.oc lives at data.data.
+        # On SDK-level failure (network error etc.) `data` is "" not a dict,
+        # so the original envelope falls through and the parser will see the
+        # "failure" status and short-circuit cleanly.
+        if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
+            return resp["data"]
+        return resp
 
 
 # =============================================================================
