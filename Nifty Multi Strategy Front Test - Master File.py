@@ -140,6 +140,7 @@ from __future__ import annotations
 import glob
 import importlib.util
 import logging
+import math
 import os
 import sys
 import threading
@@ -702,6 +703,10 @@ PROFIT_SHOOTER_STRATEGY_CONFIG = PROFIT_SHOOTER_LOGIC.ProfitShooterConfig(
 )
 # Operational sizing/risk for Profit Shooter (separate from signal config).
 PROFIT_SHOOTER_LOTS = _env_int("PROFIT_SHOOTER_LOTS", 1)
+# Per-trade rupee risk budget used by Profit Shooter's dynamic position sizer.
+# The worker overrides the static lot count and instead picks the smallest
+# whole-lot quantity whose underlying-points risk fits within this budget.
+PROFIT_SHOOTER_RISK_BUDGET = _env_float("PROFIT_SHOOTER_RISK_BUDGET", 2500.0)
 PROFIT_SHOOTER_STARTING_CAPITAL = _env_float("PROFIT_SHOOTER_STARTING_CAPITAL", 600000.0)
 PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT = _env_float("PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT", 0.03)
 PROFIT_SHOOTER_MAX_LOSS = PROFIT_SHOOTER_STARTING_CAPITAL * PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT
@@ -2459,6 +2464,20 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         )
         return (live_price - self.pos.entry_trade_price) * self.pos.quantity
 
+    def _compute_entry_lots(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> int:
+        """
+        Number of lots to use for this entry.
+
+        Default: the static class-level `self.lots`. Subclasses (e.g. Profit
+        Shooter) override this to size dynamically off the underlying SL.
+        """
+        return self.lots
+
     def enter_position(
         self,
         direction: str,
@@ -2521,7 +2540,10 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
             return False
 
-        quantity = lot_size * self.lots
+        lots_for_entry = self._compute_entry_lots(
+            float(entry_underlying), float(stop_underlying), lot_size
+        )
+        quantity = lot_size * lots_for_entry
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
         order_id = self._next_paper_order_id(entry_side)
 
@@ -2972,6 +2994,41 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
 
     def minimum_strategy_rows(self) -> int:
         return PROFIT_SHOOTER_MIN_BARS
+
+    def _compute_entry_lots(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> int:
+        """
+        Profit-Shooter-only risk-based sizing.
+
+        Pick the smallest whole-lot quantity whose worst-case underlying-points
+        loss (`risk_points * lot_size`) is within `PROFIT_SHOOTER_RISK_BUDGET`.
+        `math.ceil` over a positive ratio guarantees a minimum of 1 lot, so a
+        trade is never sized to zero -- a setup either trades at >=1 lot or
+        not at all.
+        """
+        risk_points = abs(float(entry_underlying) - float(stop_underlying))
+        if risk_points <= 0 or lot_size <= 0:
+            self.log.warning(
+                "Profit Shooter dynamic sizing fell back to static lots=%s "
+                "(entry=%.2f, stop=%.2f, lot_size=%s).",
+                self.lots, entry_underlying, stop_underlying, lot_size,
+            )
+            return self.lots
+        lots = math.ceil(PROFIT_SHOOTER_RISK_BUDGET / (risk_points * lot_size))
+        self.log.info(
+            "Profit Shooter dynamic sizing: risk_points=%.2f | lot_size=%s | "
+            "risk_budget=%.2f -> lots=%s, qty=%s.",
+            risk_points,
+            lot_size,
+            PROFIT_SHOOTER_RISK_BUDGET,
+            lots,
+            lots * lot_size,
+        )
+        return int(lots)
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         return PROFIT_SHOOTER_LOGIC.build_profit_shooter_with_indicators(ohlc, PROFIT_SHOOTER_STRATEGY_CONFIG)
