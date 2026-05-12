@@ -151,6 +151,11 @@ from typing import Optional
 
 # --- Third-party imports -----------------------------------------------------
 import pandas as pd
+# `requests` is only used by the end-of-day instrument-master refresh helper at
+# the bottom of this file. We keep it next to `pandas` rather than lazy-loading
+# it inside the helper because the rest of the repo (e.g. the swing strategy
+# data fetcher) already depends on `requests`, so it is guaranteed to be present.
+import requests
 # `DhanContext` wraps (client_id, access_token) so the rest of the SDK can
 # share one authenticated session. `DhanLogin` is the auth helper class we
 # use only for `user_profile(...)` startup validation -- the OAuth dance
@@ -176,6 +181,16 @@ LOG_FILE = ROOT_DIR / "Dependencies" / "log_files" / "nifty_multi_strategy_maste
 LOGGER_NAME = "nifty_multi_strategy_master_front_test_dhanhq"
 
 INSTRUMENT_MASTER_GLOB = str(ROOT_DIR / "Dependencies" / "all_instrument *.csv")
+
+# Public DhanHQ scrip master used by the end-of-day refresh helper at the
+# bottom of this file. The DETAILED variant is required because the option
+# resolver (`_load_option_chain`) depends on the `SEM_*` columns
+# (`SEM_EXM_EXCH_ID`, `SEM_SEGMENT`, `SEM_INSTRUMENT_NAME`, `SEM_TRADING_SYMBOL`,
+# `SEM_CUSTOM_SYMBOL`, `SEM_EXPIRY_DATE`, `SEM_LOT_UNITS`, `SEM_SMST_SECURITY_ID`,
+# `SEM_STRIKE_PRICE`, `SEM_OPTION_TYPE`, `SM_SYMBOL_NAME`). The shorter
+# `api-scrip-master.csv` does not carry those columns and would break the
+# resolver on the next run.
+DHAN_SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
 
 # The fetcher publishes only one centralized stream: 1-minute OHLC.
 # Higher timeframes (3-min for Supertrend, 5-min for EMA / Donchian) are
@@ -331,9 +346,9 @@ RENKO_SQUARE_OFF_MINUTE = _env_int("RENKO_SQUARE_OFF_MINUTE", 15)
 # Existing positions keep running through the window; only fresh entries
 # are blocked. Default 12:00 - 13:00 IST.
 RENKO_NO_TRADE_START_HOUR = _env_int("RENKO_NO_TRADE_START_HOUR", 12)
-RENKO_NO_TRADE_START_MINUTE = _env_int("RENKO_NO_TRADE_START_MINUTE", 0)
-RENKO_NO_TRADE_END_HOUR = _env_int("RENKO_NO_TRADE_END_HOUR", 13)
-RENKO_NO_TRADE_END_MINUTE = _env_int("RENKO_NO_TRADE_END_MINUTE", 0)
+RENKO_NO_TRADE_START_MINUTE = _env_int("RENKO_NO_TRADE_START_MINUTE", 30)
+RENKO_NO_TRADE_END_HOUR = _env_int("RENKO_NO_TRADE_END_HOUR", 12)
+RENKO_NO_TRADE_END_MINUTE = _env_int("RENKO_NO_TRADE_END_MINUTE", 30)
 
 
 # =============================================================================
@@ -389,6 +404,45 @@ PROFIT_SHOOTER_SQUARE_OFF_MINUTE = _env_int("PROFIT_SHOOTER_SQUARE_OFF_MINUTE", 
 # immediately. Keep this within ~1 minute of the square-off time.
 PROFIT_SHOOTER_LAST_SETUP_HOUR = _env_int("PROFIT_SHOOTER_LAST_SETUP_HOUR", 15)
 PROFIT_SHOOTER_LAST_SETUP_MINUTE = _env_int("PROFIT_SHOOTER_LAST_SETUP_MINUTE", 14)
+
+
+# =============================================================================
+# OPENING STRIKE PCR VWAP ATR STRATEGY CONSTANTS (Tier 3)
+# =============================================================================
+# Sizing/risk + trading window. Indicator periods and PCR thresholds are
+# tuned in `OPENING_STRIKE_STRATEGY_CONFIG` further down (also env-driven).
+OPENING_STRIKE_LOTS = _env_int("OPENING_STRIKE_LOTS", 1)
+OPENING_STRIKE_MAX_LOSS = _env_float("OPENING_STRIKE_MAX_LOSS", 5500.0)
+OPENING_STRIKE_POLL_SECONDS = _env_int("OPENING_STRIKE_POLL_SECONDS", 10)
+
+# The strategy uses VWAP/ATR on the latest closed candle of the chosen
+# derived timeframe. 5-min is the common default for opening-range / PCR
+# style intraday setups in Indian markets, so the 1-min source data is
+# resampled into 5-min candles before evaluation.
+OPENING_STRIKE_DERIVED_TIMEFRAME_MINUTES = _env_int("OPENING_STRIKE_DERIVED_TIMEFRAME_MINUTES", 5)
+
+# The strategy needs the opening strike fixed at session start; we wait
+# until ~10 minutes after market open so the first 1-2 derived candles
+# have closed before any signal fires.
+OPENING_STRIKE_TRADING_START_HOUR = _env_int("OPENING_STRIKE_TRADING_START_HOUR", 9)
+OPENING_STRIKE_TRADING_START_MINUTE = _env_int("OPENING_STRIKE_TRADING_START_MINUTE", 25)
+OPENING_STRIKE_SQUARE_OFF_HOUR = _env_int("OPENING_STRIKE_SQUARE_OFF_HOUR", 15)
+OPENING_STRIKE_SQUARE_OFF_MINUTE = _env_int("OPENING_STRIKE_SQUARE_OFF_MINUTE", 15)
+
+# No new trades from a setup printed at or after this time. With a default
+# 5-min timeframe, 15:00 still leaves three candles of runway before the
+# 15:15 square-off, which is the bare minimum for a 1R move on the option.
+OPENING_STRIKE_LAST_SETUP_HOUR = _env_int("OPENING_STRIKE_LAST_SETUP_HOUR", 15)
+OPENING_STRIKE_LAST_SETUP_MINUTE = _env_int("OPENING_STRIKE_LAST_SETUP_MINUTE", 0)
+
+# How often the worker is allowed to call the (rate-limited) option_chain
+# endpoint when the strategy is flat. The standard run loop already
+# signature-gates per derived candle (~once every 5 min) so 30s is a
+# conservative floor that double-protects the API budget during fast
+# intra-candle re-evaluations.
+OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS = _env_int(
+    "OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS", 30
+)
 
 
 # =============================================================================
@@ -660,6 +714,10 @@ DONCHIAN_BEARISH_LOGIC = load_module(
     "master_donchian_signal_generator_bearish",
     ROOT_DIR / "Supertrend Strategies" / "Donchian Signal Generator Bearish.py",
 )
+OPENING_STRIKE_LOGIC = load_module(
+    "master_nifty_opening_strike_pcr_vwap_atr_signal_generator",
+    ROOT_DIR / "Opening Strike PCR VWAP Strategy" / "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
+)
 
 
 # =============================================================================
@@ -732,6 +790,38 @@ SUPERTREND_SETTINGS = SUPERTREND_LOGIC.SupertrendSettings(
 DONCHIAN_BEARISH_SETTINGS = DONCHIAN_BEARISH_LOGIC.DonchianSettings(
     length=DONCHIAN_LENGTH,
 )
+
+# Opening Strike PCR/VWAP/ATR uses a frozen dataclass for its tunables.
+# Same pattern as EMA / Profit Shooter -- every parameter is `_env_*`
+# driven so ops can tune behaviour without editing strategy code.
+OPENING_STRIKE_STRATEGY_CONFIG = OPENING_STRIKE_LOGIC.NiftyOpeningStrikePCRVWAPATRConfig(
+    strike_step=int(ATM_STRIKE_STEP),
+    strike_window_n=_env_int("OPENING_STRIKE_STRIKE_WINDOW_N", 3),
+    pcr_bullish_threshold=_env_float("OPENING_STRIKE_PCR_BULLISH_THRESHOLD", 1.2),
+    pcr_bearish_threshold=_env_float("OPENING_STRIKE_PCR_BEARISH_THRESHOLD", 0.8),
+    option_moneyness="ATM",
+    atr_period=_env_int("OPENING_STRIKE_ATR_PERIOD", 14),
+    vwap_near_atr_multiplier=_env_float("OPENING_STRIKE_VWAP_NEAR_ATR_MULT", 0.5),
+    enable_rsi_filter=bool(_env_int("OPENING_STRIKE_ENABLE_RSI_FILTER", 0)),
+    rsi_period=_env_int("OPENING_STRIKE_RSI_PERIOD", 14),
+    buy_rsi_min=_env_float("OPENING_STRIKE_BUY_RSI_MIN", 50.0),
+    sell_rsi_max=_env_float("OPENING_STRIKE_SELL_RSI_MAX", 50.0),
+    initial_sl_points=_env_float("OPENING_STRIKE_INITIAL_SL_POINTS", 20.0),
+    expiry_selection=_env_str("OPENING_STRIKE_EXPIRY_SELECTION", "NEXT_WEEKLY"),
+    # Single entry per day matches the signal-generator default and the
+    # "fix the opening strike, fire once" intent of the strategy.
+    allow_multiple_entries=bool(_env_int("OPENING_STRIKE_ALLOW_MULTIPLE_ENTRIES", 0)),
+)
+
+# Minimum number of derived (e.g. 5-min) candles before the engine can
+# evaluate. `_calculate_atr` needs `atr_period` samples; we add 2 bars of
+# slack so the first usable signal lands AFTER warmup, not on it.
+OPENING_STRIKE_MIN_BARS = int(OPENING_STRIKE_STRATEGY_CONFIG.atr_period) + 2
+if OPENING_STRIKE_STRATEGY_CONFIG.enable_rsi_filter:
+    OPENING_STRIKE_MIN_BARS = max(
+        OPENING_STRIKE_MIN_BARS,
+        int(OPENING_STRIKE_STRATEGY_CONFIG.rsi_period) + 2,
+    )
 
 
 # =============================================================================
@@ -3099,6 +3189,711 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# OPENING STRIKE PCR VWAP ATR WORKER (5-min, ATM single-leg)
+# =============================================================================
+class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
+    """
+    Opening Strike PCR / VWAP / ATR strategy on a 5-minute derived series.
+
+    PLAIN-ENGLISH WALKTHROUGH (for first-time readers)
+    ---------------------------------------------------
+    What this strategy is trying to do, conceptually:
+
+    1. Right after the market opens, this worker remembers ONE special
+       strike: the NIFTY ATM strike based on the day's opening price. That
+       single strike is called the "opening strike" and is FIXED for the
+       rest of the day. Every PCR (Put/Call ratio) calculation downstream
+       uses a small window of strikes centred on this anchor.
+
+    2. The worker watches the option-chain OPEN-INTEREST (OI) "change"
+       around that opening strike. OI change is just "how much new OI got
+       added today" -- put OI growing fast means option WRITERS believe
+       NIFTY won't fall (bullish), call OI growing fast means writers
+       believe NIFTY won't rise (bearish).
+
+    3. On every closed 5-minute candle, ask the signal engine: "Given the
+       current OI flow + this candle's VWAP/ATR/price action, do we want
+       to BUY_CALL, BUY_PUT, or do nothing?". The engine combines PCR,
+       candle colour, VWAP position, and (optionally) RSI to answer.
+
+    4. On a BUY_CALL signal: buy the ATM Call option. On BUY_PUT: buy the
+       ATM Put. We always BUY (never sell) options here, so the worst-case
+       loss per trade is bounded at the premium paid.
+
+    5. Manage the trade with a "ratcheting" stop loss applied on the
+       OPTION'S PREMIUM (NOT on NIFTY spot):
+         * initial SL = entry_premium - 20 points
+         * once the option moves +2R in our favour (where 1R = 20 pts),
+           ratchet SL up to entry + 1R (locks in 1R profit).
+         * at +3R reward, ratchet to entry + 2R, and so on.
+       The "high-water" rule means SL only moves UP, never back down.
+
+    6. At 15:15 IST sharp the worker force-closes any running trade and
+       stops for the day. This happens whether or not a signal ever fired
+       -- the daily session cutoff is unconditional. See "SQUARE-OFF
+       SAFETY NET" below for details.
+
+    WHY THIS WORKER IS A LITTLE DIFFERENT FROM THE OTHER ATM WORKERS
+    ----------------------------------------------------------------
+    Renko / EMA / HeikinAshi / ProfitShooter look at NIFTY OHLC only.
+    THIS worker ALSO needs live option-chain data, because the PCR signal
+    is what the engine actually keys off. So we:
+
+    - Call `broker.fetch_option_chain` every ~30 seconds (rate-limited so
+      we never exceed DhanHQ's per-second budget for that endpoint).
+    - Snapshot OI per strike on the FIRST successful fetch of the session
+      and treat that as our "baseline". Every later fetch computes the
+      OI CHANGE as `current_oi - baseline_oi`. This is the intraday
+      definition of OI change (today's flow only), which is the same view
+      that opening-range / PCR traders watch in Sensibull, Opstra, etc.
+    - The exit rule is on OPTION premium, not on NIFTY spot. We pass
+      `stop_underlying=0.0` to the parent's `enter_position` (the parent
+      records this for audit only; it does not enforce it) and run our
+      own premium-based ratchet inside `_check_premium_trailing_sl_and_exit`.
+
+    SQUARE-OFF SAFETY NET (READ THIS IF YOU ARE WORRIED ABOUT 15:15)
+    ----------------------------------------------------------------
+    Three different time-based guards work together to make sure we are
+    flat by the end of the session no matter what state the worker is in:
+
+    1. `square_off_hour` / `square_off_minute` (= 15:15 by default).
+       The BasePaperStrategyWorker's main `run()` loop checks
+       `is_after_time(self.square_off_hour, self.square_off_minute)` on
+       EVERY single poll iteration. The moment we cross that wall-clock
+       time, the loop runs `handle_square_off_and_stop()` which:
+            (a) sets a one-shot `cutoff_handled` flag so it only runs once,
+            (b) if `self.pos.active` is True -> calls `exit_position(
+                "TIME_CUTOFF")` to close the open option leg at the live
+                LTP and record a normal PnL,
+            (c) logs the day's paper summary,
+            (d) `break`s out of the run loop so the thread exits cleanly.
+       Every scenario is covered:
+         - In a trade at 15:15 -> the trade is exited at TIME_CUTOFF.
+         - Flat at 15:15 with no signal having fired all day -> the worker
+           still hits the cutoff branch, logs the summary, and stops the
+           thread (so it won't waste CPU polling after market close).
+         - Flat at 15:15 but holding a "we already entered once" flag on
+           the signal engine -> same as above, the thread exits.
+
+    2. `last_setup_cutoff` (= 15:00 by default). This is SOFTER than the
+       hard 15:15 stop. After this time we refuse to OPEN a fresh trade,
+       because a 5-min strategy with only 15 minutes of runway is very
+       unlikely to make a clean R move before the hard cutoff kicks in.
+       Trades already open keep running and follow the trailing SL.
+
+    3. `max_loss` (=Rs.5500 by default). Independent of clock time. If
+       realized + open PnL ever dips below `-max_loss` the base loop
+       force-closes the active trade and stops the worker, just like the
+       time-cutoff path. Set max_loss=0 in .env to disable this.
+
+    EDITABLE KNOBS (all live in `.env` under "OPENING_STRIKE_*")
+    -----------------------------------------------------------
+    Every numeric / boolean parameter the strategy uses -- sizing, the
+    trading window, PCR thresholds, ATR/RSI periods, the SL points, the
+    derived timeframe, the option-chain refresh budget -- is loaded via
+    `_env_*` calls at the top of this file. So you never need to edit
+    this class to tune behaviour; just change the corresponding key in
+    `Multithreading/Dependencies/.env` and restart the runner.
+    """
+
+    # --- Class-level attributes -------------------------------------------
+    # These are read by the BasePaperStrategyWorker run loop. They have to
+    # be class attributes (not instance attributes) because the base class
+    # accesses them via `self.poll_seconds` etc. before any instance
+    # initialization can race with the supervisor thread.
+
+    # Short label used in log lines like "OpeningStrike ENTRY LONG | ..."
+    # and in the thread name. Keep it short and unique across all workers.
+    strategy_name = "OpeningStrike"
+
+    # The shared central fetcher publishes only one timeframe ("1" min).
+    # Workers that need a higher timeframe (this one needs 5-min) resample
+    # locally in `build_strategy_frame`. So this stays "1" for ALL workers.
+    timeframe = "1"
+
+    # How often the run loop wakes up to check things. The strategy fires
+    # only on closed 5-min candles, so 10 seconds is plenty -- it lets us
+    # react to a fresh candle within 10s of its close without burning the
+    # broker's API rate-limit on the option-chain endpoint.
+    poll_seconds = OPENING_STRIKE_POLL_SECONDS
+
+    # Number of NIFTY option lots to BUY per entry. 1 lot = 75 units of
+    # NIFTY today (per the NSE schedule). The instrument master CSV is the
+    # source of truth for the current lot size.
+    lots = OPENING_STRIKE_LOTS
+
+    # Daily INR drawdown cap. Once realized+open PnL <= -max_loss, the run
+    # loop closes the trade and stops the worker for the day. Set to 0 in
+    # .env to disable this safety net entirely (not recommended live).
+    max_loss = OPENING_STRIKE_MAX_LOSS
+
+    # Trading WINDOW. The base class refuses to even evaluate signals
+    # before `(trading_start_hour, trading_start_minute)`. 09:25 gives the
+    # opening 10 minutes of volatility time to settle AND ensures at least
+    # one full 5-min candle has closed before we look at anything.
+    trading_start_hour = OPENING_STRIKE_TRADING_START_HOUR
+    trading_start_minute = OPENING_STRIKE_TRADING_START_MINUTE
+
+    # Hard cutoff. At THIS wall-clock time the base class force-closes any
+    # open option leg and stops the worker (see "SQUARE-OFF SAFETY NET"
+    # in the class docstring). 15:15 matches every other option-buying
+    # worker in this runner (Renko, EMA, HeikinAshi, ProfitShooter).
+    square_off_hour = OPENING_STRIKE_SQUARE_OFF_HOUR
+    square_off_minute = OPENING_STRIKE_SQUARE_OFF_MINUTE
+
+    # Minutes per derived candle. 1-min source bars get resampled into
+    # 5-min bars in `build_strategy_frame`. Change in .env if you want a
+    # 1-min or 3-min variant.
+    derived_timeframe_minutes = OPENING_STRIKE_DERIVED_TIMEFRAME_MINUTES
+
+    # Soft cutoff: after this time we don't OPEN a new trade because the
+    # 15:15 hard stop would close it almost immediately. Existing trades
+    # keep running. `dt_time(h, m)` is Python's built-in time-of-day type;
+    # comparing it to `candle.time()` does the right thing.
+    last_setup_cutoff = dt_time(
+        OPENING_STRIKE_LAST_SETUP_HOUR,
+        OPENING_STRIKE_LAST_SETUP_MINUTE,
+    )
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        # Standard worker plumbing: shared data store, the supervisor's
+        # stop-event for Ctrl+C handling, and the authenticated broker
+        # client. The parent class hooks these into the run loop.
+        super().__init__(store, stop_event, broker)
+
+        # The signal engine is the brain that decides BUY_CALL/BUY_PUT/
+        # NO_SIGNAL on each candle. It is STATEFUL -- it remembers the
+        # opening strike from its first call and tracks whether it has
+        # already fired today. We keep exactly ONE engine per worker.
+        self.signal_engine = OPENING_STRIKE_LOGIC.NiftyOpeningStrikePCRVWAPATRSignalGenerator(
+            OPENING_STRIKE_STRATEGY_CONFIG
+        )
+
+        # Three simple counters for the end-of-day summary line.
+        # `signal_count` increments each time the engine returns a
+        # genuine BUY signal (NO_SIGNAL responses don't count).
+        # `entry_submit_count` only counts signals that we actually
+        # managed to TURN INTO a paper entry (some signals fail at the
+        # entry stage, e.g. if the ATM contract cannot be resolved).
+        # `exit_count` increments whenever any exit fires (SL, trailing
+        # SL, time cutoff, or max-loss).
+        self.signal_count = 0
+        self.entry_submit_count = 0
+        self.exit_count = 0
+
+        # --- Option-chain state ----------------------------------------
+        # `self._oi_baseline` holds the OPEN-INTEREST value we saw on the
+        # FIRST successful option-chain fetch of the session. Every later
+        # fetch computes "today's OI change" as `current_oi - baseline`.
+        # It stays empty until the first fetch lands, then is never
+        # overwritten (so changes always reflect THIS session, not some
+        # mid-session reset).
+        # Shape: {strike_float: {"ce": ce_oi_float, "pe": pe_oi_float}}.
+        self._oi_baseline: dict[float, dict[str, float]] = {}
+        self._oi_baseline_captured_at: Optional[datetime] = None
+
+        # `self._last_option_chain_fetch_at` is a simple "remember the
+        # last time we called the option_chain API" timestamp. Combined
+        # with `_last_oi_change_frame` (the cached result), it lets us
+        # avoid hammering the rate-limited endpoint when the run loop
+        # ticks faster than OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS.
+        self._last_option_chain_fetch_at: Optional[datetime] = None
+        self._last_oi_change_frame: Optional[pd.DataFrame] = None
+
+        # `self._high_water_R` tracks the BEST reward this trade has
+        # touched so far, measured in "R units" (1R = OPENING_STRIKE_
+        # INITIAL_SL_POINTS rupees of OPTION premium). The trailing-SL
+        # ratchet uses this number, NOT the current live reward, so a
+        # quick spike up to +2.4R locks in the 1R-locked-in tier even if
+        # the price immediately pulls back. Reset to 0 in `after_exit`.
+        self._high_water_R: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Status / lifecycle
+    # ------------------------------------------------------------------
+    def summary_text(self) -> str:
+        """
+        One-line end-of-day report. Logged once at 15:15 (or whenever a
+        max-loss / Ctrl+C cutoff fires). Format is identical to the other
+        ATM workers so the log file is easy to grep across strategies.
+        """
+        return (
+            f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
+            f"Exits={self.exit_count} | Trades={self.completed_trades} | RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        """
+        Hook called by the parent's `exit_position` AFTER PnL is realized
+        and the option subscription is unregistered. Two jobs here:
+
+        - Bump the exit counter (for the end-of-day summary).
+        - Reset the trailing high-water mark so that IF the operator has
+          turned on `OPENING_STRIKE_ALLOW_MULTIPLE_ENTRIES=1`, the NEXT
+          trade starts with a fresh ratchet (otherwise it would carry
+          over a stale "max reward seen" from the previous trade).
+        """
+        self.exit_count += 1
+        self._high_water_R = 0.0
+
+    def minimum_strategy_rows(self) -> int:
+        """
+        How many derived (5-min) candles must exist before the engine is
+        allowed to evaluate. ATR-14 needs 14 candles, so we add a small
+        buffer to avoid a "borderline NaN" first call. See the
+        OPENING_STRIKE_MIN_BARS computation near the config block.
+        """
+        return OPENING_STRIKE_MIN_BARS
+
+    # ------------------------------------------------------------------
+    # Frame building (1m source -> 5m derived + session VWAP)
+    # ------------------------------------------------------------------
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """
+        Turn the shared 1-min NIFTY snapshot into a 5-min DataFrame with
+        a session VWAP column attached. The signal engine consumes the
+        result on each `process_strategy_frame` call.
+
+        WHY WE COMPUTE VWAP HERE INSTEAD OF READING IT FROM THE FETCHER:
+        The central fetcher only publishes O/H/L/C (no volume column),
+        because the NIFTY *index* itself reports zero volume on most
+        data sources -- it is a synthetic level computed from constituent
+        stocks, not a tradable instrument with order flow. The signal
+        generator's VWAP check, however, only needs a "fair value" line
+        to compare candle closes against, so we use the equal-weight
+        proxy `cumulative mean of (H+L+C)/3 since session open`. When
+        every bar carries equal volume this proxy IS mathematically the
+        true VWAP, and it is the same fallback Indian-market index
+        traders use when a real volume series isn't available.
+        """
+        # Step 1: resample 1-min source into derived (5-min) bars. The
+        # helper keeps only COMPLETE bars -- i.e. a 5-min bar made of
+        # exactly 5 underlying 1-min rows -- so we never evaluate on a
+        # half-formed candle.
+        ohlc_n = resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+        if ohlc_n.empty:
+            return ohlc_n
+
+        # Step 2: filter to today's session only. The central snapshot
+        # spans the last several days (the lookback default is 7) so we
+        # must drop yesterday's tail before we compute "since-open VWAP"
+        # or read "today's opening price". Without this filter, the
+        # opening strike would still anchor on the FIRST bar we ever
+        # received, which could be from a previous day.
+        today = datetime.now().date()
+        ohlc_n = ohlc_n[pd.to_datetime(ohlc_n["timestamp"]).dt.date == today].reset_index(drop=True)
+        if ohlc_n.empty:
+            # Today's first 5-min bar has not closed yet -- the engine
+            # will see an empty frame and skip; the run loop will retry.
+            return ohlc_n
+
+        # Step 3: compute the equal-weight session VWAP proxy. `expanding`
+        # gives a running window that starts at row 0 and grows by one
+        # row each step, so `expanding().mean()` is a cumulative average
+        # from session open to "now".
+        typical_price = (ohlc_n["high"] + ohlc_n["low"] + ohlc_n["close"]) / 3.0
+        ohlc_n["vwap"] = typical_price.expanding().mean()
+        return ohlc_n
+
+    # ------------------------------------------------------------------
+    # Option-chain OI capture
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_option_chain_for_oi(resp) -> dict:
+        """
+        Flatten DhanHQ's `/optionchain` response into one tidy dict keyed
+        by strike. Output shape:
+
+            {22000.0: {"ce_oi": 12345.0, "pe_oi": 67890.0}, ...}
+
+        The DhanHQ wire format is verbose (`{"status": ..., "data":
+        {"oc": {"22000.000000": {"ce": {...}, "pe": {...}}}}}`) and the
+        SDK has historically shifted casing between minor releases. This
+        parser is intentionally defensive: anything that doesn't look
+        like a `dict` at each nesting level is skipped silently rather
+        than raising, so a single malformed strike never poisons the
+        whole evaluation.
+
+        We DROP strikes where:
+            - either CE or PE leg is missing entirely (a half-strike
+              would skew the PCR sum), OR
+            - both CE_OI and PE_OI are zero (typical of far-OTM strikes
+              that have never traded -- they would carry pure noise).
+        """
+        # Guard against entirely malformed responses (network error,
+        # empty body, non-dict payload). Returning `{}` lets callers
+        # check truthiness instead of try/except'ing every call.
+        if not isinstance(resp, dict):
+            return {}
+
+        # DhanHQ sets `status="success"` on a good response. Anything
+        # else (e.g. "failure" / "error") means the API rejected us;
+        # treat it like an empty payload.
+        status = str(resp.get("status", "")).strip().lower()
+        if status and status != "success":
+            return {}
+
+        payload = resp.get("data")
+        if not isinstance(payload, dict):
+            return {}
+
+        # The strike map lives under the `oc` key (DhanHQ's shorthand
+        # for "option chain"). We accept the all-caps variant too just
+        # in case a future SDK update changes the casing.
+        oc = payload.get("oc") or payload.get("OC") or {}
+        if not isinstance(oc, dict):
+            return {}
+
+        out: dict[float, dict[str, float]] = {}
+        for strike_str, leg_map in oc.items():
+            # Each value in `oc` should itself be a dict {"ce": {...},
+            # "pe": {...}}. Skip anything that isn't.
+            if not isinstance(leg_map, dict):
+                continue
+
+            # Strikes are keyed as strings like "22000.000000". Convert
+            # to float so we can do numeric comparisons elsewhere.
+            try:
+                strike = float(strike_str)
+            except (TypeError, ValueError):
+                continue
+
+            # Pull CE OI then PE OI. We try a couple of casing variants
+            # for each side -- some DhanHQ versions return "ce"/"pe",
+            # some return "CE"/"PE", and occasionally "Ce"/"Pe".
+            record: dict[str, float] = {}
+            for right_label, leg_keys in (
+                ("ce", ("ce", "CE", "Ce")),
+                ("pe", ("pe", "PE", "Pe")),
+            ):
+                leg = None
+                for key in leg_keys:
+                    candidate = leg_map.get(key)
+                    if isinstance(candidate, dict):
+                        leg = candidate
+                        break
+                if leg is None:
+                    # Side missing entirely -- can't compute PCR for this
+                    # strike, so skip the side. The strike will be
+                    # dropped by the "both sides required" check below.
+                    continue
+                # `_safe_float` returns a float on any input, defaulting
+                # to 0.0 for None / empty / non-numeric values.
+                record[f"{right_label}_oi"] = _safe_float(leg.get("oi"), 0.0)
+
+            # Only keep strikes that have BOTH CE and PE OI reported,
+            # and where at least one side has non-zero OI.
+            if "ce_oi" in record and "pe_oi" in record:
+                if record["ce_oi"] > 0 or record["pe_oi"] > 0:
+                    out[strike] = record
+        return out
+
+    def _build_option_chain_oi_change(self) -> Optional[pd.DataFrame]:
+        """
+        Produce the per-strike OI-change DataFrame the signal engine
+        expects. Columns:
+
+            strike (int) | call_oi_change (float) | put_oi_change (float)
+
+        The returned DataFrame is the engine's "OI flow snapshot": each
+        row says "at this strike, today's call OI is up by X and put OI
+        is up by Y since the session-open baseline". The engine sums
+        these around the opening strike to get its PCR number.
+
+        CACHING / RATE LIMITING:
+        DhanHQ's option_chain endpoint is one of the tighter rate-limited
+        APIs (~1 request/sec budget). We hold a cached copy and only
+        re-fetch when more than OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS
+        have elapsed since the last successful fetch. That way the run
+        loop can poll quickly without blowing through the API budget.
+
+        ERROR HANDLING:
+        If the fetch fails (network error, rate limit, empty response),
+        we return the LAST cached frame (which may be `None` if no fetch
+        has ever succeeded). The caller treats `None`/empty as "skip
+        this evaluation" and tries again on the next poll.
+        """
+        now = datetime.now()
+
+        # If a cached frame is fresh enough, use it as-is to avoid
+        # spending an API call.
+        if (
+            self._last_option_chain_fetch_at is not None
+            and self._last_oi_change_frame is not None
+            and (now - self._last_option_chain_fetch_at).total_seconds()
+            < OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS
+        ):
+            return self._last_oi_change_frame
+
+        # Step 1: resolve which expiry's chain to query. Same "next-next
+        # weekly" rule as the other ATM workers -- this keeps the OI
+        # flow we monitor aligned with the option we will eventually
+        # BUY when a signal triggers.
+        try:
+            expiry = self.contract_resolver.get_target_expiry()
+        except Exception as exc:
+            self.log.warning("Option-chain fetch skipped: expiry resolution failed: %s", exc)
+            return self._last_oi_change_frame
+
+        # Step 2: call the broker for the option chain. Wrapped in
+        # try/except so a transient network error never crashes the
+        # worker -- we just log and let the next poll retry.
+        try:
+            resp = self.broker.fetch_option_chain(
+                NIFTY_INDEX_SECURITY_ID,
+                NIFTY_INDEX_EXCHANGE_SEGMENT,
+                expiry,
+            )
+        except Exception as exc:
+            self.log.warning("Option-chain fetch raised: %s", exc)
+            return self._last_oi_change_frame
+
+        # Step 3: flatten the response into our tidy strike->OI map. If
+        # the parser couldn't extract anything (pre-market, rate-limit
+        # response, etc.), bail out and let the next poll retry.
+        current_oi = self._parse_option_chain_for_oi(resp)
+        if not current_oi:
+            self.log.warning(
+                "Option-chain returned no usable strikes (rate-limited or pre-market?)"
+            )
+            return self._last_oi_change_frame
+
+        # Step 4: if this is the FIRST successful fetch of the day,
+        # capture an OI baseline. This is the snapshot we will subtract
+        # from every future fetch to get "today's OI change".
+        if not self._oi_baseline:
+            self._oi_baseline = {
+                strike: {"ce": meta.get("ce_oi", 0.0), "pe": meta.get("pe_oi", 0.0)}
+                for strike, meta in current_oi.items()
+            }
+            self._oi_baseline_captured_at = now
+            self.log.info(
+                "Captured intraday OI baseline for %d strikes at %s (expiry=%s).",
+                len(self._oi_baseline),
+                now.strftime("%H:%M:%S"),
+                expiry.isoformat(),
+            )
+
+        # Step 5: walk every strike in the current snapshot and compute
+        # "current OI minus baseline OI" for each side.
+        rows = []
+        for strike, meta in current_oi.items():
+            baseline = self._oi_baseline.get(strike)
+            if baseline is None:
+                # This strike wasn't in the baseline (e.g. NSE listed a
+                # new far-OTM strike mid-session). Treat its baseline as
+                # equal to the current value so its first reported
+                # "change" is zero rather than a huge spike that would
+                # skew our PCR average.
+                self._oi_baseline[strike] = {
+                    "ce": meta.get("ce_oi", 0.0),
+                    "pe": meta.get("pe_oi", 0.0),
+                }
+                baseline = self._oi_baseline[strike]
+            rows.append(
+                {
+                    "strike": int(round(strike)),
+                    "call_oi_change": float(meta.get("ce_oi", 0.0) - baseline.get("ce", 0.0)),
+                    "put_oi_change": float(meta.get("pe_oi", 0.0) - baseline.get("pe", 0.0)),
+                }
+            )
+
+        df = pd.DataFrame(rows)
+
+        # Cache the result + fetch timestamp so the next call within
+        # OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS uses this instead
+        # of hitting the API again.
+        self._last_option_chain_fetch_at = now
+        self._last_oi_change_frame = df
+        return df
+
+    # ------------------------------------------------------------------
+    # Trade management
+    # ------------------------------------------------------------------
+    def _check_premium_trailing_sl_and_exit(self) -> None:
+        """
+        Run the premium-based trailing-SL check ONCE. Called on every
+        run-loop iteration while we hold an open option leg.
+
+        THE LADDER (also published as `risk_metadata.rr_trailing_rule`
+        by the signal generator, so the worker and the engine agree):
+
+            "R" = OPENING_STRIKE_INITIAL_SL_POINTS rupees of option
+                  PREMIUM. With the default 20, 1R = 20 INR.
+
+            Reward state                 SL location
+            ------------                 -----------
+            best reward seen <  2R   ->  entry - 1R (initial loss tol)
+            best reward seen >= 2R   ->  entry + 1R (locks in +1R)
+            best reward seen >= 3R   ->  entry + 2R (locks in +2R)
+            best reward seen >= 4R   ->  entry + 3R (locks in +3R)
+            ...and so on for higher tiers.
+
+        The "best reward seen" is `self._high_water_R`, a high-water
+        mark that only ratchets UP. A quick spike up to +2.4R locks in
+        the +1R tier even if the trade immediately pulls back to +0.5R
+        -- the SL never relaxes back to the initial level.
+        """
+        # 1R in option-premium points. Pulled from the strategy config so
+        # tuning it in .env (OPENING_STRIKE_INITIAL_SL_POINTS) is enough.
+        R = float(OPENING_STRIKE_STRATEGY_CONFIG.initial_sl_points)
+        if R <= 0:
+            # Operator set the SL to 0 -- effectively disables the
+            # premium-based stop. The time cutoff and max_loss are still
+            # in play, so the trade is not unbounded.
+            return
+
+        # Look up the current option LTP. We pass `entry_trade_price` as
+        # the fallback so a momentarily missing tick doesn't accidentally
+        # trigger a "current_premium=0 looks like a crash" exit.
+        current_premium = self._get_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+            fallback=self.pos.entry_trade_price,
+        )
+        if current_premium <= 0:
+            # Truly bad tick (cache empty, direct fetch failed, fallback
+            # was zero). Skip this poll; the next poll will likely have
+            # a fresh tick.
+            return
+
+        # Express the current reward as a multiple of R. Positive means
+        # we are in profit, negative means we are in drawdown.
+        reward_R = (current_premium - self.pos.entry_trade_price) / R
+
+        # Ratchet the high-water mark: it only goes UP, never down.
+        if reward_R > self._high_water_R:
+            self._high_water_R = reward_R
+
+        # Decide which SL tier we are on based on the high-water mark.
+        if self._high_water_R >= 2.0:
+            # Trailing tier active. math.floor(2.4) = 2 -> SL at +1R.
+            # math.floor(3.1) = 3 -> SL at +2R. And so on.
+            tier_R = math.floor(self._high_water_R) - 1
+            effective_sl = self.pos.entry_trade_price + tier_R * R
+            sl_label = f"TRAILING_SL_{int(tier_R)}R"
+        else:
+            # Still in the initial-loss zone. SL stays at entry minus 1R.
+            effective_sl = self.pos.entry_trade_price - R
+            sl_label = "INITIAL_SL"
+
+        # If the current premium has dropped to (or below) the SL, exit.
+        # `exit_position` handles the SELL leg, PnL accounting, and the
+        # post-exit hook (which resets `_high_water_R` to 0).
+        if current_premium <= effective_sl:
+            self.log.info(
+                "%s hit | CurrentPremium=%.2f <= SL=%.2f | EntryPremium=%.2f | HighWaterR=%.2f",
+                sl_label,
+                current_premium,
+                effective_sl,
+                self.pos.entry_trade_price,
+                self._high_water_R,
+            )
+            self.exit_position(sl_label)
+
+    # ------------------------------------------------------------------
+    # Strategy loop body
+    # ------------------------------------------------------------------
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """
+        Body of the main poll-iteration. Called by the BasePaperStrategy
+        Worker.run() loop AFTER every per-iteration check has passed:
+        max-loss not breached, BEFORE the 15:15 cutoff, AFTER the 09:25
+        start, source data is fresh, derived frame is large enough, AND
+        the latest derived candle changed since last time.
+
+        Flow:
+        - If we are already in a trade -> just check the premium
+          trailing SL. The signal engine is single-shot per day, so we
+          never re-enter on top of an existing position.
+        - If we are flat and the engine has already fired today AND the
+          operator has not enabled multi-entry mode -> bail before even
+          touching the rate-limited option_chain endpoint.
+        - If we are flat and past the 15:00 "last setup" cutoff -> bail
+          (the 15:15 hard stop would close the trade almost immediately).
+        - Otherwise: fetch the latest OI-change snapshot, hand it +
+          today's candles + the day's opening price to the signal engine,
+          and submit a CE/PE BUY paper order on BUY_CALL / BUY_PUT.
+        """
+        # ---- In a trade: only manage the trailing SL --------------------
+        # While we hold an open option leg the entire job here is risk
+        # management. The 15:15 force-close is handled OUTSIDE this
+        # method by the base class's run() loop, so we don't have to
+        # check the clock here.
+        if self.pos.active:
+            self._check_premium_trailing_sl_and_exit()
+            return
+
+        # ---- Fast-bail: engine already fired today ----------------------
+        # The signal engine is stateful: once it returns BUY_CALL or
+        # BUY_PUT, it stores that fact and returns NO_SIGNAL on every
+        # subsequent call (unless `allow_multiple_entries=True`). We
+        # mirror that check here so we don't waste a rate-limited
+        # option_chain fetch on a request the engine would reject anyway.
+        if (
+            not OPENING_STRIKE_STRATEGY_CONFIG.allow_multiple_entries
+            and getattr(self.signal_engine, "_entry_signal_sent", False)
+        ):
+            return
+
+        # ---- Soft cutoff: no fresh entries after 15:00 ------------------
+        # `latest_candle_time` is a Python `time` object (just HH:MM:SS,
+        # no date). Comparing it against `dt_time(15, 0)` does the right
+        # thing for the "is the latest candle from after 15:00?" check.
+        latest_candle_time = pd.to_datetime(strategy_frame.iloc[-1]["timestamp"]).time()
+        if latest_candle_time > self.last_setup_cutoff:
+            return
+
+        # ---- Build OI-change snapshot ---------------------------------
+        # This is the rate-limited call (~ once every 30s). If it fails
+        # or comes back empty we skip this iteration; the next poll will
+        # try again.
+        oi_change_df = self._build_option_chain_oi_change()
+        if oi_change_df is None or oi_change_df.empty:
+            return
+
+        # ---- Tell the engine today's opening price --------------------
+        # The first row of `strategy_frame` is today's first 5-min bar
+        # (we filtered to today's session in `build_strategy_frame`), so
+        # its `open` IS the day's opening price. The engine uses this to
+        # fix the opening strike on its very first call of the day.
+        opening_price = float(strategy_frame.iloc[0]["open"]) if not strategy_frame.empty else None
+
+        # ---- Ask the engine for a decision ----------------------------
+        decision = self.signal_engine.evaluate(
+            strategy_frame,
+            oi_change_df,
+            opening_price=opening_price,
+        )
+
+        # Count signal-quality events for the end-of-day summary.
+        if decision.signal_triggered:
+            self.signal_count += 1
+
+        # ---- Act on the decision --------------------------------------
+        # The signal generator emits at most one of BUY_CALL / BUY_PUT /
+        # NO_SIGNAL. For BUY_CALL we go LONG (buy ATM CE); for BUY_PUT
+        # we go SHORT directionally (buy ATM PE). We never SELL options
+        # in this worker, so the worst-case loss per trade is bounded
+        # by the premium we paid -- the parent's `enter_position`
+        # records `stop_underlying=0.0` because our SL is on premium,
+        # not on NIFTY spot.
+        if decision.action == "BUY_CALL":
+            if self.enter_position("LONG", decision.entry_underlying):
+                self.entry_submit_count += 1
+            return
+        if decision.action == "BUY_PUT":
+            if self.enter_position("SHORT", decision.entry_underlying):
+                self.entry_submit_count += 1
+            return
+
+
+# =============================================================================
 # SUPERTREND BULLISH WORKER (3-min, hedged PE spread)
 # =============================================================================
 class SupertrendBullishWorker(BasePaperStrategyWorker):
@@ -5241,11 +6036,85 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
 
 
 # =============================================================================
+# END-OF-DAY HELPERS
+# =============================================================================
+def _refresh_instrument_master_for_next_day() -> None:
+    """
+    Pull a fresh DhanHQ scrip master and save it date-stamped for tomorrow.
+
+    Lifecycle:
+    1. Build the target path `Dependencies/all_instrument <tomorrow>.csv`.
+       Tomorrow's date (calendar day, not next trading day) is used so the
+       file is in place before the next scheduled run, whichever day of the
+       week that turns out to be.
+    2. Stream the download to a sibling `*.part` file. We never write
+       directly to the final path because a half-finished download whose
+       process died would otherwise look like a complete file to the next
+       run's glob.
+    3. `os.replace(tmp, final)` to publish atomically.
+    4. Sweep every OTHER `all_instrument *.csv` in the same folder so the
+       glob only sees one master going forward. The just-written file is
+       excluded from the sweep by an explicit resolved-path comparison.
+
+    Failure handling: any exception is swallowed and logged. We must NOT
+    crash `main()` here -- the trading session has already finished by the
+    time we run -- and we must NOT have already deleted the previous file,
+    which is why deletion happens last, after the successful `os.replace`.
+    """
+    try:
+        next_day = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        deps_dir = ROOT_DIR / "Dependencies"
+        deps_dir.mkdir(parents=True, exist_ok=True)
+        new_path = deps_dir / f"all_instrument {next_day}.csv"
+        tmp_path = new_path.with_name(new_path.name + ".part")
+
+        logger.info(
+            "Refreshing instrument master from %s -> %s",
+            DHAN_SCRIP_MASTER_URL,
+            new_path.name,
+        )
+
+        # Stream so a ~30-50 MB CSV does not balloon memory. (15s connect,
+        # 120s per-chunk read) covers a slow link without hanging forever.
+        with requests.get(
+            DHAN_SCRIP_MASTER_URL,
+            timeout=(15.0, 120.0),
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            with open(tmp_path, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=65536):
+                    if chunk:
+                        handle.write(chunk)
+
+        os.replace(tmp_path, new_path)
+
+        # Sweep every other all_instrument *.csv. Compare resolved paths so
+        # case differences and relative/absolute mixing cannot accidentally
+        # delete the file we just wrote.
+        new_resolved = new_path.resolve()
+        for old in glob.glob(str(deps_dir / "all_instrument *.csv")):
+            if Path(old).resolve() == new_resolved:
+                continue
+            try:
+                os.remove(old)
+                logger.info("Removed stale instrument master: %s", os.path.basename(old))
+            except OSError as exc:
+                logger.warning("Could not delete old instrument master %s: %s", old, exc)
+
+        logger.info("Instrument master refresh complete: %s", new_path.name)
+    except Exception as exc:
+        logger.warning(
+            "Instrument master refresh failed (existing file preserved): %s", exc
+        )
+
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 def main() -> None:
     """
-    Wire up the central fetcher plus the six strategy worker threads.
+    Wire up the central fetcher plus the eight strategy worker threads.
 
     Architecture summary:
     1. Configure logging (root logger so every thread benefits).
@@ -5253,7 +6122,7 @@ def main() -> None:
        (instrument master, log files) stay valid no matter where the
        script is launched from.
     3. Build the shared store and shared stop signal.
-    4. Build one fetcher and the six workers.
+    4. Build one fetcher and the eight workers.
     5. Start the fetcher first so workers see fresh data on their first poll.
     6. Supervise: wait until workers exit or a Ctrl+C arrives.
     7. Signal shutdown and join every thread with a bounded timeout.
@@ -5287,7 +6156,8 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM family (4): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m. "
+        "ATM family (5): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m, "
+        "OpeningStrike 5m PCR/VWAP/ATR. "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
         "Delta-0.2 family (1): Delta20 09:20 reference, dual-side."
     )
@@ -5296,7 +6166,7 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + seven consumers (4 ATM + 2 Hedged + 1 Delta20).
+    # One producer (fetcher) + eight consumers (5 ATM + 2 Hedged + 1 Delta20).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
     workers = [
         # ATM family: each picks ATM CE/PE of the next-next expiry.
@@ -5304,6 +6174,9 @@ def main() -> None:
         EMATrendStrategyWorker(store, stop_event, broker),
         HeikinAshiStrategyWorker(store, stop_event, broker),
         ProfitShooterStrategyWorker(store, stop_event, broker),
+        # Opening-Strike PCR/VWAP/ATR also runs ATM single-leg, but it is
+        # additionally driven by intraday option-chain OI flow.
+        OpeningStrikePCRVWAPATRWorker(store, stop_event, broker),
         # Hedged Puts family: each picks current-week CE/PE by target premium.
         SupertrendBullishWorker(store, stop_event, broker),
         DonchianBearishWorker(store, stop_event, broker),
@@ -5334,6 +6207,13 @@ def main() -> None:
             logger.warning("Some threads did not exit within the shutdown window: %s", alive_threads)
         else:
             logger.info("All threads exited cleanly.")
+
+    # End-of-day instrument master refresh. Runs unconditionally (even after
+    # Ctrl+C or a partial shutdown) because the scheduler that re-launches
+    # this script tomorrow morning needs the fresh CSV regardless of how
+    # today's session ended. The helper is fail-soft: a failed download is
+    # logged and the existing CSV stays on disk as a fallback.
+    _refresh_instrument_master_for_next_day()
 
 
 if __name__ == "__main__":
