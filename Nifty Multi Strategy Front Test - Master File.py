@@ -184,12 +184,11 @@ INSTRUMENT_MASTER_GLOB = str(ROOT_DIR / "Dependencies" / "all_instrument *.csv")
 
 # Public DhanHQ scrip master used by the end-of-day refresh helper at the
 # bottom of this file. The DETAILED variant is required because the option
-# resolver (`_load_option_chain`) depends on the `SEM_*` columns
-# (`SEM_EXM_EXCH_ID`, `SEM_SEGMENT`, `SEM_INSTRUMENT_NAME`, `SEM_TRADING_SYMBOL`,
-# `SEM_CUSTOM_SYMBOL`, `SEM_EXPIRY_DATE`, `SEM_LOT_UNITS`, `SEM_SMST_SECURITY_ID`,
-# `SEM_STRIKE_PRICE`, `SEM_OPTION_TYPE`, `SM_SYMBOL_NAME`). The shorter
-# `api-scrip-master.csv` does not carry those columns and would break the
-# resolver on the next run.
+# resolver (`_load_option_chain`) depends on the detailed option columns
+# (`EXCH_ID`, `SEGMENT`, `INSTRUMENT`, `SYMBOL_NAME`, `DISPLAY_NAME`,
+# `SM_EXPIRY_DATE`, `LOT_SIZE`, `SECURITY_ID`, `STRIKE_PRICE`, `OPTION_TYPE`,
+# `UNDERLYING_SYMBOL`). The shorter `api-scrip-master.csv` does not carry the
+# same complete option metadata and would break the resolver on the next run.
 DHAN_SCRIP_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master-detailed.csv"
 
 # The fetcher publishes only one centralized stream: 1-minute OHLC.
@@ -1610,17 +1609,17 @@ class OptionsContractResolver:
         if df.empty:
             raise ValueError(f"Instrument master file is empty: {instrument_path}")
 
-        exch_col = _first_existing_col(df, ["SEM_EXM_EXCH_ID"])
-        seg_col = _first_existing_col(df, ["SEM_SEGMENT"])
-        ins_col = _first_existing_col(df, ["SEM_INSTRUMENT_NAME"])
-        ts_col = _first_existing_col(df, ["SEM_TRADING_SYMBOL"])
-        cs_col = _first_existing_col(df, ["SEM_CUSTOM_SYMBOL"])
-        exp_col = _first_existing_col(df, ["SEM_EXPIRY_DATE"])
-        lot_col = _first_existing_col(df, ["SEM_LOT_UNITS"])
-        sec_col = _first_existing_col(df, ["SEM_SMST_SECURITY_ID"])
-        strike_col = _first_existing_col(df, ["SEM_STRIKE_PRICE"])
-        opt_type_col = _first_existing_col(df, ["SEM_OPTION_TYPE"])
-        sm_col = _first_existing_col(df, ["SM_SYMBOL_NAME"])
+        exch_col = _first_existing_col(df, ["EXCH_ID"])
+        seg_col = _first_existing_col(df, ["SEGMENT"])
+        ins_col = _first_existing_col(df, ["INSTRUMENT"])
+        ts_col = _first_existing_col(df, ["SYMBOL_NAME"])
+        cs_col = _first_existing_col(df, ["DISPLAY_NAME"])
+        exp_col = _first_existing_col(df, ["SM_EXPIRY_DATE"])
+        lot_col = _first_existing_col(df, ["LOT_SIZE"])
+        sec_col = _first_existing_col(df, ["SECURITY_ID"])
+        strike_col = _first_existing_col(df, ["STRIKE_PRICE"])
+        opt_type_col = _first_existing_col(df, ["OPTION_TYPE"])
+        sm_col = _first_existing_col(df, ["UNDERLYING_SYMBOL"])
 
         required = [exch_col, seg_col, ins_col, ts_col, exp_col, sec_col, strike_col, opt_type_col]
         if any(column is None for column in required):
