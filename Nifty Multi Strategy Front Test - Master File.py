@@ -138,10 +138,12 @@ from __future__ import annotations
 
 # --- Standard library imports ------------------------------------------------
 import glob
+import html
 import importlib.util
 import logging
 import math
 import os
+import queue
 import sys
 import threading
 from dataclasses import dataclass
@@ -305,6 +307,13 @@ FETCH_POLL_SECONDS = _env_int("FETCH_POLL_SECONDS", 2)
 # Bounded join timeout for each thread on shutdown.
 SHUTDOWN_JOIN_SECONDS = _env_float("SHUTDOWN_JOIN_SECONDS", 6.0)
 
+# Telegram trade-notification settings. See Dependencies/.env for the one-time
+# bot/channel setup. When disabled (or token/chat blank) the notifier thread is
+# never started and workers' publish_trade_event() calls are cheap no-ops.
+TELEGRAM_ENABLED = _env_str("TELEGRAM_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+TELEGRAM_BOT_TOKEN = _env_str("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = _env_str("TELEGRAM_CHAT_ID", "").strip()
+
 # How many calendar days of intraday history to request every fetch.
 # DhanHQ supports up to 90 days; we use a small rolling window because all we
 # need is enough bars to satisfy MIN_BARS plus margin for weekends/holidays.
@@ -384,6 +393,20 @@ HEIKIN_SQUARE_OFF_MINUTE = _env_int("HEIKIN_SQUARE_OFF_MINUTE", 15)
 # Bollinger period and stddev used by the Heikin Ashi signal builder.
 HEIKIN_BOLL_PERIOD = _env_int("HEIKIN_BOLL_PERIOD", 20)
 HEIKIN_BOLL_STD = _env_float("HEIKIN_BOLL_STD", 2.0)
+
+
+# =============================================================================
+# CPR STRATEGY CONSTANTS (Central Pivot Range, 5-min via internal resample)
+# =============================================================================
+CPR_LOTS = _env_int("CPR_LOTS", 1)
+CPR_MAX_LOSS = _env_float("CPR_MAX_LOSS", 5500.0)
+CPR_POLL_SECONDS = _env_int("CPR_POLL_SECONDS", 5)
+
+# CPR enters from 9:25 (after the opening range), squares off at 15:15.
+CPR_TRADING_START_HOUR = _env_int("CPR_TRADING_START_HOUR", 9)
+CPR_TRADING_START_MINUTE = _env_int("CPR_TRADING_START_MINUTE", 25)
+CPR_SQUARE_OFF_HOUR = _env_int("CPR_SQUARE_OFF_HOUR", 15)
+CPR_SQUARE_OFF_MINUTE = _env_int("CPR_SQUARE_OFF_MINUTE", 15)
 
 
 # =============================================================================
@@ -717,6 +740,10 @@ OPENING_STRIKE_LOGIC = load_module(
     "master_nifty_opening_strike_pcr_vwap_atr_signal_generator",
     ROOT_DIR / "Opening Strike PCR VWAP Strategy" / "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
 )
+CPR_LOGIC = load_module(
+    "master_cpr_strategy_logic",
+    ROOT_DIR / "CPR Strategy" / "cpr_strategy_logic.py",
+)
 
 
 # =============================================================================
@@ -737,6 +764,11 @@ EMA_STRATEGY_CONFIG = EMA_LOGIC.EMATrendConfig(
     ema11_slope_atr_multiplier=_env_float("EMA_TREND_EMA11_SLOPE_ATR_MULT", 0.3),
     ema18_slope_atr_multiplier=_env_float("EMA_TREND_EMA18_SLOPE_ATR_MULT", 0.2),
 )
+
+# CPR uses its own config dataclass. The defaults already encode the PDF's
+# indicator periods and entry filters, so we keep them as-is (all three
+# sub-algos -- ALGO1, ALGO2 zone, RSI divergence -- stay enabled by default).
+CPR_STRATEGY_CONFIG = CPR_LOGIC.CPRStrategyConfig()
 
 # Profit Shooter also uses a config dataclass. Same idea: every tunable goes
 # through `_env_*` so the env can override defaults without editing code.
@@ -2232,6 +2264,33 @@ class BasePaperStrategyWorker(threading.Thread):
         self.cutoff_handled = False
         self.preopen_wait_logged = False
 
+        # Optional trade-event sink (a queue.Queue) consumed by the Telegram
+        # notifier. main() injects it after construction; it stays None when
+        # notifications are disabled, in which case publish_trade_event no-ops.
+        self.trade_event_queue = None
+
+    def publish_trade_event(self, event: dict) -> None:
+        """
+        Best-effort hand-off of a trade event to the Telegram notifier queue.
+
+        Used by every worker (single-leg and hedged) on each entry/exit. It
+        never raises and never blocks: trading must continue even if the queue
+        is absent (notifications off), full, or otherwise unhappy. The consumer
+        (TelegramMessageWorker) owns all formatting and network I/O, so the
+        trading threads are never exposed to Telegram latency or failures.
+        """
+        event_queue = getattr(self, "trade_event_queue", None)
+        if event_queue is None:
+            return
+        try:
+            event.setdefault("strategy", self.strategy_name)
+            event.setdefault("ts", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            event.setdefault("mode", "PAPER")
+            event_queue.put_nowait(event)
+        except Exception:
+            # A failed enqueue must never disturb the trading loop.
+            pass
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -2689,6 +2748,26 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             option_ltp,
             order_id,
         )
+        self.publish_trade_event(
+            {
+                "action": "ENTRY",
+                "direction": direction,
+                "lots": lots_for_entry,
+                "lot_size": lot_size,
+                "quantity": quantity,
+                "spot": spot,
+                "expiry": expiry_txt,
+                "legs": [
+                    {
+                        "symbol": trading_symbol,
+                        "side": entry_side,
+                        "right": option_right,
+                        "strike": option_strike,
+                        "entry_price": option_ltp,
+                    }
+                ],
+            }
+        )
         return True
 
     def exit_position(self, reason: str) -> None:
@@ -2753,6 +2832,28 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         self.store.unregister_option_subscription(
             closed_position.option_exchange_segment,
             closed_position.option_security_id,
+        )
+
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "direction": closed_position.direction,
+                "reason": reason,
+                "lot_size": closed_position.option_lot_size,
+                "quantity": closed_position.quantity,
+                "pnl": pnl,
+                "expiry": expiry_txt,
+                "legs": [
+                    {
+                        "symbol": closed_position.symbol,
+                        "side": exit_side,
+                        "right": closed_position.option_right,
+                        "strike": closed_position.option_strike,
+                        "entry_price": closed_position.entry_trade_price,
+                        "exit_price": exit_trade_price,
+                    }
+                ],
+            }
         )
 
         self.after_exit(closed_position, reason)
@@ -3893,6 +3994,121 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# CPR STRATEGY WORKER (1-min source, resampled to 5-min, ATM single-leg)
+# =============================================================================
+class CPRStrategyWorker(AtmSingleLegStrategyWorker):
+    """
+    CPR (Central Pivot Range) strategy. Reads 1-minute data from the shared
+    store and hands it straight to the CPR logic module, which internally
+    resamples to complete 5-minute candles and attaches previous-day CPR
+    levels plus EMA / VWAP / RSI / swing / zone / divergence columns.
+
+    CPR runs three sub-algos (neutral-zone breakout + EMA20 retrace, sideways
+    support/resistance zones, RSI divergence reversals) behind one
+    `evaluate_candle` decision. Each LONG/SHORT signal is expressed as a BUY
+    of the ATM CE/PE on the next-next expiry, exactly like the other directional
+    ATM workers. Exits are driven by the engine when the latest 5-minute candle
+    crosses the trade's stop or target, so the stop AND target are persisted on
+    the position and fed back into the engine via the position context.
+    """
+
+    strategy_name = "CPR"
+    timeframe = "1"
+    poll_seconds = CPR_POLL_SECONDS
+    lots = CPR_LOTS
+    max_loss = CPR_MAX_LOSS
+    trading_start_hour = CPR_TRADING_START_HOUR
+    trading_start_minute = CPR_TRADING_START_MINUTE
+    square_off_hour = CPR_SQUARE_OFF_HOUR
+    square_off_minute = CPR_SQUARE_OFF_MINUTE
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        super().__init__(store, stop_event, broker)
+        self.signal_engine = CPR_LOGIC.CPRSignalEngine(CPR_STRATEGY_CONFIG)
+        self.signal_count = 0
+        self.entry_submit_count = 0
+        self.exit_count = 0
+
+    def summary_text(self) -> str:
+        return (
+            f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
+            f"Exits={self.exit_count} | Trades={self.completed_trades} | RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        self.exit_count += 1
+
+    def minimum_strategy_rows(self) -> int:
+        # The engine needs indicator + swing warm-up AND a prior session for
+        # the previous-day CPR levels. Its own minimum covers the indicators;
+        # we floor it so we never run on a single sparse session.
+        return max(self.signal_engine.minimum_history_bars(), 40)
+
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """
+        Hand the shared 1-minute OHLC straight to the CPR builder. CPR's
+        `prepare_cpr_ohlc_input` resamples 1-minute data into complete
+        5-minute candles internally, so no local resample is needed here.
+        """
+        return CPR_LOGIC.build_cpr_with_indicators(ohlc, CPR_STRATEGY_CONFIG)
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """
+        Interpret the latest CPR 5-minute candle.
+
+        Flow:
+        1. If currently in a trade, build a position context (with target) for
+           the engine so it can detect stop/target hits on this candle.
+        2. Ask the engine for one decision on the latest candle.
+        3. In trade -> only honor exits on this candle.
+        4. Flat -> count signal triggers and submit fresh entries, passing the
+           stop AND target so the position carries them for later exit checks.
+        """
+        position_ctx = None
+        if self.pos.active:
+            position_ctx = CPR_LOGIC.CPRPositionContext(
+                direction=self.pos.direction,
+                entry_underlying=self.pos.entry_underlying,
+                stop_underlying=self.pos.stop_underlying,
+                target_underlying=self.pos.target_underlying,
+            )
+
+        decision = self.signal_engine.evaluate_candle(strategy_frame, position=position_ctx)
+
+        if self.pos.active:
+            if decision.action == "EXIT":
+                self.exit_position(decision.exit_reason)
+            return
+
+        if decision.signal_triggered:
+            self.signal_count += 1
+
+        if decision.action == "ENTER_LONG":
+            if self.enter_position(
+                "LONG",
+                decision.entry_underlying,
+                decision.stop_underlying,
+                decision.target_underlying,
+            ):
+                self.entry_submit_count += 1
+            return
+        if decision.action == "ENTER_SHORT":
+            if self.enter_position(
+                "SHORT",
+                decision.entry_underlying,
+                decision.stop_underlying,
+                decision.target_underlying,
+            ):
+                self.entry_submit_count += 1
+            return
+
+
+# =============================================================================
 # SUPERTREND BULLISH WORKER (3-min, hedged PE spread)
 # =============================================================================
 class SupertrendBullishWorker(BasePaperStrategyWorker):
@@ -4203,6 +4419,34 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
 
         self.entry_submit_count += 1
         net_credit = (main_entry_price * main_qty) - (hedge_entry_price * hedge_qty)
+        self.publish_trade_event(
+            {
+                "action": "ENTRY",
+                "direction": self.pos.direction,
+                "lots": self.lots,
+                "lot_size": self.pos.main_lot_size,
+                "quantity": self.pos.main_quantity,
+                "expiry": (
+                    self.pos.main_expiry.isoformat() if self.pos.main_expiry is not None else "NA"
+                ),
+                "legs": [
+                    {
+                        "symbol": self.pos.main_symbol,
+                        "side": self.pos.main_side,
+                        "right": self.pos.main_right,
+                        "strike": self.pos.main_strike,
+                        "entry_price": self.pos.main_entry_price,
+                    },
+                    {
+                        "symbol": self.pos.hedge_symbol,
+                        "side": self.pos.hedge_side,
+                        "right": self.pos.hedge_right,
+                        "strike": self.pos.hedge_strike,
+                        "entry_price": self.pos.hedge_entry_price,
+                    },
+                ],
+            }
+        )
         expiry_txt = expiry.isoformat() if expiry is not None else "NA"
         self.log.info(
             "ENTRY LONG (bullish) | Candle=%s | Expiry=%s | "
@@ -4327,6 +4571,36 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             closed.hedge_security_id,
         )
 
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "direction": closed.direction,
+                "reason": reason,
+                "lots": self.lots,
+                "lot_size": closed.main_lot_size,
+                "quantity": closed.main_quantity,
+                "pnl": total_pnl,
+                "expiry": expiry_txt,
+                "legs": [
+                    {
+                        "symbol": closed.main_symbol,
+                        "side": closed.main_side,
+                        "right": closed.main_right,
+                        "strike": closed.main_strike,
+                        "entry_price": closed.main_entry_price,
+                        "exit_price": main_exit_price,
+                    },
+                    {
+                        "symbol": closed.hedge_symbol,
+                        "side": closed.hedge_side,
+                        "right": closed.hedge_right,
+                        "strike": closed.hedge_strike,
+                        "entry_price": closed.hedge_entry_price,
+                        "exit_price": hedge_exit_price,
+                    },
+                ],
+            }
+        )
         self.after_exit(closed, reason)
         self.pos = HedgedPaperPosition()
 
@@ -4642,6 +4916,34 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
 
         self.entry_submit_count += 1
         net_credit = (main_entry_price * main_qty) - (hedge_entry_price * hedge_qty)
+        self.publish_trade_event(
+            {
+                "action": "ENTRY",
+                "direction": self.pos.direction,
+                "lots": self.lots,
+                "lot_size": self.pos.main_lot_size,
+                "quantity": self.pos.main_quantity,
+                "expiry": (
+                    self.pos.main_expiry.isoformat() if self.pos.main_expiry is not None else "NA"
+                ),
+                "legs": [
+                    {
+                        "symbol": self.pos.main_symbol,
+                        "side": self.pos.main_side,
+                        "right": self.pos.main_right,
+                        "strike": self.pos.main_strike,
+                        "entry_price": self.pos.main_entry_price,
+                    },
+                    {
+                        "symbol": self.pos.hedge_symbol,
+                        "side": self.pos.hedge_side,
+                        "right": self.pos.hedge_right,
+                        "strike": self.pos.hedge_strike,
+                        "entry_price": self.pos.hedge_entry_price,
+                    },
+                ],
+            }
+        )
         sl_level = spot * (1.0 + BEARISH_SL_UP_PCT)
         tp_level = spot * (1.0 - BEARISH_TARGET_DOWN_PCT)
         expiry_txt = expiry.isoformat() if expiry is not None else "NA"
@@ -4883,6 +5185,36 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             closed.hedge_security_id,
         )
 
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "direction": closed.direction,
+                "reason": reason,
+                "lots": self.lots,
+                "lot_size": closed.main_lot_size,
+                "quantity": closed.main_quantity,
+                "pnl": total_pnl,
+                "expiry": expiry_txt,
+                "legs": [
+                    {
+                        "symbol": closed.main_symbol,
+                        "side": closed.main_side,
+                        "right": closed.main_right,
+                        "strike": closed.main_strike,
+                        "entry_price": closed.main_entry_price,
+                        "exit_price": main_exit_price,
+                    },
+                    {
+                        "symbol": closed.hedge_symbol,
+                        "side": closed.hedge_side,
+                        "right": closed.hedge_right,
+                        "strike": closed.hedge_strike,
+                        "entry_price": closed.hedge_entry_price,
+                        "exit_price": hedge_exit_price,
+                    },
+                ],
+            }
+        )
         self.after_exit(closed, reason)
         self.pos = HedgedPaperPosition()
 
@@ -5820,6 +6152,34 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         self.signal_count += 1
         self.entry_submit_count += 1
         net_credit = (monitor_live * monitor_qty) - (hedge_live * hedge_qty)
+        self.publish_trade_event(
+            {
+                "action": "ENTRY",
+                "direction": side,
+                "lots": self.lots,
+                "lot_size": new_pos.main_lot_size,
+                "quantity": new_pos.main_quantity,
+                "expiry": (
+                    new_pos.main_expiry.isoformat() if new_pos.main_expiry is not None else "NA"
+                ),
+                "legs": [
+                    {
+                        "symbol": new_pos.main_symbol,
+                        "side": new_pos.main_side,
+                        "right": new_pos.main_right,
+                        "strike": new_pos.main_strike,
+                        "entry_price": new_pos.main_entry_price,
+                    },
+                    {
+                        "symbol": new_pos.hedge_symbol,
+                        "side": new_pos.hedge_side,
+                        "right": new_pos.hedge_right,
+                        "strike": new_pos.hedge_strike,
+                        "entry_price": new_pos.hedge_entry_price,
+                    },
+                ],
+            }
+        )
         expiry_txt = (
             new_pos.main_expiry.isoformat() if new_pos.main_expiry is not None else "NA"
         )
@@ -5947,6 +6307,36 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         self.store.unregister_option_subscription(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
+        )
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "direction": side,
+                "reason": reason,
+                "lots": self.lots,
+                "lot_size": closed.main_lot_size,
+                "quantity": closed.main_quantity,
+                "pnl": total_pnl,
+                "expiry": expiry_txt,
+                "legs": [
+                    {
+                        "symbol": closed.main_symbol,
+                        "side": closed.main_side,
+                        "right": closed.main_right,
+                        "strike": closed.main_strike,
+                        "entry_price": closed.main_entry_price,
+                        "exit_price": main_exit_price,
+                    },
+                    {
+                        "symbol": closed.hedge_symbol,
+                        "side": closed.hedge_side,
+                        "right": closed.hedge_right,
+                        "strike": closed.hedge_strike,
+                        "entry_price": closed.hedge_entry_price,
+                        "exit_price": hedge_exit_price,
+                    },
+                ],
+            }
         )
         if side == "CE":
             self.ce_pos = HedgedPaperPosition()
@@ -6109,11 +6499,184 @@ def _refresh_instrument_master_for_next_day() -> None:
 
 
 # =============================================================================
+# TELEGRAM TRADE NOTIFIER
+# =============================================================================
+def _format_inr(value) -> str:
+    """Format a rupee amount with an explicit sign and thousands separators."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    sign = "+" if amount >= 0 else "-"
+    return f"{sign}₹{abs(amount):,.2f}"
+
+
+def format_trade_message(event: dict) -> str:
+    """
+    Build the Telegram message body for one trade event.
+
+    Handles both single-leg (one element in `legs`) and hedged (two elements)
+    trades from a single unified schema. Every message carries the fields asked
+    for the group feed: the exact option instrument(s), the lot size / quantity,
+    the exact entry price, the exact exit price (on exits), the realized P&L
+    (on exits) and the strategy name.
+    """
+    action = str(event.get("action", "")).upper()
+    strategy = html.escape(str(event.get("strategy", "?")))
+    direction = html.escape(str(event.get("direction", "")))
+    mode = html.escape(str(event.get("mode", "PAPER")))
+    legs = event.get("legs") or []
+
+    if action == "ENTRY":
+        header = f"\U0001F7E2 <b>ENTRY</b> · {strategy}"
+    elif action == "EXIT":
+        header = f"\U0001F534 <b>EXIT</b> · {strategy}"
+        reason = html.escape(str(event.get("reason", "")))
+        if reason:
+            header += f" ({reason})"
+    else:
+        header = f"<b>{html.escape(action)}</b> · {strategy}"
+
+    lines = [header]
+    if direction:
+        lines.append(f"Direction: <b>{direction}</b>")
+
+    for leg in legs:
+        symbol = html.escape(str(leg.get("symbol", "?")))
+        side = html.escape(str(leg.get("side", "")))
+        prefix = f"{side} " if side else ""
+        lines.append(f"Instrument: <b>{prefix}{symbol}</b>")
+        entry_price = leg.get("entry_price")
+        exit_price = leg.get("exit_price")
+        if entry_price is not None and exit_price is not None:
+            lines.append(
+                f"  Entry: ₹{float(entry_price):.2f} → Exit: ₹{float(exit_price):.2f}"
+            )
+        elif entry_price is not None:
+            lines.append(f"  Entry: ₹{float(entry_price):.2f}")
+
+    quantity = event.get("quantity")
+    lot_size = event.get("lot_size")
+    lots = event.get("lots")
+    if quantity is not None:
+        size_line = f"Qty: <b>{quantity}</b>"
+        if lots is not None and lot_size:
+            size_line += f" ({lots} lot(s) × {lot_size})"
+        elif lot_size:
+            size_line += f" (lot size {lot_size})"
+        lines.append(size_line)
+
+    if action == "EXIT" and event.get("pnl") is not None:
+        lines.append(f"P&amp;L: <b>{_format_inr(event['pnl'])}</b>")
+
+    ts = html.escape(str(event.get("ts", "")))
+    lines.append(f"<i>[{mode}] {ts}</i>")
+    return "\n".join(lines)
+
+
+class TelegramMessageWorker(threading.Thread):
+    """
+    Posts trade events to a Telegram group/channel, one message per entry/exit.
+
+    Design notes:
+    - Runs on its own daemon thread so Telegram's network latency or downtime
+      never touches the trading threads. Workers only enqueue plain dicts via
+      `BasePaperStrategyWorker.publish_trade_event`.
+    - Polls the queue with a short timeout so Ctrl+C is honoured promptly, then
+      flushes whatever is still queued before exiting so the final exit
+      messages of the day are not lost.
+    - If the token / chat id is blank it logs once and drops messages instead
+      of crashing, so the runner still works with notifications half-configured.
+    """
+
+    def __init__(
+        self,
+        event_queue: "queue.Queue",
+        stop_event: threading.Event,
+        bot_token: str,
+        chat_id: str,
+    ):
+        super().__init__(name="TelegramThread", daemon=True)
+        self.event_queue = event_queue
+        self.stop_event = stop_event
+        self.bot_token = str(bot_token or "")
+        self.chat_id = str(chat_id or "")
+        self.log = logging.getLogger(f"{LOGGER_NAME}.telegram")
+        self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        self.sent_count = 0
+        self.failed_count = 0
+
+    def run(self) -> None:
+        if not self.bot_token or not self.chat_id:
+            self.log.warning(
+                "Telegram notifier started without a bot token / chat id; messages "
+                "will be dropped. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in "
+                "Dependencies/.env to enable."
+            )
+        self.log.info("Starting Telegram notifier worker (chat_id=%s).", self.chat_id or "UNSET")
+        while not self.stop_event.is_set():
+            try:
+                event = self.event_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            self._handle_event(event)
+        # Flush anything still queued so end-of-day exits are not lost.
+        self._drain_remaining()
+        self.log.info(
+            "Telegram notifier exited. Sent=%d Failed=%d.", self.sent_count, self.failed_count
+        )
+
+    def _drain_remaining(self) -> None:
+        while True:
+            try:
+                event = self.event_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._handle_event(event)
+
+    def _handle_event(self, event: dict) -> None:
+        try:
+            text = format_trade_message(event)
+        except Exception as exc:
+            self.failed_count += 1
+            self.log.warning("Could not format trade event %s: %s", event, exc)
+            return
+        self._send(text)
+
+    def _send(self, text: str) -> None:
+        if not self.bot_token or not self.chat_id:
+            return
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        for attempt in range(1, 4):
+            try:
+                response = requests.post(self.api_url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    self.sent_count += 1
+                    return
+                self.log.warning(
+                    "Telegram API returned HTTP %s on attempt %d: %s",
+                    response.status_code,
+                    attempt,
+                    response.text[:300],
+                )
+            except Exception as exc:
+                self.log.warning("Telegram send error on attempt %d: %s", attempt, exc)
+            if attempt < 3:
+                self.stop_event.wait(1.5 * attempt)
+        self.failed_count += 1
+
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 def main() -> None:
     """
-    Wire up the central fetcher plus the eight strategy worker threads.
+    Wire up the central fetcher plus the nine strategy worker threads.
 
     Architecture summary:
     1. Configure logging (root logger so every thread benefits).
@@ -6121,7 +6684,7 @@ def main() -> None:
        (instrument master, log files) stay valid no matter where the
        script is launched from.
     3. Build the shared store and shared stop signal.
-    4. Build one fetcher and the eight workers.
+    4. Build one fetcher and the nine workers.
     5. Start the fetcher first so workers see fresh data on their first poll.
     6. Supervise: wait until workers exit or a Ctrl+C arrives.
     7. Signal shutdown and join every thread with a bounded timeout.
@@ -6155,8 +6718,8 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM family (5): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m, "
-        "OpeningStrike 5m PCR/VWAP/ATR. "
+        "ATM family (6): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m, "
+        "OpeningStrike 5m PCR/VWAP/ATR, CPR 5m. "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
         "Delta-0.2 family (1): Delta20 09:20 reference, dual-side."
     )
@@ -6165,7 +6728,7 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + eight consumers (5 ATM + 2 Hedged + 1 Delta20).
+    # One producer (fetcher) + nine consumers (6 ATM + 2 Hedged + 1 Delta20).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
     workers = [
         # ATM family: each picks ATM CE/PE of the next-next expiry.
@@ -6176,6 +6739,8 @@ def main() -> None:
         # Opening-Strike PCR/VWAP/ATR also runs ATM single-leg, but it is
         # additionally driven by intraday option-chain OI flow.
         OpeningStrikePCRVWAPATRWorker(store, stop_event, broker),
+        # CPR (Central Pivot Range): directional ATM single-leg on 5-min candles.
+        CPRStrategyWorker(store, stop_event, broker),
         # Hedged Puts family: each picks current-week CE/PE by target premium.
         SupertrendBullishWorker(store, stop_event, broker),
         DonchianBearishWorker(store, stop_event, broker),
@@ -6183,7 +6748,30 @@ def main() -> None:
         Delta20HedgedSpreadWorker(store, stop_event, broker),
     ]
 
+    # Optional Telegram notifier: a queue-based consumer thread that posts a
+    # message on every entry/exit from ANY worker. Wired only when the .env
+    # flag is on AND credentials are present; otherwise workers keep their
+    # default `trade_event_queue = None` and publish_trade_event() is a no-op.
+    telegram_worker = None
+    if TELEGRAM_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        trade_event_queue: "queue.Queue" = queue.Queue(maxsize=1000)
+        for worker in workers:
+            worker.trade_event_queue = trade_event_queue
+        telegram_worker = TelegramMessageWorker(
+            trade_event_queue, stop_event, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+        )
+        logger.info("Telegram notifications ENABLED -> chat_id=%s", TELEGRAM_CHAT_ID)
+    elif TELEGRAM_ENABLED:
+        logger.warning(
+            "TELEGRAM_ENABLED=true but TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID is blank; "
+            "running WITHOUT Telegram notifications."
+        )
+    else:
+        logger.info("Telegram notifications disabled (TELEGRAM_ENABLED=false).")
+
     fetcher.start()
+    if telegram_worker is not None:
+        telegram_worker.start()
     for worker in workers:
         worker.start()
 
@@ -6200,8 +6788,13 @@ def main() -> None:
         for worker in workers:
             worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
         fetcher.join(timeout=SHUTDOWN_JOIN_SECONDS)
+        if telegram_worker is not None:
+            telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
-        alive_threads = [thread.name for thread in [fetcher, *workers] if thread.is_alive()]
+        supervised_threads = [fetcher, telegram_worker, *workers]
+        alive_threads = [
+            thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
+        ]
         if alive_threads:
             logger.warning("Some threads did not exit within the shutdown window: %s", alive_threads)
         else:
