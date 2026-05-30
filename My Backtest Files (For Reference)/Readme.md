@@ -8,6 +8,7 @@ Link: https://kernc.github.io/backtesting.py/
 # Files in this folder
 | File | Strategy | Imports from `Signal Generators/` |
 |---|---|---|
+| `Nifty CPR Strategy Backtest.py` | CPR PDF strategy on 5-minute candles, with Algo 1, Algo 2, and RSI divergence | `Signal Generators/CPR Strategy/cpr_strategy_logic.py` |
 | `Nifty EMA Trend Strategy Backtest.py` | 4/11/18 EMA trend, ADX-filtered | `ema_trend_strategy_logic.py` |
 | `Nifty Heiken Ashi Futures 5Y Backtest.py` | Heikin Ashi + Bollinger Bands | (self-contained) |
 | `Nifty Renko Strategy Backtest.py` | Renko + 9/21 EMA | `renko_strategy_logic_9_21.py` |
@@ -18,6 +19,11 @@ Link: https://kernc.github.io/backtesting.py/
 python "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py"
 ```
 By default each backtest reads `<repo_root>/Backtest Outputs/nifty_renko_futures_5y_1min_data.csv`. Override with `--data <path>`. The profit-shooter file additionally supports `--dataset nifty|banknifty|finnifty`.
+
+Run the CPR backtest with:
+```
+python "My Backtest Files (For Reference)/Nifty CPR Strategy Backtest.py" --dataset nifty --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"
+```
 
 # Where outputs land
 In `<repo_root>/Backtest Outputs/`:
