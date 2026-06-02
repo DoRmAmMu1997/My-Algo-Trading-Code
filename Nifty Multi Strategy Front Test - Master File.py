@@ -6511,6 +6511,30 @@ def _format_inr(value) -> str:
     return f"{sign}₹{abs(amount):,.2f}"
 
 
+def _format_eod_summary(event: dict) -> str:
+    """
+    Build the end-of-day cumulative P&L message: one line per strategy worker
+    (sorted best to worst) plus a grand total. Sent once, after every worker
+    has exited cleanly for the day.
+    """
+    mode = html.escape(str(event.get("mode", "PAPER")))
+    ts = html.escape(str(event.get("ts", "")))
+    rows = event.get("rows") or []
+    lines = [f"\U0001F4CA <b>End-of-Day P&amp;L</b> [{mode}]"]
+    if ts:
+        lines.append(f"<i>{ts}</i>")
+    for row in sorted(rows, key=lambda r: _safe_float(r.get("pnl", 0.0), 0.0), reverse=True):
+        strat = html.escape(str(row.get("strategy", "?")))
+        trades = _to_int_safe(row.get("trades", 0), 0)
+        lines.append(f"{strat}: <b>{_format_inr(row.get('pnl', 0.0))}</b> ({trades} trade(s))")
+    lines.append("──────────")
+    lines.append(
+        f"<b>Total: {_format_inr(event.get('total_pnl', 0.0))} "
+        f"({_to_int_safe(event.get('total_trades', 0), 0)} trade(s))</b>"
+    )
+    return "\n".join(lines)
+
+
 def format_trade_message(event: dict) -> str:
     """
     Build the Telegram message body for one trade event.
@@ -6522,6 +6546,8 @@ def format_trade_message(event: dict) -> str:
     (on exits) and the strategy name.
     """
     action = str(event.get("action", "")).upper()
+    if action == "EOD_SUMMARY":
+        return _format_eod_summary(event)
     strategy = html.escape(str(event.get("strategy", "?")))
     direction = html.escape(str(event.get("direction", "")))
     mode = html.escape(str(event.get("mode", "PAPER")))
@@ -6671,6 +6697,50 @@ class TelegramMessageWorker(threading.Thread):
         self.failed_count += 1
 
 
+def _publish_eod_summary(workers, event_queue) -> None:
+    """
+    Log the cumulative paper P&L per strategy worker and, when Telegram is
+    enabled, enqueue an end-of-day summary for the notifier to post.
+
+    Called once on a clean end of day (every worker has exited on its own via
+    square-off / max-loss, so each `realized_pnl` is final). The Telegram
+    worker is still alive at this point, so it consumes the event before the
+    shutdown join flushes it. Delivery is a no-op when `event_queue` is None
+    (notifications disabled); the local log line is still written.
+    """
+    rows = []
+    total_pnl = 0.0
+    total_trades = 0
+    for worker in workers:
+        pnl = _safe_float(getattr(worker, "realized_pnl", 0.0), 0.0)
+        trades = _to_int_safe(getattr(worker, "completed_trades", 0), 0)
+        rows.append({"strategy": worker.strategy_name, "pnl": pnl, "trades": trades})
+        total_pnl += pnl
+        total_trades += trades
+
+    logger.info(
+        "END-OF-DAY cumulative paper P&L across %d workers = %.2f over %d trade(s).",
+        len(workers),
+        total_pnl,
+        total_trades,
+    )
+    if event_queue is None:
+        return
+    try:
+        event_queue.put_nowait(
+            {
+                "action": "EOD_SUMMARY",
+                "rows": rows,
+                "total_pnl": total_pnl,
+                "total_trades": total_trades,
+                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "mode": "PAPER",
+            }
+        )
+    except Exception:
+        logger.warning("Could not enqueue the end-of-day Telegram summary (queue full?).")
+
+
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
@@ -6753,8 +6823,9 @@ def main() -> None:
     # flag is on AND credentials are present; otherwise workers keep their
     # default `trade_event_queue = None` and publish_trade_event() is a no-op.
     telegram_worker = None
+    trade_event_queue = None
     if TELEGRAM_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        trade_event_queue: "queue.Queue" = queue.Queue(maxsize=1000)
+        trade_event_queue = queue.Queue(maxsize=1000)
         for worker in workers:
             worker.trade_event_queue = trade_event_queue
         telegram_worker = TelegramMessageWorker(
@@ -6780,6 +6851,12 @@ def main() -> None:
         while any(worker.is_alive() for worker in workers):
             for worker in workers:
                 worker.join(timeout=1.0)
+        # Every worker has exited on its own (square-off / max-loss) -> clean
+        # end of day. Send the cumulative per-strategy P&L summary through the
+        # Telegram worker, which is still alive here (stop_event is set below,
+        # in finally). On Ctrl+C this line is skipped, so partial/forced
+        # shutdowns do not emit a misleading summary.
+        _publish_eod_summary(workers, trade_event_queue)
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received. Signaling all threads to stop.")
         stop_event.set()
