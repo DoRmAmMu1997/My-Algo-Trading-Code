@@ -5,15 +5,17 @@ This folder groups strategy files from Subhamoy-style setups.
 Included strategies in this repo folder:
 - Goldmine
 - Money Machine
+- Profit Shooter
 
-Profit Shooter already exists at `Signal Generators/profit_shooter_strategy_logic.py`
-and `My Backtest Files (For Reference)/profit_shooter_backtest.py`, so this folder
-contains only the new Subhamoy signal-generator files added by this change.
+Profit Shooter's shared engine (`profit_shooter_strategy_logic.py`) now lives in
+this folder alongside Goldmine and Money Machine. Its backtest remains at
+`My Backtest Files (For Reference)/profit_shooter_backtest.py`.
 
 ## Signal Generators
 
 - `goldmine_strategy_logic.py`
 - `money_machine_strategy_logic.py`
+- `profit_shooter_strategy_logic.py`
 - `Nifty Goldmine Signal Generator.py`
 - `Nifty Money Machine Signal Generator.py`
 
