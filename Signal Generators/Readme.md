@@ -8,6 +8,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 - Claude Opus 4.7 Max: Generated Donchian Signal Generator Bearish.py and Supertrend Signal Generator Bullish.py
 - GPT-5.4-xhigh: Generated ema_trend_strategy_logic.py, heikin_ashi_strategy_logic.py, profit_shooter_strategy_logic.py, renko_strategy_logic.py and renko_strategy_logic_9_21.py
 - GPT-5: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
+- GPT-5: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
 
 # Where each generator is used
 | File | Shape | Used by |
@@ -16,6 +17,10 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/Nifty CPR Algo 1 Signal Generator.py` | Algo 1 trend-only CPR wrapper | CPR trend-only callers |
 | `CPR Strategy/Nifty CPR Algo 2 Signal Generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
 | `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper | CPR backtest + future front-test integration |
+| `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
+| `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
+| `Subhamoy Strategies/Nifty Goldmine Signal Generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
+| `Subhamoy Strategies/Nifty Money Machine Signal Generator.py` | Thin NIFTY Money Machine wrapper | Money Machine callers that prefer wrapper functions |
 | `Donchian Signal Generator Bearish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
 | `Supertrend Signal Generator Bullish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
 | `ema_trend_strategy_logic.py` | Stateful signal engine (class) | EMA backtest + front-test master |

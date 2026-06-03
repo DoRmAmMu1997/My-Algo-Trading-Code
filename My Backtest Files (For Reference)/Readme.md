@@ -9,6 +9,8 @@ Link: https://kernc.github.io/backtesting.py/
 | File | Strategy | Imports from `Signal Generators/` |
 |---|---|---|
 | `Nifty CPR Strategy Backtest.py` | CPR PDF strategy on 5-minute candles, with Algo 1, Algo 2, and RSI divergence | `Signal Generators/CPR Strategy/cpr_strategy_logic.py` |
+| `Subhamoy Strategies/Nifty Goldmine Strategy Backtest.py` | Goldmine SMA20/SMA200 pullback strategy with engulfing entry | `Signal Generators/Subhamoy Strategies/goldmine_strategy_logic.py` |
+| `Subhamoy Strategies/Nifty Money Machine Strategy Backtest.py` | Money Machine SMA20/SMA200 compression strategy with Hulk/Marubozu entry | `Signal Generators/Subhamoy Strategies/money_machine_strategy_logic.py` |
 | `Nifty EMA Trend Strategy Backtest.py` | 4/11/18 EMA trend, ADX-filtered | `ema_trend_strategy_logic.py` |
 | `Nifty Heiken Ashi Futures 5Y Backtest.py` | Heikin Ashi + Bollinger Bands | (self-contained) |
 | `Nifty Renko Strategy Backtest.py` | Renko + 9/21 EMA | `renko_strategy_logic_9_21.py` |
@@ -23,6 +25,12 @@ By default each backtest reads `<repo_root>/Backtest Outputs/nifty_renko_futures
 Run the CPR backtest with:
 ```
 python "My Backtest Files (For Reference)/Nifty CPR Strategy Backtest.py" --dataset nifty --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"
+```
+
+Run the Subhamoy backtests with already-prepared 5-minute OHLC CSVs:
+```
+python "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Goldmine Strategy Backtest.py" --dataset nifty --data "path/to/five_minute_data.csv"
+python "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Money Machine Strategy Backtest.py" --dataset nifty --data "path/to/five_minute_data.csv"
 ```
 
 # Where outputs land
