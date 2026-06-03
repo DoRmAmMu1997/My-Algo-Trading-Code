@@ -6920,9 +6920,13 @@ def format_trade_message(event: dict) -> str:
     legs = event.get("legs") or []
 
     if action == "ENTRY":
-        header = f"\U0001F7E2 <b>ENTRY</b> · {strategy}"
+        # Rocket = entry-specific. The green/red circles are reserved for the
+        # exit P&L sign (below), so entries never use a coloured dot.
+        header = f"\U0001F680 <b>ENTRY</b> · {strategy}"
     elif action == "EXIT":
-        header = f"\U0001F534 <b>EXIT</b> · {strategy}"
+        # Chequered flag = exit-specific. Profit/loss is signalled separately by
+        # the coloured dot on the P&L line.
+        header = f"\U0001F3C1 <b>EXIT</b> · {strategy}"
         reason = html.escape(str(event.get("reason", "")))
         if reason:
             header += f" ({reason})"
@@ -6959,7 +6963,17 @@ def format_trade_message(event: dict) -> str:
         lines.append(size_line)
 
     if action == "EXIT" and event.get("pnl") is not None:
-        lines.append(f"P&amp;L: <b>{_format_inr(event['pnl'])}</b>")
+        # Coloured dot reserved for the exit outcome: green = profit, red =
+        # loss, white = breakeven. Entry/exit themselves use the rocket and
+        # chequered-flag emojis in the header, never a coloured dot.
+        pnl_value = _safe_float(event["pnl"], 0.0)
+        if pnl_value > 0:
+            pnl_dot = "\U0001F7E2"
+        elif pnl_value < 0:
+            pnl_dot = "\U0001F534"
+        else:
+            pnl_dot = "\U000026AA"
+        lines.append(f"{pnl_dot} P&amp;L: <b>{_format_inr(event['pnl'])}</b>")
 
     ts = html.escape(str(event.get("ts", "")))
     lines.append(f"<i>[{mode}] {ts}</i>")
