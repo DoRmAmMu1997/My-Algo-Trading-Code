@@ -39,6 +39,11 @@ the union of two earlier files plus one Greeks-driven addition:
            * Per-side exit at 3x the reference; strategy-wide max-loss
              of Rs.5000/lot; force exit at 15:20.
 
+Since that union, FOUR more single-leg ATM strategies were added directly to
+this master file -- Goldmine, Money Machine (both 5-min, Subhamoy folder),
+Opening Strike PCR/VWAP/ATR (5-min), and CPR (5-min) -- bringing the runner to
+ELEVEN strategies total: 8 ATM single-leg + 2 Hedged Puts + 1 Delta-0.2.
+
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
 Different strategies pick different expiries. Rather than burying this
@@ -58,7 +63,7 @@ audit later without chasing a hidden flag.
 
 STRIKE RULES (also explicit per family)
 ---------------------------------------
-- ATM family (the 4 ATM workers) -> resolver.get_atm_option(spot, dir).
+- ATM family (the 8 ATM workers) -> resolver.get_atm_option(spot, dir).
   Picks the strike whose round-50 value is nearest to live spot.
 - Hedged family (Supertrend Bullish + Donchian Bearish) -> the strike
   selection lives INSIDE each dedicated worker
@@ -72,7 +77,7 @@ STRIKE RULES (also explicit per family)
 
 EXECUTION MODEL CHEAT SHEET (paper)
 -----------------------------------
-Single-leg ATM trades (the 4 ATM workers):
+Single-leg ATM trades (the 8 ATM workers):
     PnL = (exit_option_price - entry_option_price) * qty
     Both LONG and SHORT signals open as BUY legs (CE for LONG, PE for
     SHORT). PnL is therefore always (live - entry) * qty.
@@ -90,22 +95,23 @@ THREAD ARCHITECTURE
       ANY worker (single batched ticker_data call).
     * Publishes everything into a thread-safe `SharedMarketDataStore`.
 
-- Six `*StrategyWorker` threads:
+- Eleven `*StrategyWorker` threads:
     * Read the 1-minute OHLC from the shared store.
     * Resample locally if their strategy timeframe is higher than 1m.
-    * Run their own signal generator (one of six logic modules).
+    * Run their own signal generator (one of ten logic modules; the
+      Delta-0.2 worker is the exception and reads option-chain Greeks).
     * Manage their own paper position (single-leg OR hedged).
     * Never call the broker for OHLC directly. They only do tiny
       direct LTP fallback fetches when the cache is cold.
 
 This central-fetcher design keeps API usage low and makes the data
-deterministic across all six strategies.
+deterministic across all eleven strategies.
 
 WHY ONE FILE INSTEAD OF SEPARATE FILES
 --------------------------------------
 - Single fetch budget. One DhanHQ ticker_data call covers spot plus
   every active option leg from every worker simultaneously.
-- One log destination. All six strategies share LOG_FILE so a single
+- One log destination. All eleven strategies share LOG_FILE so a single
   audit trail captures the day.
 - One process to start, one Ctrl+C to stop everything cleanly.
 
@@ -119,12 +125,16 @@ CLASS HIERARCHY OVERVIEW
         |       +-- EMATrendStrategyWorker
         |       +-- HeikinAshiStrategyWorker
         |       +-- ProfitShooterStrategyWorker
+        |       +-- GoldmineStrategyWorker
+        |       +-- MoneyMachineStrategyWorker
+        |       +-- OpeningStrikePCRVWAPATRWorker
+        |       +-- CPRStrategyWorker
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
         +-- Delta20HedgedSpreadWorker  (dual-side hedged spread, Greeks-driven)
 
-The split is intentional: only the four ATM workers share an
+The split is intentional: only the eight ATM workers share an
 `enter_position` / `exit_position` flow, so it is hosted on
 `AtmSingleLegStrategyWorker`. The hedged workers each implement
 their own enter / exit because the position shape, leg count, and
@@ -298,7 +308,8 @@ UNDERLYING = _env_str("UNDERLYING", "NIFTY").upper().strip() or "NIFTY"
 
 # Minimum number of 1-minute bars before any strategy is allowed to evaluate
 # signals. 120 is enough warm-up for ATR/EMA/Donchian/Supertrend across all
-# six strategies even after one of them resamples 1m -> 5m (still ~24 bars).
+# eleven strategies even after the 5-min resamplers downsample 1m -> 5m
+# (still ~24 bars).
 MIN_BARS = _env_int("MIN_BARS", 120)
 
 # How often the fetcher re-polls 1-minute OHLC and the LTP batch (seconds).
@@ -426,6 +437,37 @@ PROFIT_SHOOTER_SQUARE_OFF_MINUTE = _env_int("PROFIT_SHOOTER_SQUARE_OFF_MINUTE", 
 # immediately. Keep this within ~1 minute of the square-off time.
 PROFIT_SHOOTER_LAST_SETUP_HOUR = _env_int("PROFIT_SHOOTER_LAST_SETUP_HOUR", 15)
 PROFIT_SHOOTER_LAST_SETUP_MINUTE = _env_int("PROFIT_SHOOTER_LAST_SETUP_MINUTE", 14)
+
+
+# =============================================================================
+# GOLDMINE STRATEGY CONSTANTS (Tier 3)
+# =============================================================================
+# Goldmine is a 5-minute SMA20/SMA200 trend + pullback + engulfing strategy.
+# Timing/timeframe knobs live here; sizing/risk and the indicator config object
+# live further down (also env-driven).
+GOLDMINE_POLL_SECONDS = _env_int("GOLDMINE_POLL_SECONDS", 5)
+# The shared 1-min OHLC is locally resampled into N-minute candles before the
+# Goldmine indicator pipeline runs.
+GOLDMINE_DERIVED_TIMEFRAME_MINUTES = _env_int("GOLDMINE_DERIVED_TIMEFRAME_MINUTES", 5)
+
+GOLDMINE_TRADING_START_HOUR = _env_int("GOLDMINE_TRADING_START_HOUR", 9)
+GOLDMINE_TRADING_START_MINUTE = _env_int("GOLDMINE_TRADING_START_MINUTE", 25)
+GOLDMINE_SQUARE_OFF_HOUR = _env_int("GOLDMINE_SQUARE_OFF_HOUR", 15)
+GOLDMINE_SQUARE_OFF_MINUTE = _env_int("GOLDMINE_SQUARE_OFF_MINUTE", 15)
+
+
+# =============================================================================
+# MONEY MACHINE STRATEGY CONSTANTS (Tier 3)
+# =============================================================================
+# Money Machine is a 5-minute SMA20/SMA200 trend + compression + Marubozu
+# breakout strategy. Same knob layout as Goldmine.
+MONEY_MACHINE_POLL_SECONDS = _env_int("MONEY_MACHINE_POLL_SECONDS", 5)
+MONEY_MACHINE_DERIVED_TIMEFRAME_MINUTES = _env_int("MONEY_MACHINE_DERIVED_TIMEFRAME_MINUTES", 5)
+
+MONEY_MACHINE_TRADING_START_HOUR = _env_int("MONEY_MACHINE_TRADING_START_HOUR", 9)
+MONEY_MACHINE_TRADING_START_MINUTE = _env_int("MONEY_MACHINE_TRADING_START_MINUTE", 25)
+MONEY_MACHINE_SQUARE_OFF_HOUR = _env_int("MONEY_MACHINE_SQUARE_OFF_HOUR", 15)
+MONEY_MACHINE_SQUARE_OFF_MINUTE = _env_int("MONEY_MACHINE_SQUARE_OFF_MINUTE", 15)
 
 
 # =============================================================================
@@ -726,7 +768,15 @@ HEIKIN_LOGIC = load_module(
 )
 PROFIT_SHOOTER_LOGIC = load_module(
     "master_profit_shooter_strategy_logic",
-    ROOT_DIR / "Profit Shooter Strategy" / "profit_shooter_strategy_logic.py",
+    ROOT_DIR / "Subhamoy Strategies" / "profit_shooter_strategy_logic.py",
+)
+GOLDMINE_LOGIC = load_module(
+    "master_goldmine_strategy_logic",
+    ROOT_DIR / "Subhamoy Strategies" / "goldmine_strategy_logic.py",
+)
+MONEY_MACHINE_LOGIC = load_module(
+    "master_money_machine_strategy_logic",
+    ROOT_DIR / "Subhamoy Strategies" / "money_machine_strategy_logic.py",
 )
 SUPERTREND_LOGIC = load_module(
     "master_supertrend_signal_generator_bullish",
@@ -813,6 +863,50 @@ PROFIT_SHOOTER_MIN_BARS = (
     + 2
 )
 
+# Goldmine uses a config dataclass for its indicator/pattern tunables. Every
+# field is env-driven so ops can tune behaviour without editing strategy code.
+GOLDMINE_STRATEGY_CONFIG = GOLDMINE_LOGIC.GoldmineStrategyConfig(
+    sma_fast_period=_env_int("GOLDMINE_SMA_FAST_PERIOD", 20),
+    sma_slow_period=_env_int("GOLDMINE_SMA_SLOW_PERIOD", 200),
+    atr_period=_env_int("GOLDMINE_ATR_PERIOD", 14),
+    slope_lookback=_env_int("GOLDMINE_SLOPE_LOOKBACK", 3),
+    pullback_lookback=_env_int("GOLDMINE_PULLBACK_LOOKBACK", 3),
+    pullback_min_count=_env_int("GOLDMINE_PULLBACK_MIN_COUNT", 2),
+    near_sma_atr_multiple=_env_float("GOLDMINE_NEAR_SMA_ATR_MULT", 0.5),
+    engulf_tolerance=_env_float("GOLDMINE_ENGULF_TOLERANCE", 0.05),
+    target_atr_multiple=_env_float("GOLDMINE_TARGET_ATR_MULT", 2.0),
+    max_bars_in_trade=_env_int("GOLDMINE_MAX_BARS_IN_TRADE", 6),
+)
+# Operational sizing/risk for Goldmine (Profit-Shooter-style dynamic sizing).
+# GOLDMINE_LOTS is only the fallback used when risk-based sizing cannot be
+# computed; normal entries size off GOLDMINE_RISK_BUDGET.
+GOLDMINE_LOTS = _env_int("GOLDMINE_LOTS", 1)
+GOLDMINE_RISK_BUDGET = _env_float("GOLDMINE_RISK_BUDGET", 2500.0)
+GOLDMINE_STARTING_CAPITAL = _env_float("GOLDMINE_STARTING_CAPITAL", 600000.0)
+GOLDMINE_DAILY_MAX_LOSS_PCT = _env_float("GOLDMINE_DAILY_MAX_LOSS_PCT", 0.03)
+GOLDMINE_MAX_LOSS = GOLDMINE_STARTING_CAPITAL * GOLDMINE_DAILY_MAX_LOSS_PCT
+
+# Money Machine config dataclass. Same env-driven approach as Goldmine.
+MONEY_MACHINE_STRATEGY_CONFIG = MONEY_MACHINE_LOGIC.MoneyMachineStrategyConfig(
+    sma_fast_period=_env_int("MONEY_MACHINE_SMA_FAST_PERIOD", 20),
+    sma_slow_period=_env_int("MONEY_MACHINE_SMA_SLOW_PERIOD", 200),
+    atr_period=_env_int("MONEY_MACHINE_ATR_PERIOD", 14),
+    slope_lookback=_env_int("MONEY_MACHINE_SLOPE_LOOKBACK", 3),
+    near_sma_atr_multiple=_env_float("MONEY_MACHINE_NEAR_SMA_ATR_MULT", 0.5),
+    compression_window=_env_int("MONEY_MACHINE_COMPRESSION_WINDOW", 3),
+    compression_range_atr_multiple=_env_float("MONEY_MACHINE_COMPRESSION_RANGE_ATR_MULT", 0.75),
+    marubozu_body_min_ratio=_env_float("MONEY_MACHINE_MARUBOZU_BODY_MIN_RATIO", 0.80),
+    marubozu_wick_max_ratio=_env_float("MONEY_MACHINE_MARUBOZU_WICK_MAX_RATIO", 0.15),
+    require_breakout_close=bool(_env_int("MONEY_MACHINE_REQUIRE_BREAKOUT_CLOSE", 1)),
+    target_atr_multiple=_env_float("MONEY_MACHINE_TARGET_ATR_MULT", 2.0),
+)
+# Operational sizing/risk for Money Machine (same dynamic sizing as Goldmine).
+MONEY_MACHINE_LOTS = _env_int("MONEY_MACHINE_LOTS", 1)
+MONEY_MACHINE_RISK_BUDGET = _env_float("MONEY_MACHINE_RISK_BUDGET", 2500.0)
+MONEY_MACHINE_STARTING_CAPITAL = _env_float("MONEY_MACHINE_STARTING_CAPITAL", 600000.0)
+MONEY_MACHINE_DAILY_MAX_LOSS_PCT = _env_float("MONEY_MACHINE_DAILY_MAX_LOSS_PCT", 0.03)
+MONEY_MACHINE_MAX_LOSS = MONEY_MACHINE_STARTING_CAPITAL * MONEY_MACHINE_DAILY_MAX_LOSS_PCT
+
 # Settings objects for the two Hedged Puts strategies.
 SUPERTREND_SETTINGS = SUPERTREND_LOGIC.SupertrendSettings(
     atr_length=SUPERTREND_ATR_LENGTH,
@@ -889,7 +983,7 @@ class MarketSnapshot:
 @dataclass
 class PaperPosition:
     """
-    Runtime state for ONE single-leg paper trade (used by the four ATM
+    Runtime state for ONE single-leg paper trade (used by the eight ATM
     workers).
 
     Each ATM strategy worker owns exactly one of these. When the strategy is
@@ -915,6 +1009,9 @@ class PaperPosition:
     # Profit Shooter trailing-mode flags. Other strategies leave these False.
     trailing_active: bool = False
     pending_trailing_exit: bool = False
+    # Goldmine-only: completed-candle counter that drives its time exit. Other
+    # strategies leave this at 0.
+    bars_in_trade: int = 0
     # Actual paper-fill price on the option leg (used for PnL).
     entry_trade_price: float = 0.0
     # Option-leg metadata, locked at entry and reused on exit.
@@ -1021,7 +1118,7 @@ class SharedMarketDataStore:
     Thread-safe storage for centrally fetched OHLC and LTP values.
 
     This is the single rendezvous between the producer thread (the fetcher)
-    and the consumer threads (the six workers). One `threading.Lock` guards
+    and the consumer threads (the eleven workers). One `threading.Lock` guards
     every mutation, so a reader can never see a half-written snapshot.
 
     Three independent pools live inside:
@@ -1582,7 +1679,7 @@ class OptionsContractResolver:
     STRIKE RULES:
     - `get_atm_option(spot, dir)`  -> ATM strike rounded to nearest 50, paired
                                        with CE for LONG / PE for SHORT. Used
-                                       by the four ATM workers.
+                                       by the eight ATM workers.
     - `list_puts_for_expiry(exp)` + `pick_put_by_target_premium(...)`
                                     -> primitives the BULLISH hedged worker
                                        uses to pick a PE leg whose live LTP
@@ -1740,7 +1837,8 @@ class OptionsContractResolver:
         """
         Return the "next-next" expiry: the SECOND expiry on or after today.
 
-        Used by the four ATM workers (Renko, EMA, Heikin, Profit Shooter).
+        Used by the eight ATM workers (Renko, EMA, Heikin Ashi, Profit Shooter,
+        Goldmine, Money Machine, Opening Strike, CPR).
 
         Steps:
         1. Load the option chain (cached per day).
@@ -1775,7 +1873,7 @@ class OptionsContractResolver:
         return expiries[0]
 
     # ------------------------------------------------------------------
-    # ATM strike rule (used by the 4 ATM workers)
+    # ATM strike rule (used by the 8 ATM workers)
     # ------------------------------------------------------------------
     def get_atm_option(self, spot_price: float, direction: str) -> dict:
         """
@@ -2084,7 +2182,7 @@ class CentralMarketDataFetcher(threading.Thread):
     1. Fetch 1-minute NIFTY spot OHLC and `store.update(...)` it.
     2. Build a batched LTP request that always includes the NIFTY spot, plus
        every option leg currently subscribed by ANY worker (PE legs from
-       bullish, CE legs from bearish, ATM CE/PE from the four ATM workers).
+       bullish, CE legs from bearish, ATM CE/PE from the eight ATM workers).
        Fetch and `store.update_ltp_map(...)` them.
     3. Sleep `FETCH_POLL_SECONDS` using `stop_event.wait(...)` so shutdown
        stays responsive.
@@ -2581,7 +2679,7 @@ class BasePaperStrategyWorker(threading.Thread):
 # =============================================================================
 class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
     """
-    Concrete intermediate base for the four ATM strategies.
+    Concrete intermediate base for the eight ATM strategies.
 
     What this layer adds on top of `BasePaperStrategyWorker`:
     - `enter_position(direction, ...)` that resolves the ATM CE/PE of the
@@ -3283,6 +3381,274 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
                 target_underlying=decision.target_underlying,
                 trailing_active=decision.trailing_active,
                 pending_trailing_exit=decision.pending_trailing_exit,
+            ):
+                self.entry_submit_count += 1
+            return
+
+
+# =============================================================================
+# GOLDMINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
+# =============================================================================
+class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
+    """
+    Goldmine strategy. Reads 1-minute data from the shared store, locally
+    resamples it into complete 5-minute candles, then runs the SMA20/SMA200
+    trend + pullback + engulfing pipeline.
+
+    Specifics:
+    - Profit-Shooter-style dynamic sizing: each entry is sized so the
+      worst-case underlying-points loss fits GOLDMINE_RISK_BUDGET.
+    - Goldmine has a TIME exit. `GoldminePositionContext.bars_in_trade` is
+      incremented once per completed 5-min candle so the engine can emit a
+      TIME_EXIT after `max_bars_in_trade` bars. The resampler drops partial
+      bars, so each `process_strategy_frame` call is exactly one new candle.
+    """
+
+    strategy_name = "Goldmine"
+    timeframe = "1"
+    poll_seconds = GOLDMINE_POLL_SECONDS
+    lots = GOLDMINE_LOTS
+    max_loss = GOLDMINE_MAX_LOSS
+    trading_start_hour = GOLDMINE_TRADING_START_HOUR
+    trading_start_minute = GOLDMINE_TRADING_START_MINUTE
+    square_off_hour = GOLDMINE_SQUARE_OFF_HOUR
+    square_off_minute = GOLDMINE_SQUARE_OFF_MINUTE
+    derived_timeframe_minutes = GOLDMINE_DERIVED_TIMEFRAME_MINUTES
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        super().__init__(store, stop_event, broker)
+        self.signal_engine = GOLDMINE_LOGIC.GoldmineSignalEngine(GOLDMINE_STRATEGY_CONFIG)
+        self.signal_count = 0
+        self.entry_submit_count = 0
+        self.exit_count = 0
+
+    def summary_text(self) -> str:
+        return (
+            f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
+            f"Exits={self.exit_count} | Trades={self.completed_trades} | RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        self.exit_count += 1
+
+    def minimum_strategy_rows(self) -> int:
+        # Goldmine needs SMA200 warm-up; the engine reports its own minimum.
+        return self.signal_engine.minimum_history_bars()
+
+    def _compute_entry_lots(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> int:
+        """
+        Risk-based sizing (same model as Profit Shooter).
+
+        Pick the smallest whole-lot quantity whose worst-case underlying-points
+        loss (`risk_points * lot_size`) is within `GOLDMINE_RISK_BUDGET`.
+        `math.ceil` over a positive ratio guarantees at least 1 lot, so a setup
+        either trades at >=1 lot or not at all.
+        """
+        risk_points = abs(float(entry_underlying) - float(stop_underlying))
+        if risk_points <= 0 or lot_size <= 0:
+            self.log.warning(
+                "Goldmine dynamic sizing fell back to static lots=%s "
+                "(entry=%.2f, stop=%.2f, lot_size=%s).",
+                self.lots, entry_underlying, stop_underlying, lot_size,
+            )
+            return self.lots
+        lots = math.ceil(GOLDMINE_RISK_BUDGET / (risk_points * lot_size))
+        self.log.info(
+            "Goldmine dynamic sizing: risk_points=%.2f | lot_size=%s | "
+            "risk_budget=%.2f -> lots=%s, qty=%s.",
+            risk_points, lot_size, GOLDMINE_RISK_BUDGET, lots, lots * lot_size,
+        )
+        return int(lots)
+
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """Resample 1-min OHLC into complete 5-min candles, then attach Goldmine indicators."""
+        ohlc_5m = resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+        return GOLDMINE_LOGIC.build_goldmine_with_indicators(ohlc_5m, GOLDMINE_STRATEGY_CONFIG)
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """
+        Interpret the latest completed 5-min candle.
+
+        Flow:
+        1. In a trade -> bump the bars-in-trade counter (one new closed candle
+           per call), build a position context, and honor only exits.
+        2. Flat -> count signal triggers and submit fresh entries.
+        """
+        position_ctx = None
+        if self.pos.active:
+            # One process call == one new closed 5-min candle (partial bars are
+            # dropped by the resampler), so a single increment mirrors the
+            # backtest generator's per-candle bars_in_trade bump.
+            self.pos.bars_in_trade += 1
+            position_ctx = GOLDMINE_LOGIC.GoldminePositionContext(
+                direction=self.pos.direction,
+                entry_underlying=self.pos.entry_underlying,
+                stop_underlying=self.pos.stop_underlying,
+                target_underlying=self.pos.target_underlying,
+                bars_in_trade=self.pos.bars_in_trade,
+            )
+
+        decision = self.signal_engine.evaluate_candle(strategy_frame, position=position_ctx)
+
+        if self.pos.active:
+            if decision.action == "EXIT":
+                self.exit_position(decision.exit_reason or "SIGNAL_EXIT")
+            return
+
+        if decision.signal_triggered:
+            self.signal_count += 1
+
+        if decision.action == "ENTER_LONG":
+            if self.enter_position(
+                "LONG",
+                decision.entry_underlying,
+                decision.stop_underlying,
+                target_underlying=decision.target_underlying,
+            ):
+                self.entry_submit_count += 1
+            return
+        if decision.action == "ENTER_SHORT":
+            if self.enter_position(
+                "SHORT",
+                decision.entry_underlying,
+                decision.stop_underlying,
+                target_underlying=decision.target_underlying,
+            ):
+                self.entry_submit_count += 1
+            return
+
+
+# =============================================================================
+# MONEY MACHINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
+# =============================================================================
+class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
+    """
+    Money Machine strategy. Reads 1-minute data from the shared store, locally
+    resamples it into complete 5-minute candles, then runs the SMA20/SMA200
+    trend + compression + Marubozu-breakout pipeline.
+
+    Specifics:
+    - Profit-Shooter-style dynamic sizing off MONEY_MACHINE_RISK_BUDGET.
+    - No time exit: the engine manages stop/target only, so the position
+      context is just direction + entry/stop/target.
+    """
+
+    strategy_name = "MoneyMachine"
+    timeframe = "1"
+    poll_seconds = MONEY_MACHINE_POLL_SECONDS
+    lots = MONEY_MACHINE_LOTS
+    max_loss = MONEY_MACHINE_MAX_LOSS
+    trading_start_hour = MONEY_MACHINE_TRADING_START_HOUR
+    trading_start_minute = MONEY_MACHINE_TRADING_START_MINUTE
+    square_off_hour = MONEY_MACHINE_SQUARE_OFF_HOUR
+    square_off_minute = MONEY_MACHINE_SQUARE_OFF_MINUTE
+    derived_timeframe_minutes = MONEY_MACHINE_DERIVED_TIMEFRAME_MINUTES
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        super().__init__(store, stop_event, broker)
+        self.signal_engine = MONEY_MACHINE_LOGIC.MoneyMachineSignalEngine(MONEY_MACHINE_STRATEGY_CONFIG)
+        self.signal_count = 0
+        self.entry_submit_count = 0
+        self.exit_count = 0
+
+    def summary_text(self) -> str:
+        return (
+            f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
+            f"Exits={self.exit_count} | Trades={self.completed_trades} | RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        self.exit_count += 1
+
+    def minimum_strategy_rows(self) -> int:
+        # Money Machine needs SMA200 warm-up; the engine reports its own minimum.
+        return self.signal_engine.minimum_history_bars()
+
+    def _compute_entry_lots(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> int:
+        """Risk-based sizing (same model as Profit Shooter / Goldmine)."""
+        risk_points = abs(float(entry_underlying) - float(stop_underlying))
+        if risk_points <= 0 or lot_size <= 0:
+            self.log.warning(
+                "Money Machine dynamic sizing fell back to static lots=%s "
+                "(entry=%.2f, stop=%.2f, lot_size=%s).",
+                self.lots, entry_underlying, stop_underlying, lot_size,
+            )
+            return self.lots
+        lots = math.ceil(MONEY_MACHINE_RISK_BUDGET / (risk_points * lot_size))
+        self.log.info(
+            "Money Machine dynamic sizing: risk_points=%.2f | lot_size=%s | "
+            "risk_budget=%.2f -> lots=%s, qty=%s.",
+            risk_points, lot_size, MONEY_MACHINE_RISK_BUDGET, lots, lots * lot_size,
+        )
+        return int(lots)
+
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """Resample 1-min OHLC into complete 5-min candles, then attach Money Machine indicators."""
+        ohlc_5m = resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+        return MONEY_MACHINE_LOGIC.build_money_machine_with_indicators(ohlc_5m, MONEY_MACHINE_STRATEGY_CONFIG)
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """
+        Interpret the latest completed 5-min candle.
+
+        Flow:
+        1. In a trade -> build a position context and honor only stop/target exits.
+        2. Flat -> count signal triggers and submit fresh entries.
+        """
+        position_ctx = None
+        if self.pos.active:
+            position_ctx = MONEY_MACHINE_LOGIC.MoneyMachinePositionContext(
+                direction=self.pos.direction,
+                entry_underlying=self.pos.entry_underlying,
+                stop_underlying=self.pos.stop_underlying,
+                target_underlying=self.pos.target_underlying,
+            )
+
+        decision = self.signal_engine.evaluate_candle(strategy_frame, position=position_ctx)
+
+        if self.pos.active:
+            if decision.action == "EXIT":
+                self.exit_position(decision.exit_reason or "SIGNAL_EXIT")
+            return
+
+        if decision.signal_triggered:
+            self.signal_count += 1
+
+        if decision.action == "ENTER_LONG":
+            if self.enter_position(
+                "LONG",
+                decision.entry_underlying,
+                decision.stop_underlying,
+                target_underlying=decision.target_underlying,
+            ):
+                self.entry_submit_count += 1
+            return
+        if decision.action == "ENTER_SHORT":
+            if self.enter_position(
+                "SHORT",
+                decision.entry_underlying,
+                decision.stop_underlying,
+                target_underlying=decision.target_underlying,
             ):
                 self.entry_submit_count += 1
             return
@@ -4127,7 +4493,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
 
     EXPIRY RULE: this is the Hedged Puts family, so we use
     `OptionsContractResolver.get_current_week_expiry()`, NOT the next-next
-    expiry rule used by the four ATM workers.
+    expiry rule used by the eight ATM workers.
 
     STRIKE RULE: the strike-picking pipeline lives in this worker
     (`_pick_hedged_puts`), per the user's design hint. The resolver only
@@ -6788,8 +7154,8 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM family (6): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m, "
-        "OpeningStrike 5m PCR/VWAP/ATR, CPR 5m. "
+        "ATM family (8): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m, "
+        "Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m PCR/VWAP/ATR, CPR 5m. "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
         "Delta-0.2 family (1): Delta20 09:20 reference, dual-side."
     )
@@ -6798,7 +7164,7 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + nine consumers (6 ATM + 2 Hedged + 1 Delta20).
+    # One producer (fetcher) + eleven consumers (8 ATM + 2 Hedged + 1 Delta20).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
     workers = [
         # ATM family: each picks ATM CE/PE of the next-next expiry.
@@ -6806,6 +7172,10 @@ def main() -> None:
         EMATrendStrategyWorker(store, stop_event, broker),
         HeikinAshiStrategyWorker(store, stop_event, broker),
         ProfitShooterStrategyWorker(store, stop_event, broker),
+        # Goldmine & Money Machine: sibling Subhamoy 5-min strategies, both with
+        # Profit-Shooter-style dynamic (risk-budget) position sizing.
+        GoldmineStrategyWorker(store, stop_event, broker),
+        MoneyMachineStrategyWorker(store, stop_event, broker),
         # Opening-Strike PCR/VWAP/ATR also runs ATM single-leg, but it is
         # additionally driven by intraday option-chain OI flow.
         OpeningStrikePCRVWAPATRWorker(store, stop_event, broker),
