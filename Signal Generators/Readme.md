@@ -25,7 +25,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `Supertrend Signal Generator Bullish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
 | `ema_trend_strategy_logic.py` | Stateful signal engine (class) | EMA backtest + front-test master |
 | `heikin_ashi_strategy_logic.py` | Stateful signal engine (class) | front-test master |
-| `profit_shooter_strategy_logic.py` | Stateful signal engine (class) | Profit Shooter backtest + front-test master |
+| `Subhamoy Strategies/profit_shooter_strategy_logic.py` | Stateful signal engine (class) | Profit Shooter backtest + front-test master |
 | `renko_strategy_logic.py` | Stateful Renko engine — 5/21/44 EMA variant | original Renko logic (kept for reference) |
 | `renko_strategy_logic_9_21.py` | Stateful Renko engine — 9/21 EMA variant | Renko backtest + front-test master |
 
