@@ -188,7 +188,11 @@ except ImportError:  # pragma: no cover - optional dependency
 # =============================================================================
 # Constants that never come from `.env` because they are tied to the project
 # layout or are pure visual / architectural identifiers.
-ROOT_DIR = Path(__file__).resolve().parent.parent
+# In this repository the master file lives at the repo root and every strategy
+# logic module lives under `Signal Generators/`, so ROOT_DIR is the master's own
+# directory (the repo root). A `Dependencies/` folder (holding `.env`, the
+# instrument-master CSV, and `log_files/`) is expected alongside this file.
+ROOT_DIR = Path(__file__).resolve().parent
 LOG_FILE = ROOT_DIR / "Dependencies" / "log_files" / "nifty_multi_strategy_master_front_test_dhanhq.log"
 LOGGER_NAME = "nifty_multi_strategy_master_front_test_dhanhq"
 
@@ -756,43 +760,43 @@ def load_module(module_name: str, file_path: Path):
 # All trade management lives in this file's worker classes.
 RENKO_LOGIC = load_module(
     "master_renko_strategy_logic_9_21",
-    ROOT_DIR / "Renko Strategy" / "renko_strategy_logic_9_21.py",
+    ROOT_DIR / "Signal Generators" / "renko_strategy_logic_9_21.py",
 )
 EMA_LOGIC = load_module(
     "master_ema_trend_strategy_logic",
-    ROOT_DIR / "EMA Trend Strategy" / "ema_trend_strategy_logic.py",
+    ROOT_DIR / "Signal Generators" / "ema_trend_strategy_logic.py",
 )
 HEIKIN_LOGIC = load_module(
     "master_heikin_ashi_strategy_logic",
-    ROOT_DIR / "Heikin Ashi Strategy" / "heikin_ashi_strategy_logic.py",
+    ROOT_DIR / "Signal Generators" / "heikin_ashi_strategy_logic.py",
 )
 PROFIT_SHOOTER_LOGIC = load_module(
     "master_profit_shooter_strategy_logic",
-    ROOT_DIR / "Subhamoy Strategies" / "profit_shooter_strategy_logic.py",
+    ROOT_DIR / "Signal Generators" / "Subhamoy Strategies" / "profit_shooter_strategy_logic.py",
 )
 GOLDMINE_LOGIC = load_module(
     "master_goldmine_strategy_logic",
-    ROOT_DIR / "Subhamoy Strategies" / "goldmine_strategy_logic.py",
+    ROOT_DIR / "Signal Generators" / "Subhamoy Strategies" / "goldmine_strategy_logic.py",
 )
 MONEY_MACHINE_LOGIC = load_module(
     "master_money_machine_strategy_logic",
-    ROOT_DIR / "Subhamoy Strategies" / "money_machine_strategy_logic.py",
+    ROOT_DIR / "Signal Generators" / "Subhamoy Strategies" / "money_machine_strategy_logic.py",
 )
 SUPERTREND_LOGIC = load_module(
     "master_supertrend_signal_generator_bullish",
-    ROOT_DIR / "Supertrend Strategies" / "Supertrend Signal Generator Bullish.py",
+    ROOT_DIR / "Signal Generators" / "Supertrend Signal Generator Bullish.py",
 )
 DONCHIAN_BEARISH_LOGIC = load_module(
     "master_donchian_signal_generator_bearish",
-    ROOT_DIR / "Supertrend Strategies" / "Donchian Signal Generator Bearish.py",
+    ROOT_DIR / "Signal Generators" / "Donchian Signal Generator Bearish.py",
 )
 OPENING_STRIKE_LOGIC = load_module(
     "master_nifty_opening_strike_pcr_vwap_atr_signal_generator",
-    ROOT_DIR / "Opening Strike PCR VWAP Strategy" / "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
+    ROOT_DIR / "Signal Generators" / "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
 )
 CPR_LOGIC = load_module(
     "master_cpr_strategy_logic",
-    ROOT_DIR / "CPR Strategy" / "cpr_strategy_logic.py",
+    ROOT_DIR / "Signal Generators" / "CPR Strategy" / "cpr_strategy_logic.py",
 )
 
 
