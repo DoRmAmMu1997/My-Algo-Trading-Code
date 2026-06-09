@@ -7,8 +7,8 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 # The coding itself?
 - Claude Opus 4.7 Max: Generated Donchian Signal Generator Bearish.py and Supertrend Signal Generator Bullish.py
 - GPT-5.4-xhigh: Generated ema_trend_strategy_logic.py, heikin_ashi_strategy_logic.py, profit_shooter_strategy_logic.py, renko_strategy_logic.py and renko_strategy_logic_9_21.py
-- GPT-5: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
-- GPT-5: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
+- GPT-5.5-xhigh: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
+- GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
 
 # Where each generator is used
 | File | Shape | Used by |
