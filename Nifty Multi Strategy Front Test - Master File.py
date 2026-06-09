@@ -799,6 +799,184 @@ CPR_LOGIC = load_module(
     ROOT_DIR / "Signal Generators" / "CPR Strategy" / "cpr_strategy_logic.py",
 )
 
+# -----------------------------------------------------------------------------
+# Signal Generator ports (13 ATM single-leg strategies from the TradingBot repo)
+# -----------------------------------------------------------------------------
+# Same execution family as the ATM strategies above (a LONG buys the ATM CE, a
+# SHORT the ATM PE of the next-next expiry). Each lives flat in Signal Generators/
+# and shares misc_strategy_common.py. Each is namespaced by its own prefix so
+# every knob is independently env-tunable, just like Goldmine. (Pairs Trading is
+# excluded - it needs two instruments; ML Ensemble needs scikit-learn.)
+SMA_CROSSOVER_LOGIC = load_module(
+    "master_sma_crossover",
+    ROOT_DIR / "Signal Generators" / "Nifty SMA Crossover Signal Generator.py",
+)
+BOLLINGER_BANDS_LOGIC = load_module(
+    "master_bollinger_bands",
+    ROOT_DIR / "Signal Generators" / "Nifty Bollinger Bands Signal Generator.py",
+)
+KELTNER_SQUEEZE_LOGIC = load_module(
+    "master_keltner_squeeze",
+    ROOT_DIR / "Signal Generators" / "Nifty Keltner Squeeze Signal Generator.py",
+)
+MEAN_REVERSION_ZSCORE_LOGIC = load_module(
+    "master_mean_reversion_zscore",
+    ROOT_DIR / "Signal Generators" / "Nifty Mean Reversion Zscore Signal Generator.py",
+)
+ML_ENSEMBLE_LOGIC = load_module(
+    "master_ml_ensemble",
+    ROOT_DIR / "Signal Generators" / "Nifty ML Ensemble Signal Generator.py",
+)
+MULTI_TIMEFRAME_LOGIC = load_module(
+    "master_multi_timeframe",
+    ROOT_DIR / "Signal Generators" / "Nifty Multi Timeframe Signal Generator.py",
+)
+OPENING_RANGE_BREAKOUT_LOGIC = load_module(
+    "master_opening_range_breakout",
+    ROOT_DIR / "Signal Generators" / "Nifty Opening Range Breakout Signal Generator.py",
+)
+PARABOLIC_SAR_LOGIC = load_module(
+    "master_parabolic_sar",
+    ROOT_DIR / "Signal Generators" / "Nifty Parabolic SAR Signal Generator.py",
+)
+RSI_DIVERGENCE_LOGIC = load_module(
+    "master_rsi_divergence",
+    ROOT_DIR / "Signal Generators" / "Nifty RSI Divergence Signal Generator.py",
+)
+RSI_REVERSAL_LOGIC = load_module(
+    "master_rsi_reversal",
+    ROOT_DIR / "Signal Generators" / "Nifty RSI Reversal Signal Generator.py",
+)
+STOCHASTIC_LOGIC = load_module(
+    "master_stochastic_oscillator",
+    ROOT_DIR / "Signal Generators" / "Nifty Stochastic Oscillator Signal Generator.py",
+)
+SUPERTREND_PORT_LOGIC = load_module(
+    "master_supertrend_port",
+    ROOT_DIR / "Signal Generators" / "Nifty Supertrend Signal Generator.py",
+)
+VOLATILITY_BREAKOUT_LOGIC = load_module(
+    "master_volatility_breakout",
+    ROOT_DIR / "Signal Generators" / "Nifty Volatility Breakout Signal Generator.py",
+)
+
+# Per-strategy indicator configs (operational knobs are built per strategy by
+# _signal_gen_ops() next to the worker factory below). Every field is env-tunable.
+SMA_CROSSOVER_CONFIG = SMA_CROSSOVER_LOGIC.SMACrossoverConfig(
+    short_window=_env_int("SMA_CROSSOVER_SHORT_WINDOW", 9),
+    long_window=_env_int("SMA_CROSSOVER_LONG_WINDOW", 21),
+    stop_loss_pct=_env_float("SMA_CROSSOVER_STOP_LOSS_PCT", 0.015),
+    target_pct=_env_float("SMA_CROSSOVER_TARGET_PCT", 0.03),
+)
+BOLLINGER_BANDS_CONFIG = BOLLINGER_BANDS_LOGIC.BollingerBandsConfig(
+    bb_period=_env_int("BOLLINGER_BANDS_BB_PERIOD", 20),
+    bb_std=_env_float("BOLLINGER_BANDS_BB_STD", 2.0),
+    stop_loss_pct=_env_float("BOLLINGER_BANDS_STOP_LOSS_PCT", 0.02),
+)
+KELTNER_SQUEEZE_CONFIG = KELTNER_SQUEEZE_LOGIC.KeltnerSqueezeConfig(
+    bb_period=_env_int("KELTNER_SQUEEZE_BB_PERIOD", 20),
+    bb_std=_env_float("KELTNER_SQUEEZE_BB_STD", 2.0),
+    kc_period=_env_int("KELTNER_SQUEEZE_KC_PERIOD", 20),
+    kc_atr_period=_env_int("KELTNER_SQUEEZE_KC_ATR_PERIOD", 20),
+    kc_multiplier=_env_float("KELTNER_SQUEEZE_KC_MULTIPLIER", 1.5),
+    macd_fast=_env_int("KELTNER_SQUEEZE_MACD_FAST", 12),
+    macd_slow=_env_int("KELTNER_SQUEEZE_MACD_SLOW", 26),
+    macd_signal=_env_int("KELTNER_SQUEEZE_MACD_SIGNAL", 9),
+    stop_loss_pct=_env_float("KELTNER_SQUEEZE_STOP_LOSS_PCT", 0.02),
+    target_pct=_env_float("KELTNER_SQUEEZE_TARGET_PCT", 0.04),
+)
+MEAN_REVERSION_ZSCORE_CONFIG = MEAN_REVERSION_ZSCORE_LOGIC.MeanReversionZscoreConfig(
+    lookback_period=_env_int("MEAN_REVERSION_ZSCORE_LOOKBACK_PERIOD", 20),
+    entry_z=_env_float("MEAN_REVERSION_ZSCORE_ENTRY_Z", 2.0),
+    exit_z=_env_float("MEAN_REVERSION_ZSCORE_EXIT_Z", 0.0),
+    stop_loss_pct=_env_float("MEAN_REVERSION_ZSCORE_STOP_LOSS_PCT", 0.03),
+)
+ML_ENSEMBLE_CONFIG = ML_ENSEMBLE_LOGIC.MLEnsembleConfig(
+    rsi_fast=_env_int("ML_ENSEMBLE_RSI_FAST", 7),
+    rsi_slow=_env_int("ML_ENSEMBLE_RSI_SLOW", 14),
+    macd_fast=_env_int("ML_ENSEMBLE_MACD_FAST", 12),
+    macd_slow=_env_int("ML_ENSEMBLE_MACD_SLOW", 26),
+    macd_signal=_env_int("ML_ENSEMBLE_MACD_SIGNAL", 9),
+    bb_period=_env_int("ML_ENSEMBLE_BB_PERIOD", 20),
+    bb_std=_env_float("ML_ENSEMBLE_BB_STD", 2.0),
+    atr_period=_env_int("ML_ENSEMBLE_ATR_PERIOD", 14),
+    vol_window=_env_int("ML_ENSEMBLE_VOL_WINDOW", 20),
+    training_window=_env_int("ML_ENSEMBLE_TRAINING_WINDOW", 200),
+    retrain_every=_env_int("ML_ENSEMBLE_RETRAIN_EVERY", 20),
+    forward_bars=_env_int("ML_ENSEMBLE_FORWARD_BARS", 5),
+    buy_threshold=_env_float("ML_ENSEMBLE_BUY_THRESHOLD", 0.6),
+    sell_threshold=_env_float("ML_ENSEMBLE_SELL_THRESHOLD", 0.4),
+    n_estimators=_env_int("ML_ENSEMBLE_N_ESTIMATORS", 100),
+    max_depth=_env_int("ML_ENSEMBLE_MAX_DEPTH", 5),
+    min_training_rows=_env_int("ML_ENSEMBLE_MIN_TRAINING_ROWS", 50),
+    random_state=_env_int("ML_ENSEMBLE_RANDOM_STATE", 42),
+    stop_loss_pct=_env_float("ML_ENSEMBLE_STOP_LOSS_PCT", 0.025),
+    target_pct=_env_float("ML_ENSEMBLE_TARGET_PCT", 0.05),
+)
+MULTI_TIMEFRAME_CONFIG = MULTI_TIMEFRAME_LOGIC.MultiTimeframeConfig(
+    trend_sma_period=_env_int("MULTI_TIMEFRAME_TREND_SMA_PERIOD", 50),
+    ema_fast=_env_int("MULTI_TIMEFRAME_EMA_FAST", 9),
+    ema_slow=_env_int("MULTI_TIMEFRAME_EMA_SLOW", 21),
+    rsi_period=_env_int("MULTI_TIMEFRAME_RSI_PERIOD", 14),
+    rsi_buy_min=_env_float("MULTI_TIMEFRAME_RSI_BUY_MIN", 40.0),
+    rsi_buy_max=_env_float("MULTI_TIMEFRAME_RSI_BUY_MAX", 70.0),
+    rsi_sell_min=_env_float("MULTI_TIMEFRAME_RSI_SELL_MIN", 30.0),
+    rsi_sell_max=_env_float("MULTI_TIMEFRAME_RSI_SELL_MAX", 60.0),
+    stop_loss_pct=_env_float("MULTI_TIMEFRAME_STOP_LOSS_PCT", 0.02),
+    target_pct=_env_float("MULTI_TIMEFRAME_TARGET_PCT", 0.04),
+)
+OPENING_RANGE_BREAKOUT_CONFIG = OPENING_RANGE_BREAKOUT_LOGIC.OpeningRangeBreakoutConfig(
+    atr_period=_env_int("OPENING_RANGE_BREAKOUT_ATR_PERIOD", 14),
+    atr_multiplier=_env_float("OPENING_RANGE_BREAKOUT_ATR_MULTIPLIER", 0.3),
+    stop_loss_pct=_env_float("OPENING_RANGE_BREAKOUT_STOP_LOSS_PCT", 0.015),
+    target_pct=_env_float("OPENING_RANGE_BREAKOUT_TARGET_PCT", 0.03),
+)
+PARABOLIC_SAR_CONFIG = PARABOLIC_SAR_LOGIC.ParabolicSARConfig(
+    af_start=_env_float("PARABOLIC_SAR_AF_START", 0.02),
+    af_step=_env_float("PARABOLIC_SAR_AF_STEP", 0.02),
+    af_max=_env_float("PARABOLIC_SAR_AF_MAX", 0.2),
+    adx_period=_env_int("PARABOLIC_SAR_ADX_PERIOD", 14),
+    adx_min=_env_float("PARABOLIC_SAR_ADX_MIN", 20.0),
+    stop_loss_pct=_env_float("PARABOLIC_SAR_STOP_LOSS_PCT", 0.02),
+    target_pct=_env_float("PARABOLIC_SAR_TARGET_PCT", 0.04),
+)
+RSI_DIVERGENCE_CONFIG = RSI_DIVERGENCE_LOGIC.RSIDivergenceConfig(
+    rsi_period=_env_int("RSI_DIVERGENCE_RSI_PERIOD", 14),
+    swing_window=_env_int("RSI_DIVERGENCE_SWING_WINDOW", 5),
+    stop_loss_pct=_env_float("RSI_DIVERGENCE_STOP_LOSS_PCT", 0.02),
+    target_pct=_env_float("RSI_DIVERGENCE_TARGET_PCT", 0.04),
+)
+RSI_REVERSAL_CONFIG = RSI_REVERSAL_LOGIC.RSIReversalConfig(
+    rsi_period=_env_int("RSI_REVERSAL_RSI_PERIOD", 14),
+    oversold=_env_float("RSI_REVERSAL_OVERSOLD", 30.0),
+    overbought=_env_float("RSI_REVERSAL_OVERBOUGHT", 70.0),
+    exit_at_mean=bool(_env_int("RSI_REVERSAL_EXIT_AT_MEAN", 1)),
+    mean_level=_env_float("RSI_REVERSAL_MEAN_LEVEL", 50.0),
+    stop_loss_pct=_env_float("RSI_REVERSAL_STOP_LOSS_PCT", 0.02),
+    target_pct=_env_float("RSI_REVERSAL_TARGET_PCT", 0.04),
+)
+STOCHASTIC_CONFIG = STOCHASTIC_LOGIC.StochasticOscillatorConfig(
+    k_period=_env_int("STOCHASTIC_K_PERIOD", 14),
+    d_period=_env_int("STOCHASTIC_D_PERIOD", 3),
+    smooth_k=_env_int("STOCHASTIC_SMOOTH_K", 3),
+    oversold=_env_float("STOCHASTIC_OVERSOLD", 20.0),
+    overbought=_env_float("STOCHASTIC_OVERBOUGHT", 80.0),
+    zone_buffer=_env_float("STOCHASTIC_ZONE_BUFFER", 10.0),
+    trend_filter_period=_env_int("STOCHASTIC_TREND_FILTER_PERIOD", 50),
+    stop_loss_pct=_env_float("STOCHASTIC_STOP_LOSS_PCT", 0.015),
+    target_pct=_env_float("STOCHASTIC_TARGET_PCT", 0.03),
+)
+SUPERTREND_PORT_CONFIG = SUPERTREND_PORT_LOGIC.SupertrendConfig(
+    atr_period=_env_int("SUPERTREND_PORT_ATR_PERIOD", 10),
+    multiplier=_env_float("SUPERTREND_PORT_MULTIPLIER", 3.0),
+    target_pct=_env_float("SUPERTREND_PORT_TARGET_PCT", 0.0),
+)
+VOLATILITY_BREAKOUT_CONFIG = VOLATILITY_BREAKOUT_LOGIC.VolatilityBreakoutConfig(
+    k_factor=_env_float("VOLATILITY_BREAKOUT_K_FACTOR", 0.5),
+    stop_loss_pct=_env_float("VOLATILITY_BREAKOUT_STOP_LOSS_PCT", 0.02),
+    target_pct=_env_float("VOLATILITY_BREAKOUT_TARGET_PCT", 0.04),
+)
+
 
 # =============================================================================
 # STRATEGY CONFIG OBJECTS
@@ -7126,6 +7304,184 @@ def _publish_eod_summary(workers, event_queue) -> None:
 
 
 # =============================================================================
+# SIGNAL GENERATOR PORT WORKERS (ATM single-leg; TradingBot ports)
+# =============================================================================
+# The thirteen ported strategies share one identical worker lifecycle: resample
+# the shared 1-min OHLC to the strategy's derived timeframe, build the strategy
+# frame, evaluate the latest candle, and translate ENTER_LONG / ENTER_SHORT /
+# EXIT into ATM CE/PE paper trades. Because they differ only by which logic module
+# + config + env prefix they use, we build them from a single factory + table
+# instead of thirteen copy-pasted classes. Each is fully namespaced by its own env
+# prefix (like Goldmine), so every operational knob is independently tunable.
+def _signal_gen_ops(prefix: str) -> dict:
+    """
+    Build one ported strategy's operational knobs from its env prefix.
+
+    Returns the per-strategy poll cadence, resample timeframe, trading window,
+    lot size, and daily max-loss cap. Every key is <PREFIX>_<NAME> in .env (e.g.
+    SMA_CROSSOVER_POLL_SECONDS), so each strategy is tuned independently. The
+    defaults are identical across all thirteen; only the prefix differs.
+    """
+    starting_capital = _env_float(f"{prefix}_STARTING_CAPITAL", 600000.0)
+    return {
+        "poll_seconds": _env_int(f"{prefix}_POLL_SECONDS", 5),
+        "derived_timeframe_minutes": _env_int(f"{prefix}_DERIVED_TIMEFRAME_MINUTES", 5),
+        "trading_start_hour": _env_int(f"{prefix}_TRADING_START_HOUR", 9),
+        "trading_start_minute": _env_int(f"{prefix}_TRADING_START_MINUTE", 25),
+        "square_off_hour": _env_int(f"{prefix}_SQUARE_OFF_HOUR", 15),
+        "square_off_minute": _env_int(f"{prefix}_SQUARE_OFF_MINUTE", 15),
+        "lots": _env_int(f"{prefix}_LOTS", 1),
+        "max_loss": starting_capital * _env_float(f"{prefix}_DAILY_MAX_LOSS_PCT", 0.03),
+    }
+
+
+def _build_signal_gen_worker_class(
+    class_name: str,
+    display_name: str,
+    logic_module,
+    engine_attr: str,
+    build_attr: str,
+    position_attr: str,
+    config,
+    env_prefix: str,
+):
+    """
+    Return a concrete AtmSingleLegStrategyWorker subclass for one ported strategy.
+
+    A "worker" is one trading thread. Every poll it does the same four steps via
+    the base class: read the shared 1-min candles, build this strategy's frame,
+    ask the strategy engine for a decision, and act on it (buy/sell an ATM option).
+    All thirteen do those steps identically and differ only by which logic
+    module/config/env-prefix they plug in - which is what this factory captures,
+    so we avoid thirteen near-identical copy-pasted classes.
+
+    Parameters:
+    - class_name / display_name: the worker's Python class name and its log/UI name
+      (display_name is what shows on Telegram, e.g. "SMA Crossover").
+    - logic_module: the loaded strategy module (e.g. SMA_CROSSOVER_LOGIC).
+    - engine_attr / build_attr / position_attr: names of the engine class, the
+      indicator-builder function, and the position-context class inside that module.
+    - config: the strategy's frozen indicator config object.
+    - env_prefix: the .env namespace for this strategy's operational knobs
+      (e.g. "SMA_CROSSOVER").
+    """
+    ops = _signal_gen_ops(env_prefix)
+
+    class _SignalGenWorker(AtmSingleLegStrategyWorker):
+        strategy_name = display_name
+        timeframe = "1"
+        poll_seconds = ops["poll_seconds"]
+        lots = ops["lots"]
+        max_loss = ops["max_loss"]
+        trading_start_hour = ops["trading_start_hour"]
+        trading_start_minute = ops["trading_start_minute"]
+        square_off_hour = ops["square_off_hour"]
+        square_off_minute = ops["square_off_minute"]
+        derived_timeframe_minutes = ops["derived_timeframe_minutes"]
+
+        def __init__(self, store, stop_event, broker):
+            super().__init__(store, stop_event, broker)
+            self.signal_engine = getattr(logic_module, engine_attr)(config)
+
+        def minimum_strategy_rows(self) -> int:
+            # Each engine reports its own warm-up requirement.
+            return self.signal_engine.minimum_history_bars()
+
+        def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+            ohlc_n = resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+            return getattr(logic_module, build_attr)(ohlc_n, config)
+
+        def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+            # If we already hold a position, tell the engine about it so it only
+            # checks EXIT rules (it will not open a second, overlapping trade).
+            position_ctx = None
+            if self.pos.active:
+                position_ctx = getattr(logic_module, position_attr)(
+                    direction=self.pos.direction,
+                    entry_underlying=self.pos.entry_underlying,
+                    stop_underlying=self.pos.stop_underlying,
+                    target_underlying=self.pos.target_underlying,
+                )
+
+            # Ask the strategy engine what to do with the latest candle.
+            decision = self.signal_engine.evaluate_candle(strategy_frame, position=position_ctx)
+
+            # In a trade -> only honour an EXIT and then stop for this candle.
+            if self.pos.active:
+                if decision.action == "EXIT":
+                    self.exit_position(decision.exit_reason or "SIGNAL_EXIT")
+                return
+
+            # Flat -> a LONG buys an ATM CE, a SHORT buys an ATM PE (see enter_position).
+            if decision.action == "ENTER_LONG":
+                self.enter_position(
+                    "LONG",
+                    decision.entry_underlying,
+                    decision.stop_underlying,
+                    target_underlying=decision.target_underlying,
+                )
+            elif decision.action == "ENTER_SHORT":
+                self.enter_position(
+                    "SHORT",
+                    decision.entry_underlying,
+                    decision.stop_underlying,
+                    target_underlying=decision.target_underlying,
+                )
+
+    _SignalGenWorker.__name__ = class_name
+    _SignalGenWorker.__qualname__ = class_name
+    return _SignalGenWorker
+
+
+# (class name, display/log name, logic module, engine attr, build attr,
+#  position attr, config, env prefix)
+_SIGNAL_GEN_WORKER_SPECS = [
+    ("SMACrossoverWorker", "SMA Crossover", SMA_CROSSOVER_LOGIC,
+     "SMACrossoverSignalEngine", "build_sma_crossover_with_indicators",
+     "SMACrossoverPositionContext", SMA_CROSSOVER_CONFIG, "SMA_CROSSOVER"),
+    ("BollingerBandsWorker", "Bollinger Bands", BOLLINGER_BANDS_LOGIC,
+     "BollingerBandsSignalEngine", "build_bollinger_bands_with_indicators",
+     "BollingerBandsPositionContext", BOLLINGER_BANDS_CONFIG, "BOLLINGER_BANDS"),
+    ("KeltnerSqueezeWorker", "Keltner Squeeze", KELTNER_SQUEEZE_LOGIC,
+     "KeltnerSqueezeSignalEngine", "build_keltner_squeeze_with_indicators",
+     "KeltnerSqueezePositionContext", KELTNER_SQUEEZE_CONFIG, "KELTNER_SQUEEZE"),
+    ("MeanReversionZscoreWorker", "Mean Reversion Zscore", MEAN_REVERSION_ZSCORE_LOGIC,
+     "MeanReversionZscoreSignalEngine", "build_mean_reversion_zscore_with_indicators",
+     "MeanReversionZscorePositionContext", MEAN_REVERSION_ZSCORE_CONFIG, "MEAN_REVERSION_ZSCORE"),
+    ("MLEnsembleWorker", "ML Ensemble", ML_ENSEMBLE_LOGIC,
+     "MLEnsembleSignalEngine", "build_ml_ensemble_with_indicators",
+     "MLEnsemblePositionContext", ML_ENSEMBLE_CONFIG, "ML_ENSEMBLE"),
+    ("MultiTimeframeWorker", "Multi Timeframe", MULTI_TIMEFRAME_LOGIC,
+     "MultiTimeframeSignalEngine", "build_multi_timeframe_with_indicators",
+     "MultiTimeframePositionContext", MULTI_TIMEFRAME_CONFIG, "MULTI_TIMEFRAME"),
+    ("OpeningRangeBreakoutWorker", "Opening Range Breakout", OPENING_RANGE_BREAKOUT_LOGIC,
+     "OpeningRangeBreakoutSignalEngine", "build_opening_range_breakout_with_indicators",
+     "OpeningRangeBreakoutPositionContext", OPENING_RANGE_BREAKOUT_CONFIG, "OPENING_RANGE_BREAKOUT"),
+    ("ParabolicSARWorker", "Parabolic SAR", PARABOLIC_SAR_LOGIC,
+     "ParabolicSARSignalEngine", "build_parabolic_sar_with_indicators",
+     "ParabolicSARPositionContext", PARABOLIC_SAR_CONFIG, "PARABOLIC_SAR"),
+    ("RSIDivergenceWorker", "RSI Divergence", RSI_DIVERGENCE_LOGIC,
+     "RSIDivergenceSignalEngine", "build_rsi_divergence_with_indicators",
+     "RSIDivergencePositionContext", RSI_DIVERGENCE_CONFIG, "RSI_DIVERGENCE"),
+    ("RSIReversalWorker", "RSI Reversal", RSI_REVERSAL_LOGIC,
+     "RSIReversalSignalEngine", "build_rsi_reversal_with_indicators",
+     "RSIReversalPositionContext", RSI_REVERSAL_CONFIG, "RSI_REVERSAL"),
+    ("StochasticOscillatorWorker", "Stochastic Oscillator", STOCHASTIC_LOGIC,
+     "StochasticOscillatorSignalEngine", "build_stochastic_oscillator_with_indicators",
+     "StochasticOscillatorPositionContext", STOCHASTIC_CONFIG, "STOCHASTIC"),
+    ("SupertrendPortWorker", "Supertrend", SUPERTREND_PORT_LOGIC,
+     "SupertrendSignalEngine", "build_supertrend_with_indicators",
+     "SupertrendPositionContext", SUPERTREND_PORT_CONFIG, "SUPERTREND_PORT"),
+    ("VolatilityBreakoutWorker", "Volatility Breakout", VOLATILITY_BREAKOUT_LOGIC,
+     "VolatilityBreakoutSignalEngine", "build_volatility_breakout_with_indicators",
+     "VolatilityBreakoutPositionContext", VOLATILITY_BREAKOUT_CONFIG, "VOLATILITY_BREAKOUT"),
+]
+
+# Concrete worker classes, ready to instantiate in main().
+SIGNAL_GEN_WORKERS = [_build_signal_gen_worker_class(*spec) for spec in _SIGNAL_GEN_WORKER_SPECS]
+
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 def main() -> None:
@@ -7172,20 +7528,26 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM family (8): Renko 1m, EMA 5m, HeikinAshi 1m, ProfitShooter 1m, "
-        "Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m PCR/VWAP/ATR, CPR 5m. "
+        "ATM single-leg family (21): 8 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
+        "ProfitShooter 1m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
+        "PCR/VWAP/ATR, CPR 5m; + 13 TradingBot ports (%dm) - SMA Crossover, "
+        "Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, "
+        "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
+        "RSI Reversal, Stochastic, Supertrend, Volatility Breakout. "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
-        "Delta-0.2 family (1): Delta20 09:20 reference, dual-side."
+        "Delta-0.2 family (1): Delta20 09:20 reference, dual-side.",
+        SIGNAL_GEN_WORKERS[0].derived_timeframe_minutes,
     )
 
     broker = DhanBrokerClient(CLIENT_CODE, ACCESS_TOKEN)
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + eleven consumers (8 ATM + 2 Hedged + 1 Delta20).
+    # One producer (fetcher) + 24 consumers (21 ATM single-leg + 2 Hedged + 1 Delta-0.2).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
     workers = [
-        # ATM family: each picks ATM CE/PE of the next-next expiry.
+        # ATM single-leg family (8 core): each BUYS the ATM CE (LONG) / PE (SHORT)
+        # of the next-next expiry.
         RenkoStrategyWorker(store, stop_event, broker),
         EMATrendStrategyWorker(store, stop_event, broker),
         HeikinAshiStrategyWorker(store, stop_event, broker),
@@ -7199,6 +7561,12 @@ def main() -> None:
         OpeningStrikePCRVWAPATRWorker(store, stop_event, broker),
         # CPR (Central Pivot Range): directional ATM single-leg on 5-min candles.
         CPRStrategyWorker(store, stop_event, broker),
+    ]
+    # Same family, different source: the 13 TradingBot ports are also
+    # AtmSingleLegStrategyWorker subclasses (built from a shared factory), so they
+    # join the ATM family here rather than forming a separate one.
+    workers.extend(worker_cls(store, stop_event, broker) for worker_cls in SIGNAL_GEN_WORKERS)
+    workers += [
         # Hedged Puts family: each picks current-week CE/PE by target premium.
         SupertrendBullishWorker(store, stop_event, broker),
         DonchianBearishWorker(store, stop_event, broker),
