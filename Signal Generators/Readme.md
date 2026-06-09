@@ -9,6 +9,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 - GPT-5.4-xhigh: Generated ema_trend_strategy_logic.py, heikin_ashi_strategy_logic.py, profit_shooter_strategy_logic.py, renko_strategy_logic.py and renko_strategy_logic_9_21.py
 - GPT-5.5-xhigh: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
 - GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
+- Claude Opus 4.8 Max: Ported 13 strategies from the public TradingBot project (the `Nifty * Signal Generator.py` files listed below) plus the shared `misc_strategy_common.py`, and wired them into the front-test master
 
 # Where each generator is used
 | File | Shape | Used by |
@@ -28,6 +29,32 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `Subhamoy Strategies/profit_shooter_strategy_logic.py` | Stateful signal engine (class) | Profit Shooter backtest + front-test master |
 | `renko_strategy_logic.py` | Stateful Renko engine — 5/21/44 EMA variant | original Renko logic (kept for reference) |
 | `renko_strategy_logic_9_21.py` | Stateful Renko engine — 9/21 EMA variant | Renko backtest + front-test master |
+
+# TradingBot strategy ports (13, ATM single-leg)
+Thirteen strategies ported from the public TradingBot project, kept flat in this
+folder. Each is self-contained (frozen `Config` + `PositionContext` + `Decision`
+dataclasses, a `build_*_with_indicators()`, a stateful `*SignalEngine`, and a
+`*SignalGenerator`) and shares `misc_strategy_common.py` for its indicators
+(TA-Lib first, pandas fallback). All are wired into the front-test master via the
+shared `_build_signal_gen_worker_class` factory as ATM single-leg workers, each
+independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
+
+| File | Strategy idea |
+|---|---|
+| `Nifty SMA Crossover Signal Generator.py` | fast/slow SMA crossover |
+| `Nifty Bollinger Bands Signal Generator.py` | bounce off a band (mean reversion) |
+| `Nifty Keltner Squeeze Signal Generator.py` | BB-inside-KC squeeze release + MACD sign |
+| `Nifty Mean Reversion Zscore Signal Generator.py` | fade z-score extremes back to the mean |
+| `Nifty ML Ensemble Signal Generator.py` | RandomForest P(up) — **requires scikit-learn** |
+| `Nifty Multi Timeframe Signal Generator.py` | trend SMA + EMA crossover + RSI band |
+| `Nifty Opening Range Breakout Signal Generator.py` | close breaks open +/- ATR |
+| `Nifty Parabolic SAR Signal Generator.py` | SAR flip filtered by ADX |
+| `Nifty RSI Divergence Signal Generator.py` | price vs RSI swing divergence |
+| `Nifty RSI Reversal Signal Generator.py` | oversold/overbought reversal |
+| `Nifty Stochastic Oscillator Signal Generator.py` | %K/%D cross in zone, trend-filtered |
+| `Nifty Supertrend Signal Generator.py` | ATR-band Supertrend flip |
+| `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
+| `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
 
 # Two flavors of "signal generator" in this folder
 - The **Donchian / Supertrend** files are pure transformations: pass a DataFrame in, get one back with extra signal columns. Stateless.
