@@ -169,6 +169,7 @@ import logging
 import math
 import os
 import queue
+import re
 import sys
 import threading
 from dataclasses import dataclass
@@ -7319,6 +7320,215 @@ def _publish_eod_summary(workers, event_queue) -> None:
 
 
 # =============================================================================
+# END-OF-DAY GOOGLE SHEET P&L (per-strategy, with month backfill)
+# =============================================================================
+# After every worker has exited on a clean end of day, parse the day's log for
+# each strategy's realised P&L and write it into the tracker Google Sheet: rows
+# are strategies (column A), columns are calendar days of the month. Today's cell
+# is (over)written; earlier-this-month cells that are still blank are backfilled
+# from the (append-mode) log, so a missed day fills itself in on a later run.
+#
+# Auth is OAuth "user token" via gspread: set GSHEET_ID and point
+# GSHEET_OAUTH_CLIENT_FILE at a Desktop OAuth client JSON; the first run opens a
+# browser for consent and caches the token at GSHEET_OAUTH_TOKEN_FILE. The whole
+# step is a guarded no-op (logs a warning) if unconfigured or on any error, so it
+# never disturbs shutdown.
+
+# Worker strategy_name -> exact sheet row label (column A). A strategy whose row
+# is absent is skipped with a warning (e.g. split the sheet's "Stochastic
+# Supertrend" row into the two labels below so all strategies map 1:1).
+_PNL_SHEET_ROW_LABELS = {
+    "Renko": "Renko Strategy",
+    "EMA": "EMA Strategy",
+    "HeikinAshi": "Heikin Ashi Strategy",
+    "ProfitShooter": "Profit Shooter Strategy",
+    "Goldmine": "Goldmine Strategy",
+    "MoneyMachine": "Money Machine Strategy",
+    "OpeningStrike": "Opening Strike PCR VWAP ATR Strategy",
+    "CPR": "CPR Strategy",
+    "SMA Crossover": "SMA Crossover Strategy",
+    "Bollinger Bands": "Bollinger Bands Strategy",
+    "Keltner Squeeze": "Keltner Squeeze Strategy",
+    "Mean Reversion Zscore": "Mean Reversion Z-score Strategy",
+    "ML Ensemble": "ML Ensemble Strategy",
+    "Multi Timeframe": "Multi-Timeframe Strategy",
+    "Opening Range Breakout": "Opening Range Breakout Strategy",
+    "Parabolic SAR": "Parabolic SAR Strategy",
+    "RSI Divergence": "RSI Divergence Strategy",
+    "RSI Reversal": "RSI Reversal Strategy",
+    "Stochastic Oscillator": "Stochastic Oscillator Strategy",
+    "Supertrend": "Supertrend Strategy",
+    "Volatility Breakout": "Volatility Breakout Strategy",
+    "SupertrendBullish": "Supertrend Bullish Strategy",
+    "DonchianBearish": "Donchian Bearish Strategy",
+    "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
+}
+
+_PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
+
+
+def _parse_eod_pnl_by_day(log_path) -> dict:
+    """
+    Parse the runner's log for each strategy's end-of-day realised P&L per day.
+
+    Reads the per-strategy "Paper summary | ... RealizedPnL=<pnl>" lines that
+    every worker logs at square-off / max-loss. The log format is
+    "<asctime> | <level> | <threadName> | <message>", and threadName is
+    "<strategy_name>Thread", so we recover the date (from asctime), the strategy
+    (from the thread name), and the figure. Returns {"YYYY-MM-DD":
+    {strategy_name: pnl}} (last line wins per strategy/day). The log is opened in
+    append mode, so it spans multiple days -- which is what enables month backfill.
+    """
+    result: dict[str, dict[str, float]] = {}
+    try:
+        if not Path(log_path).exists():
+            return result
+        with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if "Paper summary" not in line or "RealizedPnL=" not in line:
+                    continue
+                parts = line.split(" | ", 3)
+                if len(parts) < 4:
+                    continue
+                asctime, _level, thread_name, message = parts
+                date_str = asctime.strip()[:10]
+                if len(date_str) != 10 or date_str[4] != "-":
+                    continue
+                thread_name = thread_name.strip()
+                if not thread_name.endswith("Thread"):
+                    continue
+                strategy = thread_name[: -len("Thread")].strip()
+                match = _PNL_LOG_LINE_RE.search(message)
+                if not match:
+                    continue
+                try:
+                    result.setdefault(date_str, {})[strategy] = float(match.group(1))
+                except ValueError:
+                    continue
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not parse P&L from the log file: %s", exc)
+    return result
+
+
+def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
+    """
+    Pure helper: decide which sheet cells to write (no I/O).
+
+    INPUT:
+      values     - the worksheet's current contents as a list of row-lists.
+      pnl_by_day - {"YYYY-MM-DD": {strategy_name: pnl}} (from the log).
+      today_str  - today's date "YYYY-MM-DD".
+
+    Layout: row 0 holds the date column headers; column 0 holds strategy labels.
+    Rule: only the current calendar month is touched; today's cell is always
+    (over)written; an earlier day's cell is written only when it is currently
+    blank (so manual edits and already-filled days are never clobbered).
+
+    Returns (updates, unmatched): updates is a list of (row_idx, col_idx, value)
+    with 0-based indices; unmatched is the sorted strategy names with no sheet row.
+    """
+    if not values:
+        return [], []
+    header = values[0]
+    date_to_col = {}
+    for col_idx, cell in enumerate(header):
+        text = str(cell).strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            date_to_col[text] = col_idx
+    label_to_row = {}
+    for row_idx, row in enumerate(values):
+        if not row:
+            continue
+        label = str(row[0]).strip()
+        if label and label not in label_to_row:
+            label_to_row[label] = row_idx
+
+    updates = []
+    unmatched = set()
+    current_month = today_str[:7]
+    for date_str, per_strategy in pnl_by_day.items():
+        if date_str[:7] != current_month or date_str not in date_to_col:
+            continue
+        col_idx = date_to_col[date_str]
+        for strategy, pnl in per_strategy.items():
+            label = _PNL_SHEET_ROW_LABELS.get(strategy)
+            if label is None or label not in label_to_row:
+                unmatched.add(strategy)
+                continue
+            row_idx = label_to_row[label]
+            existing = ""
+            if col_idx < len(values[row_idx]):
+                existing = str(values[row_idx][col_idx]).strip()
+            if date_str == today_str or existing == "":
+                updates.append((row_idx, col_idx, round(float(pnl), 2)))
+    return updates, sorted(unmatched)
+
+
+def _update_pnl_google_sheet() -> None:
+    """
+    End-of-day: write each strategy's realised P&L into the tracker Google Sheet
+    (today's column, plus blank earlier-this-month cells backfilled from the log).
+
+    Guarded no-op: if GSHEET_ID is unset, gspread is missing, the log has no
+    figures, or anything goes wrong, it logs a warning and returns without
+    disturbing the shutdown sequence.
+    """
+    sheet_id = _env_str("GSHEET_ID", "")
+    if not sheet_id:
+        logger.info("Google Sheet P&L update skipped (GSHEET_ID not set in .env).")
+        return
+
+    pnl_by_day = _parse_eod_pnl_by_day(LOG_FILE)
+    if not pnl_by_day:
+        logger.info("Google Sheet P&L update skipped (no per-strategy P&L found in the log).")
+        return
+
+    try:
+        import gspread
+    except ImportError:
+        logger.warning(
+            "Google Sheet P&L update skipped: gspread not installed "
+            "(pip install gspread). The figures are still in the log."
+        )
+        return
+
+    try:
+        client_file = _env_str(
+            "GSHEET_OAUTH_CLIENT_FILE",
+            str(ROOT_DIR / "Dependencies" / "gsheet_oauth_client.json"),
+        )
+        token_file = _env_str(
+            "GSHEET_OAUTH_TOKEN_FILE",
+            str(ROOT_DIR / "Dependencies" / "gsheet_oauth_token.json"),
+        )
+        gc = gspread.oauth(
+            credentials_filename=client_file,
+            authorized_user_filename=token_file,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        worksheet = gc.open_by_key(sheet_id).get_worksheet(0)
+        values = worksheet.get_all_values()
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        updates, unmatched = _compute_pnl_sheet_updates(values, pnl_by_day, today_str)
+        if unmatched:
+            logger.warning(
+                "Google Sheet P&L: no matching row for %s -- add those exact labels "
+                "in column A of the sheet.",
+                ", ".join(unmatched),
+            )
+        if not updates:
+            logger.info("Google Sheet P&L update: nothing to write.")
+            return
+        cells = [gspread.Cell(row + 1, col + 1, value) for (row, col, value) in updates]
+        worksheet.update_cells(cells, value_input_option="USER_ENTERED")
+        logger.info(
+            "Google Sheet P&L updated: %d cell(s) written (today=%s).", len(cells), today_str
+        )
+    except Exception as exc:
+        logger.warning("Google Sheet P&L update failed (non-fatal): %s", exc)
+
+
+# =============================================================================
 # SIGNAL GENERATOR PORT WORKERS (ATM single-leg; TradingBot ports)
 # =============================================================================
 # The thirteen ported strategies share one identical worker lifecycle: resample
@@ -7628,6 +7838,9 @@ def main() -> None:
         # in finally). On Ctrl+C this line is skipped, so partial/forced
         # shutdowns do not emit a misleading summary.
         _publish_eod_summary(workers, trade_event_queue)
+        # All workers have exited cleanly -> write each strategy's day-end P&L
+        # into the tracker Google Sheet (and backfill any blank days this month).
+        _update_pnl_google_sheet()
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received. Signaling all threads to stop.")
         stop_event.set()
