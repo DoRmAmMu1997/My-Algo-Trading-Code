@@ -7534,8 +7534,9 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
 
 def _update_pnl_google_sheet() -> None:
     """
-    End-of-day: write each strategy's realised P&L into the tracker Google Sheet
-    (today's column, plus blank earlier-this-month cells backfilled from the log).
+    End-of-day: write each strategy's realised P&L into the current month's tab of
+    the tracker Google Sheet (today's column, plus blank earlier-this-month cells
+    backfilled from the log).
 
     Guarded no-op: if GSHEET_ID is unset, gspread is missing, the log has no
     figures, or anything goes wrong, it logs a warning and returns without
@@ -7581,9 +7582,21 @@ def _update_pnl_google_sheet() -> None:
             authorized_user_filename=token_file,
             scopes=["https://www.googleapis.com/auth/spreadsheets"],
         )
-        # Step 5: open the spreadsheet by id and read the first tab in full, so the
-        # pure helper can line our figures up against the existing rows/columns.
-        worksheet = gc.open_by_key(sheet_id).get_worksheet(0)
+        # Step 5: the tracker keeps one tab per month ("May 2026", "June 2026", ...),
+        # so select the current month's tab by name (not just the first sheet) and
+        # read it in full, letting the pure helper line figures up against its own
+        # rows/columns. If this month's tab doesn't exist yet, skip with a clear note.
+        spreadsheet = gc.open_by_key(sheet_id)
+        month_tab = datetime.now().strftime("%B %Y")
+        try:
+            worksheet = spreadsheet.worksheet(month_tab)
+        except gspread.WorksheetNotFound:
+            logger.warning(
+                "Google Sheet P&L update skipped: no '%s' tab in the spreadsheet "
+                "(add a tab for the new month).",
+                month_tab,
+            )
+            return
         values = worksheet.get_all_values()
         today_str = datetime.now().strftime("%Y-%m-%d")
         # Step 6: work out the exact cells to write (no network I/O in here).
