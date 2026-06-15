@@ -61,18 +61,26 @@ import io
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
 import requests
 
-# --- Make the downloaded "Kotak Neo API" SDK importable -----------------------
-# This file lives at <repo>/Multithreading/Dependencies/kotak_execution.py, so
-# parents[2] is the repo root and "Kotak Neo API" is its sibling folder.
-_SDK_DIR = Path(__file__).resolve().parents[2] / "Kotak Neo API"
-if _SDK_DIR.exists() and str(_SDK_DIR) not in sys.path:
-    sys.path.insert(0, str(_SDK_DIR))
+# --- Make the downloaded "Kotak Neo API" SDK importable (if vendored) ---------
+# The SDK may live in a "Kotak Neo API" folder somewhere above this file, but the
+# depth differs by repo layout (e.g. <repo>/Dependencies/ vs
+# <repo>/Multithreading/Dependencies/). Rather than hardcode a parents[] index
+# (which is wrong in one layout or the other), walk UP the directory tree and use
+# the first "Kotak Neo API" folder found. If none exists - the SDK was pip
+# installed instead - we skip this and rely on the plain `import neo_api_client`.
+for _ancestor in Path(__file__).resolve().parents:
+    _sdk_dir = _ancestor / "Kotak Neo API"
+    if _sdk_dir.exists():
+        if str(_sdk_dir) not in sys.path:
+            sys.path.insert(0, str(_sdk_dir))
+        break
 
 # Defensively load the runner's .env so credentials are available even when this
 # module is imported/used outside the master file (e.g. in unit tests). The
@@ -94,6 +102,16 @@ from neo_api_client import NeoAPI  # noqa: E402  (resolved from "Kotak Neo API")
 _ORDER_TYPE_MAP = {"MARKET": "MKT", "LIMIT": "L", "SL": "SL", "SL-M": "SL-M"}
 _PRODUCT_MAP = {"INTRADAY": "MIS", "NORMAL": "NRML"}
 _SIDE_MAP = {"BUY": "B", "SELL": "S"}
+
+# Fill confirmation: Kotak's place_order only ACKNOWLEDGES that the request was
+# accepted - the broker can still reject it or leave it unfilled. After an ack we
+# poll order_history until the order reaches a terminal state. Market orders
+# normally fill in well under a second; we wait a few seconds then give up.
+_FILL_TIMEOUT_SECONDS = 8.0
+_FILL_POLL_INTERVAL = 0.5
+# Kotak order-status (`ordSt`) values, lower-cased.
+_FILLED_ORDER_STATES = {"complete", "traded", "executed", "filled"}
+_FAILED_ORDER_STATES = {"rejected", "cancelled", "canceled", "cancel", "lapsed"}
 
 
 class KotakExecutionClient:
@@ -509,7 +527,76 @@ class KotakExecutionClient:
         # than recording an unconfirmed fill.
         if not self._is_order_ack(resp):
             raise Exception(f"Kotak did not acknowledge the order: {resp}")
+
+        # Acceptance != fill: Kotak can still reject the order or leave it
+        # unfilled after the ack. Confirm a REAL fill before returning success,
+        # so the caller never records an entry as LIVE (or flattens an exit's
+        # position) on an order that did not actually execute.
+        order_id = self.extract_order_id(resp)
+        if not order_id:
+            raise Exception(f"Kotak acknowledged the order but returned no order id: {resp}")
+        self._confirm_fill(order_id, int(quantity))
         return resp
+
+    def _order_status(self, order_id: str):
+        """
+        Read the latest state of one order via order_history.
+
+        Returns (state, filled_qty, order_qty, reason). `state` is None when the
+        status cannot be read yet (a transient error, or the order not visible
+        yet), in which case the caller should simply keep polling.
+        """
+        with self._lock:  # order_history is a broker call -> needs the session
+            if self.client is None:
+                return (None, 0, 0, "client not initialised")
+            try:
+                resp = self.client.order_history(order_id=order_id)
+            except Exception as exc:
+                return (None, 0, 0, f"order_history error: {exc}")
+        # Kotak shape: {"data": {"stat": "Ok", "data": [ {rows, newest first} ]}}.
+        rows = None
+        if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
+            rows = resp["data"].get("data")
+        if not isinstance(rows, list) or not rows:
+            return (None, 0, 0, f"unrecognised order_history: {resp}")
+        latest = rows[0]  # history is newest-first; row 0 is the current state
+
+        def _as_int(value) -> int:
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return 0
+
+        return (
+            str(latest.get("ordSt", "")).strip().lower(),
+            _as_int(latest.get("fldQty", 0)),
+            _as_int(latest.get("qty", 0)),
+            str(latest.get("rejRsn", "")).strip(),
+        )
+
+    def _confirm_fill(self, order_id: str, want_qty: int) -> None:
+        """
+        Poll order_history until the order is fully filled, then return.
+
+        Raises if the order is rejected/cancelled, or if it has not filled within
+        `_FILL_TIMEOUT_SECONDS`. Polling happens OUTSIDE the lock (each status read
+        re-takes it briefly), so a slow fill never blocks other workers' orders.
+        """
+        deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
+        last_state = "unknown"
+        while time.monotonic() < deadline:
+            state, filled, _order_qty, reason = self._order_status(order_id)
+            if state is not None:
+                last_state = state
+                if state in _FAILED_ORDER_STATES:
+                    raise RuntimeError(f"order {order_id} {state} ({reason or 'no reason given'})")
+                if state in _FILLED_ORDER_STATES and (want_qty <= 0 or filled >= want_qty):
+                    return  # fully filled - confirmed
+            time.sleep(_FILL_POLL_INTERVAL)
+        raise RuntimeError(
+            f"order {order_id} not confirmed filled within "
+            f"{_FILL_TIMEOUT_SECONDS:.0f}s (last status: {last_state})"
+        )
 
     def _is_order_ack(self, resp: Any) -> bool:
         """

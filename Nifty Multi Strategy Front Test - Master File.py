@@ -2707,12 +2707,33 @@ class BasePaperStrategyWorker(threading.Thread):
         if not self._place_real_leg("BUY", hedge_leg):
             return False
         if not self._place_real_leg("SELL", main_leg):
-            self.log.warning(
-                "Hedged entry PARTIAL fill (hedge filled, main failed) for %s; "
-                "flattening hedge leg and falling back to paper.",
-                self.strategy_name,
-            )
-            self._place_real_leg("SELL", hedge_leg)  # unwind the hedge
+            # Main leg failed after the hedge filled -> unwind the hedge so we
+            # aren't left holding a stray live leg, then fall back to paper.
+            unwound = self._place_real_leg("SELL", hedge_leg)
+            if unwound:
+                self.log.warning(
+                    "Hedged entry PARTIAL fill (hedge filled, main failed) for %s; "
+                    "hedge unwound, falling back to paper.",
+                    self.strategy_name,
+                )
+            else:
+                # Double failure: the hedge BUY filled but neither the main SELL
+                # nor the unwind SELL did. A LIVE long leg is open and untracked.
+                self.log.error(
+                    "MANUAL ACTION NEEDED | %s hedged entry: hedge filled but main "
+                    "AND unwind failed -> a LIVE BUY %s strike=%s qty=%s is OPEN and "
+                    "untracked. Square it off manually.",
+                    self.strategy_name, hedge_leg.get("option_type"),
+                    hedge_leg.get("strike"), hedge_leg.get("quantity"),
+                )
+                self.publish_trade_event({
+                    "action": "UNHEDGED_LEG_OPEN",
+                    "mode": "LIVE",
+                    "leg": "hedge",
+                    "option_type": hedge_leg.get("option_type"),
+                    "strike": hedge_leg.get("strike"),
+                    "quantity": hedge_leg.get("quantity"),
+                })
             return False
         return True
 
@@ -3266,15 +3287,36 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             fallback=closed_position.entry_trade_price,
         )
 
-        # Real execution (live mode only). We ALWAYS flatten the books below even
-        # if the real exit order fails, so the worker never gets stuck "in a
-        # position"; a failed live exit is flagged for manual square-off.
+        # Real execution (live mode only; no-op True in paper mode).
         real_ok = self._place_real_leg(exit_side, {
             "option_type": closed_position.option_right, "strike": closed_position.option_strike,
             "expiry": closed_position.option_expiry, "quantity": closed_position.quantity,
             "dhan_symbol": closed_position.symbol,
         })
         exec_mode = self._exec_mode_tag(real_ok)
+
+        # If a LIVE exit did not confirm a fill, the real Kotak position is still
+        # open. Do NOT flatten the books - keep the position active so the worker
+        # retries the exit on its next cycle, and alert for manual square-off.
+        if self.live_trading and not real_ok:
+            self.log.error(
+                "LIVE EXIT NOT CONFIRMED | %s %s | OptionSymbol=%s | Qty=%s | Reason=%s "
+                "| position kept OPEN for retry/manual square-off.",
+                self.strategy_name, closed_position.direction, closed_position.symbol,
+                closed_position.quantity, reason,
+            )
+            self.publish_trade_event({
+                "action": "EXIT_FAILED",
+                "mode": exec_mode,
+                "direction": closed_position.direction,
+                "reason": reason,
+                "quantity": closed_position.quantity,
+                "legs": [{
+                    "symbol": closed_position.symbol, "side": exit_side,
+                    "right": closed_position.option_right, "strike": closed_position.option_strike,
+                }],
+            })
+            return
 
         pnl = (exit_trade_price - closed_position.entry_trade_price) * closed_position.quantity
 
@@ -5280,9 +5322,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode). Books are
-        # flattened regardless of success; a failed live exit is flagged for
-        # manual square-off via the trade event below.
+        # Real execution (live mode only; no-op True in paper mode).
         real_ok = self._place_real_hedged_exit(
             main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
                       "expiry": closed.main_expiry, "quantity": closed.main_quantity,
@@ -5292,6 +5332,29 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                        "dhan_symbol": closed.hedge_symbol},
         )
         exec_mode = self._exec_mode_tag(real_ok)
+
+        # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
+        # is still open. Do NOT flatten the books - keep the position so the worker
+        # retries the exit next cycle, and alert for manual square-off.
+        if self.live_trading and not real_ok:
+            self.log.error(
+                "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
+                "for retry/manual square-off (main=%s, hedge=%s).",
+                self.strategy_name, closed.direction, reason, closed.main_symbol, closed.hedge_symbol,
+            )
+            self.publish_trade_event({
+                "action": "EXIT_FAILED",
+                "mode": exec_mode,
+                "direction": closed.direction,
+                "reason": reason,
+                "legs": [
+                    {"symbol": closed.main_symbol, "side": "BUY",
+                     "right": closed.main_right, "strike": closed.main_strike},
+                    {"symbol": closed.hedge_symbol, "side": "SELL",
+                     "right": closed.hedge_right, "strike": closed.hedge_strike},
+                ],
+            })
+            return
 
         main_pnl = (closed.main_entry_price - main_exit_price) * closed.main_quantity
         hedge_pnl = (hedge_exit_price - closed.hedge_entry_price) * closed.hedge_quantity
@@ -5924,9 +5987,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode). Books are
-        # flattened regardless of success; a failed live exit is flagged for
-        # manual square-off via the trade event below.
+        # Real execution (live mode only; no-op True in paper mode).
         real_ok = self._place_real_hedged_exit(
             main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
                       "expiry": closed.main_expiry, "quantity": closed.main_quantity,
@@ -5936,6 +5997,29 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                        "dhan_symbol": closed.hedge_symbol},
         )
         exec_mode = self._exec_mode_tag(real_ok)
+
+        # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
+        # is still open. Do NOT flatten the books - keep the position so the worker
+        # retries the exit next cycle, and alert for manual square-off.
+        if self.live_trading and not real_ok:
+            self.log.error(
+                "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
+                "for retry/manual square-off (main=%s, hedge=%s).",
+                self.strategy_name, closed.direction, reason, closed.main_symbol, closed.hedge_symbol,
+            )
+            self.publish_trade_event({
+                "action": "EXIT_FAILED",
+                "mode": exec_mode,
+                "direction": closed.direction,
+                "reason": reason,
+                "legs": [
+                    {"symbol": closed.main_symbol, "side": "BUY",
+                     "right": closed.main_right, "strike": closed.main_strike},
+                    {"symbol": closed.hedge_symbol, "side": "SELL",
+                     "right": closed.hedge_right, "strike": closed.hedge_strike},
+                ],
+            })
+            return
 
         main_pnl = (closed.main_entry_price - main_exit_price) * closed.main_quantity
         hedge_pnl = (hedge_exit_price - closed.hedge_entry_price) * closed.hedge_quantity
@@ -7074,9 +7158,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode). Books are
-        # flattened regardless of success; a failed live exit is flagged for
-        # manual square-off via the trade event below.
+        # Real execution (live mode only; no-op True in paper mode).
         real_ok = self._place_real_hedged_exit(
             main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
                       "expiry": closed.main_expiry, "quantity": closed.main_quantity,
@@ -7086,6 +7168,29 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                        "dhan_symbol": closed.hedge_symbol},
         )
         exec_mode = self._exec_mode_tag(real_ok)
+
+        # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
+        # is still open. Do NOT flatten the books - keep the position so the worker
+        # retries the exit next cycle, and alert for manual square-off.
+        if self.live_trading and not real_ok:
+            self.log.error(
+                "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
+                "for retry/manual square-off (main=%s, hedge=%s).",
+                self.strategy_name, closed.direction, reason, closed.main_symbol, closed.hedge_symbol,
+            )
+            self.publish_trade_event({
+                "action": "EXIT_FAILED",
+                "mode": exec_mode,
+                "direction": closed.direction,
+                "reason": reason,
+                "legs": [
+                    {"symbol": closed.main_symbol, "side": "BUY",
+                     "right": closed.main_right, "strike": closed.main_strike},
+                    {"symbol": closed.hedge_symbol, "side": "SELL",
+                     "right": closed.hedge_right, "strike": closed.hedge_strike},
+                ],
+            })
+            return
         # Main was SOLD -> profit if exit < entry  ->  (entry - exit) * qty
         # Hedge was BOUGHT -> profit if exit > entry -> (exit - entry) * qty
         main_pnl = (closed.main_entry_price - main_exit_price) * closed.main_quantity
