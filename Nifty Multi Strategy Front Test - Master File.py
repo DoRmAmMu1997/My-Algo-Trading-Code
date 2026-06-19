@@ -296,7 +296,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     .env values are always text, so this turns words like "true"/"yes"/"on"/"1"
     into True (case doesn't matter, surrounding quotes are ignored). If the key is
     missing or blank it returns `default`; anything else counts as False.
-    Example: KOTAK_LIVE_TRADING_ENABLED=true  ->  _env_bool("KOTAK_LIVE_TRADING_ENABLED")
+    Example: LIVE_TRADING_ENABLED=true  ->  _env_bool("LIVE_TRADING_ENABLED")
     """
     raw = os.getenv(name, "")
     if raw is None:
@@ -832,30 +832,58 @@ CPR_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Kotak Neo live-execution layer (optional).
+# Live-execution layer (optional) - selectable broker: Kotak Neo or Shoonya.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. We load the helper in
-# Dependencies/kotak_execution.py and grab its single shared client object.
-# The whole thing is wrapped in try/except on purpose: if the "Kotak Neo API"
-# SDK folder isn't present, importing it fails, we set the client to None, and
-# the runner simply keeps working in paper-only mode (no crash). main() then
-# forces any "live" strategy back to paper because there's no client.
+# This is how real (non-paper) orders reach the broker. Both helpers
+# (Dependencies/Kotak API/kotak_execution.py and Dependencies/Shoonya API/
+# shoonya_execution.py) expose the SAME surface (ensure_logged_in /
+# preload_scrip_master / resolve_option_symbol / place_market_order /
+# extract_order_id / logout / is_logged_in), so the runner uses whichever one
+# LIVE_BROKER selects via a single generic `execution_client`. Each import is
+# wrapped in try/except on purpose: if a broker's SDK/deps are missing, that
+# client is set to None and the runner keeps working (the OTHER broker, or
+# paper-only). main() forces any "live" strategy back to paper when the selected
+# client is None.
 try:
     _kotak_execution_module = load_module(
         "master_kotak_execution",
-        Path(__file__).resolve().parent / "Dependencies" / "kotak_execution.py",
+        Path(__file__).resolve().parent / "Dependencies" / "Kotak API" / "kotak_execution.py",
     )
     kotak_execution_client = _kotak_execution_module.kotak_execution_client
 except Exception as _kotak_import_exc:  # ImportError when SDK folder/deps missing
     kotak_execution_client = None
     logging.getLogger(LOGGER_NAME).warning(
-        "Kotak execution layer unavailable (%s); live trading disabled, paper only.",
+        "Kotak execution layer unavailable (%s); Kotak live trading disabled.",
         _kotak_import_exc,
     )
 
-# Which "product" every real order uses. INTRADAY (MIS) = squared off the same
-# day; NORMAL (NRML) = can be carried overnight. Read once from .env at startup.
-KOTAK_PRODUCT_TYPE = _env_str("KOTAK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+try:
+    _shoonya_execution_module = load_module(
+        "master_shoonya_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Shoonya API" / "shoonya_execution.py",
+    )
+    shoonya_execution_client = _shoonya_execution_module.shoonya_execution_client
+except Exception as _shoonya_import_exc:  # ImportError when SDK folder/deps missing
+    shoonya_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Shoonya execution layer unavailable (%s); Shoonya live trading disabled.",
+        _shoonya_import_exc,
+    )
+
+# Pick the active broker from .env (default KOTAK). The rest of the runner only
+# touches the generic `execution_client` / LIVE_EXCHANGE_SEGMENT / LIVE_PRODUCT_TYPE
+# below, so the per-broker differences (exchange code, product key) live here only.
+# INTRADAY (MIS/I) = squared off same day; NORMAL (NRML/M) = carried overnight.
+LIVE_BROKER = _env_str("LIVE_BROKER", "KOTAK").upper().strip() or "KOTAK"
+if LIVE_BROKER == "SHOONYA":
+    execution_client = shoonya_execution_client
+    LIVE_EXCHANGE_SEGMENT = "NFO"
+    LIVE_PRODUCT_TYPE = _env_str("SHOONYA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+else:  # default / unrecognised -> Kotak
+    LIVE_BROKER = "KOTAK"
+    execution_client = kotak_execution_client
+    LIVE_EXCHANGE_SEGMENT = "nse_fo"
+    LIVE_PRODUCT_TYPE = _env_str("KOTAK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
 
 # =============================================================================
 # SIGNAL GENERATOR PORTS (ATM single-leg strategies from the TradingBot repo)
@@ -2603,26 +2631,27 @@ class BasePaperStrategyWorker(threading.Thread):
         self.trade_event_queue = None
 
         # Per-strategy execution mode. Defaults to paper; main() flips this to
-        # True after construction when KOTAK_LIVE_TRADING_ENABLED and this
-        # strategy's <PREFIX>_LIVE_TRADING are both on. When True, the take-trade
-        # logic places real Kotak Neo orders (see `_place_real_leg`) in addition
-        # to the usual paper bookkeeping.
+        # True after construction when LIVE_TRADING_ENABLED and this strategy's
+        # <PREFIX>_LIVE_TRADING are both on. When True, the take-trade logic places
+        # real orders on the active broker (see `_place_real_leg`) in addition to
+        # the usual paper bookkeeping.
         self.live_trading = False
 
     def _place_real_leg(self, side: str, leg: dict) -> bool:
         """
-        Send ONE real buy/sell order to Kotak for a single option ("leg").
+        Send ONE real buy/sell order to the active broker for a single option ("leg").
 
         This is the bridge between "paper" and "real": in paper mode it does
         nothing and just returns True, so the rest of the trade code can call it
         without caring which mode we're in. In live mode it actually places the
-        order. A "leg" is one option contract (a spread has two legs).
+        order via the selected `execution_client` (Kotak or Shoonya). A "leg" is
+        one option contract (a spread has two legs).
 
         `leg` is a dict describing the option:
             {"option_type": "CE"/"PE", "strike": float, "expiry": date,
              "quantity": int, "dhan_symbol": str}
-        The Kotak order symbol (pTrdSymbol) is resolved from Kotak's own scrip
-        master via `resolve_option_symbol` because it differs from Dhan's symbol.
+        The broker order symbol is built/resolved by the client's
+        `resolve_option_symbol` from the contract details.
 
         Returns True on success. When this worker is not in live mode this is a
         no-op that returns True, so every call site can invoke it unconditionally.
@@ -2636,44 +2665,45 @@ class BasePaperStrategyWorker(threading.Thread):
             return True
         quantity = leg["quantity"]
         dhan_symbol = leg.get("dhan_symbol", "")
-        if kotak_execution_client is None:
+        if execution_client is None:
             self.log.warning(
-                "REAL ORDER SKIPPED (no Kotak client) | %s %s qty=%s dhan=%s | falling back to paper.",
-                self.strategy_name, side, quantity, dhan_symbol,
+                "REAL ORDER SKIPPED (no %s client) | %s %s qty=%s dhan=%s | falling back to paper.",
+                LIVE_BROKER, self.strategy_name, side, quantity, dhan_symbol,
             )
             return False
-        # Resolve the Dhan contract to Kotak's pTrdSymbol before ordering.
-        kotak_symbol = kotak_execution_client.resolve_option_symbol(
+        # Resolve the broker's order symbol for this contract before ordering.
+        broker_symbol = execution_client.resolve_option_symbol(
             underlying=UNDERLYING,
             expiry=leg.get("expiry"),
             option_type=leg.get("option_type", ""),
             strike=leg.get("strike", 0.0),
         )
-        if not kotak_symbol:
+        if not broker_symbol:
             self.log.warning(
-                "REAL ORDER SKIPPED (Kotak symbol not found) | %s %s strike=%s %s dhan=%s | "
+                "REAL ORDER SKIPPED (%s symbol not found) | %s %s strike=%s %s dhan=%s | "
                 "falling back to paper.",
-                self.strategy_name, side, leg.get("strike"), leg.get("option_type"), dhan_symbol,
+                LIVE_BROKER, self.strategy_name, side, leg.get("strike"),
+                leg.get("option_type"), dhan_symbol,
             )
             return False
         try:
-            resp = kotak_execution_client.place_market_order(
-                symbol=kotak_symbol,
+            resp = execution_client.place_market_order(
+                symbol=broker_symbol,
                 side=side,
                 quantity=quantity,
-                exchange_segment="nse_fo",
-                product_type=KOTAK_PRODUCT_TYPE,
+                exchange_segment=LIVE_EXCHANGE_SEGMENT,
+                product_type=LIVE_PRODUCT_TYPE,
             )
             self.log.info(
-                "REAL ORDER OK | %s %s qty=%s kotak=%s (dhan=%s) | KotakOrderId=%s",
-                self.strategy_name, side, quantity, kotak_symbol, dhan_symbol,
-                kotak_execution_client.extract_order_id(resp),
+                "REAL ORDER OK | %s %s %s qty=%s sym=%s (dhan=%s) | OrderId=%s",
+                LIVE_BROKER, self.strategy_name, side, quantity, broker_symbol, dhan_symbol,
+                execution_client.extract_order_id(resp),
             )
             return True
         except Exception as exc:
             self.log.warning(
-                "REAL ORDER FAILED (falling back to paper) | %s %s qty=%s kotak=%s (dhan=%s) | %s",
-                self.strategy_name, side, quantity, kotak_symbol, dhan_symbol, exc,
+                "REAL ORDER FAILED (falling back to paper) | %s %s %s qty=%s sym=%s (dhan=%s) | %s",
+                LIVE_BROKER, self.strategy_name, side, quantity, broker_symbol, dhan_symbol, exc,
             )
             return False
 
@@ -3295,7 +3325,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         })
         exec_mode = self._exec_mode_tag(real_ok)
 
-        # If a LIVE exit did not confirm a fill, the real Kotak position is still
+        # If a LIVE exit did not confirm a fill, the real broker position is still
         # open. Do NOT flatten the books - keep the position active so the worker
         # retries the exit on its next cycle, and alert for manual square-off.
         if self.live_trading and not real_ok:
@@ -8312,13 +8342,14 @@ def main() -> None:
     # Decide which strategies trade for real vs on paper.
     # -------------------------------------------------------------------------
     # A strategy trades LIVE only if TWO switches are both on:
-    #   1) the global master switch KOTAK_LIVE_TRADING_ENABLED, and
+    #   1) the global master switch LIVE_TRADING_ENABLED, and
     #   2) that strategy's own <PREFIX>_LIVE_TRADING flag.
     # This double-gate is a safety net: one switch can't accidentally send
     # everything live. We work it out ONCE here (not inside the threads) and set
     # each worker's `live_trading` flag. Default stays paper; if a strategy has no
     # known prefix it is left on paper and an error is logged so it's noticed.
-    master_live = _env_bool("KOTAK_LIVE_TRADING_ENABLED", False)
+    # Real orders go to whichever broker LIVE_BROKER selected (see execution_client).
+    master_live = _env_bool("LIVE_TRADING_ENABLED", False)
     live_count = 0  # how many strategies ended up live (for the summary log)
     for worker in workers:
         prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
@@ -8327,54 +8358,54 @@ def main() -> None:
         if worker.live_trading:
             live_count += 1
             logger.warning(
-                "LIVE TRADING ENABLED for %s -> real Kotak Neo orders (product=%s).",
-                worker.strategy_name, KOTAK_PRODUCT_TYPE,
+                "LIVE TRADING ENABLED for %s -> real %s orders (product=%s).",
+                worker.strategy_name, LIVE_BROKER, LIVE_PRODUCT_TYPE,
             )
         elif prefix is None:
             logger.error(
                 "No env prefix mapped for strategy %s; forcing PAPER.", worker.strategy_name
             )
 
-    # Startup guard: never attempt live trading without a working Kotak client.
-    if live_count > 0 and kotak_execution_client is None:
+    # Startup guard: never attempt live trading without a working broker client.
+    if live_count > 0 and execution_client is None:
         logger.error(
-            '%d strateg(ies) flagged for LIVE trading but the Kotak execution layer is '
-            'unavailable ("Kotak Neo API" SDK missing or failed to import). '
+            '%d strateg(ies) flagged for LIVE trading but the %s execution layer is '
+            "unavailable (SDK/deps missing or failed to import). "
             "Forcing ALL strategies back to PAPER.",
-            live_count,
+            live_count, LIVE_BROKER,
         )
         for worker in workers:
             worker.live_trading = False
         live_count = 0
 
-    # Eagerly establish the Kotak session NOW (at startup, while you're at the
-    # console to type the TOTP) so worker threads never block on the interactive
-    # TOTP prompt mid-session. If 2FA fails here, force every strategy to PAPER
-    # rather than failing one order at a time later.
-    if live_count > 0 and kotak_execution_client is not None:
-        logger.warning("Logging in to Kotak for LIVE trading - you will be prompted for a TOTP now.")
-        if not kotak_execution_client.ensure_logged_in():
-            logger.error("Kotak login failed at startup; forcing ALL strategies back to PAPER.")
+    # Eagerly establish the broker session NOW (at startup) so worker threads never
+    # block on login mid-session (Kotak prompts for a TOTP; Shoonya auto-generates
+    # it). If login/2FA fails here, force every strategy to PAPER rather than
+    # failing one order at a time later.
+    if live_count > 0 and execution_client is not None:
+        logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
+        if not execution_client.ensure_logged_in():
+            logger.error("%s login failed at startup; forcing ALL strategies back to PAPER.", LIVE_BROKER)
             for worker in workers:
                 worker.live_trading = False
             live_count = 0
         else:
-            # One-time scrip-master download so the first real order doesn't pay
-            # the multi-second download cost mid-session.
-            logger.info("Kotak login OK; downloading NSE F&O scrip master (one-time)...")
-            if not kotak_execution_client.preload_scrip_master():
+            # One-time scrip/symbol-master download so live orders can be resolved
+            # without paying the download cost mid-session.
+            logger.info("%s login OK; downloading NSE F&O scrip master (one-time)...", LIVE_BROKER)
+            if not execution_client.preload_scrip_master():
                 logger.warning(
                     "Scrip master preload failed; symbols will be resolved lazily on first order."
                 )
 
     if master_live:
         logger.warning(
-            "KOTAK_LIVE_TRADING_ENABLED=true: %d of %d strategies will place REAL orders.",
-            live_count, len(workers),
+            "LIVE_TRADING_ENABLED=true (broker=%s): %d of %d strategies will place REAL orders.",
+            LIVE_BROKER, live_count, len(workers),
         )
     else:
         logger.info(
-            "Live trading master switch OFF (KOTAK_LIVE_TRADING_ENABLED=false); all strategies PAPER."
+            "Live trading master switch OFF (LIVE_TRADING_ENABLED=false); all strategies PAPER."
         )
 
     # Optional Telegram notifier: a queue-based consumer thread that posts a
@@ -8439,15 +8470,15 @@ def main() -> None:
         else:
             logger.info("All threads exited cleanly.")
 
-        # Politely log out of Kotak on the way out, but only if we ever logged in
-        # (pure-paper runs never do). Wrapped in try/except so a logout hiccup
+        # Politely log out of the broker on the way out, but only if we ever logged
+        # in (pure-paper runs never do). Wrapped in try/except so a logout hiccup
         # can't stop the rest of shutdown.
-        if kotak_execution_client is not None and getattr(kotak_execution_client, "is_logged_in", False):
+        if execution_client is not None and getattr(execution_client, "is_logged_in", False):
             try:
-                kotak_execution_client.logout()
-                logger.info("Kotak execution session logged out.")
+                execution_client.logout()
+                logger.info("%s execution session logged out.", LIVE_BROKER)
             except Exception as exc:
-                logger.warning("Kotak logout failed: %s", exc)
+                logger.warning("%s logout failed: %s", LIVE_BROKER, exc)
 
     # End-of-day instrument master refresh. Runs unconditionally (even after
     # Ctrl+C or a partial shutdown) because the scheduler that re-launches
