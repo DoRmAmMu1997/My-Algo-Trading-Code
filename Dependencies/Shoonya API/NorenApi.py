@@ -246,9 +246,11 @@ class NorenApi:
         self.__accountid  = userid
         self.__password   = password
         self.__susertoken = resDict['susertoken']
-        f=open("shoonyakey.txt",'w')
-        f.write(resDict['susertoken'])
-        f.close()
+        # NOTE: upstream NorenApi persists the session token to "shoonyakey.txt" in
+        # the CWD here (for token_setter() reuse). This wrapper never calls
+        # token_setter() and keeps the token in memory only, so we DO NOT write it
+        # to disk -- a live broker session token in the repo root is a secret-
+        # hygiene risk and could be accidentally committed.
         #reportmsg(self.__susertoken)
 
         return resDict

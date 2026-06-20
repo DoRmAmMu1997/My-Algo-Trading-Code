@@ -875,15 +875,25 @@ except Exception as _shoonya_import_exc:  # ImportError when SDK folder/deps mis
 # below, so the per-broker differences (exchange code, product key) live here only.
 # INTRADAY (MIS/I) = squared off same day; NORMAL (NRML/M) = carried overnight.
 LIVE_BROKER = _env_str("LIVE_BROKER", "KOTAK").upper().strip() or "KOTAK"
-if LIVE_BROKER == "SHOONYA":
-    execution_client = shoonya_execution_client
-    LIVE_EXCHANGE_SEGMENT = "NFO"
-    LIVE_PRODUCT_TYPE = _env_str("SHOONYA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
-else:  # default / unrecognised -> Kotak
-    LIVE_BROKER = "KOTAK"
+if LIVE_BROKER == "KOTAK":
     execution_client = kotak_execution_client
     LIVE_EXCHANGE_SEGMENT = "nse_fo"
     LIVE_PRODUCT_TYPE = _env_str("KOTAK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+elif LIVE_BROKER == "SHOONYA":
+    execution_client = shoonya_execution_client
+    LIVE_EXCHANGE_SEGMENT = "NFO"
+    LIVE_PRODUCT_TYPE = _env_str("SHOONYA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+else:
+    # Fail CLOSED on an unknown/typo'd broker (e.g. "SHONYA"): leave NO client so
+    # the startup guard forces every strategy to PAPER, and log a loud error. We
+    # must never silently fall back to a different broker for live-money execution.
+    logging.getLogger(LOGGER_NAME).error(
+        "Unknown LIVE_BROKER=%r (expected KOTAK or SHOONYA); live trading DISABLED (paper only).",
+        LIVE_BROKER,
+    )
+    execution_client = None
+    LIVE_EXCHANGE_SEGMENT = ""
+    LIVE_PRODUCT_TYPE = "INTRADAY"
 
 # =============================================================================
 # SIGNAL GENERATOR PORTS (ATM single-leg strategies from the TradingBot repo)

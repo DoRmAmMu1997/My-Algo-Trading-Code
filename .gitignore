@@ -11,6 +11,8 @@ env/
 # Environment / secrets
 .env
 .env.*
+# Shoonya/Noren session token, if ever written to disk (broker session secret)
+shoonyakey.txt
 
 # Generated outputs (downloaded OHLC data, backtest results, logs)
 Backtest Outputs/
