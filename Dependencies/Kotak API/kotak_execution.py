@@ -89,7 +89,8 @@ for _ancestor in Path(__file__).resolve().parents:
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=False)
+    # .env lives one level up in Dependencies/ (this file is in Dependencies/Kotak API/).
+    load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=False)
 except Exception:
     pass
 
@@ -268,8 +269,27 @@ class KotakExecutionClient:
                 print(f"  totp_validate -> {validate_resp}")
                 return False
 
+            # Surface the ORDER-critical fields too, not just edit_token/edit_sid.
+            # place_order authorizes with Auth(edit_token) + Sid(edit_sid) +
+            # sId(serverId); login + scrip lookups (which authorize via
+            # consumer_key) can succeed while serverId is empty, in which case
+            # orders are rejected as "unauthorized".
             self.is_logged_in = True
-            print("Kotak execution client login successful (2FA complete).")
+            server_id = getattr(cfg, "serverId", None)
+            print(
+                "Kotak execution client login successful (2FA complete). "
+                f"serverId={server_id!r}, "
+                f"base_url={'set' if getattr(cfg, 'base_url', None) else 'MISSING'}, "
+                f"data_center={getattr(cfg, 'data_center', None)!r}"
+            )
+            if not server_id:
+                print(
+                    "WARNING: Kotak login returned NO serverId (hsServerId). The order "
+                    "endpoint needs Auth+Sid+serverId, so order placement will be rejected "
+                    "as 'unauthorized' (data + scrip lookups still work via consumer_key). "
+                    "This usually means the account/API key is not enabled for live order "
+                    "placement - check Trade API order permission / F&O segment with Kotak."
+                )
             return True
         except Exception as exc:
             # Reset state on any failure so a stale half-session never leaks.
