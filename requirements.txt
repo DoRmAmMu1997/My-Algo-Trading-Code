@@ -1,0 +1,21 @@
+# Core dependencies — data extractors, backtests, and the front-test runner.
+dhanhq
+pandas
+numpy
+backtesting
+python-dotenv
+gspread
+pytz
+requests
+
+# ---- Live trading (optional) — install only for the broker you use ----
+# Kotak Neo:
+#   neo_api_client
+# Shoonya (Finvasia) — the NorenApi client is vendored in "Dependencies/Shoonya API/",
+# but it needs these at runtime:
+#   pyotp
+#   websocket-client
+# ML Ensemble signal generator:
+#   scikit-learn
+# Optional faster indicators (the signal generators fall back to pandas if absent):
+#   TA-Lib
