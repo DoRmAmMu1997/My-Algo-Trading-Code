@@ -13,6 +13,7 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - Live Telegram alerts: the front-test master file can post every entry/exit (option instrument, lot size, entry/exit price, and P&L) to a Telegram group/channel
 
 # Recent additions
+- **Code-quality pass.** Added a `requirements.txt`; gave every Shoonya broker HTTP call a timeout (a hung call could otherwise stall a worker thread and the shared broker lock); removed hardcoded credentials from the vendored Shoonya client; routed the execution layer's status/errors through `logging` instead of `print()`; and ported the **110-test** master suite into the repo (`test_nifty_multi_strategy_master.py` — see Tests below).
 - **Live broker execution is now broker-selectable (Kotak Neo or Shoonya).** The front-test master can place REAL orders, not just paper. `LIVE_BROKER` (in `.env`) picks the broker — `KOTAK` or `SHOONYA` — and the runner routes every real order through one generic `execution_client` to whichever is selected. It is gated by two switches: the global `LIVE_TRADING_ENABLED` kill-switch AND each strategy's own `<PREFIX>_LIVE_TRADING` flag — a strategy goes live only when both are true, and an unrecognised `LIVE_BROKER` fails closed (live disabled, paper only). The per-broker code lives under `Dependencies/Kotak API/` and `Dependencies/Shoonya API/`, each with its execution client plus a read-only diagnostic that can optionally place a confirmation-gated round-trip test order (`--place-order`). Both brokers share one surface (login, symbol resolution, market order with fill confirmation), and any order failure falls back to paper for that trade. Everything defaults to paper. (Note: Shoonya's legacy QuickAuth endpoint is being decommissioned by Finvasia, so Kotak Neo is the working live path today.)
 - **End-of-day P&L is now written to a Google Sheet.** When all workers exit on a clean end of day, the master parses the run's log for each strategy's realised P&L and writes it into a tracker sheet — one row per strategy, one column per calendar day — overwriting today's cell and backfilling any blank earlier-this-month cells from the (append-mode) log. Auth is OAuth user-token via `gspread`; configure `GSHEET_ID` + an OAuth client in `.env` (see Setup). It's a safe no-op when unconfigured, so it never disturbs shutdown.
 - **13 TradingBot signal-generator ports added — the front test now runs 24 workers.** Thirteen more ATM single-leg strategies were ported into `Signal Generators/` (SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic, Supertrend, Volatility Breakout), all sharing `misc_strategy_common.py` (TA-Lib-first indicator helpers). They're wired into the master via one shared factory as `AtmSingleLegStrategyWorker`s — the same family as Renko/Goldmine/CPR — and each is fully tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`, `KELTNER_SQUEEZE_*`). This brings the runner to **24 workers** (21 ATM single-leg + 2 Hedged Puts + 1 Delta-0.2). ML Ensemble needs `scikit-learn`.
@@ -83,3 +84,13 @@ Each subfolder has its own `Readme.md` with the details.
 3. Once a strategy looks good, run `Nifty Multi Strategy Front Test - Master File.py` for multi-strategy execution — paper by default, or live once you've configured a broker (Setup step 6).
 
 The `Backtest Outputs/` folder is `.gitignore`-d, so generated CSVs/logs stay local.
+
+# Tests
+The front-test master has a unittest suite — env toggles, broker paper/live routing and the fail-closed `LIVE_BROKER` switch, order fill-confirmation, and symbol resolution. Run it from the repo root:
+```
+python -m unittest test_nifty_multi_strategy_master
+```
+110 tests; the broker/SDK-specific cases skip automatically when those optional deps aren't installed. (The CPR and Subhamoy signal generators have their own tests under `Signal Generators/`.)
+
+# License
+Released under the MIT License — see [LICENSE](LICENSE).
