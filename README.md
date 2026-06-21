@@ -41,9 +41,9 @@ Each subfolder has its own `Readme.md` with the details.
 1. Python 3.10+ (I'm running 3.13).
 2. Install dependencies:
    ```
-   pip install dhanhq pandas numpy backtesting python-dotenv gspread
+   pip install -r requirements.txt
    ```
-   For live trading you'll also need your broker's client: Kotak Neo (`pip install neo_api_client`) and/or Shoonya (the client is vendored in `Dependencies/Shoonya API/`; it needs `pip install pyotp websocket-client`).
+   That covers the core (data fetch, backtests, runner). For live trading also install your broker's client — see the commented "Live trading (optional)" section in `requirements.txt`: Kotak Neo (`neo_api_client`) and/or Shoonya (`pyotp` + `websocket-client`; the NorenApi client itself is vendored in `Dependencies/Shoonya API/`).
 3. Configure credentials. Copy `Dependencies/env.example` to `Dependencies/.env` and fill it in (`.env` is git-ignored). Set your Dhan credentials there, then run the one-time token setup:
    ```
    python "Dependencies/dhan_token_setup.py"

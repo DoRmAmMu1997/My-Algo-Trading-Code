@@ -58,6 +58,7 @@ existing proven wrapper.
 """
 
 import io
+import logging
 import os
 import sys
 import threading
@@ -95,6 +96,10 @@ except Exception:
     pass
 
 from neo_api_client import NeoAPI  # noqa: E402  (resolved from "Kotak Neo API")
+
+# Route status/errors through the logging system so they land in the master
+# runner's log file/handlers (with timestamps + levels), not just stdout.
+log = logging.getLogger(__name__)
 
 
 # Kotak's API expects short codes, not friendly words. These three dicts
@@ -233,7 +238,7 @@ class KotakExecutionClient:
             if not totp:
                 self.is_logged_in = False
                 self.client = None
-                print("Kotak login aborted: no TOTP entered.")
+                log.error("Kotak login aborted: no TOTP entered.")
                 return False
 
             # Step 1: initialise API client (v2 constructor; same shape as v1).
@@ -263,10 +268,10 @@ class KotakExecutionClient:
             if not two_fa_complete:
                 self.is_logged_in = False
                 self.client = None
-                print("Kotak login did NOT complete 2FA - orders & scrip lookups "
+                log.error("Kotak login did NOT complete 2FA - orders & scrip lookups "
                       "will be rejected. Raw responses:")
-                print(f"  totp_login    -> {login_resp}")
-                print(f"  totp_validate -> {validate_resp}")
+                log.error(f"  totp_login    -> {login_resp}")
+                log.error(f"  totp_validate -> {validate_resp}")
                 return False
 
             # Surface the ORDER-critical fields too, not just edit_token/edit_sid.
@@ -276,15 +281,15 @@ class KotakExecutionClient:
             # orders are rejected as "unauthorized".
             self.is_logged_in = True
             server_id = getattr(cfg, "serverId", None)
-            print(
+            log.info(
                 "Kotak execution client login successful (2FA complete). "
                 f"serverId={server_id!r}, "
                 f"base_url={'set' if getattr(cfg, 'base_url', None) else 'MISSING'}, "
                 f"data_center={getattr(cfg, 'data_center', None)!r}"
             )
             if not server_id:
-                print(
-                    "WARNING: Kotak login returned NO serverId (hsServerId). The order "
+                log.warning(
+                    "Kotak login returned NO serverId (hsServerId). The order "
                     "endpoint needs Auth+Sid+serverId, so order placement will be rejected "
                     "as 'unauthorized' (data + scrip lookups still work via consumer_key). "
                     "This usually means the account/API key is not enabled for live order "
@@ -295,7 +300,7 @@ class KotakExecutionClient:
             # Reset state on any failure so a stale half-session never leaks.
             self.is_logged_in = False
             self.client = None
-            print(f"Kotak execution client login failed: {exc}")
+            log.error(f"Kotak execution client login failed: {exc}")
             return False
 
     def ensure_logged_in(self) -> bool:
@@ -339,11 +344,11 @@ class KotakExecutionClient:
         try:
             url = self.client.scrip_master(exchange_segment="nse_fo")
         except Exception as exc:
-            print(f"Kotak scrip_master() call failed: {exc}")
+            log.warning(f"Kotak scrip_master() call failed: {exc}")
             return False
         if not isinstance(url, str) or not url.lower().startswith("http"):
             # On failure the SDK returns an error dict instead of a URL string.
-            print(f"Kotak scrip_master() returned no CSV url: {url!r}")
+            log.warning(f"Kotak scrip_master() returned no CSV url: {url!r}")
             return False
         # Step 2: download the CSV and load it into a pandas table (DataFrame).
         try:
@@ -364,10 +369,10 @@ class KotakExecutionClient:
             df["_opt_u"] = df["pOptionType"].astype(str).str.strip().str.upper()
             df["_strike_f"] = pd.to_numeric(df["dStrikePrice;"], errors="coerce")
             self._scrip_df = df
-            print(f"Kotak NSE F&O scrip master loaded ({len(df)} rows).")
+            log.info(f"Kotak NSE F&O scrip master loaded ({len(df)} rows).")
             return True
         except Exception as exc:
-            print(f"Kotak scrip master download/parse failed: {exc}")
+            log.warning(f"Kotak scrip master download/parse failed: {exc}")
             return False
 
     def resolve_option_symbol(
@@ -394,7 +399,7 @@ class KotakExecutionClient:
         """
         # Guard against obviously bad inputs before doing any work.
         if expiry is None or strike is None or float(strike) <= 0:
-            print(f"Kotak resolve skipped (bad inputs): expiry={expiry!r} strike={strike!r}")
+            log.warning(f"Kotak resolve skipped (bad inputs): expiry={expiry!r} strike={strike!r}")
             return ""
         underlying = str(underlying).strip().upper()
         option_type = str(option_type).strip().upper()
@@ -402,7 +407,7 @@ class KotakExecutionClient:
             # Convert the date into the same "DDMMMYYYY" text the scrip master uses.
             expiry_str = expiry.strftime("%d%b%Y").upper()  # e.g. "26JUN2025"
         except Exception:
-            print(f"Kotak resolve skipped (expiry not a date): expiry={expiry!r} type={type(expiry).__name__}")
+            log.warning(f"Kotak resolve skipped (expiry not a date): expiry={expiry!r} type={type(expiry).__name__}")
             return ""
         int_strike = int(round(float(strike)))
         cache_key = (underlying, expiry_str, option_type, int_strike)
@@ -463,17 +468,17 @@ class KotakExecutionClient:
         df = self._scrip_df
         base = df[(df["_sym_u"] == underlying) & (df["_opt_u"] == option_type)]
         exp_match = base[base["_expiry_str"] == expiry_str]
-        print(f"Kotak symbol NOT resolved: {underlying}/{option_type}/{expiry_str}/strike {int_strike} "
+        log.warning(f"Kotak symbol NOT resolved: {underlying}/{option_type}/{expiry_str}/strike {int_strike} "
               f"-> {len(base)} {underlying} {option_type} row(s), {len(exp_match)} on that expiry.")
         if len(exp_match):
             strikes = sorted(exp_match["_strike_f"].dropna().unique().tolist())
-            print(f"  strikes on expiry (dStrikePrice;): {strikes[:3]} ... {strikes[-3:]}; "
+            log.info(f"  strikes on expiry (dStrikePrice;): {strikes[:3]} ... {strikes[-3:]}; "
                   f"wanted {float(int_strike) * 100.0}")
         else:
             # Sort by real date (the "DDMMMYYYY" strings sort by day-of-month as text).
             exp = pd.to_datetime(base["_expiry_str"].dropna().unique(), format="%d%b%Y", errors="coerce")
             expiries = [d.strftime("%d%b%Y").upper() for d in sorted(exp.dropna())]
-            print(f"  available expiries: {expiries[:12]}")
+            log.info(f"  available expiries: {expiries[:12]}")
 
     # ------------------------------------------------------------------
     # Order placement

@@ -13,6 +13,11 @@ from datetime import datetime as dt
 
 logger = logging.getLogger(__name__)
 
+# (connect, read) timeout for every broker HTTP call. Upstream NorenApi issues
+# requests with NO timeout, so a hung connection would block the calling thread
+# (and, in the multi-strategy runner, the shared broker lock) indefinitely.
+_HTTP_TIMEOUT = (10, 30)
+
 class ProductType:
     Delivery = 'C'
     Intraday = 'I'
@@ -235,7 +240,7 @@ class NorenApi:
         payload = 'jData=' + json.dumps(values)
         reportmsg("Req:" + payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg("Reply:" + res.text)
 
         resDict = json.loads(res.text)
@@ -255,12 +260,13 @@ class NorenApi:
 
         return resDict
 
-    def token_setter(self):
-        token = open("shoonyakey.txt",'r').read().rstrip()
+    def token_setter(self, userid=""):
+        # Restore a saved session token (susertoken) from shoonyakey.txt. Pass your
+        # own userid; we no longer embed any hardcoded account credentials here.
+        token = open("shoonyakey.txt", 'r').read().rstrip()
         self.__susertoken = token
-        self.__username = "FA15563"
-        self.__password = "Temp123####"
-        self.__accountid = "FA15563"
+        self.__username = userid
+        self.__accountid = userid
 
     def set_session(self, userid, password, usertoken):
         
@@ -289,7 +295,7 @@ class NorenApi:
         payload = 'jData=' + json.dumps(values)
         reportmsg("Req:" + payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg("Reply:" + res.text)
 
         resDict = json.loads(res.text)
@@ -313,7 +319,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -388,7 +394,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -412,7 +418,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -441,7 +447,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -469,7 +475,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -524,7 +530,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -573,7 +579,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -598,7 +604,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         print(res.text)
 
         resDict = json.loads(res.text)
@@ -624,7 +630,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -659,7 +665,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -686,7 +692,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -712,7 +718,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -739,7 +745,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -770,7 +776,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -800,7 +806,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -826,7 +832,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -852,7 +858,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -894,7 +900,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -932,7 +938,7 @@ class NorenApi:
         reportmsg(payload)
 
         headers = {"Content-Type": "application/json; charset=utf-8"}
-        res = requests.post(url, data=payload, headers=headers)
+        res = requests.post(url, data=payload, headers=headers, timeout=_HTTP_TIMEOUT)
         reportmsg(res)
 
         if res.status_code != 200:
@@ -968,7 +974,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
@@ -1002,7 +1008,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)        
@@ -1024,7 +1030,7 @@ class NorenApi:
         
         reportmsg(payload)
 
-        res = requests.post(url, data=payload)
+        res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
         resDict = json.loads(res.text)

@@ -56,6 +56,7 @@ How the master file uses this module:
 
 import os
 import sys
+import logging
 import threading
 import time
 from pathlib import Path
@@ -89,6 +90,10 @@ except Exception:
     pass
 
 from NorenApi import NorenApi  # noqa: E402  (resolved from "Shoonya API")
+
+# Route status/errors through the logging system so they land in the master
+# runner's log file/handlers (with timestamps + levels), not just stdout.
+log = logging.getLogger(__name__)
 
 
 # Shoonya's API expects short codes, not friendly words. These dicts translate
@@ -159,12 +164,12 @@ class ShoonyaExecutionClient:
         try:
             import pyotp
         except Exception as exc:
-            print(f"Shoonya TOTP secret is set but pyotp is not installed: {exc}")
+            log.warning(f"Shoonya TOTP secret is set but pyotp is not installed: {exc}")
             return ""
         try:
             return pyotp.TOTP(secret).now()
         except Exception as exc:
-            print(f"Shoonya TOTP generation failed: {exc}")
+            log.error(f"Shoonya TOTP generation failed: {exc}")
             return ""
 
     @staticmethod
@@ -218,7 +223,7 @@ class ShoonyaExecutionClient:
             if not two_fa:
                 self.is_logged_in = False
                 self.client = None
-                print("Shoonya login aborted: no TOTP available "
+                log.error("Shoonya login aborted: no TOTP available "
                       "(set SHOONYA_TOTP_SECRET, or enter a code when prompted).")
                 return False
 
@@ -239,11 +244,11 @@ class ShoonyaExecutionClient:
             if not isinstance(resp, dict) or str(resp.get("stat", "")).strip().lower() != "ok":
                 self.is_logged_in = False
                 self.client = None
-                print(f"Shoonya login failed (no valid session). Raw response: {resp}")
+                log.error(f"Shoonya login failed (no valid session). Raw response: {resp}")
                 return False
 
             self.is_logged_in = True
-            print(
+            log.info(
                 "Shoonya execution client login successful "
                 f"(uid={userid}, name={resp.get('uname', '')!r})."
             )
@@ -261,7 +266,7 @@ class ShoonyaExecutionClient:
                 hint = (" -- Shoonya returned a non-JSON response (e.g. an HTTP 502 / "
                         "maintenance page), which usually means the broker API is "
                         "temporarily down. This is server-side; retry in a few minutes.")
-            print(f"Shoonya execution client login failed: {exc}{hint}")
+            log.error(f"Shoonya execution client login failed: {exc}{hint}")
             return False
 
     def ensure_logged_in(self) -> bool:
@@ -307,17 +312,17 @@ class ShoonyaExecutionClient:
             df = pd.read_csv(_NFO_SYMBOL_MASTER_URL)
             df = df.rename(columns=lambda c: str(c).strip())  # trim stray spaces
         except Exception as exc:
-            print(f"Shoonya NFO symbol master download/parse failed: {exc}")
+            log.warning(f"Shoonya NFO symbol master download/parse failed: {exc}")
             return False
         if "TradingSymbol" not in df.columns:
-            print(f"Shoonya NFO symbol master missing 'TradingSymbol' column: {list(df.columns)}")
+            log.warning(f"Shoonya NFO symbol master missing 'TradingSymbol' column: {list(df.columns)}")
             return False
         try:
             self._symbol_set = set(df["TradingSymbol"].astype(str).str.strip().str.upper())
-            print(f"Shoonya NSE F&O symbol master loaded ({len(df)} rows).")
+            log.info(f"Shoonya NSE F&O symbol master loaded ({len(df)} rows).")
             return True
         except Exception as exc:
-            print(f"Shoonya NFO symbol master parse failed: {exc}")
+            log.warning(f"Shoonya NFO symbol master parse failed: {exc}")
             return False
 
     def resolve_option_symbol(
@@ -343,18 +348,18 @@ class ShoonyaExecutionClient:
         """
         # Guard against obviously bad inputs before doing any work.
         if expiry is None or strike is None or float(strike) <= 0:
-            print(f"Shoonya resolve skipped (bad inputs): expiry={expiry!r} strike={strike!r}")
+            log.warning(f"Shoonya resolve skipped (bad inputs): expiry={expiry!r} strike={strike!r}")
             return ""
         underlying = str(underlying).strip().upper()
         option_type = str(option_type).strip().upper()
         if option_type not in ("CE", "PE"):
-            print(f"Shoonya resolve skipped (bad option_type): {option_type!r}")
+            log.warning(f"Shoonya resolve skipped (bad option_type): {option_type!r}")
             return ""
         try:
             # Shoonya uses a 2-digit year, zero-padded day: "26JUN25".
             expiry_str = expiry.strftime("%d%b%y").upper()
         except Exception:
-            print(f"Shoonya resolve skipped (expiry not a date): expiry={expiry!r} "
+            log.warning(f"Shoonya resolve skipped (expiry not a date): expiry={expiry!r} "
                   f"type={type(expiry).__name__}")
             return ""
         int_strike = int(round(float(strike)))
@@ -387,15 +392,15 @@ class ShoonyaExecutionClient:
         Print a helpful breakdown when a constructed symbol is not in the master,
         so we can tell WHICH part is wrong (expiry vs strike). Debug aid only.
         """
-        print(f"Shoonya symbol NOT in NFO master: {tsym} "
+        log.warning(f"Shoonya symbol NOT in NFO master: {tsym} "
               f"({underlying}/{option_type}/{expiry_str}/strike {int_strike}).")
         if self._symbol_set:
             prefix = f"{underlying}{expiry_str}{option_type[0]}"
             sample = sorted(s for s in self._symbol_set if s.startswith(prefix))
             if sample:
-                print(f"  sample {prefix}* symbols: {sample[:3]} ... {sample[-3:]}; wanted {tsym}")
+                log.info(f"  sample {prefix}* symbols: {sample[:3]} ... {sample[-3:]}; wanted {tsym}")
             else:
-                print(f"  no {prefix}* symbols found - check the expiry ({expiry_str}).")
+                log.info(f"  no {prefix}* symbols found - check the expiry ({expiry_str}).")
 
     # ------------------------------------------------------------------
     # Order placement
