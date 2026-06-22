@@ -129,8 +129,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "live/paper execution, and setup. Run `python algo.py <command> --help` "
                     "for a command's options.",
     )
-    # `required=True` means you must pick a command (otherwise we print help).
-    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
+    # Intentionally NOT `required=True`: a bare `python algo.py` (no command) should
+    # print the full help (handled in main()) rather than raise a terse argparse error.
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     fetch = sub.add_parser(
         "fetch-data",
@@ -185,6 +186,13 @@ def main(argv=None) -> int:
     """
     parser = build_parser()
     args, forwarded = parser.parse_known_args(argv)
+
+    # A bare `python algo.py` (no command) prints the full help and exits cleanly —
+    # friendlier than argparse's terse "a command is required" error. (Explicit
+    # `--help` on the program or any sub-command is handled by argparse already.)
+    if not args.command:
+        parser.print_help()
+        return 0
 
     if args.command == "fetch-data":
         return _run(INDEX_SCRIPTS[args.index], forwarded)
