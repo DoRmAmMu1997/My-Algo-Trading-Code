@@ -83,10 +83,25 @@ Each subfolder has its own `Readme.md` with the details.
    python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
    ```
 
+# Command-line interface
+`algo.py` is a single entry point for every script in this repo via short commands. It just launches the underlying scripts (so each one still works on its own), and any flag beyond the selector passes straight through. From the repo root:
+
+| Command | What it does | Example |
+|---|---|---|
+| `fetch-data --index {nifty,banknifty,finnifty}` | Download 1-min OHLC for an index | `python algo.py fetch-data --index nifty --interval 5 --lookback 5y` |
+| `backtest --strategy {renko,ema,heikin,cpr,profit-shooter,goldmine,money-machine}` | Backtest one strategy against a CSV | `python algo.py backtest --strategy renko --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"` |
+| `run` | Start the front-test master (paper by default; live per `.env`) | `python algo.py run` |
+| `setup-token` | One-time DhanHQ token setup (writes `.env`) | `python algo.py setup-token` |
+| `diagnose --broker {kotak,shoonya}` | Read-only broker/symbol check (add `--place-order` for a test order) | `python algo.py diagnose --broker kotak CE 23950` |
+
+Run `python algo.py --help`, or `python algo.py <command> --help`, for the details.
+
 # Typical workflow
 1. Pull historical data — e.g. `python "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py"`. The CSV lands in `Backtest Outputs/`.
 2. Run a backtest against that CSV — e.g. `python "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py"`.
 3. Once a strategy looks good, run `Nifty Multi Strategy Front Test - Master File.py` for multi-strategy execution — paper by default, or live once you've configured a broker (Setup step 6).
+
+(Or do all three with the unified CLI above: `python algo.py fetch-data --index nifty` → `python algo.py backtest --strategy renko --data ...` → `python algo.py run`.)
 
 The `Backtest Outputs/` folder is `.gitignore`-d, so generated CSVs/logs stay local.
 
