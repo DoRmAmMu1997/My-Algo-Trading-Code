@@ -1,0 +1,70 @@
+# CLAUDE.md — My-Algo-Trading-Code
+
+> **Before doing any work in this repo**, invoke the **`anthropic-skills:using-superpowers`** skill (it
+> surfaces any other relevant skills) and the **`anthropic-skills:karpathy-guidelines`** skill, then
+> follow them: simplicity first, surgical changes, surface tradeoffs, and verify before claiming done.
+> This is live-money trading code — bias toward caution.
+
+## What this project is
+A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
+the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~24
+strategies together — on paper by default, and live through a real broker when explicitly enabled.
+Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
+
+## Architecture (runtime)
+One process, cooperating threads:
+- `CentralMarketDataFetcher` (one thread) polls DhanHQ and writes into a **lock-guarded
+  `SharedMarketDataStore`** (1-min OHLC + LTPs).
+- **~24 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
+  family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / Opening-Strike +
+  13 ported TradingBot strategies), two **hedged-puts** workers, and one **Delta-0.2** hedged-spread worker.
+- Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
+  (best-effort alerts; never blocks trading).
+- Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
+  **`execution_client`** (see Broker layer). On a clean end-of-day, per-strategy P&L is written to a
+  Google Sheet. All behaviour is driven by a single `.env` — nothing is hard-coded per run.
+
+## Repository layout
+```
+Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
+algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose
+test_nifty_multi_strategy_master.py                # unittest suite for the master (110 tests)
+requirements.txt                                   # core deps (+ commented optional broker/ML deps)
+Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
+My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
+Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/)
+Dependencies/
+  env.example                                      # template; copy to Dependencies/.env (gitignored)
+  dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
+  Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py
+  Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
+Backtest Outputs/                                  # generated CSVs/logs (gitignored)
+```
+
+## Conventions
+- **Config:** one `.env` (gitignored) is the single source of truth, copied from `Dependencies/env.example`.
+  Read values through the `_env_str` / `_env_bool` / `_env_int` / `_env_float` helpers (master ~L253-292),
+  not ad-hoc `os.getenv`. Per-strategy knobs are namespaced `<PREFIX>_*` (e.g. `RENKO_*`, `CPR_*`); the
+  name→prefix map is `STRATEGY_ENV_PREFIX`. **Never commit secrets** — `env.example` holds blank placeholders.
+- **Live-trading safety (critical):** paper by default. A strategy trades live ONLY when the global
+  `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
+  (`KOTAK` | `SHOONYA`) selects the broker; an unknown value **fails closed** (live disabled, paper only).
+  Any order failure falls back to paper for that trade. Every broker HTTP call must have a timeout.
+- **Broker layer:** the Kotak and Shoonya clients expose the SAME surface — `ensure_logged_in`,
+  `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`, `extract_order_id`, `logout`,
+  `is_logged_in` — so the runner only ever touches the generic `execution_client`. The Shoonya `NorenApi`
+  client is vendored under `Dependencies/Shoonya API/`.
+- **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
+  comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
+  `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module
+  `logging.getLogger(__name__)` logger, **not `print()`**. Strategy files have spaces in their names and
+  are imported via `load_module()` (master ~L742), not regular imports.
+- **CLI:** prefer `python algo.py <command>` (`fetch-data` / `backtest` / `run` / `setup-token` /
+  `diagnose`); each underlying script still runs standalone, and any flag beyond the selector passes
+  straight through. A bare `python algo.py` prints help.
+- **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
+  mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
+  under `Signal Generators/`.
+- **Dependencies:** `pip install -r requirements.txt`; optional broker/ML extras are documented (commented) inside it.
+- **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with the
+  `Co-Authored-By: Claude <noreply@anthropic.com>` trailer. `.env`, `Backtest Outputs/`, and `*.log` stay gitignored.
