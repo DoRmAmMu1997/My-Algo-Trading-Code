@@ -17,7 +17,8 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/cpr_strategy_logic.py` | Stateful CPR engine with CPR levels, Algo 1, Algo 2, and RSI divergence | CPR backtest + future front-test integration |
 | `CPR Strategy/Nifty CPR Algo 1 Signal Generator.py` | Algo 1 trend-only CPR wrapper | CPR trend-only callers |
 | `CPR Strategy/Nifty CPR Algo 2 Signal Generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
-| `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper | CPR backtest + future front-test integration |
+| `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
+| `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | standalone — not yet wired into the front-test (needs ITM CE/PE feeds) |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
 | `Subhamoy Strategies/Nifty Goldmine Signal Generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
