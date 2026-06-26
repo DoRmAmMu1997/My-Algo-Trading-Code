@@ -7,7 +7,7 @@
 
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
-the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~24
+the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~26
 strategies together — on paper by default, and live through a real broker when explicitly enabled.
 Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
 
@@ -15,9 +15,11 @@ Running live since May 2026; daily per-strategy results are tracked in a Google 
 One process, cooperating threads:
 - `CentralMarketDataFetcher` (one thread) polls DhanHQ and writes into a **lock-guarded
   `SharedMarketDataStore`** (1-min OHLC + LTPs).
-- **~24 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
-  family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / Opening-Strike +
-  13 ported TradingBot strategies), two **hedged-puts** workers, and one **Delta-0.2** hedged-spread worker.
+- **~26 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
+  family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / CPR Algo 3
+  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies), two
+  **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
+  and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading).
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
@@ -28,7 +30,7 @@ One process, cooperating threads:
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose
-test_nifty_multi_strategy_master.py                # unittest suite for the master (110 tests)
+test_nifty_multi_strategy_master.py                # unittest suite for the master (127 tests)
 requirements.txt                                   # core deps (+ commented optional broker/ML deps)
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
