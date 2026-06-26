@@ -696,6 +696,60 @@ DELTA20_HEDGE_STRIKES_OTM = _env_int("DELTA20_HEDGE_STRIKES_OTM", 4)
 DELTA20_CAPTURE_RETRY_SECONDS = _env_int("DELTA20_CAPTURE_RETRY_SECONDS", 5)
 
 
+# =============================================================================
+# LONG STRANGLE (AlgoTest port) - time-based, dual-leg, BUY-only
+# =============================================================================
+# Strategy in one paragraph (full notes live in Dependencies/env.example):
+#   At STRANGLE_ENTRY_*:* (default 09:30) we BUY one lot of the OTM1 weekly CE
+#   AND one lot of the OTM1 weekly PE - a "long strangle" that profits from a
+#   big intraday move in EITHER direction and bleeds slowly on a quiet day.
+#   The two legs are managed INDEPENDENTLY (AlgoTest "Square Off: Partial"):
+#   each has its own 5% premium stop-loss with a "1:1" trailing stop (every +1%
+#   the premium rises, the stop trails up by 1% of the entry premium). Anything
+#   still open is force-closed at STRANGLE_SQUARE_OFF_*:* (default 15:15).
+#   Entry is purely time-based (no indicator / signal generator), so the worker
+#   holds the entire rule set itself - mirroring Delta20HedgedSpreadWorker.
+#   Phase 2 (not yet implemented) will add momentum re-entry after a stop-out.
+STRANGLE_LOTS = _env_int("STRANGLE_LOTS", 1)
+# Strategy-wide safety backstop in INR across BOTH legs. The AlgoTest config
+# had the overall stop-loss switched OFF, but the live runner always keeps a
+# hard cap so a pathological day cannot run unbounded. Set 0 to disable (the
+# per-leg stop and the time cutoff still apply).
+STRANGLE_MAX_LOSS = _env_float("STRANGLE_MAX_LOSS", 10000.0)
+STRANGLE_POLL_SECONDS = _env_int("STRANGLE_POLL_SECONDS", 2)
+
+# Entry time (both legs open here, once) and the daily force-close cutoff.
+STRANGLE_ENTRY_HOUR = _env_int("STRANGLE_ENTRY_HOUR", 9)
+STRANGLE_ENTRY_MINUTE = _env_int("STRANGLE_ENTRY_MINUTE", 30)
+STRANGLE_SQUARE_OFF_HOUR = _env_int("STRANGLE_SQUARE_OFF_HOUR", 15)
+STRANGLE_SQUARE_OFF_MINUTE = _env_int("STRANGLE_SQUARE_OFF_MINUTE", 15)
+
+# How many strikes out-of-the-money each leg is. 1 = OTM1 (CE = ATM+1 step,
+# PE = ATM-1 step), where one step = ATM_STRIKE_STEP (50 for NIFTY).
+STRANGLE_OTM_STEPS = _env_int("STRANGLE_OTM_STEPS", 1)
+
+# Per-leg stop-loss as a fraction of the entry premium (0.05 = 5%). A leg
+# exits when its premium drops to <= entry * (1 - STRANGLE_SL_PCT)...
+STRANGLE_SL_PCT = _env_float("STRANGLE_SL_PCT", 0.05)
+# ...but the stop TRAILS up as the premium rises. "1:1" = for every
+# STRANGLE_TRAIL_TRIGGER_PCT (%) the premium gains over entry, lift the stop by
+# STRANGLE_TRAIL_STEP_PCT (%) of the entry premium. With both at 1.0 the stop
+# sits a constant 5% under the high-water premium once the trade is in profit.
+STRANGLE_TRAIL_TRIGGER_PCT = _env_float("STRANGLE_TRAIL_TRIGGER_PCT", 1.0)
+STRANGLE_TRAIL_STEP_PCT = _env_float("STRANGLE_TRAIL_STEP_PCT", 1.0)
+
+# Momentum re-entry (AlgoTest "RE MOMENTUM"). After a leg is stopped out we do
+# NOT re-buy immediately; we keep watching the SAME strike and re-enter only
+# once its premium rebounds STRANGLE_REENTRY_MOMENTUM_PCT (default 5%) above the
+# stop-out price - confirmation the move resumed in the buyer's favour. Repeats
+# up to STRANGLE_MAX_REENTRIES (default 10) times per leg per day. Enabled by
+# default because the source AlgoTest strategy had it on; set 0/false to make a
+# stopped-out leg stay flat for the rest of the day.
+STRANGLE_REENTRY_ENABLED = _env_bool("STRANGLE_REENTRY_ENABLED", True)
+STRANGLE_REENTRY_MOMENTUM_PCT = _env_float("STRANGLE_REENTRY_MOMENTUM_PCT", 0.05)
+STRANGLE_MAX_REENTRIES = _env_int("STRANGLE_MAX_REENTRIES", 10)
+
+
 logger = logging.getLogger(LOGGER_NAME)
 
 
@@ -2206,6 +2260,86 @@ class OptionsContractResolver:
             "lot_size": _to_int_safe(row["lot_size"], 0),
             "spot_reference": float(spot),
             "atm_strike_rounded": float(atm_strike),
+        }
+
+    def get_otm_option(
+        self,
+        spot_price: float,
+        right: str,
+        otm_steps: int = 1,
+        expiry: Optional[date] = None,
+    ) -> dict:
+        """
+        Resolve an OUT-OF-THE-MONEY option row, `otm_steps` strikes from ATM.
+
+        Used by the Long Strangle worker, which buys the OTM1 CE and OTM1 PE.
+
+        Right + OTM direction:
+        - "CE" -> a call ABOVE the money: target = ATM + otm_steps * step
+        - "PE" -> a put  BELOW the money: target = ATM - otm_steps * step
+          where `step` is ATM_STRIKE_STEP (50 for NIFTY) and ATM is the spot
+          rounded to the nearest step (same rounding as `get_atm_option`).
+        `otm_steps=0` degenerates to the ATM strike for that right.
+
+        Expiry:
+        - Defaults to the CURRENT-WEEK expiry (the strangle trades weeklies),
+          matching the hedged-puts family. Pass `expiry` to override.
+
+        Strike pick:
+        - If the exact target strike is listed we take it; otherwise the
+          closest available strike (smallest absolute difference, lower strike
+          breaking ties) - identical to `get_atm_option`.
+        """
+        right_upper = str(right).strip().upper()
+        if right_upper not in ("CE", "PE"):
+            raise ValueError(f"Unsupported option right for OTM resolution: {right!r}")
+
+        spot = _safe_float(spot_price, 0.0)
+        if spot <= 0:
+            raise ValueError(f"Invalid spot price for OTM resolution: {spot_price!r}")
+
+        steps = int(otm_steps)
+        if steps < 0:
+            raise ValueError(f"otm_steps must be >= 0, got {otm_steps!r}")
+
+        options = self._load_option_chain()
+        target_expiry = expiry if expiry is not None else self.get_current_week_expiry()
+
+        atm_strike = round(spot / ATM_STRIKE_STEP) * ATM_STRIKE_STEP
+        if right_upper == "CE":
+            target_strike = atm_strike + steps * ATM_STRIKE_STEP
+        else:
+            target_strike = atm_strike - steps * ATM_STRIKE_STEP
+
+        subset = options[
+            (options["expiry"] == target_expiry) & (options["option_type"] == right_upper)
+        ].copy()
+        if subset.empty:
+            raise ValueError(
+                f"No {right_upper} rows found for {self.underlying} expiry {target_expiry}."
+            )
+
+        subset["strike_diff"] = (subset["strike"] - target_strike).abs()
+        subset = subset.sort_values(["strike_diff", "strike"])
+        row = subset.iloc[0]
+
+        today = datetime.now().date()
+        expiry_date = row["expiry"]
+        days_to_expiry = (expiry_date - today).days if expiry_date is not None else None
+
+        return {
+            "security_id": int(row["security_id"]),
+            "exchange_segment": OPTION_EXCHANGE_SEGMENT,
+            "trading_symbol": str(row["trading_symbol"]).strip(),
+            "custom_symbol": str(row["custom_symbol"]).strip(),
+            "strike": float(row["strike"]),
+            "option_type": right_upper,
+            "expiry_date": expiry_date,
+            "days_to_expiry": days_to_expiry,
+            "lot_size": _to_int_safe(row["lot_size"], 0),
+            "spot_reference": float(spot),
+            "atm_strike_rounded": float(atm_strike),
+            "target_strike": float(target_strike),
         }
 
     # ------------------------------------------------------------------
@@ -7406,6 +7540,733 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
 
 
 # =============================================================================
+# LONG STRANGLE WORKER (AlgoTest port; time-based, dual-leg, BUY-only)
+# =============================================================================
+class LongStrangleWorker(BasePaperStrategyWorker):
+    """
+    Intraday long OTM strangle on NIFTY weekly options (ported from AlgoTest).
+
+    BEGINNER-FRIENDLY OVERVIEW
+    --------------------------
+    A "long strangle" is two BOUGHT options held at once:
+        * BUY one OTM call (CE) - profits if NIFTY rallies hard.
+        * BUY one OTM put  (PE) - profits if NIFTY falls hard.
+    Net, it is a bet that the index makes a BIG intraday move in EITHER
+    direction; it bleeds slowly (premium decay) on a quiet, range-bound day.
+
+    Like Delta20HedgedSpreadWorker, the two legs are TWO INDEPENDENT trades
+    sharing one worker thread: each has its own stop-loss and its own
+    active/flat state, and one leg's exit does not touch the other
+    (AlgoTest's "Square Off: Partial").
+
+    SPEC RECAP (the AlgoTest config, in code terms)
+    -----------------------------------------------
+    - ENTRY (once per day, time-based): at STRANGLE_ENTRY_*:* (default 09:30)
+      BUY 1 lot of the OTM1 weekly CE and 1 lot of the OTM1 weekly PE. "OTM1" =
+      one strike out of the money (CE = ATM+1 step, PE = ATM-1 step; one step =
+      ATM_STRIKE_STEP). There is NO indicator and NO signal generator - the only
+      entry trigger is the wall-clock.
+    - PER-LEG STOP-LOSS: a leg exits when its premium falls to
+      <= entry * (1 - STRANGLE_SL_PCT) (default 5% below entry)...
+    - PER-LEG TRAILING STOP ("1:1"): ...but the stop trails UP as the premium
+      rises. For every STRANGLE_TRAIL_TRIGGER_PCT (%) the premium gains over
+      entry, the stop is lifted by STRANGLE_TRAIL_STEP_PCT (%) of the entry
+      premium. With both at 1.0 the stop sits a constant 5% below the
+      high-water premium once the trade is in profit. The high-water mark only
+      ratchets up, so a spike-then-pullback still locks in the gain. (See
+      `_compute_trailing_sl` for the exact ladder + a worked example.)
+    - EXIT (force): at STRANGLE_SQUARE_OFF_*:* (default 15:15) close whatever is
+      still open and stop for the day.
+    - MOMENTUM RE-ENTRY (AlgoTest "RE MOMENTUM"): a stopped-out leg is NOT
+      re-bought immediately. We keep watching the SAME strike and re-enter only
+      once its premium rebounds STRANGLE_REENTRY_MOMENTUM_PCT (default +5%) above
+      the stop-out price - confirmation the move resumed in the buyer's favour.
+      Repeats up to STRANGLE_MAX_REENTRIES (default 10) times per leg per day.
+      Toggle with STRANGLE_REENTRY_ENABLED. (See `_exit_leg` for arming and
+      `_manage_reentry` for the trigger.)
+    - SAFETY: STRANGLE_MAX_LOSS is a strategy-wide INR backstop across both legs
+      (the AlgoTest overall-SL was off, but the live runner always keeps a hard
+      cap).
+
+    EXPIRY RULE: current-week weekly (OptionsContractResolver.get_otm_option
+    defaults to get_current_week_expiry), matching the AlgoTest "Weekly" setting.
+
+    WHY OVERRIDE run() INSTEAD OF USING THE BASE LOOP
+    -------------------------------------------------
+    This strategy never consumes OHLC. The base loop's candle-signature gate
+    would needlessly hold back our purely time-and-LTP-driven logic, so we
+    override run() to keep the shared risk / cutoff / pre-open scaffolding but
+    skip the OHLC plumbing entirely (same rationale as Delta20).
+
+    NON-OBVIOUS DESIGN POINTS
+    -------------------------
+    - self.pos (the base single-position handle) is intentionally left flat and
+      unused. We carry two real positions in self.ce_pos and self.pe_pos and
+      override the base risk / exit handlers to operate on both.
+    - Each leg's stop-loss is independent, but STRANGLE_MAX_LOSS is a single
+      shared pool: if the COMBINED PnL breaches it, both legs close and the
+      worker stops for the day.
+    """
+
+    strategy_name = "LongStrangle"
+    timeframe = "1"
+    poll_seconds = STRANGLE_POLL_SECONDS
+    lots = STRANGLE_LOTS
+    max_loss = STRANGLE_MAX_LOSS
+    # The base pre-open wait uses trading_start_*; for us that IS the entry time.
+    trading_start_hour = STRANGLE_ENTRY_HOUR
+    trading_start_minute = STRANGLE_ENTRY_MINUTE
+    square_off_hour = STRANGLE_SQUARE_OFF_HOUR
+    square_off_minute = STRANGLE_SQUARE_OFF_MINUTE
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        super().__init__(store, stop_event, broker)
+        # Two independent single-leg BUY positions. The base self.pos stays
+        # flat and unused (see class docstring).
+        self.ce_pos = PaperPosition()
+        self.pe_pos = PaperPosition()
+        # High-water premium per leg, seeded at entry and ratcheted up only.
+        # Drives the 1:1 trailing-stop ladder in _compute_trailing_sl.
+        self.ce_high_water_premium = 0.0
+        self.pe_high_water_premium = 0.0
+        # Single-shot INITIAL entry guards. Each leg opens its FIRST position
+        # once (the first poll past the entry time it can resolve + fill);
+        # `entered_today` is the convenience "both initial legs are on" gate the
+        # run loop checks. Crucially, once a leg's initial entry is done it is
+        # NEVER fresh-entered again - any later re-fill comes ONLY from the
+        # momentum re-entry path (_manage_reentry). This keeps the partial-entry
+        # retry (one leg failed to fill at open) from accidentally re-opening a
+        # leg that has since been stopped out.
+        self.ce_initial_done = False
+        self.pe_initial_done = False
+        self.entered_today = False
+
+        # ----- Momentum re-entry state (per leg) ------------------------
+        # When a leg is stopped out we (optionally) arm it: keep its LTP
+        # subscription alive and watch the SAME strike for a +momentum rebound
+        # above the stop-out price. These hold that watch.
+        self.ce_awaiting_reentry = False
+        self.pe_awaiting_reentry = False
+        # Premium at which the leg was last stopped out - the reference the
+        # rebound is measured against.
+        self.ce_stop_out_price = 0.0
+        self.pe_stop_out_price = 0.0
+        # How many times each leg has already re-entered today (capped by
+        # STRANGLE_MAX_REENTRIES).
+        self.ce_reentry_count = 0
+        self.pe_reentry_count = 0
+        # The exact contract last held on each leg (normalized 7-key dict), so a
+        # re-entry re-buys the SAME strike rather than re-deriving OTM1 from a
+        # since-moved spot.
+        self.ce_last_contract: Optional[dict] = None
+        self.pe_last_contract: Optional[dict] = None
+
+        # Telemetry for the end-of-day summary line.
+        self.entry_submit_count = 0
+        self.exit_count = 0
+        self.reentry_count = 0
+
+    # ------------------------------------------------------------------
+    # Per-side state accessor (keeps the per-leg helpers readable)
+    # ------------------------------------------------------------------
+    def _leg_pos(self, side: str) -> PaperPosition:
+        if side == "CE":
+            return self.ce_pos
+        if side == "PE":
+            return self.pe_pos
+        raise ValueError(f"Unsupported side: {side!r}")
+
+    def _reentry_state(self, side: str):
+        """
+        Bundled read of one leg's momentum-re-entry state, returned in a fixed
+        order: (awaiting, stop_out_price, last_contract, reentry_count). Keeps
+        the re-entry helpers readable without a six-line if/else at each call.
+        """
+        if side == "CE":
+            return (self.ce_awaiting_reentry, self.ce_stop_out_price,
+                    self.ce_last_contract, self.ce_reentry_count)
+        if side == "PE":
+            return (self.pe_awaiting_reentry, self.pe_stop_out_price,
+                    self.pe_last_contract, self.pe_reentry_count)
+        raise ValueError(f"Unsupported side: {side!r}")
+
+    # ------------------------------------------------------------------
+    # Risk / lifecycle overrides (we use ce_pos + pe_pos, not self.pos)
+    # ------------------------------------------------------------------
+    def _get_open_position_pnl(self) -> float:
+        """
+        Live mark-to-market PnL summed across both legs.
+
+        Both legs are BUY options, so each leg's PnL is simply
+        (live - entry) * qty. Inactive legs contribute zero. The base class's
+        is_max_loss_breached() calls this to enforce STRANGLE_MAX_LOSS.
+        """
+        total = 0.0
+        for leg_pos in (self.ce_pos, self.pe_pos):
+            if not leg_pos.active:
+                continue
+            live = self._get_option_ltp(
+                leg_pos.option_exchange_segment,
+                leg_pos.option_security_id,
+                fallback=leg_pos.entry_trade_price,
+            )
+            total += (live - leg_pos.entry_trade_price) * leg_pos.quantity
+        return float(total)
+
+    def exit_position(self, reason: str) -> None:
+        """
+        Close BOTH legs at once. This is the single entry point the base risk /
+        time-cutoff handlers call for strategy-wide events (max-loss breach,
+        15:15 cutoff). Per-leg stop-losses call _exit_leg directly so only the
+        stopped leg closes.
+        """
+        if self.ce_pos.active:
+            self._exit_leg("CE", reason)
+        if self.pe_pos.active:
+            self._exit_leg("PE", reason)
+
+    def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
+        """One-time shutdown when the strategy-wide max loss is breached."""
+        if self.cutoff_handled:
+            return
+        self.cutoff_handled = True
+        self.log.error(
+            "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
+            "Closing both legs and stopping.",
+            self.max_loss, total_pnl, open_pnl,
+        )
+        try:
+            self.exit_position("MAX_LOSS_BREACH")
+        except Exception as exc:
+            self.log.exception("Error while exiting on max-loss breach: %s", exc)
+        self._unsubscribe_armed_legs()
+        self.log.info("Paper summary | %s", self.summary_text())
+        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+
+    def handle_square_off_and_stop(self) -> None:
+        """One-time shutdown at the daily square-off cutoff (default 15:15)."""
+        if self.cutoff_handled:
+            return
+        self.cutoff_handled = True
+        self.log.info(
+            "%02d:%02d cutoff reached. Closing any open legs and halting trading for the day.",
+            self.square_off_hour, self.square_off_minute,
+        )
+        try:
+            self.exit_position("TIME_CUTOFF")
+        except Exception as exc:
+            self.log.exception("Error while exiting at cutoff: %s", exc)
+        self._unsubscribe_armed_legs()
+        self.log.info("Paper summary | %s", self.summary_text())
+        self.log.info("Strategy stopped for the day.")
+
+    def summary_text(self) -> str:
+        return (
+            f"Entries={self.entry_submit_count} | Re-entries={self.reentry_count} | "
+            f"Exits={self.exit_count} | Trades={self.completed_trades} | "
+            f"RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    # ------------------------------------------------------------------
+    # Run loop (no OHLC dependency)
+    # ------------------------------------------------------------------
+    def run(self) -> None:
+        """
+        Main worker loop, every STRANGLE_POLL_SECONDS until stop / shutdown.
+
+        Per iteration, in order:
+            1. Risk check    -> max-loss breach -> close everything, exit.
+            2. Time cutoff   -> 15:15 reached   -> close everything, exit.
+            3. Pre-open wait -> before entry time -> sleep and retry.
+            4. Entry         -> at/after entry time, open BOTH legs once.
+            5. Manage stops  -> run each open leg's stop-loss / trailing stop.
+            6. Manage re-entry -> for each stopped-out, armed leg, re-buy the
+               same strike once its premium rebounds past the momentum trigger.
+
+        Wrapped in try/except so one bad poll (e.g. a transient network error)
+        cannot kill the worker for the whole day.
+        """
+        self.log.info("Starting %s strategy worker.", self.strategy_name)
+        while not self.stop_event.is_set():
+            try:
+                breached, total_pnl, open_pnl = self.is_max_loss_breached()
+                if breached:
+                    self.handle_max_loss_and_stop(total_pnl, open_pnl)
+                    break
+
+                if is_after_time(self.square_off_hour, self.square_off_minute):
+                    self.handle_square_off_and_stop()
+                    break
+
+                if is_before_time(self.trading_start_hour, self.trading_start_minute):
+                    if not self.preopen_wait_logged:
+                        self.log.info(
+                            "Before entry time (%02d:%02d). Waiting to open the strangle.",
+                            self.trading_start_hour, self.trading_start_minute,
+                        )
+                        self.preopen_wait_logged = True
+                    self.wait_for_next_poll()
+                    continue
+                self.preopen_wait_logged = False
+
+                # 4. Open both legs once, the first poll at/after entry time.
+                if not self.entered_today:
+                    self._enter_both_legs()
+
+                # 5. Manage each open leg's stop independently (also harmless
+                #    immediately after entry: premium ~= entry, no exit fires).
+                self._manage_leg("CE")
+                self._manage_leg("PE")
+
+                # 6. Re-buy a stopped-out leg once its premium rebounds past the
+                #    momentum trigger (no-op for legs that are flat-and-done or
+                #    still in a trade).
+                self._manage_reentry("CE")
+                self._manage_reentry("PE")
+            except Exception as exc:
+                self.log.exception("Main loop error: %s", exc)
+
+            self.wait_for_next_poll()
+
+        self.log.info("%s strategy worker exited.", self.strategy_name)
+
+    # ------------------------------------------------------------------
+    # Entry
+    # ------------------------------------------------------------------
+    def _enter_both_legs(self) -> None:
+        """
+        Open each leg's INITIAL position once. If only one resolves this poll
+        (e.g. a transient LTP gap on the other), its `*_initial_done` flag flips
+        and the next poll retries ONLY the still-pending leg. A leg whose initial
+        entry is already done is never fresh-entered here again, so a leg that
+        has since been stopped out is left to the momentum re-entry path rather
+        than re-opened by this retry. `entered_today` (= both initial done)
+        closes the gate for good.
+        """
+        spot = self._get_underlying_spot(fallback=0.0)
+        if spot <= 0:
+            self.log.warning("Strangle entry deferred: NIFTY spot LTP unavailable.")
+            return
+        if not self.ce_initial_done:
+            self.ce_initial_done = self._enter_leg("CE", spot)
+        if not self.pe_initial_done:
+            self.pe_initial_done = self._enter_leg("PE", spot)
+        self.entered_today = self.ce_initial_done and self.pe_initial_done
+
+    def _enter_leg(self, side: str, spot: float) -> bool:
+        """
+        Resolve the OTM1 strike for `side` from the live spot and BUY it (the
+        INITIAL entry). No-op (returns True) if the leg is already open. The
+        order placement / bookkeeping is shared with the re-entry path through
+        `_buy_leg`.
+        """
+        leg_pos = self._leg_pos(side)
+        if leg_pos.active:
+            return True
+
+        try:
+            contract = self.contract_resolver.get_otm_option(
+                spot, side, otm_steps=STRANGLE_OTM_STEPS
+            )
+        except Exception as exc:
+            self.log.warning(
+                "Strangle %s entry skipped: OTM option resolution failed: %s", side, exc
+            )
+            return False
+
+        return self._buy_leg(side, contract, spot=spot, is_reentry=False)
+
+    def _buy_leg(self, side: str, contract: dict, spot: float, is_reentry: bool) -> bool:
+        """
+        BUY one option leg from a resolved `contract` dict and record it as a
+        paper position. Shared by the initial entry (`_enter_leg`) and the
+        momentum re-entry (`_manage_reentry`). Mirrors
+        AtmSingleLegStrategyWorker.enter_position for a single BUY leg but writes
+        into ce_pos / pe_pos.
+
+        `contract` must carry: security_id, exchange_segment, trading_symbol,
+        option_type, strike, expiry_date, lot_size (both `get_otm_option` and the
+        stashed `_last_contract` provide these). `is_reentry` only changes the
+        log/telemetry wording and bumps the per-leg re-entry counter.
+        """
+        option_sec_id = int(contract["security_id"])
+        option_segment = str(contract["exchange_segment"])
+        trading_symbol = str(contract["trading_symbol"])
+        option_right = str(contract["option_type"])
+        option_strike = float(contract["strike"])
+        expiry_date = contract["expiry_date"]
+        lot_size = _to_int_safe(contract["lot_size"], 0)
+
+        if not trading_symbol or option_sec_id <= 0:
+            self.log.warning("Strangle %s entry skipped: option identifiers missing.", side)
+            return False
+        if lot_size <= 0:
+            self.log.warning(
+                "Strangle %s entry skipped: invalid lot size %s for %s.",
+                side, lot_size, trading_symbol,
+            )
+            return False
+
+        option_ltp = self._get_option_ltp(option_segment, option_sec_id, fallback=0.0)
+        if option_ltp <= 0:
+            self.log.warning(
+                "Strangle %s entry skipped: option LTP unavailable for %s (security_id=%s).",
+                side, trading_symbol, option_sec_id,
+            )
+            return False
+
+        quantity = lot_size * self.lots
+        order_id = self._next_paper_order_id("BUY")
+
+        # Real execution (live mode only; no-op returning True in paper mode).
+        real_ok = self._place_real_leg("BUY", {
+            "option_type": option_right, "strike": option_strike,
+            "expiry": expiry_date, "quantity": quantity, "dhan_symbol": trading_symbol,
+        })
+        exec_mode = self._exec_mode_tag(real_ok)
+
+        # Keep the fetcher refreshing this leg's LTP for its whole lifetime. On a
+        # re-entry the subscription is already live (kept since the stop-out);
+        # re-registering is harmless/idempotent.
+        self.store.register_option_subscription(
+            OptionSubscription(
+                security_id=option_sec_id,
+                exchange_segment=option_segment,
+                trading_symbol=trading_symbol,
+                right=option_right,
+                strike=option_strike,
+                expiry=expiry_date,
+            )
+        )
+
+        new_pos = PaperPosition(
+            active=True,
+            direction=side,
+            symbol=trading_symbol,
+            quantity=quantity,
+            entry_order_id=str(order_id),
+            entry_trade_price=float(option_ltp),
+            option_security_id=option_sec_id,
+            option_exchange_segment=option_segment,
+            option_right=option_right,
+            option_strike=option_strike,
+            option_expiry=expiry_date,
+            option_lot_size=lot_size,
+        )
+        # Normalized contract snapshot, reused verbatim if this leg is stopped
+        # out and later re-entered on the SAME strike.
+        normalized = {
+            "security_id": option_sec_id,
+            "exchange_segment": option_segment,
+            "trading_symbol": trading_symbol,
+            "option_type": option_right,
+            "strike": option_strike,
+            "expiry_date": expiry_date,
+            "lot_size": lot_size,
+        }
+        if side == "CE":
+            self.ce_pos = new_pos
+            self.ce_high_water_premium = float(option_ltp)
+            self.ce_last_contract = normalized
+            self.ce_awaiting_reentry = False
+            if is_reentry:
+                self.ce_reentry_count += 1
+        else:
+            self.pe_pos = new_pos
+            self.pe_high_water_premium = float(option_ltp)
+            self.pe_last_contract = normalized
+            self.pe_awaiting_reentry = False
+            if is_reentry:
+                self.pe_reentry_count += 1
+
+        self.entry_submit_count += 1
+        if is_reentry:
+            self.reentry_count += 1
+        entry_kind = "RE-ENTRY" if is_reentry else "ENTRY"
+        expiry_txt = expiry_date.isoformat() if expiry_date else "NA"
+        self.log.info(
+            "%s %s | Side=BUY | OptionSymbol=%s | Right=%s | Strike=%.2f | Expiry=%s | "
+            "Qty=%s | Spot=%.2f | EntryOptPx=%.2f | PaperRef=%s",
+            entry_kind, side, trading_symbol, option_right, option_strike, expiry_txt,
+            quantity, spot, option_ltp, order_id,
+        )
+        self.publish_trade_event({
+            "action": "ENTRY",
+            "mode": exec_mode,
+            "reentry": is_reentry,
+            "direction": side,
+            "lots": self.lots,
+            "lot_size": lot_size,
+            "quantity": quantity,
+            "spot": spot,
+            "expiry": expiry_txt,
+            "legs": [{
+                "symbol": trading_symbol, "side": "BUY",
+                "right": option_right, "strike": option_strike,
+                "entry_price": option_ltp,
+            }],
+        })
+        return True
+
+    # ------------------------------------------------------------------
+    # Momentum re-entry (AlgoTest "RE MOMENTUM")
+    # ------------------------------------------------------------------
+    def _manage_reentry(self, side: str) -> None:
+        """
+        Re-buy a stopped-out leg once its premium rebounds past the momentum
+        trigger. No-op unless the leg is flat, armed (`_awaiting_reentry`), and
+        under the re-entry cap.
+
+        Trigger: re-enter when the SAME strike's live premium rises to
+        >= stop_out_price * (1 + STRANGLE_REENTRY_MOMENTUM_PCT). The strike is
+        re-bought from the stashed `_last_contract`, not re-derived from a
+        since-moved spot.
+        """
+        if not STRANGLE_REENTRY_ENABLED:
+            return
+        leg_pos = self._leg_pos(side)
+        if leg_pos.active:
+            return  # Already back in a trade.
+
+        awaiting, stop_out_price, contract, reentry_count = self._reentry_state(side)
+        if not awaiting or contract is None or stop_out_price <= 0:
+            return
+        if reentry_count >= STRANGLE_MAX_REENTRIES:
+            return  # Cap reached (defensive; arming already enforces this).
+
+        current = self._get_option_ltp(
+            str(contract["exchange_segment"]), int(contract["security_id"]), fallback=0.0
+        )
+        if current <= 0:
+            return  # Bad tick; try again next poll.
+
+        trigger = stop_out_price * (1.0 + STRANGLE_REENTRY_MOMENTUM_PCT)
+        if current >= trigger:
+            self.log.info(
+                "%s momentum re-entry | Current=%.2f >= %.2f (stop=%.2f +%.1f%%) | re-entry %d/%d",
+                side, current, trigger, stop_out_price,
+                STRANGLE_REENTRY_MOMENTUM_PCT * 100.0,
+                reentry_count + 1, STRANGLE_MAX_REENTRIES,
+            )
+            # Spot is only for the entry log line; the strike comes from contract.
+            spot = self._get_underlying_spot(fallback=0.0)
+            self._buy_leg(side, contract, spot=spot, is_reentry=True)
+
+    def _unsubscribe_armed_legs(self) -> None:
+        """
+        Drop LTP subscriptions for legs that are flat but still ARMED for
+        momentum re-entry (kept subscribed during the session so we could watch
+        for the rebound). Called once during end-of-day shutdown. Active legs
+        are unsubscribed by `_exit_leg`; legs that never entered were never
+        subscribed.
+        """
+        for side in ("CE", "PE"):
+            leg_pos = self._leg_pos(side)
+            awaiting, _, contract, _ = self._reentry_state(side)
+            if not leg_pos.active and awaiting and contract is not None:
+                self.store.unregister_option_subscription(
+                    str(contract["exchange_segment"]), int(contract["security_id"])
+                )
+
+    # ------------------------------------------------------------------
+    # Per-leg stop-loss / trailing-stop management
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _compute_trailing_sl(
+        entry_premium: float,
+        high_water_premium: float,
+        sl_pct: float,
+        trail_trigger_pct: float,
+        trail_step_pct: float,
+    ) -> float:
+        """
+        Effective stop-loss premium for one leg, given its entry price and the
+        high-water premium seen so far. Pure function (no I/O) so it is unit
+        tested directly.
+
+        The ladder, with entry E, SL% (e.g. 0.05), trigger X% and step Y%:
+            gain%  = max(0, (high_water - E) / E * 100)
+            steps  = floor(gain% / X)
+            SL     = E * (1 - SL%) + steps * (Y/100) * E
+
+        Worked example (E=100, SL%=5%, X=1, Y=1):
+            high_water=100 -> steps 0  -> SL 95   (initial 5% stop)
+            high_water=105 -> steps 5  -> SL 100  (breakeven)
+            high_water=110 -> steps 10 -> SL 105  (locks +5)
+        i.e. once in profit the stop trails a constant 5% under the high-water
+        mark, stepped in 1% increments.
+        """
+        if entry_premium <= 0:
+            return 0.0
+        gain_pct = max(0.0, (high_water_premium - entry_premium) / entry_premium * 100.0)
+        steps = math.floor(gain_pct / trail_trigger_pct) if trail_trigger_pct > 0 else 0
+        return entry_premium * (1.0 - sl_pct) + steps * (trail_step_pct / 100.0) * entry_premium
+
+    def _manage_leg(self, side: str) -> None:
+        """
+        Run the stop-loss / trailing-stop check once for one leg. Called every
+        poll while the leg is open; exits the leg if its premium has fallen to
+        or below the effective (trailed) stop.
+        """
+        leg_pos = self._leg_pos(side)
+        if not leg_pos.active:
+            return
+
+        current = self._get_option_ltp(
+            leg_pos.option_exchange_segment,
+            leg_pos.option_security_id,
+            fallback=leg_pos.entry_trade_price,
+        )
+        if current <= 0:
+            return  # Bad tick; try again next poll.
+
+        # Ratchet the per-leg high-water mark upward only.
+        if side == "CE":
+            self.ce_high_water_premium = max(self.ce_high_water_premium, current)
+            high_water = self.ce_high_water_premium
+        else:
+            self.pe_high_water_premium = max(self.pe_high_water_premium, current)
+            high_water = self.pe_high_water_premium
+
+        effective_sl = self._compute_trailing_sl(
+            leg_pos.entry_trade_price, high_water,
+            STRANGLE_SL_PCT, STRANGLE_TRAIL_TRIGGER_PCT, STRANGLE_TRAIL_STEP_PCT,
+        )
+        if current <= effective_sl:
+            # Label distinguishes the initial stop from a trailed one in logs.
+            label = "TRAILING_SL" if high_water > leg_pos.entry_trade_price else "STOP_LOSS"
+            self.log.info(
+                "%s %s | CurrentPremium=%.2f <= SL=%.2f | Entry=%.2f | HighWater=%.2f",
+                side, label, current, effective_sl, leg_pos.entry_trade_price, high_water,
+            )
+            # Per-leg stop-outs may arm a momentum re-entry; strategy-wide exits
+            # (cutoff / max-loss) go through exit_position and never arm.
+            self._exit_leg(side, label, allow_reentry=True)
+
+    # ------------------------------------------------------------------
+    # Per-leg exit
+    # ------------------------------------------------------------------
+    def _exit_leg(self, side: str, reason: str, allow_reentry: bool = False) -> None:
+        """
+        SELL-to-close one leg and book its PnL. Mirrors
+        AtmSingleLegStrategyWorker.exit_position for a single BUY leg, but
+        operates on ce_pos / pe_pos.
+
+        `allow_reentry` (True only for per-leg stop-outs) decides whether the
+        leg is ARMED for a momentum re-entry: if armed (and under the re-entry
+        cap), the LTP subscription is KEPT alive and the stop-out price recorded
+        so `_manage_reentry` can watch for the rebound; otherwise the leg is
+        unsubscribed and left flat for the day.
+        """
+        leg_pos = self._leg_pos(side)
+        if not leg_pos.active:
+            return
+
+        closed = leg_pos
+        order_id = self._next_paper_order_id("SELL")
+        exit_price = self._get_option_ltp(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+            fallback=closed.entry_trade_price,
+        )
+
+        # Real execution (live mode only; no-op True in paper mode).
+        real_ok = self._place_real_leg("SELL", {
+            "option_type": closed.option_right, "strike": closed.option_strike,
+            "expiry": closed.option_expiry, "quantity": closed.quantity,
+            "dhan_symbol": closed.symbol,
+        })
+        exec_mode = self._exec_mode_tag(real_ok)
+
+        # If a LIVE exit did not confirm a fill, keep the leg OPEN for retry /
+        # manual square-off rather than flattening the books (same safety rule
+        # as the single-leg ATM worker).
+        if self.live_trading and not real_ok:
+            self.log.error(
+                "LIVE EXIT NOT CONFIRMED | %s %s | OptionSymbol=%s | Qty=%s | Reason=%s "
+                "| leg kept OPEN for retry/manual square-off.",
+                self.strategy_name, side, closed.symbol, closed.quantity, reason,
+            )
+            self.publish_trade_event({
+                "action": "EXIT_FAILED", "mode": exec_mode, "direction": side, "reason": reason,
+                "quantity": closed.quantity,
+                "legs": [{"symbol": closed.symbol, "side": "SELL",
+                          "right": closed.option_right, "strike": closed.option_strike}],
+            })
+            return
+
+        pnl = (exit_price - closed.entry_trade_price) * closed.quantity
+        self.completed_trades += 1
+        self.exit_count += 1
+        self.realized_pnl += pnl
+
+        pnl_colored = self._color_pnl_text(pnl)
+        expiry_txt = closed.option_expiry.isoformat() if closed.option_expiry is not None else "NA"
+        self.log.info(
+            "EXIT %s | OptionSymbol=%s | Right=%s | Strike=%.2f | Expiry=%s | Qty=%s | "
+            "Reason=%s | EntryOptPx=%.2f | ExitOptPx=%.2f | P&L=%.2f | CumPnL=%.2f | PaperRef=%s",
+            side, closed.symbol, closed.option_right, closed.option_strike, expiry_txt,
+            closed.quantity, reason, closed.entry_trade_price, exit_price, pnl,
+            self.realized_pnl, order_id,
+        )
+        print(
+            f"{datetime.now():%Y-%m-%d %H:%M:%S} | {self.strategy_name} EXIT {side} | "
+            f"OptionSymbol={closed.symbol} | Qty={closed.quantity} | Reason={reason} | "
+            f"P&L={pnl_colored} | PaperRef={order_id}"
+        )
+
+        self.publish_trade_event({
+            "action": "EXIT", "mode": exec_mode,
+            "exit_order_failed": bool(self.live_trading and not real_ok),
+            "direction": side, "reason": reason,
+            "lot_size": closed.option_lot_size, "quantity": closed.quantity,
+            "pnl": pnl, "expiry": expiry_txt,
+            "legs": [{"symbol": closed.symbol, "side": "SELL",
+                      "right": closed.option_right, "strike": closed.option_strike,
+                      "entry_price": closed.entry_trade_price, "exit_price": exit_price}],
+        })
+
+        # Decide whether to ARM this leg for a momentum re-entry. Only per-leg
+        # stop-outs (allow_reentry=True) arm; strategy-wide exits (cutoff /
+        # max-loss) never do. Arming keeps the LTP subscription alive so
+        # _manage_reentry can watch the same strike for the rebound.
+        _, _, _, prior_reentries = self._reentry_state(side)
+        reentry_armed = (
+            allow_reentry
+            and STRANGLE_REENTRY_ENABLED
+            and prior_reentries < STRANGLE_MAX_REENTRIES
+        )
+        if reentry_armed:
+            self.log.info(
+                "%s armed for momentum re-entry | stop=%.2f | re-buy when premium >= %.2f "
+                "(+%.1f%%) | re-entries so far %d/%d",
+                side, exit_price, exit_price * (1.0 + STRANGLE_REENTRY_MOMENTUM_PCT),
+                STRANGLE_REENTRY_MOMENTUM_PCT * 100.0, prior_reentries, STRANGLE_MAX_REENTRIES,
+            )
+        else:
+            # No re-entry: stop watching this strike.
+            self.store.unregister_option_subscription(
+                closed.option_exchange_segment, closed.option_security_id,
+            )
+
+        if side == "CE":
+            self.ce_pos = PaperPosition()
+            self.ce_high_water_premium = 0.0
+            self.ce_awaiting_reentry = reentry_armed
+            self.ce_stop_out_price = exit_price if reentry_armed else 0.0
+        else:
+            self.pe_pos = PaperPosition()
+            self.pe_high_water_premium = 0.0
+            self.pe_awaiting_reentry = reentry_armed
+            self.pe_stop_out_price = exit_price if reentry_armed else 0.0
+
+
+# =============================================================================
 # SIGNAL GENERATOR PORT WORKERS (ATM single-leg; TradingBot ports)
 # =============================================================================
 # The thirteen ported strategies share one identical worker lifecycle: resample
@@ -7606,6 +8467,7 @@ STRATEGY_ENV_PREFIX = {
     "SupertrendBullish": "BULLISH",
     "DonchianBearish": "BEARISH",
     "Delta20Hedged": "DELTA20",
+    "LongStrangle": "STRANGLE",
     **{spec[1]: spec[7] for spec in _SIGNAL_GEN_WORKER_SPECS},
 }
 
@@ -7984,6 +8846,7 @@ _PNL_SHEET_ROW_LABELS = {
     "SupertrendBullish": "Supertrend Bullish Strategy",
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
+    "LongStrangle": "Long Strangle Strategy",
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
@@ -8306,7 +9169,8 @@ def main() -> None:
         "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
         "RSI Reversal, Stochastic, Supertrend, Volatility Breakout. "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
-        "Delta-0.2 family (1): Delta20 09:20 reference, dual-side.",
+        "Delta-0.2 family (1): Delta20 09:20 reference, dual-side. "
+        "Long Strangle family (1): 09:30 OTM1 CE+PE, two independent legs.",
         SIGNAL_GEN_WORKERS[0].derived_timeframe_minutes,
     )
 
@@ -8314,7 +9178,8 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + 24 consumers (21 ATM single-leg + 2 Hedged + 1 Delta-0.2).
+    # One producer (fetcher) + 25 consumers (21 ATM single-leg + 2 Hedged +
+    # 1 Delta-0.2 + 1 Long Strangle).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
 
     # ----- ATM single-leg family: each BUYS the ATM CE (LONG) / PE (SHORT) of the
@@ -8346,6 +9211,8 @@ def main() -> None:
         DonchianBearishWorker(store, stop_event, broker),
         # ----- Delta-0.2 family: dual-side hedged spread driven by option-chain Greeks. -----
         Delta20HedgedSpreadWorker(store, stop_event, broker),
+        # ----- Long Strangle family: time-based, BUY OTM1 CE+PE, two independent legs. -----
+        LongStrangleWorker(store, stop_event, broker),
     ]
 
     # -------------------------------------------------------------------------

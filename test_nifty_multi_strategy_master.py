@@ -1270,7 +1270,7 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master_file.GoldmineStrategyWorker, master_file.MoneyMachineStrategyWorker,
             master_file.OpeningStrikePCRVWAPATRWorker, master_file.CPRStrategyWorker,
             master_file.SupertrendBullishWorker, master_file.DonchianBearishWorker,
-            master_file.Delta20HedgedSpreadWorker,
+            master_file.Delta20HedgedSpreadWorker, master_file.LongStrangleWorker,
         ]
         for cls in core + list(master_file.SIGNAL_GEN_WORKERS):
             self.assertIn(
@@ -1294,6 +1294,301 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master = master_file._env_bool("LIVE_TRADING_ENABLED", False)
             per = master_file._env_bool("RENKO_LIVE_TRADING", False)
             self.assertTrue(master and per)
+
+
+# =============================================================================
+# TEST SUITE: LONG STRANGLE WORKER
+# =============================================================================
+class TestLongStrangleWorker(unittest.TestCase):
+    """
+    OTM1 strike resolution, the trailing-stop ladder (pure function),
+    independent per-leg exits, registry coverage, and paper-by-default.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # The shared resolver test uses 500-point strike gaps; the strangle
+        # needs adjacent 50-point strikes to exercise the OTM1 offset, so we
+        # build a dedicated synthetic instrument master here.
+        cls.tmpdir = tempfile.TemporaryDirectory()
+        cls.csv_path = Path(cls.tmpdir.name) / "all_instrument 1.csv"
+        cls.exp1 = (date.today() + timedelta(days=7)).isoformat()
+        cls.exp2 = (date.today() + timedelta(days=14)).isoformat()
+        rows = []
+        sec = 50000
+        for exp in (cls.exp1, cls.exp2):
+            for strike in (22400, 22450, 22500, 22550, 22600):
+                for right in ("CE", "PE"):
+                    rows.append({
+                        "EXCH_ID": "NSE", "SEGMENT": "D", "INSTRUMENT": "OPTIDX",
+                        "SYMBOL_NAME": f"NIFTY-{exp}-{strike}-{right}",
+                        "DISPLAY_NAME": f"NIFTY {exp} {strike} {right}",
+                        "SM_EXPIRY_DATE": exp, "LOT_SIZE": "75",
+                        "SECURITY_ID": str(sec), "STRIKE_PRICE": str(strike),
+                        "OPTION_TYPE": right, "UNDERLYING_SYMBOL": "NIFTY",
+                    })
+                    sec += 1
+        pd.DataFrame(rows).to_csv(cls.csv_path, index=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmpdir.cleanup()
+
+    def _make_resolver(self):
+        import logging
+        glob_pattern = str(Path(self.tmpdir.name) / "all_instrument *.csv")
+        return master_file.OptionsContractResolver(
+            underlying="NIFTY",
+            instrument_master_glob=glob_pattern,
+            log=logging.getLogger("test_strangle_resolver"),
+        )
+
+    # ----- get_otm_option resolver -----------------------------------------
+    def test_get_otm_option_ce_is_one_strike_above_atm(self):
+        """CE OTM1 sits one step ABOVE the ATM strike, current-week expiry."""
+        resolver = self._make_resolver()
+        # spot 22510 -> ATM 22500 -> OTM1 CE = 22550.
+        contract = resolver.get_otm_option(spot_price=22510.0, right="CE", otm_steps=1)
+        self.assertEqual(contract["option_type"], "CE")
+        self.assertEqual(contract["strike"], 22550.0)
+        self.assertEqual(contract["lot_size"], 75)
+        self.assertEqual(contract["expiry_date"].isoformat(), self.exp1)
+
+    def test_get_otm_option_pe_is_one_strike_below_atm(self):
+        """PE OTM1 sits one step BELOW the ATM strike."""
+        resolver = self._make_resolver()
+        # spot 22510 -> ATM 22500 -> OTM1 PE = 22450.
+        contract = resolver.get_otm_option(spot_price=22510.0, right="PE", otm_steps=1)
+        self.assertEqual(contract["option_type"], "PE")
+        self.assertEqual(contract["strike"], 22450.0)
+
+    def test_get_otm_option_rejects_bad_right(self):
+        resolver = self._make_resolver()
+        with self.assertRaises(ValueError):
+            resolver.get_otm_option(spot_price=22500.0, right="XX", otm_steps=1)
+
+    def test_get_otm_option_rejects_invalid_spot(self):
+        resolver = self._make_resolver()
+        with self.assertRaises(ValueError):
+            resolver.get_otm_option(spot_price=0, right="CE", otm_steps=1)
+
+    # ----- _compute_trailing_sl ladder (pure function) ---------------------
+    def test_trailing_sl_initial_is_five_pct_below_entry(self):
+        sl = master_file.LongStrangleWorker._compute_trailing_sl(
+            entry_premium=100.0, high_water_premium=100.0,
+            sl_pct=0.05, trail_trigger_pct=1.0, trail_step_pct=1.0,
+        )
+        self.assertAlmostEqual(sl, 95.0)
+
+    def test_trailing_sl_reaches_breakeven_at_five_pct_gain(self):
+        sl = master_file.LongStrangleWorker._compute_trailing_sl(
+            entry_premium=100.0, high_water_premium=105.0,
+            sl_pct=0.05, trail_trigger_pct=1.0, trail_step_pct=1.0,
+        )
+        self.assertAlmostEqual(sl, 100.0)
+
+    def test_trailing_sl_locks_profit_above_breakeven(self):
+        sl = master_file.LongStrangleWorker._compute_trailing_sl(
+            entry_premium=100.0, high_water_premium=110.0,
+            sl_pct=0.05, trail_trigger_pct=1.0, trail_step_pct=1.0,
+        )
+        self.assertAlmostEqual(sl, 105.0)
+
+    def test_trailing_sl_safe_on_zero_entry(self):
+        sl = master_file.LongStrangleWorker._compute_trailing_sl(
+            entry_premium=0.0, high_water_premium=0.0,
+            sl_pct=0.05, trail_trigger_pct=1.0, trail_step_pct=1.0,
+        )
+        self.assertEqual(sl, 0.0)
+
+    # ----- Worker behaviour with a fake store + mocked resolver ------------
+    def _make_worker(self):
+        store = master_file.SharedMarketDataStore()
+        broker = MagicMock()
+        # Any cache-miss LTP lookup returns "no price" rather than a MagicMock,
+        # so a deliberately-absent leg resolves cleanly to its fallback.
+        broker.fetch_ltp_map.return_value = {}
+        worker = master_file.LongStrangleWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+
+        # Canned OTM contracts so the worker never touches a CSV.
+        def fake_otm(spot, right, otm_steps=1, expiry=None):
+            if right == "CE":
+                return {
+                    "security_id": 1001, "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+                    "trading_symbol": "NIFTY-CE", "custom_symbol": "NIFTY CE",
+                    "strike": 22550.0, "option_type": "CE", "expiry_date": date.today(),
+                    "days_to_expiry": 2, "lot_size": 75, "spot_reference": spot,
+                    "atm_strike_rounded": 22500.0, "target_strike": 22550.0,
+                }
+            return {
+                "security_id": 2002, "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+                "trading_symbol": "NIFTY-PE", "custom_symbol": "NIFTY PE",
+                "strike": 22450.0, "option_type": "PE", "expiry_date": date.today(),
+                "days_to_expiry": 2, "lot_size": 75, "spot_reference": spot,
+                "atm_strike_rounded": 22500.0, "target_strike": 22450.0,
+            }
+
+        worker.contract_resolver = MagicMock()
+        worker.contract_resolver.get_otm_option.side_effect = fake_otm
+        return worker, store
+
+    def test_enter_both_legs_opens_two_independent_positions(self):
+        worker, store = self._make_worker()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._enter_both_legs()
+        self.assertTrue(worker.ce_pos.active)
+        self.assertTrue(worker.pe_pos.active)
+        self.assertTrue(worker.entered_today)
+        self.assertEqual(worker.ce_pos.entry_trade_price, 100.0)
+        self.assertEqual(worker.pe_pos.entry_trade_price, 90.0)
+        self.assertEqual(worker.ce_pos.quantity, 75)  # 1 lot * 75
+
+    def test_stopping_ce_leaves_pe_active(self):
+        """Independent legs: a CE stop-out must not disturb the PE leg."""
+        worker, store = self._make_worker()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._enter_both_legs()
+        # Drop the CE premium below its 5% stop (100 -> 90); PE unchanged.
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 90.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._manage_leg("CE")
+        self.assertFalse(worker.ce_pos.active)   # CE stopped out
+        self.assertTrue(worker.pe_pos.active)    # PE untouched
+        self.assertEqual(worker.exit_count, 1)
+        self.assertEqual(worker.completed_trades, 1)
+
+    def test_paper_by_default(self):
+        worker, _ = self._make_worker()
+        self.assertFalse(worker.live_trading)
+
+    def test_pnl_sheet_label_present(self):
+        self.assertIn("LongStrangle", master_file._PNL_SHEET_ROW_LABELS)
+
+    # ----- Phase 2: momentum re-entry --------------------------------------
+    def _enter_and_stop_ce(self, worker, store):
+        """Helper: open both legs then stop the CE leg out (100 -> 90)."""
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._enter_both_legs()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 90.0,   # CE hits its 5% stop
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._manage_leg("CE")
+
+    def test_stop_out_arms_momentum_reentry(self):
+        """A per-leg stop-out arms the leg and records the stop-out price."""
+        worker, store = self._make_worker()
+        self._enter_and_stop_ce(worker, store)
+        self.assertFalse(worker.ce_pos.active)
+        self.assertTrue(worker.ce_awaiting_reentry)
+        self.assertAlmostEqual(worker.ce_stop_out_price, 90.0)
+        self.assertEqual(worker.ce_reentry_count, 0)  # armed, not yet re-entered
+
+    def test_momentum_rebound_triggers_reentry(self):
+        """Re-entry fires only once the premium rebounds +5% above the stop."""
+        worker, store = self._make_worker()
+        self._enter_and_stop_ce(worker, store)  # stop_out_price = 90 -> trigger 94.5
+
+        # Still below the +5% trigger: no re-entry.
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 93.0})
+        worker._manage_reentry("CE")
+        self.assertFalse(worker.ce_pos.active)
+        self.assertTrue(worker.ce_awaiting_reentry)
+
+        # Rebounds past +5%: re-enter the SAME strike at the new premium.
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 95.0})
+        worker._manage_reentry("CE")
+        self.assertTrue(worker.ce_pos.active)
+        self.assertFalse(worker.ce_awaiting_reentry)
+        self.assertEqual(worker.ce_reentry_count, 1)
+        self.assertEqual(worker.reentry_count, 1)
+        self.assertEqual(worker.ce_pos.entry_trade_price, 95.0)
+        self.assertEqual(worker.ce_high_water_premium, 95.0)  # high-water reset
+        self.assertTrue(worker.pe_pos.active)  # PE untouched throughout
+
+    def test_reentry_respects_max_cap(self):
+        """At the re-entry cap, a stop-out does not arm again."""
+        worker, store = self._make_worker()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._enter_both_legs()
+        worker.ce_reentry_count = master_file.STRANGLE_MAX_REENTRIES  # cap reached
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 90.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._manage_leg("CE")
+        self.assertFalse(worker.ce_pos.active)
+        self.assertFalse(worker.ce_awaiting_reentry)  # not re-armed
+
+    def test_reentry_disabled_leaves_leg_flat(self):
+        """With re-entry disabled, a stopped-out leg is not armed."""
+        worker, store = self._make_worker()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        worker._enter_both_legs()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 90.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        with patch.object(master_file, "STRANGLE_REENTRY_ENABLED", False):
+            worker._manage_leg("CE")
+        self.assertFalse(worker.ce_pos.active)
+        self.assertFalse(worker.ce_awaiting_reentry)
+
+    def test_partial_initial_entry_does_not_refresh_stopped_leg(self):
+        """A pending initial leg must not cause a fresh re-open of the OTHER
+        leg after it has been stopped out (re-fills are momentum-only)."""
+        worker, store = self._make_worker()
+        # CE fills at 100; PE LTP deliberately absent -> PE initial entry defers.
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+        })
+        worker._enter_both_legs()
+        self.assertTrue(worker.ce_pos.active)
+        self.assertTrue(worker.ce_initial_done)
+        self.assertFalse(worker.pe_pos.active)
+        self.assertFalse(worker.pe_initial_done)
+        self.assertFalse(worker.entered_today)
+
+        # CE stops out -> armed, flat.
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 90.0})
+        worker._manage_leg("CE")
+        self.assertFalse(worker.ce_pos.active)
+        self.assertTrue(worker.ce_awaiting_reentry)
+
+        # Re-call the initial-entry path (PE still pending). CE must stay flat -
+        # its initial entry is done, so it is never fresh-entered again.
+        worker._enter_both_legs()
+        self.assertFalse(worker.ce_pos.active)
+        self.assertEqual(worker.ce_reentry_count, 0)
 
 
 class TestLiveOrderRouting(unittest.TestCase):
