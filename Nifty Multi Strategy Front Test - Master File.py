@@ -377,6 +377,10 @@ NIFTY_INDEX_SECURITY_ID = _env_int("NIFTY_INDEX_SECURITY_ID", 13)
 NIFTY_INDEX_EXCHANGE_SEGMENT = _env_str("NIFTY_INDEX_EXCHANGE_SEGMENT", "IDX_I")
 NIFTY_INDEX_INSTRUMENT_TYPE = _env_str("NIFTY_INDEX_INSTRUMENT_TYPE", "INDEX")
 OPTION_EXCHANGE_SEGMENT = _env_str("OPTION_EXCHANGE_SEGMENT", "NSE_FNO")
+# Instrument type for index OPTIONS in DhanHQ's intraday/historical APIs. Used to
+# pull 1-minute OHLC for a specific option strike (e.g. CPR Algo 3's observation
+# legs), exactly like the index fetch but on the NSE_FNO segment.
+OPTION_INSTRUMENT_TYPE = _env_str("OPTION_INSTRUMENT_TYPE", "OPTIDX")
 
 # NIFTY listed strikes step in 50-point increments. The ATM rule rounds the
 # live spot to the nearest multiple of this step.
@@ -454,6 +458,25 @@ CPR_TRADING_START_HOUR = _env_int("CPR_TRADING_START_HOUR", 9)
 CPR_TRADING_START_MINUTE = _env_int("CPR_TRADING_START_MINUTE", 25)
 CPR_SQUARE_OFF_HOUR = _env_int("CPR_SQUARE_OFF_HOUR", 15)
 CPR_SQUARE_OFF_MINUTE = _env_int("CPR_SQUARE_OFF_MINUTE", 15)
+
+
+# =============================================================================
+# CPR ALGO 3 STRATEGY CONSTANTS (multi-instrument: spot + ITM CE + ITM PE)
+# =============================================================================
+# Algo 3 watches the spot AND a ~ITM CE + ~ITM PE of the CURRENT-week expiry
+# (observation only). A signal still BUYS the ATM CE/PE of the next-next expiry,
+# exactly like the other ATM workers, so it shares all of CPR's risk knobs.
+CPR_ALGO3_LOTS = _env_int("CPR_ALGO3_LOTS", 1)
+CPR_ALGO3_MAX_LOSS = _env_float("CPR_ALGO3_MAX_LOSS", 5500.0)
+CPR_ALGO3_POLL_SECONDS = _env_int("CPR_ALGO3_POLL_SECONDS", 5)
+CPR_ALGO3_TRADING_START_HOUR = _env_int("CPR_ALGO3_TRADING_START_HOUR", 9)
+CPR_ALGO3_TRADING_START_MINUTE = _env_int("CPR_ALGO3_TRADING_START_MINUTE", 25)
+CPR_ALGO3_SQUARE_OFF_HOUR = _env_int("CPR_ALGO3_SQUARE_OFF_HOUR", 15)
+CPR_ALGO3_SQUARE_OFF_MINUTE = _env_int("CPR_ALGO3_SQUARE_OFF_MINUTE", 15)
+# How deep ITM (in points) the two observation options sit. The PDF uses ~100
+# points ITM (stepping past the 50-point strike), so CE strike = ATM - offset and
+# PE strike = ATM + offset, rounded to the listed strike step.
+CPR_ALGO3_ITM_OFFSET = _env_float("CPR_ALGO3_ITM_OFFSET", 100.0)
 
 
 # =============================================================================
@@ -884,6 +907,14 @@ CPR_LOGIC = load_module(
     "master_cpr_strategy_logic",
     ROOT_DIR / "Signal Generators" / "CPR Strategy" / "cpr_strategy_logic.py",
 )
+# CPR Algo 3 (multi-instrument) reuses the engine above via `from cpr_strategy_logic
+# import ...`. Alias the already-loaded engine under that bare name so loading the
+# Algo 3 file binds to THIS instance instead of importing a second copy of it.
+sys.modules.setdefault("cpr_strategy_logic", CPR_LOGIC)
+CPR_ALGO3_LOGIC = load_module(
+    "master_cpr_algo3_signal_generator",
+    ROOT_DIR / "Signal Generators" / "CPR Strategy" / "Nifty CPR Algo 3 Signal Generator.py",
+)
 
 # -----------------------------------------------------------------------------
 # Live-execution layer (optional) - selectable broker: Kotak Neo or Shoonya.
@@ -1146,6 +1177,10 @@ EMA_STRATEGY_CONFIG = EMA_LOGIC.EMATrendConfig(
 # indicator periods and entry filters, so we keep them as-is (all three
 # sub-algos -- ALGO1, ALGO2 zone, RSI divergence -- stay enabled by default).
 CPR_STRATEGY_CONFIG = CPR_LOGIC.CPRStrategyConfig()
+
+# CPR Algo 3 wraps the same indicator config (so its CPR/VWAP/RSI/ARSI match the
+# other CPR algos) plus the PDF's 45/60 RSI-vs-ARSI thresholds (its own defaults).
+CPR_ALGO3_CONFIG = CPR_ALGO3_LOGIC.CPRAlgo3Config()
 
 # Profit Shooter also uses a config dataclass. Same idea: every tunable goes
 # through `_env_*` so the env can override defaults without editing code.
@@ -5077,6 +5112,183 @@ class CPRStrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# CPR ALGO 3 WORKER (multi-instrument: spot + ITM CE + ITM PE observation)
+# =============================================================================
+class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
+    """
+    CPR Algo 3 ("CPR basic setup") — the multi-instrument CPR strategy.
+
+    Unlike the single-chart CPR worker above, Algo 3 watches THREE charts at once:
+    the NIFTY spot plus a ~ITM CE and a ~ITM PE of the CURRENT-week expiry. It only
+    fires when VWAP and the CPR band line up across all three (with RSI/ARSI and the
+    target read off the spot). See `Nifty CPR Algo 3 Signal Generator.py`.
+
+    The two ITM options are OBSERVATION ONLY: a signal still BUYS the ATM CE/PE of
+    the next-next expiry through the shared, battle-tested `enter_position` path, so
+    Algo 3 trades exactly like the other directional ATM workers. The observation
+    strikes are picked ONCE per session (fixed) so each option's VWAP/CPR/RSI stay
+    continuous, and their 1-minute OHLC is fetched on demand from the broker.
+
+    Exits: the generator is entry-only, so this worker drives its own exit by
+    watching the spot close cross the stored target / stop (plus the base loop's
+    max-loss and daily square-off).
+    """
+
+    strategy_name = "CPRAlgo3"
+    timeframe = "1"
+    poll_seconds = CPR_ALGO3_POLL_SECONDS
+    lots = CPR_ALGO3_LOTS
+    max_loss = CPR_ALGO3_MAX_LOSS
+    trading_start_hour = CPR_ALGO3_TRADING_START_HOUR
+    trading_start_minute = CPR_ALGO3_TRADING_START_MINUTE
+    square_off_hour = CPR_ALGO3_SQUARE_OFF_HOUR
+    square_off_minute = CPR_ALGO3_SQUARE_OFF_MINUTE
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        super().__init__(store, stop_event, broker)
+        self.config = CPR_ALGO3_CONFIG
+        # Observation legs, chosen once per session by `_ensure_observation_strikes`.
+        self.itm_ce: Optional[dict] = None
+        self.itm_pe: Optional[dict] = None
+        self.observation_expiry = None
+        self.signal_count = 0
+        self.entry_submit_count = 0
+        self.exit_count = 0
+
+    def summary_text(self) -> str:
+        return (
+            f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
+            f"Exits={self.exit_count} | Trades={self.completed_trades} | RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        self.exit_count += 1
+
+    def minimum_strategy_rows(self) -> int:
+        # 5-minute rows after the internal resample: enough for the indicator
+        # warm-up AND a prior session for the previous-day CPR levels.
+        return 40
+
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """
+        Enrich the SPOT 1-minute frame with CPR levels / VWAP / RSI / ARSI.
+
+        This drives the base loop's 5-minute signature gate (so we only act on a new
+        spot candle) and gives the latest spot close for exit checks. The generator
+        re-derives indicators on the raw frames itself, so `process_strategy_frame`
+        passes RAW OHLC to it, not this enriched frame.
+        """
+        return CPR_LOGIC.build_cpr_with_indicators(ohlc, self.config.indicator_config)
+
+    def _ensure_observation_strikes(self) -> bool:
+        """Pick the ~ITM CE/PE of the current-week expiry once per session."""
+        if self.itm_ce is not None and self.itm_pe is not None:
+            return True
+        spot = self._get_underlying_spot(fallback=0.0)
+        if spot <= 0:
+            return False
+        atm = round(spot / ATM_STRIKE_STEP) * ATM_STRIKE_STEP
+        ce_strike = atm - CPR_ALGO3_ITM_OFFSET  # CE is ITM at lower strikes
+        pe_strike = atm + CPR_ALGO3_ITM_OFFSET  # PE is ITM at higher strikes
+        try:
+            expiry = self.contract_resolver.get_current_week_expiry()
+            ce = self.contract_resolver.get_option_for_strike(expiry, ce_strike, "CE")
+            pe = self.contract_resolver.get_option_for_strike(expiry, pe_strike, "PE")
+        except Exception as exc:
+            self.log.warning("Algo3 observation-strike resolution failed: %s", exc)
+            return False
+        if not ce or not pe:
+            self.log.warning(
+                "Algo3 could not resolve observation legs (atm=%.0f, ce=%.0f, pe=%.0f); will retry.",
+                atm, ce_strike, pe_strike,
+            )
+            return False
+        self.itm_ce, self.itm_pe, self.observation_expiry = ce, pe, expiry
+        self.log.info(
+            "Algo3 observation legs fixed | Expiry=%s | CE=%s (%.0f) | PE=%s (%.0f)",
+            expiry.isoformat(), ce["trading_symbol"], ce_strike, pe["trading_symbol"], pe_strike,
+        )
+        return True
+
+    def _fetch_option_1m(self, contract: dict) -> pd.DataFrame:
+        """1-minute OHLC for one option strike (same intraday API as the index)."""
+        return self.broker.fetch_index_1m_ohlc(
+            security_id=int(contract["security_id"]),
+            exchange_segment=str(contract["exchange_segment"]),
+            instrument_type=OPTION_INSTRUMENT_TYPE,
+        )
+
+    def _check_spot_target_stop_and_exit(self, spot_close: float) -> None:
+        """Exit the open trade when the spot close crosses the stored target/stop."""
+        stop = self.pos.stop_underlying
+        target = self.pos.target_underlying
+        stop_ok = pd.notna(stop) and stop > 0
+        target_ok = pd.notna(target) and target > 0
+        reason = None
+        if self.pos.direction == "LONG":
+            if stop_ok and spot_close <= stop:
+                reason = "ALGO3_STOP"
+            elif target_ok and spot_close >= target:
+                reason = "ALGO3_TARGET"
+        else:  # SHORT
+            if stop_ok and spot_close >= stop:
+                reason = "ALGO3_STOP"
+            elif target_ok and spot_close <= target:
+                reason = "ALGO3_TARGET"
+        if reason:
+            self.exit_position(reason)
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """
+        Once per new 5-minute spot candle:
+        - ensure the observation legs are chosen (retry until resolvable),
+        - if in a trade, only check the spot target/stop exit,
+        - if flat, fetch the two option OHLC series, ask Algo 3 for a decision on the
+          latest aligned candle, and BUY the ATM CE/PE (next-next expiry) on a signal.
+        """
+        if not self._ensure_observation_strikes():
+            return
+
+        if self.pos.active:
+            self._check_spot_target_stop_and_exit(float(strategy_frame.iloc[-1]["close"]))
+            return
+
+        try:
+            ce_ohlc = self._fetch_option_1m(self.itm_ce)
+            pe_ohlc = self._fetch_option_1m(self.itm_pe)
+        except Exception as exc:
+            self.log.warning("Algo3 observation OHLC fetch failed: %s", exc)
+            return
+        if ce_ohlc is None or ce_ohlc.empty or pe_ohlc is None or pe_ohlc.empty:
+            return
+
+        spot_snapshot = self.store.get(self.timeframe)
+        if spot_snapshot is None or spot_snapshot.frame.empty:
+            return
+
+        decision = CPR_ALGO3_LOGIC.get_latest_nifty_cpr_algo3_signal(
+            spot_snapshot.frame, ce_ohlc, pe_ohlc, config=self.config
+        )
+        if decision.signal_triggered:
+            self.signal_count += 1
+        if decision.action == "ENTER_LONG":
+            if self.enter_position(
+                "LONG", decision.entry_underlying, decision.stop_underlying, decision.target_underlying
+            ):
+                self.entry_submit_count += 1
+        elif decision.action == "ENTER_SHORT":
+            if self.enter_position(
+                "SHORT", decision.entry_underlying, decision.stop_underlying, decision.target_underlying
+            ):
+                self.entry_submit_count += 1
+
+
+# =============================================================================
 # SUPERTREND BULLISH WORKER (3-min, hedged PE spread)
 # =============================================================================
 class SupertrendBullishWorker(BasePaperStrategyWorker):
@@ -8464,6 +8676,7 @@ STRATEGY_ENV_PREFIX = {
     "MoneyMachine": "MONEY_MACHINE",
     "OpeningStrike": "OPENING_STRIKE",
     "CPR": "CPR",
+    "CPRAlgo3": "CPR_ALGO3",
     "SupertrendBullish": "BULLISH",
     "DonchianBearish": "BEARISH",
     "Delta20Hedged": "DELTA20",
@@ -9162,9 +9375,9 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM single-leg family (21): 8 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
+        "ATM single-leg family (22): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
         "ProfitShooter 1m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
-        "PCR/VWAP/ATR, CPR 5m; + 13 TradingBot ports (%dm) - SMA Crossover, "
+        "PCR/VWAP/ATR, CPR 5m, CPR Algo 3 5m (multi-instrument); + 13 TradingBot ports (%dm) - SMA Crossover, "
         "Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, "
         "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
         "RSI Reversal, Stochastic, Supertrend, Volatility Breakout. "
@@ -9178,7 +9391,7 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + 25 consumers (21 ATM single-leg + 2 Hedged +
+    # One producer (fetcher) + 26 consumers (22 ATM single-leg + 2 Hedged +
     # 1 Delta-0.2 + 1 Long Strangle).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
 
@@ -9199,6 +9412,9 @@ def main() -> None:
         OpeningStrikePCRVWAPATRWorker(store, stop_event, broker),
         # CPR (Central Pivot Range): directional ATM single-leg on 5-min candles.
         CPRStrategyWorker(store, stop_event, broker),
+        # CPR Algo 3: multi-instrument (spot + ITM CE + ITM PE observation); trades
+        # the ATM CE/PE next-next expiry like the rest of this family.
+        CPRAlgo3StrategyWorker(store, stop_event, broker),
     ]
     # Same family, different source: the 13 TradingBot ports are ALSO
     # AtmSingleLegStrategyWorker subclasses (built from a shared factory), so they

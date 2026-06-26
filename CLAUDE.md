@@ -7,7 +7,7 @@
 
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
-the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~25
+the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~26
 strategies together — on paper by default, and live through a real broker when explicitly enabled.
 Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
 
@@ -15,9 +15,10 @@ Running live since May 2026; daily per-strategy results are tracked in a Google 
 One process, cooperating threads:
 - `CentralMarketDataFetcher` (one thread) polls DhanHQ and writes into a **lock-guarded
   `SharedMarketDataStore`** (1-min OHLC + LTPs).
-- **~25 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
-  family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / Opening-Strike +
-  13 ported TradingBot strategies), two **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
+- **~26 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
+  family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / CPR Algo 3
+  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies), two
+  **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
   and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading).

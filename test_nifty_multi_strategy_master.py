@@ -1269,6 +1269,7 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master_file.HeikinAshiStrategyWorker, master_file.ProfitShooterStrategyWorker,
             master_file.GoldmineStrategyWorker, master_file.MoneyMachineStrategyWorker,
             master_file.OpeningStrikePCRVWAPATRWorker, master_file.CPRStrategyWorker,
+            master_file.CPRAlgo3StrategyWorker,
             master_file.SupertrendBullishWorker, master_file.DonchianBearishWorker,
             master_file.Delta20HedgedSpreadWorker, master_file.LongStrangleWorker,
         ]
@@ -1968,6 +1969,122 @@ def _run_with_logging() -> bool:
     result = runner.run(suite)
     _print_final_summary(result)
     return result.wasSuccessful()
+
+
+class TestCPRAlgo3StrategyWorker(unittest.TestCase):
+    """
+    CPR Algo 3 worker WIRING: observation-strike selection, signal dispatch into
+    the shared ATM `enter_position` path, "no fetch while in a position", and the
+    spot target/stop exit. Algo 3's multi-instrument decision LOGIC is covered by
+    the generator's own suite (Signal Generators/CPR Strategy/), so the generator
+    decision is stubbed here.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.broker = MagicMock()
+        self.stop_event = threading.Event()
+        self.worker = master_file.CPRAlgo3StrategyWorker(
+            store=self.store, stop_event=self.stop_event, broker=self.broker
+        )
+        # Mock the resolver so no instrument-master CSV is touched.
+        self.worker.contract_resolver = MagicMock()
+        self.worker.contract_resolver.get_current_week_expiry.return_value = (
+            date.today() + timedelta(days=3)
+        )
+
+        def fake_strike(expiry, strike, right):
+            if right == "CE":
+                return {
+                    "security_id": 1001, "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+                    "trading_symbol": "NIFTY-22400-CE", "custom_symbol": "NIFTY 22400 CE",
+                    "strike": float(strike), "option_type": "CE",
+                    "expiry_date": expiry, "lot_size": 50,
+                }
+            return {
+                "security_id": 2002, "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+                "trading_symbol": "NIFTY-22600-PE", "custom_symbol": "NIFTY 22600 PE",
+                "strike": float(strike), "option_type": "PE",
+                "expiry_date": expiry, "lot_size": 50,
+            }
+
+        self.worker.contract_resolver.get_option_for_strike.side_effect = fake_strike
+        # The trade itself buys the ATM CE/PE (next-next expiry) via the shared path.
+        self.worker.contract_resolver.get_atm_option.return_value = {
+            "security_id": 49081, "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+            "trading_symbol": "NIFTY-22500-CE", "custom_symbol": "NIFTY 22500 CE",
+            "strike": 22500.0, "option_type": "CE",
+            "expiry_date": date.today() + timedelta(days=10), "days_to_expiry": 10,
+            "lot_size": 50, "spot_reference": 22500.0, "atm_strike_rounded": 22500.0,
+        }
+        # Seed spot + ATM-option LTPs.
+        self.store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22500.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 49081): 100.0,
+        })
+        # A non-empty 1-min OHLC frame so the option fetch + spot snapshot are truthy.
+        self._dummy = pd.DataFrame([{
+            "timestamp": pd.Timestamp("2026-06-25 09:20"),
+            "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1,
+        }])
+        self.broker.fetch_index_1m_ohlc.return_value = self._dummy
+        self.store.update("1", self._dummy)
+
+    def test_observation_strikes_picked_around_atm(self):
+        self.assertTrue(self.worker._ensure_observation_strikes())
+        self.assertEqual(self.worker.itm_ce["security_id"], 1001)
+        self.assertEqual(self.worker.itm_pe["security_id"], 2002)
+        # CE ~100 ITM below ATM(22500); PE ~100 above. (Spot 22500, offset 100.)
+        ce_call = next(c for c in self.worker.contract_resolver.get_option_for_strike.call_args_list
+                       if c.args[2] == "CE")
+        pe_call = next(c for c in self.worker.contract_resolver.get_option_for_strike.call_args_list
+                       if c.args[2] == "PE")
+        self.assertEqual(ce_call.args[1], 22400.0)
+        self.assertEqual(pe_call.args[1], 22600.0)
+
+    def test_enter_long_dispatches_to_atm_entry(self):
+        decision = master_file.CPR_ALGO3_LOGIC.CPRDecision(
+            action="ENTER_LONG", strategy_name="CPR_ALGO3", signal_triggered=True,
+            entry_underlying=22500.0, stop_underlying=22450.0, target_underlying=22700.0,
+        )
+        with patch.object(master_file.CPR_ALGO3_LOGIC, "get_latest_nifty_cpr_algo3_signal",
+                          return_value=decision):
+            self.worker.process_strategy_frame(self._dummy)
+        self.assertTrue(self.worker.pos.active)
+        self.assertEqual(self.worker.pos.direction, "LONG")
+        self.assertEqual(self.worker.pos.option_security_id, 49081)  # bought the ATM leg
+        self.assertEqual(self.worker.entry_submit_count, 1)
+
+    def test_no_option_fetch_while_in_position(self):
+        """While holding, the worker only checks the exit - it must not re-fetch options."""
+        self.worker._ensure_observation_strikes()
+        self.broker.fetch_index_1m_ohlc.reset_mock()
+        self.worker.enter_position("LONG", 22500.0, 22450.0, 22700.0)
+        # A fresh candle whose close has NOT hit the target or stop.
+        frame = pd.DataFrame([{
+            "timestamp": pd.Timestamp("2026-06-25 09:25"),
+            "open": 22500.0, "high": 22510.0, "low": 22490.0, "close": 22500.0, "volume": 1,
+        }])
+        self.worker.process_strategy_frame(frame)
+        self.broker.fetch_index_1m_ohlc.assert_not_called()
+        self.assertTrue(self.worker.pos.active)
+
+    def test_spot_target_hit_exits_long(self):
+        self.worker.enter_position("LONG", 22500.0, 22450.0, 22700.0)
+        self.assertTrue(self.worker.pos.active)
+        self.worker._check_spot_target_stop_and_exit(22750.0)  # spot >= target
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.worker.exit_count, 1)
+        self.assertEqual(self.worker.completed_trades, 1)
+
+    def test_spot_stop_hit_exits_long(self):
+        self.worker.enter_position("LONG", 22500.0, 22450.0, 22700.0)
+        self.worker._check_spot_target_stop_and_exit(22440.0)  # spot <= stop
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.worker.exit_count, 1)
+
+    def test_paper_by_default(self):
+        self.assertFalse(self.worker.live_trading)
 
 
 if __name__ == "__main__":
