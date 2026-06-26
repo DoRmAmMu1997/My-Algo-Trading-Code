@@ -5,7 +5,7 @@ Nifty Multi Strategy Front Test - Master File
 
 WHAT THIS FILE IS (read this first if you have never seen this code base)
 ------------------------------------------------------------------------
-This is a single multi-threaded paper-trading runner that combines TWENTY-FOUR
+This is a single multi-threaded paper-trading runner that combines TWENTY-SIX
 NIFTY strategies behind ONE shared market-data fetcher. It started as
 the union of two earlier files plus one Greeks-driven addition:
 
@@ -50,8 +50,16 @@ from one shared factory: SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean
 Reversion Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout, Parabolic
 SAR, RSI Divergence, RSI Reversal, Stochastic, Supertrend, and Volatility
 Breakout. They are the SAME ATM single-leg family (a LONG buys the ATM CE, a SHORT
-the ATM PE), bringing the runner to TWENTY-FOUR strategies total: 21 ATM
-single-leg + 2 Hedged Puts + 1 Delta-0.2. (ML Ensemble needs scikit-learn.)
+the ATM PE). (ML Ensemble needs scikit-learn.)
+
+Two more were then added. CPR Algo 3 is a multi-instrument "CPR basic setup" ATM
+worker: it watches the spot PLUS a ~ITM CE and a ~ITM PE of the current-week expiry
+and only fires when VWAP and the CPR band align across all three, but it still
+trades the ATM CE/PE of the next-next expiry like the rest of the ATM family. The
+Long Strangle worker is a time-based two-leg BUY of the OTM1 weekly CE+PE, with
+independent per-leg trailing stops and momentum re-entry. Together they bring the
+runner to TWENTY-SIX strategies total: 22 ATM single-leg + 2 Hedged Puts +
+1 Delta-0.2 + 1 Long Strangle.
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -59,12 +67,15 @@ Different strategies pick different expiries. Rather than burying this
 in a single overloaded method, every worker is explicit about which
 expiry rule it uses:
 
-    if strategy belongs to the "Hedged Puts" family
+    if strategy belongs to the "Hedged Puts" family, or is the Long Strangle
         -> use OptionsContractResolver.get_current_week_expiry()
            (the FIRST expiry on or after today)
     else
         -> use OptionsContractResolver.get_target_expiry()
            (the SECOND expiry on or after today, i.e. "next-next")
+
+(CPR Algo 3 is "else" -- it TRADES the next-next ATM -- even though its read-only
+observation legs use the current-week expiry.)
 
 Both methods live on the same resolver so the choice is one line at
 the call site. That keeps the rule visible in the code and easy to
@@ -72,7 +83,7 @@ audit later without chasing a hidden flag.
 
 STRIKE RULES (also explicit per family)
 ---------------------------------------
-- ATM family (the 21 ATM workers) -> resolver.get_atm_option(spot, dir).
+- ATM family (the 22 ATM workers) -> resolver.get_atm_option(spot, dir).
   Picks the strike whose round-50 value is nearest to live spot.
 - Hedged family (Supertrend Bullish + Donchian Bearish) -> the strike
   selection lives INSIDE each dedicated worker
@@ -86,7 +97,7 @@ STRIKE RULES (also explicit per family)
 
 EXECUTION MODEL CHEAT SHEET (paper)
 -----------------------------------
-Single-leg ATM trades (the 21 ATM workers):
+Single-leg ATM trades (the 22 ATM workers):
     PnL = (exit_option_price - entry_option_price) * qty
     Both LONG and SHORT signals open as BUY legs (CE for LONG, PE for
     SHORT). PnL is therefore always (live - entry) * qty.
@@ -104,7 +115,7 @@ THREAD ARCHITECTURE
       ANY worker (single batched ticker_data call).
     * Publishes everything into a thread-safe `SharedMarketDataStore`.
 
-- Twenty-four `*StrategyWorker` threads:
+- Twenty-six `*StrategyWorker` threads:
     * Read the 1-minute OHLC from the shared store.
     * Resample locally if their strategy timeframe is higher than 1m.
     * Run their own signal generator (the Delta-0.2 worker is the
@@ -114,13 +125,13 @@ THREAD ARCHITECTURE
       direct LTP fallback fetches when the cache is cold.
 
 This central-fetcher design keeps API usage low and makes the data
-deterministic across all twenty-four strategies.
+deterministic across all twenty-six strategies.
 
 WHY ONE FILE INSTEAD OF SEPARATE FILES
 --------------------------------------
 - Single fetch budget. One DhanHQ ticker_data call covers spot plus
   every active option leg from every worker simultaneously.
-- One log destination. All twenty-four strategies share LOG_FILE so a single
+- One log destination. All twenty-six strategies share LOG_FILE so a single
   audit trail captures the day.
 - One process to start, one Ctrl+C to stop everything cleanly.
 
@@ -138,6 +149,7 @@ CLASS HIERARCHY OVERVIEW
         |       +-- MoneyMachineStrategyWorker
         |       +-- OpeningStrikePCRVWAPATRWorker
         |       +-- CPRStrategyWorker
+        |       +-- CPRAlgo3StrategyWorker      (multi-instrument: spot + ITM CE + ITM PE)
         |       +-- (+ 13 TradingBot ports, built via _build_signal_gen_worker_class:
         |             SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
@@ -147,8 +159,9 @@ CLASS HIERARCHY OVERVIEW
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
         +-- Delta20HedgedSpreadWorker  (dual-side hedged spread, Greeks-driven)
+        +-- LongStrangleWorker         (time-based two-leg BUY OTM1 CE+PE, momentum re-entry)
 
-The split is intentional: only the ATM workers (the 8 core + 13 ports) share an
+The split is intentional: only the ATM workers (the 9 core + 13 ports) share an
 `enter_position` / `exit_position` flow, so it is hosted on
 `AtmSingleLegStrategyWorker`. The hedged workers each implement
 their own enter / exit because the position shape, leg count, and
@@ -344,7 +357,7 @@ UNDERLYING = _env_str("UNDERLYING", "NIFTY").upper().strip() or "NIFTY"
 
 # Minimum number of 1-minute bars before any strategy is allowed to evaluate
 # signals. 120 is enough warm-up for ATR/EMA/Donchian/Supertrend across all
-# eleven strategies even after the 5-min resamplers downsample 1m -> 5m
+# strategies even after the 5-min resamplers downsample 1m -> 5m
 # (still ~24 bars).
 MIN_BARS = _env_int("MIN_BARS", 120)
 
