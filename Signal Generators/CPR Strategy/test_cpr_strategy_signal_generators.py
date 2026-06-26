@@ -9,6 +9,7 @@ import pandas as pd
 STRATEGY_DIR = Path(__file__).resolve().parent
 LOGIC_PATH = STRATEGY_DIR / "cpr_strategy_logic.py"
 BACKTEST_PATH = STRATEGY_DIR / "Nifty CPR Strategy Backtest.py"
+ALGO3_PATH = STRATEGY_DIR / "Nifty CPR Algo 3 Signal Generator.py"
 
 
 def load_module(path: Path, name: str):
@@ -227,6 +228,106 @@ class TestCPRStrategySignalGenerators(unittest.TestCase):
         enriched = module.build_cpr_with_indicators(pd.DataFrame(build_day("2026-05-05", 100.0, rows=5)), config)
 
         decision = engine.evaluate_candle(enriched)
+
+        self.assertEqual(decision.action, "HOLD")
+        self.assertFalse(decision.signal_triggered)
+
+
+def algo3_instrument(prev_base, current_start, current_step, rows=40, prev2_updates=None):
+    """
+    One OPTION leg's three-session frame for Algo 3 tests.
+
+    Two flat prior days set the CPR band (the 2nd can be widened via `prev2_updates`),
+    then a monotonic current day (`current_step` > 0 rises, < 0 falls). All instruments
+    built with the same `rows` share the same 5-minute timestamps, so Algo 3 can align
+    them. (Option legs only need to sit above/below their own CPR/VWAP, so a clean trend
+    is fine - their RSI is irrelevant; the spot RSI is the one Algo 3 reads.)
+    """
+    out = []
+    out.extend(build_day("2026-05-01", prev_base, rows=rows, step=0.0))
+    prev2 = build_day("2026-05-04", prev_base, rows=rows, step=0.0)
+    for idx, update in (prev2_updates or {}).items():
+        prev2[idx].update(update)
+    out.extend(prev2)
+    out.extend(build_day("2026-05-05", current_start, rows=rows, step=current_step))
+    return pd.DataFrame(out)
+
+
+def trending_spot(direction, rows=40, prev2_updates=None):
+    """
+    SPOT frame whose current day DRIFTS `direction` ('up'/'down') while oscillating.
+
+    A clean monotonic ramp saturates RSI to 100/0 and ties it with its own EMA (ARSI),
+    which would make the strict `RSI vs ARSI` test ambiguous. A gentle zig-zag keeps RSI
+    mid-range and clearly on the right side of ARSI. Two flat prior days (the 2nd widened
+    so r1/prev_high/r2 sit above the band and s1/prev_low/s2 below it, leaving room for a
+    target) set the CPR band and pivot levels.
+    """
+    parts = []
+    parts.extend(build_day("2026-05-01", 100.0, rows=rows, step=0.0))
+    prev2 = build_day("2026-05-04", 100.0, rows=rows, step=0.0)
+    for idx, update in (prev2_updates or {}).items():
+        prev2[idx].update(update)
+    parts.extend(prev2)
+    start = pd.Timestamp("2026-05-05 09:15")
+    sign = 1.0 if direction == "up" else -1.0
+    price = 100.0 + sign * 1.0
+    closes = [price]
+    for index in range(rows - 1):
+        price += (sign * 0.6 if index % 2 == 0 else -sign * 0.3)  # two steps forward, one back
+        closes.append(price)
+    for index, close in enumerate(closes):
+        parts.append({"timestamp": start + pd.Timedelta(minutes=5 * index),
+                      "open": close, "high": close + 0.4, "low": close - 0.4, "close": close, "volume": 1000})
+    return pd.DataFrame(parts)
+
+
+class TestCPRAlgo3SignalGenerator(unittest.TestCase):
+    """Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE)."""
+
+    # A widened previous day for spot, so r1/prev_high/r2 sit above the CPR band and
+    # there is room for an upward target (and s1/prev_low/s2 below for a downward one).
+    WIDE_SPOT_PREV = {0: {"high": 110.0}, 1: {"low": 90.0}}
+
+    def _config(self, module):
+        # Short indicator periods so a synthetic session moves RSI/ARSI decisively.
+        return module.CPRAlgo3Config(
+            indicator_config=module.CPRStrategyConfig(
+                rsi_period=3, rsi_ema_period=3, ema_fast_period=3, ema_slow_period=5
+            )
+        )
+
+    def test_call_alignment_enters_long_to_buy_ce(self):
+        module = load_module(ALGO3_PATH, "cpr_algo3_call")
+        spot = trending_spot("up", prev2_updates=self.WIDE_SPOT_PREV)  # spot up over CPR, RSI > ARSI
+        ce = algo3_instrument(200.0, 201.0, 0.3)   # call rises above its CPR/VWAP
+        pe = algo3_instrument(200.0, 199.0, -0.3)  # put falls below its CPR/VWAP
+
+        decision = module.get_latest_nifty_cpr_algo3_signal(spot, ce, pe, config=self._config(module))
+
+        self.assertEqual(decision.action, "ENTER_LONG")
+        self.assertEqual(decision.strategy_name, "CPR_ALGO3")
+        self.assertGreater(decision.target_underlying, decision.entry_underlying)
+
+    def test_put_alignment_enters_short_to_buy_pe(self):
+        module = load_module(ALGO3_PATH, "cpr_algo3_put")
+        spot = trending_spot("down", prev2_updates=self.WIDE_SPOT_PREV)  # spot down under CPR, RSI < ARSI
+        ce = algo3_instrument(200.0, 199.0, -0.3)  # call falls below its CPR/VWAP
+        pe = algo3_instrument(200.0, 201.0, 0.3)   # put rises above its CPR/VWAP
+
+        decision = module.get_latest_nifty_cpr_algo3_signal(spot, ce, pe, config=self._config(module))
+
+        self.assertEqual(decision.action, "ENTER_SHORT")
+        self.assertEqual(decision.strategy_name, "CPR_ALGO3")
+        self.assertLess(decision.target_underlying, decision.entry_underlying)
+
+    def test_misaligned_options_hold(self):
+        module = load_module(ALGO3_PATH, "cpr_algo3_hold")
+        spot = trending_spot("up", prev2_updates=self.WIDE_SPOT_PREV)  # spot would-be call
+        ce = algo3_instrument(200.0, 200.0, 0.0)   # but the options are flat - not above/below their CPR
+        pe = algo3_instrument(200.0, 200.0, 0.0)
+
+        decision = module.get_latest_nifty_cpr_algo3_signal(spot, ce, pe, config=self._config(module))
 
         self.assertEqual(decision.action, "HOLD")
         self.assertFalse(decision.signal_triggered)
