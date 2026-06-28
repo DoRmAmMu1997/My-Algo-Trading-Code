@@ -19,3 +19,10 @@ requests
 #   scikit-learn
 # Optional faster indicators (the signal generators fall back to pandas if absent):
 #   TA-Lib
+# SL Hunting AI Agent (optional, LLM-driven strategy under "Signal Generators/
+# SL Hunting AI Agent/") — only needed when SL_HUNTING_ENABLED=true. The Claude
+# Agent SDK runs on your Claude subscription (bundled Claude CLI login; keep
+# ANTHROPIC_API_KEY UNSET). pydantic validates the agent's JSON decisions. Both
+# are lazily imported, so the master and its test suite run fine without them:
+#   claude-agent-sdk
+#   pydantic

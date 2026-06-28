@@ -61,6 +61,15 @@ independent per-leg trailing stops and momentum re-entry. Together they bring th
 runner to TWENTY-SIX strategies total: 22 ATM single-leg + 2 Hedged Puts +
 1 Delta-0.2 + 1 Long Strangle.
 
+One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
+(under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
+is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
+decides once per completed 5-min bar via in-process tools, then acts through this
+runner's own enter_position/exit_position (so it is just another ATM single-leg
+member of the family). It is OFF by default; SL_HUNTING_ENABLED=true includes it,
+and its optional deps (claude-agent-sdk, pydantic) are imported behind try/except
+so a missing dep simply disables it without touching the rest of the runner.
+
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
 Different strategies pick different expiries. Rather than burying this
@@ -1044,6 +1053,48 @@ SUPERTREND_PORT_LOGIC = load_module(
 VOLATILITY_BREAKOUT_LOGIC = load_module(
     "master_volatility_breakout", SIGNAL_GEN_DIR / "Nifty Volatility Breakout Signal Generator.py"
 )
+
+# =============================================================================
+# SL HUNTING AI AGENT (optional, LLM-driven strategy)
+# =============================================================================
+# A Claude-Agent-SDK strategy that trades the discretionary "SL Hunting" price-
+# action method on NIFTY ATM options. It is OPT-IN via SL_HUNTING_ENABLED and an
+# OPTIONAL component: its extra deps (claude-agent-sdk, pydantic) are imported
+# here behind try/except exactly like the broker layer above, so a missing dep
+# just disables this one worker and never breaks the rest of the runner or the
+# unittest suite. The heavy Claude Agent SDK is imported lazily at decision time
+# (inside the agent), so only `pydantic` must be importable for the worker to load.
+#
+# The folder has cross-importing modules all prefixed `sl_hunting_*`, so we add it
+# to sys.path once and import by name (cleaner than load_module for a multi-file
+# folder; the unique prefix avoids any sys.modules collision).
+SL_HUNTING_ENABLED = _env_bool("SL_HUNTING_ENABLED", False)
+SL_HUNTING_DIR = SIGNAL_GEN_DIR / "SL Hunting AI Agent"
+SL_HUNTING_AVAILABLE = False
+SL_HUNTING_AGENT_MODULE = None
+SL_HUNTING_EXECUTOR_MODULE = None
+SL_HUNTING_INDICATOR_CONFIG = None
+if SL_HUNTING_ENABLED:
+    try:
+        if str(SL_HUNTING_DIR) not in sys.path:
+            sys.path.insert(0, str(SL_HUNTING_DIR))
+        SL_HUNTING_AGENT_MODULE = importlib.import_module("sl_hunting_agent")
+        SL_HUNTING_EXECUTOR_MODULE = importlib.import_module("sl_hunting_executor")
+        SL_HUNTING_INDICATOR_CONFIG = importlib.import_module(
+            "sl_hunting_indicators"
+        ).SLHuntingIndicatorConfig()
+        SL_HUNTING_AVAILABLE = True
+        logging.getLogger(LOGGER_NAME).info(
+            "SL Hunting AI Agent loaded (model=%s); add SL_HUNTING_LIVE_TRADING + "
+            "LIVE_TRADING_ENABLED for real orders.",
+            _env_str("SL_HUNTING_MODEL", "claude-opus-4-8"),
+        )
+    except Exception as _sl_hunting_import_exc:  # missing pydantic / SDK / import error
+        logging.getLogger(LOGGER_NAME).warning(
+            "SL Hunting AI Agent unavailable (%s); that strategy is disabled. "
+            "Install its deps with `pip install claude-agent-sdk pydantic`.",
+            _sl_hunting_import_exc,
+        )
 
 # Each port is fully namespaced by its own prefix (<STRATEGY>_<FIELD>), so every
 # operational knob (poll/lots/timing/risk) and every indicator field is an
@@ -8698,6 +8749,84 @@ STRATEGY_ENV_PREFIX = {
 }
 
 
+# -----------------------------------------------------------------------------
+# SL Hunting AI Agent worker (optional, LLM brain)
+# -----------------------------------------------------------------------------
+# Unlike the deterministic ATM workers above, this one asks a Claude agent for a
+# decision once per completed N-min bar. The agent ACTS by calling its single
+# env-selected order tool, which routes through a MasterWorkerExecutor back into
+# this worker's own safe enter_position / exit_position -- so paper-vs-live, the
+# broker choice (LIVE_BROKER), max-loss, square-off and Telegram all behave
+# exactly like every other strategy. Defined only when the optional agent loaded;
+# otherwise SLHuntingAIWorker stays None and main() simply skips it.
+SLHuntingAIWorker = None
+if SL_HUNTING_AVAILABLE:
+    _sl_hunting_ops = _signal_gen_ops("SL_HUNTING")
+
+    class SLHuntingAIWorker(AtmSingleLegStrategyWorker):  # noqa: F811 - optional definition
+        """ATM single-leg worker whose entries/exits come from the SL Hunting agent."""
+
+        strategy_name = "SL Hunting AI"
+        timeframe = "1"
+        poll_seconds = _sl_hunting_ops["poll_seconds"]
+        lots = _sl_hunting_ops["lots"]
+        max_loss = _sl_hunting_ops["max_loss"]
+        trading_start_hour = _sl_hunting_ops["trading_start_hour"]
+        trading_start_minute = _sl_hunting_ops["trading_start_minute"]
+        square_off_hour = _sl_hunting_ops["square_off_hour"]
+        square_off_minute = _sl_hunting_ops["square_off_minute"]
+        derived_timeframe_minutes = _sl_hunting_ops["derived_timeframe_minutes"]
+
+        def __init__(self, store, stop_event, broker):
+            super().__init__(store, stop_event, broker)
+            self.agent = SL_HUNTING_AGENT_MODULE.SLHuntingAgent(
+                model=_env_str("SL_HUNTING_MODEL", "claude-opus-4-8"),
+                fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
+                indicator_config=SL_HUNTING_INDICATOR_CONFIG,
+            )
+            # The order tool routes through this executor into our own safe methods.
+            self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
+            # Throttle: consult the LLM only once per NEW completed bar (not per poll).
+            self._last_decision_bar = None
+
+        def minimum_strategy_rows(self) -> int:
+            # Enough derived bars for swings / fibo / structure, with a margin.
+            return max(40, int(getattr(SL_HUNTING_INDICATOR_CONFIG, "swing_lookback", 120)) // 2)
+
+        def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+            return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+
+        def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+            if strategy_frame is None or strategy_frame.empty:
+                return
+            # Only call the agent when a NEW bar has completed since last time.
+            latest_bar = strategy_frame["timestamp"].iloc[-1]
+            if latest_bar == self._last_decision_bar:
+                return
+            self._last_decision_bar = latest_bar
+
+            # The agent acts via the order tool DURING decide() (it calls our
+            # enter_position / exit_position through the executor); the returned
+            # decision is the agent's own record of what it did, for the log.
+            decision = self.agent.decide(
+                strategy_frame,
+                self._executor,
+                live_active=bool(self.live_trading),
+                broker=LIVE_BROKER,
+            )
+            if decision.action != "HOLD":
+                self.log.info(
+                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
+                    decision.action, decision.confidence, decision.setup,
+                    decision.stop, decision.target, decision.reasoning,
+                )
+
+    SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
+    SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"
+    # Wire the live-trading flag lookup (same pattern as every other strategy).
+    STRATEGY_ENV_PREFIX["SL Hunting AI"] = "SL_HUNTING"
+
+
 # =============================================================================
 # END-OF-DAY HELPERS
 # =============================================================================
@@ -9405,7 +9534,8 @@ def main() -> None:
     stop_event = threading.Event()
 
     # One producer (fetcher) + 26 consumers (22 ATM single-leg + 2 Hedged +
-    # 1 Delta-0.2 + 1 Long Strangle).
+    # 1 Delta-0.2 + 1 Long Strangle), plus the optional SL Hunting AI agent
+    # (appended below when SL_HUNTING_ENABLED).
     fetcher = CentralMarketDataFetcher(store, stop_event, broker)
 
     # ----- ATM single-leg family: each BUYS the ATM CE (LONG) / PE (SHORT) of the
@@ -9443,6 +9573,13 @@ def main() -> None:
         # ----- Long Strangle family: time-based, BUY OTM1 CE+PE, two independent legs. -----
         LongStrangleWorker(store, stop_event, broker),
     ]
+
+    # ----- SL Hunting AI agent (optional): LLM-driven ATM single-leg. Appended
+    #       only when the agent module loaded AND SL_HUNTING_ENABLED is set. Stays
+    #       paper unless SL_HUNTING_LIVE_TRADING + LIVE_TRADING_ENABLED are both on
+    #       (the live-wiring below applies the same double-gate as every strategy).
+    if SLHuntingAIWorker is not None:
+        workers.append(SLHuntingAIWorker(store, stop_event, broker))
 
     # -------------------------------------------------------------------------
     # Decide which strategies trade for real vs on paper.
