@@ -62,6 +62,31 @@ def risk_based_lots(
     return max(1, math.ceil(float(risk_budget) / (risk_points * int(lot_size))))
 
 
+def stop_or_target_hit(direction: str, stop: float, target: float, price: float) -> str | None:
+    """Return 'AI_STOP' / 'AI_TARGET' / None for a spot `price` vs the open position's
+    underlying stop/target levels.
+
+    Used by the master worker to ENFORCE the agent's stop/target on every poll — the
+    agent only re-decides once per completed bar, so without this an option position
+    would stay open (only max-loss / square-off / a later AI EXIT would close it) and
+    the ~Rs.2500 risk budget would not be bounded. Zero levels mean "not set" (skip).
+    """
+    direction = (direction or "").strip().upper()
+    price = float(price)
+    s, t = float(stop or 0.0), float(target or 0.0)
+    if direction == "LONG":
+        if s and price <= s:
+            return "AI_STOP"
+        if t and price >= t:
+            return "AI_TARGET"
+    elif direction == "SHORT":
+        if s and price >= s:
+            return "AI_STOP"
+        if t and price <= t:
+            return "AI_TARGET"
+    return None
+
+
 def execution_tool_name(live_active: bool, broker: str | None) -> str:
     """Return the single order-tool name the configuration selects.
 

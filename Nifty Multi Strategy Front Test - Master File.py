@@ -8828,6 +8828,23 @@ if SL_HUNTING_AVAILABLE:
         def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
             if strategy_frame is None or strategy_frame.empty:
                 return
+
+            # Enforce the agent's UNDERLYING stop/target on EVERY poll (not just once
+            # per bar), so the ~Rs.2500 risk is actually bounded between the agent's
+            # bar-cadence decisions -- the agent only re-decides per completed bar, so
+            # we cannot wait for it to call EXIT. Mirrors CPR Algo 3's spot stop/target
+            # check; _get_underlying_spot reads the live LTP cache.
+            if self.pos.active:
+                spot = self._get_underlying_spot(fallback=0.0)
+                if spot > 0:
+                    hit = SL_HUNTING_EXECUTOR_MODULE.stop_or_target_hit(
+                        self.pos.direction, self.pos.stop_underlying, self.pos.target_underlying, spot
+                    )
+                    if hit:
+                        self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
+                        self.exit_position(hit)
+                        return
+
             # Only call the agent when a NEW bar has completed since last time.
             latest_bar = strategy_frame["timestamp"].iloc[-1]
             if latest_bar == self._last_decision_bar:

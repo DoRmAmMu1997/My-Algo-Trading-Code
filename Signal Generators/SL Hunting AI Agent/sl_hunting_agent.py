@@ -39,7 +39,7 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import Field, ValidationError, field_validator
 
-from sl_hunting_ai_validation import StrictAIModel, parse_with_retry
+from sl_hunting_ai_validation import StrictAIModel
 from sl_hunting_knowledge import FINAL_OUTPUT_INSTRUCTION, build_system_prompt
 from sl_hunting_indicators import SLHuntingIndicatorConfig, prepare_candles
 from sl_hunting_tools import SLHuntingToolContext, build_sl_hunting_mcp_server
@@ -157,7 +157,6 @@ class SLHuntingAgent:
         runner: RunnerFn | None = None,
         fast_mode: bool = False,
         indicator_config: SLHuntingIndicatorConfig | None = None,
-        attempts: int = 2,
     ) -> None:
         if not model:
             raise ValueError("SLHuntingAgent: model is required.")
@@ -165,7 +164,6 @@ class SLHuntingAgent:
         self._runner = runner
         self._fast_mode = bool(fast_mode)
         self._cfg = indicator_config or SLHuntingIndicatorConfig()
-        self._attempts = max(1, int(attempts))
         self._system_prompt = build_system_prompt() + FINAL_OUTPUT_INSTRUCTION
 
     # ------------------------------------------------------------------
@@ -375,18 +373,25 @@ class SLHuntingAgent:
             decision = SLHuntingDecision.model_validate(payload)
             return decision.model_copy(update={"model_used": self._model})
 
-        try:
-            return parse_with_retry(
-                _run_once,
-                _parse,
-                attempts=self._attempts,
-                retry_on=(SLHuntingAgentError, ValidationError),
-                label="SLHuntingDecision",
-            )
-        except Exception as exc:  # noqa: BLE001 - never kill the trading loop
-            logger.warning("SLHuntingAgent.decide failed (%s); holding.", type(exc).__name__, exc_info=True)
+        def _hold(reasoning: str) -> SLHuntingDecision:
             return SLHuntingDecision(
                 action="HOLD", confidence=0, setup="agent_error",
-                reasoning=f"Agent unavailable or returned invalid output ({type(exc).__name__}); holding.",
-                model_used=self._model,
+                reasoning=reasoning, model_used=self._model,
             )
+
+        # IMPORTANT: do NOT retry the agentic loop. Unlike the read-only Scanner
+        # agents, our order tool has SIDE EFFECTS — the agent ENTERS/EXITS via the
+        # executor DURING the loop. Re-running the loop after a malformed final JSON
+        # could double-fire an order or act against already-changed state. So we run
+        # exactly ONCE: the executor state is the source of truth for any trade, and
+        # a bad/missing final JSON simply yields a safe HOLD record (no further action).
+        try:
+            text = _run_once()
+        except Exception as exc:  # noqa: BLE001 - infra failure (SDK/CLI/usage limit)
+            logger.warning("SLHuntingAgent run failed (%s); holding.", type(exc).__name__, exc_info=True)
+            return _hold(f"Agent unavailable ({type(exc).__name__}); holding.")
+        try:
+            return _parse(text)
+        except (SLHuntingAgentError, ValidationError) as exc:
+            logger.warning("SLHuntingAgent returned invalid output (%s); holding.", type(exc).__name__)
+            return _hold(f"Agent returned invalid output ({type(exc).__name__}); holding.")

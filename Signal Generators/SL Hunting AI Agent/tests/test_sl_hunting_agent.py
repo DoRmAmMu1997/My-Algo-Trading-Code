@@ -139,7 +139,7 @@ def test_agent_decide_parses_canned_json_and_stamps_model():
 
 
 def test_agent_decide_holds_on_malformed_output():
-    agent = SLHuntingAgent(model="test-model", runner=_FakeRunner("this is not json"), attempts=2)
+    agent = SLHuntingAgent(model="test-model", runner=_FakeRunner("this is not json"))
     decision = agent.decide(_candles(), StandaloneExecutor())
     assert decision.action == "HOLD"
     assert decision.setup == "agent_error"

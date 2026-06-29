@@ -33,6 +33,13 @@ def test_resample_1m_to_5m_aggregates_ohlc():
     assert set(["timestamp", "open", "high", "low", "close"]).issubset(out.columns)
 
 
+def test_resample_drops_incomplete_tail_bucket():
+    # 12 one-minute bars -> two COMPLETE 5-min bars (09:15, 09:20); the 09:25 bucket
+    # has only 2 of 5 rows and must be dropped (matches the master's resampler).
+    out = resample_1m_to_n(_one_min(n=12), 5)
+    assert len(out) == 2
+
+
 def test_manage_open_position_fills_long_target_and_stop():
     ex = StandaloneExecutor()
     ex.enter("LONG", stop=24950, target=25100, reason="t", price=25000)

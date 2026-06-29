@@ -99,16 +99,21 @@ def _synthetic_bnf(nifty_1m: pd.DataFrame, scale: float = 2.2, seed: int = 11) -
 
 
 def resample_1m_to_n(candles: pd.DataFrame, minutes: int) -> pd.DataFrame:
-    """Resample 1-minute OHLC up to `minutes`-minute candles.
+    """Resample 1-minute OHLC up to `minutes`-minute candles, keeping ONLY complete bars.
 
-    Uses left-closed, left-labelled bins — the NSE intraday convention (the 09:15
-    bar covers 09:15-09:19), matching the master's `resample_ohlc_from_1m`.
+    Uses left-closed, left-labelled bins — the NSE intraday convention (the 09:15 bar
+    covers 09:15-09:19) — and drops any bucket that did not receive all `minutes`
+    source 1-minute rows (e.g. a 09:15-09:17 tail in a CSV), exactly like the master's
+    `resample_ohlc_from_1m`. This stops the agent from ever deciding on a partial bar.
     """
     if minutes <= 1:
         return prepare_candles(candles)
     df = prepare_candles(candles).set_index("timestamp")
+    rule = f"{minutes}min"
     agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-    out = df.resample(f"{minutes}min", label="left", closed="left").agg(agg).dropna(subset=["open"])
+    out = df.resample(rule, label="left", closed="left").agg(agg).dropna(subset=["open"])
+    counts = df["close"].resample(rule, label="left", closed="left").count()
+    out = out[counts.reindex(out.index) == minutes]
     return out.reset_index()
 
 

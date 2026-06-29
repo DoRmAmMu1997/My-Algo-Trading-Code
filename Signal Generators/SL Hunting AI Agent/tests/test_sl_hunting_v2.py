@@ -7,7 +7,7 @@ import json
 import pandas as pd
 
 from sl_hunting_agent import AgentRunResult, SLHuntingAgent
-from sl_hunting_executor import StandaloneExecutor, risk_based_lots
+from sl_hunting_executor import StandaloneExecutor, risk_based_lots, stop_or_target_hit
 from sl_hunting_indicators import cross_index_signal
 from sl_hunting_tools import SLHuntingToolContext
 
@@ -119,6 +119,19 @@ def test_risk_based_lots_targets_budget():
 
 def test_risk_based_lots_falls_back_on_zero_distance():
     assert risk_based_lots(25000, 25000, 75, 2500, fallback_lots=2) == 2
+
+
+def test_stop_or_target_hit():
+    # LONG: spot at/below stop -> AI_STOP; at/above target -> AI_TARGET.
+    assert stop_or_target_hit("LONG", 24985, 25080, 24980) == "AI_STOP"
+    assert stop_or_target_hit("LONG", 24985, 25080, 25090) == "AI_TARGET"
+    assert stop_or_target_hit("LONG", 24985, 25080, 25000) is None
+    # SHORT: spot at/above stop -> AI_STOP; at/below target -> AI_TARGET.
+    assert stop_or_target_hit("SHORT", 25050, 24900, 25060) == "AI_STOP"
+    assert stop_or_target_hit("SHORT", 25050, 24900, 24890) == "AI_TARGET"
+    assert stop_or_target_hit("SHORT", 25050, 24900, 25000) is None
+    # Zero levels mean "not set" -> never trigger.
+    assert stop_or_target_hit("LONG", 0, 0, 1) is None
 
 
 def test_standalone_executor_sizes_dynamically():
