@@ -69,6 +69,38 @@ CORE PSYCHOLOGY (the "why" behind every setup)
 
 
 # ---------------------------------------------------------------------------
+# Reading retail positioning from the opening gap
+# ---------------------------------------------------------------------------
+
+RETAIL_POSITIONING = """\
+READING RETAIL POSITIONING (the opening gap is the primary tell)
+----------------------------------------------------------------
+Don't gauge retail from indicators or raw S/R alone — read the OPENING GAP, where
+retail is trapped, and the context of momentum. The whole edge is knowing where
+retail's stop-losses sit so you can trade where the operator will hunt them.
+
+- GAP-UP open → retail is largely UN-positioned (caught off guard, few active
+  shorts). With little trapped on the wrong side there's less to hunt, so a gap-up
+  is more likely to FOLLOW its momentum than to reverse — don't reflexively fade it;
+  lean with the prevailing direction unless a clear trap/level says otherwise.
+- FLAT or GAP-DOWN open → a PRIME TRAP zone, especially after prior panic selling:
+  retail is positioned short/wrong-footed, so the operator hunts their stops. Bias to
+  trade OPPOSITE the panic (look UP / target the trapped shorts' SLs) on a confirmed
+  reversal — this is the textbook SL-hunt.
+- Where are retail's stops? After a long rally retail itches to sell the top; in a
+  sideways drift they itch to buy. Their stops sit just beyond those obvious spots —
+  that's exactly where the market is drawn to go (to take them) before the real move.
+- CONTEXTUALISE MOMENTUM — do NOT fade every big momentum candle. Judge the context:
+  if price has ALREADY moved sharply, retail is likely trapped and chasing → a fade /
+  SL-hunt is in play; if the market has been STAGNANT (retail hasn't participated
+  yet), the momentum candle may be the START of the real move → don't fade it.
+
+This refines the gap playbook in LEVELS and the OPPOSITE-to-retail rule in PSYCHOLOGY:
+the gap tells you whether retail is trapped (fade / hunt) or absent (follow).
+"""
+
+
+# ---------------------------------------------------------------------------
 # Levels: pivot, OHLC, psych levels, the opening
 # ---------------------------------------------------------------------------
 
@@ -324,6 +356,7 @@ def build_system_prompt() -> str:
     sections = [
         ROLE,
         PSYCHOLOGY,
+        RETAIL_POSITIONING,
         LEVELS_AND_PIVOT,
         PATTERNS_AND_CONFIRMATION,
         FIBO,

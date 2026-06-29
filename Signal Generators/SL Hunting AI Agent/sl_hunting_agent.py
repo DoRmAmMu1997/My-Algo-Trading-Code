@@ -157,6 +157,7 @@ class SLHuntingAgent:
         runner: RunnerFn | None = None,
         fast_mode: bool = False,
         indicator_config: SLHuntingIndicatorConfig | None = None,
+        lessons_block: str = "",
     ) -> None:
         if not model:
             raise ValueError("SLHuntingAgent: model is required.")
@@ -164,7 +165,11 @@ class SLHuntingAgent:
         self._runner = runner
         self._fast_mode = bool(fast_mode)
         self._cfg = indicator_config or SLHuntingIndicatorConfig()
-        self._system_prompt = build_system_prompt() + FINAL_OUTPUT_INSTRUCTION
+        # Optional v3 LEARNED LESSONS block (loaded + formatted by the caller, gated by
+        # SL_HUNTING_LESSONS_ENABLED). Injected ONCE here, before the output contract,
+        # so the system prefix stays stable per session and prompt caching is preserved.
+        learned = ("\n\n" + lessons_block.strip()) if lessons_block and lessons_block.strip() else ""
+        self._system_prompt = build_system_prompt() + learned + FINAL_OUTPUT_INSTRUCTION
 
     # ------------------------------------------------------------------
     # Prompt construction

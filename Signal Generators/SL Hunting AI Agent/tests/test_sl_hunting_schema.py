@@ -73,3 +73,13 @@ def test_system_prompt_has_v2_markers():
     assert "bank_nifty" in prompt and "cross_index" in prompt
     # The agent is told sizing is automatic at ~Rs.2500 risk (it does not pick lots).
     assert "2500" in prompt
+
+
+def test_system_prompt_has_v3_gap_knowledge():
+    """v3: the gap/retail-positioning knowledge from the video is present."""
+    prompt = build_system_prompt()
+    assert "READING RETAIL POSITIONING" in prompt
+    low = prompt.lower()
+    assert "gap-up" in low and "gap-down" in low
+    # The momentum-context nuance (don't fade every big candle).
+    assert "momentum" in low

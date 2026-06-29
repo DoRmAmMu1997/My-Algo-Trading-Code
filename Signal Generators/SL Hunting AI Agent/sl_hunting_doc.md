@@ -240,3 +240,37 @@ Pivot can be used as S/R directly or after retracement. Pivot changes if the tim
 - If the market keeps going one way, at some point it turns back and finds support at a fibo or psych level.
 - To get upside targets, plot fibo on the down-swing; 161 and 261 give the targets.
 - When putting fibo in reverse, look at the first reverse swing; look for reversals at 161 and 261; no trade in between even with confirmation.
+
+---
+
+## Video addendum — reading retail positioning from the opening gap (v3)
+
+> Source: a separate SL-hunting video (timestamps in parentheses). Distilled into the
+> curated `RETAIL_POSITIONING` section of `sl_hunting_knowledge.py`. Verbatim notes:
+
+Identifying retail positioning is not about traditional indicators like support/resistance.
+Instead, gauge retail participation by:
+
+- **Analysing the opening gap** — the primary indicator of sentiment. A gap-up often
+  suggests retail traders do NOT have significant active positions (caught off guard),
+  which lets you follow the existing momentum (2:45–3:00, 4:56–5:06).
+- **Evaluating price action and traps** — instead of chart patterns, look for retail
+  traps. In a flat-to-gap-down scenario the market is more likely trapping retail who
+  entered on previous panic selling; identifying these traps lets you target their stop
+  losses (6:38–7:15).
+- **Observing market psychology** — traders develop a bias (urge to sell the top after a
+  long rally, or buy when the market looks sideways). By observing where retail likely
+  placed stops after these moves, you can see where smart money will move the market
+  (8:09–8:21, 11:50–12:15).
+- **Contextualising momentum** — don't automatically trade against every big momentum
+  candle. Read the overall context: whether the market has moved sharply (retail likely
+  trapped) or has been stagnant (retail not yet participated) (1:28–2:02).
+
+On opening gaps specifically (02:45–03:12):
+- **Gap-up openings** — a gap-up often indicates retail has no significant active
+  positions; because they aren't heavily positioned the market is less likely to be
+  trapped, so you can follow the prevailing momentum (02:48–03:01).
+- **Flat-to-gap-down openings** — prime environments for traps. A preceding period of
+  negative sentiment / panic selling lets the market trap retail who are positioned the
+  wrong way; this is an opportunity to target their stop losses and trade opposite the
+  initial panic (03:02–03:10, 06:38–07:15).

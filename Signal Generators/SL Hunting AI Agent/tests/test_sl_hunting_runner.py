@@ -57,6 +57,30 @@ def test_manage_open_position_fills_long_target_and_stop():
     assert ex2.closed_trades[-1]["exit_reason"] == "stop_hit"
 
 
+def test_runner_journal_helpers_open_and_close(tmp_path):
+    import json
+
+    from sl_hunting_agent import SLHuntingDecision
+    from sl_hunting_executor import StandaloneExecutor
+    from sl_hunting_journal import TradeJournal
+    from sl_hunting_runner import _close_journal_row, _open_journal_row
+
+    ex = StandaloneExecutor(lot_size=75, risk_budget=2500)
+    ex.enter("LONG", stop=24985, target=25060, reason="t", price=25000)  # 15-pt stop -> 3 lots
+    j = TradeJournal(str(tmp_path / "j.jsonl"))
+    dec = SLHuntingDecision(action="ENTER_LONG", stop=24985, target=25060, confidence=7,
+                            setup="pivot_support", reasoning="r")
+    oid = _open_journal_row(j, dec, _one_min(n=12), None, ex)
+    assert j.open_count == 1
+
+    ex.exit("target_hit", price=25030)
+    _close_journal_row(j, oid, ex)
+    assert j.open_count == 0
+    row = json.loads((tmp_path / "j.jsonl").read_text(encoding="utf-8").strip())
+    assert row["direction"] == "LONG" and row["lots"] == 3
+    assert row["outcome"]["exit_reason"] == "target_hit"
+
+
 def test_manage_open_position_fills_short():
     ex = StandaloneExecutor()
     ex.enter("SHORT", stop=25050, target=24900, reason="t", price=25000)
