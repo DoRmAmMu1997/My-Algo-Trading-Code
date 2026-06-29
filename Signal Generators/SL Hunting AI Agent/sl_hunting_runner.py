@@ -45,8 +45,46 @@ import pandas as pd
 from sl_hunting_agent import AgentRunResult, SLHuntingAgent
 from sl_hunting_executor import StandaloneExecutor
 from sl_hunting_indicators import prepare_candles
+from sl_hunting_journal import TradeJournal, make_entry_record
+from sl_hunting_lessons import format_lessons, load_lessons
 
 logger = logging.getLogger("sl_hunting_runner")
+
+# Default journal path: <repo root>/Backtest Outputs/ (gitignored).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DEFAULT_JOURNAL = os.path.join(_REPO_ROOT, "Backtest Outputs", "sl_hunting_journal.jsonl")
+_DEFAULT_LESSONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons.json")
+
+
+def _open_journal_row(journal: TradeJournal, decision, window, bnf_window, ex: StandaloneExecutor) -> str:
+    """Open a journal row for a freshly-entered trade (paper).
+
+    The EXECUTED trade details (direction / stop / target / entry / lots) are read
+    from the EXECUTOR position -- the source of truth -- not from `decision`. The
+    agent acts via the order tool DURING decide(), so the position is already live;
+    if the model's final JSON then comes back malformed or disagrees with the tool
+    call (e.g. a safe HOLD), trusting `decision.action` here would mislabel the trade
+    (any non-ENTER_LONG -> "SHORT") and store the wrong stop/target, corrupting the
+    rows the coach later learns from. Only the rationale (setup / confidence /
+    reasoning) is taken from the decision. Mirrors the master worker's _journal_open_row.
+    """
+    entry = make_entry_record(
+        direction=ex.pos.direction, setup=decision.setup, confidence=decision.confidence,
+        stop=ex.pos.stop, target=ex.pos.target, reasoning=decision.reasoning,
+        entry_underlying=ex.pos.entry, lots=ex.pos.lots, nifty_df=window, bnf_df=bnf_window,
+    )
+    return journal.open_trade(entry)
+
+
+def _close_journal_row(journal: TradeJournal, open_id: str, ex: StandaloneExecutor) -> None:
+    """Close the open journal row from the executor's most recent closed trade."""
+    if not ex.closed_trades:
+        return
+    t = ex.closed_trades[-1]
+    journal.close_trade(open_id, {
+        "exit_underlying": t["exit"], "exit_reason": t["exit_reason"],
+        "points": t["points"], "option_pnl": t["pnl_proxy"], "lots": t["lots"],
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +92,7 @@ logger = logging.getLogger("sl_hunting_runner")
 # ---------------------------------------------------------------------------
 
 def _load_csv(path: str) -> pd.DataFrame:
+    """Load a 1-minute OHLC CSV into a clean candle frame (tolerant of the time column name)."""
     df = pd.read_csv(path)
     # Be forgiving about the timestamp column name.
     rename = {}
@@ -155,6 +194,11 @@ class _AlwaysHoldRunner:
 # ---------------------------------------------------------------------------
 
 def _env(name: str, default: str) -> str:
+    """Read an env var (trimmed); fall back to ``default`` when blank/unset.
+
+    Lets every CLI flag below default to the matching ``SL_HUNTING_*`` env value, so the
+    standalone runner honours the same `.env` knobs the master front-test uses.
+    """
     val = os.getenv(name, "")
     return val.strip() if val and val.strip() else default
 
@@ -176,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-bars", type=int, default=0, help="Cap the number of decisions (0 = all).")
     parser.add_argument("--lots", type=int, default=int(_env("SL_HUNTING_LOTS", "1")))
     parser.add_argument("--lot-size", type=int, default=int(_env("NIFTY_LOT_SIZE", "75")))
+    parser.add_argument("--journal", default=_DEFAULT_JOURNAL,
+                        help="Path to the trade-journal JSONL (the coach reads this).")
+    parser.add_argument("--no-journal", action="store_true", help="Disable trade journaling.")
+    parser.add_argument("--lessons", choices=["on", "off"], default="off",
+                        help="Inject the approved LEARNED LESSONS into the agent (A/B against 'off').")
+    parser.add_argument("--lessons-path", default=_DEFAULT_LESSONS)
     args = parser.parse_args(argv)
 
     # 1. Load data.
@@ -207,24 +257,50 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("No --bnf-csv: running NIFTY-only (cross-index will report unavailable).")
 
     # 2. Build the agent (fake runner for --fake; real Claude Agent SDK otherwise).
+    lessons_block = ""
+    if args.lessons == "on":
+        lessons_block = format_lessons(load_lessons(args.lessons_path))
+        logger.info("Lessons ON: injected %d learned-lesson chars from %s.", len(lessons_block), args.lessons_path)
     runner = _AlwaysHoldRunner() if args.fake else None
-    agent = SLHuntingAgent(model=args.model, runner=runner, fast_mode=args.fast)
+    agent = SLHuntingAgent(model=args.model, runner=runner, fast_mode=args.fast, lessons_block=lessons_block)
     ex = StandaloneExecutor(lots=args.lots, lot_size=args.lot_size)
+
+    journal = None if args.no_journal else TradeJournal(args.journal)
+    if journal is not None:
+        logger.info("Journaling trades to %s", args.journal)
+    open_id = None
 
     # 3. Replay bar by bar.
     decisions = 0
     n = len(bars)
     for i in range(args.warmup, n):
         bar = bars.iloc[i]
+        # Two position snapshots are taken per bar so we can tell WHY a trade closed:
+        #  • was_active  — were we in a trade BEFORE filling this bar's stop/target? If we
+        #                  were and now we're flat, the bar's high/low closed it.
+        #  • pre_active  — (below) were we in a trade BEFORE the agent decided? Lets us tell
+        #                  an agent EXIT apart from a brand-new entry, to journal correctly.
+        was_active = ex.pos.active
         _manage_open_position(ex, bar)  # fill paper stop/target from this bar first
+        if journal is not None and open_id is not None and was_active and not ex.pos.active:
+            _close_journal_row(journal, open_id, ex)  # closed by a stop/target hit
+            open_id = None
+
         window = bars.iloc[: i + 1]
         bnf_window = None
         if bnf_bars is not None:
             bnf_window = bnf_bars[bnf_bars["timestamp"] <= bar.timestamp]
             if bnf_window.empty:
                 bnf_window = None
+        pre_active = ex.pos.active
         decision = agent.decide(window, ex, bnf_candles=bnf_window, live_active=False, broker=None)
         decisions += 1
+        if journal is not None:
+            if pre_active and not ex.pos.active and open_id is not None:
+                _close_journal_row(journal, open_id, ex)  # agent EXIT
+                open_id = None
+            elif not pre_active and ex.pos.active:
+                open_id = _open_journal_row(journal, decision, window, bnf_window, ex)  # new entry
         if decision.action != "HOLD":
             logger.info(
                 "[%s] %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
@@ -238,6 +314,9 @@ def main(argv: list[str] | None = None) -> int:
     # 4. Close any open position at the last price and summarise.
     if ex.pos.active:
         ex.exit("session_end", price=float(bars.iloc[min(i, n - 1)].close))
+        if journal is not None and open_id is not None:
+            _close_journal_row(journal, open_id, ex)
+            open_id = None
 
     trades = ex.closed_trades
     total = round(sum(t["pnl_proxy"] for t in trades), 2)

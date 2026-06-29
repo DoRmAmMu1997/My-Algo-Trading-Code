@@ -119,13 +119,24 @@ def prepare_candles(candles: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _anatomy(row: pd.Series, cfg: SLHuntingIndicatorConfig) -> dict[str, Any]:
-    """Describe one candle: body, wicks, and simple shape flags."""
+    """Describe ONE candle as numbers + simple shape flags.
+
+    Beginner note: a candle has four prices — open/high/low/close (OHLC). We turn
+    those into the parts a trader eyeballs:
+    - ``range``  = high − low  (the candle's total height; the denominator for every
+      ratio below, floored at a tiny number so we never divide by zero).
+    - ``body``   = |close − open|  (the thick part).
+    - ``upper_wick`` = the thin line ABOVE the body (high down to the body's top).
+    - ``lower_wick`` = the thin line BELOW the body (body's bottom down to the low).
+    The boolean flags then label the shape by comparing those parts to the
+    fractions in ``cfg`` (e.g. "is this basically all wick and no body?").
+    """
     o, h, l, c = float(row.open), float(row.high), float(row.low), float(row.close)
-    rng = max(h - l, 1e-9)
-    body = abs(c - o)
-    upper = h - max(o, c)
-    lower = min(o, c) - l
-    is_bull = c > o
+    rng = max(h - l, 1e-9)            # total height; 1e-9 floor avoids divide-by-zero
+    body = abs(c - o)                 # thick part (direction-agnostic)
+    upper = h - max(o, c)            # wick above the body
+    lower = min(o, c) - l            # wick below the body
+    is_bull = c > o                   # green candle (close above open)
     return {
         "open": round(o, 2),
         "high": round(h, 2),
@@ -139,8 +150,12 @@ def _anatomy(row: pd.Series, cfg: SLHuntingIndicatorConfig) -> dict[str, Any]:
         "is_bear": bool(c < o),
         "is_doji": bool(body <= cfg.doji_body_max_ratio * rng),
         "is_full_body": bool(body >= cfg.full_body_min_ratio * rng),
+        # Hammer: a long LOWER wick (price was pushed down, then rejected back up) with
+        # almost no upper wick — a classic bullish-reversal shape at a support level.
         "is_hammer": bool(lower >= cfg.long_wick_min_ratio * rng and upper <= 0.25 * rng),
+        # Shooting star: the mirror image — long UPPER wick, tiny lower wick (bearish at resistance).
         "is_shooting_star": bool(upper >= cfg.long_wick_min_ratio * rng and lower <= 0.25 * rng),
+        # Long-wick (either side): marks where stop-losses / money are parked (a reversal/target zone).
         "is_long_wick": bool(max(upper, lower) >= cfg.long_wick_min_ratio * rng),
     }
 
@@ -236,14 +251,25 @@ def pivot_and_levels(
 # ---------------------------------------------------------------------------
 
 def _swings(df: pd.DataFrame, cfg: SLHuntingIndicatorConfig) -> list[dict[str, Any]]:
-    """Return fractal swing highs/lows in the recent window (oldest → newest)."""
+    """Return "fractal" swing highs/lows in the recent window (oldest → newest).
+
+    Beginner note: a swing HIGH is a candle that is taller than its neighbours — its
+    high is the highest within ``swing_left`` bars to its left and ``swing_right`` to
+    its right (a local peak). A swing LOW is the opposite (a local trough/valley).
+    These peaks and troughs are the skeleton the fibo + structure tools build on.
+    We only look at the last ``swing_lookback`` bars to stay "recent".
+    """
     window = df.tail(cfg.swing_lookback).reset_index(drop=True)
     n = len(window)
     left, right = cfg.swing_left, cfg.swing_right
     swings: list[dict[str, Any]] = []
+    # Skip the first ``left`` and last ``right`` bars — they don't have enough
+    # neighbours on both sides to be confirmed as a peak/trough.
     for i in range(left, n - right):
         hi = float(window.high.iloc[i])
         lo = float(window.low.iloc[i])
+        # Peak/trough test: compare candle i against every neighbour in the window
+        # [i-left .. i+right] (excluding itself). >= / <= so flat ties still qualify.
         is_high = all(hi >= float(window.high.iloc[j]) for j in range(i - left, i + right + 1) if j != i)
         is_low = all(lo <= float(window.low.iloc[j]) for j in range(i - left, i + right + 1) if j != i)
         if is_high:
@@ -395,7 +421,10 @@ def candle_patterns(
             _add("doji", "bullish", p_high, p_low)
             _add("doji", "bearish", p_high, p_low)
 
-        # Engulfing (2-candle). Body engulf; note whether wicks are covered too.
+        # Engulfing (2-candle): the current candle's BODY fully swallows the previous
+        # candle's body in the OPPOSITE colour. Bullish = a green candle whose body
+        # covers a prior red body (close ≥ prev open AND open ≤ prev close); bearish is
+        # the mirror. Colour matters here (unlike a hammer). Both bodies must be non-zero.
         if cur["body"] > 0 and prev["body"] > 0:
             bull_engulf = cur["is_bull"] and prev["is_bear"] and cur["close"] >= prev["open"] and cur["open"] <= prev["close"]
             bear_engulf = cur["is_bear"] and prev["is_bull"] and cur["close"] <= prev["open"] and cur["open"] >= prev["close"]
@@ -404,13 +433,19 @@ def candle_patterns(
             if bear_engulf:
                 _add("bearish_engulfing", "bearish", max(cur["high"], prev["high"]), min(cur["low"], prev["low"]))
 
-        # Inside bar / harami (child range within parent range).
+        # Inside bar / harami: the current candle sits ENTIRELY inside the previous
+        # ("mother") candle's high-low range — a pause/coil. The trade is the breakout
+        # of the mother candle, so we record both its high and low as the levels and
+        # let the confirmation candle decide which way it actually breaks.
         if cur["high"] <= prev["high"] and cur["low"] >= prev["low"]:
             # Direction = breakout of the mother candle; record both edges.
             _add("inside_bar", "bullish", prev["high"], prev["low"])
             _add("inside_bar", "bearish", prev["high"], prev["low"])
 
-        # Morning / evening star (3-candle).
+        # Morning / evening star (3-candle reversal): a big candle, then a SMALL-bodied
+        # candle (indecision — body ≤ half the first's), then a big candle the other way
+        # that closes back past the MIDPOINT of the first. Morning star = down→pause→up
+        # (bullish); evening star = up→pause→down (bearish).
         small_middle = prev["body"] <= 0.5 * max(prev2["body"], 1e-9)
         if prev2["is_bear"] and small_middle and cur["is_bull"] and cur["close"] > (prev2["open"] + prev2["close"]) / 2:
             _add("morning_star", "bullish", max(cur["high"], prev["high"], prev2["high"]), min(cur["low"], prev["low"], prev2["low"]))
@@ -542,11 +577,15 @@ def index_position(
     if psych:
         levels.append(("psych", float(min(psych, key=lambda p: abs(p - last)))))
 
-    # A level at/below price is potential support; strictly above is resistance.
+    # Split the levels by where they sit vs the current price: anything at/below price
+    # could act as support; anything strictly above could act as resistance.
     supports = [(n, v) for n, v in levels if v <= last]
     resistances = [(n, v) for n, v in levels if v > last]
+    # "Nearest" support is the HIGHEST support (closest up to price from below) → max();
+    # nearest resistance is the LOWEST resistance (closest down to price from above) → min().
     nearest_support = max(supports, key=lambda nv: nv[1]) if supports else None
     nearest_resistance = min(resistances, key=lambda nv: nv[1]) if resistances else None
+    # "At" a level = price is within ``band`` (a small % of price) of it — i.e. touching it.
     at_support = bool(nearest_support and (last - nearest_support[1]) <= band)
     at_resistance = bool(nearest_resistance and (nearest_resistance[1] - last) <= band)
 
@@ -557,6 +596,10 @@ def index_position(
     else:
         vs_pivot = "above" if last > pivot else "below"
 
+    # Detect a FRESH pivot break in the last few bars (not just "opened far from it").
+    # Broke DOWN = price is now clearly below the pivot, yet some recent bar still
+    # reached up to/above it — i.e. price was at the pivot and then crossed below.
+    # Broke UP is the mirror. This is what the SL-hunting "clean break" rule keys on.
     broke_pivot_down = broke_pivot_up = False
     if pivot is not None and len(df) >= 2:
         recent = df.tail(6)
@@ -600,6 +643,10 @@ def cross_index_signal(
     if not (n.get("available") and b.get("available")):
         return {"available": False, "reason": "BankNIFTY data unavailable; judge on NIFTY alone (be more conservative)."}
 
+    # Verdict ladder, checked MOST-SPECIFIC first (both-break and both-at-a-level beat
+    # the looser "same side of pivot" context). Remember the SL-hunting inversion: both
+    # indices agreeing AT a level means that level likely FAILS (so fade it), while a
+    # shared clean BREAK tends to reverse. ``bias`` is the suggested NIFTY direction.
     alignment, bias, reason = "neutral", "none", ""
     if n["broke_pivot_down"] and b["broke_pivot_down"]:
         alignment, bias = "both_breakdown", "up"

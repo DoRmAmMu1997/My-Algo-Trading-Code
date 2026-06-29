@@ -240,3 +240,119 @@ Pivot can be used as S/R directly or after retracement. Pivot changes if the tim
 - If the market keeps going one way, at some point it turns back and finds support at a fibo or psych level.
 - To get upside targets, plot fibo on the down-swing; 161 and 261 give the targets.
 - When putting fibo in reverse, look at the first reverse swing; look for reversals at 161 and 261; no trade in between even with confirmation.
+
+---
+
+## Video addendum — reading retail positioning from the opening gap (v3)
+
+> Source: a separate SL-hunting video (timestamps in parentheses). Distilled into the
+> curated `RETAIL_POSITIONING` section of `sl_hunting_knowledge.py`. Verbatim notes:
+
+Identifying retail positioning is not about traditional indicators like support/resistance.
+Instead, gauge retail participation by:
+
+- **Analysing the opening gap** — the primary indicator of sentiment. A gap-up often
+  suggests retail traders do NOT have significant active positions (caught off guard),
+  which lets you follow the existing momentum (2:45–3:00, 4:56–5:06).
+- **Evaluating price action and traps** — instead of chart patterns, look for retail
+  traps. In a flat-to-gap-down scenario the market is more likely trapping retail who
+  entered on previous panic selling; identifying these traps lets you target their stop
+  losses (6:38–7:15).
+- **Observing market psychology** — traders develop a bias (urge to sell the top after a
+  long rally, or buy when the market looks sideways). By observing where retail likely
+  placed stops after these moves, you can see where smart money will move the market
+  (8:09–8:21, 11:50–12:15).
+- **Contextualising momentum** — don't automatically trade against every big momentum
+  candle. Read the overall context: whether the market has moved sharply (retail likely
+  trapped) or has been stagnant (retail not yet participated) (1:28–2:02).
+
+On opening gaps specifically (02:45–03:12):
+- **Gap-up openings** — a gap-up often indicates retail has no significant active
+  positions; because they aren't heavily positioned the market is less likely to be
+  trapped, so you can follow the prevailing momentum (02:48–03:01).
+- **Flat-to-gap-down openings** — prime environments for traps. A preceding period of
+  negative sentiment / panic selling lets the market trap retail who are positioned the
+  wrong way; this is an opportunity to target their stop losses and trade opposite the
+  initial panic (03:02–03:10, 06:38–07:15).
+
+---
+
+## Video addendum — Bank Nifty live-trading methodology (v3a)
+
+> Source: 9 "Intraday Hunter" YouTube videos (8 live BankNIFTY option-trading sessions +
+> 1 weekly-analysis lesson). The audio is Hindi and raw transcripts were not retrievable
+> in our environment, so the methodology below was **distilled via YouTube's built-in
+> "Ask" (Gemini) summaries** of each video (prompted for concrete rules with timestamps),
+> not from a verbatim transcript. Treat it as a **secondary AI summary, operator-reviewable**.
+> 4 videos were captured in full (both market regimes); the rest restated the same method
+> with no net-new rule. General lessons were merged into the curated knowledge sections;
+> BankNIFTY-specific behaviour went into the new `BNF_SPECIFIC` section (advisory context
+> for the cross-index read — NIFTY-only execution is unchanged).
+>
+> Videos: `s41N7OS17Wk` (Weekly Charts Analysis — general), and the live BankNIFTY sessions
+> `gMu0DU4HJ00`, `1e14YWvOtzs`, `LmO-Y1XzqgY`, `O_PHs9q1QqA`, `G9HR80PLK8E`, `a3jih441RZo`,
+> `XHIlEHikp6k`, `o0a5gq5i_Mo`.
+
+**General method (merged into the existing sections):**
+- **Bias is read from the open.** Gap-up / immediate positive momentum ⇒ buyers not
+  threatened, no trapped shorts to hunt ⇒ follow the trend, don't fade. A flat open that
+  then struggles to push up ⇒ had it meant to rise it would have gapped up; the hesitant
+  flat open that lures buyers to "support" expecting a breakout is a trap for them ⇒ short
+  and hunt their SLs. Gap-down after panic ⇒ trapped shorts ⇒ hunt upward.
+- **"Closing price" (previous-day close) is the pivotal intraday level** — both S/R and the
+  trade's invalidation: a long dies if price falls back to it; indices stalling at
+  closing-price resistance without a decisive breakout is the short tell.
+- **Confirmation is also behavioural** (complements, never replaces, the candle rule): enter
+  when price holds without aggressive selling (long) or fails to break out and stalls
+  (short); accept a slightly worse price rather than miss the anticipated move.
+- **Stops = premise-invalidation + a hard intraday loss cap;** never hold a loser hoping for
+  a reversal — you cannot wait indefinitely intraday.
+- **Time-decay discipline (option BUYER):** a bought option bleeds premium when the market
+  goes sideways — most sharply near/at expiry; if the move doesn't come quickly, exit.
+- **Targets = the hunted-SL liquidity zone; book on weakness** (momentum failure / leading
+  index stalls / opposing reversal), not a fixed number.
+- **Don't over-focus on accuracy** — the edge is the positioning read + discipline.
+
+**Bank Nifty-specific (new `BNF_SPECIFIC` section — advisory; the agent still trades NIFTY only):**
+- **Triple-index read:** watch BankNIFTY + NIFTY + Sensex together; a thesis needs momentum
+  confirmed across them, and concurrent rejection across all three invalidates it.
+- **BankNIFTY is the "major index"** that sets the base bias (NIFTY/Sensex confirm); exit when
+  BankNIFTY weakens vs the others, especially if the weakest one starts reversing.
+- **Prioritise the index whose expiry is that day** (Sensex/NIFTY) — it concentrates the
+  action and theta.
+- **Round-number levels weigh more on BankNIFTY** (its larger point range): the round
+  "…500"/"…000" levels are prime trap/breakout magnets where breakout-buyers get trapped.
+- (Context only, not an agent rule:) the trader executes a **basket across BankNIFTY + NIFTY +
+  Sensex legs concurrently** — noted for realism; our agent trades NIFTY only.
+
+---
+
+## Video addendum — daily "Analysis" videos review (v3b)
+
+> Diligence record (no knowledge change). I reviewed every "Analysis"-titled Intraday Hunter
+> video from the previous ~2 weeks (15–29 Jun 2026) for **net-new durable method**, via YouTube's
+> built-in "Ask"/Gemini panel (same path as v3a). **Outcome: confirmatory only — nothing net-new
+> was added.** The daily clips are short (~2 min) **pre-market prediction calls**: their content is
+> *ephemeral* (that day's specific support/resistance levels and bias), and the durable themes they
+> touch — gap-up/gap-down read, "avoid flat markets", expiry handling, round-number/S-R levels,
+> SL-hunting, volatility — are **already** in the knowledge base (see `RETAIL_POSITIONING`,
+> `LEVELS_AND_PIVOT`, `RISK`, `BNF_SPECIFIC`, `BNF_CROSS_CONFIRMATION`). No rule is added that a
+> video did not actually state (no fabrication), so the knowledge sections are unchanged for v3b.
+
+Videos reviewed (id — date — Ask/Gemini signal):
+- `I2BGDZIEc4c` — 29 Jun — gap-down caution, "closing price" importance, breakout-trap skepticism (known)
+- `st8p4CkP8mo` — 25 Jun — Sensex-expiry day; Ask panel not offered on this clip; on-screen chart is day-specific S/R only
+- `ZXQZy735-Fo` — 24 Jun — "trading plan", "SENSEX outlook", "SL hunting for intraday" (known)
+- `GCpBLoj3DSw` — 23 Jun — "why avoid trading when flat", "prepare for Nifty expiry" (known)
+- `0Pq2Arc7gRo` — 22 Jun — "outlook for Nifty", "trade Bank Nifty & Sensex", "SL hunting strategy" (known)
+- `Z2cVRE3sa6s` — 19 Jun — "trend analysis", "today's plan", "key S/R levels" (ephemeral)
+- `2aDHbVBT6gM` — 18 Jun — "outlook", "key levels", "why avoid trading on a gap down" (known)
+- `aBvETyWqKSQ` — 17 Jun — "strategy", "handle sudden gaps", "key S/R levels" (known/ephemeral)
+- `OKpfb0Nky2I` — 16 Jun — same daily-prediction format (ephemeral)
+- `lN4qRl5VQgs` — 15 Jun — "strategy for the day", "key S/R levels", "handle volatility" (ephemeral)
+
+Also: the **"Analysis Q&A | Most Asked Questions"** (`7a3dAL7mBJY`) is **members-only / inaccessible**;
+its preview lists method topics (e.g. "how to predict Monday's direction when retail exits on Friday",
+"regain confidence after a big loss", "60% profit booking") — a potential net-new "weekend / Friday-exit
+→ Monday-open" refinement — but the answers are paywalled, so nothing is added from it. (If the operator
+shares those notes, the Friday→Monday concept can be folded into `RETAIL_POSITIONING` the same way.)

@@ -131,6 +131,11 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def _mentions_usage_limit(*texts: str | None) -> bool:
+    """True if any error text looks like a subscription usage/rate limit (vs a real bug).
+
+    Lets us map those specific failures to `SLHuntingUsageLimitError` so the caller can
+    treat "out of plan credit" differently from a genuine crash.
+    """
     blob = " ".join(t for t in texts if t).lower()
     return any(k in blob for k in ("usage limit", "rate limit", "429", "quota"))
 
@@ -157,6 +162,7 @@ class SLHuntingAgent:
         runner: RunnerFn | None = None,
         fast_mode: bool = False,
         indicator_config: SLHuntingIndicatorConfig | None = None,
+        lessons_block: str = "",
     ) -> None:
         if not model:
             raise ValueError("SLHuntingAgent: model is required.")
@@ -164,13 +170,22 @@ class SLHuntingAgent:
         self._runner = runner
         self._fast_mode = bool(fast_mode)
         self._cfg = indicator_config or SLHuntingIndicatorConfig()
-        self._system_prompt = build_system_prompt() + FINAL_OUTPUT_INSTRUCTION
+        # Optional v3 LEARNED LESSONS block (loaded + formatted by the caller, gated by
+        # SL_HUNTING_LESSONS_ENABLED). Injected ONCE here, before the output contract,
+        # so the system prefix stays stable per session and prompt caching is preserved.
+        learned = ("\n\n" + lessons_block.strip()) if lessons_block and lessons_block.strip() else ""
+        self._system_prompt = build_system_prompt() + learned + FINAL_OUTPUT_INSTRUCTION
 
     # ------------------------------------------------------------------
     # Prompt construction
     # ------------------------------------------------------------------
 
     def _snapshot_csv(self, candles: pd.DataFrame) -> str:
+        """Render the last ``_SNAPSHOT_BARS`` candles as a tiny CSV for the prompt.
+
+        This is ORIENTATION only (a glance at recent price) — the agent gets exact
+        numbers from its tools, so we keep this short to bound tokens/cost.
+        """
         recent = candles.tail(_SNAPSHOT_BARS)
         lines = ["time,open,high,low,close"]
         for row in recent.itertuples(index=False):
@@ -179,6 +194,7 @@ class SLHuntingAgent:
         return "\n".join(lines)
 
     def _build_user_prompt(self, candles: pd.DataFrame, position: dict[str, Any]) -> str:
+        """Compose the per-bar USER message: instrument, current price, position, candles, task."""
         last_price = float(candles["close"].iloc[-1]) if not candles.empty else 0.0
         pos_line = (
             f"You currently HOLD a {position.get('direction')} position "

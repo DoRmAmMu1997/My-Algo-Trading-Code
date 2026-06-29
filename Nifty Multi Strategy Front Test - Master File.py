@@ -68,7 +68,11 @@ decides once per completed 5-min bar via in-process tools, then acts through thi
 runner's own enter_position/exit_position (so it is just another ATM single-leg
 member of the family). It is OFF by default; SL_HUNTING_ENABLED=true includes it,
 and its optional deps (claude-agent-sdk, pydantic) are imported behind try/except
-so a missing dep simply disables it without touching the rest of the runner.
+so a missing dep simply disables it without touching the rest of the runner. It can
+also learn from its own trades (v3): a per-trade journal feeds an off-loop reflection
+coach that proposes lessons, which the operator promotes into lessons.json and the
+agent injects only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by
+default).
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -1080,6 +1084,8 @@ SL_HUNTING_DIR = SIGNAL_GEN_DIR / "SL Hunting AI Agent"
 SL_HUNTING_AVAILABLE = False
 SL_HUNTING_AGENT_MODULE = None
 SL_HUNTING_EXECUTOR_MODULE = None
+SL_HUNTING_JOURNAL_MODULE = None
+SL_HUNTING_LESSONS_MODULE = None
 SL_HUNTING_INDICATOR_CONFIG = None
 if SL_HUNTING_ENABLED:
     try:
@@ -1087,6 +1093,8 @@ if SL_HUNTING_ENABLED:
             sys.path.insert(0, str(SL_HUNTING_DIR))
         SL_HUNTING_AGENT_MODULE = importlib.import_module("sl_hunting_agent")
         SL_HUNTING_EXECUTOR_MODULE = importlib.import_module("sl_hunting_executor")
+        SL_HUNTING_JOURNAL_MODULE = importlib.import_module("sl_hunting_journal")
+        SL_HUNTING_LESSONS_MODULE = importlib.import_module("sl_hunting_lessons")
         SL_HUNTING_INDICATOR_CONFIG = importlib.import_module(
             "sl_hunting_indicators"
         ).SLHuntingIndicatorConfig()
@@ -8773,6 +8781,17 @@ if SL_HUNTING_AVAILABLE:
     # convention/default as Profit Shooter). The agent does NOT choose lots; this is
     # computed from the agent's underlying stop distance.
     SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
+    # Trade journal (v3): record each trade's entry context + exit outcome to a
+    # gitignored JSONL the reflection coach reads. Best-effort; never blocks trading.
+    SL_HUNTING_JOURNAL_ENABLED = _env_bool("SL_HUNTING_JOURNAL_ENABLED", True)
+    SL_HUNTING_JOURNAL_PATH = _env_str(
+        "SL_HUNTING_JOURNAL_PATH", str(ROOT_DIR / "Backtest Outputs" / "sl_hunting_journal.jsonl")
+    )
+    # Learned lessons (v3): inject APPROVED lessons into the agent's prompt ONLY when
+    # explicitly enabled (default OFF) -- human-gated + paper-first. The live store
+    # lives in the agent folder so it ships with the strategy.
+    SL_HUNTING_LESSONS_ENABLED = _env_bool("SL_HUNTING_LESSONS_ENABLED", False)
+    SL_HUNTING_LESSONS_PATH = _env_str("SL_HUNTING_LESSONS_PATH", str(SL_HUNTING_DIR / "lessons.json"))
 
     class SLHuntingAIWorker(AtmSingleLegStrategyWorker):  # noqa: F811 - optional definition
         """ATM single-leg worker whose entries/exits come from the SL Hunting agent."""
@@ -8790,10 +8809,24 @@ if SL_HUNTING_AVAILABLE:
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
+            # Optional learned-lessons block (loaded ONCE at construction so the prompt
+            # prefix stays stable per session — preserves prompt caching). Gated + off
+            # by default; only APPROVED lessons are in the live store.
+            lessons_block = ""
+            if SL_HUNTING_LESSONS_ENABLED:
+                try:
+                    lessons_block = SL_HUNTING_LESSONS_MODULE.format_lessons(
+                        SL_HUNTING_LESSONS_MODULE.load_lessons(SL_HUNTING_LESSONS_PATH)
+                    )
+                    if lessons_block:
+                        self.log.info("SL Hunting: injected %d learned lesson chars.", len(lessons_block))
+                except Exception as exc:  # noqa: BLE001 - lessons are advisory, never fatal
+                    self.log.warning("SL Hunting lessons load failed: %s", exc)
             self.agent = SL_HUNTING_AGENT_MODULE.SLHuntingAgent(
                 model=_env_str("SL_HUNTING_MODEL", "claude-opus-4-8"),
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
+                lessons_block=lessons_block,
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
@@ -8802,6 +8835,57 @@ if SL_HUNTING_AVAILABLE:
             # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
             # exactly like CPR Algo 3 fetches its observation legs.
             self._use_bnf = _env_bool("SL_HUNTING_USE_BNF", True)
+            # Trade journal (v3): open a row on entry here, close it in after_exit
+            # (the universal post-close hook, so EVERY exit path is captured).
+            self._journal = (
+                SL_HUNTING_JOURNAL_MODULE.TradeJournal(SL_HUNTING_JOURNAL_PATH)
+                if SL_HUNTING_JOURNAL_ENABLED else None
+            )
+            self._open_trade_id = None
+            self._entry_realized_pnl = 0.0
+
+        def _journal_open_row(self, decision, nifty_df, bnf_df) -> None:
+            """Open a journal row for a trade the agent just entered (best-effort)."""
+            try:
+                lot_size = max(int(getattr(self.pos, "option_lot_size", 0)), 1)
+                entry = SL_HUNTING_JOURNAL_MODULE.make_entry_record(
+                    direction=getattr(self.pos, "direction", ""),
+                    setup=decision.setup, confidence=decision.confidence,
+                    reasoning=decision.reasoning,
+                    stop=float(getattr(self.pos, "stop_underlying", 0.0)),
+                    target=float(getattr(self.pos, "target_underlying", 0.0)),
+                    entry_underlying=float(getattr(self.pos, "entry_underlying", 0.0)),
+                    lots=int(getattr(self.pos, "quantity", 0)) // lot_size,
+                    nifty_df=nifty_df, bnf_df=bnf_df,
+                )
+                self._open_trade_id = self._journal.open_trade(entry)
+                self._entry_realized_pnl = self.realized_pnl
+            except Exception as exc:  # noqa: BLE001 - journaling must never disturb trading
+                self.log.warning("SL Hunting journal open failed: %s", exc)
+
+        def after_exit(self, closed_position, reason: str) -> None:
+            """Universal post-close hook (fires for AI exit, stop/target, max-loss,
+            square-off). Close the open journal row with the underlying outcome."""
+            super().after_exit(closed_position, reason)
+            if self._journal is None or self._open_trade_id is None:
+                return
+            try:
+                entry_u = float(getattr(closed_position, "entry_underlying", 0.0))
+                direction = getattr(closed_position, "direction", "")
+                spot = self._get_underlying_spot(fallback=entry_u)
+                points = (spot - entry_u) if direction == "LONG" else (entry_u - spot)
+                lot_size = max(int(getattr(closed_position, "option_lot_size", 0)), 1)
+                self._journal.close_trade(self._open_trade_id, {
+                    "exit_underlying": round(spot, 2),
+                    "exit_reason": reason,
+                    "points": round(points, 2),
+                    "option_pnl": round(self.realized_pnl - self._entry_realized_pnl, 2),
+                    "lots": int(getattr(closed_position, "quantity", 0)) // lot_size,
+                })
+            except Exception as exc:  # noqa: BLE001
+                self.log.warning("SL Hunting journal close failed: %s", exc)
+            finally:
+                self._open_trade_id = None
 
         def minimum_strategy_rows(self) -> int:
             # Enough derived bars for swings / fibo / structure, with a margin.
@@ -8871,6 +8955,7 @@ if SL_HUNTING_AVAILABLE:
             # The agent acts via the order tool DURING decide() (it calls our
             # enter_position / exit_position through the executor); the returned
             # decision is the agent's own record of what it did, for the log.
+            was_active = self.pos.active
             decision = self.agent.decide(
                 strategy_frame,
                 self._executor,
@@ -8884,6 +8969,11 @@ if SL_HUNTING_AVAILABLE:
                     decision.action, decision.confidence, decision.setup,
                     decision.stop, decision.target, decision.reasoning,
                 )
+            # Journal a fresh entry (flat -> active during decide). Exits are journaled
+            # in after_exit, so EVERY close path is captured there.
+            if (self._journal is not None and self._open_trade_id is None
+                    and not was_active and self.pos.active):
+                self._journal_open_row(decision, strategy_frame, bnf_candles)
 
     SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
     SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"
@@ -9249,6 +9339,7 @@ _PNL_SHEET_ROW_LABELS = {
     "MoneyMachine": "Money Machine Strategy",
     "OpeningStrike": "Opening Strike PCR VWAP ATR Strategy",
     "CPR": "CPR Strategy",
+    "CPRAlgo3": "CPR Algo 3 Strategy",
     "SMA Crossover": "SMA Crossover Strategy",
     "Bollinger Bands": "Bollinger Bands Strategy",
     "Keltner Squeeze": "Keltner Squeeze Strategy",
@@ -9266,6 +9357,8 @@ _PNL_SHEET_ROW_LABELS = {
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
     "LongStrangle": "Long Strangle Strategy",
+    # Optional opt-in 27th worker (SL_HUNTING_ENABLED); maps only when it runs.
+    "SL Hunting AI": "SL Hunting AI Agent Strategy",
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")

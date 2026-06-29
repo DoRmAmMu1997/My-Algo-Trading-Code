@@ -41,6 +41,10 @@ the lot count — position size is computed automatically so the worst-case risk
 | `sl_hunting_ai_validation.py` | `StrictAIModel` + `parse_with_retry` (bounded retry on malformed JSON). |
 | `sl_hunting_agent.py` | `SLHuntingAgent` + the strict `SLHuntingDecision` schema. |
 | `sl_hunting_runner.py` | Standalone PAPER harness (synthetic/CSV replay). |
+| `sl_hunting_journal.py` | v3 trade journal — entry context + exit outcome per trade (JSONL). |
+| `sl_hunting_coach.py` | v3 reflection coach — proposes lessons from the journal (`--reflect`/`--promote`/`--list`). |
+| `sl_hunting_lessons.py` | v3 lessons store (schema, consolidate, `format_lessons` for prompt injection). |
+| `lessons.json` | The APPROVED (live) lessons the agent injects — starts empty; you promote into it. |
 | `tests/` | pytest suite — runs with a fake runner, no SDK/CLI/network. |
 
 ## Setup (one-time)
@@ -107,3 +111,38 @@ The source doc's ~108 pages of annotated chart screenshots were exported and
 reviewed; they are illustrative of the prose rules and contained **no net-new
 knowledge**, so nothing was added to the agent's knowledge from them (see the note
 at the top of `sl_hunting_doc.md`).
+
+## Learning from mistakes (v3)
+The agent grows a **lessons memory** from its own trades — not by fine-tuning, but by a
+human-reviewed loop:
+
+1. **Journal** — every trade's entry context (decision + a pivot/fibo/pattern/cross-index
+   snapshot) and exit outcome (reason, points, R-multiple, P&L, `followed_method`) is
+   appended to a gitignored JSONL (`Backtest Outputs/sl_hunting_journal.jsonl`).
+   On by default (`SL_HUNTING_JOURNAL_ENABLED`); a no-op when disabled.
+2. **Reflect** — a separate read-only coach turns the journal into *proposed* lessons:
+   ```bash
+   python sl_hunting_coach.py --reflect            # proposes lessons -> *_proposed.json
+   python sl_hunting_coach.py --list               # review proposed + live
+   python sl_hunting_coach.py --promote <lesson-id> # human gate: approve into lessons.json
+   ```
+3. **Inject** — `lessons.json` (approved only) is injected into the agent's prompt **only
+   when `SL_HUNTING_LESSONS_ENABLED=true`** (default off), loaded once per session so
+   prompt caching holds. Validate first on paper: `sl_hunting_runner.py --lessons on|off`.
+
+**Safety/ML guardrails:** lessons are **human-gated, paper-first, and off by default**;
+the coach runs off the live loop; lessons are phrased as tendencies (not laws), require a
+minimum sample, separate process from outcome (a sound setup that lost ≠ a mistake), and
+the store is bounded/de-duplicated. Fine-tuning/RL and auto-promotion are out of scope.
+
+## Bank Nifty methodology (v3a)
+Knowledge-only drop distilled from 9 "Intraday Hunter" live-trading videos. General lessons
+(gap-driven bias, "closing price" as the invalidation level, behavioural confirmation,
+premise-invalidation stops, option **time-decay** discipline, book-on-weakness) were merged
+into the existing curated sections; **BankNIFTY-specific** behaviour lives in a new
+`BNF_SPECIFIC` section — a **triple-index** (BankNIFTY + NIFTY + Sensex) read with BankNIFTY
+as the "major index", expiry-day index priority, and round-number magnets. It is **advisory
+context for the cross-index read only — the agent still trades NIFTY ATM options**; nothing
+about execution changes. The video audio is Hindi and raw transcripts weren't retrievable,
+so the rules were distilled via YouTube's built-in "Ask"/Gemini summaries (a secondary AI
+summary, recorded with provenance in `sl_hunting_doc.md` and operator-reviewable).
