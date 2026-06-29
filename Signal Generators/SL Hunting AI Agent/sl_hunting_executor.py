@@ -158,6 +158,11 @@ class StandaloneExecutor:
         self.closed_trades: list[dict[str, Any]] = []
 
     def enter(self, direction: str, stop: float, target: float, reason: str, price: float) -> dict[str, Any]:
+        """Open a paper position at ``price`` (rejects a bad direction or a double-entry).
+
+        Records the entry/stop/target and the dynamically-sized lot count, then returns
+        an ``accepted`` result dict the order tool relays back to the agent.
+        """
         direction = (direction or "").strip().upper()
         if direction not in VALID_DIRECTIONS:
             return {"accepted": False, "reason": f"invalid direction {direction!r}; expected LONG or SHORT"}
@@ -178,9 +183,15 @@ class StandaloneExecutor:
         return {"accepted": True, "action": f"ENTER_{direction}", "entry": self.pos.entry, "stop": self.pos.stop, "target": self.pos.target, "lots": lots, "quantity": lots * self.lot_size}
 
     def exit(self, reason: str, price: float) -> dict[str, Any]:
+        """Close the open position at ``price``, append it to the trade log, go flat.
+
+        P&L is the simple underlying-points proxy (LONG profits as price rises, SHORT as
+        it falls) × lots × lot_size. Rejects if there is nothing open to close.
+        """
         if not self.pos.active:
             return {"accepted": False, "reason": "no open position to exit"}
         last = float(price)
+        # LONG makes money when price rises above entry; SHORT when it falls below entry.
         pts = (last - self.pos.entry) if self.pos.direction == "LONG" else (self.pos.entry - last)
         lots = self.pos.lots or self.lots
         pnl = round(pts * lots * self.lot_size, 2)
@@ -200,6 +211,7 @@ class StandaloneExecutor:
         return {"accepted": True, "action": "EXIT", **trade}
 
     def snapshot(self) -> dict[str, Any]:
+        """Return the current position as a dict for the `position_state` tool (or flat)."""
         if not self.pos.active:
             return {"in_position": False}
         return {
@@ -239,6 +251,12 @@ class MasterWorkerExecutor:
         self._w = worker
 
     def enter(self, direction: str, stop: float, target: float, reason: str, price: float) -> dict[str, Any]:
+        """Delegate the entry to the master worker's safe `enter_position`.
+
+        The worker resolves the ATM option and places the paper/real order; we only
+        guard against an invalid direction or entering while already in a position, and
+        translate the worker's True/False into the result dict the order tool expects.
+        """
         direction = (direction or "").strip().upper()
         if direction not in VALID_DIRECTIONS:
             return {"accepted": False, "reason": f"invalid direction {direction!r}; expected LONG or SHORT"}
@@ -256,6 +274,7 @@ class MasterWorkerExecutor:
         return {"accepted": True, "action": f"ENTER_{direction}", "entry": round(float(price), 2), "stop": round(float(stop), 2), "target": round(float(target), 2)}
 
     def exit(self, reason: str, price: float) -> dict[str, Any]:
+        """Delegate the close to the worker's `exit_position` (which handles P&L/alerts)."""
         pos = getattr(self._w, "pos", None)
         if pos is None or not getattr(pos, "active", False):
             return {"accepted": False, "reason": "no open position to exit"}
@@ -263,6 +282,12 @@ class MasterWorkerExecutor:
         return {"accepted": True, "action": "EXIT", "reason": str(reason)[:300]}
 
     def snapshot(self) -> dict[str, Any]:
+        """Read the worker's open position (duck-typed) into the `position_state` shape.
+
+        The worker stores entry/stop/target on its ``pos`` object as ``*_underlying``
+        attributes; we copy those across and best-effort attach unrealised P&L if the
+        worker exposes a getter for it.
+        """
         pos = getattr(self._w, "pos", None)
         if pos is None or not getattr(pos, "active", False):
             return {"in_position": False}

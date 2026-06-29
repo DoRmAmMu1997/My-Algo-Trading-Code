@@ -52,6 +52,12 @@ DEFAULT_LIVE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons
 
 
 def _coach_system_prompt(min_sample: int, max_lessons: int) -> str:
+    """Build the coach's system prompt — the skeptical "reviewer" persona + its guardrails.
+
+    Bakes the overfitting defences into the instructions themselves: a minimum sample
+    before any lesson, tendencies-not-laws phrasing, process-vs-outcome separation, and
+    "return an empty list if the evidence is thin" (so it doesn't invent lessons).
+    """
     return (
         "You are a trading COACH reviewing the SL Hunting agent's OWN trade journal to "
         "propose a few LESSONS that would improve its future decisions. You are rigorous "
@@ -126,6 +132,11 @@ class CoachAgent:
         self._attempts = max(1, int(attempts))
 
     async def _default_run(self, prompt: str, *, system_prompt: str, model: str, max_turns: int) -> str:
+        """Run one read-only reflection pass on the Claude Agent SDK; return final text.
+
+        No tools and no order venue here (the coach only reads the journal text we pass
+        in), so it's far simpler than the trading agent's loop. SDK imported lazily.
+        """
         try:
             import claude_agent_sdk as claude_sdk  # type: ignore[import-not-found, unused-ignore]
             from claude_agent_sdk import (  # type: ignore[import-not-found, unused-ignore]
@@ -166,6 +177,11 @@ class CoachAgent:
 
     @staticmethod
     def _run_sync(coro: Awaitable[str]) -> str:
+        """Drive the async run from a plain CLI (own thread + event loop; Windows-safe).
+
+        Same bridge idea as the trading agent — a dedicated worker thread with its own
+        loop (ProactorEventLoop on Windows, needed to spawn the Claude CLI subprocess).
+        """
         def _runner() -> str:
             loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
             try:
@@ -208,6 +224,12 @@ class CoachAgent:
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Pull the coach's `{"lessons": [...]}` JSON out of its final message.
+
+    Tolerant of a ```json fence or a leading sentence (fenced block first, else the
+    outermost {...}); returns None if nothing parses. A local twin of the agent's
+    extractor, kept here so the coach module stands alone.
+    """
     import re
 
     if not text:
@@ -234,6 +256,7 @@ class _FakeEmptyCoach:
 
 
 def _env(name: str, default: str) -> str:
+    """Read an env var, trimming whitespace; fall back to ``default`` when blank/unset."""
     val = os.getenv(name, "")
     return val.strip() if val and val.strip() else default
 

@@ -324,3 +324,35 @@ On opening gaps specifically (02:45–03:12):
   "…500"/"…000" levels are prime trap/breakout magnets where breakout-buyers get trapped.
 - (Context only, not an agent rule:) the trader executes a **basket across BankNIFTY + NIFTY +
   Sensex legs concurrently** — noted for realism; our agent trades NIFTY only.
+
+---
+
+## Video addendum — daily "Analysis" videos review (v3b)
+
+> Diligence record (no knowledge change). I reviewed every "Analysis"-titled Intraday Hunter
+> video from the previous ~2 weeks (15–29 Jun 2026) for **net-new durable method**, via YouTube's
+> built-in "Ask"/Gemini panel (same path as v3a). **Outcome: confirmatory only — nothing net-new
+> was added.** The daily clips are short (~2 min) **pre-market prediction calls**: their content is
+> *ephemeral* (that day's specific support/resistance levels and bias), and the durable themes they
+> touch — gap-up/gap-down read, "avoid flat markets", expiry handling, round-number/S-R levels,
+> SL-hunting, volatility — are **already** in the knowledge base (see `RETAIL_POSITIONING`,
+> `LEVELS_AND_PIVOT`, `RISK`, `BNF_SPECIFIC`, `BNF_CROSS_CONFIRMATION`). No rule is added that a
+> video did not actually state (no fabrication), so the knowledge sections are unchanged for v3b.
+
+Videos reviewed (id — date — Ask/Gemini signal):
+- `I2BGDZIEc4c` — 29 Jun — gap-down caution, "closing price" importance, breakout-trap skepticism (known)
+- `st8p4CkP8mo` — 25 Jun — Sensex-expiry day; Ask panel not offered on this clip; on-screen chart is day-specific S/R only
+- `ZXQZy735-Fo` — 24 Jun — "trading plan", "SENSEX outlook", "SL hunting for intraday" (known)
+- `GCpBLoj3DSw` — 23 Jun — "why avoid trading when flat", "prepare for Nifty expiry" (known)
+- `0Pq2Arc7gRo` — 22 Jun — "outlook for Nifty", "trade Bank Nifty & Sensex", "SL hunting strategy" (known)
+- `Z2cVRE3sa6s` — 19 Jun — "trend analysis", "today's plan", "key S/R levels" (ephemeral)
+- `2aDHbVBT6gM` — 18 Jun — "outlook", "key levels", "why avoid trading on a gap down" (known)
+- `aBvETyWqKSQ` — 17 Jun — "strategy", "handle sudden gaps", "key S/R levels" (known/ephemeral)
+- `OKpfb0Nky2I` — 16 Jun — same daily-prediction format (ephemeral)
+- `lN4qRl5VQgs` — 15 Jun — "strategy for the day", "key S/R levels", "handle volatility" (ephemeral)
+
+Also: the **"Analysis Q&A | Most Asked Questions"** (`7a3dAL7mBJY`) is **members-only / inaccessible**;
+its preview lists method topics (e.g. "how to predict Monday's direction when retail exits on Friday",
+"regain confidence after a big loss", "60% profit booking") — a potential net-new "weekend / Friday-exit
+→ Monday-open" refinement — but the answers are paywalled, so nothing is added from it. (If the operator
+shares those notes, the Friday→Monday concept can be folded into `RETAIL_POSITIONING` the same way.)

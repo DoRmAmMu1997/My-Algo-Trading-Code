@@ -83,6 +83,7 @@ def _close_journal_row(journal: TradeJournal, open_id: str, ex: StandaloneExecut
 # ---------------------------------------------------------------------------
 
 def _load_csv(path: str) -> pd.DataFrame:
+    """Load a 1-minute OHLC CSV into a clean candle frame (tolerant of the time column name)."""
     df = pd.read_csv(path)
     # Be forgiving about the timestamp column name.
     rename = {}
@@ -184,6 +185,11 @@ class _AlwaysHoldRunner:
 # ---------------------------------------------------------------------------
 
 def _env(name: str, default: str) -> str:
+    """Read an env var (trimmed); fall back to ``default`` when blank/unset.
+
+    Lets every CLI flag below default to the matching ``SL_HUNTING_*`` env value, so the
+    standalone runner honours the same `.env` knobs the master front-test uses.
+    """
     val = os.getenv(name, "")
     return val.strip() if val and val.strip() else default
 
@@ -260,6 +266,11 @@ def main(argv: list[str] | None = None) -> int:
     n = len(bars)
     for i in range(args.warmup, n):
         bar = bars.iloc[i]
+        # Two position snapshots are taken per bar so we can tell WHY a trade closed:
+        #  • was_active  — were we in a trade BEFORE filling this bar's stop/target? If we
+        #                  were and now we're flat, the bar's high/low closed it.
+        #  • pre_active  — (below) were we in a trade BEFORE the agent decided? Lets us tell
+        #                  an agent EXIT apart from a brand-new entry, to journal correctly.
         was_active = ex.pos.active
         _manage_open_position(ex, bar)  # fill paper stop/target from this bar first
         if journal is not None and open_id is not None and was_active and not ex.pos.active:

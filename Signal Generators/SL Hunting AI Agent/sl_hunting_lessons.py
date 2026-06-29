@@ -63,12 +63,19 @@ class CoachOutput(StrictAIModel):
 
 
 def _slug(scope: str, lesson: str) -> str:
+    """Build a STABLE id from scope + lesson text (lowercase, non-alphanumerics → '-').
+
+    Because the same lesson always slugs to the same id, ``consolidate`` can recognise
+    duplicates across coach runs and keep just the best-evidenced copy. Capped to 48
+    chars; falls back to ``"lesson"`` if the text had nothing alphanumeric.
+    """
     base = f"{scope}-{lesson}".lower()
     cleaned = "".join(c if c.isalnum() else "-" for c in base)
     return "-".join(filter(None, cleaned.split("-")))[:48] or "lesson"
 
 
 def _now() -> str:
+    """Current UTC time as a stable ISO-8601 string (used for created/updated stamps)."""
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
@@ -102,6 +109,7 @@ def load_lessons(path: str) -> list[dict[str, Any]]:
 
 
 def save_lessons(path: str, lessons: list[dict[str, Any]]) -> None:
+    """Write the lessons list to ``path`` as pretty JSON (creating the folder if needed)."""
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -110,6 +118,7 @@ def save_lessons(path: str, lessons: list[dict[str, Any]]) -> None:
 
 
 def _sample(lesson: dict[str, Any]) -> int:
+    """Pull the supporting trade count out of a lesson's ``evidence`` (0 if absent)."""
     return int((lesson.get("evidence") or {}).get("sample_size", 0))
 
 

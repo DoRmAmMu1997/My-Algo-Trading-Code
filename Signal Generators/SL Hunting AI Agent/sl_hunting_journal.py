@@ -144,7 +144,10 @@ class TradeJournal:
             return None
         out = dict(outcome)
         out.setdefault("closed_at", datetime.now().isoformat(timespec="seconds"))
-        # R-multiple = underlying points won/lost ÷ the entry's stop distance.
+        # R-multiple = profit/loss measured in UNITS OF RISK: points won/lost ÷ the
+        # entry's stop distance. +2R means we made twice what we risked; -1R means the
+        # stop was hit. It normalises trades of different sizes so the coach can compare
+        # them fairly (a +30pt win on a 10pt stop = +3R beats a +30pt win on a 30pt stop).
         stop_dist = abs(float(entry.get("entry_underlying") or 0.0) - float(entry.get("stop") or 0.0))
         pts = out.get("points")
         if stop_dist > 0 and pts is not None:
@@ -159,4 +162,5 @@ class TradeJournal:
 
     @property
     def open_count(self) -> int:
+        """How many trades are opened-but-not-yet-closed (held in memory)."""
         return len(self._open)

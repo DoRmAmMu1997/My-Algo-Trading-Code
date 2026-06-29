@@ -91,6 +91,12 @@ class SLHuntingToolContext:
         broker: str | None = None,
         bnf_candles: pd.DataFrame | None = None,
     ) -> "SLHuntingToolContext":
+        """Prepare the per-bar context: clean the candles, cache the last price, attach BNF.
+
+        Normalises the NIFTY (and optional BankNIFTY) frames once here so each tool call
+        reuses the same prepared data, and records the venue selection (live + broker)
+        used only to NAME the single order tool.
+        """
         cfg = cfg or SLHuntingIndicatorConfig()
         prepared = prepare_candles(candles)
         last_price = float(prepared["close"].iloc[-1]) if not prepared.empty else 0.0

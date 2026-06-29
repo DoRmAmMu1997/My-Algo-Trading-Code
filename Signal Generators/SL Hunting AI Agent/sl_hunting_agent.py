@@ -131,6 +131,11 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def _mentions_usage_limit(*texts: str | None) -> bool:
+    """True if any error text looks like a subscription usage/rate limit (vs a real bug).
+
+    Lets us map those specific failures to `SLHuntingUsageLimitError` so the caller can
+    treat "out of plan credit" differently from a genuine crash.
+    """
     blob = " ".join(t for t in texts if t).lower()
     return any(k in blob for k in ("usage limit", "rate limit", "429", "quota"))
 
@@ -176,6 +181,11 @@ class SLHuntingAgent:
     # ------------------------------------------------------------------
 
     def _snapshot_csv(self, candles: pd.DataFrame) -> str:
+        """Render the last ``_SNAPSHOT_BARS`` candles as a tiny CSV for the prompt.
+
+        This is ORIENTATION only (a glance at recent price) — the agent gets exact
+        numbers from its tools, so we keep this short to bound tokens/cost.
+        """
         recent = candles.tail(_SNAPSHOT_BARS)
         lines = ["time,open,high,low,close"]
         for row in recent.itertuples(index=False):
@@ -184,6 +194,7 @@ class SLHuntingAgent:
         return "\n".join(lines)
 
     def _build_user_prompt(self, candles: pd.DataFrame, position: dict[str, Any]) -> str:
+        """Compose the per-bar USER message: instrument, current price, position, candles, task."""
         last_price = float(candles["close"].iloc[-1]) if not candles.empty else 0.0
         pos_line = (
             f"You currently HOLD a {position.get('direction')} position "
