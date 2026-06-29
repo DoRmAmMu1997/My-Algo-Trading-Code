@@ -9339,6 +9339,7 @@ _PNL_SHEET_ROW_LABELS = {
     "MoneyMachine": "Money Machine Strategy",
     "OpeningStrike": "Opening Strike PCR VWAP ATR Strategy",
     "CPR": "CPR Strategy",
+    "CPRAlgo3": "CPR Algo 3 Strategy",
     "SMA Crossover": "SMA Crossover Strategy",
     "Bollinger Bands": "Bollinger Bands Strategy",
     "Keltner Squeeze": "Keltner Squeeze Strategy",
@@ -9356,6 +9357,8 @@ _PNL_SHEET_ROW_LABELS = {
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
     "LongStrangle": "Long Strangle Strategy",
+    # Optional opt-in 27th worker (SL_HUNTING_ENABLED); maps only when it runs.
+    "SL Hunting AI": "SL Hunting AI Agent Strategy",
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
