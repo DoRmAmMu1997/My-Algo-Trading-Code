@@ -178,6 +178,9 @@ RISK DISCIPLINE
 - Keep the underlying (spot) stop TIGHT: aim for ~10-15 NIFTY points beyond the
   pattern. If the required stop is larger than that, either wait for a pullback
   entry that tightens it, or SKIP the trade (HOLD).
+- Position size is computed AUTOMATICALLY to risk ~Rs.2500 per trade from your stop
+  distance — you do NOT choose lots. A tighter stop just means more lots for the
+  same rupee risk, so set an honest, tight stop; never widen it to "get size".
 - Require a worthwhile target: at least ~1:2 reward:risk to the next clear level
   (swing / pivot / fibo / psych). If the nearest opposing level is too close, the
   target is too small — HOLD.
@@ -186,6 +189,36 @@ RISK DISCIPLINE
   level in your favour. Otherwise HOLD and let it run.
 - One position at a time. Never add to or reverse a position in a single decision —
   EXIT first; a fresh entry is a later decision.
+"""
+
+
+# ---------------------------------------------------------------------------
+# BankNIFTY (BNF) cross-confirmation
+# ---------------------------------------------------------------------------
+
+BNF_CROSS_CONFIRMATION = """\
+CROSS-INDEX CONFIRMATION (NIFTY vs BankNIFTY) — advisory
+-------------------------------------------------------
+The method cross-checks BankNIFTY (BNF) against NIFTY. Use the `cross_index` tool
+(it returns an `alignment` and a `bias`) and `bank_nifty` for BNF's own levels.
+This is ADVISORY: it strengthens or weakens a NIFTY setup; it is NOT a hard gate.
+When BankNIFTY data is unavailable, judge on NIFTY alone (a bit more conservative).
+
+The rules (note the SL-hunting inversion — "taking"/holding a level = continuation,
+a clean BREAK of it = reversal):
+- BOTH indices at SUPPORT → bias DOWN (the shared support likely fails / SL-hunt).
+- BOTH break DOWN through pivot/support → bias UP (the breakdown reverses).
+- BOTH at RESISTANCE → bias UP (continuation); BOTH break UP → bias DOWN.
+- DIVERGENCE — one index breaks a level while the other HOLDS it: the break tends
+  to FAIL; bias toward the holder (e.g. NIFTY breaks down but BNF holds support →
+  NIFTY's breakdown likely fails → look UP).
+- OPPOSITE SIDES of pivot (one above, one below) → treat the pivot as a normal
+  level and WAIT until both align before trading it.
+- BNF psych levels attract within ~100 points (NIFTY ~50). BankNIFTY is the larger,
+  faster index, so its break/hold of a round level often leads.
+
+How to use it: if `cross_index` AGREES with your NIFTY setup, take it with more
+confidence; if it says "wait" or DISAGREES with your direction, prefer HOLD.
 """
 
 
@@ -209,6 +242,10 @@ deciding:
   double top/bottom.
 - `position_state`   → your current open position (direction, entry, stop, target,
   unrealised P&L) or "flat".
+- `bank_nifty`       → BankNIFTY's OWN pivot/levels, structure and recent patterns,
+  for cross-confirmation. Reports available:false when BankNIFTY data is missing.
+- `cross_index`      → the NIFTY-vs-BankNIFTY alignment verdict (see CROSS-INDEX
+  CONFIRMATION). Reports available:false when BankNIFTY data is missing.
 
 To ACT, you have exactly ONE order tool (named `place_paper_order` or
 `place_live_order` — whichever you were given; you cannot choose the venue, the
@@ -217,9 +254,10 @@ your stop & target (on the underlying). It returns whether the order was accepte
 or rejected (e.g. already in a position). If you decide to do nothing, do NOT call
 the order tool — just report HOLD.
 
-NIFTY-ONLY: the original method cross-checks Bank Nifty (BNF). BNF data is NOT
-available to you here, so do not rely on BNF confirmation — judge on NIFTY alone
-and be slightly more conservative because that cross-check is missing.
+CROSS-INDEX (NF/BNF): call `cross_index` (and `bank_nifty` for detail). If they
+report available:false, BankNIFTY data is missing — judge on NIFTY alone and be a
+bit more conservative because that cross-check isn't available. If available, weigh
+the verdict per CROSS-INDEX CONFIRMATION below (it is advisory, not a hard gate).
 """
 
 
@@ -290,6 +328,7 @@ def build_system_prompt() -> str:
         PATTERNS_AND_CONFIRMATION,
         FIBO,
         STRUCTURE,
+        BNF_CROSS_CONFIRMATION,
         RISK,
         TOOL_GUIDE,
         DECISION_RULES,

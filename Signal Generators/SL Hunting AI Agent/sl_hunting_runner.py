@@ -79,6 +79,25 @@ def _synthetic_session(bars_1m: int = 375, seed: int = 7, start_price: float = 2
     )
 
 
+def _synthetic_bnf(nifty_1m: pd.DataFrame, scale: float = 2.2, seed: int = 11) -> pd.DataFrame:
+    """Derive a correlated synthetic BankNIFTY 1-min series from the NIFTY one.
+
+    BankNIFTY trades at roughly `scale`x NIFTY and moves together with it, so we
+    scale the NIFTY closes and add small idiosyncratic noise. Same timestamps, so
+    the two align bar-for-bar. Used only by --synthetic to exercise cross-index.
+    """
+    nifty_1m = prepare_candles(nifty_1m)
+    rng = np.random.default_rng(seed)
+    n = len(nifty_1m)
+    closes = nifty_1m["close"].to_numpy() * scale + rng.normal(0, 12, size=n)
+    opens = np.concatenate([[closes[0]], closes[:-1]])
+    highs = np.maximum(opens, closes) + rng.uniform(0, 15, size=n)
+    lows = np.minimum(opens, closes) - rng.uniform(0, 15, size=n)
+    return pd.DataFrame(
+        {"timestamp": nifty_1m["timestamp"].to_numpy(), "open": opens, "high": highs, "low": lows, "close": closes, "volume": 0}
+    )
+
+
 def resample_1m_to_n(candles: pd.DataFrame, minutes: int) -> pd.DataFrame:
     """Resample 1-minute OHLC up to `minutes`-minute candles.
 
@@ -140,8 +159,9 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Standalone PAPER runner for the SL Hunting AI Agent.")
     src = parser.add_mutually_exclusive_group()
-    src.add_argument("--csv", help="Path to a 1-minute OHLC CSV (timestamp,open,high,low,close[,volume]).")
+    src.add_argument("--csv", help="Path to a 1-minute NIFTY OHLC CSV (timestamp,open,high,low,close[,volume]).")
     src.add_argument("--synthetic", action="store_true", help="Use a generated random-walk session.")
+    parser.add_argument("--bnf-csv", help="Optional 1-minute BankNIFTY OHLC CSV for cross-confirmation (paired with --csv).")
     parser.add_argument("--timeframe", type=int, default=int(_env("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", "5")),
                         help="Decision timeframe in minutes (resampled from 1-min).")
     parser.add_argument("--model", default=_env("SL_HUNTING_MODEL", "claude-opus-4-8"), help="Claude model id.")
@@ -169,6 +189,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     logger.info("Resampled to %d %d-min bars.", len(bars), args.timeframe)
 
+    # 1b. Optional BankNIFTY (cross-confirmation). A real --bnf-csv when given;
+    # a correlated synthetic series in synthetic mode; otherwise None (NIFTY-only).
+    bnf_bars = None
+    if args.bnf_csv:
+        bnf_bars = resample_1m_to_n(_load_csv(args.bnf_csv), args.timeframe)
+        logger.info("Loaded BankNIFTY for cross-confirmation from %s.", args.bnf_csv)
+    elif not args.csv:
+        bnf_bars = resample_1m_to_n(_synthetic_bnf(candles_1m), args.timeframe)
+        logger.info("Using synthetic BankNIFTY for cross-confirmation.")
+    else:
+        logger.info("No --bnf-csv: running NIFTY-only (cross-index will report unavailable).")
+
     # 2. Build the agent (fake runner for --fake; real Claude Agent SDK otherwise).
     runner = _AlwaysHoldRunner() if args.fake else None
     agent = SLHuntingAgent(model=args.model, runner=runner, fast_mode=args.fast)
@@ -181,7 +213,12 @@ def main(argv: list[str] | None = None) -> int:
         bar = bars.iloc[i]
         _manage_open_position(ex, bar)  # fill paper stop/target from this bar first
         window = bars.iloc[: i + 1]
-        decision = agent.decide(window, ex, live_active=False, broker=None)
+        bnf_window = None
+        if bnf_bars is not None:
+            bnf_window = bnf_bars[bnf_bars["timestamp"] <= bar.timestamp]
+            if bnf_window.empty:
+                bnf_window = None
+        decision = agent.decide(window, ex, bnf_candles=bnf_window, live_active=False, broker=None)
         decisions += 1
         if decision.action != "HOLD":
             logger.info(

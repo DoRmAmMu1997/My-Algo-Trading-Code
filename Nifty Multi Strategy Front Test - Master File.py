@@ -398,6 +398,13 @@ INTRADAY_LOOKBACK_DAYS = _env_int("INTRADAY_LOOKBACK_DAYS", 7)
 NIFTY_INDEX_SECURITY_ID = _env_int("NIFTY_INDEX_SECURITY_ID", 13)
 NIFTY_INDEX_EXCHANGE_SEGMENT = _env_str("NIFTY_INDEX_EXCHANGE_SEGMENT", "IDX_I")
 NIFTY_INDEX_INSTRUMENT_TYPE = _env_str("NIFTY_INDEX_INSTRUMENT_TYPE", "INDEX")
+# BankNIFTY index identity (DhanHQ security_id 25 on the IDX_I segment). Only the
+# optional SL Hunting AI Agent uses these today, to fetch BankNIFTY 1-min OHLC for
+# its NF/BNF cross-confirmation (the same fetch_index_1m_ohlc path the fetcher and
+# CPR Algo 3 use). Env-overridable like the NIFTY constants above.
+BANKNIFTY_INDEX_SECURITY_ID = _env_int("BANKNIFTY_INDEX_SECURITY_ID", 25)
+BANKNIFTY_INDEX_EXCHANGE_SEGMENT = _env_str("BANKNIFTY_INDEX_EXCHANGE_SEGMENT", "IDX_I")
+BANKNIFTY_INDEX_INSTRUMENT_TYPE = _env_str("BANKNIFTY_INDEX_INSTRUMENT_TYPE", "INDEX")
 OPTION_EXCHANGE_SEGMENT = _env_str("OPTION_EXCHANGE_SEGMENT", "NSE_FNO")
 # Instrument type for index OPTIONS in DhanHQ's intraday/historical APIs. Used to
 # pull 1-minute OHLC for a specific option strike (e.g. CPR Algo 3's observation
@@ -8762,6 +8769,10 @@ STRATEGY_ENV_PREFIX = {
 SLHuntingAIWorker = None
 if SL_HUNTING_AVAILABLE:
     _sl_hunting_ops = _signal_gen_ops("SL_HUNTING")
+    # Dynamic position sizing: ~Rs.2500 worst-case risk per trade (the same house
+    # convention/default as Profit Shooter). The agent does NOT choose lots; this is
+    # computed from the agent's underlying stop distance.
+    SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
 
     class SLHuntingAIWorker(AtmSingleLegStrategyWorker):  # noqa: F811 - optional definition
         """ATM single-leg worker whose entries/exits come from the SL Hunting agent."""
@@ -8788,10 +8799,28 @@ if SL_HUNTING_AVAILABLE:
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
             # Throttle: consult the LLM only once per NEW completed bar (not per poll).
             self._last_decision_bar = None
+            # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
+            # exactly like CPR Algo 3 fetches its observation legs.
+            self._use_bnf = _env_bool("SL_HUNTING_USE_BNF", True)
 
         def minimum_strategy_rows(self) -> int:
             # Enough derived bars for swings / fibo / structure, with a margin.
             return max(40, int(getattr(SL_HUNTING_INDICATOR_CONFIG, "swing_lookback", 120)) // 2)
+
+        def _compute_entry_lots(self, entry_underlying: float, stop_underlying: float, lot_size: int) -> int:
+            """Dynamic risk-based sizing (~SL_HUNTING_RISK_BUDGET, default Rs.2500),
+            from the agent's UNDERLYING stop distance. Shares ONE implementation with
+            the standalone executor via `risk_based_lots`, and matches the Profit
+            Shooter sizer (ceil, minimum 1 lot — a setup trades at >=1 lot or not at all).
+            """
+            lots = SL_HUNTING_EXECUTOR_MODULE.risk_based_lots(
+                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, self.lots
+            )
+            self.log.info(
+                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s risk_budget=%.0f -> lots=%s qty=%s.",
+                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, lots, lots * lot_size,
+            )
+            return lots
 
         def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
             return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
@@ -8805,12 +8834,30 @@ if SL_HUNTING_AVAILABLE:
                 return
             self._last_decision_bar = latest_bar
 
+            # Optional BankNIFTY for the agent's NF/BNF cross-confirmation. Fetched
+            # on-demand via the shared broker (same fetch_index_1m_ohlc path as the
+            # central fetcher / CPR Algo 3). Any failure -> NIFTY-only this bar.
+            bnf_candles = None
+            if self._use_bnf:
+                try:
+                    bnf_1m = self.broker.fetch_index_1m_ohlc(
+                        BANKNIFTY_INDEX_SECURITY_ID,
+                        BANKNIFTY_INDEX_EXCHANGE_SEGMENT,
+                        BANKNIFTY_INDEX_INSTRUMENT_TYPE,
+                    )
+                    bnf_candles = resample_ohlc_from_1m(bnf_1m, self.derived_timeframe_minutes)
+                except Exception as exc:
+                    self.log.warning(
+                        "BankNIFTY fetch failed (%s); SL Hunting goes NIFTY-only this bar.", exc
+                    )
+
             # The agent acts via the order tool DURING decide() (it calls our
             # enter_position / exit_position through the executor); the returned
             # decision is the agent's own record of what it did, for the log.
             decision = self.agent.decide(
                 strategy_frame,
                 self._executor,
+                bnf_candles=bnf_candles,
                 live_active=bool(self.live_trading),
                 broker=LIVE_BROKER,
             )

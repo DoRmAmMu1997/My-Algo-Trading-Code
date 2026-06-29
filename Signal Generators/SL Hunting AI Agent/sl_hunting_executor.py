@@ -27,12 +27,39 @@ already in a position, and cannot EXIT while flat.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 # Valid directions the agent may request. LONG → buy CE (expect up); SHORT → buy PE.
 VALID_DIRECTIONS = ("LONG", "SHORT")
+
+# Default rupee risk budget per trade (used by dynamic position sizing). The agent
+# does NOT choose the lot count — it is computed so the worst-case underlying-points
+# loss is ~= this budget, exactly like the repo's Profit Shooter sizer.
+DEFAULT_RISK_BUDGET = 2500.0
+
+
+def risk_based_lots(
+    entry: float,
+    stop: float,
+    lot_size: int,
+    risk_budget: float = DEFAULT_RISK_BUDGET,
+    fallback_lots: int = 1,
+) -> int:
+    """Lots sized so the worst-case underlying-points loss ~= ``risk_budget``.
+
+    ``risk_points`` is the agent's UNDERLYING (spot) stop distance; the rupee risk
+    proxy is ``risk_points * lot_size`` per lot (a conservative delta~=1 proxy, the
+    same one Profit Shooter / Goldmine / Money Machine use). ``math.ceil`` over a
+    positive ratio guarantees a minimum of 1 lot, so a trade is never sized to zero.
+    Falls back to ``fallback_lots`` when the stop distance is unusable.
+    """
+    risk_points = abs(float(entry) - float(stop))
+    if risk_points <= 0 or int(lot_size) <= 0:
+        return max(1, int(fallback_lots))
+    return max(1, math.ceil(float(risk_budget) / (risk_points * int(lot_size))))
 
 
 def execution_tool_name(live_active: bool, broker: str | None) -> str:
@@ -86,6 +113,7 @@ class _PaperPosition:
     target: float = 0.0
     entry_time: str = ""
     reason: str = ""
+    lots: int = 0
 
 
 class StandaloneExecutor:
@@ -97,9 +125,10 @@ class StandaloneExecutor:
     The closed-trade log is kept so the runner can print a session summary.
     """
 
-    def __init__(self, *, lots: int = 1, lot_size: int = 75) -> None:
-        self.lots = int(lots)
+    def __init__(self, *, lots: int = 1, lot_size: int = 75, risk_budget: float = DEFAULT_RISK_BUDGET) -> None:
+        self.lots = int(lots)  # fallback when the stop distance is unusable
         self.lot_size = int(lot_size)
+        self.risk_budget = float(risk_budget)
         self.pos = _PaperPosition()
         self.closed_trades: list[dict[str, Any]] = []
 
@@ -109,6 +138,8 @@ class StandaloneExecutor:
             return {"accepted": False, "reason": f"invalid direction {direction!r}; expected LONG or SHORT"}
         if self.pos.active:
             return {"accepted": False, "reason": "already in a position; EXIT first before entering again"}
+        # Dynamic sizing: lots chosen so worst-case risk ~= self.risk_budget (Rs.2500).
+        lots = risk_based_lots(float(price), float(stop), self.lot_size, self.risk_budget, self.lots)
         self.pos = _PaperPosition(
             active=True,
             direction=direction,
@@ -117,20 +148,23 @@ class StandaloneExecutor:
             target=round(float(target), 2),
             entry_time=datetime.now().isoformat(timespec="seconds"),
             reason=str(reason)[:300],
+            lots=lots,
         )
-        return {"accepted": True, "action": f"ENTER_{direction}", "entry": self.pos.entry, "stop": self.pos.stop, "target": self.pos.target}
+        return {"accepted": True, "action": f"ENTER_{direction}", "entry": self.pos.entry, "stop": self.pos.stop, "target": self.pos.target, "lots": lots, "quantity": lots * self.lot_size}
 
     def exit(self, reason: str, price: float) -> dict[str, Any]:
         if not self.pos.active:
             return {"accepted": False, "reason": "no open position to exit"}
         last = float(price)
         pts = (last - self.pos.entry) if self.pos.direction == "LONG" else (self.pos.entry - last)
-        pnl = round(pts * self.lots * self.lot_size, 2)
+        lots = self.pos.lots or self.lots
+        pnl = round(pts * lots * self.lot_size, 2)
         trade = {
             "direction": self.pos.direction,
             "entry": self.pos.entry,
             "exit": round(last, 2),
             "points": round(pts, 2),
+            "lots": lots,
             "pnl_proxy": pnl,
             "entry_time": self.pos.entry_time,
             "exit_time": datetime.now().isoformat(timespec="seconds"),
@@ -157,7 +191,8 @@ class StandaloneExecutor:
         if not self.pos.active:
             return {"in_position": False}
         pts = (price - self.pos.entry) if self.pos.direction == "LONG" else (self.pos.entry - price)
-        return {"in_position": True, "points": round(pts, 2), "pnl_proxy": round(pts * self.lots * self.lot_size, 2)}
+        lots = self.pos.lots or self.lots
+        return {"in_position": True, "points": round(pts, 2), "lots": lots, "pnl_proxy": round(pts * lots * self.lot_size, 2)}
 
 
 # ---------------------------------------------------------------------------

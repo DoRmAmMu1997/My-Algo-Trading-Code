@@ -329,6 +329,7 @@ class SLHuntingAgent:
         candles: pd.DataFrame,
         executor: TradeExecutor,
         *,
+        bnf_candles: pd.DataFrame | None = None,
         live_active: bool = False,
         broker: str | None = None,
     ) -> SLHuntingDecision:
@@ -346,7 +347,8 @@ class SLHuntingAgent:
             return SLHuntingDecision(action="HOLD", confidence=0, setup="no_data", reasoning="No candles available.", model_used=self._model)
 
         tool_context = SLHuntingToolContext.build(
-            prepared, executor, cfg=self._cfg, live_active=live_active, broker=broker
+            prepared, executor, cfg=self._cfg, live_active=live_active, broker=broker,
+            bnf_candles=bnf_candles,
         )
         position = executor.snapshot()
         prompt = self._build_user_prompt(prepared, position)

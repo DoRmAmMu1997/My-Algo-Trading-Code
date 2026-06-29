@@ -70,6 +70,9 @@ class SLHuntingIndicatorConfig:
     # "Fast vs slow": compare the average body of the latest third of the window to
     # the prior portion; ratio above/below these flags acceleration/deceleration.
     speed_window: int = 20
+    # Cross-index (NF/BNF): how close (fraction of price) the last price must be to a
+    # level to count as "at" that level / pivot.
+    cross_index_band_pct: float = 0.15
 
 
 # ---------------------------------------------------------------------------
@@ -495,4 +498,141 @@ def market_structure(
         "double_top": double_top,
         "double_bottom": double_bottom,
         "note": "Trade a trendline only on the 3rd touch or a confirmed break (4th+). For W/M, trade the activation after the neckline break, not the breakout itself.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Cross-index (NIFTY vs BankNIFTY) confirmation
+# ---------------------------------------------------------------------------
+
+def index_position(
+    candles: pd.DataFrame,
+    cfg: SLHuntingIndicatorConfig | None = None,
+) -> dict[str, Any]:
+    """Classify one index's current position vs its own pivot and key levels.
+
+    Returns a compact read used by `cross_index_signal`: where the last price sits
+    relative to the day pivot, the nearest support/resistance among {pivot, prev-day
+    H/L, today H/L, prev close, nearest psych}, whether it is *at* support/resistance
+    (within a small band), and whether it has recently broken the pivot up/down.
+    Heuristic but deterministic — the agent applies the nuance.
+    """
+    cfg = cfg or SLHuntingIndicatorConfig()
+    pl = pivot_and_levels(candles, cfg)
+    if not pl.get("available"):
+        return {"available": False}
+    df = prepare_candles(candles)
+    last = float(pl["last_price"])
+    band = max(cfg.cross_index_band_pct / 100.0 * last, 1e-6)
+    pivot = pl.get("pivot")
+    prev = pl.get("previous_day_ohlc") or {}
+
+    levels: list[tuple[str, float]] = []
+    if pivot is not None:
+        levels.append(("pivot", float(pivot)))
+    # Stable levels only (pivot, prev-day OHLC, nearest psych). Today's H/L are
+    # excluded — they sit right next to price and would make "at a level" trivial.
+    for name, val in (
+        ("prev_high", prev.get("high")), ("prev_low", prev.get("low")),
+        ("prev_close", pl.get("previous_close")),
+    ):
+        if val is not None:
+            levels.append((name, float(val)))
+    psych = pl.get("psych_levels") or []
+    if psych:
+        levels.append(("psych", float(min(psych, key=lambda p: abs(p - last)))))
+
+    # A level at/below price is potential support; strictly above is resistance.
+    supports = [(n, v) for n, v in levels if v <= last]
+    resistances = [(n, v) for n, v in levels if v > last]
+    nearest_support = max(supports, key=lambda nv: nv[1]) if supports else None
+    nearest_resistance = min(resistances, key=lambda nv: nv[1]) if resistances else None
+    at_support = bool(nearest_support and (last - nearest_support[1]) <= band)
+    at_resistance = bool(nearest_resistance and (nearest_resistance[1] - last) <= band)
+
+    if pivot is None:
+        vs_pivot = "unknown"
+    elif abs(last - pivot) <= band:
+        vs_pivot = "at"
+    else:
+        vs_pivot = "above" if last > pivot else "below"
+
+    broke_pivot_down = broke_pivot_up = False
+    if pivot is not None and len(df) >= 2:
+        recent = df.tail(6)
+        if last < pivot - band and float(recent["high"].max()) >= pivot:
+            broke_pivot_down = True
+        if last > pivot + band and float(recent["low"].min()) <= pivot:
+            broke_pivot_up = True
+
+    return {
+        "available": True,
+        "last": round(last, 2),
+        "pivot": round(pivot, 2) if pivot is not None else None,
+        "vs_pivot": vs_pivot,
+        "at_support": at_support,
+        "at_resistance": at_resistance,
+        "nearest_support": {"name": nearest_support[0], "price": round(nearest_support[1], 2)} if nearest_support else None,
+        "nearest_resistance": {"name": nearest_resistance[0], "price": round(nearest_resistance[1], 2)} if nearest_resistance else None,
+        "broke_pivot_down": broke_pivot_down,
+        "broke_pivot_up": broke_pivot_up,
+    }
+
+
+def cross_index_signal(
+    nifty_df: pd.DataFrame,
+    bnf_df: pd.DataFrame | None,
+    cfg: SLHuntingIndicatorConfig | None = None,
+) -> dict[str, Any]:
+    """Compare NIFTY vs BankNIFTY and emit the doc's NF/BNF alignment verdict.
+
+    Faithful to the method's NF/BNF rules (advisory):
+    - both at support   -> bias DOWN (operator likely breaks the support / SL-hunt)
+    - both breakdown     -> bias UP   (the breakdown reverses)
+    - both at resistance -> bias UP;  both breakup -> bias DOWN
+    - one breaks, the other holds -> the break likely FAILS; bias toward the holder
+    - opposite sides of pivot -> treat pivot as a normal level; WAIT for alignment
+    Returns {"available": false, ...} when BankNIFTY data is missing.
+    """
+    cfg = cfg or SLHuntingIndicatorConfig()
+    n = index_position(nifty_df, cfg)
+    b = index_position(bnf_df, cfg) if bnf_df is not None else {"available": False}
+    if not (n.get("available") and b.get("available")):
+        return {"available": False, "reason": "BankNIFTY data unavailable; judge on NIFTY alone (be more conservative)."}
+
+    alignment, bias, reason = "neutral", "none", ""
+    if n["broke_pivot_down"] and b["broke_pivot_down"]:
+        alignment, bias = "both_breakdown", "up"
+        reason = "Both indices broke down through pivot -> breakdown reverses; bias UP."
+    elif n["broke_pivot_up"] and b["broke_pivot_up"]:
+        alignment, bias = "both_breakup", "down"
+        reason = "Both indices broke up through pivot -> breakup reverses; bias DOWN."
+    elif n["at_support"] and b["at_support"]:
+        alignment, bias = "both_at_support", "down"
+        reason = "Both indices at support -> support likely fails; bias DOWN."
+    elif n["at_resistance"] and b["at_resistance"]:
+        alignment, bias = "both_at_resistance", "up"
+        reason = "Both indices at resistance -> continuation up; bias UP."
+    elif (n["broke_pivot_down"] != b["broke_pivot_down"]) and (n["at_support"] or b["at_support"]):
+        holder = "BankNIFTY" if n["broke_pivot_down"] else "NIFTY"
+        alignment, bias = "divergence_breakdown", "up"
+        reason = f"One index broke down while {holder} held support -> breakdown likely fails; bias UP toward the holder."
+    elif n["vs_pivot"] in ("above", "below") and b["vs_pivot"] in ("above", "below") and n["vs_pivot"] != b["vs_pivot"]:
+        alignment, bias = "opposite_sides_of_pivot", "wait"
+        reason = "Indices are on opposite sides of their pivots -> treat pivot as a normal level and WAIT for alignment."
+    elif n["vs_pivot"] == b["vs_pivot"] == "above":
+        alignment, bias = "both_above_pivot", "up_context"
+        reason = "Both above pivot -> buyers' market on both; bullish context."
+    elif n["vs_pivot"] == b["vs_pivot"] == "below":
+        alignment, bias = "both_below_pivot", "down_context"
+        reason = "Both below pivot -> sellers' market on both; bearish context."
+
+    return {
+        "available": True,
+        "alignment": alignment,
+        "bias": bias,
+        "reason": reason,
+        "nifty": n,
+        "bank_nifty": b,
+        "note": "Advisory: weigh with the NIFTY setup. 'wait' = require alignment; if this disagrees with your NIFTY read, prefer HOLD.",
     }

@@ -13,6 +13,8 @@ Read-only context tools (no arguments — each closes over the per-call context)
 - ``candle_patterns``  → reversal patterns on recent candles + confirmation status.
 - ``market_structure`` → swings, trend, fast/slow, trendline points, W/M, doubles.
 - ``position_state``   → the current open position (or flat).
+- ``bank_nifty``       → BankNIFTY's own pivot/levels/structure/patterns (advisory).
+- ``cross_index``      → NIFTY-vs-BankNIFTY alignment verdict (NF/BNF rules).
 
 Action tool (exactly ONE, named by the environment):
 - ``place_paper_order`` / ``place_kotak_order`` / ``place_shoonya_order`` — only the
@@ -37,6 +39,7 @@ import pandas as pd
 from sl_hunting_indicators import (
     SLHuntingIndicatorConfig,
     candle_patterns,
+    cross_index_signal,
     fibo_levels,
     market_structure,
     pivot_and_levels,
@@ -54,6 +57,8 @@ CONTEXT_TOOL_NAMES = [
     f"mcp__{SERVER_NAME}__candle_patterns",
     f"mcp__{SERVER_NAME}__market_structure",
     f"mcp__{SERVER_NAME}__position_state",
+    f"mcp__{SERVER_NAME}__bank_nifty",
+    f"mcp__{SERVER_NAME}__cross_index",
 ]
 
 
@@ -73,6 +78,7 @@ class SLHuntingToolContext:
     live_active: bool = False
     broker: str | None = None
     last_price: float = field(default=0.0)
+    bnf_candles: pd.DataFrame | None = None
 
     @classmethod
     def build(
@@ -83,10 +89,17 @@ class SLHuntingToolContext:
         cfg: SLHuntingIndicatorConfig | None = None,
         live_active: bool = False,
         broker: str | None = None,
+        bnf_candles: pd.DataFrame | None = None,
     ) -> "SLHuntingToolContext":
         cfg = cfg or SLHuntingIndicatorConfig()
         prepared = prepare_candles(candles)
         last_price = float(prepared["close"].iloc[-1]) if not prepared.empty else 0.0
+        # BankNIFTY is optional (advisory cross-confirmation); prepare it if given.
+        prepared_bnf = None
+        if bnf_candles is not None:
+            prepared_bnf = prepare_candles(bnf_candles)
+            if prepared_bnf.empty:
+                prepared_bnf = None
         return cls(
             candles=prepared,
             cfg=cfg,
@@ -94,6 +107,7 @@ class SLHuntingToolContext:
             live_active=bool(live_active),
             broker=broker,
             last_price=last_price,
+            bnf_candles=prepared_bnf,
         )
 
     # --- tool payload builders (plain functions; easy to unit test) ---------
@@ -112,6 +126,21 @@ class SLHuntingToolContext:
 
     def position_state_payload(self) -> dict[str, Any]:
         return self.executor.snapshot()
+
+    def bank_nifty_payload(self) -> dict[str, Any]:
+        """BankNIFTY's own pivot/levels, structure and recent patterns (advisory)."""
+        if self.bnf_candles is None or self.bnf_candles.empty:
+            return {"available": False, "reason": "BankNIFTY data unavailable; judge on NIFTY alone."}
+        return {
+            "available": True,
+            "pivot_and_levels": pivot_and_levels(self.bnf_candles, self.cfg),
+            "market_structure": market_structure(self.bnf_candles, self.cfg),
+            "candle_patterns": candle_patterns(self.bnf_candles, self.cfg),
+        }
+
+    def cross_index_payload(self) -> dict[str, Any]:
+        """NIFTY-vs-BankNIFTY alignment verdict (the doc's NF/BNF rules)."""
+        return cross_index_signal(self.candles, self.bnf_candles, self.cfg)
 
     def action_tool_name(self) -> str:
         return execution_tool_name(self.live_active, self.broker)
@@ -162,6 +191,14 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
     async def _position(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.position_state_payload())
 
+    @tool("bank_nifty", "BankNIFTY's OWN pivot/levels, market structure and recent candle patterns (for cross-confirmation). Returns available:false when BankNIFTY data is unavailable.", {})
+    async def _bank_nifty(_args: dict[str, Any]) -> dict[str, Any]:
+        return _as_tool_text(context.bank_nifty_payload())
+
+    @tool("cross_index", "NIFTY-vs-BankNIFTY alignment verdict per the NF/BNF rules (both at support -> bias down; both breakdown -> bias up; one fails -> the holder wins; opposite sides of pivot -> wait). Advisory. available:false when BankNIFTY data is unavailable.", {})
+    async def _cross_index(_args: dict[str, Any]) -> dict[str, Any]:
+        return _as_tool_text(context.cross_index_payload())
+
     order_name = context.action_tool_name()
     venue = "PAPER" if order_name == "place_paper_order" else ("KOTAK (LIVE)" if order_name == "place_kotak_order" else "SHOONYA (LIVE)")
 
@@ -186,7 +223,7 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
     server = create_sdk_mcp_server(
         name=SERVER_NAME,
         version="1.0.0",
-        tools=[_pivot, _fibo, _patterns, _structure, _position, _order],
+        tools=[_pivot, _fibo, _patterns, _structure, _position, _bank_nifty, _cross_index, _order],
     )
     allowed = list(CONTEXT_TOOL_NAMES) + [f"mcp__{SERVER_NAME}__{order_name}"]
     return {SERVER_NAME: server}, allowed

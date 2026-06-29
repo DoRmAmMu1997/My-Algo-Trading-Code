@@ -12,6 +12,15 @@
 > tool-computed facts (pivot, fibo, candlestick patterns, structure), not from the
 > original chart pictures. (Source doc:
 > https://docs.google.com/document/d/1lzUwGFlILcELHsv1X6nMY3PNU5WqkQ6lhaoyfJdYCBs )
+>
+> **v2 image review (verified):** the full doc (108 pages, ~122 MB) was exported to
+> PDF and reviewed — a visual sample of pages spanning every section, plus the
+> complete extracted text layer of all 108 pages. The embedded images are
+> **illustrative** (annotated TradingView screenshots and whiteboard sketches of the
+> setups described in the prose) and contain **no net-new rules**: every page's
+> caption is prose already captured below. So nothing was added to the agent's
+> knowledge from the images — the text rules here, and the curation in
+> `sl_hunting_knowledge.py`, already encode the method.
 
 ---
 

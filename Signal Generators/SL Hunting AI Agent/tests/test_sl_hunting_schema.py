@@ -64,3 +64,12 @@ def test_system_prompt_has_final_output_marker():
     # The method's core rules should be present in the agent's "brain".
     assert "pivot" in prompt.lower()
     assert "confirmation" in prompt.lower()
+
+
+def test_system_prompt_has_v2_markers():
+    """v2: BankNIFTY cross-confirmation section + the dynamic-sizing note are present."""
+    prompt = build_system_prompt()
+    assert "CROSS-INDEX CONFIRMATION" in prompt
+    assert "bank_nifty" in prompt and "cross_index" in prompt
+    # The agent is told sizing is automatic at ~Rs.2500 risk (it does not pick lots).
+    assert "2500" in prompt

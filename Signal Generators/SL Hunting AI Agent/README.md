@@ -18,22 +18,25 @@ Once per **completed N-minute bar** (default 5), the agent is handed the recent
 NIFTY candles and runs one agentic pass:
 1. It calls **read-only context tools** for deterministic facts —
    `pivot_and_levels`, `candle_patterns` (with confirmation status), `fibo_levels`,
-   `market_structure`, `position_state`.
+   `market_structure`, `position_state`, plus `bank_nifty` and `cross_index` for
+   the **BankNIFTY cross-confirmation** (the NF/BNF rules; advisory).
 2. If — and only if — a confirmed setup at a real level with a tight stop and a
    worthwhile target is present, it calls its **single order tool** to act.
 3. Its final message is a strict `SLHuntingDecision` JSON object (logged as a
    record of what it did).
 
 `ENTER_LONG` buys an ATM **CALL**; `ENTER_SHORT` buys an ATM **PUT**. Stops and
-targets are levels on the NIFTY **underlying** (spot).
+targets are levels on the NIFTY **underlying** (spot). The agent does **not** choose
+the lot count — position size is computed automatically so the worst-case risk is
+**~₹2500 per trade** (`SL_HUNTING_RISK_BUDGET`), from the agent's stop distance.
 
 ## Files
 | File | Purpose |
 |---|---|
 | `sl_hunting_doc.md` | Verbatim source methodology (the agent's ground truth). |
 | `sl_hunting_knowledge.py` | `build_system_prompt()` + strict-JSON `FINAL_OUTPUT_INSTRUCTION` — the agent's "brain". |
-| `sl_hunting_indicators.py` | Deterministic detectors (pivot/levels, fibo, candlestick patterns + confirmation, structure). |
-| `sl_hunting_tools.py` | In-process MCP server: 5 read-only tools + 1 env-selected order tool. |
+| `sl_hunting_indicators.py` | Deterministic detectors (pivot/levels, fibo, candlestick patterns + confirmation, structure, NF/BNF cross-index). |
+| `sl_hunting_tools.py` | In-process MCP server: 7 read-only tools (incl. `bank_nifty`/`cross_index`) + 1 env-selected order tool. |
 | `sl_hunting_executor.py` | `StandaloneExecutor` (paper) and `MasterWorkerExecutor` (delegates to the master worker). |
 | `sl_hunting_ai_validation.py` | `StrictAIModel` + `parse_with_retry` (bounded retry on malformed JSON). |
 | `sl_hunting_agent.py` | `SLHuntingAgent` + the strict `SLHuntingDecision` schema. |
@@ -56,6 +59,10 @@ python sl_hunting_runner.py --synthetic --fake
 
 # Replay a real 1-min NIFTY CSV with the live agent, capped to 30 decisions:
 python sl_hunting_runner.py --csv path/to/nifty_1m.csv --max-bars 30
+
+# Add BankNIFTY for cross-confirmation (pair a 1-min BankNIFTY CSV with the NIFTY one);
+# --synthetic generates a correlated BankNIFTY automatically:
+python sl_hunting_runner.py --csv nifty_1m.csv --bnf-csv banknifty_1m.csv --max-bars 30
 ```
 The standalone runner is **paper-only** by design (its P&L is a proxy on the
 underlying, to validate decisions — not option pricing).
@@ -87,8 +94,16 @@ master's one shared, lock-guarded broker session and its `enter_position` /
 pytest "Signal Generators/SL Hunting AI Agent/tests"
 ```
 
-## Scope (v1)
-NIFTY-only. The original method cross-checks Bank Nifty (BNF); BNF is **not** in the
-master's live data store, so the agent judges on NIFTY alone (and is told to be a
-bit more conservative because that cross-check is missing). BNF cross-confirmation
-is a future enhancement requiring a second live instrument feed.
+## BankNIFTY cross-confirmation (v2)
+The agent applies the method's NF/BNF rules via the `bank_nifty` + `cross_index`
+tools. BankNIFTY 1-min OHLC is **not** in the master's shared store, so the worker
+fetches it on demand each bar through the shared broker (`fetch_index_1m_ohlc`, the
+same path CPR Algo 3 uses) — set `SL_HUNTING_USE_BNF=false` to disable. It is
+**advisory**: it strengthens/weakens a NIFTY setup but never hard-gates, and any
+BankNIFTY fetch failure auto-degrades to NIFTY-only for that bar.
+
+## Source images (v2)
+The source doc's ~108 pages of annotated chart screenshots were exported and
+reviewed; they are illustrative of the prose rules and contained **no net-new
+knowledge**, so nothing was added to the agent's knowledge from them (see the note
+at the top of `sl_hunting_doc.md`).
