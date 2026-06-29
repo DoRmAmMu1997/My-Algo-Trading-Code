@@ -134,3 +134,15 @@ human-reviewed loop:
 the coach runs off the live loop; lessons are phrased as tendencies (not laws), require a
 minimum sample, separate process from outcome (a sound setup that lost ≠ a mistake), and
 the store is bounded/de-duplicated. Fine-tuning/RL and auto-promotion are out of scope.
+
+## Bank Nifty methodology (v3a)
+Knowledge-only drop distilled from 9 "Intraday Hunter" live-trading videos. General lessons
+(gap-driven bias, "closing price" as the invalidation level, behavioural confirmation,
+premise-invalidation stops, option **time-decay** discipline, book-on-weakness) were merged
+into the existing curated sections; **BankNIFTY-specific** behaviour lives in a new
+`BNF_SPECIFIC` section — a **triple-index** (BankNIFTY + NIFTY + Sensex) read with BankNIFTY
+as the "major index", expiry-day index priority, and round-number magnets. It is **advisory
+context for the cross-index read only — the agent still trades NIFTY ATM options**; nothing
+about execution changes. The video audio is Hindi and raw transcripts weren't retrievable,
+so the rules were distilled via YouTube's built-in "Ask"/Gemini summaries (a secondary AI
+summary, recorded with provenance in `sl_hunting_doc.md` and operator-reviewable).

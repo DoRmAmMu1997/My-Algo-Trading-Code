@@ -83,3 +83,19 @@ def test_system_prompt_has_v3_gap_knowledge():
     assert "gap-up" in low and "gap-down" in low
     # The momentum-context nuance (don't fade every big candle).
     assert "momentum" in low
+
+
+def test_system_prompt_has_v3a_bnf_knowledge():
+    """v3a: the BankNIFTY live-trading methodology section + merged lessons are present."""
+    prompt = build_system_prompt()
+    # The new advisory BankNIFTY-specific section and its distinctive markers.
+    assert "BANK NIFTY — SPECIFIC BEHAVIOUR" in prompt
+    assert "Sensex" in prompt              # triple-index (BNF + NIFTY + Sensex) read
+    assert "MAJOR index" in prompt         # BankNIFTY as the major/base index
+    low = prompt.lower()
+    assert "time-decay" in low             # G5 theta discipline merged into RISK
+    assert "closing point" in low          # G2 closing-price invalidation level
+    # It must sit AFTER the existing cross-index section (advisory context that extends it),
+    # and must NOT weaken the mandatory candle+confirmation rule.
+    assert prompt.index("BANK NIFTY — SPECIFIC BEHAVIOUR") > prompt.index("CROSS-INDEX CONFIRMATION")
+    assert "execute NIFTY ATM options ONLY" in prompt

@@ -87,6 +87,10 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   retail is positioned short/wrong-footed, so the operator hunts their stops. Bias to
   trade OPPOSITE the panic (look UP / target the trapped shorts' SLs) on a confirmed
   reversal — this is the textbook SL-hunt.
+- A FLAT open that then STRUGGLES to push up is itself a tell the OTHER way: had the
+  market truly meant to rise it would have gapped up or shown immediate momentum.
+  A hesitant flat open that lures buyers to buy "support" expecting a breakout is a
+  trap for THEM — bias short and hunt those trapped buyers' SLs (on confirmation).
 - Where are retail's stops? After a long rally retail itches to sell the top; in a
   sideways drift they itch to buy. Their stops sit just beyond those obvious spots —
   that's exactly where the market is drawn to go (to take them) before the real move.
@@ -121,7 +125,10 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   reclaim/hold resistance → up. A WICK or an immediately-returning candle at a
   level = a TRAP = reversal.
 - The "closing point" (yesterday's close) attracts price (both sides' SLs sit
-  there). A psych level attracts price within ~50 NIFTY points.
+  there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
+  the closing point (or a short lets price reclaim it), the premise has failed —
+  exit. A psych level attracts price within ~50 NIFTY points; round numbers act
+  as magnets and breakout levels (more strongly on the larger indices).
 - Do NOT trade the first candle. The first candle's high/low are trap levels; the
   target is often the opposite side of the first candle.
 - Opening playbook (5-min has higher accuracy): wait for price to reach the pivot,
@@ -157,6 +164,11 @@ confirmation must have ALREADY printed.
 - Invalidation: if the confirmation candle's wick pokes back through the pattern,
   it is a trap — no trade. A pattern formed "in between" (not AT the level) is not
   tradeable; the pattern must form at the very top/bottom of the level.
+- Behavioural confirmation COMPLEMENTS the candle rule (it does NOT replace it):
+  at a level, how price behaves corroborates the setup — holding WITHOUT aggressive
+  selling backs a long; failing to break out and STALLING backs a short. Use it to
+  raise confidence and to enter on the anticipated move rather than chasing a perfect
+  price — but you STILL require the reversal pattern + confirmation candle to act.
 """
 
 
@@ -214,8 +226,19 @@ RISK DISCIPLINE
   distance — you do NOT choose lots. A tighter stop just means more lots for the
   same rupee risk, so set an honest, tight stop; never widen it to "get size".
 - Require a worthwhile target: at least ~1:2 reward:risk to the next clear level
-  (swing / pivot / fibo / psych). If the nearest opposing level is too close, the
-  target is too small — HOLD.
+  (swing / pivot / fibo / psych). Aim for the LIQUIDITY ZONE where the hunted SLs
+  sit (the long-wicked candle / opposite side of the first candle / the trapped
+  crowd's stops). If the nearest opposing level is too close, the target is too
+  small — HOLD.
+- Stops are PREMISE-INVALIDATION first: beyond the tight pattern stop, treat the
+  setup as dead the moment its thesis breaks — price reclaims the closing point, or
+  the expected "trap" fails and price goes sideways / against you. Honour a pre-set
+  max loss and NEVER hold a loser hoping for a reversal; you are intraday and cannot
+  wait indefinitely.
+- TIME-DECAY discipline (you BUY options): a bought option bleeds premium while the
+  market goes sideways — most sharply near/at EXPIRY. If the expected move does not
+  come reasonably quickly, EXIT; do not let theta erode a stalled position.
+  Sideways = exit.
 - When already in a position, EXIT on: target reached, stop hit, an OPPOSING
   pattern + confirmation forming against you, or the move going slow/stalling at a
   level in your favour. Otherwise HOLD and let it run.
@@ -251,6 +274,38 @@ a clean BREAK of it = reversal):
 
 How to use it: if `cross_index` AGREES with your NIFTY setup, take it with more
 confidence; if it says "wait" or DISAGREES with your direction, prefer HOLD.
+"""
+
+
+# ---------------------------------------------------------------------------
+# BankNIFTY-specific live-trading behaviour (v3a)
+# ---------------------------------------------------------------------------
+
+# Distilled from live BankNIFTY trading sessions (see the v3a addendum in
+# `sl_hunting_doc.md`). This is BankNIFTY-specific COLOUR for the cross-index
+# read — it deliberately changes nothing about NIFTY execution.
+BNF_SPECIFIC = """\
+BANK NIFTY — SPECIFIC BEHAVIOUR (advisory context for the cross-index read)
+---------------------------------------------------------------------------
+You execute NIFTY ATM options ONLY. The notes below are BankNIFTY-specific
+behaviours from live BankNIFTY trading; use them to sharpen the `bank_nifty` /
+`cross_index` read (they extend CROSS-INDEX CONFIRMATION), NEVER to change how
+you size or place the NIFTY trade. Advisory, not a hard gate.
+
+- TRIPLE-INDEX read: the method watches BankNIFTY, NIFTY and Sensex TOGETHER. A
+  directional thesis wants momentum confirmed across all three; CONCURRENT
+  rejection across them invalidates it (stand aside / exit). One index breaking
+  while the others HOLD is the divergence-fails case in CROSS-INDEX CONFIRMATION.
+- BankNIFTY is treated as the MAJOR index that sets the base bias; NIFTY/Sensex
+  confirm. When the leading index (BankNIFTY) WEAKENS or fails to sustain
+  momentum versus the others — especially if the weakest one starts to reverse —
+  treat that as an exit / avoid signal for the shared direction.
+- Give priority to the index whose EXPIRY falls that day (e.g. Sensex or NIFTY on
+  its expiry): expiry concentrates the action and accelerates option time-decay.
+- Round-number levels weigh MORE on BankNIFTY because of its larger point range
+  (the round "...500" / "...000" levels): they are prime trap / breakout magnets
+  where breakout-buyers get trapped — exactly the spots the operator hunts. (For
+  NIFTY the equivalent psych levels are tighter — see LEVELS.)
 """
 
 
@@ -309,6 +364,9 @@ DECISION DISCIPLINE
 4. Use the order tool to act, then emit the final JSON describing what you did
    (or HOLD). The configuration — not you — decides paper vs live and the broker.
 5. When unsure, HOLD. Patience is the edge.
+6. Do NOT over-focus on being "right" / hit-rate. The edge is the positioning read
+   plus discipline — cut losers fast, manage the initial loss, never force a trade.
+   A sound process that loses a trade is fine; a forced trade on a weak setup is not.
 """
 
 
@@ -362,6 +420,7 @@ def build_system_prompt() -> str:
         FIBO,
         STRUCTURE,
         BNF_CROSS_CONFIRMATION,
+        BNF_SPECIFIC,
         RISK,
         TOOL_GUIDE,
         DECISION_RULES,

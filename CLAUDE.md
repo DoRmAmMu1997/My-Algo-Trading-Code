@@ -27,7 +27,11 @@ One process, cooperating threads:
   so a missing dep just disables it. It can also **learn from its own trades** (v3): a per-trade journal
   feeds an off-loop reflection coach (`sl_hunting_coach.py`) that proposes lessons; the operator promotes
   approved ones into `lessons.json`, injected into the prompt only when `SL_HUNTING_LESSONS_ENABLED`
-  (human-gated, paper-first, off by default).
+  (human-gated, paper-first, off by default). Its knowledge also carries a curated BankNIFTY
+  live-trading layer (v3a, knowledge-only): a `BNF_SPECIFIC` section (triple-index BNF+NIFTY+Sensex
+  read, BankNIFTY as the "major index", expiry-day priority, round-number magnets) that is **advisory
+  context for the cross-index read — execution stays NIFTY-only** — plus general lessons merged into
+  the existing sections (distilled from Intraday Hunter videos; provenance in `sl_hunting_doc.md`).
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading).
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic

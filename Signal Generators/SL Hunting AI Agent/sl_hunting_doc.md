@@ -274,3 +274,53 @@ On opening gaps specifically (02:45–03:12):
   negative sentiment / panic selling lets the market trap retail who are positioned the
   wrong way; this is an opportunity to target their stop losses and trade opposite the
   initial panic (03:02–03:10, 06:38–07:15).
+
+---
+
+## Video addendum — Bank Nifty live-trading methodology (v3a)
+
+> Source: 9 "Intraday Hunter" YouTube videos (8 live BankNIFTY option-trading sessions +
+> 1 weekly-analysis lesson). The audio is Hindi and raw transcripts were not retrievable
+> in our environment, so the methodology below was **distilled via YouTube's built-in
+> "Ask" (Gemini) summaries** of each video (prompted for concrete rules with timestamps),
+> not from a verbatim transcript. Treat it as a **secondary AI summary, operator-reviewable**.
+> 4 videos were captured in full (both market regimes); the rest restated the same method
+> with no net-new rule. General lessons were merged into the curated knowledge sections;
+> BankNIFTY-specific behaviour went into the new `BNF_SPECIFIC` section (advisory context
+> for the cross-index read — NIFTY-only execution is unchanged).
+>
+> Videos: `s41N7OS17Wk` (Weekly Charts Analysis — general), and the live BankNIFTY sessions
+> `gMu0DU4HJ00`, `1e14YWvOtzs`, `LmO-Y1XzqgY`, `O_PHs9q1QqA`, `G9HR80PLK8E`, `a3jih441RZo`,
+> `XHIlEHikp6k`, `o0a5gq5i_Mo`.
+
+**General method (merged into the existing sections):**
+- **Bias is read from the open.** Gap-up / immediate positive momentum ⇒ buyers not
+  threatened, no trapped shorts to hunt ⇒ follow the trend, don't fade. A flat open that
+  then struggles to push up ⇒ had it meant to rise it would have gapped up; the hesitant
+  flat open that lures buyers to "support" expecting a breakout is a trap for them ⇒ short
+  and hunt their SLs. Gap-down after panic ⇒ trapped shorts ⇒ hunt upward.
+- **"Closing price" (previous-day close) is the pivotal intraday level** — both S/R and the
+  trade's invalidation: a long dies if price falls back to it; indices stalling at
+  closing-price resistance without a decisive breakout is the short tell.
+- **Confirmation is also behavioural** (complements, never replaces, the candle rule): enter
+  when price holds without aggressive selling (long) or fails to break out and stalls
+  (short); accept a slightly worse price rather than miss the anticipated move.
+- **Stops = premise-invalidation + a hard intraday loss cap;** never hold a loser hoping for
+  a reversal — you cannot wait indefinitely intraday.
+- **Time-decay discipline (option BUYER):** a bought option bleeds premium when the market
+  goes sideways — most sharply near/at expiry; if the move doesn't come quickly, exit.
+- **Targets = the hunted-SL liquidity zone; book on weakness** (momentum failure / leading
+  index stalls / opposing reversal), not a fixed number.
+- **Don't over-focus on accuracy** — the edge is the positioning read + discipline.
+
+**Bank Nifty-specific (new `BNF_SPECIFIC` section — advisory; the agent still trades NIFTY only):**
+- **Triple-index read:** watch BankNIFTY + NIFTY + Sensex together; a thesis needs momentum
+  confirmed across them, and concurrent rejection across all three invalidates it.
+- **BankNIFTY is the "major index"** that sets the base bias (NIFTY/Sensex confirm); exit when
+  BankNIFTY weakens vs the others, especially if the weakest one starts reversing.
+- **Prioritise the index whose expiry is that day** (Sensex/NIFTY) — it concentrates the
+  action and theta.
+- **Round-number levels weigh more on BankNIFTY** (its larger point range): the round
+  "…500"/"…000" levels are prime trap/breakout magnets where breakout-buyers get trapped.
+- (Context only, not an agent rule:) the trader executes a **basket across BankNIFTY + NIFTY +
+  Sensex legs concurrently** — noted for realism; our agent trades NIFTY only.
