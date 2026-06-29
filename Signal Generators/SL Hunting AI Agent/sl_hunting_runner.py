@@ -57,11 +57,20 @@ _DEFAULT_LESSONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "les
 
 
 def _open_journal_row(journal: TradeJournal, decision, window, bnf_window, ex: StandaloneExecutor) -> str:
-    """Open a journal row for a freshly-entered trade (paper)."""
-    direction = "LONG" if decision.action == "ENTER_LONG" else "SHORT"
+    """Open a journal row for a freshly-entered trade (paper).
+
+    The EXECUTED trade details (direction / stop / target / entry / lots) are read
+    from the EXECUTOR position -- the source of truth -- not from `decision`. The
+    agent acts via the order tool DURING decide(), so the position is already live;
+    if the model's final JSON then comes back malformed or disagrees with the tool
+    call (e.g. a safe HOLD), trusting `decision.action` here would mislabel the trade
+    (any non-ENTER_LONG -> "SHORT") and store the wrong stop/target, corrupting the
+    rows the coach later learns from. Only the rationale (setup / confidence /
+    reasoning) is taken from the decision. Mirrors the master worker's _journal_open_row.
+    """
     entry = make_entry_record(
-        direction=direction, setup=decision.setup, confidence=decision.confidence,
-        stop=decision.stop, target=decision.target, reasoning=decision.reasoning,
+        direction=ex.pos.direction, setup=decision.setup, confidence=decision.confidence,
+        stop=ex.pos.stop, target=ex.pos.target, reasoning=decision.reasoning,
         entry_underlying=ex.pos.entry, lots=ex.pos.lots, nifty_df=window, bnf_df=bnf_window,
     )
     return journal.open_trade(entry)

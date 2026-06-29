@@ -81,6 +81,39 @@ def test_runner_journal_helpers_open_and_close(tmp_path):
     assert row["outcome"]["exit_reason"] == "target_hit"
 
 
+def test_open_journal_row_uses_executor_state_not_decision(tmp_path):
+    """Regression (Codex P2): journal the EXECUTED position, not a mismatched decision.
+
+    The order tool opened a LONG during decide(), but the model's final JSON came back
+    as a safe HOLD (malformed / disagreeing). The row must reflect the executor's
+    actual position (LONG + its stop/target), not the decision. The old code derived
+    direction from `decision.action` (a HOLD fell into the `else` and was mislabelled
+    SHORT) and stored decision.stop/target (0/0), corrupting the row.
+    """
+    import json
+
+    from sl_hunting_agent import SLHuntingDecision
+    from sl_hunting_journal import TradeJournal
+    from sl_hunting_runner import _close_journal_row, _open_journal_row
+
+    ex = StandaloneExecutor(lot_size=75, risk_budget=2500)
+    ex.enter("LONG", stop=24985, target=25060, reason="t", price=25000)
+    j = TradeJournal(str(tmp_path / "j2.jsonl"))
+    # Decision DISAGREES with the executed trade (what decide() returns on bad JSON).
+    dec = SLHuntingDecision(action="HOLD", stop=0, target=0, confidence=0,
+                            setup="agent_error", reasoning="holding")
+    oid = _open_journal_row(j, dec, _one_min(n=12), None, ex)
+    # The row is flushed to disk on close; the entry half (direction/stop/target) is
+    # what the fix is about, and it is unchanged by the exit.
+    ex.exit("manual_close", price=25030)
+    _close_journal_row(j, oid, ex)
+    row = json.loads((tmp_path / "j2.jsonl").read_text(encoding="utf-8").strip())
+    assert row["direction"] == "LONG"    # from ex.pos (old code would have said SHORT)
+    assert row["stop"] == 24985          # ex.pos.stop (old code used decision.stop = 0)
+    assert row["target"] == 25060        # ex.pos.target (old code used decision.target = 0)
+    assert row["setup"] == "agent_error"  # rationale still comes from the decision
+
+
 def test_manage_open_position_fills_short():
     ex = StandaloneExecutor()
     ex.enter("SHORT", stop=25050, target=24900, reason="t", price=25000)
