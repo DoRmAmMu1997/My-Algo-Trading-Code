@@ -20,6 +20,11 @@ One process, cooperating threads:
   (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies), two
   **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
   and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
+  One **optional, opt-in** 27th worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
+  `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 5-min bar
+  (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
+  sizing) and acts through the same ATM `enter_position`/`exit_position`; its deps are lazily imported
+  so a missing dep just disables it.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading).
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
@@ -34,7 +39,8 @@ test_nifty_multi_strategy_master.py                # unittest suite for the mast
 requirements.txt                                   # core deps (+ commented optional broker/ML deps)
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
-Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/)
+Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/,
+                                                   #   SL Hunting AI Agent/ — optional Claude-agent strategy)
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
