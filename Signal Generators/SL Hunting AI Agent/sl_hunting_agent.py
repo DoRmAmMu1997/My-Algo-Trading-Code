@@ -66,7 +66,48 @@ class SLHuntingAgentError(RuntimeError):
 
 
 class SLHuntingUsageLimitError(SLHuntingAgentError):
-    """The Claude subscription's Agent SDK usage limit was hit."""
+    """The Claude subscription's Agent SDK usage/rate limit was hit (HTTP 429)."""
+
+
+class SLHuntingAuthError(SLHuntingAgentError):
+    """The bundled Claude CLI could not authenticate to Anthropic (HTTP 401/403).
+
+    The Claude SUBSCRIPTION token is missing or expired in the runner's environment.
+    A headless runner (unlike a Claude Code/IDE session) has nothing to refresh an
+    expired OAuth login, so the spawned CLI 401s on every call. Fix by running
+    `claude setup-token` (preferred for an unattended runner) or `claude login` in the
+    terminal that launches the runner, with ANTHROPIC_API_KEY UNSET, then restart.
+    """
+
+    def __init__(self, status: int) -> None:
+        self.status = int(status)
+        super().__init__(
+            f"Claude subscription authentication failed (HTTP {self.status}). The "
+            "spawned `claude` CLI has no valid token in the runner's environment. Run "
+            "`claude setup-token` (or `claude login`) in that terminal with "
+            "ANTHROPIC_API_KEY unset, then restart the runner."
+        )
+
+
+def _raise_for_error_result(result_message: Any) -> None:
+    """Classify a failed-API-call ResultMessage into a typed, actionable error.
+
+    The SDK sets ``is_error=True`` with ``subtype="success"`` and an HTTP
+    ``api_error_status`` when the CLI's call to Anthropic failed (this is exactly what
+    surfaces otherwise as the opaque "Claude Code returned an error result: success").
+    Map the status to a specific error so the log explains itself. Only the status
+    CODE is used — it carries no model/message content, so it is safe to log. No-op
+    when the result is absent or not an error.
+    """
+    if result_message is None or not getattr(result_message, "is_error", False):
+        return
+    status = getattr(result_message, "api_error_status", None)
+    if status in (401, 403):
+        raise SLHuntingAuthError(status)
+    if status == 429:
+        raise SLHuntingUsageLimitError()
+    detail = f"HTTP {status}" if status else "no api_error_status"
+    raise SLHuntingAgentError(f"Claude Agent SDK returned an error result ({detail}).")
 
 
 # A runner drives one full agentic loop and returns the final message text.
@@ -296,13 +337,17 @@ class SLHuntingAgent:
             if _mentions_usage_limit(str(exc), getattr(exc, "stderr", None)):
                 raise SLHuntingUsageLimitError() from exc
             raise SLHuntingAgentError(f"Claude Agent SDK process error: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - surface the structured error instead
+            # When the CLI returns an error result, SDK 0.2.x raises a GENERIC Exception
+            # ("Claude Code returned an error result: ...") from inside the stream — but it
+            # yields the structured ResultMessage to us FIRST, so classify by that (HTTP
+            # 401 auth / 429 usage limit / etc.) for an actionable error rather than the
+            # opaque text. Falls through to a generic error if we captured no result.
+            _raise_for_error_result(result_message)
+            raise SLHuntingAgentError(f"Claude Agent SDK error: {type(exc).__name__}") from exc
 
-        if result_message is not None and getattr(result_message, "is_error", False):
-            if getattr(result_message, "api_error_status", None) == 429:
-                raise SLHuntingUsageLimitError()
-            raise SLHuntingAgentError(
-                f"SL Hunting agent run failed: {str(getattr(result_message, 'result', '') or '')[:300]}".strip()
-            )
+        # The loop can also complete normally with an error result (CLI exit 0); classify it.
+        _raise_for_error_result(result_message)
         return AgentRunResult(text=final_text, cost_usd=cost_usd)
 
     # ------------------------------------------------------------------
@@ -403,7 +448,15 @@ class SLHuntingAgent:
         # a bad/missing final JSON simply yields a safe HOLD record (no further action).
         try:
             text = _run_once()
-        except Exception as exc:  # noqa: BLE001 - infra failure (SDK/CLI/usage limit)
+        except SLHuntingUsageLimitError as exc:
+            # Actionable, content-free message (e.g. "...usage limit was hit (HTTP 429)").
+            logger.warning("SL Hunting agent holding — %s", exc)
+            return _hold("Agent usage-limited; holding.")
+        except SLHuntingAuthError as exc:
+            # Tells the operator exactly how to fix it (run `claude setup-token`).
+            logger.warning("SL Hunting agent holding — %s", exc)
+            return _hold("Agent auth failed; holding.")
+        except Exception as exc:  # noqa: BLE001 - other infra failure (SDK/CLI)
             logger.warning("SLHuntingAgent run failed (%s); holding.", type(exc).__name__, exc_info=True)
             return _hold(f"Agent unavailable ({type(exc).__name__}); holding.")
         try:

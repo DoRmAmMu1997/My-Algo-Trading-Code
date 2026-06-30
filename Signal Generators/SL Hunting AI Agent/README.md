@@ -50,9 +50,20 @@ the lot count — position size is computed automatically so the worst-case risk
 ## Setup (one-time)
 ```bash
 pip install claude-agent-sdk pydantic
-claude login            # sign in once with your Claude subscription
-# Ensure ANTHROPIC_API_KEY is UNSET so the agent bills your plan, not per-token API.
+# Authenticate to your Claude SUBSCRIPTION. For an UNATTENDED live runner prefer a
+# long-lived token; interactive `claude login` also works but its OAuth login expires.
+claude setup-token
+# Keep ANTHROPIC_API_KEY UNSET so the agent bills your Claude plan, not per-token API.
 ```
+Run this in the **same terminal/profile that launches the runner**: a headless process
+has nothing to refresh an expired login, so a token created elsewhere (e.g. an IDE
+session) will eventually return **HTTP 401**. Verify with `claude -p "say hi"` there.
+
+**Troubleshooting auth:** if the worker logs `authentication failed (HTTP 401) ... run claude setup-token`
+(older builds surfaced this opaquely as *"Claude Code returned an error result: success"*), the
+spawned `claude` CLI has no valid subscription token in the runner's environment — re-run
+`claude setup-token` as above and restart. A `429` likewise means the plan's usage/rate limit was
+hit. Either way the agent just **HOLDs** (no trade).
 
 ## Run standalone (paper-first)
 ```bash
@@ -89,7 +100,9 @@ master's one shared, lock-guarded broker session and its `enter_position` /
   the env (`place_paper_order` / `place_kotak_order` / `place_shoonya_order`) — it
   can never pick paper-vs-real or the broker.
 - The agent **never raises** into the trading loop: any failure (SDK missing,
-  malformed output, usage limit) returns a safe `HOLD`.
+  malformed output, **auth 401 / usage-limit 429**, …) returns a safe `HOLD`, and the
+  warning log names the cause (e.g. "authentication failed (HTTP 401) — run
+  `claude setup-token`") so it's actionable.
 - Both extra deps are **lazily imported**, so a missing dep just disables this one
   worker — the rest of the master and its test suite are unaffected.
 
