@@ -13,6 +13,8 @@ env/
 .env.*
 # Shoonya/Noren session token, if ever written to disk (broker session secret)
 shoonyakey.txt
+# Google Sheets OAuth client + cached token (credentials for the EOD P&L export)
+Dependencies/gsheet_oauth_*.json
 
 # Generated outputs (downloaded OHLC data, backtest results, logs)
 Backtest Outputs/
