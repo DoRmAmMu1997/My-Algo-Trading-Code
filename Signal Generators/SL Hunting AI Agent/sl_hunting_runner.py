@@ -211,8 +211,8 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--csv", help="Path to a 1-minute NIFTY OHLC CSV (timestamp,open,high,low,close[,volume]).")
     src.add_argument("--synthetic", action="store_true", help="Use a generated random-walk session.")
     parser.add_argument("--bnf-csv", help="Optional 1-minute BankNIFTY OHLC CSV for cross-confirmation (paired with --csv).")
-    parser.add_argument("--timeframe", type=int, default=int(_env("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", "5")),
-                        help="Decision timeframe in minutes (resampled from 1-min).")
+    parser.add_argument("--timeframe", type=int, default=int(_env("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", "1")),
+                        help="Decision timeframe in minutes (resampled from 1-min; SL Hunting's default is 1).")
     parser.add_argument("--model", default=_env("SL_HUNTING_MODEL", "claude-opus-4-8"), help="Claude model id.")
     parser.add_argument("--fast", action="store_true", help="Disable extended thinking (lower latency).")
     parser.add_argument("--fake", action="store_true", help="Use the built-in always-HOLD runner (no SDK/cost).")

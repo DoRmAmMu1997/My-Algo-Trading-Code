@@ -8813,7 +8813,11 @@ if SL_HUNTING_AVAILABLE:
         trading_start_minute = _sl_hunting_ops["trading_start_minute"]
         square_off_hour = _sl_hunting_ops["square_off_hour"]
         square_off_minute = _sl_hunting_ops["square_off_minute"]
-        derived_timeframe_minutes = _sl_hunting_ops["derived_timeframe_minutes"]
+        # SL Hunting runs on the 1-MINUTE timeframe by design (the method's "daily trades"
+        # are 1-min; 5-min is only the opening-setup nuance), so override the shared
+        # 5-min default. NOTE: the agent makes one LLM/subscription call PER completed bar,
+        # so 1-min is ~5x the calls/usage of 5-min — raise this if usage/cost is a concern.
+        derived_timeframe_minutes = _env_int("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", 1)
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)

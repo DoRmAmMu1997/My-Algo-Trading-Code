@@ -14,8 +14,9 @@ tool servers, an injectable `runner=` testing seam, a Windows-safe async→sync
 bridge, and strict Pydantic output validation.
 
 ## How it works
-Once per **completed N-minute bar** (default 5), the agent is handed the recent
-NIFTY candles and runs one agentic pass:
+Once per **completed N-minute bar** (default **1** — the method's native timeframe;
+`SL_HUNTING_DERIVED_TIMEFRAME_MINUTES`), the agent is handed the recent NIFTY candles
+and runs one agentic pass:
 1. It calls **read-only context tools** for deterministic facts —
    `pivot_and_levels`, `candle_patterns` (with confirmation status), `fibo_levels`,
    `market_structure`, `position_state`, plus `bank_nifty` and `cross_index` for

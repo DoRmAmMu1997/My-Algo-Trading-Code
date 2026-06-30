@@ -43,9 +43,9 @@ _EXTENSIONS = (1.272, 1.618, 2.618)
 class SLHuntingIndicatorConfig:
     """All tunable detector settings in one beginner-friendly place.
 
-    Defaults are chosen for 5-minute NIFTY candles (the agent's default derived
-    timeframe) but work for 1-minute too. The agent does the final judgement, so
-    these only need to surface useful, deterministic facts — not be perfect.
+    The bar-count / ratio defaults work on the agent's default **1-minute** NIFTY
+    timeframe (and on 5-minute too). The agent does the final judgement, so these only
+    need to surface useful, deterministic facts — not be perfect.
     """
 
     # Candle anatomy thresholds (fractions of the candle's full range).
