@@ -21,10 +21,12 @@ One process, cooperating threads:
   **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
   and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
   One **optional, opt-in** 27th worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
-  `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 5-min bar
+  `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
   sizing) and acts through the same ATM `enter_position`/`exit_position`; its deps are lazily imported
-  so a missing dep just disables it. It can also **learn from its own trades** (v3): a per-trade journal
+  so a missing dep just disables it. It stops opening NEW positions after noon
+  (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — not a square-off (exits + the 15:15 square-off
+  still run; when flat past the cutoff it skips the LLM call entirely). It can also **learn from its own trades** (v3): a per-trade journal
   feeds an off-loop reflection coach (`sl_hunting_coach.py`) that proposes lessons; the operator promotes
   approved ones into `lessons.json`, injected into the prompt only when `SL_HUNTING_LESSONS_ENABLED`
   (human-gated, paper-first, off by default). Its knowledge also carries a curated BankNIFTY

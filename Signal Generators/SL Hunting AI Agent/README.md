@@ -14,8 +14,9 @@ tool servers, an injectable `runner=` testing seam, a Windows-safe async→sync
 bridge, and strict Pydantic output validation.
 
 ## How it works
-Once per **completed N-minute bar** (default 5), the agent is handed the recent
-NIFTY candles and runs one agentic pass:
+Once per **completed N-minute bar** (default **1** — the method's native timeframe;
+`SL_HUNTING_DERIVED_TIMEFRAME_MINUTES`), the agent is handed the recent NIFTY candles
+and runs one agentic pass:
 1. It calls **read-only context tools** for deterministic facts —
    `pivot_and_levels`, `candle_patterns` (with confirmation status), `fibo_levels`,
    `market_structure`, `position_state`, plus `bank_nifty` and `cross_index` for
@@ -94,6 +95,12 @@ broker is the existing `LIVE_BROKER` (`KOTAK`/`SHOONYA`). Live orders go through
 master's one shared, lock-guarded broker session and its `enter_position` /
 `exit_position` (so max-loss, square-off and Telegram all apply). See the
 `SL_HUNTING_*` block in `Dependencies/env.example` for all knobs.
+
+By default the agent **stops opening new positions at 12:00** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`
+/ `_MINUTE`) — mirroring the "no fresh trades after noon" rule. This is **not** a square-off:
+open positions keep running and are only force-closed by the existing `SQUARE_OFF_*` gate
+(15:15); stop/target, AI exits and max-loss all keep working. As a bonus, once flat past the
+cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of the day**.
 
 ## Safety
 - **Paper by default.** The agent is given exactly **one** order tool, chosen by

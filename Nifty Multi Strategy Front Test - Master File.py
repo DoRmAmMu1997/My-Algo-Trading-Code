@@ -64,15 +64,19 @@ runner to TWENTY-SIX strategies total: 22 ATM single-leg + 2 Hedged Puts +
 One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
 (under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
-decides once per completed 5-min bar via in-process tools, then acts through this
-runner's own enter_position/exit_position (so it is just another ATM single-leg
-member of the family). It is OFF by default; SL_HUNTING_ENABLED=true includes it,
-and its optional deps (claude-agent-sdk, pydantic) are imported behind try/except
-so a missing dep simply disables it without touching the rest of the runner. It can
-also learn from its own trades (v3): a per-trade journal feeds an off-loop reflection
-coach that proposes lessons, which the operator promotes into lessons.json and the
-agent injects only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by
-default).
+decides once per completed 1-min bar (the method's native timeframe) via in-process
+tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
+and dynamic ~Rs.2500 risk-based sizing -- then acts through this runner's own
+enter_position/exit_position (so it is just another ATM single-leg member of the
+family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
+default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
+15:15 square-off are all unaffected, and when flat past the cutoff it skips the LLM
+call entirely. It is OFF by default; SL_HUNTING_ENABLED=true includes it, and its
+optional deps (claude-agent-sdk, pydantic) are imported behind try/except so a missing
+dep simply disables it without touching the rest of the runner. It can also learn from
+its own trades (v3): a per-trade journal feeds an off-loop reflection coach that
+proposes lessons, which the operator promotes into lessons.json and the agent injects
+only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -168,6 +172,7 @@ CLASS HIERARCHY OVERVIEW
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
         |             Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic,
         |             Supertrend, Volatility Breakout)
+        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in 27th: LLM/Claude-agent driven)
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
@@ -8813,7 +8818,17 @@ if SL_HUNTING_AVAILABLE:
         trading_start_minute = _sl_hunting_ops["trading_start_minute"]
         square_off_hour = _sl_hunting_ops["square_off_hour"]
         square_off_minute = _sl_hunting_ops["square_off_minute"]
-        derived_timeframe_minutes = _sl_hunting_ops["derived_timeframe_minutes"]
+        # SL Hunting runs on the 1-MINUTE timeframe by design (the method's "daily trades"
+        # are 1-min; 5-min is only the opening-setup nuance), so override the shared
+        # 5-min default. NOTE: the agent makes one LLM/subscription call PER completed bar,
+        # so 1-min is ~5x the calls/usage of 5-min — raise this if usage/cost is a concern.
+        derived_timeframe_minutes = _env_int("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", 1)
+        # Stop opening NEW positions at/after this time (default 12:00), mirroring the
+        # manual "no fresh trades after noon" rule. This does NOT square off open
+        # positions -- only the existing square_off_* gate (15:15) force-closes; exits
+        # (stop/target, AI exit, max-loss) keep working. See process_strategy_frame.
+        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 12)
+        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 0)
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
@@ -8940,6 +8955,15 @@ if SL_HUNTING_AVAILABLE:
                         self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
                         self.exit_position(hit)
                         return
+
+            # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
+            # past the cutoff, don't consult the agent at all -- it could only ENTER, and
+            # skipping it also saves the per-bar LLM call all afternoon. An OPEN position
+            # is unaffected: the per-poll stop/target above, a discretionary AI exit
+            # below, max-loss, and the 15:15 square-off all still run, so exits and the
+            # force-square-off gate are NEVER blocked by this.
+            if not self.pos.active and is_after_time(self.no_new_entry_hour, self.no_new_entry_minute):
+                return
 
             # Only call the agent when a NEW bar has completed since last time.
             latest_bar = strategy_frame["timestamp"].iloc[-1]
