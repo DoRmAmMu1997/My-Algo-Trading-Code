@@ -8787,6 +8787,14 @@ if SL_HUNTING_AVAILABLE:
     SL_HUNTING_JOURNAL_PATH = _env_str(
         "SL_HUNTING_JOURNAL_PATH", str(ROOT_DIR / "Backtest Outputs" / "sl_hunting_journal.jsonl")
     )
+    # Decision log: record EVERY agent decision (HOLD included) to a SEPARATE gitignored
+    # JSONL so the operator can review what the agent decided each bar. Kept apart from
+    # the trade journal above so the coach's win/loss stats aren't diluted by no-trade
+    # bars. Best-effort; never blocks trading.
+    SL_HUNTING_DECISIONS_ENABLED = _env_bool("SL_HUNTING_DECISIONS_ENABLED", True)
+    SL_HUNTING_DECISIONS_PATH = _env_str(
+        "SL_HUNTING_DECISIONS_PATH", str(ROOT_DIR / "Backtest Outputs" / "sl_hunting_decisions.jsonl")
+    )
     # Learned lessons (v3): inject APPROVED lessons into the agent's prompt ONLY when
     # explicitly enabled (default OFF) -- human-gated + paper-first. The live store
     # lives in the agent folder so it ships with the strategy.
@@ -8843,6 +8851,10 @@ if SL_HUNTING_AVAILABLE:
             )
             self._open_trade_id = None
             self._entry_realized_pnl = 0.0
+            # Separate per-bar decision log (HOLD included); None disables it.
+            self._decisions_path = (
+                SL_HUNTING_DECISIONS_PATH if SL_HUNTING_DECISIONS_ENABLED else None
+            )
 
         def _journal_open_row(self, decision, nifty_df, bnf_df) -> None:
             """Open a journal row for a trade the agent just entered (best-effort)."""
@@ -8969,6 +8981,18 @@ if SL_HUNTING_AVAILABLE:
                     decision.action, decision.confidence, decision.setup,
                     decision.stop, decision.target, decision.reasoning,
                 )
+            # Decision log: persist EVERY decision (HOLD included) to its own JSONL so the
+            # operator can review what the agent decided each bar. Best-effort.
+            if self._decisions_path is not None:
+                try:
+                    SL_HUNTING_JOURNAL_MODULE.append_decision(
+                        self._decisions_path,
+                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
+                            decision, strategy_frame, bnf_candles
+                        ),
+                    )
+                except Exception as exc:  # never let logging disturb trading
+                    self.log.warning("SL Hunting decision-log failed: %s", exc)
             # Journal a fresh entry (flat -> active during decide). Exits are journaled
             # in after_exit, so EVERY close path is captured there.
             if (self._journal is not None and self._open_trade_id is None

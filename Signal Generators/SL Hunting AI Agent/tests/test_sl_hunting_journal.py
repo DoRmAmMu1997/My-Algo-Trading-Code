@@ -81,3 +81,31 @@ def test_build_entry_context_and_make_record():
     assert rec["direction"] == "LONG" and rec["lots"] == 2
     assert "context" in rec and "followed_method" in rec
     assert rec["stop"] == 24985.0 and rec["target"] == 25060.0
+
+
+def test_decision_log_records_holds_and_actions(tmp_path):
+    """The separate decision log captures EVERY decision -- including HOLDs, which the
+    trade journal never records (no trade)."""
+    from types import SimpleNamespace
+
+    from sl_hunting_journal import append_decision, make_decision_record
+
+    df = _two_day()
+    hold = SimpleNamespace(action="HOLD", confidence=2, setup="none", stop=0, target=0,
+                           reasoning="No confirmed setup at a level; waiting.", model_used="m")
+    rec = make_decision_record(hold, df, None)
+    assert rec["action"] == "HOLD" and rec["confidence"] == 2 and rec["setup"] == "none"
+    assert rec["reasoning"].startswith("No confirmed setup")
+    assert "decided_at" in rec and "pivot" in rec["context"]  # context snapshot attached
+
+    path = str(tmp_path / "decisions.jsonl")
+    append_decision(path, rec)
+    enter = SimpleNamespace(action="ENTER_LONG", confidence=7, setup="pivot_support",
+                            stop=24985, target=25060, reasoning="hammer at pivot", model_used="m")
+    append_decision(path, make_decision_record(enter, df, None))
+
+    lines = (tmp_path / "decisions.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["action"] == "HOLD"               # the HOLD is captured
+    second = json.loads(lines[1])
+    assert second["action"] == "ENTER_LONG" and second["stop"] == 24985.0
