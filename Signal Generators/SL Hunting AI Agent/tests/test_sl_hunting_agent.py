@@ -154,6 +154,70 @@ def test_agent_decide_on_empty_candles_holds():
 
 
 # --------------------------------------------------------------------------
+# _raise_for_error_result — classify the CLI's failed-API-call result by HTTP status
+# (the "is_error=True, subtype=success" case that otherwise surfaces opaquely as
+#  "Claude Code returned an error result: success").
+# --------------------------------------------------------------------------
+
+class _FakeResult:
+    """Minimal stand-in for the SDK ResultMessage (is_error + api_error_status)."""
+
+    def __init__(self, is_error: bool, api_error_status=None):
+        self.is_error = is_error
+        self.api_error_status = api_error_status
+
+
+def test_raise_for_error_result_classifies_api_status():
+    import pytest
+
+    from sl_hunting_agent import (
+        SLHuntingAgentError,
+        SLHuntingAuthError,
+        SLHuntingUsageLimitError,
+        _raise_for_error_result,
+    )
+
+    # 401 / 403 -> auth error, with an actionable, content-free message.
+    with pytest.raises(SLHuntingAuthError) as ei:
+        _raise_for_error_result(_FakeResult(True, 401))
+    assert "401" in str(ei.value) and "claude" in str(ei.value).lower()
+    with pytest.raises(SLHuntingAuthError):
+        _raise_for_error_result(_FakeResult(True, 403))
+
+    # 429 -> usage limit
+    with pytest.raises(SLHuntingUsageLimitError):
+        _raise_for_error_result(_FakeResult(True, 429))
+
+    # Other HTTP errors -> generic agent error (NOT the auth/usage subclasses).
+    with pytest.raises(SLHuntingAgentError) as ei2:
+        _raise_for_error_result(_FakeResult(True, 500))
+    assert not isinstance(ei2.value, (SLHuntingAuthError, SLHuntingUsageLimitError))
+    assert "500" in str(ei2.value)
+
+    # Not an error result, or no result at all -> no raise (returns None).
+    assert _raise_for_error_result(_FakeResult(False, None)) is None
+    assert _raise_for_error_result(None) is None
+
+
+def test_agent_decide_logs_actionable_auth_error(caplog):
+    """A 401 from the SDK path makes decide() HOLD AND log the fix, not an opaque trace."""
+    import logging
+
+    from sl_hunting_agent import SLHuntingAuthError
+
+    class _AuthFailRunner:
+        async def __call__(self, prompt, *, system_prompt, model, max_turns, tool_context=None):
+            raise SLHuntingAuthError(401)
+
+    agent = SLHuntingAgent(model="test-model", runner=_AuthFailRunner())
+    with caplog.at_level(logging.WARNING):
+        decision = agent.decide(_candles(), StandaloneExecutor())
+    assert decision.action == "HOLD" and decision.setup == "agent_error"  # fail-soft held
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "401" in logged and "claude" in logged.lower()  # actionable fix in the log
+
+
+# --------------------------------------------------------------------------
 # MasterWorkerExecutor duck-types the worker
 # --------------------------------------------------------------------------
 
