@@ -146,3 +146,20 @@ context for the cross-index read only — the agent still trades NIFTY ATM optio
 about execution changes. The video audio is Hindi and raw transcripts weren't retrievable,
 so the rules were distilled via YouTube's built-in "Ask"/Gemini summaries (a secondary AI
 summary, recorded with provenance in `sl_hunting_doc.md` and operator-reviewable).
+
+## Decision log
+The agent decides once per completed bar, but the worker only *logs* the bars where it
+acts — so a HOLD leaves just a `decision cost` line with no record of **what** it decided or
+**why**. The **decision log** fills that gap: every decision (HOLD included) is appended to a
+gitignored JSONL with the action, confidence, setup, stop/target, reasoning, and the
+deterministic context the agent saw (pivot/fibo/patterns/cross-index).
+
+```bash
+tail -f "Backtest Outputs/sl_hunting_decisions.jsonl"
+```
+
+On by default (`SL_HUNTING_DECISIONS_ENABLED`, path `SL_HUNTING_DECISIONS_PATH`); a no-op
+when disabled. It is **separate from the trade journal** above on purpose: that journal is
+the reflection coach's learning input and must stay trade-only (a HOLD has no win/loss
+outcome, and ~70 no-trade bars a day would skew the coach's stats). So: trade journal =
+*completed trades* the coach learns from; decision log = *every decision* for you to review.
