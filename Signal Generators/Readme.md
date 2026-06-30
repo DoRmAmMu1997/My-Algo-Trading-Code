@@ -10,6 +10,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 - GPT-5.5-xhigh: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
 - GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
 - Claude Opus 4.8 Max: Ported 13 strategies from the public TradingBot project (the `Nifty * Signal Generator.py` files listed below) plus the shared `misc_strategy_common.py`, and wired them into the front-test master
+- Claude Opus 4.8 Max: Built the **SL Hunting AI Agent** (`SL Hunting AI Agent/`) — an LLM-driven strategy (a Claude agent), unlike the deterministic generators above (see its own README)
 
 # Where each generator is used
 | File | Shape | Used by |
@@ -18,7 +19,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/Nifty CPR Algo 1 Signal Generator.py` | Algo 1 trend-only CPR wrapper | CPR trend-only callers |
 | `CPR Strategy/Nifty CPR Algo 2 Signal Generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
 | `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
-| `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | standalone — not yet wired into the front-test (needs ITM CE/PE feeds) |
+| `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
 | `Subhamoy Strategies/Nifty Goldmine Signal Generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
@@ -56,6 +57,22 @@ independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 | `Nifty Supertrend Signal Generator.py` | ATR-band Supertrend flip |
 | `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
 | `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
+
+# SL Hunting AI Agent (`SL Hunting AI Agent/`) — LLM-driven, a different kind
+Unlike everything else in this folder (deterministic "DataFrame in → signal out" transforms,
+or stateful engines that compute a signal from a formula), the **SL Hunting AI Agent** is an
+**LLM trader**. A Claude agent — via [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/)
+on your Claude subscription (no API key) — reasons over the recent NIFTY chart each completed
+bar and acts through **tool calls**, rather than returning a computed signal. It trades the
+discretionary *SL Hunting* price-action method on NIFTY ATM options, with **BankNIFTY
+cross-confirmation** and dynamic **~₹2,500 risk-per-trade** sizing, and is wired into the
+front-test master as the **optional, opt-in 27th worker** (`SL_HUNTING_ENABLED`, off by default;
+paper unless explicitly enabled; **fail-soft** — a safe HOLD on any error). It also **learns
+from its own trades** (a per-trade journal → an off-loop reflection coach → human-gated lessons
+injected into its prompt) and writes a **per-bar decision log**. The agent has its own subfolder
+— deterministic detectors, an in-process MCP tool server, strict-Pydantic output validation, and
+a pytest suite — fully documented (design, setup via `claude setup-token`, safety model, the
+learning loop) in **`SL Hunting AI Agent/README.md`**.
 
 # Two flavors of "signal generator" in this folder
 - The **Donchian / Supertrend** files are pure transformations: pass a DataFrame in, get one back with extra signal columns. Stateless.
