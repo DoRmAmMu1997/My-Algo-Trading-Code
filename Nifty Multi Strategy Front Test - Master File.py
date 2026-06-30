@@ -64,15 +64,19 @@ runner to TWENTY-SIX strategies total: 22 ATM single-leg + 2 Hedged Puts +
 One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
 (under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
-decides once per completed 5-min bar via in-process tools, then acts through this
-runner's own enter_position/exit_position (so it is just another ATM single-leg
-member of the family). It is OFF by default; SL_HUNTING_ENABLED=true includes it,
-and its optional deps (claude-agent-sdk, pydantic) are imported behind try/except
-so a missing dep simply disables it without touching the rest of the runner. It can
-also learn from its own trades (v3): a per-trade journal feeds an off-loop reflection
-coach that proposes lessons, which the operator promotes into lessons.json and the
-agent injects only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by
-default).
+decides once per completed 1-min bar (the method's native timeframe) via in-process
+tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
+and dynamic ~Rs.2500 risk-based sizing -- then acts through this runner's own
+enter_position/exit_position (so it is just another ATM single-leg member of the
+family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
+default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
+15:15 square-off are all unaffected, and when flat past the cutoff it skips the LLM
+call entirely. It is OFF by default; SL_HUNTING_ENABLED=true includes it, and its
+optional deps (claude-agent-sdk, pydantic) are imported behind try/except so a missing
+dep simply disables it without touching the rest of the runner. It can also learn from
+its own trades (v3): a per-trade journal feeds an off-loop reflection coach that
+proposes lessons, which the operator promotes into lessons.json and the agent injects
+only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -168,6 +172,7 @@ CLASS HIERARCHY OVERVIEW
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
         |             Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic,
         |             Supertrend, Volatility Breakout)
+        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in 27th: LLM/Claude-agent driven)
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
