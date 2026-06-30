@@ -19,6 +19,8 @@ Dependencies/gsheet_oauth_*.json
 # Generated outputs (downloaded OHLC data, backtest results, logs)
 Backtest Outputs/
 *.log
+# DhanHQ instrument master dump (regenerated daily by the runner; auto-swept)
+Dependencies/all_instrument*.csv
 
 # IDE / OS
 .vscode/
