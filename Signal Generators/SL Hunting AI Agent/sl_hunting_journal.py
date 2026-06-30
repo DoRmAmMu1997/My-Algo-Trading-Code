@@ -109,6 +109,50 @@ def make_entry_record(
     }
 
 
+def make_decision_record(
+    decision: Any,
+    nifty_df: pd.DataFrame,
+    bnf_df: pd.DataFrame | None = None,
+    cfg: SLHuntingIndicatorConfig | None = None,
+) -> dict[str, Any]:
+    """Build one AUDIT row for a SINGLE agent decision — HOLD included.
+
+    For a SEPARATE decisions log, NOT the trade journal: it captures what the agent
+    decided this bar (action / confidence / setup / reasoning + the deterministic
+    context it saw), so an operator can review every decision, including the HOLDs.
+    The trade journal stays trade-only so the reflection coach's win/loss stats are
+    never diluted by the ~70 no-trade bars a day.
+    """
+    ctx = build_entry_context(nifty_df, bnf_df, cfg)
+    return {
+        "decided_at": datetime.now().isoformat(timespec="seconds"),
+        "action": getattr(decision, "action", ""),
+        "confidence": getattr(decision, "confidence", None),
+        "setup": getattr(decision, "setup", ""),
+        "stop": round(float(getattr(decision, "stop", 0.0) or 0.0), 2),
+        "target": round(float(getattr(decision, "target", 0.0) or 0.0), 2),
+        "reasoning": str(getattr(decision, "reasoning", ""))[:500],
+        "model_used": getattr(decision, "model_used", ""),
+        "context": ctx,
+    }
+
+
+def append_decision(path: str, record: dict[str, Any]) -> None:
+    """Append one decision row to the decisions JSONL (best-effort; never raises).
+
+    A plain append (not via TradeJournal) because a decision has no open/close
+    lifecycle — it is one complete row written immediately, every bar.
+    """
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except OSError:
+        logger.warning("Could not append to decisions log %s", path, exc_info=True)
+
+
 class TradeJournal:
     """Append-only JSONL journal — one complete row per closed trade.
 
