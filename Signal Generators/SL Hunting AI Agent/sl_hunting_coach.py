@@ -31,6 +31,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from sl_hunting_agent import _disabled_thinking_config
 from sl_hunting_ai_validation import parse_with_retry
 from sl_hunting_lessons import (
     CoachOutput,
@@ -151,7 +152,6 @@ class CoachAgent:
                 "sign in once with the Claude CLI (keep ANTHROPIC_API_KEY UNSET)."
             ) from exc
 
-        ThinkingConfigDisabled = getattr(claude_sdk, "ThinkingConfigDisabled", None)
         options_kwargs: dict[str, Any] = {
             "model": model,
             "system_prompt": system_prompt,
@@ -159,8 +159,14 @@ class CoachAgent:
             "permission_mode": "dontAsk",
             "setting_sources": [],
         }
-        if self._fast_mode and ThinkingConfigDisabled is not None:
-            options_kwargs["thinking"] = ThinkingConfigDisabled()
+        if self._fast_mode:
+            # Shared helper builds {"type": "disabled"}; a bare ThinkingConfigDisabled()
+            # is {} and would KeyError in the SDK's _build_command (see the helper docstring).
+            thinking_cfg = _disabled_thinking_config(claude_sdk)
+            if thinking_cfg is not None:
+                options_kwargs["thinking"] = thinking_cfg
+            else:
+                logger.warning("SL Hunting coach fast mode requested but ThinkingConfigDisabled is unavailable; using default thinking.")
         options = ClaudeAgentOptions(**options_kwargs)
 
         final_text = ""

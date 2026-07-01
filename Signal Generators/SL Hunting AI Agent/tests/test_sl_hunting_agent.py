@@ -218,6 +218,37 @@ def test_agent_decide_logs_actionable_auth_error(caplog):
 
 
 # --------------------------------------------------------------------------
+# Fast mode ("disable extended thinking") must build a VALID thinking config.
+# Regression: ThinkingConfigDisabled is a TypedDict, so a bare ThinkingConfigDisabled()
+# is {} (no "type" key). Passing that to the SDK makes _build_command raise
+# `KeyError: 'type'` on `thinking["type"]` -- i.e. fast mode never worked.
+# --------------------------------------------------------------------------
+
+def test_disabled_thinking_config_carries_type_key():
+    import pytest
+
+    sdk = pytest.importorskip("claude_agent_sdk")
+    from sl_hunting_agent import _disabled_thinking_config
+
+    cfg = _disabled_thinking_config(sdk)
+    assert cfg is not None
+    # The SDK does `thinking["type"]`; a config without it KeyErrors in _build_command.
+    assert cfg["type"] == "disabled"
+
+    # Guard against regressing to the bare call: ThinkingConfigDisabled() is the {} trap.
+    assert dict(sdk.ThinkingConfigDisabled()) == {}
+
+
+def test_disabled_thinking_config_none_when_sdk_lacks_it():
+    from sl_hunting_agent import _disabled_thinking_config
+
+    class _OldSdk:  # too old to expose ThinkingConfigDisabled -> caller warns, no thinking
+        pass
+
+    assert _disabled_thinking_config(_OldSdk()) is None
+
+
+# --------------------------------------------------------------------------
 # MasterWorkerExecutor duck-types the worker
 # --------------------------------------------------------------------------
 
