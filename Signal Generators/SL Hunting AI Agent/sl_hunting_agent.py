@@ -181,6 +181,26 @@ def _mentions_usage_limit(*texts: str | None) -> bool:
     return any(k in blob for k in ("usage limit", "rate limit", "429", "quota"))
 
 
+def _disabled_thinking_config(sdk_module: Any) -> dict[str, Any] | None:
+    """Build the SDK ``thinking`` option that DISABLES extended thinking (fast mode).
+
+    Returns ``{"type": "disabled"}`` (via the SDK's ``ThinkingConfigDisabled`` type),
+    or ``None`` when the installed SDK is too old to expose that type (the caller then
+    warns and falls back to the default thinking).
+
+    Why this helper exists: ``ThinkingConfigDisabled`` is a *TypedDict*, so a bare
+    ``ThinkingConfigDisabled()`` evaluates to an empty ``{}`` with NO ``"type"`` key.
+    The SDK's ``_build_command`` reads ``thinking["type"]`` unconditionally, so that
+    empty dict makes it raise ``KeyError: 'type'`` before the CLI is ever launched --
+    i.e. `SL_HUNTING_FAST_MODE=true` crashed the agent. The fix is to build the dict
+    WITH its required ``type="disabled"`` field.
+    """
+    thinking_disabled = getattr(sdk_module, "ThinkingConfigDisabled", None)
+    if thinking_disabled is None:
+        return None
+    return thinking_disabled(type="disabled")
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -293,7 +313,6 @@ class SLHuntingAgent:
                 "UNSET so it bills your plan, not per-token API usage."
             ) from exc
 
-        ThinkingConfigDisabled = getattr(claude_sdk, "ThinkingConfigDisabled", None)
         mcp_servers, allowed_tools = build_sl_hunting_mcp_server(tool_context)
 
         options_kwargs: dict[str, Any] = {
@@ -307,10 +326,12 @@ class SLHuntingAgent:
             "permission_mode": "dontAsk",
             "setting_sources": [],
         }
-        if self._fast_mode and ThinkingConfigDisabled is not None:
-            options_kwargs["thinking"] = ThinkingConfigDisabled()
-        elif self._fast_mode:
-            logger.warning("SL Hunting fast mode requested but ThinkingConfigDisabled is unavailable; using default thinking.")
+        if self._fast_mode:
+            thinking_cfg = _disabled_thinking_config(claude_sdk)
+            if thinking_cfg is not None:
+                options_kwargs["thinking"] = thinking_cfg
+            else:
+                logger.warning("SL Hunting fast mode requested but ThinkingConfigDisabled is unavailable; using default thinking.")
         options = ClaudeAgentOptions(**options_kwargs)
 
         final_text = ""
