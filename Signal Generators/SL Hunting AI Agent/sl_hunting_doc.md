@@ -429,3 +429,65 @@ shares those notes, the Friday→Monday concept can be folded into `RETAIL_POSIT
 - `BNF_CROSS_CONFIRMATION`: two cautions (stale early verdicts vs the opening-gap context;
   an opposing verdict is a real vote → HOLD unless textbook).
 - `BNF_SPECIFIC`: expiry-day index = extra fuel for with-gap momentum on a gap morning.
+
+---
+
+## Video addendum — 2-week verbatim sweep (v3d)
+
+> Source: every Intraday Hunter video for the 18 Jun – 2 Jul 2026 sessions, re-extracted from
+> the **verbatim Hindi auto-transcripts** (YouTube transcript panel → page-text capture, the
+> v3c method) — including videos v3a/v3b had only covered via lossy Ask/Gemini summaries.
+> 15 of 18 in-window videos captured; `st8p4CkP8mo` has no transcript, the weekly
+> `s41N7OS17Wk` never loads its panel (v3a's Gemini coverage stands), `WhfVxV0h5bo` was v3c.
+
+Videos (id — session — type — outcome/signal):
+- `G9HR80PLK8E` — 18 Jun — live — WIN: post-flush flat-open long; "flushed buyers don't
+  return"; BNF-moves-first entry; slow-continuous momentum read.
+- `O_PHs9q1QqA` — 19 Jun — live — small LOSS: bought a BIG gap-down against an up-streak
+  ("only the gap itself tells you to sell"); cut when the smaller-gap index (BNF) refused to
+  join the recovery → gap-size asymmetry lesson.
+- `Z2cVRE3sa6s` — for 19 Jun — plan — crowd-QUANTITY read (drip-buyers not huntable).
+- `0Pq2Arc7gRo` — for 22 Jun — plan — gap-size gradation (small counter-gap ≈ flat).
+- `LmO-Y1XzqgY` — 23 Jun — live — LOSS: faded a flat-open recovery after a SIDEWAYS period
+  (positioning unclear = no crowd); held to limit, cut on time + expiry decay.
+- `ZXQZy735-Fo` — for 24 Jun — plan — the conditional plan (gap-up → sell-side; flat/gap-down
+  → buy-side) after a big down day.
+- `J64qDUp2M88` — 24 Jun — live — WIN: executed that plan; flat open + first positive momentum
+  → quick triple-index long; "had it gapped up we'd have SOLD it".
+- `st8p4CkP8mo` — for 25 Jun — plan — no transcript.
+- `1e14YWvOtzs` — 25 Jun — live — WIN: gap-up continuing strength on Sensex expiry → follow;
+  sized up the expiring index; exited when the weakest index stalled.
+- `s41N7OS17Wk` — 28 Jun — weekly — transcript unavailable.
+- `I2BGDZIEc4c` — for 29 Jun — plan — breakout-failure day → trap read; produced the losing
+  29 Jun long (plans can be wrong; direction-first still governs).
+- `gMu0DU4HJ00` — 29 Jun — live — LOSS: trap-CONSTRUCTION leg premise (rally to re-add buyers
+  after a flush); cut when all three rejected together.
+- `FXugPeqs2HQ` — for 30 Jun — plan — KEY CONTRAST: close freshly below the round number →
+  sellers' SLs unreachable → flat/gap-down = go WITH the selling; only a gap-up activates the
+  hunt (→ SL-REACHABILITY TEST).
+- `SKgchmcArt0` — 30 Jun — live — LOSS: textbook cross-index divergence entry failed because
+  the day's DIRECTION was down (→ direction-first hierarchy); open exactly ON the round number
+  = ambiguous; admits loss-streak bias.
+- `yVFhGqGCjMc` — for 1 Jul — plan — mindset-based plan after a choppy day (lower conviction).
+- `Jj9yec-QDvI` — 1 Jul — live — WIN: flat open after 2-3 down days → hunt the comfortable
+  sellers up; gap-down would make old sellers SAFE (fresh herd traps itself); gap-up after a
+  selling streak = "no trust".
+- `kW5phlWuMKM` — for 2 Jul — plan — reads 1 Jul as an over-the-day seller trap; "gap-up →
+  go with, buy-side" = the v3c live trade the agent missed.
+- `2vO3onLbhPc` — for 3 Jul — plan — day-specific (ephemeral), captured for the record.
+
+**Knowledge changes (v3d, all prose):**
+- `PSYCHOLOGY`: trap-CONSTRUCTION leg (post-flush single momentum leg — capture and leave).
+- `RETAIL_POSITIONING`: READ THE GAP AGAINST THE PRIOR DAYS (continuation vs big-counter-gap
+  lure vs small-gap gradation); MULTI-DAY ACCUMULATION (flat-open hunt vs sideways = no crowd;
+  drip-crowds not huntable); SL-REACHABILITY TEST.
+- `OPENING_DRIVE`: Variant B — flat-open seller-hunt long after an extended multi-day down
+  move (same first-candle/no-major-rejection discipline; still no short / no gap-down variant).
+- `BNF_CROSS_CONFIRMATION`: direction-first hierarchy (divergence setups are entry-timing
+  tools; 30 Jun live loss).
+- `BNF_SPECIFIC`: gap-size asymmetry across the three indices + BNF-moves-first entry tell.
+- `RISK`: loss caps in trade units; two-rejections/third-momentum heuristic; early-adverse =
+  wrong direction on one-directional (expiry) days; slow-continuous vs fast momentum quality;
+  loss-streak "recovery trade" bias.
+- `DECISION_RULES`: rule 7 — no-plan zones (abstaining is a valid plan).
+- Test marker: `test_system_prompt_has_v3d_conditional_gap_knowledge`.

@@ -182,6 +182,18 @@ note. Full analysis + provenance in the v3c addendum of `sl_hunting_doc.md`. The
 separately moved the worker's start to 09:15 via `SL_HUNTING_TRADING_START_*` in `.env`
 (config, not code).
 
+## Two-week verbatim sweep (v3c → v3d)
+All 18 in-window Intraday Hunter videos (18 Jun – 2 Jul sessions: 8 live trades, 9 nightly
+plan clips, 1 weekly) were re-extracted from **verbatim transcripts** (15 captured; 2 have no
+transcript; 1 was v3c). The wins AND losses together yielded the v3d layer: **read the gap
+against the prior days** (a big counter-gap is a lure, not a signal; small counter-gaps read
+as flat), the **SL-reachability test** (no hunt when the crowd's stops sit beyond an intact
+level), an **OPENING_DRIVE variant B** (flat-open seller-hunt long after multi-day selling),
+**gap-size asymmetry** across the three indices, the trap-construction leg, direction-first
+hierarchy over divergence setups, and several risk heuristics (two-rejections rule,
+early-adverse = wrong direction on expiry days, loss-streak bias). Per-video provenance and
+the win/loss evidence table live in the v3d addendum of `sl_hunting_doc.md`.
+
 ## Decision log
 The agent decides once per completed bar, but the worker only *logs* the bars where it
 acts — so a HOLD leaves just a `decision cost` line with no record of **what** it decided or

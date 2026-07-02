@@ -99,3 +99,15 @@ def test_system_prompt_has_v3a_bnf_knowledge():
     # and must NOT weaken the mandatory candle+confirmation rule.
     assert prompt.index("BANK NIFTY — SPECIFIC BEHAVIOUR") > prompt.index("CROSS-INDEX CONFIRMATION")
     assert "execute NIFTY ATM options ONLY" in prompt
+
+
+def test_system_prompt_has_v3d_conditional_gap_knowledge():
+    """v3d: prior-days conditional gap read, reachability, and gap-size asymmetry are present."""
+    prompt = build_system_prompt()
+    assert "READ THE GAP AGAINST THE PRIOR DAYS" in prompt
+    assert "SL-REACHABILITY TEST" in prompt
+    assert "GAP-SIZE ASYMMETRY" in prompt
+    # The flat-open seller-hunt long lives inside the OPENING DRIVE section as variant B.
+    assert "Variant B" in prompt
+    # v3c's opening-drive exception must still be present and scoped.
+    assert "OPENING DRIVE" in prompt
