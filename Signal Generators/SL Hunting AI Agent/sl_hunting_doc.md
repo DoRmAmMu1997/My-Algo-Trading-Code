@@ -356,3 +356,76 @@ its preview lists method topics (e.g. "how to predict Monday's direction when re
 "regain confidence after a big loss", "60% profit booking") — a potential net-new "weekend / Friday-exit
 → Monday-open" refinement — but the answers are paywalled, so nothing is added from it. (If the operator
 shares those notes, the Friday→Monday concept can be folded into `RETAIL_POSITIONING` the same way.)
+
+---
+
+## Video addendum — live gap-up session + same-day journal review (v3c)
+
+> Source: "Live Bank Nifty Option Trading" (`WhfVxV0h5bo`), the 2026-07-02 live session,
+> reviewed the same day against the agent's own decision log and trade journal. Unlike v3a
+> (Ask/Gemini summaries), this one was distilled from the **verbatim Hindi auto-transcript**
+> captured via YouTube's transcript panel — primary-source provenance. Timestamps in
+> parentheses are video time (session opens at 0:06 ≈ 09:15 IST).
+
+**The trade (what the agent was benchmarked against):**
+- Market opens gap-up; "no big rejection, only small green-to-red candles" (0:06–0:17).
+- LONG (call-side) basket built ~1 minute after open: BankNifty 1170 qty (0:24), Sensex
+  900 qty (0:43), NIFTY 1365 qty (0:53) — triple-index, with-gap.
+- Reasoning (1:08–2:27): the market moved up but with NO BIG momentum, so few traders
+  could have bought; whatever few longs exist have SLs below the closing price —
+  unreachable without a major rejection. "We can't target those buyers directly. Had it
+  opened flat or gap-down we would hunt them; but on a gap-up we should go WITH the
+  market" → call-side trade. NIFTY's 24,000 round level was the same read (3:18–3:25).
+- Risk framing (3:03–3:18): the danger is a rejection that drags price back to the round
+  number — that's where the loss limit would be crossed. No big rejection = stay.
+- Catalyst (3:52): "today Sensex has expiry — overall positive momentum is possible."
+- Booked ~9 minutes in when momentum arrived across Sensex + NIFTY and BankNifty printed
+  2-3 strong candles (5:59–6:49).
+- Discipline riffs: don't make 2-3 trades in 5-10 minutes; give the market time after a
+  trade (4:09–4:49); put effort into the trade that's working (7:06–7:21); "greed has a
+  limit" — book, don't sit (8:32–8:40).
+
+**Same-day journal/decisions review (2026-07-02; 149 decisions, 3 trades, all SHORT):**
+- **T1** 09:28 `psych_round_number_bearish_engulfing_fade`, -19.0 pts (-1.11R): faded a
+  ~60-pt gap-grind 13 minutes in by declaring "late breakout longs trapped" — exactly the
+  read the video refutes (small momentum = nobody trapped). The agent's own 09:26 HOLD had
+  said "classic gap-up momentum, no reason to fade blindly"; two bars later it faded on
+  the first confirmed bearish pattern. → the TRAP-DENSITY TEST now in `RETAIL_POSITIONING`.
+- **T2** 09:46 `double_top_doji_confirmation_reversal`, +42.35 pts (+3.04R): the CORRECT
+  fade — a ~170-pt run to 24159 trapped real breakout buyers at a double top. Validates
+  the same test from the winning side (extended run → real trapped SLs → hunt works).
+- **T3** 10:33 `shooting_star_evening_star_fib_rejection`, -16.55 pts (-1.15R): entered
+  SHORT while `cross_index` read "both_at_resistance → bias UP" — the knowledge already
+  said "disagrees → prefer HOLD" and was overridden. → the two cautions appended to
+  `BNF_CROSS_CONFIRMATION`. (T1's cross read, "both_at_support → bias down" during a
+  gap-up rally, was the opposite failure: a stale yesterday-levels verdict — same fix.)
+- A valid with-gap LONG trigger existed inside the agent's own rules — its 09:33 exit
+  reasoning cites a bullish doji (09:26) confirmed above 24117.85 at 09:31 — and was
+  never taken. → the GAP-UP FIRST-TRADE bullet in `RETAIL_POSITIONING`.
+
+**Why the agent could not capture the video's trade (root causes):**
+1. It was asleep: the worker's `trading_start` used the shared 09:25 default
+   (`_signal_gen_ops`), so its first decision landed 09:26:16 vs the video's ~09:16 entry.
+   The operator has since set the start to 09:15 via the existing
+   `SL_HUNTING_TRADING_START_HOUR/MINUTE` knobs in `.env` — a config change, not code.
+2. Even awake, the method had no opening-drive entry: every entry required a reversal
+   pattern + confirmation at a level, and the first candle was untradeable — the video's
+   trade is a positioning/context trade, structurally outside those rules.
+3. No trap-density notion — see T1 vs T2 above.
+4. Cross-index verdicts nudged/allowed the wrong side — see T3/T1 above.
+
+**Knowledge changes made for v3c (all prose, no logic):**
+- `RETAIL_POSITIONING`: TRAP-DENSITY TEST + GAP-UP MORNING → FIRST TRADE WITH THE GAP
+  (incl. "a stopped-out fade on a gap-up morning is evidence of gap-and-go — don't re-fade").
+- New `OPENING_DRIVE` section: the ONE scoped exception to pattern+confirmation — with-gap
+  LONG only, first ~15 minutes, clear gap-up above prev close + round number, entry only
+  after the first 1-min candle closes, no full-body green-to-red rejection, behavioural
+  confirmation substitutes, stop below first-candle/opening-range low (size auto-shrinks
+  via the risk budget), exit immediately on a major rejection, book on weakness. No
+  gap-down mirror (flat/gap-down stays a hunt-UP trap per the existing read).
+- `ROLE`, `LEVELS_AND_PIVOT`, `DECISION_RULES`: the blanket "pattern only / never the
+  first candle" statements now carry the scoped OPENING DRIVE exception (never DURING the
+  forming first candle; from its close onward, only under ALL its conditions).
+- `BNF_CROSS_CONFIRMATION`: two cautions (stale early verdicts vs the opening-gap context;
+  an opposing verdict is a real vote → HOLD unless textbook).
+- `BNF_SPECIFIC`: expiry-day index = extra fuel for with-gap momentum on a gap morning.
