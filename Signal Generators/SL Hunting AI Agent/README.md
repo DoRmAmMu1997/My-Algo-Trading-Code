@@ -167,6 +167,21 @@ about execution changes. The video audio is Hindi and raw transcripts weren't re
 so the rules were distilled via YouTube's built-in "Ask"/Gemini summaries (a secondary AI
 summary, recorded with provenance in `sl_hunting_doc.md` and operator-reviewable).
 
+## Gap-up opening drive (v3c)
+Knowledge-only drop from the 2026-07-02 live session (`WhfVxV0h5bo`) reviewed the same day
+against the agent's decision log and journal — this time from the **verbatim Hindi
+auto-transcript** (YouTube transcript panel), not an AI summary. The trader went LONG with a
+small gap-up ~1 minute after open ("nobody is trapped on a mild gap-up, so there is no
+SL-hunt — go WITH the market"); the agent, awake only from 09:25 and pattern-gated, took
+three shorts instead. Changes: a **TRAP-DENSITY TEST** before every fade and a
+**first-trade-WITH-the-gap** rule in `RETAIL_POSITIONING`; a new **`OPENING_DRIVE`** section —
+the one scoped exception to the pattern+confirmation rule (with-gap LONG only, first ~15 min,
+strict no-major-rejection conditions, honest wide stop with risk-budget sizing); cross-index
+cautions (stale early verdicts; an opposing verdict means HOLD); and an expiry-day-as-fuel
+note. Full analysis + provenance in the v3c addendum of `sl_hunting_doc.md`. The operator
+separately moved the worker's start to 09:15 via `SL_HUNTING_TRADING_START_*` in `.env`
+(config, not code).
+
 ## Decision log
 The agent decides once per completed bar, but the worker only *logs* the bars where it
 acts — so a HOLD leaves just a `decision cost` line with no record of **what** it decided or
