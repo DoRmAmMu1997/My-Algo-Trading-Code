@@ -7,7 +7,9 @@ bandit==1.9.4
 pre-commit==4.6.0
 # Type stubs for typed third-party usage in the mypy scope.
 types-requests==2.33.0.20260518
-# Optional runtime deps installed in CI so the SL Hunting suite runs fully
-# instead of skipping (they stay optional for live operation).
+# Optional runtime deps installed in CI so the SL Hunting and Shoonya suites
+# run fully instead of skipping (they stay optional for live operation).
 pydantic
 claude-agent-sdk
+pyotp
+websocket-client

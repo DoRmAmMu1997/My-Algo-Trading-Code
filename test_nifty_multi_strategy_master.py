@@ -1854,6 +1854,13 @@ class TestShoonyaFillConfirmation(unittest.TestCase):
     real fill via single_order_history before reporting success.
     """
 
+    def setUp(self):
+        # Same guard as TestShoonyaOrderAck: without the optional Shoonya deps
+        # the master binds shoonya_execution_client to None, and type(None)()
+        # below would blow up instead of skipping.
+        if master_file.shoonya_execution_client is None:
+            self.skipTest("Shoonya execution layer not importable in this environment.")
+
     def _client(self, history):
         c = type(master_file.shoonya_execution_client)()  # fresh instance, not the singleton
         c.client = _StubNoren(history)
