@@ -32,10 +32,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import adx, finite, normalize_ohlc_frame, parabolic_sar, require_columns
 
 
@@ -85,7 +84,7 @@ class ParabolicSARDecision:
 
 def build_parabolic_sar_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[ParabolicSARConfig] = None,
+    config: ParabolicSARConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with SAR, SAR direction, ADX, flip flags, and risk levels."""
     config = config or ParabolicSARConfig()
@@ -121,7 +120,7 @@ def build_parabolic_sar_with_indicators(
 class ParabolicSARSignalEngine:
     """Decision engine for Parabolic SAR entries and exits."""
 
-    def __init__(self, config: Optional[ParabolicSARConfig] = None) -> None:
+    def __init__(self, config: ParabolicSARConfig | None = None) -> None:
         self.config = config or ParabolicSARConfig()
 
     def minimum_history_bars(self) -> int:
@@ -170,7 +169,7 @@ class ParabolicSARSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[ParabolicSARPositionContext] = None,
+        position: ParabolicSARPositionContext | None = None,
     ) -> ParabolicSARDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -227,7 +226,7 @@ class ParabolicSARSignalEngine:
 class ParabolicSARSignalGenerator:
     """Convenience wrapper for full-history and latest-candle Parabolic SAR signals."""
 
-    def __init__(self, config: Optional[ParabolicSARConfig] = None) -> None:
+    def __init__(self, config: ParabolicSARConfig | None = None) -> None:
         self.config = config or ParabolicSARConfig()
         self.engine = ParabolicSARSignalEngine(self.config)
 
@@ -241,7 +240,7 @@ class ParabolicSARSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[ParabolicSARPositionContext] = None
+        position: ParabolicSARPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -277,7 +276,7 @@ class ParabolicSARSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[ParabolicSARPositionContext] = None,
+        position: ParabolicSARPositionContext | None = None,
     ) -> ParabolicSARDecision:
         frame = build_parabolic_sar_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -285,15 +284,15 @@ class ParabolicSARSignalGenerator:
 
 def generate_parabolic_sar_signals(
     data: pd.DataFrame,
-    config: Optional[ParabolicSARConfig] = None,
+    config: ParabolicSARConfig | None = None,
 ) -> pd.DataFrame:
     return ParabolicSARSignalGenerator(config=config).generate(data)
 
 
 def get_latest_parabolic_sar_signal(
     data: pd.DataFrame,
-    config: Optional[ParabolicSARConfig] = None,
-    position: Optional[ParabolicSARPositionContext] = None,
+    config: ParabolicSARConfig | None = None,
+    position: ParabolicSARPositionContext | None = None,
 ) -> ParabolicSARDecision:
     return ParabolicSARSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -304,15 +303,15 @@ get_latest_nifty_parabolic_sar_signal = get_latest_parabolic_sar_signal
 
 
 __all__ = [
+    "NiftyParabolicSARSignalGenerator",
     "ParabolicSARConfig",
-    "ParabolicSARPositionContext",
     "ParabolicSARDecision",
-    "build_parabolic_sar_with_indicators",
+    "ParabolicSARPositionContext",
     "ParabolicSARSignalEngine",
     "ParabolicSARSignalGenerator",
-    "generate_parabolic_sar_signals",
-    "get_latest_parabolic_sar_signal",
-    "NiftyParabolicSARSignalGenerator",
+    "build_parabolic_sar_with_indicators",
     "generate_nifty_parabolic_sar_signals",
+    "generate_parabolic_sar_signals",
     "get_latest_nifty_parabolic_sar_signal",
+    "get_latest_parabolic_sar_signal",
 ]

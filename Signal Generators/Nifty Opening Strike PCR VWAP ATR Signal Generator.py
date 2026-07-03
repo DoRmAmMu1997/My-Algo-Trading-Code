@@ -52,9 +52,10 @@ the opening strike fixed and block duplicate entries when configured to do so.
 Create a new engine, or call `reset_trading_day()`, for a new trading day.
 """
 
-from dataclasses import asdict, dataclass, field
 import math
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -141,7 +142,7 @@ class NiftyOpeningStrikePCRVWAPATRDecision:
 # =============================================================================
 # SMALL INPUT AND INDICATOR HELPERS
 # =============================================================================
-def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> Optional[str]:
+def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
     """
     Find a column by comparing lower-case, trimmed column names.
 
@@ -269,7 +270,7 @@ def _normalize_option_chain_frame(data: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-def _attach_vwap(frame: pd.DataFrame) -> tuple[pd.DataFrame, Optional[str]]:
+def _attach_vwap(frame: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
     """Use an existing VWAP column or calculate VWAP from OHLCV."""
 
     result = frame.copy()
@@ -407,9 +408,9 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
     - `_entry_signal_sent`: used to block duplicate entries when configured.
     """
 
-    def __init__(self, config: Optional[NiftyOpeningStrikePCRVWAPATRConfig] = None):
+    def __init__(self, config: NiftyOpeningStrikePCRVWAPATRConfig | None = None):
         self.config = config or NiftyOpeningStrikePCRVWAPATRConfig()
-        self.starting_strike: Optional[int] = None
+        self.starting_strike: int | None = None
         self._starting_strike_source = ""
         self._entry_signal_sent = False
 
@@ -448,9 +449,9 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
     def _ensure_starting_strike(
         self,
         ohlc: pd.DataFrame,
-        opening_price: Optional[float],
+        opening_price: float | None,
         debug: dict[str, Any],
-    ) -> Optional[str]:
+    ) -> str | None:
         """Set starting strike once, then keep it fixed."""
 
         if self.starting_strike is not None:
@@ -478,13 +479,13 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
         self,
         option_chain: pd.DataFrame,
         debug: dict[str, Any],
-    ) -> Optional[str]:
+    ) -> str | None:
         """Calculate PCR-change inputs and store them in debug."""
 
         selected_strikes = self._selected_pcr_strikes()
         debug["selected_pcr_strikes"] = selected_strikes
 
-        available_strikes = set(int(strike) for strike in option_chain["strike"].tolist())
+        available_strikes = {int(strike) for strike in option_chain["strike"].tolist()}
         missing_strikes = [strike for strike in selected_strikes if strike not in available_strikes]
         debug["missing_selected_pcr_strikes"] = missing_strikes
         if missing_strikes:
@@ -552,7 +553,7 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
         self,
         ohlc: pd.DataFrame,
         option_chain_oi_change: pd.DataFrame,
-        opening_price: Optional[float] = None,
+        opening_price: float | None = None,
     ) -> NiftyOpeningStrikePCRVWAPATRDecision:
         """
         Evaluate the latest supplied OHLC candle and return one decision.
@@ -743,8 +744,8 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
 def get_latest_nifty_opening_strike_pcr_vwap_atr_signal(
     ohlc: pd.DataFrame,
     option_chain_oi_change: pd.DataFrame,
-    config: Optional[NiftyOpeningStrikePCRVWAPATRConfig] = None,
-    opening_price: Optional[float] = None,
+    config: NiftyOpeningStrikePCRVWAPATRConfig | None = None,
+    opening_price: float | None = None,
 ) -> NiftyOpeningStrikePCRVWAPATRDecision:
     """
     One-shot helper for callers who do not want to instantiate the engine.

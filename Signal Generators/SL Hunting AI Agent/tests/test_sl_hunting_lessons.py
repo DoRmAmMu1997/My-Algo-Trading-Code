@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from sl_hunting_agent import SLHuntingAgent
 from sl_hunting_coach import CoachAgent, summarize_journal
 from sl_hunting_lessons import (
-    CoachOutput,
     ProposedLesson,
     add_proposed,
     consolidate,
@@ -18,7 +16,6 @@ from sl_hunting_lessons import (
     promote,
     proposed_to_record,
 )
-
 
 # --------------------------------------------------------------------------
 # Lesson schema
@@ -41,18 +38,27 @@ def test_proposed_lesson_validates_and_omits_min_max():
 # --------------------------------------------------------------------------
 
 def test_consolidate_dedupes_by_id_keeping_bigger_sample_and_caps():
-    base = proposed_to_record(ProposedLesson(scope="s", lesson="L", rationale="r", wins=1, losses=0, sample_size=2, confidence=5))
+    base = proposed_to_record(
+        ProposedLesson(scope="s", lesson="L", rationale="r", wins=1, losses=0, sample_size=2, confidence=5)
+    )
     bigger = dict(base)
     bigger["evidence"] = {"wins": 5, "losses": 1, "sample_size": 6}
     out = consolidate([base, bigger])
     assert len(out) == 1 and out[0]["evidence"]["sample_size"] == 6
     # cap
-    many = [proposed_to_record(ProposedLesson(scope=f"s{i}", lesson=f"L{i}", rationale="r", wins=i, losses=0, sample_size=i, confidence=5)) for i in range(1, 20)]
+    many = [
+        proposed_to_record(
+            ProposedLesson(scope=f"s{i}", lesson=f"L{i}", rationale="r", wins=i, losses=0, sample_size=i, confidence=5)
+        )
+        for i in range(1, 20)
+    ]
     assert len(consolidate(many, max_lessons=5)) == 5
 
 
 def test_format_lessons_only_renders_approved():
-    proposed = proposed_to_record(ProposedLesson(scope="s", lesson="be cautious", rationale="r", wins=1, losses=3, sample_size=4, confidence=4))
+    proposed = proposed_to_record(
+        ProposedLesson(scope="s", lesson="be cautious", rationale="r", wins=1, losses=3, sample_size=4, confidence=4)
+    )
     assert format_lessons([proposed]) == ""  # status=proposed -> nothing
     approved = dict(proposed, status="approved")
     block = format_lessons([approved])
@@ -106,7 +112,8 @@ def test_coach_reflect_empty_on_malformed():
 
 def test_summarize_journal_renders_trades():
     rows = [{"direction": "LONG", "setup": "pivot", "confidence": 7, "followed_method": True,
-             "context": {"cross_index": {"bias": "up"}}, "outcome": {"r_multiple": 2.0, "points": 30, "exit_reason": "target_hit"}}]
+             "context": {"cross_index": {"bias": "up"}},
+             "outcome": {"r_multiple": 2.0, "points": 30, "exit_reason": "target_hit"}}]
     text = summarize_journal(rows)
     assert "1 trades" in text and "pivot" in text and "target_hit" in text
     assert summarize_journal([]).startswith("No trades")

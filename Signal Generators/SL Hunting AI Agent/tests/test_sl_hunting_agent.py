@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-
 from sl_hunting_agent import AgentRunResult, SLHuntingAgent, SLHuntingDecision
 from sl_hunting_executor import (
     MasterWorkerExecutor,
@@ -169,7 +168,6 @@ class _FakeResult:
 
 def test_raise_for_error_result_classifies_api_status():
     import pytest
-
     from sl_hunting_agent import (
         SLHuntingAgentError,
         SLHuntingAuthError,

@@ -29,7 +29,7 @@ oldest → newest. Helper `prepare_candles` normalises this.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -123,24 +123,24 @@ def _anatomy(row: pd.Series, cfg: SLHuntingIndicatorConfig) -> dict[str, Any]:
 
     Beginner note: a candle has four prices — open/high/low/close (OHLC). We turn
     those into the parts a trader eyeballs:
-    - ``range``  = high − low  (the candle's total height; the denominator for every
+    - ``range``  = high - low  (the candle's total height; the denominator for every
       ratio below, floored at a tiny number so we never divide by zero).
-    - ``body``   = |close − open|  (the thick part).
+    - ``body``   = |close - open|  (the thick part).
     - ``upper_wick`` = the thin line ABOVE the body (high down to the body's top).
     - ``lower_wick`` = the thin line BELOW the body (body's bottom down to the low).
     The boolean flags then label the shape by comparing those parts to the
     fractions in ``cfg`` (e.g. "is this basically all wick and no body?").
     """
-    o, h, l, c = float(row.open), float(row.high), float(row.low), float(row.close)
-    rng = max(h - l, 1e-9)            # total height; 1e-9 floor avoids divide-by-zero
+    o, h, lo, c = float(row.open), float(row.high), float(row.low), float(row.close)
+    rng = max(h - lo, 1e-9)           # total height; 1e-9 floor avoids divide-by-zero
     body = abs(c - o)                 # thick part (direction-agnostic)
     upper = h - max(o, c)            # wick above the body
-    lower = min(o, c) - l            # wick below the body
+    lower = min(o, c) - lo           # wick below the body
     is_bull = c > o                   # green candle (close above open)
     return {
         "open": round(o, 2),
         "high": round(h, 2),
-        "low": round(l, 2),
+        "low": round(lo, 2),
         "close": round(c, 2),
         "range": round(rng, 2),
         "body": round(body, 2),
@@ -239,10 +239,13 @@ def pivot_and_levels(
             "previous_close": _dist(prev_day["close"]) if prev_day else None,
             "previous_high": _dist(prev_day["high"]) if prev_day else None,
             "previous_low": _dist(prev_day["low"]) if prev_day else None,
-            "today_open": _dist(today_levels["open"]),
+            "today_open": _dist(cast(float, today_levels["open"])),
             "nearest_psych": _dist(min(psych, key=lambda p: abs(p - last_price))) if psych else None,
         },
-        "note": "Above pivot = buyers' market; below = sellers'. A WICK at a level = trap/reversal; a clean BREAK = continuation.",
+        "note": (
+            "Above pivot = buyers' market; below = sellers'. A WICK at a level = "
+            "trap/reversal; a clean BREAK = continuation."
+        ),
     }
 
 
@@ -273,9 +276,11 @@ def _swings(df: pd.DataFrame, cfg: SLHuntingIndicatorConfig) -> list[dict[str, A
         is_high = all(hi >= float(window.high.iloc[j]) for j in range(i - left, i + right + 1) if j != i)
         is_low = all(lo <= float(window.low.iloc[j]) for j in range(i - left, i + right + 1) if j != i)
         if is_high:
-            swings.append({"kind": "high", "price": round(hi, 2), "time": str(window.timestamp.iloc[i]), "bars_ago": n - 1 - i})
+            swings.append({"kind": "high", "price": round(hi, 2),
+                           "time": str(window.timestamp.iloc[i]), "bars_ago": n - 1 - i})
         elif is_low:
-            swings.append({"kind": "low", "price": round(lo, 2), "time": str(window.timestamp.iloc[i]), "bars_ago": n - 1 - i})
+            swings.append({"kind": "low", "price": round(lo, 2),
+                           "time": str(window.timestamp.iloc[i]), "bars_ago": n - 1 - i})
     return swings
 
 
@@ -338,8 +343,15 @@ def fibo_levels(
         "last_price": last_price,
         "retracements": retr,
         "extensions": ext,
-        "nearest_retracement": {"level_name": nearest[0], "price": nearest[1], "points_away": round(last_price - nearest[1], 2)},
-        "note": "Only 50/61/78 are valid reversal zones (need pattern + confirmation); 161/261 are targets. 78% is the deepest valid zone.",
+        "nearest_retracement": {
+            "level_name": nearest[0],
+            "price": nearest[1],
+            "points_away": round(last_price - nearest[1], 2),
+        },
+        "note": (
+            "Only 50/61/78 are valid reversal zones (need pattern + confirmation); "
+            "161/261 are targets. 78% is the deepest valid zone."
+        ),
     }
 
 
@@ -362,9 +374,15 @@ def _confirmation(
     for j in range(pattern_idx + 1, n):
         a = _anatomy(df.iloc[j], cfg)
         if direction == "bullish" and a["close"] > pattern_high and a["is_full_body"] and a["is_bull"]:
-            return {"confirmed": True, "bars_after": j - pattern_idx, "close": a["close"], "time": str(df.timestamp.iloc[j])}
+            return {
+                "confirmed": True, "bars_after": j - pattern_idx,
+                "close": a["close"], "time": str(df.timestamp.iloc[j]),
+            }
         if direction == "bearish" and a["close"] < pattern_low and a["is_full_body"] and a["is_bear"]:
-            return {"confirmed": True, "bars_after": j - pattern_idx, "close": a["close"], "time": str(df.timestamp.iloc[j])}
+            return {
+                "confirmed": True, "bars_after": j - pattern_idx,
+                "close": a["close"], "time": str(df.timestamp.iloc[j]),
+            }
     # No confirmation yet — flag a trap if price poked back through after a wick test.
     return {"confirmed": False, "bars_after": None, "close": None, "time": None}
 
@@ -397,7 +415,9 @@ def candle_patterns(
         bars_ago = n - 1 - i
         p_high, p_low = cur["high"], cur["low"]
 
-        def _add(ptype: str, direction: str, hi: float, lo: float) -> None:
+        # Bind the loop variables as defaults so the helper is safe even if a
+        # future refactor stores it past this iteration (ruff B023).
+        def _add(ptype: str, direction: str, hi: float, lo: float, *, i: int = i, bars_ago: int = bars_ago) -> None:
             conf = _confirmation(df, i, direction, hi, lo, cfg)
             found.append({
                 "type": ptype,
@@ -426,8 +446,14 @@ def candle_patterns(
         # covers a prior red body (close ≥ prev open AND open ≤ prev close); bearish is
         # the mirror. Colour matters here (unlike a hammer). Both bodies must be non-zero.
         if cur["body"] > 0 and prev["body"] > 0:
-            bull_engulf = cur["is_bull"] and prev["is_bear"] and cur["close"] >= prev["open"] and cur["open"] <= prev["close"]
-            bear_engulf = cur["is_bear"] and prev["is_bull"] and cur["close"] <= prev["open"] and cur["open"] >= prev["close"]
+            bull_engulf = (
+                cur["is_bull"] and prev["is_bear"]
+                and cur["close"] >= prev["open"] and cur["open"] <= prev["close"]
+            )
+            bear_engulf = (
+                cur["is_bear"] and prev["is_bull"]
+                and cur["close"] <= prev["open"] and cur["open"] >= prev["close"]
+            )
             if bull_engulf:
                 _add("bullish_engulfing", "bullish", max(cur["high"], prev["high"]), min(cur["low"], prev["low"]))
             if bear_engulf:
@@ -448,9 +474,13 @@ def candle_patterns(
         # (bullish); evening star = up→pause→down (bearish).
         small_middle = prev["body"] <= 0.5 * max(prev2["body"], 1e-9)
         if prev2["is_bear"] and small_middle and cur["is_bull"] and cur["close"] > (prev2["open"] + prev2["close"]) / 2:
-            _add("morning_star", "bullish", max(cur["high"], prev["high"], prev2["high"]), min(cur["low"], prev["low"], prev2["low"]))
+            _add("morning_star", "bullish",
+                 max(cur["high"], prev["high"], prev2["high"]),
+                 min(cur["low"], prev["low"], prev2["low"]))
         if prev2["is_bull"] and small_middle and cur["is_bear"] and cur["close"] < (prev2["open"] + prev2["close"]) / 2:
-            _add("evening_star", "bearish", max(cur["high"], prev["high"], prev2["high"]), min(cur["low"], prev["low"], prev2["low"]))
+            _add("evening_star", "bearish",
+                 max(cur["high"], prev["high"], prev2["high"]),
+                 min(cur["low"], prev["low"], prev2["low"]))
 
     confirmed = [p for p in found if p.get("confirmed")]
     return {
@@ -458,7 +488,10 @@ def candle_patterns(
         "latest_candle": _anatomy(df.iloc[-1], cfg),
         "patterns": found[-cfg.pattern_lookback:],
         "confirmed_patterns": confirmed[-5:],
-        "note": "A tradeable setup needs a pattern AT a level AND a confirmation candle that already closed beyond it. No confirmation = no trade.",
+        "note": (
+            "A tradeable setup needs a pattern AT a level AND a confirmation candle "
+            "that already closed beyond it. No confirmation = no trade."
+        ),
     }
 
 
@@ -532,7 +565,10 @@ def market_structure(
         "descending_trendline_points": desc_line,
         "double_top": double_top,
         "double_bottom": double_bottom,
-        "note": "Trade a trendline only on the 3rd touch or a confirmed break (4th+). For W/M, trade the activation after the neckline break, not the breakout itself.",
+        "note": (
+            "Trade a trendline only on the 3rd touch or a confirmed break (4th+). "
+            "For W/M, trade the activation after the neckline break, not the breakout itself."
+        ),
     }
 
 
@@ -615,8 +651,14 @@ def index_position(
         "vs_pivot": vs_pivot,
         "at_support": at_support,
         "at_resistance": at_resistance,
-        "nearest_support": {"name": nearest_support[0], "price": round(nearest_support[1], 2)} if nearest_support else None,
-        "nearest_resistance": {"name": nearest_resistance[0], "price": round(nearest_resistance[1], 2)} if nearest_resistance else None,
+        "nearest_support": (
+            {"name": nearest_support[0], "price": round(nearest_support[1], 2)}
+            if nearest_support else None
+        ),
+        "nearest_resistance": (
+            {"name": nearest_resistance[0], "price": round(nearest_resistance[1], 2)}
+            if nearest_resistance else None
+        ),
         "broke_pivot_down": broke_pivot_down,
         "broke_pivot_up": broke_pivot_up,
     }
@@ -641,7 +683,10 @@ def cross_index_signal(
     n = index_position(nifty_df, cfg)
     b = index_position(bnf_df, cfg) if bnf_df is not None else {"available": False}
     if not (n.get("available") and b.get("available")):
-        return {"available": False, "reason": "BankNIFTY data unavailable; judge on NIFTY alone (be more conservative)."}
+        return {
+            "available": False,
+            "reason": "BankNIFTY data unavailable; judge on NIFTY alone (be more conservative).",
+        }
 
     # Verdict ladder, checked MOST-SPECIFIC first (both-break and both-at-a-level beat
     # the looser "same side of pivot" context). Remember the SL-hunting inversion: both
@@ -663,10 +708,16 @@ def cross_index_signal(
     elif (n["broke_pivot_down"] != b["broke_pivot_down"]) and (n["at_support"] or b["at_support"]):
         holder = "BankNIFTY" if n["broke_pivot_down"] else "NIFTY"
         alignment, bias = "divergence_breakdown", "up"
-        reason = f"One index broke down while {holder} held support -> breakdown likely fails; bias UP toward the holder."
+        reason = (
+            f"One index broke down while {holder} held support -> "
+            "breakdown likely fails; bias UP toward the holder."
+        )
     elif n["vs_pivot"] in ("above", "below") and b["vs_pivot"] in ("above", "below") and n["vs_pivot"] != b["vs_pivot"]:
         alignment, bias = "opposite_sides_of_pivot", "wait"
-        reason = "Indices are on opposite sides of their pivots -> treat pivot as a normal level and WAIT for alignment."
+        reason = (
+            "Indices are on opposite sides of their pivots -> "
+            "treat pivot as a normal level and WAIT for alignment."
+        )
     elif n["vs_pivot"] == b["vs_pivot"] == "above":
         alignment, bias = "both_above_pivot", "up_context"
         reason = "Both above pivot -> buyers' market on both; bullish context."
@@ -681,5 +732,8 @@ def cross_index_signal(
         "reason": reason,
         "nifty": n,
         "bank_nifty": b,
-        "note": "Advisory: weigh with the NIFTY setup. 'wait' = require alignment; if this disagrees with your NIFTY read, prefer HOLD.",
+        "note": (
+            "Advisory: weigh with the NIFTY setup. 'wait' = require alignment; "
+            "if this disagrees with your NIFTY read, prefer HOLD."
+        ),
     }

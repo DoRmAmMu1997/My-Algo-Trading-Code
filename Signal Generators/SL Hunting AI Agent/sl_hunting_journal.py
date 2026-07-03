@@ -21,7 +21,6 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
-
 from sl_hunting_indicators import (
     SLHuntingIndicatorConfig,
     candle_patterns,

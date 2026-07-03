@@ -13,10 +13,8 @@ Quick-start:
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 import pandas as pd
-
 
 DEFAULT_BOLL_PERIOD = 20
 DEFAULT_BOLL_STD = 2.0
@@ -162,7 +160,7 @@ class HeikinAshiSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[HeikinAshiPositionContext] = None,
+        position: HeikinAshiPositionContext | None = None,
     ) -> HeikinAshiDecision:
         """
         Evaluate the latest candle and return one decision.

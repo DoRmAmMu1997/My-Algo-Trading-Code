@@ -30,7 +30,6 @@ from collections.abc import Awaitable
 from typing import Any
 
 from pydantic import ValidationError
-
 from sl_hunting_agent import _disabled_thinking_config
 from sl_hunting_ai_validation import parse_with_retry
 from sl_hunting_lessons import (
@@ -166,14 +165,15 @@ class CoachAgent:
             if thinking_cfg is not None:
                 options_kwargs["thinking"] = thinking_cfg
             else:
-                logger.warning("SL Hunting coach fast mode requested but ThinkingConfigDisabled is unavailable; using default thinking.")
+                logger.warning("SL Hunting coach fast mode requested but ThinkingConfigDisabled "
+                               "is unavailable; using default thinking.")
         options = ClaudeAgentOptions(**options_kwargs)
 
         final_text = ""
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, ResultMessage):
                 if getattr(message, "result", None):
-                    final_text = message.result
+                    final_text = message.result or ""
             elif isinstance(message, AssistantMessage):
                 for block in getattr(message, "content", None) or []:
                     text = getattr(block, "text", None)
@@ -189,7 +189,12 @@ class CoachAgent:
         loop (ProactorEventLoop on Windows, needed to spawn the Claude CLI subprocess).
         """
         def _runner() -> str:
-            loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+            # The statement form (not a ternary) lets mypy narrow sys.platform,
+            # exactly as the trading agent's identical bridge does.
+            if sys.platform == "win32":
+                loop = asyncio.ProactorEventLoop()
+            else:
+                loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
                 return loop.run_until_complete(coro)
@@ -200,7 +205,9 @@ class CoachAgent:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             return executor.submit(_runner).result()
 
-    def reflect(self, journal_rows: list[dict[str, Any]], *, min_sample: int = 5, max_lessons: int = 6) -> list[ProposedLesson]:
+    def reflect(
+        self, journal_rows: list[dict[str, Any]], *, min_sample: int = 5, max_lessons: int = 6
+    ) -> list[ProposedLesson]:
         """Run one reflection pass and return the proposed lessons (possibly empty)."""
         system_prompt = _coach_system_prompt(min_sample, max_lessons)
         prompt = (
@@ -210,7 +217,9 @@ class CoachAgent:
         runner = self._runner or self._default_run
 
         def _run_once() -> str:
-            return self._run_sync(runner(prompt, system_prompt=system_prompt, model=self._model, max_turns=self.MAX_TURNS))
+            return self._run_sync(
+                runner(prompt, system_prompt=system_prompt, model=self._model, max_turns=self.MAX_TURNS)
+            )
 
         def _parse(text: str) -> CoachOutput:
             payload = _extract_json_object(text)
@@ -293,10 +302,11 @@ def main(argv: list[str] | None = None) -> int:
         for label, path in (("PROPOSED", args.proposed), ("LIVE (approved)", args.live)):
             items = load_lessons(path)
             logger.info("=== %s (%d) ===", label, len(items))
-            for l in consolidate(items, max_lessons=100):
-                ev = l.get("evidence") or {}
-                logger.info("  [%s] %s :: %s (W%s/L%s n%s, conf=%s)", l.get("id"), l.get("scope"),
-                            l.get("lesson"), ev.get("wins"), ev.get("losses"), ev.get("sample_size"), l.get("confidence"))
+            for lesson in consolidate(items, max_lessons=100):
+                ev = lesson.get("evidence") or {}
+                logger.info("  [%s] %s :: %s (W%s/L%s n%s, conf=%s)", lesson.get("id"), lesson.get("scope"),
+                            lesson.get("lesson"), ev.get("wins"), ev.get("losses"), ev.get("sample_size"),
+                            lesson.get("confidence"))
         return 0
 
     # default: reflect

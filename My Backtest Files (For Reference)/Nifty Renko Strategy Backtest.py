@@ -49,7 +49,6 @@ from renko_strategy_logic_9_21 import (
     build_renko_with_indicators,
 )
 
-
 # -----------------------------
 # User configuration
 # -----------------------------

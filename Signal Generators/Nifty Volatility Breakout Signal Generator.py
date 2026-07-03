@@ -34,10 +34,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import finite, normalize_ohlc_frame, require_columns
 
 
@@ -79,7 +78,7 @@ class VolatilityBreakoutDecision:
 
 def build_volatility_breakout_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[VolatilityBreakoutConfig] = None,
+    config: VolatilityBreakoutConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with breakout trigger levels and cross flags."""
     config = config or VolatilityBreakoutConfig()
@@ -95,8 +94,12 @@ def build_volatility_breakout_with_indicators(
 
     # Breakout = price was on the calm side of the trigger last candle and has
     # punched through it this candle (a fresh cross, not a sustained state).
-    frame["long_setup"] = ((close > frame["upper_trigger"]) & (prev_close <= frame["upper_trigger"].shift(1))).fillna(False)
-    frame["short_setup"] = ((close < frame["lower_trigger"]) & (prev_close >= frame["lower_trigger"].shift(1))).fillna(False)
+    frame["long_setup"] = (
+        (close > frame["upper_trigger"]) & (prev_close <= frame["upper_trigger"].shift(1))
+    ).fillna(False)
+    frame["short_setup"] = (
+        (close < frame["lower_trigger"]) & (prev_close >= frame["lower_trigger"].shift(1))
+    ).fillna(False)
 
     frame["long_entry_price"] = close
     frame["short_entry_price"] = close
@@ -110,7 +113,7 @@ def build_volatility_breakout_with_indicators(
 class VolatilityBreakoutSignalEngine:
     """Decision engine for volatility breakout entries and exits."""
 
-    def __init__(self, config: Optional[VolatilityBreakoutConfig] = None) -> None:
+    def __init__(self, config: VolatilityBreakoutConfig | None = None) -> None:
         self.config = config or VolatilityBreakoutConfig()
 
     def minimum_history_bars(self) -> int:
@@ -128,7 +131,9 @@ class VolatilityBreakoutSignalEngine:
     def _direction(direction: str) -> str:
         return str(direction).strip().upper()
 
-    def _evaluate_exit(self, current: pd.Series, position: VolatilityBreakoutPositionContext) -> VolatilityBreakoutDecision:
+    def _evaluate_exit(
+        self, current: pd.Series, position: VolatilityBreakoutPositionContext
+    ) -> VolatilityBreakoutDecision:
         direction = self._direction(position.direction)
         high = float(current["high"])
         low = float(current["low"])
@@ -152,7 +157,7 @@ class VolatilityBreakoutSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[VolatilityBreakoutPositionContext] = None,
+        position: VolatilityBreakoutPositionContext | None = None,
     ) -> VolatilityBreakoutDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -209,7 +214,7 @@ class VolatilityBreakoutSignalEngine:
 class VolatilityBreakoutSignalGenerator:
     """Convenience wrapper for full-history and latest-candle breakout signals."""
 
-    def __init__(self, config: Optional[VolatilityBreakoutConfig] = None) -> None:
+    def __init__(self, config: VolatilityBreakoutConfig | None = None) -> None:
         self.config = config or VolatilityBreakoutConfig()
         self.engine = VolatilityBreakoutSignalEngine(self.config)
 
@@ -223,7 +228,7 @@ class VolatilityBreakoutSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[VolatilityBreakoutPositionContext] = None
+        position: VolatilityBreakoutPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -259,7 +264,7 @@ class VolatilityBreakoutSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[VolatilityBreakoutPositionContext] = None,
+        position: VolatilityBreakoutPositionContext | None = None,
     ) -> VolatilityBreakoutDecision:
         frame = build_volatility_breakout_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -267,15 +272,15 @@ class VolatilityBreakoutSignalGenerator:
 
 def generate_volatility_breakout_signals(
     data: pd.DataFrame,
-    config: Optional[VolatilityBreakoutConfig] = None,
+    config: VolatilityBreakoutConfig | None = None,
 ) -> pd.DataFrame:
     return VolatilityBreakoutSignalGenerator(config=config).generate(data)
 
 
 def get_latest_volatility_breakout_signal(
     data: pd.DataFrame,
-    config: Optional[VolatilityBreakoutConfig] = None,
-    position: Optional[VolatilityBreakoutPositionContext] = None,
+    config: VolatilityBreakoutConfig | None = None,
+    position: VolatilityBreakoutPositionContext | None = None,
 ) -> VolatilityBreakoutDecision:
     return VolatilityBreakoutSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -286,15 +291,15 @@ get_latest_nifty_volatility_breakout_signal = get_latest_volatility_breakout_sig
 
 
 __all__ = [
+    "NiftyVolatilityBreakoutSignalGenerator",
     "VolatilityBreakoutConfig",
-    "VolatilityBreakoutPositionContext",
     "VolatilityBreakoutDecision",
-    "build_volatility_breakout_with_indicators",
+    "VolatilityBreakoutPositionContext",
     "VolatilityBreakoutSignalEngine",
     "VolatilityBreakoutSignalGenerator",
-    "generate_volatility_breakout_signals",
-    "get_latest_volatility_breakout_signal",
-    "NiftyVolatilityBreakoutSignalGenerator",
+    "build_volatility_breakout_with_indicators",
     "generate_nifty_volatility_breakout_signals",
+    "generate_volatility_breakout_signals",
     "get_latest_nifty_volatility_breakout_signal",
+    "get_latest_volatility_breakout_signal",
 ]

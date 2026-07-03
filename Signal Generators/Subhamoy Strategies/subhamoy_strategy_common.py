@@ -15,7 +15,7 @@ Beginner mental model:
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -23,15 +23,17 @@ import pandas as pd
 try:
     # TA-Lib is the preferred indicator backend in this repo because it matches
     # the user's request for standard library indicator implementations.
-    import talib  # type: ignore
+    import talib
 except ImportError:  # pragma: no cover - used only when TA-Lib is absent
-    talib = None  # type: ignore
+    # The assignment error only exists where TA-Lib (with stubs) is installed;
+    # on stub-less machines the ignore is unused, hence the dual code.
+    talib = None  # type: ignore[assignment, unused-ignore]
 
 
 OHLC_COLUMNS = ["open", "high", "low", "close"]
 
 
-def find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> Optional[str]:
+def find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
     """Find the first matching column name using case-insensitive comparison."""
     lookup = {str(column).strip().lower(): column for column in frame.columns}
     for name in names:
@@ -132,7 +134,7 @@ def sma(values: pd.Series, period: int) -> pd.Series:
     """Calculate simple moving average with TA-Lib first, then pandas."""
     if talib is not None:
         return pd.Series(
-            talib.SMA(values.to_numpy(dtype="float64"), timeperiod=int(period)),  # type: ignore[union-attr]
+            talib.SMA(values.to_numpy(dtype="float64"), timeperiod=int(period)),
             index=values.index,
         )
     return values.rolling(window=int(period), min_periods=int(period)).mean()
@@ -145,7 +147,7 @@ def atr(frame: pd.DataFrame, period: int) -> pd.Series:
     close = frame["close"].astype(float)
     if talib is not None:
         return pd.Series(
-            talib.ATR(  # type: ignore[union-attr]
+            talib.ATR(
                 high.to_numpy(dtype="float64"),
                 low.to_numpy(dtype="float64"),
                 close.to_numpy(dtype="float64"),
@@ -189,6 +191,6 @@ def falling_over_lookback(values: pd.Series, lookback: int) -> pd.Series:
 def finite(value: object) -> bool:
     """Return True only for real finite numbers."""
     try:
-        return bool(np.isfinite(float(value)))
+        return bool(np.isfinite(float(value)))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return False

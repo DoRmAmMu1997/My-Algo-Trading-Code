@@ -31,10 +31,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, rsi
 
 
@@ -82,7 +81,7 @@ class RSIReversalDecision:
 
 def build_rsi_reversal_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[RSIReversalConfig] = None,
+    config: RSIReversalConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with RSI, oversold/overbought cross flags, and risk levels."""
     config = config or RSIReversalConfig()
@@ -111,7 +110,7 @@ def build_rsi_reversal_with_indicators(
 class RSIReversalSignalEngine:
     """Decision engine for RSI reversal entries and exits."""
 
-    def __init__(self, config: Optional[RSIReversalConfig] = None) -> None:
+    def __init__(self, config: RSIReversalConfig | None = None) -> None:
         self.config = config or RSIReversalConfig()
 
     def minimum_history_bars(self) -> int:
@@ -132,7 +131,7 @@ class RSIReversalSignalEngine:
     def _evaluate_exit(
         self,
         current: pd.Series,
-        prev: Optional[pd.Series],
+        prev: pd.Series | None,
         position: RSIReversalPositionContext,
     ) -> RSIReversalDecision:
         direction = self._direction(position.direction)
@@ -180,7 +179,7 @@ class RSIReversalSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[RSIReversalPositionContext] = None,
+        position: RSIReversalPositionContext | None = None,
     ) -> RSIReversalDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -238,7 +237,7 @@ class RSIReversalSignalEngine:
 class RSIReversalSignalGenerator:
     """Convenience wrapper for full-history and latest-candle RSI reversal signals."""
 
-    def __init__(self, config: Optional[RSIReversalConfig] = None) -> None:
+    def __init__(self, config: RSIReversalConfig | None = None) -> None:
         self.config = config or RSIReversalConfig()
         self.engine = RSIReversalSignalEngine(self.config)
 
@@ -252,7 +251,7 @@ class RSIReversalSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[RSIReversalPositionContext] = None
+        position: RSIReversalPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -288,7 +287,7 @@ class RSIReversalSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[RSIReversalPositionContext] = None,
+        position: RSIReversalPositionContext | None = None,
     ) -> RSIReversalDecision:
         frame = build_rsi_reversal_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -296,15 +295,15 @@ class RSIReversalSignalGenerator:
 
 def generate_rsi_reversal_signals(
     data: pd.DataFrame,
-    config: Optional[RSIReversalConfig] = None,
+    config: RSIReversalConfig | None = None,
 ) -> pd.DataFrame:
     return RSIReversalSignalGenerator(config=config).generate(data)
 
 
 def get_latest_rsi_reversal_signal(
     data: pd.DataFrame,
-    config: Optional[RSIReversalConfig] = None,
-    position: Optional[RSIReversalPositionContext] = None,
+    config: RSIReversalConfig | None = None,
+    position: RSIReversalPositionContext | None = None,
 ) -> RSIReversalDecision:
     return RSIReversalSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -315,15 +314,15 @@ get_latest_nifty_rsi_reversal_signal = get_latest_rsi_reversal_signal
 
 
 __all__ = [
+    "NiftyRSIReversalSignalGenerator",
     "RSIReversalConfig",
-    "RSIReversalPositionContext",
     "RSIReversalDecision",
-    "build_rsi_reversal_with_indicators",
+    "RSIReversalPositionContext",
     "RSIReversalSignalEngine",
     "RSIReversalSignalGenerator",
-    "generate_rsi_reversal_signals",
-    "get_latest_rsi_reversal_signal",
-    "NiftyRSIReversalSignalGenerator",
+    "build_rsi_reversal_with_indicators",
     "generate_nifty_rsi_reversal_signals",
+    "generate_rsi_reversal_signals",
     "get_latest_nifty_rsi_reversal_signal",
+    "get_latest_rsi_reversal_signal",
 ]

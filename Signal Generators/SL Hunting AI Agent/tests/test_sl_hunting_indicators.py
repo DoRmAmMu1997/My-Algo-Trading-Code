@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
-
 from sl_hunting_indicators import (
-    SLHuntingIndicatorConfig,
     candle_patterns,
     fibo_levels,
     market_structure,

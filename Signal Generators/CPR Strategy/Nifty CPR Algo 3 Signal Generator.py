@@ -50,10 +50,8 @@ needs synchronized 1-minute OHLC for the chosen ITM CE & PE (a separate follow-u
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import pandas as pd
-
 from cpr_strategy_logic import (
     CPRDecision,
     CPRPositionContext,
@@ -107,7 +105,7 @@ def _next_level(row: pd.Series, reference: float, direction: str) -> float:
 class NiftyCPRAlgo3SignalGenerator:
     """Multi-instrument CPR Algo 3 generator (spot + ITM CE + ITM PE)."""
 
-    def __init__(self, config: Optional[CPRAlgo3Config] = None) -> None:
+    def __init__(self, config: CPRAlgo3Config | None = None) -> None:
         self.config = config or CPRAlgo3Config()
 
     def _enrich(self, frame: pd.DataFrame) -> pd.DataFrame:
@@ -189,7 +187,7 @@ class NiftyCPRAlgo3SignalGenerator:
         spot: pd.DataFrame,
         ce: pd.DataFrame,
         pe: pd.DataFrame,
-        position: Optional[CPRPositionContext] = None,  # accepted for API parity; entries only
+        position: CPRPositionContext | None = None,  # accepted for API parity; entries only
     ) -> CPRDecision:
         """Return only the newest Algo 3 decision (the last shared candle)."""
         s, c, p, common = self._aligned(spot, ce, pe)
@@ -204,7 +202,7 @@ def generate_nifty_cpr_algo3_signals(
     spot: pd.DataFrame,
     ce: pd.DataFrame,
     pe: pd.DataFrame,
-    config: Optional[CPRAlgo3Config] = None,
+    config: CPRAlgo3Config | None = None,
 ) -> pd.DataFrame:
     """Full-history Algo 3 signals across the candles the three charts share."""
     return NiftyCPRAlgo3SignalGenerator(config=config).generate(spot, ce, pe)
@@ -214,8 +212,8 @@ def get_latest_nifty_cpr_algo3_signal(
     spot: pd.DataFrame,
     ce: pd.DataFrame,
     pe: pd.DataFrame,
-    config: Optional[CPRAlgo3Config] = None,
-    position: Optional[CPRPositionContext] = None,
+    config: CPRAlgo3Config | None = None,
+    position: CPRPositionContext | None = None,
 ) -> CPRDecision:
     """Only the newest Algo 3 decision."""
     return NiftyCPRAlgo3SignalGenerator(config=config).latest_signal(spot, ce, pe, position=position)

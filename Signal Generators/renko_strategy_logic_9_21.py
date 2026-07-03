@@ -33,7 +33,6 @@ What this file contains:
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 import pandas as pd
 
@@ -218,10 +217,9 @@ def build_renko_with_indicators(ohlc: pd.DataFrame) -> pd.DataFrame:
     - ema21
     - box_size
     """
-    # ATR(21) is the defining difference in this variant.
-    # We use the most recent ATR value as today's Renko box size.
-    atr_series = atr(ohlc, 21)
-    # box_size = float(atr_series.iloc[-1])
+    # Box size is FIXED at 12.5 points. The ATR(21)-dynamic sizing that defined
+    # this variant is deliberately disabled — see git history to restore
+    # ``float(atr(ohlc, 21).iloc[-1])``.
     box_size = 12.5
     if pd.isna(box_size) or box_size <= 0:
         # ATR can be invalid during warm-up or when incoming data is malformed.
@@ -388,7 +386,7 @@ class RenkoSignalEngine:
     def evaluate_candle(
         self,
         renko: pd.DataFrame,
-        position: Optional[RenkoPositionContext] = None,
+        position: RenkoPositionContext | None = None,
     ) -> RenkoDecision:
         """
         Evaluate the latest Renko candle and return one strategy decision.

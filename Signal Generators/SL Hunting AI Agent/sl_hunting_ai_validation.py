@@ -12,13 +12,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 class StrictAIModel(BaseModel):
@@ -44,7 +41,7 @@ class AIValidationError(RuntimeError):
         )
 
 
-def parse_with_retry(
+def parse_with_retry[T](
     run_once: Callable[[], str],
     parse_once: Callable[[str], T],
     *,

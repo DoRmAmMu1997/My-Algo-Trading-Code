@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
 STRATEGY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = STRATEGY_DIR.parents[1]
 BACKTEST_DIR = REPO_ROOT / "My Backtest Files (For Reference)" / "Subhamoy Strategies"

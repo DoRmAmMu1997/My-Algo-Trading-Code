@@ -1,0 +1,129 @@
+# Quality-tooling configuration only. This repo is not a packaged distribution
+# (the runner and most strategy files have SPACES in their names and are loaded
+# via importlib -- see load_module() in the master file), so there is no
+# [project] section: this file centralizes ruff + mypy configuration, mirroring
+# the Streamlit Scanner App's setup (the house pattern for CI quality gates).
+
+[tool.ruff]
+# Measured against this codebase: at 100 columns there are ~455 long lines, at
+# 120 there are ~57 (mostly deliberate log/docstring lines). The code was
+# written to a ~100-120 column style, so 120 keeps the lint signal about real
+# problems instead of wrapping churn.
+line-length = 120
+# Local runtime is Python 3.13; CI also runs 3.12, so target the older of the
+# two to avoid suggesting syntax 3.12 cannot parse.
+target-version = "py312"
+extend-exclude = [
+    # Vendored third-party Shoonya SDK -- never linted, never rewritten locally.
+    "Dependencies/Shoonya API/NorenApi.py",
+    # Generated outputs and reference-only backtests are not part of the
+    # runtime quality gate (the backtests are kept as historical reference).
+    "Backtest Outputs",
+]
+
+[tool.ruff.lint]
+# E/W   pycodestyle errors and warnings
+# F     pyflakes (undefined names, unused imports/variables)
+# I     import sorting
+# B     flake8-bugbear (likely bugs: mutable defaults, loop-var closures, ...)
+# UP    pyupgrade (modern 3.12+ syntax)
+# C4    comprehension correctness/efficiency
+# SIM   simplifiable code
+# RUF   Ruff-native checks (mutable class defaults, unused noqa, ...)
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM", "RUF"]
+# `# noqa: BLE001` comments document intentional broad-except blocks for a
+# stricter future rule set. BLE is not enabled yet, so tell Ruff the code is
+# external-tool noqa rather than letting RUF100 delete the documentation.
+external = ["BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# B017: tests intentionally assert on bare Exception for defensive paths.
+# RUF012: test fakes use mutable class attributes as fixtures.
+"**/test_*.py" = ["B017", "RUF012"]
+"test_nifty_multi_strategy_master.py" = ["B017", "RUF012"]
+# Reference-only backtests keep the deliberate sys.path-before-import pattern.
+"My Backtest Files (For Reference)/**" = ["E402"]
+
+[tool.mypy]
+# CI runs 3.12 and 3.13; pin the older so local runs stay honest about what CI
+# will accept.
+python_version = "3.12"
+# First-adoption scope: every module whose FILENAME is a valid Python
+# identifier. The master runner ("Nifty Multi Strategy Front Test - Master
+# File.py") and the per-strategy files with spaces in their names CANNOT be
+# mypy modules (invalid module name); they are covered by `compileall` plus
+# the 133-test master unittest suite instead.
+files = [
+    "algo.py",
+    "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
+    "Dependencies/dhan_token_setup.py",
+    "Dependencies/Kotak API/kotak_execution.py",
+    "Dependencies/Kotak API/diagnose_kotak_symbol.py",
+    "Dependencies/Shoonya API/shoonya_execution.py",
+    "Dependencies/Shoonya API/diagnose_shoonya_symbol.py",
+    "Dependencies/Flattrade API/flattrade_execution.py",
+    "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
+    "Signal Generators/ema_trend_strategy_logic.py",
+    "Signal Generators/heikin_ashi_strategy_logic.py",
+    "Signal Generators/renko_strategy_logic.py",
+    "Signal Generators/renko_strategy_logic_9_21.py",
+    "Signal Generators/misc_strategy_common.py",
+    "Signal Generators/CPR Strategy/cpr_strategy_logic.py",
+    "Signal Generators/Subhamoy Strategies/goldmine_strategy_logic.py",
+    "Signal Generators/Subhamoy Strategies/money_machine_strategy_logic.py",
+    "Signal Generators/Subhamoy Strategies/profit_shooter_strategy_logic.py",
+    "Signal Generators/Subhamoy Strategies/subhamoy_strategy_common.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_agent.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_ai_validation.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_coach.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_executor.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_indicators.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_journal.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_knowledge.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_lessons.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_runner.py",
+    "Signal Generators/SL Hunting AI Agent/sl_hunting_tools.py",
+]
+# Sibling imports (sl_hunting_agent -> sl_hunting_knowledge, shoonya_execution
+# -> NorenApi, logic modules -> *_strategy_common) resolve through these roots.
+mypy_path = [
+    "Signal Generators",
+    "Signal Generators/CPR Strategy",
+    "Signal Generators/Subhamoy Strategies",
+    "Signal Generators/SL Hunting AI Agent",
+    "Dependencies/Shoonya API",
+]
+# First-adoption strictness (Scanner App parity): check function bodies
+# everywhere without yet requiring annotations on every def. Stricter flags
+# (disallow_untyped_defs) and tests/ coverage are deliberate follow-ups.
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# Third-party packages that ship no type stubs, optional broker/ML SDKs that
+# are absent on CI, and the vendored NorenApi client. pandas is deliberately
+# untyped here: pandas-stubs would surface a wall of new errors in this
+# pandas-heavy codebase and is its own future migration.
+module = [
+    "dhanhq.*",
+    "pandas.*",
+    "gspread.*",
+    "dotenv.*",
+    "pytz.*",
+    "backtesting.*",
+    "claude_agent_sdk.*",
+    "neo_api_client.*",
+    "pyotp.*",
+    "websocket.*",
+    "sklearn.*",
+    "talib.*",
+    "NorenApi",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The vendored Shoonya SDK is third-party code; type-check our wrappers, not it.
+module = ["NorenApi"]
+ignore_errors = true

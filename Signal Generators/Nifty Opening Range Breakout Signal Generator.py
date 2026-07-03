@@ -34,10 +34,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import atr, finite, normalize_ohlc_frame, require_columns
 
 
@@ -82,7 +81,7 @@ class OpeningRangeBreakoutDecision:
 
 def build_opening_range_breakout_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[OpeningRangeBreakoutConfig] = None,
+    config: OpeningRangeBreakoutConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with ATR-scaled opening-range levels and cross flags."""
     config = config or OpeningRangeBreakoutConfig()
@@ -114,7 +113,7 @@ def build_opening_range_breakout_with_indicators(
 class OpeningRangeBreakoutSignalEngine:
     """Decision engine for opening range breakout entries and exits."""
 
-    def __init__(self, config: Optional[OpeningRangeBreakoutConfig] = None) -> None:
+    def __init__(self, config: OpeningRangeBreakoutConfig | None = None) -> None:
         self.config = config or OpeningRangeBreakoutConfig()
 
     def minimum_history_bars(self) -> int:
@@ -132,7 +131,9 @@ class OpeningRangeBreakoutSignalEngine:
     def _direction(direction: str) -> str:
         return str(direction).strip().upper()
 
-    def _evaluate_exit(self, current: pd.Series, position: OpeningRangeBreakoutPositionContext) -> OpeningRangeBreakoutDecision:
+    def _evaluate_exit(
+        self, current: pd.Series, position: OpeningRangeBreakoutPositionContext
+    ) -> OpeningRangeBreakoutDecision:
         direction = self._direction(position.direction)
         high = float(current["high"])
         low = float(current["low"])
@@ -156,7 +157,7 @@ class OpeningRangeBreakoutSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[OpeningRangeBreakoutPositionContext] = None,
+        position: OpeningRangeBreakoutPositionContext | None = None,
     ) -> OpeningRangeBreakoutDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -213,7 +214,7 @@ class OpeningRangeBreakoutSignalEngine:
 class OpeningRangeBreakoutSignalGenerator:
     """Convenience wrapper for full-history and latest-candle ORB signals."""
 
-    def __init__(self, config: Optional[OpeningRangeBreakoutConfig] = None) -> None:
+    def __init__(self, config: OpeningRangeBreakoutConfig | None = None) -> None:
         self.config = config or OpeningRangeBreakoutConfig()
         self.engine = OpeningRangeBreakoutSignalEngine(self.config)
 
@@ -227,7 +228,7 @@ class OpeningRangeBreakoutSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[OpeningRangeBreakoutPositionContext] = None
+        position: OpeningRangeBreakoutPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -263,7 +264,7 @@ class OpeningRangeBreakoutSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[OpeningRangeBreakoutPositionContext] = None,
+        position: OpeningRangeBreakoutPositionContext | None = None,
     ) -> OpeningRangeBreakoutDecision:
         frame = build_opening_range_breakout_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -271,15 +272,15 @@ class OpeningRangeBreakoutSignalGenerator:
 
 def generate_opening_range_breakout_signals(
     data: pd.DataFrame,
-    config: Optional[OpeningRangeBreakoutConfig] = None,
+    config: OpeningRangeBreakoutConfig | None = None,
 ) -> pd.DataFrame:
     return OpeningRangeBreakoutSignalGenerator(config=config).generate(data)
 
 
 def get_latest_opening_range_breakout_signal(
     data: pd.DataFrame,
-    config: Optional[OpeningRangeBreakoutConfig] = None,
-    position: Optional[OpeningRangeBreakoutPositionContext] = None,
+    config: OpeningRangeBreakoutConfig | None = None,
+    position: OpeningRangeBreakoutPositionContext | None = None,
 ) -> OpeningRangeBreakoutDecision:
     return OpeningRangeBreakoutSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -290,15 +291,15 @@ get_latest_nifty_opening_range_breakout_signal = get_latest_opening_range_breako
 
 
 __all__ = [
+    "NiftyOpeningRangeBreakoutSignalGenerator",
     "OpeningRangeBreakoutConfig",
-    "OpeningRangeBreakoutPositionContext",
     "OpeningRangeBreakoutDecision",
-    "build_opening_range_breakout_with_indicators",
+    "OpeningRangeBreakoutPositionContext",
     "OpeningRangeBreakoutSignalEngine",
     "OpeningRangeBreakoutSignalGenerator",
-    "generate_opening_range_breakout_signals",
-    "get_latest_opening_range_breakout_signal",
-    "NiftyOpeningRangeBreakoutSignalGenerator",
+    "build_opening_range_breakout_with_indicators",
     "generate_nifty_opening_range_breakout_signals",
+    "generate_opening_range_breakout_signals",
     "get_latest_nifty_opening_range_breakout_signal",
+    "get_latest_opening_range_breakout_signal",
 ]

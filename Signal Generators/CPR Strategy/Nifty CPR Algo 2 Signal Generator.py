@@ -11,10 +11,7 @@ so the behavior is repeatable in both backtests and future live/front tests.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
-
 from cpr_strategy_logic import (
     CPRDecision,
     CPRPositionContext,
@@ -26,13 +23,13 @@ from cpr_strategy_logic import (
 class NiftyCPRAlgo2SignalGenerator(CPRSignalGenerator):
     """CPR Algo 2 only: sideways zones plus RSI divergence reversals."""
 
-    def __init__(self, config: Optional[CPRStrategyConfig] = None) -> None:
+    def __init__(self, config: CPRStrategyConfig | None = None) -> None:
         super().__init__(config=config, enabled_algorithms=("ALGO2_ZONE", "RSI_DIVERGENCE"))
 
 
 def generate_nifty_cpr_algo2_signals(
     data: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
+    config: CPRStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """Return full-history Algo 2 signals."""
     return NiftyCPRAlgo2SignalGenerator(config=config).generate(data)
@@ -40,8 +37,8 @@ def generate_nifty_cpr_algo2_signals(
 
 def get_latest_nifty_cpr_algo2_signal(
     data: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
-    position: Optional[CPRPositionContext] = None,
+    config: CPRStrategyConfig | None = None,
+    position: CPRPositionContext | None = None,
 ) -> CPRDecision:
     """Return only the newest Algo 2 decision."""
     return NiftyCPRAlgo2SignalGenerator(config=config).latest_signal(data, position=position)

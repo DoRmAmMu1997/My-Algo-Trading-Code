@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pandas as pd
-
 from sl_hunting_executor import StandaloneExecutor
 from sl_hunting_runner import _manage_open_position, resample_1m_to_n
 
@@ -30,7 +29,7 @@ def test_resample_1m_to_5m_aggregates_ohlc():
     assert len(out) == 4
     # First 5-min bar's high should be the max of its constituent 1-min highs.
     assert out.iloc[0]["high"] == df.iloc[:5]["high"].max()
-    assert set(["timestamp", "open", "high", "low", "close"]).issubset(out.columns)
+    assert {"timestamp", "open", "high", "low", "close"}.issubset(out.columns)
 
 
 def test_resample_drops_incomplete_tail_bucket():

@@ -20,7 +20,7 @@ What this file contains:
 """
 
 from dataclasses import dataclass
-from typing import Optional
+
 import pandas as pd
 
 
@@ -175,14 +175,12 @@ def build_renko_with_indicators(ohlc: pd.DataFrame) -> pd.DataFrame:
     Convert OHLC candles into Renko candles plus EMA indicators.
 
     Steps:
-    1. Compute ATR(14).
-    2. Use latest ATR value as dynamic Renko box size.
-    3. Build Renko bricks from close prices.
-    4. Add EMA(5), EMA(21), EMA(44) on Renko close.
+    1. Use the FIXED 12.5-point Renko box size (the ATR(14)-dynamic sizing this
+       function originally used is deliberately disabled — see git history to
+       restore ``float(atr(ohlc, 14).iloc[-1])``).
+    2. Build Renko bricks from close prices.
+    3. Add EMA(5), EMA(21), EMA(44) on Renko close.
     """
-    # ATR is used for dynamic Renko box size.
-    atr_series = atr(ohlc, 14)
-    # box_size = float(atr_series.iloc[-1])
     box_size = 12.5
     if pd.isna(box_size) or box_size <= 0:
         # ATR may be NaN in early warm-up or in malformed data.
@@ -327,7 +325,7 @@ class RenkoSignalEngine:
     def evaluate_candle(
         self,
         renko: pd.DataFrame,
-        position: Optional[RenkoPositionContext] = None,
+        position: RenkoPositionContext | None = None,
     ) -> RenkoDecision:
         """
         Evaluate the latest Renko candle and return one strategy decision.

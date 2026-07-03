@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 from backtesting import Backtest, Strategy
 
-
 # Anchor everything to the repo root (parent of `My Backtest Files (For
 # Reference)/`) so paths resolve regardless of cwd. `__file__` lives at
 # <repo>/My Backtest Files (For Reference)/..., so dirname(dirname(__file__))

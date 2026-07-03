@@ -38,11 +38,10 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from misc_strategy_common import (
     atr,
     bollinger_bands,
@@ -145,7 +144,7 @@ class MLEnsembleDecision:
 
 def build_ml_ensemble_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[MLEnsembleConfig] = None,
+    config: MLEnsembleConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with the model feature set, the training label, and risk levels."""
     config = config or MLEnsembleConfig()
@@ -206,7 +205,7 @@ def _load_random_forest():
 class MLEnsembleSignalEngine:
     """Stateful decision engine: trains/caches a RandomForest and predicts entries."""
 
-    def __init__(self, config: Optional[MLEnsembleConfig] = None) -> None:
+    def __init__(self, config: MLEnsembleConfig | None = None) -> None:
         self.config = config or MLEnsembleConfig()
         self._rf_class = _load_random_forest()
         self.model = None
@@ -256,7 +255,7 @@ class MLEnsembleSignalEngine:
         # Only rows whose forward outcome is already known by the latest bar are
         # eligible for training -> drop the trailing `forward_bars` rows.
         trainable = frame.iloc[: max(0, n - int(self.config.forward_bars))]
-        trainable = trainable.dropna(subset=FEATURE_COLUMNS + ["ml_target"])
+        trainable = trainable.dropna(subset=[*FEATURE_COLUMNS, "ml_target"])
         if len(trainable) < int(self.config.min_training_rows):
             return
         trainable = trainable.iloc[-int(self.config.training_window):]
@@ -276,7 +275,7 @@ class MLEnsembleSignalEngine:
         model.fit(x, y)
         self.model = model
 
-    def _predict_up_probability(self, current: pd.Series) -> Optional[float]:
+    def _predict_up_probability(self, current: pd.Series) -> float | None:
         if self.model is None:
             return None
         features = [current.get(col) for col in FEATURE_COLUMNS]
@@ -314,7 +313,7 @@ class MLEnsembleSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[MLEnsemblePositionContext] = None,
+        position: MLEnsemblePositionContext | None = None,
     ) -> MLEnsembleDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -324,7 +323,7 @@ class MLEnsembleSignalEngine:
         if position is not None:
             return self._evaluate_exit(current, position)
 
-        require_columns(candles_with_indicators, FEATURE_COLUMNS + ["ml_target"])
+        require_columns(candles_with_indicators, [*FEATURE_COLUMNS, "ml_target"])
         if len(candles_with_indicators) < self.minimum_history_bars():
             return self._hold("Insufficient history.")
 
@@ -371,7 +370,7 @@ class MLEnsembleSignalEngine:
 class MLEnsembleSignalGenerator:
     """Convenience wrapper for full-history and latest-candle ML ensemble signals."""
 
-    def __init__(self, config: Optional[MLEnsembleConfig] = None) -> None:
+    def __init__(self, config: MLEnsembleConfig | None = None) -> None:
         self.config = config or MLEnsembleConfig()
         self.engine = MLEnsembleSignalEngine(self.config)
 
@@ -385,7 +384,7 @@ class MLEnsembleSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[MLEnsemblePositionContext] = None
+        position: MLEnsemblePositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -421,7 +420,7 @@ class MLEnsembleSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[MLEnsemblePositionContext] = None,
+        position: MLEnsemblePositionContext | None = None,
     ) -> MLEnsembleDecision:
         frame = build_ml_ensemble_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -429,15 +428,15 @@ class MLEnsembleSignalGenerator:
 
 def generate_ml_ensemble_signals(
     data: pd.DataFrame,
-    config: Optional[MLEnsembleConfig] = None,
+    config: MLEnsembleConfig | None = None,
 ) -> pd.DataFrame:
     return MLEnsembleSignalGenerator(config=config).generate(data)
 
 
 def get_latest_ml_ensemble_signal(
     data: pd.DataFrame,
-    config: Optional[MLEnsembleConfig] = None,
-    position: Optional[MLEnsemblePositionContext] = None,
+    config: MLEnsembleConfig | None = None,
+    position: MLEnsemblePositionContext | None = None,
 ) -> MLEnsembleDecision:
     return MLEnsembleSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -450,14 +449,14 @@ get_latest_nifty_ml_ensemble_signal = get_latest_ml_ensemble_signal
 __all__ = [
     "FEATURE_COLUMNS",
     "MLEnsembleConfig",
-    "MLEnsemblePositionContext",
     "MLEnsembleDecision",
-    "build_ml_ensemble_with_indicators",
+    "MLEnsemblePositionContext",
     "MLEnsembleSignalEngine",
     "MLEnsembleSignalGenerator",
-    "generate_ml_ensemble_signals",
-    "get_latest_ml_ensemble_signal",
     "NiftyMLEnsembleSignalGenerator",
+    "build_ml_ensemble_with_indicators",
+    "generate_ml_ensemble_signals",
     "generate_nifty_ml_ensemble_signals",
+    "get_latest_ml_ensemble_signal",
     "get_latest_nifty_ml_ensemble_signal",
 ]

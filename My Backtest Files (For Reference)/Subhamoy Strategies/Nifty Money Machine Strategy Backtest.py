@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 from backtesting import Backtest, Strategy
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parents[1]
 SIGNAL_GENERATOR_DIR = ROOT_DIR / "Signal Generators" / "Subhamoy Strategies"
@@ -54,7 +53,6 @@ from subhamoy_backtest_common import (
     save_outputs,
     setup_logging,
 )
-
 
 STRATEGY_CONFIG = MoneyMachineStrategyConfig(
     sma_fast_period=env_int("MONEY_MACHINE_SMA_FAST_PERIOD", 20),
@@ -198,10 +196,9 @@ class NiftyMoneyMachineStrategyBacktest(Strategy):
         if active_trade is not None:
             # Attach the protective stop and profit target only after entry
             # exists. backtesting.py then handles intrabar touches from here.
-            if direction == "LONG" and stop < actual_entry < target:
-                active_trade.sl = stop
-                active_trade.tp = target
-            elif direction == "SHORT" and target < actual_entry < stop:
+            if (direction == "LONG" and stop < actual_entry < target) or (
+                direction == "SHORT" and target < actual_entry < stop
+            ):
                 active_trade.sl = stop
                 active_trade.tp = target
             else:

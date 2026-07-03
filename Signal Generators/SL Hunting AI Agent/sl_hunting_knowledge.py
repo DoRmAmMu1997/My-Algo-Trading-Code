@@ -59,6 +59,10 @@ CORE PSYCHOLOGY (the "why" behind every setup)
 - Fast move one way, then a SLOW move the other way = the operator creating SLs on
   the slow side. The slow-side reversal is the SL-hunt; trade it, do not chase the
   fast trend blindly.
+- After a FLUSH (a rejection already took the nearby crowd's SLs), expect the
+  operator to CONSTRUCT the next trap: a single momentum leg whose job is to re-add
+  traders on one side. That leg is tradeable — but it is ONE leg; capture it and
+  leave, do not read it as a new trend.
 - A long-wicked candle (hammer/doji/pin) marks where money/SLs are parked — the
   longer the wick, the more SLs. These mark targets and reversal zones.
 - Act OPPOSITE to the obvious retail read: after a gap down retail expects more
@@ -84,6 +88,30 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   shorts). With little trapped on the wrong side there's less to hunt, so a gap-up
   is more likely to FOLLOW its momentum than to reverse — don't reflexively fade it;
   lean with the prevailing direction unless a clear trap/level says otherwise.
+- READ THE GAP AGAINST THE PRIOR DAYS — the same gap means opposite things depending
+  on what preceded it:
+  * Gap CONTINUING prior strength (e.g. gap-up in an established up-move) → the rule
+    above: follow it.
+  * BIG gap AGAINST an extended prior move = a LURE for the starved opposite crowd:
+    a big gap-down after days of up-moves invites the "hungry" sellers who had no
+    trade for days; a gap-up after a multi-day selling streak invites relieved
+    buyers. The herd that takes the bait traps itself, so the recovery back INTO the
+    prior trend is the premise — following such a gap blindly is the retail mistake.
+    (A gap-up after a selling streak is UNTRUSTWORTHY — it tends to fall back; after
+    a big down day the method SELLS a direct gap-up rather than following it.)
+  * Gap SIZE matters: a SMALL counter-gap inside a trend reads like a flat open
+    (keep the with-trend plan); only a gap THROUGH the prior day's extreme flips it.
+- MULTI-DAY ACCUMULATION: after 2-3 one-way days the accumulated crowd sits with SLs
+  just beyond the closing price / round number — a FLAT open then is the prime
+  chance to hunt them (see OPENING DRIVE variant B for the with-gap long after down
+  days). But if the prior days were SIDEWAYS/both-ways, positioning is UNCLEAR —
+  nobody's crowd, low edge: wait for the first momentum tell instead of forcing the
+  flat-open playbook. And a crowd that only TRICKLED in (small-quantity drip-buying
+  of an up-trend) is not huntable — do not target it.
+- SL-REACHABILITY TEST (run alongside the trap-density test): a hunt also needs the
+  crowd's SL zone to be REACHABLE from today's open without crossing an intact major
+  level. If their stops sit beyond an uncrossed round number / closing price, the
+  hunt is off — go WITH the market until a gap or break puts those stops in play.
 - FLAT or GAP-DOWN open → a PRIME TRAP zone, especially after prior panic selling:
   retail is positioned short/wrong-footed, so the operator hunts their stops. Bias to
   trade OPPOSITE the panic (look UP / target the trapped shorts' SLs) on a confirmed
@@ -148,6 +176,15 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
 - Behavioural confirmation substitutes for the candle rule HERE ONLY: price
   holding above the open / round number without aggressive selling is the
   confirmation. Everywhere else the pattern + confirmation rule is mandatory.
+
+Variant B — FLAT-OPEN seller-hunt long (same discipline, v3d): after an extended
+multi-day DOWN move across all three indices, when the seller crowd's SLs sit within
+reach above (SL-reachability test passed), a FLAT open may also be traded LONG on
+the first positive momentum — at the earliest after the first 1-min candle closes,
+with the same behavioural confirmation and the same no-major-rejection condition.
+Invalidation: price falling back through the open / the closing point. If the prior
+days were SIDEWAYS rather than one-way, this variant does NOT apply. There is still
+NO opening-drive SHORT and NO gap-down variant.
 
 Risk handling for this branch:
 - Stop = below the first-candle low / opening-range low. This stop may be wider
@@ -306,6 +343,17 @@ RISK DISCIPLINE
   level in your favour. Otherwise HOLD and let it run.
 - One position at a time. Never add to or reverse a position in a single decision —
   EXIT first; a fresh entry is a later decision.
+- Loss discipline in TRADE units: never let one trade take 2-3 trades' worth of
+  loss — a capped loss is recoverable by the next normal winner. A reversal premise
+  tolerates roughly TWO rejections; the THIRD momentum must be the recovery — if it
+  is not, exit without waiting for the stop. On days expected to be ONE-directional
+  (especially expiry), meaningful EARLY adverse movement on a directional trade
+  means the DIRECTION itself is wrong — exit early.
+- Momentum quality while holding: SLOW-but-CONTINUOUS with-trend momentum (small
+  candles) is the sustainable kind — let it run; a FAST spike invites a retracement
+  — book into strength or tighten. After consecutive losing days, deliberately
+  reduce risk and prefer clearer setups: the urge for a "recovery trade" is itself
+  a bias the market exploits.
 """
 
 
@@ -344,6 +392,10 @@ Two cautions from live review:
   is stale — weight READING RETAIL POSITIONING first in the opening hour.
 - A verdict that directly OPPOSES your intended direction is a real vote against
   the trade, not a footnote: HOLD unless the setup is genuinely textbook.
+- Level/divergence setups (e.g. one index HOLDS the closing price while the others
+  reclaim it) are ENTRY-TIMING tools SUBORDINATE to the day-direction read: when the
+  direction read is wrong, the textbook divergence fails anyway. Direction first,
+  setup second.
 """
 
 
@@ -378,6 +430,13 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   (the round "...500" / "...000" levels): they are prime trap / breakout magnets
   where breakout-buyers get trapped — exactly the spots the operator hunts. (For
   NIFTY the equivalent psych levels are tighter — see LEVELS.)
+- GAP-SIZE ASYMMETRY: when the opening gaps differ meaningfully across the three
+  indices, the SMALLER-gap index is the tell — oversized gaps are built to keep
+  participants out. A retracement in the big-gap indices mostly flushes their
+  gap-sellers before the move resumes; if the smaller-gap index (often BankNIFTY)
+  fails to join a recovery, the recovery premise is dead. In the with-trend case,
+  BankNIFTY moving FIRST while the others still dip is an entry tell (the major
+  index drags the rest along).
 """
 
 
@@ -441,6 +500,10 @@ DECISION DISCIPLINE
 6. Do NOT over-focus on being "right" / hit-rate. The edge is the positioning read
    plus discipline — cut losers fast, manage the initial loss, never force a trade.
    A sound process that loses a trade is fine; a forced trade on a weak setup is not.
+7. Not every open type has a plan. When the pre-open situation offers no understood
+   premise (e.g. a gap-down where the sitting crowd's reaction is unreadable), the
+   correct plan is NO trade for that scenario — abstain and reassess once the
+   market shows its hand.
 """
 
 

@@ -27,6 +27,7 @@ already in a position, and cannot EXIT while flat.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -145,7 +146,7 @@ class StandaloneExecutor:
     """Paper bookkeeping for the standalone runner.
 
     P&L is a proxy on the underlying: ``(last - entry)`` for LONG and
-    ``(entry - last)`` for SHORT, in NIFTY points × lots × lot_size. This is
+    ``(entry - last)`` for SHORT, in NIFTY points x lots x lot_size. This is
     deliberately simple — it validates the agent's *decisions*, not option pricing.
     The closed-trade log is kept so the runner can print a session summary.
     """
@@ -180,13 +181,17 @@ class StandaloneExecutor:
             reason=str(reason)[:300],
             lots=lots,
         )
-        return {"accepted": True, "action": f"ENTER_{direction}", "entry": self.pos.entry, "stop": self.pos.stop, "target": self.pos.target, "lots": lots, "quantity": lots * self.lot_size}
+        return {
+            "accepted": True, "action": f"ENTER_{direction}",
+            "entry": self.pos.entry, "stop": self.pos.stop, "target": self.pos.target,
+            "lots": lots, "quantity": lots * self.lot_size,
+        }
 
     def exit(self, reason: str, price: float) -> dict[str, Any]:
         """Close the open position at ``price``, append it to the trade log, go flat.
 
         P&L is the simple underlying-points proxy (LONG profits as price rises, SHORT as
-        it falls) × lots × lot_size. Rejects if there is nothing open to close.
+        it falls) x lots x lot_size. Rejects if there is nothing open to close.
         """
         if not self.pos.active:
             return {"accepted": False, "reason": "no open position to exit"}
@@ -229,7 +234,10 @@ class StandaloneExecutor:
             return {"in_position": False}
         pts = (price - self.pos.entry) if self.pos.direction == "LONG" else (self.pos.entry - price)
         lots = self.pos.lots or self.lots
-        return {"in_position": True, "points": round(pts, 2), "lots": lots, "pnl_proxy": round(pts * lots * self.lot_size, 2)}
+        return {
+            "in_position": True, "points": round(pts, 2), "lots": lots,
+            "pnl_proxy": round(pts * lots * self.lot_size, 2),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +278,14 @@ class MasterWorkerExecutor:
             target_underlying=float(target),
         ))
         if not ok:
-            return {"accepted": False, "reason": "worker rejected the entry (e.g. could not resolve option / outside trading window)"}
-        return {"accepted": True, "action": f"ENTER_{direction}", "entry": round(float(price), 2), "stop": round(float(stop), 2), "target": round(float(target), 2)}
+            return {
+                "accepted": False,
+                "reason": "worker rejected the entry (e.g. could not resolve option / outside trading window)",
+            }
+        return {
+            "accepted": True, "action": f"ENTER_{direction}", "entry": round(float(price), 2),
+            "stop": round(float(stop), 2), "target": round(float(target), 2),
+        }
 
     def exit(self, reason: str, price: float) -> dict[str, Any]:
         """Delegate the close to the worker's `exit_position` (which handles P&L/alerts)."""
@@ -300,8 +314,7 @@ class MasterWorkerExecutor:
         }
         getter = getattr(self._w, "_get_open_position_pnl", None)
         if callable(getter):
-            try:
+            # Best-effort enrichment only: any failure just omits the field.
+            with contextlib.suppress(Exception):
                 snap["unrealized_pnl"] = round(float(getter()), 2)
-            except Exception:  # noqa: BLE001 - best-effort enrichment only
-                pass
         return snap

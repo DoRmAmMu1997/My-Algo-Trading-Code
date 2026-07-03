@@ -64,7 +64,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 import requests
@@ -138,27 +138,20 @@ class KotakExecutionClient:
 
     def __init__(self) -> None:
         # The live Kotak SDK object. Stays None until we successfully log in.
-        self.client: Optional[NeoAPI] = None
+        self.client: NeoAPI | None = None
         # Simple flag so we don't re-login every call once we're authenticated.
         self.is_logged_in = False
         # The "one thread at a time" gate for login + orders + scrip lookups.
         self._lock = threading.Lock()
-        # Remember Kotak symbols we've already looked up, so we don't search the
-        # scrip master again for the same contract. Key = (underlying, expiry as
-        # "DDMMMYYYY", "CE"/"PE", strike-as-int) -> Kotak pTrdSymbol string.
-        self._symbol_cache: Dict[tuple, str] = {}
-        # The full NSE F&O contract list (a pandas table). We download it ONCE and
-        # reuse it for every symbol lookup. It stays None until first loaded.
-        self._scrip_df: Optional["pd.DataFrame"] = None
         # Cache of resolved Kotak symbols, keyed by
         # (underlying, expiry "DDMMMYYYY", option_type, int_strike). search_scrip
         # downloads the whole NFO scrip-master CSV per call, so caching per
         # contract keeps real trading cheap (one lookup per option per day).
-        self._symbol_cache: Dict[tuple, str] = {}
+        self._symbol_cache: dict[tuple, str] = {}
         # The full NSE F&O scrip master, downloaded once per process and reused
         # for every symbol lookup (the SDK's search_scrip re-downloads it on
         # EVERY call, which is far too slow for a live multi-strategy runner).
-        self._scrip_df: Optional["pd.DataFrame"] = None
+        self._scrip_df: pd.DataFrame | None = None
 
     # ------------------------------------------------------------------
     # Authentication
@@ -340,6 +333,9 @@ class KotakExecutionClient:
         """
         if self._scrip_df is not None:
             return True  # already downloaded earlier in this run
+        if self.client is None:
+            log.warning("Kotak scrip master unavailable: not logged in yet.")
+            return False
         # Step 1: ask Kotak for the download URL of the F&O contract CSV.
         try:
             url = self.client.scrip_master(exchange_segment="nse_fo")
@@ -409,7 +405,7 @@ class KotakExecutionClient:
         except Exception:
             log.warning(f"Kotak resolve skipped (expiry not a date): expiry={expiry!r} type={type(expiry).__name__}")
             return ""
-        int_strike = int(round(float(strike)))
+        int_strike = round(float(strike))
         cache_key = (underlying, expiry_str, option_type, int_strike)
 
         # Fast path: have we already resolved this exact contract today?
@@ -466,6 +462,9 @@ class KotakExecutionClient:
         WHICH part didn't match (wrong expiry vs wrong strike). Debug aid only.
         """
         df = self._scrip_df
+        if df is None:
+            log.warning("Kotak symbol NOT resolved (scrip master not loaded).")
+            return
         base = df[(df["_sym_u"] == underlying) & (df["_opt_u"] == option_type)]
         exp_match = base[base["_expiry_str"] == expiry_str]
         log.warning(f"Kotak symbol NOT resolved: {underlying}/{option_type}/{expiry_str}/strike {int_strike} "
@@ -490,7 +489,7 @@ class KotakExecutionClient:
         quantity: int,
         exchange_segment: str = "nse_fo",
         product_type: str = "INTRADAY",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Place ONE market order (buy or sell at the current price) on Kotak.
 
@@ -676,7 +675,7 @@ class KotakExecutionClient:
     # ------------------------------------------------------------------
     # Teardown
     # ------------------------------------------------------------------
-    def logout(self) -> Dict[str, Any]:
+    def logout(self) -> dict[str, Any]:
         """Close the Kotak session cleanly at shutdown (safe to call if never logged in)."""
         with self._lock:
             if self.client is None:

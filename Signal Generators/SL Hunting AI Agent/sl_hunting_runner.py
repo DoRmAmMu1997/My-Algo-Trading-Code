@@ -35,7 +35,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
 
 import numpy as np
 import pandas as pd
@@ -132,9 +131,10 @@ def _synthetic_bnf(nifty_1m: pd.DataFrame, scale: float = 2.2, seed: int = 11) -
     opens = np.concatenate([[closes[0]], closes[:-1]])
     highs = np.maximum(opens, closes) + rng.uniform(0, 15, size=n)
     lows = np.minimum(opens, closes) - rng.uniform(0, 15, size=n)
-    return pd.DataFrame(
-        {"timestamp": nifty_1m["timestamp"].to_numpy(), "open": opens, "high": highs, "low": lows, "close": closes, "volume": 0}
-    )
+    return pd.DataFrame({
+        "timestamp": nifty_1m["timestamp"].to_numpy(),
+        "open": opens, "high": highs, "low": lows, "close": closes, "volume": 0,
+    })
 
 
 def resample_1m_to_n(candles: pd.DataFrame, minutes: int) -> pd.DataFrame:
@@ -210,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     src = parser.add_mutually_exclusive_group()
     src.add_argument("--csv", help="Path to a 1-minute NIFTY OHLC CSV (timestamp,open,high,low,close[,volume]).")
     src.add_argument("--synthetic", action="store_true", help="Use a generated random-walk session.")
-    parser.add_argument("--bnf-csv", help="Optional 1-minute BankNIFTY OHLC CSV for cross-confirmation (paired with --csv).")
+    parser.add_argument("--bnf-csv",
+                        help="Optional 1-minute BankNIFTY OHLC CSV for cross-confirmation (paired with --csv).")
     parser.add_argument("--timeframe", type=int, default=int(_env("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", "1")),
                         help="Decision timeframe in minutes (resampled from 1-min; SL Hunting's default is 1).")
     parser.add_argument("--model", default=_env("SL_HUNTING_MODEL", "claude-opus-4-8"), help="Claude model id.")
@@ -326,7 +327,8 @@ def main(argv: list[str] | None = None) -> int:
     if trades:
         logger.info("Total P&L proxy: %.2f | wins %d/%d (%.0f%%)", total, wins, len(trades), 100.0 * wins / len(trades))
         for t in trades:
-            logger.info("  %s %s->%s (%+.2f pts, %+.2f) [%s]", t["direction"], t["entry"], t["exit"], t["points"], t["pnl_proxy"], t["exit_reason"])
+            logger.info("  %s %s->%s (%+.2f pts, %+.2f) [%s]", t["direction"], t["entry"],
+                        t["exit"], t["points"], t["pnl_proxy"], t["exit_reason"])
     else:
         logger.info("No trades taken (agent held throughout).")
     logger.info("NOTE: P&L proxy is on the NIFTY underlying, not option premium - validates decisions, not pricing.")

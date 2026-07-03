@@ -33,7 +33,6 @@ Indicator note:
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -45,8 +44,9 @@ try:
     import talib
 except ImportError:  # pragma: no cover - fallback only used when TA-Lib is unavailable
     # We intentionally keep a fallback path so the strategy does not become
-    # unusable in environments where TA-Lib is not installed yet.
-    talib = None
+    # unusable in environments where TA-Lib is not installed yet. (The ignore
+    # carries both codes because the error only exists where stubs are present.)
+    talib = None  # type: ignore[assignment, unused-ignore]
 
 
 @dataclass(frozen=True)
@@ -353,7 +353,7 @@ def _build_short_setup(frame: pd.DataFrame, config: ProfitShooterConfig) -> pd.S
 
 def build_profit_shooter_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[ProfitShooterConfig] = None,
+    config: ProfitShooterConfig | None = None,
 ) -> pd.DataFrame:
     """
     Enrich OHLC candles with the indicators and derived columns used by the strategy.
@@ -532,7 +532,7 @@ class ProfitShooterSignalEngine:
     `build_profit_shooter_with_indicators()` and returns one clean decision.
     """
 
-    def __init__(self, config: Optional[ProfitShooterConfig] = None):
+    def __init__(self, config: ProfitShooterConfig | None = None):
         # Store config on the engine so every caller shares the same rule set.
         self.config = config or ProfitShooterConfig()
 
@@ -740,7 +740,7 @@ class ProfitShooterSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[ProfitShooterPositionContext] = None,
+        position: ProfitShooterPositionContext | None = None,
     ) -> ProfitShooterDecision:
         """
         Evaluate the latest completed candle and return one strategy decision.

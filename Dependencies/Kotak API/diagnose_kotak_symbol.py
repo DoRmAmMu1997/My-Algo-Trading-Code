@@ -81,6 +81,9 @@ def main():
         return
 
     df = client._scrip_df
+    if df is None:
+        print("Scrip master is unexpectedly empty after preload.")
+        return
     print(f"\nScrip master rows: {len(df)}")
     base = df[(df["_sym_u"] == UNDERLYING) & (df["_opt_u"] == OPT)]
     print(f"{UNDERLYING} {OPT} rows: {len(base)}")

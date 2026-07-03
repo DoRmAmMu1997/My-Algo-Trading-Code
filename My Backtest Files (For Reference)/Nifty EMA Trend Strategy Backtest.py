@@ -55,7 +55,6 @@ from ema_trend_strategy_logic import (
     build_ema_trend_with_indicators,
 )
 
-
 # -----------------------------
 # User configuration
 # -----------------------------

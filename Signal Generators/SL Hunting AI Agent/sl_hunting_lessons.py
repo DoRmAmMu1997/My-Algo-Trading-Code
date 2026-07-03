@@ -19,7 +19,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import Field, field_validator
-
 from sl_hunting_ai_validation import StrictAIModel
 
 logger = logging.getLogger(__name__)
@@ -33,7 +32,9 @@ class ProposedLesson(StrictAIModel):
     agent's decision; integer ranges use `@field_validator` so the JSON schema stays
     free of min/max, which Claude rejects)."""
 
-    scope: str = Field(description="Short tag for WHEN this applies (e.g. 'pivot_retest', 'gap_down', 'cross_index_wait').")
+    scope: str = Field(
+        description="Short tag for WHEN this applies (e.g. 'pivot_retest', 'gap_down', 'cross_index_wait')."
+    )
     lesson: str = Field(description="One-line tendency/directive — NOT a hard law.")
     rationale: str = Field(description="Why: the pattern across the trades behind it.")
     wins: int = Field(description="Winning trades supporting it.")
@@ -135,7 +136,7 @@ def consolidate(lessons: list[dict[str, Any]], max_lessons: int = MAX_LIVE_LESSO
             by_id[lid] = lesson
     ranked = sorted(
         by_id.values(),
-        key=lambda l: (_sample(l), str(l.get("updated_at", ""))),
+        key=lambda rec: (_sample(rec), str(rec.get("updated_at", ""))),
         reverse=True,
     )
     return ranked[:max_lessons]
@@ -143,7 +144,7 @@ def consolidate(lessons: list[dict[str, Any]], max_lessons: int = MAX_LIVE_LESSO
 
 def format_lessons(lessons: list[dict[str, Any]]) -> str:
     """Render APPROVED lessons as a `LEARNED LESSONS` prompt block ('' if none)."""
-    approved = [l for l in lessons if l.get("status") == "approved"]
+    approved = [rec for rec in lessons if rec.get("status") == "approved"]
     if not approved:
         return ""
     out = [
@@ -153,10 +154,10 @@ def format_lessons(lessons: list[dict[str, Any]]) -> str:
         "soft priors that refine the method; they never override a clear live read.",
         "",
     ]
-    for l in consolidate(approved):
-        ev = l.get("evidence") or {}
+    for rec in consolidate(approved):
+        ev = rec.get("evidence") or {}
         out.append(
-            f"- [{l.get('scope', '?')}] {str(l.get('lesson', '')).strip()} "
+            f"- [{rec.get('scope', '?')}] {str(rec.get('lesson', '')).strip()} "
             f"(W{ev.get('wins', 0)}/L{ev.get('losses', 0)}, n={ev.get('sample_size', 0)})"
         )
     return "\n".join(out)
@@ -172,7 +173,7 @@ def add_proposed(proposed_path: str, proposed: list[ProposedLesson]) -> list[dic
 
 def promote(proposed_path: str, live_path: str, ids: list[str]) -> list[str]:
     """Move selected PROPOSED lessons into the live (APPROVED) store — the human gate."""
-    proposed = {l.get("id"): l for l in load_lessons(proposed_path)}
+    proposed = {rec.get("id"): rec for rec in load_lessons(proposed_path)}
     live = load_lessons(live_path)
     promoted: list[str] = []
     for lid in ids:

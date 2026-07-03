@@ -56,19 +56,23 @@ ATR if TA-Lib is not installed on the machine.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterable
+
 # --- Standard library imports ------------------------------------------------
 # `dataclass` lets us define small "struct-like" classes for settings and
 # decisions without writing `__init__` boilerplate.
 from dataclasses import dataclass
+
 # `IntEnum` is a tidy way to attach human-readable names (LONG, SHORT, ...)
 # to small integer flags. The underlying values are still plain integers, so
 # they can be compared against numpy arrays cheaply.
 from enum import IntEnum
-from typing import Iterable, Optional
 
 # --- Third-party imports -----------------------------------------------------
 # numpy is used for fast array math (no Python for-loops over raw numbers).
 import numpy as np
+
 # pandas is the tabular-data library we accept as input and return as output.
 import pandas as pd
 
@@ -162,7 +166,7 @@ class SupertrendDecision:
 # =============================================================================
 # INPUT PREPARATION HELPERS
 # =============================================================================
-def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> Optional[str]:
+def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
     """
     Return the first column in `frame` whose (case-insensitive, trimmed)
     name is in `names`, or None if nothing matches.
@@ -228,12 +232,10 @@ def _prepare_ohlc_frame(data: pd.DataFrame) -> pd.DataFrame:
         # as-is.
         #
         # We used to pass `errors="ignore"` here, but pandas deprecated that
-        # option (FutureWarning on every call). The try/except below gives
+        # option (FutureWarning on every call). The suppress below gives
         # the same behaviour without the warning.
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             out["timestamp"] = pd.to_datetime(out["timestamp"])
-        except (ValueError, TypeError):
-            pass
     # Reset to a clean integer index so `.iloc[-1]`, `.iloc[-2]` etc. behave
     # predictably regardless of the original index.
     return out.reset_index(drop=True)
@@ -525,7 +527,7 @@ class SupertrendSignalGenerator:
     is equivalent to expressing a long / bullish view on the underlying.
     """
 
-    def __init__(self, settings: Optional[SupertrendSettings] = None) -> None:
+    def __init__(self, settings: SupertrendSettings | None = None) -> None:
         # If the caller does not pass settings, use the class's default
         # configuration (ATR 14, Factor 3) from `SupertrendSettings`.
         self.settings = settings or SupertrendSettings()
@@ -682,7 +684,7 @@ class SupertrendSignalGenerator:
 # unless the caller overrides them.
 def generate_supertrend_signals(
     data: pd.DataFrame,
-    settings: Optional[SupertrendSettings] = None,
+    settings: SupertrendSettings | None = None,
 ) -> pd.DataFrame:
     """Functional alias for `SupertrendSignalGenerator(...).generate(data)`."""
     generator = SupertrendSignalGenerator(settings=settings)
@@ -691,7 +693,7 @@ def generate_supertrend_signals(
 
 def get_latest_supertrend_signal(
     data: pd.DataFrame,
-    settings: Optional[SupertrendSettings] = None,
+    settings: SupertrendSettings | None = None,
 ) -> SupertrendDecision:
     """Functional alias for `SupertrendSignalGenerator(...).latest_signal(data)`."""
     generator = SupertrendSignalGenerator(settings=settings)
@@ -702,8 +704,8 @@ def get_latest_supertrend_signal(
 # names here also serves as a quick table-of-contents for readers.
 __all__ = [
     "Direction",
-    "SupertrendSettings",
     "SupertrendDecision",
+    "SupertrendSettings",
     "SupertrendSignalGenerator",
     "generate_supertrend_signals",
     "get_latest_supertrend_signal",

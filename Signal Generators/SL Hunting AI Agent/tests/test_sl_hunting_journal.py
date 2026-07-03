@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-
 from sl_hunting_journal import (
     TradeJournal,
     build_entry_context,

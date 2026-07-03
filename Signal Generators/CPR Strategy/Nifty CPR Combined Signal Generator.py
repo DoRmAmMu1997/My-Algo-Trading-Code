@@ -19,10 +19,7 @@ this file as its own generator - see `Nifty CPR Algo 3 Signal Generator.py`.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
-
 from cpr_strategy_logic import (
     CPRDecision,
     CPRPositionContext,
@@ -36,7 +33,7 @@ from cpr_strategy_logic import (
 class NiftyCPRCombinedSignalGenerator(CPRSignalGenerator):
     """Full CPR PDF strategy wrapper."""
 
-    def __init__(self, config: Optional[CPRStrategyConfig] = None) -> None:
+    def __init__(self, config: CPRStrategyConfig | None = None) -> None:
         super().__init__(
             config=config,
             enabled_algorithms=("ALGO1", "ALGO2_ZONE", "RSI_DIVERGENCE"),
@@ -45,7 +42,7 @@ class NiftyCPRCombinedSignalGenerator(CPRSignalGenerator):
 
 def generate_nifty_cpr_combined_signals(
     data: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
+    config: CPRStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """Return full-history combined CPR signals."""
     return generate_cpr_signals(
@@ -57,8 +54,8 @@ def generate_nifty_cpr_combined_signals(
 
 def get_latest_nifty_cpr_combined_signal(
     data: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
-    position: Optional[CPRPositionContext] = None,
+    config: CPRStrategyConfig | None = None,
+    position: CPRPositionContext | None = None,
 ) -> CPRDecision:
     """Return only the newest combined CPR decision."""
     return get_latest_cpr_signal(

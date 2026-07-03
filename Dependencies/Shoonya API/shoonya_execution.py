@@ -54,13 +54,13 @@ How the master file uses this module:
 3. `logout()` is called during graceful shutdown.
 """
 
+import logging
 import os
 import sys
-import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -134,7 +134,7 @@ class ShoonyaExecutionClient:
 
     def __init__(self) -> None:
         # The live Shoonya SDK object. Stays None until we successfully log in.
-        self.client: Optional[NorenApi] = None
+        self.client: NorenApi | None = None
         # Simple flag so we don't re-login every call once we're authenticated.
         self.is_logged_in = False
         # The "one thread at a time" gate for login + orders + symbol lookups.
@@ -142,10 +142,10 @@ class ShoonyaExecutionClient:
         # Remember symbols we've already resolved, so we don't rebuild/re-validate
         # for the same contract. Key = (underlying, expiry "DDMMMYY", "CE"/"PE",
         # strike-as-int) -> Shoonya tsym string.
-        self._symbol_cache: Dict[tuple, str] = {}
+        self._symbol_cache: dict[tuple, str] = {}
         # The set of valid NFO trading symbols (uppercased), downloaded once and
         # reused for validation. Stays None until first loaded.
-        self._symbol_set: Optional[set] = None
+        self._symbol_set: set | None = None
 
     # ------------------------------------------------------------------
     # Authentication
@@ -362,7 +362,7 @@ class ShoonyaExecutionClient:
             log.warning(f"Shoonya resolve skipped (expiry not a date): expiry={expiry!r} "
                   f"type={type(expiry).__name__}")
             return ""
-        int_strike = int(round(float(strike)))
+        int_strike = round(float(strike))
         cache_key = (underlying, expiry_str, option_type, int_strike)
 
         # Fast path: have we already resolved this exact contract today?
@@ -412,7 +412,7 @@ class ShoonyaExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Place ONE market order (buy or sell at the current price) on Shoonya.
 
@@ -587,7 +587,7 @@ class ShoonyaExecutionClient:
     # ------------------------------------------------------------------
     # Teardown
     # ------------------------------------------------------------------
-    def logout(self) -> Dict[str, Any]:
+    def logout(self) -> dict[str, Any]:
         """Close the Shoonya session cleanly at shutdown (safe to call if never logged in)."""
         with self._lock:
             if self.client is None:
