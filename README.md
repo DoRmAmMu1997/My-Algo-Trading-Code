@@ -14,7 +14,7 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - The backtest files I used to backtest
 - The signal generators I created to generate signals
 - The main front test file which uses miltithreading to execute all strategies together
-- Live order execution to a real broker — selectable between **Kotak Neo** and **Shoonya (Finvasia)** — gated by a global kill-switch and per-strategy paper/live toggles (everything defaults to paper)
+- Live order execution to a real broker — selectable among **Kotak Neo**, **Shoonya (Finvasia)**, and **Flattrade Pi v2** — gated by a global kill-switch and per-strategy paper/live toggles (everything defaults to paper)
 - Live Telegram alerts: the front-test master file can post every entry/exit (option instrument, lot size, entry/exit price, and P&L) to a Telegram group/channel
 - An **optional, opt-in LLM trading agent** — the "SL Hunting AI Agent" — a Claude agent that trades a discretionary price-action method on NIFTY options; off by default, paper unless explicitly enabled, and fail-soft (see Recent additions)
 
@@ -22,7 +22,7 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - **Optional LLM trading agent — the "SL Hunting AI Agent" (opt-in 27th worker).** A Claude agent (via the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) on your Claude subscription — **no API key**) trades the discretionary *SL Hunting* price-action method on NIFTY ATM options. Once per completed 1-min bar (the method's native timeframe) it reads the NIFTY chart (with **BankNIFTY cross-confirmation**) and — only on a confirmed setup at a real level — acts through the SAME tested `enter_position`/`exit_position` path as every other worker, with dynamic **~₹2,500 risk-per-trade** position sizing (it does not pick lots). It **stops opening new positions after noon** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — *not* a square-off: open positions, their stops/targets, and the 15:15 square-off are unaffected. It is **off by default** (`SL_HUNTING_ENABLED`), trades **paper** unless both `LIVE_TRADING_ENABLED` and `SL_HUNTING_LIVE_TRADING` are set, and is **fail-soft** — any agent/SDK error becomes a safe HOLD (never an exception into the trading loop), and its extra deps are lazily imported so a missing dep just disables this one worker. It can also **learn from its own trades**: a per-trade journal feeds an off-loop reflection *coach* that proposes lessons, which the operator human-gates into the prompt (paper-first, off by default). Needs `pip install claude-agent-sdk pydantic` and a one-time `claude setup-token` (keep `ANTHROPIC_API_KEY` **UNSET** so it bills your Claude plan, not per-token API). Full details — knowledge, tools, safety model, the learning loop — are in `Signal Generators/SL Hunting AI Agent/README.md`. This is the optional **27th** worker.
 - **CPR Algo 3 (multi-instrument) is now wired into the front test.** A new `CPRAlgo3StrategyWorker` runs the "CPR basic setup" strategy, which watches THREE charts at once — the NIFTY spot plus a ~ITM CE and a ~ITM PE of the current-week expiry — and only fires when VWAP and the CPR band align across all three (RSI/ARSI on spot). The two ITM options are **observation only**: a signal still BUYS the ATM CE/PE of the next-next expiry through the same tested path as the other directional workers, so it shares CPR's risk knobs (tunable via `CPR_ALGO3_*` in `.env`, including `CPR_ALGO3_ITM_OFFSET`). It fetches the two option 1-min OHLC feeds on demand and drives its own spot target/stop exit. This brings the runner to **26 workers**. (The standalone Algo 3 signal generator + its unit tests live under `Signal Generators/CPR Strategy/`.)
 - **Code-quality pass.** Added a `requirements.txt`; gave every Shoonya broker HTTP call a timeout (a hung call could otherwise stall a worker thread and the shared broker lock); removed hardcoded credentials from the vendored Shoonya client; routed the execution layer's status/errors through `logging` instead of `print()`; and ported the master test suite into the repo (`test_nifty_multi_strategy_master.py` — see Tests below).
-- **Live broker execution is now broker-selectable (Kotak Neo or Shoonya).** The front-test master can place REAL orders, not just paper. `LIVE_BROKER` (in `.env`) picks the broker — `KOTAK` or `SHOONYA` — and the runner routes every real order through one generic `execution_client` to whichever is selected. It is gated by two switches: the global `LIVE_TRADING_ENABLED` kill-switch AND each strategy's own `<PREFIX>_LIVE_TRADING` flag — a strategy goes live only when both are true, and an unrecognised `LIVE_BROKER` fails closed (live disabled, paper only). The per-broker code lives under `Dependencies/Kotak API/` and `Dependencies/Shoonya API/`, each with its execution client plus a read-only diagnostic that can optionally place a confirmation-gated round-trip test order (`--place-order`). Both brokers share one surface (login, symbol resolution, market order with fill confirmation), and any order failure falls back to paper for that trade. Everything defaults to paper. (Note: Shoonya's legacy QuickAuth endpoint is being decommissioned by Finvasia, so Kotak Neo is the working live path today.)
+- **Live broker execution is broker-selectable (Kotak Neo, Shoonya, or Flattrade).** `LIVE_BROKER` picks `KOTAK`, `SHOONYA`, or `FLATTRADE`, and every real order goes through one generic `execution_client`. The global `LIVE_TRADING_ENABLED` kill-switch and each strategy's `<PREFIX>_LIVE_TRADING` flag must both be true; unknown broker names fail closed to paper. Each broker folder contains an execution client and a read-only diagnostic with an optional, typed-`YES`, round-trip test order. Flattrade uses its official Pi v2 browser-token flow, exact NFO index scrip master, documented request limits, market-order protection, and `SingleOrdHist` fill confirmation. Everything still defaults to paper. (Shoonya's legacy QuickAuth endpoint is being decommissioned by Finvasia.)
 - **End-of-day P&L is now written to a Google Sheet.** When all workers exit on a clean end of day, the master parses the run's log for each strategy's realised P&L and writes it into a tracker sheet — one row per strategy, one column per calendar day — overwriting today's cell and backfilling any blank earlier-this-month cells from the (append-mode) log. Auth is OAuth user-token via `gspread`; configure `GSHEET_ID` + an OAuth client in `.env` (see Setup). It's a safe no-op when unconfigured, so it never disturbs shutdown.
 - **13 TradingBot signal-generator ports added — the front test now runs 24 workers.** Thirteen more ATM single-leg strategies were ported into `Signal Generators/` (SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic, Supertrend, Volatility Breakout), all sharing `misc_strategy_common.py` (TA-Lib-first indicator helpers). They're wired into the master via one shared factory as `AtmSingleLegStrategyWorker`s — the same family as Renko/Goldmine/CPR — and each is fully tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`, `KELTNER_SQUEEZE_*`). This brings the runner to **24 workers** (21 ATM single-leg + 2 Hedged Puts + 1 Delta-0.2). ML Ensemble needs `scikit-learn`.
 - **CPR (Central Pivot Range) strategy is now live in the front test.** It runs as an ATM single-leg worker (`CPRStrategyWorker`) alongside the other strategies: the master file feeds it 1-min OHLC, the CPR logic resamples to complete 5-min candles internally, and a LONG/SHORT signal buys the ATM CE/PE of the next-next expiry. Tunable via `CPR_*` knobs in the `.env` (lots, max-loss, poll, 09:25-15:15 window). (This brought the master file to nine workers at the time; see the latest addition at the top of this list for the current total.)
@@ -42,7 +42,8 @@ You might have to adjust the import addresses from which the files are to be imp
     ├── env.example                                    # copy to Dependencies/.env and fill in
     ├── dhan_token_setup.py                            # one-time DhanHQ OAuth token setup
     ├── Kotak API/                                     # kotak_execution.py + diagnose_kotak_symbol.py
-    └── Shoonya API/                                   # NorenApi.py + shoonya_execution.py + diagnose_shoonya_symbol.py
+    ├── Shoonya API/                                   # NorenApi.py + shoonya_execution.py + diagnose_shoonya_symbol.py
+    └── Flattrade API/                                 # flattrade_execution.py + diagnose_flattrade_symbol.py
 ```
 Each subfolder has its own `Readme.md` with the details.
 
@@ -52,7 +53,7 @@ Each subfolder has its own `Readme.md` with the details.
    ```
    pip install -r requirements.txt
    ```
-   That covers the core (data fetch, backtests, runner). For live trading also install your broker's client — see the commented "Live trading (optional)" section in `requirements.txt`: Kotak Neo (`neo_api_client`) and/or Shoonya (`pyotp` + `websocket-client`; the NorenApi client itself is vendored in `Dependencies/Shoonya API/`).
+   That covers the core (data fetch, backtests, runner). For live trading also install your broker's client — see the commented "Live trading (optional)" section in `requirements.txt`: Kotak Neo (`neo_api_client`) and/or Shoonya (`pyotp` + `websocket-client`; the NorenApi client itself is vendored). Flattrade uses the core `requests` and `pandas` dependencies, so it needs no extra SDK.
 3. Configure credentials. Copy `Dependencies/env.example` to `Dependencies/.env` and fill it in (`.env` is git-ignored). Set your Dhan credentials there, then run the one-time token setup:
    ```
    python "Dependencies/dhan_token_setup.py"
@@ -77,13 +78,14 @@ Each subfolder has its own `Readme.md` with the details.
 6. (Optional) Live broker execution. Everything is paper by default. To place REAL orders, set in `Dependencies/.env`:
    ```
    LIVE_TRADING_ENABLED=true        # global kill-switch (default false)
-   LIVE_BROKER=KOTAK                # KOTAK or SHOONYA
+   LIVE_BROKER=KOTAK                # KOTAK, SHOONYA, or FLATTRADE
    RENKO_LIVE_TRADING=true          # flip the specific strategies you want live
    ```
-   Then fill the selected broker's credential block (Kotak: `CONSUMER_KEY`/`MOBILE`/`MPIN`/`UCC`; Shoonya: `SHOONYA_USERID`/`SHOONYA_PASSWORD`/`SHOONYA_VENDOR_CODE`/`SHOONYA_API_SECRET`/`SHOONYA_IMEI`/`SHOONYA_TOTP_SECRET`). A strategy trades live only when `LIVE_TRADING_ENABLED` **and** its own `<PREFIX>_LIVE_TRADING` are both true; any order failure falls back to paper for that trade. Check connectivity first with the read-only diagnostics — they can place a confirmation-gated round-trip (buy + auto square-off) test order via `--place-order`:
+   Then fill the selected broker's credential block. Flattrade needs `FLATTRADE_CLIENT_ID`, `FLATTRADE_API_KEY`, and `FLATTRADE_API_SECRET`; its optional `FLATTRADE_ACCESS_TOKEN` is validated when supplied, otherwise startup opens browser authorization and asks for the returned `request_code`. A strategy trades live only when `LIVE_TRADING_ENABLED` **and** its own `<PREFIX>_LIVE_TRADING` are both true; any order failure falls back to paper for that trade. Check connectivity first with the read-only diagnostics — they can place a confirmation-gated round-trip (buy + auto square-off) test order via `--place-order`:
    ```
    python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order
    python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
+   python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 14JUL26 --place-order
    ```
 
 # Command-line interface
@@ -95,7 +97,7 @@ Each subfolder has its own `Readme.md` with the details.
 | `backtest --strategy {renko,ema,heikin,cpr,profit-shooter,goldmine,money-machine}` | Backtest one strategy against a CSV | `python algo.py backtest --strategy renko --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"` |
 | `run` | Start the front-test master (paper by default; live per `.env`) | `python algo.py run` |
 | `setup-token` | One-time DhanHQ token setup (writes `.env`) | `python algo.py setup-token` |
-| `diagnose --broker {kotak,shoonya}` | Read-only broker/symbol check (add `--place-order` for a test order) | `python algo.py diagnose --broker kotak CE 23950` |
+| `diagnose --broker {kotak,shoonya,flattrade}` | Read-only broker/symbol check (add `--place-order` for a test order) | `python algo.py diagnose --broker flattrade CE 24150 14JUL26` |
 
 Run `python algo.py --help`, or `python algo.py <command> --help`, for the details.
 
@@ -113,7 +115,7 @@ The front-test master has a unittest suite — env toggles, broker paper/live ro
 ```
 python -m unittest test_nifty_multi_strategy_master
 ```
-133 tests; the broker/SDK-specific cases skip automatically when those optional deps aren't installed. (The CPR, Subhamoy, and SL Hunting AI Agent signal generators have their own tests under `Signal Generators/`.)
+157 tests; broker/SDK-specific cases skip automatically when optional dependencies are absent, and all Flattrade HTTP/browser/order behaviour is mocked. (The CPR, Subhamoy, and SL Hunting AI Agent signal generators have their own tests under `Signal Generators/`.)
 
 # License
 Released under the MIT License — see [LICENSE](LICENSE).

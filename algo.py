@@ -45,6 +45,7 @@ The commands:
                place a confirmation-gated round-trip TEST order with --place-order).
       python algo.py diagnose --broker kotak CE 23950
       python algo.py diagnose --broker shoonya CE 23950 26JUN25 --place-order
+      python algo.py diagnose --broker flattrade CE 24150 14JUL26
 
 Tips:
   - `python algo.py --help` lists the commands; `python algo.py <command> --help`
@@ -92,6 +93,7 @@ BACKTEST_SCRIPTS = {
 
 # `diagnose --broker <key>`
 BROKER_DIAGNOSTICS = {
+    "flattrade": "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
     "kotak": "Dependencies/Kotak API/diagnose_kotak_symbol.py",
     "shoonya": "Dependencies/Shoonya API/diagnose_shoonya_symbol.py",
 }
