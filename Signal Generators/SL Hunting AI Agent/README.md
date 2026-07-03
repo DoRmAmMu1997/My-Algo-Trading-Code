@@ -194,6 +194,17 @@ hierarchy over divergence setups, and several risk heuristics (two-rejections ru
 early-adverse = wrong direction on expiry days, loss-streak bias). Per-video provenance and
 the win/loss evidence table live in the v3d addendum of `sl_hunting_doc.md`.
 
+## Live-day match + weekly sweep (v3e)
+First session with v3c+v3d live (3 Jul): the agent and IH independently refused the opening
+drive on a first-candle rejection, and the agent's winning double-top short shared IH's exact
+premise — strong convergence (agent +31.7 pts across 5 trades). v3e adds what IH had that the
+agent didn't: **both-sides participation** (exact-touch bounces that attract only one side are
+fades), the **huge-gap mindset trap** (no nearby SLs exist — fade the first post-gap push),
+**third-index lag** (two indices breaking a level doesn't commit the third), **setup staleness**
+(late breaks reverse on their followers → normal target only), and loss-recovery discipline
+from the revenge-trading lecture. Provenance and the per-trade match table live in the v3e
+addendum of `sl_hunting_doc.md`.
+
 ## Decision log
 The agent decides once per completed bar, but the worker only *logs* the bars where it
 acts — so a HOLD leaves just a `decision cost` line with no record of **what** it decided or

@@ -63,6 +63,11 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   operator to CONSTRUCT the next trap: a single momentum leg whose job is to re-add
   traders on one side. That leg is tradeable — but it is ONE leg; capture it and
   leave, do not read it as a new trend.
+- BOTH-SIDES PARTICIPATION: the market only sustains a move through zones where
+  BOTH sides are willing to engage. A bounce that would attract ONLY buyers (e.g.
+  off an EXACT closing-price touch right after a huge gap-up) is unsustainable —
+  fade it. Corollary: an EXACT touch-and-bounce at a level is fragile; small,
+  partial rejections at the level are the go-with tell instead.
 - A long-wicked candle (hammer/doji/pin) marks where money/SLs are parked — the
   longer the wick, the more SLs. These mark targets and reversal zones.
 - Act OPPOSITE to the obvious retail read: after a gap down retail expects more
@@ -101,6 +106,12 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
     a big down day the method SELLS a direct gap-up rather than following it.)
   * Gap SIZE matters: a SMALL counter-gap inside a trend reads like a flat open
     (keep the with-trend plan); only a gap THROUGH the prior day's extreme flips it.
+  * HUGE gap (even WITH the trend): nearby SLs simply do not EXIST on either side —
+    nobody is positioned there. The tradeable premise becomes the MINDSET trap:
+    fresh buyers who add on the first post-gap push are the target, so expect a
+    retracement of that push rather than clean continuation (fade it only with a
+    strict loss limit — a days-long trend can simply keep running). A modest
+    with-trend gap still follows the continuation rule above.
 - MULTI-DAY ACCUMULATION: after 2-3 one-way days the accumulated crowd sits with SLs
   just beyond the closing price / round number — a FLAT open then is the prime
   chance to hunt them (see OPENING DRIVE variant B for the with-gap long after down
@@ -354,6 +365,14 @@ RISK DISCIPLINE
   — book into strength or tighten. After consecutive losing days, deliberately
   reduce risk and prefer clearer setups: the urge for a "recovery trade" is itself
   a bias the market exploits.
+- SETUP STALENESS: a pending break must fire FAST — candles holding at the level
+  INVITE the crowd, and a break that comes only after a long hold attracts
+  followers and then reverses on them. If the level held a long time before
+  breaking, take the NORMAL target on the break and leave; never stretch it.
+- Loss recovery discipline: after a losing trade, do NOT take the next trade
+  immediately (that reflex is where revenge trading starts); recover a BIG loss
+  across MULTIPLE ordinary trades, never in one; and beware the "one last trade"
+  of the day — it is the classic start of over-trading.
 """
 
 
@@ -437,6 +456,10 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   fails to join a recovery, the recovery premise is dead. In the with-trend case,
   BankNIFTY moving FIRST while the others still dip is an entry tell (the major
   index drags the rest along).
+- THIRD-INDEX LAG: when TWO indices have broken a shared round number / closing
+  price, the THIRD frequently does NOT follow — it lags or reacts in the opposite
+  direction. Do not assume a two-index break commits the third; its refusal is
+  itself a divergence signal (see the divergence-fails rule above).
 """
 
 

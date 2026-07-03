@@ -491,3 +491,45 @@ Videos (id — session — type — outcome/signal):
   loss-streak "recovery trade" bias.
 - `DECISION_RULES`: rule 7 — no-plan zones (abstaining is a valid plan).
 - Test marker: `test_system_prompt_has_v3d_conditional_gap_knowledge`.
+
+---
+
+## Video addendum — 3 Jul live match + weekly/lecture sweep (v3e)
+
+> Sources: the 3 Jul live session `BvkCsOgkigI` (**verbatim transcript**, 11:25) matched against
+> the agent's same-day journal; the "Weekly Recap Step 2 Step" `yRITNBXsAXY` (3 May session,
+> 16:13) and the "STOP Revenge Trading" lecture `wBHAjFxfXJE` (14 Jun, 15:39) via YouTube's
+> Ask/Gemini panel (secondary AI summary — the transcript panel never populates on >12-minute
+> videos in our environment, re-verified, and the timedtext endpoint stays gated). The 28 Jun
+> weekly `s41N7OS17Wk` remains covered by v3a's Gemini pass; the other three long lectures
+> (`YRTuOxYDKhw`, `dVGgbkCtCGM`, `QXMuGzdu0CE`) are deferred to a future Ask-panel pass.
+
+**3 Jul: IH vs the agent (the first session with v3c+v3d + the 09:15 start live):**
+- IH: HUGE gap-up (Sensex/NIFTY large, BNF small). Waited out the first momentum; went SHORT on
+  two stacked reads: after a huge gap NO SLs exist nearby — the premise is the MINDSET trap on
+  fresh buyers who add into the first post-gap push; and BNF's bounce off an EXACT closing-price
+  touch would attract only buyers ("the market only works where BOTH sides want to engage") →
+  unsustainable → fade. Booked a NORMAL target after the market held too long ("holding candles
+  INVITE sellers; a late breakdown attracts followers and reverses").
+- Agent (5 trades, +31.7 pts, +Rs.1,053): declined the opening drive on the first-candle
+  full-body rejection (v3c behaving exactly as designed — IH waited too); LONG the flush-to-24300
+  reclaim +27.05; theta stall-exit +1.65; SHORT the rebuilt double-top +19 (the SAME premise as
+  IH's short); double-bottom long -7.7 (stall exit); re-fade of a buyers'-market dip -8.3
+  (stopped — v3d's don't-re-fade counsel plus the new staleness/participation reads all argue
+  that skip).
+- Verdict: strong convergence; the deltas feeding v3e are the participation principle, the
+  huge-gap mindset-trap, and setup staleness.
+
+**Knowledge changes (v3e, all prose):**
+- `PSYCHOLOGY`: BOTH-SIDES PARTICIPATION (+ exact-touch support fragility vs small-rejection
+  go-with tell).
+- `RETAIL_POSITIONING`: HUGE-gap nuance appended to the conditional-gap block (no nearby SLs
+  exist; fade the first post-gap push as a mindset trap, strict loss limit).
+- `BNF_SPECIFIC`: THIRD-INDEX LAG (two indices breaking a shared level does not commit the
+  third; its refusal is a divergence signal) — from the weekly recap (09:48-10:40).
+- `RISK`: SETUP STALENESS (late breaks attract followers then reverse → normal target only) +
+  loss-recovery discipline (no immediate re-entry after a loss; recover big losses across
+  multiple trades; the "one last trade" trap).
+- NOT encoded: the lecture's "observe-only first 1-1.5 hours" rule — it is beginner-discipline
+  framing that contradicts the operator's opening-drive edge (IH himself trades the open).
+- Test marker: `test_system_prompt_has_v3e_participation_knowledge`.
