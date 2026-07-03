@@ -205,6 +205,18 @@ fades), the **huge-gap mindset trap** (no nearby SLs exist — fade the first po
 from the revenge-trading lecture. Provenance and the per-trade match table live in the v3e
 addendum of `sl_hunting_doc.md`.
 
+## BankNIFTY mirror basket (v4)
+Intraday Hunter trades a multi-index basket; the worker now mirrors him: every NIFTY entry
+also BUYS the **same lot count** on the **BankNIFTY ATM** option (BankNIFTY's own target
+expiry — BNF has no weekly series), and the mirror **exits the moment the NIFTY leg exits**
+(AI exit, stop/target, max-loss, 15:15 square-off — one basket). The mirror is mechanical:
+the agent still decides ONLY on NIFTY; its prompt just tells it the P&L it sees is basket
+P&L. Same paper/live gates as the NIFTY leg; fail-soft (a mirror problem only skips the
+mirror); **basket risk ≈ 2× the ~Rs.2500 budget** (operator-accepted — the daily max-loss
+kill-switch still caps the day). Toggle: `SL_HUNTING_BNF_MIRROR` (default true). Journal
+rows' `option_pnl` includes both legs; MIRROR ENTRY/EXIT lines appear in the log and
+Telegram.
+
 ## Decision log
 The agent decides once per completed bar, but the worker only *logs* the bars where it
 acts — so a HOLD leaves just a `decision cost` line with no record of **what** it decided or

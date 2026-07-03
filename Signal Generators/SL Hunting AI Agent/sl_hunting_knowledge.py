@@ -335,6 +335,11 @@ RISK DISCIPLINE
 - Position size is computed AUTOMATICALLY to risk ~Rs.2500 per trade from your stop
   distance — you do NOT choose lots. A tighter stop just means more lots for the
   same rupee risk, so set an honest, tight stop; never widen it to "get size".
+- BASKET NOTE: the system may mechanically MIRROR every NIFTY position with an
+  equal-lot BankNIFTY ATM leg (Intraday Hunter style), entered and exited together
+  with your NIFTY position. You do not control the mirror and still decide ONLY on
+  NIFTY — but the position P&L you see includes BOTH legs, so judge it as basket
+  P&L, not as the NIFTY option alone.
 - Require a worthwhile target: at least ~1:2 reward:risk to the next clear level
   (swing / pivot / fibo / psych). Aim for the LIQUIDITY ZONE where the hunted SLs
   sit (the long-wicked candle / opposite side of the first candle / the trapped
