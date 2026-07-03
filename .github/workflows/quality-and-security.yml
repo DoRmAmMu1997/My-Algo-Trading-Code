@@ -1,0 +1,76 @@
+name: Quality and security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# Least privilege: this workflow only reads the repo (checkout + run tools), so
+# the GITHUB_TOKEN is pinned to read-only instead of inheriting broader defaults.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Python ${{ matrix.python-version }} quality checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is the operator's live runtime; 3.12 catches accidental use of
+        # newer-only syntax before an interpreter downgrade would reveal it.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Validate pre-commit configuration
+        run: python -m pre_commit validate-config .pre-commit-config.yaml
+
+      - name: Run the master unittest suite
+        # Loads the spaced-name master file via importlib with dhanhq mocked --
+        # this suite is the correctness gate for the runner itself.
+        run: python -m unittest test_nifty_multi_strategy_master
+
+      - name: Run the pytest suites
+        # Signal-generator + SL Hunting agent + broker-helper tests. SDK-gated
+        # cases skip cleanly when an optional dependency is absent.
+        run: python -m pytest "Signal Generators" "Dependencies" -q
+
+      - name: Compile every Python file
+        # The master runner and most strategy files have SPACES in their names,
+        # so they cannot be mypy modules -- byte-compiling them (plus the test
+        # suites above) is their syntax/consistency gate.
+        run: python -m compileall -q . -x "(__pycache__|Backtest Outputs|\.git)"
+
+      - name: Run Ruff static checks
+        run: python -m ruff check .
+
+      - name: Run mypy type checks
+        # Scope and strictness live in pyproject.toml ([tool.mypy]): every
+        # identifier-named module is checked; expanding to tests is a follow-up.
+        run: python -m mypy
+
+      - name: Run Bandit security checks
+        # B101 (asserts), B105 (false positives on token-URL/dict-key strings)
+        # and B110 (documented best-effort fallbacks) are skipped; vendored and
+        # reference-only code is excluded. Coverage gating is a deliberate
+        # follow-up (measuring the importlib-loaded master needs its own work).
+        run: >
+          python -m bandit -r . -q
+          -x "./Backtest Outputs,./My Backtest Files (For Reference),./Dependencies/Shoonya API/NorenApi.py"
+          --skip B101,B105,B110

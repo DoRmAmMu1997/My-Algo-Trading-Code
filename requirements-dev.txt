@@ -1,0 +1,13 @@
+# Development / CI quality-gate tools (runtime deps live in requirements.txt).
+# Versions mirror the Streamlit Scanner App's verified set where shared.
+pytest==9.0.3
+ruff==0.15.1
+mypy==1.19.1
+bandit==1.9.4
+pre-commit==4.6.0
+# Type stubs for typed third-party usage in the mypy scope.
+types-requests==2.33.0.20260518
+# Optional runtime deps installed in CI so the SL Hunting suite runs fully
+# instead of skipping (they stay optional for live operation).
+pydantic
+claude-agent-sdk
