@@ -2961,8 +2961,10 @@ class BasePaperStrategyWorker(threading.Thread):
             )
             return False
         # Resolve the broker's order symbol for this contract before ordering.
+        # A leg may name its own underlying (the SL Hunting BankNIFTY mirror);
+        # everything else defaults to the NIFTY constant as before.
         broker_symbol = execution_client.resolve_option_symbol(
-            underlying=UNDERLYING,
+            underlying=leg.get("underlying", UNDERLYING),
             expiry=leg.get("expiry"),
             option_type=leg.get("option_type", ""),
             strike=leg.get("strike", 0.0),
@@ -8805,6 +8807,14 @@ if SL_HUNTING_AVAILABLE:
     # convention/default as Profit Shooter). The agent does NOT choose lots; this is
     # computed from the agent's underlying stop distance.
     SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
+    # BankNIFTY mirror (Intraday Hunter style): every NIFTY entry is mirrored
+    # with the SAME lot count on the BankNIFTY ATM option of BankNIFTY's own
+    # target expiry, entered and exited together as ONE basket. The mirror is
+    # mechanical -- the agent does not choose it -- and NOTE: it roughly doubles
+    # the basket's rupee risk beyond SL_HUNTING_RISK_BUDGET (operator-accepted;
+    # the daily max-loss kill-switch still caps the day). Fail-soft: any mirror
+    # problem only skips the mirror, never the NIFTY leg.
+    SL_HUNTING_BNF_MIRROR = _env_bool("SL_HUNTING_BNF_MIRROR", True)
     # Trade journal (v3): record each trade's entry context + exit outcome to a
     # gitignored JSONL the reflection coach reads. Best-effort; never blocks trading.
     SL_HUNTING_JOURNAL_ENABLED = _env_bool("SL_HUNTING_JOURNAL_ENABLED", True)
@@ -8889,6 +8899,25 @@ if SL_HUNTING_AVAILABLE:
             self._decisions_path = (
                 SL_HUNTING_DECISIONS_PATH if SL_HUNTING_DECISIONS_ENABLED else None
             )
+            # BankNIFTY mirror leg (Intraday Hunter style). A second resolver
+            # against the SAME instrument master, pointed at BANKNIFTY; the
+            # mirror position uses the same PaperPosition bookkeeping as the
+            # main leg but is owned entirely by this worker (the base class
+            # never sees it).
+            self._mirror_enabled = SL_HUNTING_BNF_MIRROR
+            self._bnf_resolver = (
+                OptionsContractResolver(
+                    underlying="BANKNIFTY",
+                    instrument_master_glob=INSTRUMENT_MASTER_GLOB,
+                    log=self.log,
+                )
+                if self._mirror_enabled else None
+            )
+            self._mirror_pos = PaperPosition()
+            # Latest BankNIFTY close seen this session (refreshed each decision
+            # bar from the same fetch that feeds cross-confirmation); used to
+            # pick the mirror's ATM strike.
+            self._last_bnf_close = 0.0
 
         def _journal_open_row(self, decision, nifty_df, bnf_df) -> None:
             """Open a journal row for a trade the agent just entered (best-effort)."""
@@ -8909,10 +8938,159 @@ if SL_HUNTING_AVAILABLE:
             except Exception as exc:  # noqa: BLE001 - journaling must never disturb trading
                 self.log.warning("SL Hunting journal open failed: %s", exc)
 
+        # --------------------------------------------------------------
+        # BankNIFTY mirror leg (Intraday Hunter style)
+        # --------------------------------------------------------------
+        def enter_position(self, direction, entry_underlying, stop_underlying=0.0,
+                           target_underlying=0.0, trailing_active=False,
+                           pending_trailing_exit=False) -> bool:
+            """Open the NIFTY leg as usual, then mechanically mirror it on
+            BankNIFTY with the SAME lot count (one basket). The mirror is
+            best-effort: any failure logs and skips it, never the NIFTY leg."""
+            ok = super().enter_position(
+                direction, entry_underlying, stop_underlying, target_underlying,
+                trailing_active, pending_trailing_exit,
+            )
+            if ok and self._mirror_enabled:
+                try:
+                    self._open_bnf_mirror(direction)
+                except Exception as exc:  # noqa: BLE001 - mirror must never disturb the main leg
+                    self.log.warning("BNF mirror entry failed (NIFTY leg unaffected): %s", exc)
+            return ok
+
+        def _open_bnf_mirror(self, direction: str) -> None:
+            """Buy the BankNIFTY ATM CE/PE (BankNIFTY's own target expiry) at the
+            same lot COUNT as the just-opened NIFTY leg."""
+            if self._mirror_pos.active or self._bnf_resolver is None:
+                return
+            nifty_lot_size = max(int(self.pos.option_lot_size), 1)
+            lots = max(int(self.pos.quantity) // nifty_lot_size, 1)
+
+            bnf_spot = float(self._last_bnf_close)
+            if bnf_spot <= 0:
+                self.log.warning("BNF mirror skipped: no BankNIFTY close seen yet this session.")
+                return
+            contract = self._bnf_resolver.get_atm_option(bnf_spot, direction)
+            sec_id = int(contract["security_id"])
+            segment = str(contract["exchange_segment"])
+            symbol = str(contract["trading_symbol"])
+            lot_size = _to_int_safe(contract["lot_size"], 0)
+            if not symbol or sec_id <= 0 or lot_size <= 0:
+                self.log.warning("BNF mirror skipped: unusable contract %r.", symbol)
+                return
+            option_ltp = self._get_option_ltp(segment, sec_id, fallback=0.0)
+            if option_ltp <= 0:
+                self.log.warning("BNF mirror skipped: no LTP for %s (security_id=%s).", symbol, sec_id)
+                return
+
+            quantity = lot_size * lots
+            order_id = self._next_paper_order_id("BUY")
+            real_ok = self._place_real_leg("BUY", {
+                "option_type": contract["option_type"], "strike": contract["strike"],
+                "expiry": contract["expiry_date"], "quantity": quantity,
+                "dhan_symbol": symbol, "underlying": "BANKNIFTY",
+            })
+            self.store.register_option_subscription(OptionSubscription(
+                security_id=sec_id, exchange_segment=segment, trading_symbol=symbol,
+                right=str(contract["option_type"]), strike=float(contract["strike"]),
+                expiry=contract["expiry_date"],
+            ))
+            self._mirror_pos = PaperPosition(
+                active=True, direction=direction, symbol=symbol, quantity=quantity,
+                entry_order_id=str(order_id), entry_underlying=bnf_spot,
+                entry_trade_price=float(option_ltp), option_security_id=sec_id,
+                option_exchange_segment=segment, option_right=str(contract["option_type"]),
+                option_strike=float(contract["strike"]), option_expiry=contract["expiry_date"],
+                option_lot_size=lot_size,
+            )
+            self.log.info(
+                "MIRROR ENTRY %s | OptionSymbol=%s | Strike=%.2f | Qty=%s (lots=%s x %s) | "
+                "BNFSpot=%.2f | EntryOptPx=%.2f | PaperRef=%s",
+                direction, symbol, float(contract["strike"]), quantity, lots, lot_size,
+                bnf_spot, option_ltp, order_id,
+            )
+            self.publish_trade_event({
+                "action": "ENTRY", "mode": self._exec_mode_tag(real_ok),
+                "direction": direction, "lots": lots, "lot_size": lot_size,
+                "quantity": quantity, "spot": bnf_spot,
+                "expiry": contract["expiry_date"].isoformat() if contract["expiry_date"] else "NA",
+                "legs": [{
+                    "symbol": symbol, "side": "BUY", "right": str(contract["option_type"]),
+                    "strike": float(contract["strike"]), "entry_price": option_ltp,
+                }],
+            })
+
+        def _close_bnf_mirror(self, reason: str) -> None:
+            """Sell the mirror leg and fold its P&L into this worker's books.
+
+            Called from `after_exit`, so EVERY main-leg exit path (AI exit,
+            stop/target, max-loss, square-off) also closes the basket. If a LIVE
+            sell fails we still close the books and alert loudly (same policy as
+            the hedged workers' unwind path) rather than leaving a phantom open
+            record that nothing would ever retry."""
+            if not self._mirror_pos.active:
+                return
+            mirror = self._mirror_pos
+            exit_ltp = self._get_option_ltp(
+                mirror.option_exchange_segment, mirror.option_security_id,
+                fallback=mirror.entry_trade_price,
+            )
+            real_ok = self._place_real_leg("SELL", {
+                "option_type": mirror.option_right, "strike": mirror.option_strike,
+                "expiry": mirror.option_expiry, "quantity": mirror.quantity,
+                "dhan_symbol": mirror.symbol, "underlying": "BANKNIFTY",
+            })
+            if self.live_trading and not real_ok:
+                self.log.error(
+                    "MANUAL ACTION NEEDED | BNF mirror SELL not confirmed | %s qty=%s -> a LIVE "
+                    "BankNIFTY long may be OPEN at the broker. Square it off manually.",
+                    mirror.symbol, mirror.quantity,
+                )
+            pnl = (exit_ltp - mirror.entry_trade_price) * mirror.quantity
+            self.realized_pnl += pnl
+            self.store.unregister_option_subscription(
+                mirror.option_exchange_segment, mirror.option_security_id,
+            )
+            self.log.info(
+                "MIRROR EXIT %s | OptionSymbol=%s | Qty=%s | Reason=%s | EntryOptPx=%.2f | "
+                "ExitOptPx=%.2f | P&L=%.2f | CumPnL=%.2f",
+                mirror.direction, mirror.symbol, mirror.quantity, reason,
+                mirror.entry_trade_price, exit_ltp, pnl, self.realized_pnl,
+            )
+            self.publish_trade_event({
+                "action": "EXIT", "mode": self._exec_mode_tag(real_ok),
+                "direction": mirror.direction, "reason": reason, "pnl": pnl,
+                "quantity": mirror.quantity,
+                "legs": [{
+                    "symbol": mirror.symbol, "side": "SELL", "right": mirror.option_right,
+                    "strike": mirror.option_strike, "exit_price": exit_ltp,
+                }],
+            })
+            self._mirror_pos = PaperPosition()
+
+        def _get_open_position_pnl(self) -> float:
+            """Basket MTM: the NIFTY leg plus the BankNIFTY mirror, so the daily
+            max-loss kill-switch and the agent's position_state tool both see the
+            whole basket."""
+            pnl = super()._get_open_position_pnl()
+            if self._mirror_pos.active:
+                live = self._get_option_ltp(
+                    self._mirror_pos.option_exchange_segment,
+                    self._mirror_pos.option_security_id,
+                    fallback=self._mirror_pos.entry_trade_price,
+                )
+                pnl += (live - self._mirror_pos.entry_trade_price) * self._mirror_pos.quantity
+            return pnl
+
         def after_exit(self, closed_position, reason: str) -> None:
             """Universal post-close hook (fires for AI exit, stop/target, max-loss,
-            square-off). Close the open journal row with the underlying outcome."""
+            square-off). Close the BankNIFTY mirror FIRST (so the journal row's
+            option_pnl below reflects the whole basket), then the journal row."""
             super().after_exit(closed_position, reason)
+            try:
+                self._close_bnf_mirror(reason)
+            except Exception as exc:  # noqa: BLE001 - mirror close must never block the journal
+                self.log.warning("BNF mirror close failed: %s", exc)
             if self._journal is None or self._open_trade_id is None:
                 return
             try:
@@ -9002,6 +9180,10 @@ if SL_HUNTING_AVAILABLE:
                         BANKNIFTY_INDEX_INSTRUMENT_TYPE,
                     )
                     bnf_candles = resample_ohlc_from_1m(bnf_1m, self.derived_timeframe_minutes)
+                    if bnf_candles is not None and not bnf_candles.empty:
+                        # Remember BankNIFTY's latest close for the mirror leg's
+                        # ATM pick (no extra API call at entry time).
+                        self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
                 except Exception as exc:
                     self.log.warning(
                         "BankNIFTY fetch failed (%s); SL Hunting goes NIFTY-only this bar.", exc

@@ -1634,6 +1634,126 @@ class TestLongStrangleWorker(unittest.TestCase):
         self.assertEqual(worker.ce_reentry_count, 0)
 
 
+@unittest.skipIf(
+    getattr(master_file, "SLHuntingAIWorker", None) is None,
+    "SL Hunting worker unavailable (claude-agent-sdk / pydantic absent)",
+)
+class TestSLHuntingBnfMirror(unittest.TestCase):
+    """
+    The Intraday-Hunter-style BankNIFTY mirror: every NIFTY entry opens an
+    equal-LOT-count BankNIFTY ATM leg, and every NIFTY exit closes it (one
+    basket). The mirror is fail-soft and must never disturb the NIFTY leg.
+    """
+
+    NIFTY_CONTRACT = {
+        "security_id": 1001, "exchange_segment": None,  # segment filled in setUp
+        "trading_symbol": "NIFTY-24300-CE", "custom_symbol": "NIFTY CE",
+        "strike": 24300.0, "option_type": "CE", "expiry_date": None,
+        "days_to_expiry": 2, "lot_size": 75, "spot_reference": 24300.0,
+        "atm_strike_rounded": 24300.0,
+    }
+    BNF_CONTRACT = {
+        "security_id": 3003, "exchange_segment": None,
+        "trading_symbol": "BANKNIFTY-57900-CE", "custom_symbol": "BANKNIFTY CE",
+        "strike": 57900.0, "option_type": "CE", "expiry_date": None,
+        "days_to_expiry": 20, "lot_size": 35, "spot_reference": 57900.0,
+        "atm_strike_rounded": 57900.0,
+    }
+
+    def _make_worker(self):
+        store = master_file.SharedMarketDataStore()
+        broker = MagicMock()
+        broker.fetch_ltp_map.return_value = {}
+        worker = master_file.SLHuntingAIWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker._mirror_enabled = True
+        nifty_c = dict(self.NIFTY_CONTRACT,
+                       exchange_segment=master_file.OPTION_EXCHANGE_SEGMENT,
+                       expiry_date=date.today())
+        bnf_c = dict(self.BNF_CONTRACT,
+                     exchange_segment=master_file.OPTION_EXCHANGE_SEGMENT,
+                     expiry_date=date.today() + timedelta(days=20))
+        worker.contract_resolver = MagicMock()
+        worker.contract_resolver.get_atm_option.return_value = nifty_c
+        worker._bnf_resolver = MagicMock()
+        worker._bnf_resolver.get_atm_option.return_value = bnf_c
+        worker._last_bnf_close = 57910.0
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 24300.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 500.0,
+        })
+        return worker, store
+
+    def test_mirror_opens_with_same_lot_count(self):
+        worker, _ = self._make_worker()
+        # 10-pt stop -> risk_based_lots => ceil(2500 / (10*75)) = 4 NIFTY lots.
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        nifty_lots = worker.pos.quantity // 75
+        self.assertTrue(worker._mirror_pos.active)
+        self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
+        self.assertEqual(worker._mirror_pos.option_right, "CE")
+        # The mirror asked BankNIFTY's resolver with the BNF spot + direction.
+        worker._bnf_resolver.get_atm_option.assert_called_once_with(57910.0, "LONG")
+
+    def test_basket_exits_together_and_pnl_includes_both_legs(self):
+        worker, store = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        nifty_qty = worker.pos.quantity
+        bnf_qty = worker._mirror_pos.quantity
+        # NIFTY option +10, BNF option +20.
+        store.update_ltp_map({
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 110.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0,
+        })
+        expected = 10.0 * nifty_qty + 20.0 * bnf_qty
+        self.assertAlmostEqual(worker._get_open_position_pnl(), expected)
+        worker.exit_position("AI_TARGET")
+        self.assertFalse(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertAlmostEqual(worker.realized_pnl, expected)
+
+    def test_mirror_failure_never_blocks_the_nifty_leg(self):
+        worker, _ = self._make_worker()
+        worker._bnf_resolver.get_atm_option.side_effect = ValueError("no BNF chain")
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        self.assertTrue(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)
+
+    def test_mirror_skipped_without_bnf_spot(self):
+        worker, _ = self._make_worker()
+        worker._last_bnf_close = 0.0
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        self.assertFalse(worker._mirror_pos.active)
+
+    def test_mirror_disabled_flag_trades_nifty_only(self):
+        worker, _ = self._make_worker()
+        worker._mirror_enabled = False
+        self.assertTrue(worker.enter_position("SHORT", 24300.0, 24310.0, 24200.0))
+        self.assertTrue(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)
+        worker._bnf_resolver.get_atm_option.assert_not_called()
+
+    def test_real_leg_uses_banknifty_underlying_for_mirror(self):
+        """_place_real_leg must resolve the mirror's broker symbol as BANKNIFTY."""
+        worker, _ = self._make_worker()
+        captured = []
+
+        def fake_real_leg(side, leg):
+            captured.append((side, dict(leg)))
+            return True
+
+        worker._place_real_leg = fake_real_leg
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker.exit_position("AI_TARGET")
+        mirror_legs = [(s, leg) for s, leg in captured if leg.get("underlying") == "BANKNIFTY"]
+        self.assertEqual([s for s, _ in mirror_legs], ["BUY", "SELL"])
+        # The NIFTY legs carry no underlying override (default applies).
+        nifty_legs = [(s, leg) for s, leg in captured if "underlying" not in leg]
+        self.assertEqual([s for s, _ in nifty_legs], ["BUY", "SELL"])
+
+
 class TestLiveOrderRouting(unittest.TestCase):
     """
     Drives the single-leg take-trade methods with `live_trading=True` and a fake
