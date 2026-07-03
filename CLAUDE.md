@@ -55,8 +55,8 @@ Dependencies/
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
   Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
-  Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py (diagnostics only —
-                    NOT yet selectable via LIVE_BROKER)
+  Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py,
+                    test_flattrade_execution.py
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 Backtest Outputs/                                  # generated CSVs/logs (gitignored)
@@ -69,14 +69,16 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   name→prefix map is `STRATEGY_ENV_PREFIX`. **Never commit secrets** — `env.example` holds blank placeholders.
 - **Live-trading safety (critical):** paper by default. A strategy trades live ONLY when the global
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
-  (`KOTAK` | `SHOONYA`) selects the broker; an unknown value **fails closed** (live disabled, paper only).
+  (`KOTAK` | `SHOONYA` | `FLATTRADE`) selects the broker; an unknown value **fails closed** (live
+  disabled, paper only).
   Any order failure falls back to paper for that trade. Every broker HTTP call must have a timeout.
 - **Broker layer:** the Kotak, Shoonya and Flattrade clients expose the SAME surface —
   `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
   `extract_order_id`, `logout`, `is_logged_in` — so the runner only ever touches the generic
   `execution_client`. The Shoonya `NorenApi` client is vendored under `Dependencies/Shoonya API/`.
-  Flattrade is DIAGNOSTICS-ONLY so far (`algo.py diagnose --broker flattrade`); wiring it into
-  `LIVE_BROKER` is a separate, deliberate step.
+  Before first routing live orders through Flattrade, validate the symbol/order path once with
+  `python algo.py diagnose --broker flattrade CE <strike>` (its jData wire format is newer than
+  the battle-tested Kotak/Shoonya paths).
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module

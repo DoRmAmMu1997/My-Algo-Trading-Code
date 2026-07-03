@@ -1,5 +1,5 @@
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import os
 import sys
