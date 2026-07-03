@@ -189,7 +189,12 @@ class CoachAgent:
         loop (ProactorEventLoop on Windows, needed to spawn the Claude CLI subprocess).
         """
         def _runner() -> str:
-            loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+            # The statement form (not a ternary) lets mypy narrow sys.platform,
+            # exactly as the trading agent's identical bridge does.
+            if sys.platform == "win32":
+                loop = asyncio.ProactorEventLoop()
+            else:
+                loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
                 return loop.run_until_complete(coro)
