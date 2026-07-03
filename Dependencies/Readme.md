@@ -12,27 +12,30 @@ Dependencies/
 ├── Kotak API/           # Kotak Neo live execution
 │   ├── kotak_execution.py        # KotakExecutionClient (shared singleton)
 │   └── diagnose_kotak_symbol.py  # read-only symbol check + optional test order
-└── Shoonya API/         # Shoonya (Finvasia) live execution
-    ├── NorenApi.py               # vendored Finvasia NorenApi client
-    ├── shoonya_execution.py      # ShoonyaExecutionClient (shared singleton)
-    └── diagnose_shoonya_symbol.py# read-only symbol check + optional test order
+├── Shoonya API/         # Shoonya (Finvasia) live execution
+│   ├── NorenApi.py               # vendored Finvasia NorenApi client
+│   ├── shoonya_execution.py      # ShoonyaExecutionClient (shared singleton)
+│   └── diagnose_shoonya_symbol.py# read-only symbol check + optional test order
+└── Flattrade API/       # Flattrade Pi v2 REST live execution
+    ├── flattrade_execution.py      # FlattradeExecutionClient (shared singleton)
+    └── diagnose_flattrade_symbol.py# read-only symbol check + optional test order
 ```
 
 `.env` itself is git-ignored (it holds secrets); `env.example` is the committed template.
-Both execution modules load `.env` from this `Dependencies/` folder.
+All execution modules load `.env` from this `Dependencies/` folder.
 
 ## How live execution works
-The master file loads **both** broker clients (each guarded — a missing SDK just
-disables that broker) and then picks one with `LIVE_BROKER` (`KOTAK` or `SHOONYA`).
-The rest of the runner only touches a single generic `execution_client`, so the two
-brokers are interchangeable. Both clients expose the **same surface**:
+The master file guarded-loads all three broker clients and then picks one with
+`LIVE_BROKER` (`KOTAK`, `SHOONYA`, or `FLATTRADE`). The rest of the runner only
+touches a single generic `execution_client`, so the brokers are interchangeable.
+All clients expose the **same surface**:
 `ensure_logged_in()`, `preload_scrip_master()`, `resolve_option_symbol()`,
 `place_market_order()` (with fill confirmation), `extract_order_id()`, `logout()`,
 and an `is_logged_in` flag.
 
 Safety gates (all in `.env`):
 - `LIVE_TRADING_ENABLED` — global kill-switch (default `false` = everything paper).
-- `LIVE_BROKER` — `KOTAK` or `SHOONYA`. An unrecognised value **fails closed**
+- `LIVE_BROKER` — `KOTAK`, `SHOONYA`, or `FLATTRADE`. An unrecognised value **fails closed**
   (live disabled, paper only) rather than guessing a broker.
 - `<PREFIX>_LIVE_TRADING` — per strategy. A strategy goes live only when the global
   switch **and** its own flag are both true.
@@ -40,8 +43,8 @@ Safety gates (all in `.env`):
   strategy falls back to paper for that trade.
 
 Product/exchange per broker is derived from `LIVE_BROKER`: Kotak uses `nse_fo` +
-`KOTAK_PRODUCT_TYPE`; Shoonya uses `NFO` + `SHOONYA_PRODUCT_TYPE` (INTRADAY → MIS/I,
-NORMAL → NRML/M).
+`KOTAK_PRODUCT_TYPE`; Shoonya uses `NFO` + `SHOONYA_PRODUCT_TYPE`; Flattrade uses
+`NFO` + `FLATTRADE_PRODUCT_TYPE` (INTRADAY → MIS/I, NORMAL → NRML/M).
 
 ## Credentials (in `.env`)
 - **Kotak Neo:** `CONSUMER_KEY`, `MOBILE`, `MPIN`, `UCC`. TOTP is typed at startup
@@ -50,10 +53,15 @@ NORMAL → NRML/M).
   `SHOONYA_API_SECRET`, `SHOONYA_IMEI`, `SHOONYA_TOTP_SECRET` (base32 seed; the TOTP
   is auto-generated via `pyotp`, or you're prompted if blank). The client is vendored
   here; needs `pip install pyotp websocket-client`.
+- **Flattrade:** `FLATTRADE_CLIENT_ID`, `FLATTRADE_API_KEY`, and
+  `FLATTRADE_API_SECRET`. `FLATTRADE_ACCESS_TOKEN` is optional: when blank, startup
+  opens Flattrade authorization and asks for the returned `request_code`. Tokens
+  remain in memory unless you manually paste one into `.env`. Uses core `requests`
+  and `pandas`; no extra SDK is required. Token exchange must originate from the
+  static IP registered against your Flattrade API key.
 
 > Note: Finvasia is decommissioning the legacy Shoonya QuickAuth endpoint (it returns
 > HTTP 502), so Shoonya live login needs the new OAuth API before it works again.
-> Kotak Neo is the working live path today.
 
 ## Diagnostics (read-only, with an optional REAL test order)
 Each broker has a diagnostic that logs in and shows whether a contract resolves to a
@@ -63,4 +71,5 @@ flatten) — it asks you to type `YES` first:
 ```
 python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order
 python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
+python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 14JUL26 --place-order
 ```

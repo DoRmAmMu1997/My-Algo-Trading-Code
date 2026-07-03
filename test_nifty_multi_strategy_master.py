@@ -1,5 +1,7 @@
 import unittest
 import importlib.util
+import hashlib
+import json
 import tempfile
 import threading
 from pathlib import Path
@@ -8,6 +10,7 @@ import pandas as pd
 from unittest.mock import MagicMock, patch
 import os
 import sys
+from urllib.parse import parse_qs
 
 # =============================================================================
 # DYNAMIC MODULE IMPORT
@@ -33,6 +36,39 @@ with patch.dict(os.environ, {"DHAN_CLIENT_CODE": "test", "DHAN_TOKEN_ID": "test"
             spec.loader.exec_module(master_file)
         except Exception as e:
             print(f"Failed to load master_file for testing: {e}")
+
+
+# The Flattrade helper is loaded separately so its low-level REST behaviour can
+# be tested without starting the master runner or making any network requests.
+flattrade_file_path = Path(__file__).parent / "Dependencies" / "Flattrade API" / "flattrade_execution.py"
+flattrade_module = None
+if flattrade_file_path.is_file():
+    flattrade_spec = importlib.util.spec_from_file_location(
+        "flattrade_execution_under_test", flattrade_file_path
+    )
+    flattrade_module = importlib.util.module_from_spec(flattrade_spec)
+    sys.modules["flattrade_execution_under_test"] = flattrade_module
+    flattrade_spec.loader.exec_module(flattrade_module)
+
+flattrade_diagnostic_path = (
+    Path(__file__).parent
+    / "Dependencies"
+    / "Flattrade API"
+    / "diagnose_flattrade_symbol.py"
+)
+flattrade_diagnostic_module = None
+if flattrade_diagnostic_path.is_file():
+    flattrade_diagnostic_spec = importlib.util.spec_from_file_location(
+        "diagnose_flattrade_symbol_under_test", flattrade_diagnostic_path
+    )
+    flattrade_diagnostic_module = importlib.util.module_from_spec(
+        flattrade_diagnostic_spec
+    )
+    sys.modules["diagnose_flattrade_symbol_under_test"] = flattrade_diagnostic_module
+    # The diagnostic imports its sibling module by name, just like a standalone
+    # invocation. Temporarily expose the already-loaded, network-free test copy.
+    with patch.dict(sys.modules, {"flattrade_execution": flattrade_module}):
+        flattrade_diagnostic_spec.loader.exec_module(flattrade_diagnostic_module)
 
 
 # =============================================================================
@@ -1884,6 +1920,496 @@ class TestShoonyaSymbolResolution(unittest.TestCase):
         c._symbol_set = {"NIFTY25JUN26C23000"}  # wanted strike absent
         self.assertEqual(
             c.resolve_option_symbol("NIFTY", date(2026, 6, 25), "CE", 22500), ""
+        )
+
+
+class _FakeHttpResponse:
+    """Small requests.Response stand-in used by the offline Flattrade tests."""
+
+    def __init__(self, payload, text=""):
+        self._payload = payload
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClock:
+    """Controllable monotonic clock so rate-limit tests never really sleep."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class TestFlattradeAuthentication(unittest.TestCase):
+    """Flattrade login must validate a token or perform the documented code exchange."""
+
+    def setUp(self):
+        self.assertIsNotNone(
+            flattrade_module,
+            "Dependencies/Flattrade API/flattrade_execution.py has not been implemented",
+        )
+        self.client = flattrade_module.FlattradeExecutionClient()
+        self.session = MagicMock()
+        self.client.client = self.session
+
+    def test_existing_access_token_is_validated_with_user_details(self):
+        self.session.post.return_value = _FakeHttpResponse(
+            {"stat": "Ok", "actid": "FT123", "exarr": ["NFO"]}
+        )
+        env = {
+            "FLATTRADE_CLIENT_ID": "FT123",
+            "FLATTRADE_ACCESS_TOKEN": "daily-token",
+            "FLATTRADE_API_KEY": "",
+            "FLATTRADE_API_SECRET": "",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            self.assertTrue(self.client.ensure_logged_in())
+
+        self.assertTrue(self.client.is_logged_in)
+        self.assertEqual(self.client._access_token, "daily-token")
+        _, kwargs = self.session.post.call_args
+        self.assertEqual(kwargs["timeout"], flattrade_module._API_TIMEOUT_SECONDS)
+        posted = parse_qs(kwargs["data"])
+        self.assertEqual(json.loads(posted["jData"][0]), {"uid": "FT123"})
+        self.assertEqual(posted["jKey"], ["daily-token"])
+        self.assertEqual(kwargs["headers"], {"Content-Type": "application/json"})
+
+    def test_browser_request_code_is_hashed_exchanged_and_validated(self):
+        self.session.post.side_effect = [
+            _FakeHttpResponse({"status": "Ok", "token": "issued-token", "client": "FT123"}),
+            _FakeHttpResponse({"stat": "Ok", "actid": "FT123", "exarr": ["NFO"]}),
+        ]
+        env = {
+            "FLATTRADE_CLIENT_ID": "FT123",
+            "FLATTRADE_ACCESS_TOKEN": "",
+            "FLATTRADE_API_KEY": "public-key",
+            "FLATTRADE_API_SECRET": "raw-secret",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(flattrade_module.webbrowser, "open", return_value=True) as open_browser, \
+             patch("builtins.input", return_value="request-code"):
+            self.assertTrue(self.client.ensure_logged_in())
+
+        expected_hash = hashlib.sha256(
+            b"public-keyrequest-coderaw-secret"
+        ).hexdigest()
+        open_browser.assert_called_once_with(
+            "https://auth.flattrade.in/?app_key=public-key"
+        )
+        token_call = self.session.post.call_args_list[0]
+        self.assertEqual(token_call.args[0], flattrade_module._TOKEN_URL)
+        self.assertEqual(
+            token_call.kwargs["json"],
+            {
+                "api_key": "public-key",
+                "request_code": "request-code",
+                "api_secret": expected_hash,
+            },
+        )
+        self.assertEqual(self.client._access_token, "issued-token")
+
+    def test_missing_credentials_fail_closed_without_network(self):
+        env = {
+            "FLATTRADE_CLIENT_ID": "",
+            "FLATTRADE_ACCESS_TOKEN": "",
+            "FLATTRADE_API_KEY": "",
+            "FLATTRADE_API_SECRET": "",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            self.assertFalse(self.client.ensure_logged_in())
+        self.session.post.assert_not_called()
+
+    def test_failed_exchange_logs_no_secret_or_request_code(self):
+        self.session.post.return_value = _FakeHttpResponse(
+            {"status": "Not_Ok", "emsg": "invalid input"}
+        )
+        env = {
+            "FLATTRADE_CLIENT_ID": "FT123",
+            "FLATTRADE_ACCESS_TOKEN": "",
+            "FLATTRADE_API_KEY": "public-key",
+            "FLATTRADE_API_SECRET": "raw-secret",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(flattrade_module.webbrowser, "open", return_value=True), \
+             patch("builtins.input", return_value="request-code"), \
+             self.assertLogs(flattrade_module.log, level="ERROR") as captured:
+            self.assertFalse(self.client.ensure_logged_in())
+        joined = "\n".join(captured.output)
+        self.assertNotIn("raw-secret", joined)
+        self.assertNotIn("request-code", joined)
+
+
+class TestFlattradeRateLimits(unittest.TestCase):
+    """The client must wait for short bursts and fail before stale minute waits."""
+
+    def setUp(self):
+        self.assertIsNotNone(flattrade_module)
+
+    def test_short_per_second_limit_waits_for_a_slot(self):
+        clock = _FakeClock()
+        limiter = flattrade_module._RollingWindowRateLimiter(
+            per_second=2,
+            per_minute=10,
+            max_wait_seconds=2.0,
+            clock=clock.monotonic,
+            sleeper=clock.sleep,
+            label="test",
+        )
+        limiter.acquire()
+        limiter.acquire()
+        limiter.acquire()
+        self.assertTrue(clock.sleeps)
+        self.assertGreaterEqual(clock.now, 1.0)
+
+    def test_exhausted_minute_limit_raises_before_http_request(self):
+        clock = _FakeClock()
+        limiter = flattrade_module._RollingWindowRateLimiter(
+            per_second=10,
+            per_minute=2,
+            max_wait_seconds=0.0,
+            clock=clock.monotonic,
+            sleeper=clock.sleep,
+            label="test",
+        )
+        limiter.acquire()
+        limiter.acquire()
+
+        client = flattrade_module.FlattradeExecutionClient()
+        client.client = MagicMock()
+        client._access_token = "token"
+        client._client_id = "FT123"
+        client._api_limiter = limiter
+        with self.assertRaises(RuntimeError):
+            client._post_api("UserDetails", {"uid": "FT123"})
+        client.client.post.assert_not_called()
+
+
+class TestFlattradeSymbolResolution(unittest.TestCase):
+    """Option resolution must use exact rows from Flattrade's official CSV schema."""
+
+    def setUp(self):
+        self.assertIsNotNone(flattrade_module)
+        self.client = flattrade_module.FlattradeExecutionClient()
+        raw = pd.DataFrame(
+            [
+                {
+                    "Exchange": "NFO",
+                    "Token": "51377",
+                    "Lotsize": "65",
+                    "Symbol": "NIFTY",
+                    "Tradingsymbol": "NIFTY14JUL26C24150",
+                    "Instrument": "OPTIDX",
+                    "Expiry": "14-JUL-2026",
+                    "Strike": "24150.00",
+                    "Optiontype": "CE",
+                }
+            ]
+        )
+        self.client._scrip_df = self.client._prepare_scrip_master(raw)
+
+    def test_exact_contract_resolves_and_is_cached(self):
+        with patch.object(self.client, "ensure_logged_in", return_value=True):
+            symbol = self.client.resolve_option_symbol(
+                "NIFTY", date(2026, 7, 14), "CE", 24150
+            )
+            self.client._scrip_df = pd.DataFrame()
+            cached = self.client.resolve_option_symbol(
+                "NIFTY", date(2026, 7, 14), "CE", 24150
+            )
+        self.assertEqual(symbol, "NIFTY14JUL26C24150")
+        self.assertEqual(cached, symbol)
+
+    def test_nonexistent_contract_returns_empty(self):
+        with patch.object(self.client, "ensure_logged_in", return_value=True):
+            self.assertEqual(
+                self.client.resolve_option_symbol(
+                    "NIFTY", date(2026, 7, 14), "PE", 24150
+                ),
+                "",
+            )
+
+    def test_malformed_master_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.client._prepare_scrip_master(pd.DataFrame({"Symbol": ["NIFTY"]}))
+
+
+class TestFlattradeOrders(unittest.TestCase):
+    """Market orders must use Flattrade mappings and confirm the complete fill."""
+
+    def setUp(self):
+        self.assertIsNotNone(flattrade_module)
+        self.client = flattrade_module.FlattradeExecutionClient()
+        self.client._client_id = "FT123"
+        self.client._account_id = "FT123"
+        self.client._access_token = "token"
+        self.client.is_logged_in = True
+
+    def test_market_order_payload_uses_documented_codes(self):
+        ack = {"stat": "Ok", "norenordno": "260703000001"}
+        with patch.dict(os.environ, {"FLATTRADE_MARKET_PROTECTION": "5"}), \
+             patch.object(self.client, "ensure_logged_in", return_value=True), \
+             patch.object(self.client, "_post_api", return_value=ack) as post_api, \
+             patch.object(self.client, "_confirm_fill") as confirm:
+            result = self.client.place_market_order(
+                symbol="NIFTY14JUL26C24150",
+                side="BUY",
+                quantity=65,
+                exchange_segment="NFO",
+                product_type="INTRADAY",
+            )
+
+        self.assertEqual(result, ack)
+        endpoint, payload = post_api.call_args.args
+        self.assertEqual(endpoint, "PlaceOrder")
+        self.assertEqual(
+            payload,
+            {
+                "uid": "FT123",
+                "actid": "FT123",
+                "exch": "NFO",
+                "tsym": "NIFTY14JUL26C24150",
+                "qty": "65",
+                "prc": "0",
+                "dscqty": "0",
+                "prd": "I",
+                "trantype": "B",
+                "prctyp": "MKT",
+                "ret": "DAY",
+                "ordersource": "API",
+                "mkt_protection": "5",
+            },
+        )
+        self.assertTrue(post_api.call_args.kwargs["is_order"])
+        confirm.assert_called_once_with("260703000001", 65)
+
+    def test_invalid_order_inputs_raise_before_submission(self):
+        with patch.object(self.client, "_post_api") as post_api:
+            for kwargs in (
+                {"symbol": "X", "side": "HOLD", "quantity": 65},
+                {"symbol": "X", "side": "BUY", "quantity": 0},
+                {
+                    "symbol": "X",
+                    "side": "BUY",
+                    "quantity": 65,
+                    "exchange_segment": "NSE",
+                },
+                {
+                    "symbol": "X",
+                    "side": "BUY",
+                    "quantity": 65,
+                    "product_type": "DELIVERY",
+                },
+            ):
+                with self.assertRaises(ValueError):
+                    self.client.place_market_order(**kwargs)
+        post_api.assert_not_called()
+
+    def test_acknowledgement_requires_ok_and_order_id(self):
+        self.assertTrue(
+            self.client._is_order_ack({"stat": "Ok", "norenordno": "ORD1"})
+        )
+        for bad in (
+            {"stat": "Not_Ok", "norenordno": "ORD1"},
+            {"stat": "Ok"},
+            {"norenordno": "ORD1"},
+            None,
+        ):
+            self.assertFalse(self.client._is_order_ack(bad))
+
+    def test_order_status_parses_single_order_history(self):
+        history = [
+            {
+                "stat": "Ok",
+                "status": "COMPLETE",
+                "fillshares": "65",
+                "qty": "65",
+                "rejreason": "",
+            }
+        ]
+        with patch.object(self.client, "_post_api", return_value=history):
+            self.assertEqual(
+                self.client._order_status("ORD1"),
+                ("complete", 65, 65, ""),
+            )
+
+    def test_fill_confirmation_handles_complete_rejected_and_timeout(self):
+        with patch.object(
+            self.client, "_order_status", return_value=("complete", 65, 65, "")
+        ):
+            self.client._confirm_fill("ORD1", 65)
+
+        with patch.object(
+            self.client,
+            "_order_status",
+            return_value=("rejected", 0, 65, "RMS: margin"),
+        ), self.assertRaises(RuntimeError):
+            self.client._confirm_fill("ORD2", 65)
+
+        with patch.object(
+            self.client, "_order_status", return_value=("open", 0, 65, "")
+        ), patch.object(flattrade_module, "_FILL_TIMEOUT_SECONDS", 0.02), \
+             patch.object(flattrade_module, "_FILL_POLL_INTERVAL", 0.005), \
+             self.assertRaises(TimeoutError):
+            self.client._confirm_fill("ORD3", 65)
+
+    def test_recursive_order_id_extraction_and_local_logout(self):
+        self.assertEqual(
+            self.client.extract_order_id({"data": [{"norenordno": "ORD9"}]}),
+            "ORD9",
+        )
+        self.client.client = MagicMock()
+        response = self.client.logout()
+        self.assertEqual(response["stat"], "Ok")
+        self.assertFalse(self.client.is_logged_in)
+        self.assertEqual(self.client._access_token, "")
+        self.client.client.close.assert_called_once()
+
+
+class TestFlattradeDiagnostic(unittest.TestCase):
+    """The diagnostic is read-only unless the operator explicitly confirms."""
+
+    def setUp(self):
+        self.assertIsNotNone(
+            flattrade_diagnostic_module,
+            "diagnose_flattrade_symbol.py has not been implemented",
+        )
+        raw = pd.DataFrame(
+            [
+                {
+                    "Exchange": "NFO",
+                    "Token": "1",
+                    "Lotsize": "65",
+                    "Symbol": "NIFTY",
+                    "Tradingsymbol": "NIFTY14JUL26C24150",
+                    "Instrument": "OPTIDX",
+                    "Expiry": "14-JUL-2026",
+                    "Strike": "24150.00",
+                    "Optiontype": "CE",
+                },
+                {
+                    "Exchange": "NFO",
+                    "Token": "2",
+                    "Lotsize": "65",
+                    "Symbol": "NIFTY",
+                    "Tradingsymbol": "NIFTY21JUL26C24150",
+                    "Instrument": "OPTIDX",
+                    "Expiry": "21-JUL-2026",
+                    "Strike": "24150.00",
+                    "Optiontype": "CE",
+                },
+            ]
+        )
+        self.client = flattrade_module.FlattradeExecutionClient()
+        self.client._scrip_df = self.client._prepare_scrip_master(raw)
+
+    def test_nearest_matching_expiry_and_lot_size_are_selected(self):
+        expiry, symbol, lot_size = flattrade_diagnostic_module.select_contract(
+            self.client,
+            underlying="NIFTY",
+            option_type="CE",
+            strike=24150,
+            requested_expiry=None,
+            today=date(2026, 7, 3),
+        )
+        self.assertEqual(expiry, date(2026, 7, 14))
+        self.assertEqual(symbol, "NIFTY14JUL26C24150")
+        self.assertEqual(lot_size, 65)
+
+    def test_explicit_expiry_selects_exact_contract(self):
+        expiry, symbol, lot_size = flattrade_diagnostic_module.select_contract(
+            self.client,
+            underlying="NIFTY",
+            option_type="CE",
+            strike=24150,
+            requested_expiry=date(2026, 7, 21),
+            today=date(2026, 7, 3),
+        )
+        self.assertEqual((expiry, symbol, lot_size), (
+            date(2026, 7, 21), "NIFTY21JUL26C24150", 65
+        ))
+
+    def test_round_trip_aborts_without_exact_yes(self):
+        fake_client = MagicMock()
+        with patch("builtins.input", return_value="yes"):
+            placed = flattrade_diagnostic_module.place_round_trip_test_order(
+                fake_client, "NIFTY14JUL26C24150", 65
+            )
+        self.assertFalse(placed)
+        fake_client.place_market_order.assert_not_called()
+
+    def test_round_trip_buys_then_sells_after_confirmation(self):
+        fake_client = MagicMock()
+        fake_client.place_market_order.side_effect = [
+            {"stat": "Ok", "norenordno": "BUY1"},
+            {"stat": "Ok", "norenordno": "SELL1"},
+        ]
+        fake_client.extract_order_id.side_effect = ["BUY1", "SELL1"]
+        with patch("builtins.input", return_value="YES"):
+            placed = flattrade_diagnostic_module.place_round_trip_test_order(
+                fake_client, "NIFTY14JUL26C24150", 65
+            )
+        self.assertTrue(placed)
+        self.assertEqual(
+            [call.kwargs["side"] for call in fake_client.place_market_order.call_args_list],
+            ["BUY", "SELL"],
+        )
+
+    def test_unconfirmed_entry_warns_that_a_live_position_may_exist(self):
+        fake_client = MagicMock()
+        fake_client.place_market_order.side_effect = TimeoutError("fill unknown")
+        with patch("builtins.input", return_value="YES"), \
+             patch("builtins.print") as printed:
+            placed = flattrade_diagnostic_module.place_round_trip_test_order(
+                fake_client, "NIFTY14JUL26C24150", 65
+            )
+        self.assertFalse(placed)
+        output = "\n".join(" ".join(map(str, call.args)) for call in printed.call_args_list)
+        self.assertIn("MAY BE OPEN", output)
+
+
+class TestFlattradeMasterIntegration(unittest.TestCase):
+    """The master and friendly CLI must expose Flattrade without network access."""
+
+    def test_master_guarded_loads_flattrade_singleton(self):
+        self.assertIsNotNone(
+            getattr(master_file, "flattrade_execution_client", None)
+        )
+
+    def test_master_selector_uses_flattrade_nfo_product_settings(self):
+        self.assertTrue(hasattr(master_file, "_select_execution_client"))
+        with patch.dict(
+            os.environ, {"FLATTRADE_PRODUCT_TYPE": "NORMAL"}, clear=False
+        ):
+            client, exchange, product = master_file._select_execution_client(
+                "FLATTRADE"
+            )
+        self.assertIs(client, master_file.flattrade_execution_client)
+        self.assertEqual((exchange, product), ("NFO", "NORMAL"))
+
+    def test_master_selector_fails_closed_for_unknown_broker(self):
+        self.assertTrue(hasattr(master_file, "_select_execution_client"))
+        with self.assertLogs(master_file.logging.getLogger(master_file.LOGGER_NAME), level="ERROR"):
+            selected = master_file._select_execution_client("FLAT-TYPO")
+        self.assertEqual(selected, (None, "", "INTRADAY"))
+
+    def test_algo_cli_maps_flattrade_diagnostic(self):
+        import algo
+
+        self.assertEqual(
+            algo.BROKER_DIAGNOSTICS.get("flattrade"),
+            "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
         )
 
 

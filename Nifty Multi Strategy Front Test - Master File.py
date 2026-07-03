@@ -955,11 +955,10 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - selectable broker: Kotak Neo or Shoonya.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, or Flattrade.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. Both helpers
-# (Dependencies/Kotak API/kotak_execution.py and Dependencies/Shoonya API/
-# shoonya_execution.py) expose the SAME surface (ensure_logged_in /
+# This is how real (non-paper) orders reach the broker. All three helpers expose
+# the SAME surface (ensure_logged_in /
 # preload_scrip_master / resolve_option_symbol / place_market_order /
 # extract_order_id / logout / is_logged_in), so the runner uses whichever one
 # LIVE_BROKER selects via a single generic `execution_client`. Each import is
@@ -993,30 +992,55 @@ except Exception as _shoonya_import_exc:  # ImportError when SDK folder/deps mis
         _shoonya_import_exc,
     )
 
-# Pick the active broker from .env (default KOTAK). The rest of the runner only
-# touches the generic `execution_client` / LIVE_EXCHANGE_SEGMENT / LIVE_PRODUCT_TYPE
-# below, so the per-broker differences (exchange code, product key) live here only.
-# INTRADAY (MIS/I) = squared off same day; NORMAL (NRML/M) = carried overnight.
-LIVE_BROKER = _env_str("LIVE_BROKER", "KOTAK").upper().strip() or "KOTAK"
-if LIVE_BROKER == "KOTAK":
-    execution_client = kotak_execution_client
-    LIVE_EXCHANGE_SEGMENT = "nse_fo"
-    LIVE_PRODUCT_TYPE = _env_str("KOTAK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
-elif LIVE_BROKER == "SHOONYA":
-    execution_client = shoonya_execution_client
-    LIVE_EXCHANGE_SEGMENT = "NFO"
-    LIVE_PRODUCT_TYPE = _env_str("SHOONYA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
-else:
-    # Fail CLOSED on an unknown/typo'd broker (e.g. "SHONYA"): leave NO client so
-    # the startup guard forces every strategy to PAPER, and log a loud error. We
-    # must never silently fall back to a different broker for live-money execution.
-    logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK or SHOONYA); live trading DISABLED (paper only).",
-        LIVE_BROKER,
+try:
+    _flattrade_execution_module = load_module(
+        "master_flattrade_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Flattrade API" / "flattrade_execution.py",
     )
-    execution_client = None
-    LIVE_EXCHANGE_SEGMENT = ""
-    LIVE_PRODUCT_TYPE = "INTRADAY"
+    flattrade_execution_client = _flattrade_execution_module.flattrade_execution_client
+except Exception as _flattrade_import_exc:
+    flattrade_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Flattrade execution layer unavailable (%s); Flattrade live trading disabled.",
+        _flattrade_import_exc,
+    )
+
+
+def _select_execution_client(broker_name: str):
+    """Return client, exchange, and product for one explicit broker selection.
+
+    Keeping this decision in one small function makes the fail-closed behaviour
+    easy to test.  A typo must never route real-money orders to another broker.
+
+    Returns:
+        ``(client, exchange_segment, product_type)``. Unknown names deliberately
+        return ``(None, "", "INTRADAY")``; startup sees the missing client and
+        forces every would-be live strategy back to paper mode.
+    """
+    broker = str(broker_name).upper().strip()
+    if broker == "KOTAK":
+        product = _env_str("KOTAK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return kotak_execution_client, "nse_fo", product
+    if broker == "SHOONYA":
+        product = _env_str("SHOONYA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return shoonya_execution_client, "NFO", product
+    if broker == "FLATTRADE":
+        product = _env_str("FLATTRADE_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return flattrade_execution_client, "NFO", product
+    logging.getLogger(LOGGER_NAME).error(
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, or FLATTRADE); "
+        "live trading DISABLED (paper only).",
+        broker_name,
+    )
+    return None, "", "INTRADAY"
+
+
+# Pick the active broker from .env (default KOTAK). The rest of the runner only
+# touches these three generic values. INTRADAY is same-day; NORMAL is carry-forward.
+LIVE_BROKER = _env_str("LIVE_BROKER", "KOTAK").upper().strip() or "KOTAK"
+execution_client, LIVE_EXCHANGE_SEGMENT, LIVE_PRODUCT_TYPE = _select_execution_client(
+    LIVE_BROKER
+)
 
 # =============================================================================
 # SIGNAL GENERATOR PORTS (ATM single-leg strategies from the TradingBot repo)
@@ -2907,7 +2931,7 @@ class BasePaperStrategyWorker(threading.Thread):
         This is the bridge between "paper" and "real": in paper mode it does
         nothing and just returns True, so the rest of the trade code can call it
         without caring which mode we're in. In live mode it actually places the
-        order via the selected `execution_client` (Kotak or Shoonya). A "leg" is
+        order via the selected `execution_client` (Kotak, Shoonya, or Flattrade). A "leg" is
         one option contract (a spread has two legs).
 
         `leg` is a dict describing the option:
@@ -9827,9 +9851,9 @@ def main() -> None:
         live_count = 0
 
     # Eagerly establish the broker session NOW (at startup) so worker threads never
-    # block on login mid-session (Kotak prompts for a TOTP; Shoonya auto-generates
-    # it). If login/2FA fails here, force every strategy to PAPER rather than
-    # failing one order at a time later.
+    # block on login mid-session (Kotak uses TOTP, Shoonya may auto-generate it,
+    # and Flattrade uses browser authorization). If login fails here, force every
+    # strategy to PAPER rather than failing one order at a time later.
     if live_count > 0 and execution_client is not None:
         logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
         if not execution_client.ensure_logged_in():
