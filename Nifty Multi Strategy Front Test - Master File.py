@@ -203,17 +203,19 @@ import re
 import sys
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, time as dt_time, timedelta
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
-from typing import Optional
 
 # --- Third-party imports -----------------------------------------------------
 import pandas as pd
+
 # `requests` is only used by the end-of-day instrument-master refresh helper at
 # the bottom of this file. We keep it next to `pandas` rather than lazy-loading
 # it inside the helper because the rest of the repo (e.g. the swing strategy
 # data fetcher) already depends on `requests`, so it is guaranteed to be present.
 import requests
+
 # `DhanContext` wraps (client_id, access_token) so the rest of the SDK can
 # share one authenticated session. `DhanLogin` is the auth helper class we
 # use only for `user_profile(...)` startup validation -- the OAuth dance
@@ -1445,8 +1447,8 @@ class MarketSnapshot:
 
     timeframe: str
     frame: pd.DataFrame
-    source_candle_ts: Optional[pd.Timestamp]
-    candle_signature: Optional[tuple]
+    source_candle_ts: pd.Timestamp | None
+    candle_signature: tuple | None
     fetched_at: datetime
 
 
@@ -1489,7 +1491,7 @@ class PaperPosition:
     option_exchange_segment: str = ""
     option_right: str = ""
     option_strike: float = 0.0
-    option_expiry: Optional[date] = None
+    option_expiry: date | None = None
     option_lot_size: int = 0
 
 
@@ -1516,7 +1518,7 @@ class HedgedPaperPosition:
 
     # Snapshot at entry, used for logging / audit / SL-target anchoring.
     entry_underlying: float = 0.0
-    entry_timestamp: Optional[datetime] = None
+    entry_timestamp: datetime | None = None
 
     # -- Main leg (SELL PE for bullish, SELL CE for bearish) ----------------
     main_symbol: str = ""
@@ -1525,7 +1527,7 @@ class HedgedPaperPosition:
     main_exchange_segment: str = ""
     main_right: str = ""
     main_strike: float = 0.0
-    main_expiry: Optional[date] = None
+    main_expiry: date | None = None
     main_lot_size: int = 0
     main_quantity: int = 0
     main_entry_price: float = 0.0
@@ -1538,7 +1540,7 @@ class HedgedPaperPosition:
     hedge_exchange_segment: str = ""
     hedge_right: str = ""
     hedge_strike: float = 0.0
-    hedge_expiry: Optional[date] = None
+    hedge_expiry: date | None = None
     hedge_lot_size: int = 0
     hedge_quantity: int = 0
     hedge_entry_price: float = 0.0
@@ -1577,7 +1579,7 @@ class OptionSubscription:
     trading_symbol: str
     right: str
     strike: float
-    expiry: Optional[date]
+    expiry: date | None
 
 
 # =============================================================================
@@ -1629,7 +1631,7 @@ class SharedMarketDataStore:
             self._snapshots[str(timeframe)] = snapshot
         return snapshot
 
-    def get(self, timeframe: str) -> Optional[MarketSnapshot]:
+    def get(self, timeframe: str) -> MarketSnapshot | None:
         """
         Return a fresh `MarketSnapshot` whose `frame` is a pandas copy.
 
@@ -1734,7 +1736,7 @@ def _to_int_safe(value, default=0) -> int:
         return default
 
 
-def _first_existing_col(df: pd.DataFrame, names) -> Optional[str]:
+def _first_existing_col(df: pd.DataFrame, names) -> str | None:
     """
     Case-insensitively look up the first column from `names` that exists in
     `df`. Used for instrument-master parsing where column names can vary
@@ -1844,7 +1846,7 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
     return out
 
 
-def build_last_row_signature(frame: pd.DataFrame) -> Optional[tuple]:
+def build_last_row_signature(frame: pd.DataFrame) -> tuple | None:
     """
     Fingerprint the latest row of an OHLC table.
 
@@ -2167,8 +2169,8 @@ class OptionsContractResolver:
         self.underlying = str(underlying).upper().strip()
         self.instrument_master_glob = instrument_master_glob
         self.log = log
-        self._option_chain_cache: Optional[pd.DataFrame] = None
-        self._cache_date: Optional[date] = None
+        self._option_chain_cache: pd.DataFrame | None = None
+        self._cache_date: date | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -2410,7 +2412,7 @@ class OptionsContractResolver:
         spot_price: float,
         right: str,
         otm_steps: int = 1,
-        expiry: Optional[date] = None,
+        expiry: date | None = None,
     ) -> dict:
         """
         Resolve an OUT-OF-THE-MONEY option row, `otm_steps` strikes from ATM.
@@ -2507,7 +2509,7 @@ class OptionsContractResolver:
         puts: pd.DataFrame,
         ltp_map: dict[tuple[str, int], float],
         target_premium: float,
-        exclude_security_ids: Optional[set[int]] = None,
+        exclude_security_ids: set[int] | None = None,
     ) -> dict:
         """
         From a PE-rows DataFrame and a (segment, sec_id) -> LTP map, return
@@ -2579,7 +2581,7 @@ class OptionsContractResolver:
         calls: pd.DataFrame,
         ltp_map: dict[tuple[str, int], float],
         target_premium: float,
-        exclude_security_ids: Optional[set[int]] = None,
+        exclude_security_ids: set[int] | None = None,
     ) -> dict:
         """
         Mirror of `pick_put_by_target_premium` for CE rows.
@@ -2634,7 +2636,7 @@ class OptionsContractResolver:
         expiry: date,
         strike: float,
         right: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """
         Return the option-chain row for an exact (expiry, strike, right) tuple.
 
@@ -2754,8 +2756,8 @@ class CentralMarketDataFetcher(threading.Thread):
         self.stop_event = stop_event
         self.broker = broker
         self.log = logging.getLogger(f"{LOGGER_NAME}.fetcher")
-        self.last_logged_candle_ts: dict[str, Optional[pd.Timestamp]] = {}
-        self.last_logged_index_ltp: Optional[float] = None
+        self.last_logged_candle_ts: dict[str, pd.Timestamp | None] = {}
+        self.last_logged_index_ltp: float | None = None
 
     def fetch_ohlc(self, timeframe: str) -> pd.DataFrame:
         """Fetch 1-min NIFTY spot OHLC. Higher TFs are derived per-worker."""
@@ -4606,15 +4608,15 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
         # mid-session reset).
         # Shape: {strike_float: {"ce": ce_oi_float, "pe": pe_oi_float}}.
         self._oi_baseline: dict[float, dict[str, float]] = {}
-        self._oi_baseline_captured_at: Optional[datetime] = None
+        self._oi_baseline_captured_at: datetime | None = None
 
         # `self._last_option_chain_fetch_at` is a simple "remember the
         # last time we called the option_chain API" timestamp. Combined
         # with `_last_oi_change_frame` (the cached result), it lets us
         # avoid hammering the rate-limited endpoint when the run loop
         # ticks faster than OPENING_STRIKE_OPTION_CHAIN_REFRESH_SECONDS.
-        self._last_option_chain_fetch_at: Optional[datetime] = None
-        self._last_oi_change_frame: Optional[pd.DataFrame] = None
+        self._last_option_chain_fetch_at: datetime | None = None
+        self._last_oi_change_frame: pd.DataFrame | None = None
 
         # `self._high_water_R` tracks the BEST reward this trade has
         # touched so far, measured in "R units" (1R = OPENING_STRIKE_
@@ -4799,12 +4801,11 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
 
             # Only keep strikes that have BOTH CE and PE OI reported,
             # and where at least one side has non-zero OI.
-            if "ce_oi" in record and "pe_oi" in record:
-                if record["ce_oi"] > 0 or record["pe_oi"] > 0:
-                    out[strike] = record
+            if "ce_oi" in record and "pe_oi" in record and (record["ce_oi"] > 0 or record["pe_oi"] > 0):
+                out[strike] = record
         return out
 
-    def _build_option_chain_oi_change(self) -> Optional[pd.DataFrame]:
+    def _build_option_chain_oi_change(self) -> pd.DataFrame | None:
         """
         Produce the per-strike OI-change DataFrame the signal engine
         expects. Columns:
@@ -4908,7 +4909,7 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
                 baseline = self._oi_baseline[strike]
             rows.append(
                 {
-                    "strike": int(round(strike)),
+                    "strike": round(float(strike)),
                     "call_oi_change": float(meta.get("ce_oi", 0.0) - baseline.get("ce", 0.0)),
                     "put_oi_change": float(meta.get("pe_oi", 0.0) - baseline.get("pe", 0.0)),
                 }
@@ -5261,8 +5262,8 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
         super().__init__(store, stop_event, broker)
         self.config = CPR_ALGO3_CONFIG
         # Observation legs, chosen once per session by `_ensure_observation_strikes`.
-        self.itm_ce: Optional[dict] = None
-        self.itm_pe: Optional[dict] = None
+        self.itm_ce: dict | None = None
+        self.itm_pe: dict | None = None
         self.observation_expiry = None
         self.signal_count = 0
         self.entry_submit_count = 0
@@ -5384,14 +5385,10 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
         )
         if decision.signal_triggered:
             self.signal_count += 1
-        if decision.action == "ENTER_LONG":
+        if decision.action in ("ENTER_LONG", "ENTER_SHORT"):
+            direction = "LONG" if decision.action == "ENTER_LONG" else "SHORT"
             if self.enter_position(
-                "LONG", decision.entry_underlying, decision.stop_underlying, decision.target_underlying
-            ):
-                self.entry_submit_count += 1
-        elif decision.action == "ENTER_SHORT":
-            if self.enter_position(
-                "SHORT", decision.entry_underlying, decision.stop_underlying, decision.target_underlying
+                direction, decision.entry_underlying, decision.stop_underlying, decision.target_underlying
             ):
                 self.entry_submit_count += 1
 
@@ -5448,7 +5445,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition()
         # Wall-clock time of the most recent paper-trade exit. The cool-off
         # gate compares (now - last_exit) against POST_EXIT_COOLDOWN_MINUTES.
-        self.last_exit_datetime: Optional[datetime] = None
+        self.last_exit_datetime: datetime | None = None
         self.post_exit_cooldown = timedelta(minutes=POST_EXIT_COOLDOWN_MINUTES)
         self.signal_count = 0
         self.entry_submit_count = 0
@@ -5536,7 +5533,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
     # ------------------------------------------------------------------
     # Hedged entry (PE legs - strike selection lives HERE per the user's hint)
     # ------------------------------------------------------------------
-    def _pick_hedged_puts(self, spot_price: float) -> Optional[tuple[dict, dict, date]]:
+    def _pick_hedged_puts(self, spot_price: float) -> tuple[dict, dict, date] | None:
         """
         Pick the main (SELL ~Rs.160) and hedge (BUY ~Rs.10) PE legs for the
         CURRENT-WEEK expiry.
@@ -6038,9 +6035,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         """True between BEARISH_TRADING_START_*:* and BEARISH_ENTRY_CUTOFF_*:*."""
         if is_before_time(self.trading_start_hour, self.trading_start_minute):
             return False
-        if is_after_time(BEARISH_ENTRY_CUTOFF_HOUR, BEARISH_ENTRY_CUTOFF_MINUTE):
-            return False
-        return True
+        return not is_after_time(BEARISH_ENTRY_CUTOFF_HOUR, BEARISH_ENTRY_CUTOFF_MINUTE)
 
     def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
         """
@@ -6091,7 +6086,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
     # ------------------------------------------------------------------
     # Hedged entry (CE legs - strike selection lives HERE per the user's hint)
     # ------------------------------------------------------------------
-    def _pick_hedged_calls(self, spot_price: float) -> Optional[tuple[dict, dict, date]]:
+    def _pick_hedged_calls(self, spot_price: float) -> tuple[dict, dict, date] | None:
         """
         Pick the main (SELL ~Rs.160) and hedge (BUY ~Rs.10) CE legs for the
         CURRENT-WEEK expiry. Mirror of `_pick_hedged_puts` with PE swapped
@@ -6734,10 +6729,10 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         # Wall-clock time of the most recent capture attempt. We use this
         # to enforce a backoff between retries so we do not spam DhanHQ's
         # `/optionchain` endpoint when something is wrong.
-        self.last_capture_attempt_at: Optional[datetime] = None
+        self.last_capture_attempt_at: datetime | None = None
         self.capture_backoff = timedelta(seconds=DELTA20_CAPTURE_RETRY_SECONDS)
         # The expiry we captured against. Stored only for log clarity.
-        self.reference_expiry: Optional[date] = None
+        self.reference_expiry: date | None = None
 
         # ----- Per-side metadata snapshot at 09:20 ----------------------
         # Each *_meta is a dict with keys:
@@ -6749,10 +6744,10 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         # All four are subscribed with the central fetcher at capture
         # time, so their LTPs stay fresh in the shared store throughout
         # the session without us needing to make extra broker calls.
-        self.ce_monitor_meta: Optional[dict] = None
-        self.ce_hedge_meta: Optional[dict] = None
-        self.pe_monitor_meta: Optional[dict] = None
-        self.pe_hedge_meta: Optional[dict] = None
+        self.ce_monitor_meta: dict | None = None
+        self.ce_hedge_meta: dict | None = None
+        self.pe_monitor_meta: dict | None = None
+        self.pe_hedge_meta: dict | None = None
         # The "reference" premium = the monitor leg's LTP at 09:20. This
         # is the yardstick: entries fire on a 5% drop below it; exits
         # fire on a 3x rise above it. The deltas are stored only for
@@ -7285,7 +7280,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         parsed_chain: dict,
         target_delta: float,
         right: str,
-    ) -> Optional[tuple[float, dict]]:
+    ) -> tuple[float, dict] | None:
         """
         Return (strike, leg_dict) whose delta is closest to `target_delta`.
 
@@ -7983,8 +7978,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         # The exact contract last held on each leg (normalized 7-key dict), so a
         # re-entry re-buys the SAME strike rather than re-deriving OTM1 from a
         # since-moved spot.
-        self.ce_last_contract: Optional[dict] = None
-        self.pe_last_contract: Optional[dict] = None
+        self.ce_last_contract: dict | None = None
+        self.pe_last_contract: dict | None = None
 
         # Telemetry for the end-of-day summary line.
         self.entry_submit_count = 0
@@ -8830,7 +8825,7 @@ if SL_HUNTING_AVAILABLE:
     SL_HUNTING_LESSONS_ENABLED = _env_bool("SL_HUNTING_LESSONS_ENABLED", False)
     SL_HUNTING_LESSONS_PATH = _env_str("SL_HUNTING_LESSONS_PATH", str(SL_HUNTING_DIR / "lessons.json"))
 
-    class SLHuntingAIWorker(AtmSingleLegStrategyWorker):  # noqa: F811 - optional definition
+    class SLHuntingAIWorker(AtmSingleLegStrategyWorker):
         """ATM single-leg worker whose entries/exits come from the SL Hunting agent."""
 
         strategy_name = "SL Hunting AI"
@@ -8851,8 +8846,8 @@ if SL_HUNTING_AVAILABLE:
         # manual "no fresh trades after noon" rule. This does NOT square off open
         # positions -- only the existing square_off_* gate (15:15) force-closes; exits
         # (stop/target, AI exit, max-loss) keep working. See process_strategy_frame.
-        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 12)
-        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 0)
+        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10)
+        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 30)
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
@@ -9220,7 +9215,7 @@ def format_trade_message(event: dict) -> str:
     if quantity is not None:
         size_line = f"Qty: <b>{quantity}</b>"
         if lots is not None and lot_size:
-            size_line += f" ({lots} lot(s) × {lot_size})"
+            size_line += f" ({lots} lot(s) x {lot_size})"
         elif lot_size:
             size_line += f" (lot size {lot_size})"
         lines.append(size_line)
@@ -9260,7 +9255,7 @@ class TelegramMessageWorker(threading.Thread):
 
     def __init__(
         self,
-        event_queue: "queue.Queue",
+        event_queue: queue.Queue,
         stop_event: threading.Event,
         bot_token: str,
         chat_id: str,
@@ -9490,7 +9485,7 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
         if not Path(log_path).exists():
             return result
         # errors="replace" stops one stray non-UTF-8 byte from aborting the parse.
-        with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+        with open(log_path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 # Cheap pre-filter: skip everything that isn't a P&L summary line
                 # before doing the costlier split/regex work below.

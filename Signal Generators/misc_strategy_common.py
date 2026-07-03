@@ -34,7 +34,7 @@ Beginner orientation
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -42,9 +42,11 @@ import pandas as pd
 try:
     # TA-Lib is the preferred indicator backend in this repo because it matches
     # the standard library indicator implementations used by the other folders.
-    import talib  # type: ignore
+    import talib
 except ImportError:  # pragma: no cover - used only when TA-Lib is absent
-    talib = None  # type: ignore
+    # The assignment error only exists where TA-Lib (with stubs) is installed;
+    # on stub-less machines the ignore is unused, hence the dual code.
+    talib = None  # type: ignore[assignment, unused-ignore]
 
 
 OHLC_COLUMNS = ["open", "high", "low", "close"]
@@ -53,7 +55,7 @@ OHLC_COLUMNS = ["open", "high", "low", "close"]
 # ---------------------------------------------------------------------------
 # Column / frame helpers (shared with the Subhamoy convention)
 # ---------------------------------------------------------------------------
-def find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> Optional[str]:
+def find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
     """Find the first matching column name using case-insensitive comparison."""
     lookup = {str(column).strip().lower(): column for column in frame.columns}
     for name in names:
@@ -150,7 +152,7 @@ def falling_over_lookback(values: pd.Series, lookback: int) -> pd.Series:
 def finite(value: object) -> bool:
     """Return True only for real finite numbers."""
     try:
-        return bool(np.isfinite(float(value)))
+        return bool(np.isfinite(float(value)))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return False
 
@@ -337,9 +339,9 @@ def stochastic(
             _as_float_array(close),
             fastk_period=k_period,
             slowk_period=smooth_k,
-            slowk_matype=0,
+            slowk_matype=0,  # type: ignore[arg-type, unused-ignore]
             slowd_period=d_period,
-            slowd_matype=0,
+            slowd_matype=0,  # type: ignore[arg-type, unused-ignore]
         )
         return pd.Series(slowk, index=frame.index), pd.Series(slowd, index=frame.index)
     lowest_low = low.rolling(window=k_period, min_periods=k_period).min()
@@ -409,7 +411,7 @@ def bollinger_bands(
             timeperiod=period,
             nbdevup=num_std,
             nbdevdn=num_std,
-            matype=0,
+            matype=0,  # type: ignore[arg-type, unused-ignore]
         )
         return (
             pd.Series(upper, index=values.index),
@@ -672,26 +674,26 @@ def find_swing_highs(values: pd.Series, window: int) -> list[int]:
 
 __all__ = [
     "OHLC_COLUMNS",
-    "find_first_col",
-    "require_columns",
-    "normalize_ohlc_frame",
     "add_candle_anatomy",
-    "rising_over_lookback",
-    "falling_over_lookback",
-    "finite",
-    "sma",
-    "ema",
-    "atr",
-    "true_range",
-    "rsi",
-    "macd",
-    "stochastic",
     "adx",
+    "atr",
     "bollinger_bands",
-    "keltner_channels",
-    "rolling_zscore",
-    "parabolic_sar",
-    "supertrend",
-    "find_swing_lows",
+    "ema",
+    "falling_over_lookback",
+    "find_first_col",
     "find_swing_highs",
+    "find_swing_lows",
+    "finite",
+    "keltner_channels",
+    "macd",
+    "normalize_ohlc_frame",
+    "parabolic_sar",
+    "require_columns",
+    "rising_over_lookback",
+    "rolling_zscore",
+    "rsi",
+    "sma",
+    "stochastic",
+    "supertrend",
+    "true_range",
 ]

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
 STRATEGY_DIR = Path(__file__).resolve().parent
 LOGIC_PATH = STRATEGY_DIR / "cpr_strategy_logic.py"
 BACKTEST_PATH = STRATEGY_DIR / "Nifty CPR Strategy Backtest.py"

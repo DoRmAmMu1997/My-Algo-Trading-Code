@@ -41,10 +41,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, supertrend
 
 
@@ -88,7 +87,7 @@ class SupertrendDecision:
 
 def build_supertrend_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[SupertrendConfig] = None,
+    config: SupertrendConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with the Supertrend line, direction, flip flags, and risk levels."""
     config = config or SupertrendConfig()
@@ -123,7 +122,7 @@ def build_supertrend_with_indicators(
 class SupertrendSignalEngine:
     """Decision engine for Supertrend flip entries and exits."""
 
-    def __init__(self, config: Optional[SupertrendConfig] = None) -> None:
+    def __init__(self, config: SupertrendConfig | None = None) -> None:
         self.config = config or SupertrendConfig()
 
     def minimum_history_bars(self) -> int:
@@ -172,7 +171,7 @@ class SupertrendSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[SupertrendPositionContext] = None,
+        position: SupertrendPositionContext | None = None,
     ) -> SupertrendDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -229,7 +228,7 @@ class SupertrendSignalEngine:
 class SupertrendSignalGenerator:
     """Convenience wrapper for full-history and latest-candle Supertrend signals."""
 
-    def __init__(self, config: Optional[SupertrendConfig] = None) -> None:
+    def __init__(self, config: SupertrendConfig | None = None) -> None:
         self.config = config or SupertrendConfig()
         self.engine = SupertrendSignalEngine(self.config)
 
@@ -243,7 +242,7 @@ class SupertrendSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[SupertrendPositionContext] = None
+        position: SupertrendPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -279,7 +278,7 @@ class SupertrendSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[SupertrendPositionContext] = None,
+        position: SupertrendPositionContext | None = None,
     ) -> SupertrendDecision:
         frame = build_supertrend_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -287,15 +286,15 @@ class SupertrendSignalGenerator:
 
 def generate_supertrend_signals(
     data: pd.DataFrame,
-    config: Optional[SupertrendConfig] = None,
+    config: SupertrendConfig | None = None,
 ) -> pd.DataFrame:
     return SupertrendSignalGenerator(config=config).generate(data)
 
 
 def get_latest_supertrend_signal(
     data: pd.DataFrame,
-    config: Optional[SupertrendConfig] = None,
-    position: Optional[SupertrendPositionContext] = None,
+    config: SupertrendConfig | None = None,
+    position: SupertrendPositionContext | None = None,
 ) -> SupertrendDecision:
     return SupertrendSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -306,15 +305,15 @@ get_latest_nifty_supertrend_misc_signal = get_latest_supertrend_signal
 
 
 __all__ = [
+    "NiftySupertrendMiscSignalGenerator",
     "SupertrendConfig",
-    "SupertrendPositionContext",
     "SupertrendDecision",
-    "build_supertrend_with_indicators",
+    "SupertrendPositionContext",
     "SupertrendSignalEngine",
     "SupertrendSignalGenerator",
-    "generate_supertrend_signals",
-    "get_latest_supertrend_signal",
-    "NiftySupertrendMiscSignalGenerator",
+    "build_supertrend_with_indicators",
     "generate_nifty_supertrend_misc_signals",
+    "generate_supertrend_signals",
     "get_latest_nifty_supertrend_misc_signal",
+    "get_latest_supertrend_signal",
 ]

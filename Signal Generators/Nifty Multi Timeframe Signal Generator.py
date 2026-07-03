@@ -32,10 +32,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import ema, finite, normalize_ohlc_frame, require_columns, rsi, sma
 
 
@@ -93,7 +92,7 @@ class MultiTimeframeDecision:
 
 def build_multi_timeframe_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[MultiTimeframeConfig] = None,
+    config: MultiTimeframeConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with trend SMA, EMA crossover flags, RSI, and risk levels."""
     config = config or MultiTimeframeConfig()
@@ -134,7 +133,7 @@ def build_multi_timeframe_with_indicators(
 class MultiTimeframeSignalEngine:
     """Decision engine for multi-timeframe trend entries and exits."""
 
-    def __init__(self, config: Optional[MultiTimeframeConfig] = None) -> None:
+    def __init__(self, config: MultiTimeframeConfig | None = None) -> None:
         self.config = config or MultiTimeframeConfig()
 
     def minimum_history_bars(self) -> int:
@@ -176,7 +175,7 @@ class MultiTimeframeSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[MultiTimeframePositionContext] = None,
+        position: MultiTimeframePositionContext | None = None,
     ) -> MultiTimeframeDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -233,7 +232,7 @@ class MultiTimeframeSignalEngine:
 class MultiTimeframeSignalGenerator:
     """Convenience wrapper for full-history and latest-candle multi-timeframe signals."""
 
-    def __init__(self, config: Optional[MultiTimeframeConfig] = None) -> None:
+    def __init__(self, config: MultiTimeframeConfig | None = None) -> None:
         self.config = config or MultiTimeframeConfig()
         self.engine = MultiTimeframeSignalEngine(self.config)
 
@@ -247,7 +246,7 @@ class MultiTimeframeSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[MultiTimeframePositionContext] = None
+        position: MultiTimeframePositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -283,7 +282,7 @@ class MultiTimeframeSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[MultiTimeframePositionContext] = None,
+        position: MultiTimeframePositionContext | None = None,
     ) -> MultiTimeframeDecision:
         frame = build_multi_timeframe_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -291,15 +290,15 @@ class MultiTimeframeSignalGenerator:
 
 def generate_multi_timeframe_signals(
     data: pd.DataFrame,
-    config: Optional[MultiTimeframeConfig] = None,
+    config: MultiTimeframeConfig | None = None,
 ) -> pd.DataFrame:
     return MultiTimeframeSignalGenerator(config=config).generate(data)
 
 
 def get_latest_multi_timeframe_signal(
     data: pd.DataFrame,
-    config: Optional[MultiTimeframeConfig] = None,
-    position: Optional[MultiTimeframePositionContext] = None,
+    config: MultiTimeframeConfig | None = None,
+    position: MultiTimeframePositionContext | None = None,
 ) -> MultiTimeframeDecision:
     return MultiTimeframeSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -311,14 +310,14 @@ get_latest_nifty_multi_timeframe_signal = get_latest_multi_timeframe_signal
 
 __all__ = [
     "MultiTimeframeConfig",
-    "MultiTimeframePositionContext",
     "MultiTimeframeDecision",
-    "build_multi_timeframe_with_indicators",
+    "MultiTimeframePositionContext",
     "MultiTimeframeSignalEngine",
     "MultiTimeframeSignalGenerator",
-    "generate_multi_timeframe_signals",
-    "get_latest_multi_timeframe_signal",
     "NiftyMultiTimeframeSignalGenerator",
+    "build_multi_timeframe_with_indicators",
+    "generate_multi_timeframe_signals",
     "generate_nifty_multi_timeframe_signals",
+    "get_latest_multi_timeframe_signal",
     "get_latest_nifty_multi_timeframe_signal",
 ]

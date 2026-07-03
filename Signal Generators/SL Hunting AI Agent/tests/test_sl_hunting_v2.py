@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-
 from sl_hunting_agent import AgentRunResult, SLHuntingAgent
 from sl_hunting_executor import StandaloneExecutor, risk_based_lots, stop_or_target_hit
 from sl_hunting_indicators import cross_index_signal

@@ -32,12 +32,12 @@ Important modeling note:
 """
 
 import argparse
+import contextlib
 import logging
 import os
 import sys
 from dataclasses import dataclass
 from datetime import time as dt_time
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -62,7 +62,6 @@ from profit_shooter_strategy_logic import (
     ProfitShooterSignalEngine,
     build_profit_shooter_with_indicators,
 )
-
 
 # -----------------------------
 # User configuration
@@ -348,7 +347,7 @@ class ProfitShooterFuturesStrategy(Strategy):
         self.close_request_reason = ""
 
         # Pending next-candle breakout order state.
-        self.pending_entry: Optional[PendingEntryOrder] = None
+        self.pending_entry: PendingEntryOrder | None = None
 
         # Diagnostic counters.
         self.signal_count = 0
@@ -391,10 +390,8 @@ class ProfitShooterFuturesStrategy(Strategy):
             return
 
         if cancel_order:
-            try:
+            with contextlib.suppress(Exception):
                 self.pending_entry.order.cancel()
-            except Exception:
-                pass
             self.pending_entry_cancel_count += 1
 
         self.pending_entry = None

@@ -24,7 +24,6 @@ import os
 
 from index_1m_5y_data_fetch_dhan_common import IndexFetchDefaults, run_index_fetcher
 
-
 # Anchor the default output to <repo_root>/Backtest Outputs/ so the CSV
 # always lands in the repo's shared output folder regardless of the cwd
 # the script is launched from. `__file__` is at <repo>/Data Extractors/...

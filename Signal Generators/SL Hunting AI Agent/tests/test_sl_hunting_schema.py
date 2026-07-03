@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from sl_hunting_agent import SLHuntingDecision
 from sl_hunting_knowledge import FINAL_OUTPUT_INSTRUCTION, build_system_prompt
 

@@ -32,10 +32,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, rolling_zscore, sma
 
 
@@ -82,7 +81,7 @@ class MeanReversionZscoreDecision:
 
 def build_mean_reversion_zscore_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[MeanReversionZscoreConfig] = None,
+    config: MeanReversionZscoreConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with rolling mean, z-score, cross flags, and risk levels."""
     config = config or MeanReversionZscoreConfig()
@@ -113,7 +112,7 @@ def build_mean_reversion_zscore_with_indicators(
 class MeanReversionZscoreSignalEngine:
     """Decision engine for z-score mean reversion entries and exits."""
 
-    def __init__(self, config: Optional[MeanReversionZscoreConfig] = None) -> None:
+    def __init__(self, config: MeanReversionZscoreConfig | None = None) -> None:
         self.config = config or MeanReversionZscoreConfig()
 
     def minimum_history_bars(self) -> int:
@@ -131,7 +130,9 @@ class MeanReversionZscoreSignalEngine:
     def _direction(direction: str) -> str:
         return str(direction).strip().upper()
 
-    def _evaluate_exit(self, current: pd.Series, position: MeanReversionZscorePositionContext) -> MeanReversionZscoreDecision:
+    def _evaluate_exit(
+        self, current: pd.Series, position: MeanReversionZscorePositionContext
+    ) -> MeanReversionZscoreDecision:
         direction = self._direction(position.direction)
         high = float(current["high"])
         low = float(current["low"])
@@ -162,7 +163,7 @@ class MeanReversionZscoreSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[MeanReversionZscorePositionContext] = None,
+        position: MeanReversionZscorePositionContext | None = None,
     ) -> MeanReversionZscoreDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -219,7 +220,7 @@ class MeanReversionZscoreSignalEngine:
 class MeanReversionZscoreSignalGenerator:
     """Convenience wrapper for full-history and latest-candle z-score signals."""
 
-    def __init__(self, config: Optional[MeanReversionZscoreConfig] = None) -> None:
+    def __init__(self, config: MeanReversionZscoreConfig | None = None) -> None:
         self.config = config or MeanReversionZscoreConfig()
         self.engine = MeanReversionZscoreSignalEngine(self.config)
 
@@ -233,7 +234,7 @@ class MeanReversionZscoreSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[MeanReversionZscorePositionContext] = None
+        position: MeanReversionZscorePositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -269,7 +270,7 @@ class MeanReversionZscoreSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[MeanReversionZscorePositionContext] = None,
+        position: MeanReversionZscorePositionContext | None = None,
     ) -> MeanReversionZscoreDecision:
         frame = build_mean_reversion_zscore_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -277,15 +278,15 @@ class MeanReversionZscoreSignalGenerator:
 
 def generate_mean_reversion_zscore_signals(
     data: pd.DataFrame,
-    config: Optional[MeanReversionZscoreConfig] = None,
+    config: MeanReversionZscoreConfig | None = None,
 ) -> pd.DataFrame:
     return MeanReversionZscoreSignalGenerator(config=config).generate(data)
 
 
 def get_latest_mean_reversion_zscore_signal(
     data: pd.DataFrame,
-    config: Optional[MeanReversionZscoreConfig] = None,
-    position: Optional[MeanReversionZscorePositionContext] = None,
+    config: MeanReversionZscoreConfig | None = None,
+    position: MeanReversionZscorePositionContext | None = None,
 ) -> MeanReversionZscoreDecision:
     return MeanReversionZscoreSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -297,14 +298,14 @@ get_latest_nifty_mean_reversion_zscore_signal = get_latest_mean_reversion_zscore
 
 __all__ = [
     "MeanReversionZscoreConfig",
-    "MeanReversionZscorePositionContext",
     "MeanReversionZscoreDecision",
-    "build_mean_reversion_zscore_with_indicators",
+    "MeanReversionZscorePositionContext",
     "MeanReversionZscoreSignalEngine",
     "MeanReversionZscoreSignalGenerator",
-    "generate_mean_reversion_zscore_signals",
-    "get_latest_mean_reversion_zscore_signal",
     "NiftyMeanReversionZscoreSignalGenerator",
+    "build_mean_reversion_zscore_with_indicators",
+    "generate_mean_reversion_zscore_signals",
     "generate_nifty_mean_reversion_zscore_signals",
+    "get_latest_mean_reversion_zscore_signal",
     "get_latest_nifty_mean_reversion_zscore_signal",
 ]

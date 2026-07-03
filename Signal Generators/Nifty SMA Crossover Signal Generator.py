@@ -33,10 +33,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, sma
 
 
@@ -87,7 +86,7 @@ class SMACrossoverDecision:
 
 def build_sma_crossover_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[SMACrossoverConfig] = None,
+    config: SMACrossoverConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with fast/slow SMAs, crossover flags, and risk levels."""
     config = config or SMACrossoverConfig()
@@ -122,7 +121,7 @@ def build_sma_crossover_with_indicators(
 class SMACrossoverSignalEngine:
     """Decision engine for SMA crossover entries and exits."""
 
-    def __init__(self, config: Optional[SMACrossoverConfig] = None) -> None:
+    def __init__(self, config: SMACrossoverConfig | None = None) -> None:
         self.config = config or SMACrossoverConfig()
 
     def minimum_history_bars(self) -> int:
@@ -171,7 +170,7 @@ class SMACrossoverSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[SMACrossoverPositionContext] = None,
+        position: SMACrossoverPositionContext | None = None,
     ) -> SMACrossoverDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -228,7 +227,7 @@ class SMACrossoverSignalEngine:
 class SMACrossoverSignalGenerator:
     """Convenience wrapper for full-history and latest-candle SMA crossover signals."""
 
-    def __init__(self, config: Optional[SMACrossoverConfig] = None) -> None:
+    def __init__(self, config: SMACrossoverConfig | None = None) -> None:
         self.config = config or SMACrossoverConfig()
         self.engine = SMACrossoverSignalEngine(self.config)
 
@@ -242,7 +241,7 @@ class SMACrossoverSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[SMACrossoverPositionContext] = None
+        position: SMACrossoverPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -278,7 +277,7 @@ class SMACrossoverSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[SMACrossoverPositionContext] = None,
+        position: SMACrossoverPositionContext | None = None,
     ) -> SMACrossoverDecision:
         frame = build_sma_crossover_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -286,7 +285,7 @@ class SMACrossoverSignalGenerator:
 
 def generate_sma_crossover_signals(
     data: pd.DataFrame,
-    config: Optional[SMACrossoverConfig] = None,
+    config: SMACrossoverConfig | None = None,
 ) -> pd.DataFrame:
     """Functional wrapper for full-history SMA crossover signals."""
     return SMACrossoverSignalGenerator(config=config).generate(data)
@@ -294,8 +293,8 @@ def generate_sma_crossover_signals(
 
 def get_latest_sma_crossover_signal(
     data: pd.DataFrame,
-    config: Optional[SMACrossoverConfig] = None,
-    position: Optional[SMACrossoverPositionContext] = None,
+    config: SMACrossoverConfig | None = None,
+    position: SMACrossoverPositionContext | None = None,
 ) -> SMACrossoverDecision:
     """Functional wrapper for the latest SMA crossover decision."""
     return SMACrossoverSignalGenerator(config=config).latest_signal(data, position=position)
@@ -308,15 +307,15 @@ get_latest_nifty_sma_crossover_signal = get_latest_sma_crossover_signal
 
 
 __all__ = [
+    "NiftySMACrossoverSignalGenerator",
     "SMACrossoverConfig",
-    "SMACrossoverPositionContext",
     "SMACrossoverDecision",
-    "build_sma_crossover_with_indicators",
+    "SMACrossoverPositionContext",
     "SMACrossoverSignalEngine",
     "SMACrossoverSignalGenerator",
-    "generate_sma_crossover_signals",
-    "get_latest_sma_crossover_signal",
-    "NiftySMACrossoverSignalGenerator",
+    "build_sma_crossover_with_indicators",
     "generate_nifty_sma_crossover_signals",
+    "generate_sma_crossover_signals",
     "get_latest_nifty_sma_crossover_signal",
+    "get_latest_sma_crossover_signal",
 ]

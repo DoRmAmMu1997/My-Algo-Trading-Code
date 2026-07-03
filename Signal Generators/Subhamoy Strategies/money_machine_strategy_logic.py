@@ -11,11 +11,10 @@ trigger is different:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from subhamoy_strategy_common import (
     add_candle_anatomy,
     atr,
@@ -158,7 +157,7 @@ def _build_hulk_masks(frame: pd.DataFrame, config: MoneyMachineStrategyConfig) -
 
 def build_money_machine_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[MoneyMachineStrategyConfig] = None,
+    config: MoneyMachineStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """
     Return OHLC candles enriched with Money Machine indicators and setup columns.
@@ -262,7 +261,7 @@ def build_money_machine_with_indicators(
 class MoneyMachineSignalEngine:
     """Decision engine for Money Machine entries and exits."""
 
-    def __init__(self, config: Optional[MoneyMachineStrategyConfig] = None) -> None:
+    def __init__(self, config: MoneyMachineStrategyConfig | None = None) -> None:
         """
         Store one config object for all later evaluations.
 
@@ -323,7 +322,7 @@ class MoneyMachineSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[MoneyMachinePositionContext] = None,
+        position: MoneyMachinePositionContext | None = None,
     ) -> MoneyMachineDecision:
         """Evaluate the newest candle and return HOLD, ENTER_LONG, ENTER_SHORT, or EXIT."""
         if candles_with_indicators is None or candles_with_indicators.empty:
@@ -406,7 +405,7 @@ class MoneyMachineSignalEngine:
 class MoneyMachineSignalGenerator:
     """Convenience wrapper for full-history and latest-candle Money Machine signals."""
 
-    def __init__(self, config: Optional[MoneyMachineStrategyConfig] = None) -> None:
+    def __init__(self, config: MoneyMachineStrategyConfig | None = None) -> None:
         """
         Create one reusable engine for this generator instance.
 
@@ -427,7 +426,7 @@ class MoneyMachineSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[MoneyMachinePositionContext] = None
+        position: MoneyMachinePositionContext | None = None
 
         for index in range(len(frame)):
             # Full-history generation keeps one simple simulated position so
@@ -471,7 +470,7 @@ class MoneyMachineSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[MoneyMachinePositionContext] = None,
+        position: MoneyMachinePositionContext | None = None,
     ) -> MoneyMachineDecision:
         """Return only the newest Money Machine decision."""
         frame = build_money_machine_with_indicators(data, self.config)
@@ -480,7 +479,7 @@ class MoneyMachineSignalGenerator:
 
 def generate_money_machine_signals(
     data: pd.DataFrame,
-    config: Optional[MoneyMachineStrategyConfig] = None,
+    config: MoneyMachineStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """Functional wrapper for full-history Money Machine signals."""
     return MoneyMachineSignalGenerator(config=config).generate(data)
@@ -488,20 +487,20 @@ def generate_money_machine_signals(
 
 def get_latest_money_machine_signal(
     data: pd.DataFrame,
-    config: Optional[MoneyMachineStrategyConfig] = None,
-    position: Optional[MoneyMachinePositionContext] = None,
+    config: MoneyMachineStrategyConfig | None = None,
+    position: MoneyMachinePositionContext | None = None,
 ) -> MoneyMachineDecision:
     """Functional wrapper for the latest Money Machine decision."""
     return MoneyMachineSignalGenerator(config=config).latest_signal(data, position=position)
 
 
 __all__ = [
-    "MoneyMachineStrategyConfig",
-    "MoneyMachinePositionContext",
     "MoneyMachineDecision",
-    "build_money_machine_with_indicators",
+    "MoneyMachinePositionContext",
     "MoneyMachineSignalEngine",
     "MoneyMachineSignalGenerator",
+    "MoneyMachineStrategyConfig",
+    "build_money_machine_with_indicators",
     "generate_money_machine_signals",
     "get_latest_money_machine_signal",
 ]

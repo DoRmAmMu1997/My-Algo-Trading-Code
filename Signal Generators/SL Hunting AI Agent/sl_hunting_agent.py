@@ -38,12 +38,11 @@ from typing import Any, Literal
 
 import pandas as pd
 from pydantic import Field, ValidationError, field_validator
-
 from sl_hunting_ai_validation import StrictAIModel
-from sl_hunting_knowledge import FINAL_OUTPUT_INSTRUCTION, build_system_prompt
-from sl_hunting_indicators import SLHuntingIndicatorConfig, prepare_candles
-from sl_hunting_tools import SLHuntingToolContext, build_sl_hunting_mcp_server
 from sl_hunting_executor import TradeExecutor
+from sl_hunting_indicators import SLHuntingIndicatorConfig, prepare_candles
+from sl_hunting_knowledge import FINAL_OUTPUT_INSTRUCTION, build_system_prompt
+from sl_hunting_tools import SLHuntingToolContext, build_sl_hunting_mcp_server
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +330,8 @@ class SLHuntingAgent:
             if thinking_cfg is not None:
                 options_kwargs["thinking"] = thinking_cfg
             else:
-                logger.warning("SL Hunting fast mode requested but ThinkingConfigDisabled is unavailable; using default thinking.")
+                logger.warning("SL Hunting fast mode requested but ThinkingConfigDisabled "
+                               "is unavailable; using default thinking.")
         options = ClaudeAgentOptions(**options_kwargs)
 
         final_text = ""
@@ -343,7 +343,7 @@ class SLHuntingAgent:
                     result_message = message
                     cost_usd = getattr(message, "total_cost_usd", None)
                     if getattr(message, "result", None):
-                        final_text = message.result
+                        final_text = message.result or ""
                 elif isinstance(message, AssistantMessage):
                     for block in getattr(message, "content", None) or []:
                         block_text = getattr(block, "text", None)
@@ -424,7 +424,10 @@ class SLHuntingAgent:
         """
         prepared = prepare_candles(candles)
         if prepared.empty:
-            return SLHuntingDecision(action="HOLD", confidence=0, setup="no_data", reasoning="No candles available.", model_used=self._model)
+            return SLHuntingDecision(
+                action="HOLD", confidence=0, setup="no_data",
+                reasoning="No candles available.", model_used=self._model,
+            )
 
         tool_context = SLHuntingToolContext.build(
             prepared, executor, cfg=self._cfg, live_active=live_active, broker=broker,

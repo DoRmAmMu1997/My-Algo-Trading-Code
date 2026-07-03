@@ -31,10 +31,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import (
     bollinger_bands,
     finite,
@@ -103,7 +102,7 @@ class KeltnerSqueezeDecision:
 
 def build_keltner_squeeze_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[KeltnerSqueezeConfig] = None,
+    config: KeltnerSqueezeConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with BB/KC bands, MACD histogram, squeeze-release flags, and risk levels."""
     config = config or KeltnerSqueezeConfig()
@@ -112,8 +111,8 @@ def build_keltner_squeeze_with_indicators(
         return frame
 
     close = frame["close"].astype(float)
-    bb_upper, bb_mid, bb_lower = bollinger_bands(close, config.bb_period, config.bb_std)
-    kc_upper, kc_mid, kc_lower = keltner_channels(frame, config.kc_period, config.kc_atr_period, config.kc_multiplier)
+    bb_upper, _bb_mid, bb_lower = bollinger_bands(close, config.bb_period, config.bb_std)
+    kc_upper, _kc_mid, kc_lower = keltner_channels(frame, config.kc_period, config.kc_atr_period, config.kc_multiplier)
     _, _, macd_hist = macd(close, config.macd_fast, config.macd_slow, config.macd_signal)
 
     frame["bb_upper"] = bb_upper
@@ -146,7 +145,7 @@ def build_keltner_squeeze_with_indicators(
 class KeltnerSqueezeSignalEngine:
     """Decision engine for Keltner squeeze entries and exits."""
 
-    def __init__(self, config: Optional[KeltnerSqueezeConfig] = None) -> None:
+    def __init__(self, config: KeltnerSqueezeConfig | None = None) -> None:
         self.config = config or KeltnerSqueezeConfig()
 
     def minimum_history_bars(self) -> int:
@@ -192,7 +191,7 @@ class KeltnerSqueezeSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[KeltnerSqueezePositionContext] = None,
+        position: KeltnerSqueezePositionContext | None = None,
     ) -> KeltnerSqueezeDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -249,7 +248,7 @@ class KeltnerSqueezeSignalEngine:
 class KeltnerSqueezeSignalGenerator:
     """Convenience wrapper for full-history and latest-candle squeeze signals."""
 
-    def __init__(self, config: Optional[KeltnerSqueezeConfig] = None) -> None:
+    def __init__(self, config: KeltnerSqueezeConfig | None = None) -> None:
         self.config = config or KeltnerSqueezeConfig()
         self.engine = KeltnerSqueezeSignalEngine(self.config)
 
@@ -263,7 +262,7 @@ class KeltnerSqueezeSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[KeltnerSqueezePositionContext] = None
+        position: KeltnerSqueezePositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -299,7 +298,7 @@ class KeltnerSqueezeSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[KeltnerSqueezePositionContext] = None,
+        position: KeltnerSqueezePositionContext | None = None,
     ) -> KeltnerSqueezeDecision:
         frame = build_keltner_squeeze_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -307,15 +306,15 @@ class KeltnerSqueezeSignalGenerator:
 
 def generate_keltner_squeeze_signals(
     data: pd.DataFrame,
-    config: Optional[KeltnerSqueezeConfig] = None,
+    config: KeltnerSqueezeConfig | None = None,
 ) -> pd.DataFrame:
     return KeltnerSqueezeSignalGenerator(config=config).generate(data)
 
 
 def get_latest_keltner_squeeze_signal(
     data: pd.DataFrame,
-    config: Optional[KeltnerSqueezeConfig] = None,
-    position: Optional[KeltnerSqueezePositionContext] = None,
+    config: KeltnerSqueezeConfig | None = None,
+    position: KeltnerSqueezePositionContext | None = None,
 ) -> KeltnerSqueezeDecision:
     return KeltnerSqueezeSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -327,14 +326,14 @@ get_latest_nifty_keltner_squeeze_signal = get_latest_keltner_squeeze_signal
 
 __all__ = [
     "KeltnerSqueezeConfig",
-    "KeltnerSqueezePositionContext",
     "KeltnerSqueezeDecision",
-    "build_keltner_squeeze_with_indicators",
+    "KeltnerSqueezePositionContext",
     "KeltnerSqueezeSignalEngine",
     "KeltnerSqueezeSignalGenerator",
-    "generate_keltner_squeeze_signals",
-    "get_latest_keltner_squeeze_signal",
     "NiftyKeltnerSqueezeSignalGenerator",
+    "build_keltner_squeeze_with_indicators",
+    "generate_keltner_squeeze_signals",
     "generate_nifty_keltner_squeeze_signals",
+    "get_latest_keltner_squeeze_signal",
     "get_latest_nifty_keltner_squeeze_signal",
 ]

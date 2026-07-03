@@ -48,8 +48,13 @@ class IndexFetchDefaults:
     instrument_type: str = "INDEX"
     interval: int = 1
     lookback: str = "5y"
-    default_client_id: str = "1102601655"
-    default_access_token: str = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzc2NzAwOTY5LCJpYXQiOjE3NzY2MTQ1NjksInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTAyNjAxNjU1In0.Ivic07sLx-lbLd1LYtcwNkNGJk5XOtN7LBfGeeEH5jNrLevrRADofSI3DL4OABo0svY68k0mFeX8GWDQk6Ofcw"
+    # SECURITY: never hardcode credentials here. Resolution order is CLI flag ->
+    # environment variable (DHAN_CLIENT_CODE / DHAN_TOKEN_ID, e.g. from
+    # Dependencies/.env) -> these blanks. A real client id + access token used
+    # to live in these defaults; they were removed (and remain in old git
+    # history, so treat that token as burned).
+    default_client_id: str = ""
+    default_access_token: str = ""
 
 
 def parse_args(defaults: IndexFetchDefaults):
@@ -200,9 +205,7 @@ def normalize_response_data(data) -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        if isinstance(data, list):
-            df = pd.DataFrame(data)
-        elif isinstance(data, dict):
+        if isinstance(data, (list, dict)):
             df = pd.DataFrame(data)
         else:
             return pd.DataFrame()

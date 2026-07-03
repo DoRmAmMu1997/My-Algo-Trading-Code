@@ -38,11 +38,10 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from misc_strategy_common import (
     find_swing_highs,
     find_swing_lows,
@@ -92,7 +91,7 @@ class RSIDivergenceDecision:
     debug: dict[str, Any] = field(default_factory=dict)  # optional extra diagnostics
 
 
-def _last_two_at_or_before(positions: list[int], limit: int) -> Optional[tuple[int, int]]:
+def _last_two_at_or_before(positions: list[int], limit: int) -> tuple[int, int] | None:
     """Return the last two swing positions that are confirmed by `limit`."""
     eligible = [p for p in positions if p <= limit]
     if len(eligible) < 2:
@@ -102,7 +101,7 @@ def _last_two_at_or_before(positions: list[int], limit: int) -> Optional[tuple[i
 
 def build_rsi_divergence_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[RSIDivergenceConfig] = None,
+    config: RSIDivergenceConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with RSI, divergence flags, and risk levels."""
     config = config or RSIDivergenceConfig()
@@ -176,7 +175,7 @@ def build_rsi_divergence_with_indicators(
 class RSIDivergenceSignalEngine:
     """Decision engine for RSI divergence entries and exits."""
 
-    def __init__(self, config: Optional[RSIDivergenceConfig] = None) -> None:
+    def __init__(self, config: RSIDivergenceConfig | None = None) -> None:
         self.config = config or RSIDivergenceConfig()
 
     def minimum_history_bars(self) -> int:
@@ -218,7 +217,7 @@ class RSIDivergenceSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[RSIDivergencePositionContext] = None,
+        position: RSIDivergencePositionContext | None = None,
     ) -> RSIDivergenceDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -275,7 +274,7 @@ class RSIDivergenceSignalEngine:
 class RSIDivergenceSignalGenerator:
     """Convenience wrapper for full-history and latest-candle RSI divergence signals."""
 
-    def __init__(self, config: Optional[RSIDivergenceConfig] = None) -> None:
+    def __init__(self, config: RSIDivergenceConfig | None = None) -> None:
         self.config = config or RSIDivergenceConfig()
         self.engine = RSIDivergenceSignalEngine(self.config)
 
@@ -289,7 +288,7 @@ class RSIDivergenceSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[RSIDivergencePositionContext] = None
+        position: RSIDivergencePositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -325,7 +324,7 @@ class RSIDivergenceSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[RSIDivergencePositionContext] = None,
+        position: RSIDivergencePositionContext | None = None,
     ) -> RSIDivergenceDecision:
         frame = build_rsi_divergence_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -333,15 +332,15 @@ class RSIDivergenceSignalGenerator:
 
 def generate_rsi_divergence_signals(
     data: pd.DataFrame,
-    config: Optional[RSIDivergenceConfig] = None,
+    config: RSIDivergenceConfig | None = None,
 ) -> pd.DataFrame:
     return RSIDivergenceSignalGenerator(config=config).generate(data)
 
 
 def get_latest_rsi_divergence_signal(
     data: pd.DataFrame,
-    config: Optional[RSIDivergenceConfig] = None,
-    position: Optional[RSIDivergencePositionContext] = None,
+    config: RSIDivergenceConfig | None = None,
+    position: RSIDivergencePositionContext | None = None,
 ) -> RSIDivergenceDecision:
     return RSIDivergenceSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -352,15 +351,15 @@ get_latest_nifty_rsi_divergence_signal = get_latest_rsi_divergence_signal
 
 
 __all__ = [
+    "NiftyRSIDivergenceSignalGenerator",
     "RSIDivergenceConfig",
-    "RSIDivergencePositionContext",
     "RSIDivergenceDecision",
-    "build_rsi_divergence_with_indicators",
+    "RSIDivergencePositionContext",
     "RSIDivergenceSignalEngine",
     "RSIDivergenceSignalGenerator",
-    "generate_rsi_divergence_signals",
-    "get_latest_rsi_divergence_signal",
-    "NiftyRSIDivergenceSignalGenerator",
+    "build_rsi_divergence_with_indicators",
     "generate_nifty_rsi_divergence_signals",
+    "generate_rsi_divergence_signals",
     "get_latest_nifty_rsi_divergence_signal",
+    "get_latest_rsi_divergence_signal",
 ]

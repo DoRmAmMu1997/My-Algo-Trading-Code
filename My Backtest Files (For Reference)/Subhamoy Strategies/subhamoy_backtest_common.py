@@ -19,7 +19,6 @@ from typing import Any
 
 import pandas as pd
 
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SIGNAL_GENERATOR_DIR = ROOT_DIR / "Signal Generators" / "Subhamoy Strategies"
 if str(SIGNAL_GENERATOR_DIR) not in sys.path:
@@ -29,7 +28,6 @@ if str(SIGNAL_GENERATOR_DIR) not in sys.path:
     sys.path.insert(0, str(SIGNAL_GENERATOR_DIR))
 
 from subhamoy_strategy_common import normalize_ohlc_frame, validate_five_minute_spacing
-
 
 OUTPUT_DIR = ROOT_DIR / "Backtest Outputs"
 

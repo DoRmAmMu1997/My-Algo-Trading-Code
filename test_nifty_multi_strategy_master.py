@@ -1,22 +1,23 @@
-import unittest
 import importlib.util
 import hashlib
 import json
-import tempfile
-import threading
-from pathlib import Path
-from datetime import datetime, date, timedelta
-import pandas as pd
-from unittest.mock import MagicMock, patch
 import os
 import sys
+import tempfile
+import threading
+import unittest
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
+
+import pandas as pd
 
 # =============================================================================
 # DYNAMIC MODULE IMPORT
 # =============================================================================
 # Python usually expects file names without spaces (e.g. "my_script.py").
-# Since the original strategy file has spaces in its name, we must use 
+# Since the original strategy file has spaces in its name, we must use
 # 'importlib' to manually load the file as a module so we can test its contents.
 file_path = Path(__file__).parent / "Nifty Multi Strategy Front Test - Master File.py"
 spec = importlib.util.spec_from_file_location("master_file", file_path)
@@ -26,16 +27,19 @@ sys.modules["master_file"] = master_file
 # =============================================================================
 # MOCKING (FAKE DATA) FOR SAFE TESTING
 # =============================================================================
-# We do not want our tests to accidentally place real trades or connect to 
+# We do not want our tests to accidentally place real trades or connect to
 # the DhanHQ API. So we "mock" (fake) the API connections.
-with patch.dict(os.environ, {"DHAN_CLIENT_CODE": "test", "DHAN_TOKEN_ID": "test"}):
-    # This completely disables the 'dhanhq' module while the script loads
-    with patch("dhanhq.dhanhq"):
-        try:
-            # We execute the file so that all classes and functions become available
-            spec.loader.exec_module(master_file)
-        except Exception as e:
-            print(f"Failed to load master_file for testing: {e}")
+# The patch of 'dhanhq.dhanhq' completely disables the real SDK while the
+# script loads.
+with (
+    patch.dict(os.environ, {"DHAN_CLIENT_CODE": "test", "DHAN_TOKEN_ID": "test"}),
+    patch("dhanhq.dhanhq"),
+):
+    try:
+        # We execute the file so that all classes and functions become available
+        spec.loader.exec_module(master_file)
+    except Exception as e:
+        print(f"Failed to load master_file for testing: {e}")
 
 
 # The Flattrade helper is loaded separately so its low-level REST behaviour can
@@ -105,10 +109,10 @@ class TestMasterFileUtilities(unittest.TestCase):
             "open": [100.0], "high": [105.0], "low": [95.0], "close": [102.0]
         })
         sig = master_file.build_last_row_signature(df)
-        self.assertIsNotNone(sig) 
-        self.assertEqual(sig[0], 1) 
-        self.assertEqual(sig[2], 100.0) 
-        self.assertEqual(sig[5], 102.0) 
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig[0], 1)
+        self.assertEqual(sig[2], 100.0)
+        self.assertEqual(sig[5], 102.0)
 
         self.assertIsNone(master_file.build_last_row_signature(None))
         self.assertIsNone(master_file.build_last_row_signature(pd.DataFrame()))
@@ -135,20 +139,20 @@ class TestSharedMarketDataStore(unittest.TestCase):
         })
         snapshot = self.store.update("1", df)
         self.assertEqual(snapshot.timeframe, "1")
-        
+
         fetched = self.store.get("1")
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched.timeframe, "1")
         self.assertEqual(fetched.frame.iloc[-1]["close"], 102.0)
-        
+
     def test_ltp_cache(self):
         """Verify that the Last Traded Price (LTP) cache stores prices properly and ignores glitches."""
         self.store.update_ltp_map({("NSE_FNO", 1234): 150.5, ("IDX_I", 13): 20000.0})
-        
+
         self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
         self.assertEqual(self.store.get_ltp_by_secid("IDX_I", 13), 20000.0)
         self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 9999, fallback=10.0), 10.0)
-        
+
         self.store.update_ltp_map({("NSE_FNO", 1234): -50.0})
         self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
 
@@ -159,11 +163,11 @@ class TestSharedMarketDataStore(unittest.TestCase):
             right="CE", strike=20000.0, expiry=date(2023, 1, 26)
         )
         self.store.register_option_subscription(sub)
-        
+
         subs = self.store.snapshot_option_subscriptions()
         self.assertEqual(len(subs), 1)
         self.assertEqual(subs[0].security_id, 123)
-        
+
         self.store.unregister_option_subscription("NSE_FNO", 123)
         self.assertEqual(len(self.store.snapshot_option_subscriptions()), 0)
 
@@ -173,7 +177,7 @@ class TestSharedMarketDataStore(unittest.TestCase):
 # =============================================================================
 class TestDataclasses(unittest.TestCase):
     """
-    Dataclasses are like blueprints for storing structured information. 
+    Dataclasses are like blueprints for storing structured information.
     Here we test if the blueprints assemble the objects correctly.
     """
 
@@ -589,6 +593,7 @@ class TestOptionsContractResolver(unittest.TestCase):
             for row, ltp in zip(
                 [r for _, r in puts.iterrows()],
                 [10.0, 50.0, 160.0, 350.0],
+                strict=False,
             )
         }
         pick = resolver.pick_put_by_target_premium(
@@ -607,6 +612,7 @@ class TestOptionsContractResolver(unittest.TestCase):
             for row, ltp in zip(
                 [r for _, r in calls.iterrows()],
                 [350.0, 160.0, 50.0, 10.0],
+                strict=False,
             )
         }
         # First pick - landed at the 160-Rs strike.
@@ -1861,7 +1867,7 @@ class TestShoonyaFillConfirmation(unittest.TestCase):
 
     def test_order_status_parses_latest_row(self):
         c = self._client(self._hist("COMPLETE", fld=50, qty=75))
-        state, filled, qty, reason = c._order_status("ORD1")
+        state, filled, qty, _reason = c._order_status("ORD1")
         self.assertEqual((state, filled, qty), ("complete", 50, 75))
 
     def test_confirm_fill_returns_on_complete(self):
@@ -1878,9 +1884,8 @@ class TestShoonyaFillConfirmation(unittest.TestCase):
         mod = type(c).__module__
         smod = sys.modules[mod]
         with patch.object(smod, "_FILL_TIMEOUT_SECONDS", 0.05), \
-             patch.object(smod, "_FILL_POLL_INTERVAL", 0.01):
-            with self.assertRaises(Exception):
-                c._confirm_fill("ORD1", 75)
+             patch.object(smod, "_FILL_POLL_INTERVAL", 0.01), self.assertRaises(Exception):
+            c._confirm_fill("ORD1", 75)
 
 
 class TestShoonyaSymbolResolution(unittest.TestCase):

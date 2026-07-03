@@ -34,10 +34,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, sma, stochastic
 
 
@@ -94,7 +93,7 @@ class StochasticOscillatorDecision:
 
 def build_stochastic_oscillator_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[StochasticOscillatorConfig] = None,
+    config: StochasticOscillatorConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with %K/%D, trend SMA, crossover flags, and risk levels."""
     config = config or StochasticOscillatorConfig()
@@ -135,7 +134,7 @@ def build_stochastic_oscillator_with_indicators(
 class StochasticOscillatorSignalEngine:
     """Decision engine for stochastic oscillator entries and exits."""
 
-    def __init__(self, config: Optional[StochasticOscillatorConfig] = None) -> None:
+    def __init__(self, config: StochasticOscillatorConfig | None = None) -> None:
         self.config = config or StochasticOscillatorConfig()
 
     def minimum_history_bars(self) -> int:
@@ -153,7 +152,9 @@ class StochasticOscillatorSignalEngine:
     def _direction(direction: str) -> str:
         return str(direction).strip().upper()
 
-    def _evaluate_exit(self, current: pd.Series, position: StochasticOscillatorPositionContext) -> StochasticOscillatorDecision:
+    def _evaluate_exit(
+        self, current: pd.Series, position: StochasticOscillatorPositionContext
+    ) -> StochasticOscillatorDecision:
         direction = self._direction(position.direction)
         high = float(current["high"])
         low = float(current["low"])
@@ -177,7 +178,7 @@ class StochasticOscillatorSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[StochasticOscillatorPositionContext] = None,
+        position: StochasticOscillatorPositionContext | None = None,
     ) -> StochasticOscillatorDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -234,7 +235,7 @@ class StochasticOscillatorSignalEngine:
 class StochasticOscillatorSignalGenerator:
     """Convenience wrapper for full-history and latest-candle stochastic signals."""
 
-    def __init__(self, config: Optional[StochasticOscillatorConfig] = None) -> None:
+    def __init__(self, config: StochasticOscillatorConfig | None = None) -> None:
         self.config = config or StochasticOscillatorConfig()
         self.engine = StochasticOscillatorSignalEngine(self.config)
 
@@ -248,7 +249,7 @@ class StochasticOscillatorSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[StochasticOscillatorPositionContext] = None
+        position: StochasticOscillatorPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -284,7 +285,7 @@ class StochasticOscillatorSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[StochasticOscillatorPositionContext] = None,
+        position: StochasticOscillatorPositionContext | None = None,
     ) -> StochasticOscillatorDecision:
         frame = build_stochastic_oscillator_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -292,15 +293,15 @@ class StochasticOscillatorSignalGenerator:
 
 def generate_stochastic_oscillator_signals(
     data: pd.DataFrame,
-    config: Optional[StochasticOscillatorConfig] = None,
+    config: StochasticOscillatorConfig | None = None,
 ) -> pd.DataFrame:
     return StochasticOscillatorSignalGenerator(config=config).generate(data)
 
 
 def get_latest_stochastic_oscillator_signal(
     data: pd.DataFrame,
-    config: Optional[StochasticOscillatorConfig] = None,
-    position: Optional[StochasticOscillatorPositionContext] = None,
+    config: StochasticOscillatorConfig | None = None,
+    position: StochasticOscillatorPositionContext | None = None,
 ) -> StochasticOscillatorDecision:
     return StochasticOscillatorSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -311,15 +312,15 @@ get_latest_nifty_stochastic_oscillator_signal = get_latest_stochastic_oscillator
 
 
 __all__ = [
+    "NiftyStochasticOscillatorSignalGenerator",
     "StochasticOscillatorConfig",
-    "StochasticOscillatorPositionContext",
     "StochasticOscillatorDecision",
-    "build_stochastic_oscillator_with_indicators",
+    "StochasticOscillatorPositionContext",
     "StochasticOscillatorSignalEngine",
     "StochasticOscillatorSignalGenerator",
-    "generate_stochastic_oscillator_signals",
-    "get_latest_stochastic_oscillator_signal",
-    "NiftyStochasticOscillatorSignalGenerator",
+    "build_stochastic_oscillator_with_indicators",
     "generate_nifty_stochastic_oscillator_signals",
+    "generate_stochastic_oscillator_signals",
     "get_latest_nifty_stochastic_oscillator_signal",
+    "get_latest_stochastic_oscillator_signal",
 ]

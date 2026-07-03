@@ -7,10 +7,7 @@ actual strategy math lives in `goldmine_strategy_logic.py`.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
-
 from goldmine_strategy_logic import (
     GoldmineDecision,
     GoldminePositionContext,
@@ -27,7 +24,7 @@ class NiftyGoldmineSignalGenerator(GoldmineSignalGenerator):
 
 def generate_nifty_goldmine_signals(
     data: pd.DataFrame,
-    config: Optional[GoldmineStrategyConfig] = None,
+    config: GoldmineStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """Return full-history NIFTY Goldmine signals."""
     return generate_goldmine_signals(data, config=config)
@@ -35,8 +32,8 @@ def generate_nifty_goldmine_signals(
 
 def get_latest_nifty_goldmine_signal(
     data: pd.DataFrame,
-    config: Optional[GoldmineStrategyConfig] = None,
-    position: Optional[GoldminePositionContext] = None,
+    config: GoldmineStrategyConfig | None = None,
+    position: GoldminePositionContext | None = None,
 ) -> GoldmineDecision:
     """Return only the newest NIFTY Goldmine decision."""
     return get_latest_goldmine_signal(data, config=config, position=position)

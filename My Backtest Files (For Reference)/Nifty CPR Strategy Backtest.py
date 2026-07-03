@@ -43,7 +43,6 @@ from cpr_strategy_logic import (
     prepare_cpr_ohlc_input,
 )
 
-
 OUTPUT_DIR = ROOT_DIR / "Backtest Outputs"
 
 DEFAULT_DATA_PATHS = {

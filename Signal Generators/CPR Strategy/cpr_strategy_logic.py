@@ -14,16 +14,19 @@ future front-test use the same repeatable rules.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 try:
-    import talib  # type: ignore
+    import talib
 except ImportError:  # pragma: no cover - fallback path is used when TA-Lib is absent
-    talib = None
+    # The assignment error only exists where TA-Lib (with stubs) is installed;
+    # on stub-less machines the ignore is unused, hence the dual code.
+    talib = None  # type: ignore[assignment, unused-ignore]
 
 
 OHLC_COLUMNS = ["open", "high", "low", "close"]
@@ -119,7 +122,7 @@ class CPRDecision:
     debug: dict[str, Any] = field(default_factory=dict)
 
 
-def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> Optional[str]:
+def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
     """Find a column name case-insensitively."""
     col_map = {str(column).strip().lower(): column for column in frame.columns}
     for name in names:
@@ -241,7 +244,7 @@ def _ema(values: pd.Series, period: int) -> pd.Series:
     """Calculate EMA with TA-Lib when available, otherwise pandas."""
     if talib is not None:
         return pd.Series(
-            talib.EMA(values.to_numpy(dtype=float), timeperiod=int(period)),  # type: ignore[union-attr]
+            talib.EMA(values.to_numpy(dtype=float), timeperiod=int(period)),
             index=values.index,
         )
     return values.ewm(span=int(period), adjust=False, min_periods=int(period)).mean()
@@ -251,7 +254,7 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
     """Calculate Wilder-style RSI."""
     if talib is not None:
         return pd.Series(
-            talib.RSI(close.to_numpy(dtype=float), timeperiod=int(period)),  # type: ignore[union-attr]
+            talib.RSI(close.to_numpy(dtype=float), timeperiod=int(period)),
             index=close.index,
         )
 
@@ -304,8 +307,8 @@ def _add_daily_cpr(frame: pd.DataFrame) -> pd.DataFrame:
     result["s3"] = low - 2.0 * (high - pivot)
     result["s4"] = result["s3"] - (high - low)
     result["cpr_width"] = [
-        classify_daily_cpr_width(h, l, c)
-        for h, l, c in zip(result["prev_high"], result["prev_low"], result["prev_close"])
+        classify_daily_cpr_width(hi, lo, cl)
+        for hi, lo, cl in zip(result["prev_high"], result["prev_low"], result["prev_close"], strict=False)
     ]
     return result
 
@@ -385,8 +388,8 @@ def _add_swings_and_divergence(frame: pd.DataFrame, config: CPRStrategyConfig) -
     bullish_move_seen = result["bullish_half_pct_move_seen"].to_numpy(dtype=bool)
     bearish_move_seen = result["bearish_half_pct_move_seen"].to_numpy(dtype=bool)
 
-    last_high: Optional[tuple[int, float, float]] = None
-    last_low: Optional[tuple[int, float, float]] = None
+    last_high: tuple[int, float, float] | None = None
+    last_low: tuple[int, float, float] | None = None
     last_confirmed_low_price = np.nan
     last_confirmed_high_price = np.nan
 
@@ -639,7 +642,7 @@ def _add_sideways_zones(frame: pd.DataFrame, config: CPRStrategyConfig) -> pd.Da
 
 def build_cpr_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
+    config: CPRStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """
     Normalize OHLC candles and add all CPR strategy indicator/setup columns.
@@ -674,14 +677,14 @@ class CPRSignalEngine:
 
     def __init__(
         self,
-        config: Optional[CPRStrategyConfig] = None,
-        enabled_algorithms: Optional[Sequence[str]] = None,
+        config: CPRStrategyConfig | None = None,
+        enabled_algorithms: Sequence[str] | None = None,
     ) -> None:
         self.config = config or CPRStrategyConfig()
         self.enabled_algorithms = tuple(enabled_algorithms or self.config.enabled_algorithms)
 
     @staticmethod
-    def _hold(reason: str = "", debug: Optional[dict[str, Any]] = None) -> CPRDecision:
+    def _hold(reason: str = "", debug: dict[str, Any] | None = None) -> CPRDecision:
         return CPRDecision(action="HOLD", exit_reason=reason, debug=debug or {})
 
     @staticmethod
@@ -762,7 +765,7 @@ class CPRSignalEngine:
         stop_column: str,
         target_column: str,
         priority: int,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Return a normalized entry candidate if the setup is valid."""
         if not bool(row.get(condition, False)):
             return None
@@ -889,7 +892,7 @@ class CPRSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[CPRPositionContext] = None,
+        position: CPRPositionContext | None = None,
     ) -> CPRDecision:
         """Evaluate only the newest candle in an enriched CPR DataFrame."""
         if candles_with_indicators is None or candles_with_indicators.empty:
@@ -941,8 +944,8 @@ class CPRSignalGenerator:
 
     def __init__(
         self,
-        config: Optional[CPRStrategyConfig] = None,
-        enabled_algorithms: Optional[Sequence[str]] = None,
+        config: CPRStrategyConfig | None = None,
+        enabled_algorithms: Sequence[str] | None = None,
     ) -> None:
         self.config = config or CPRStrategyConfig()
         self.engine = CPRSignalEngine(self.config, enabled_algorithms=enabled_algorithms)
@@ -959,7 +962,7 @@ class CPRSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[CPRPositionContext] = None
+        position: CPRPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -1005,7 +1008,7 @@ class CPRSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[CPRPositionContext] = None,
+        position: CPRPositionContext | None = None,
     ) -> CPRDecision:
         """Return only the newest CPR decision."""
         frame = build_cpr_with_indicators(data, self.config)
@@ -1014,8 +1017,8 @@ class CPRSignalGenerator:
 
 def generate_cpr_signals(
     data: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
-    enabled_algorithms: Optional[Sequence[str]] = None,
+    config: CPRStrategyConfig | None = None,
+    enabled_algorithms: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Functional wrapper for full-history signal generation."""
     return CPRSignalGenerator(config=config, enabled_algorithms=enabled_algorithms).generate(data)
@@ -1023,9 +1026,9 @@ def generate_cpr_signals(
 
 def get_latest_cpr_signal(
     data: pd.DataFrame,
-    config: Optional[CPRStrategyConfig] = None,
-    position: Optional[CPRPositionContext] = None,
-    enabled_algorithms: Optional[Sequence[str]] = None,
+    config: CPRStrategyConfig | None = None,
+    position: CPRPositionContext | None = None,
+    enabled_algorithms: Sequence[str] | None = None,
 ) -> CPRDecision:
     """Functional wrapper for latest-candle signal generation."""
     return CPRSignalGenerator(config=config, enabled_algorithms=enabled_algorithms).latest_signal(
@@ -1035,14 +1038,14 @@ def get_latest_cpr_signal(
 
 
 __all__ = [
-    "CPRStrategyConfig",
-    "CPRPositionContext",
     "CPRDecision",
+    "CPRPositionContext",
     "CPRSignalEngine",
     "CPRSignalGenerator",
+    "CPRStrategyConfig",
     "build_cpr_with_indicators",
     "classify_daily_cpr_width",
-    "prepare_cpr_ohlc_input",
     "generate_cpr_signals",
     "get_latest_cpr_signal",
+    "prepare_cpr_ohlc_input",
 ]

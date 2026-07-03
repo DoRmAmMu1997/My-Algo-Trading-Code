@@ -27,8 +27,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import flattrade_execution as fe  # noqa: E402 - sibling import for standalone use
-
+import flattrade_execution as fe
 
 UNDERLYING = "NIFTY"
 
@@ -265,7 +264,8 @@ def main(argv: list[str] | None = None) -> int:
             args.option_type,
             args.strike,
         )
-        print(f"\nContract master rows: {len(client._scrip_df)}")
+        master_rows = 0 if client._scrip_df is None else len(client._scrip_df)
+        print(f"\nContract master rows: {master_rows}")
         print(f"Selected expiry : {expiry:%d%b%y}")
         print(f"Trading symbol  : {csv_symbol}")
         print(f"Official lot    : {lot_size}")

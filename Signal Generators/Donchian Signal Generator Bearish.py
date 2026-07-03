@@ -129,19 +129,23 @@ point rounding) because they compute the same rolling max/min/average.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterable
+
 # --- Standard library imports ------------------------------------------------
 # `dataclass` lets us define small "struct-like" classes without writing the
 # `__init__` boilerplate ourselves.
 from dataclasses import dataclass
+
 # `IntEnum` attaches human-readable names (LONG, SHORT, ...) to small integer
 # flags. The underlying values stay plain integers, so they can be compared
 # against numpy arrays cheaply.
 from enum import IntEnum
-from typing import Iterable, Optional
 
 # --- Third-party imports -----------------------------------------------------
 # numpy is used for fast array math (no Python for-loops over raw numbers).
 import numpy as np
+
 # pandas is the tabular-data library we accept as input and return as output.
 import pandas as pd
 
@@ -170,7 +174,7 @@ except ImportError:  # pragma: no cover - only exercised when TA-Lib missing
 # and cache the outcome. On an ordinary session with TA-Lib installed,
 # pandas_ta is NEVER imported at all.
 pta = None  # populated lazily on first use, never at module load
-_PANDAS_TA_AVAILABLE: Optional[bool] = None  # None = "not probed yet"
+_PANDAS_TA_AVAILABLE: bool | None = None  # None = "not probed yet"
 
 
 def _ensure_pandas_ta() -> bool:
@@ -284,7 +288,7 @@ class BearishDecision:
 # resolve cross-file imports for the helper functions. The duplication is a
 # few dozen lines and pays for itself in decoupling.
 
-def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> Optional[str]:
+def _find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
     """
     Return the first column in `frame` whose (case-insensitive, trimmed)
     name is in `names`, or None if nothing matches.
@@ -351,12 +355,10 @@ def _prepare_ohlc_frame(data: pd.DataFrame) -> pd.DataFrame:
         # as-is.
         #
         # We used to pass `errors="ignore"` here, but pandas deprecated that
-        # option (FutureWarning on every call). The try/except below gives
+        # option (FutureWarning on every call). The suppress below gives
         # the same behaviour without the warning.
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             out["timestamp"] = pd.to_datetime(out["timestamp"])
-        except (ValueError, TypeError):
-            pass
     # Reset to a clean integer index so `.iloc[-1]`, `.iloc[-2]`, etc. behave
     # predictably regardless of the original index.
     return out.reset_index(drop=True)
@@ -537,7 +539,7 @@ class DonchianBearishSignalGenerator:
     natural bearish counterpart to the bullish file's "sell a put".
     """
 
-    def __init__(self, settings: Optional[DonchianSettings] = None) -> None:
+    def __init__(self, settings: DonchianSettings | None = None) -> None:
         # If the caller does not pass settings, fall back to the default
         # configuration from `DonchianSettings` (length = 20).
         self.settings = settings or DonchianSettings()
@@ -711,7 +713,7 @@ class DonchianBearishSignalGenerator:
 # unless the caller overrides them.
 def generate_donchian_bearish_signals(
     data: pd.DataFrame,
-    settings: Optional[DonchianSettings] = None,
+    settings: DonchianSettings | None = None,
 ) -> pd.DataFrame:
     """Functional alias for `DonchianBearishSignalGenerator(...).generate(data)`."""
     generator = DonchianBearishSignalGenerator(settings=settings)
@@ -720,7 +722,7 @@ def generate_donchian_bearish_signals(
 
 def get_latest_donchian_bearish_signal(
     data: pd.DataFrame,
-    settings: Optional[DonchianSettings] = None,
+    settings: DonchianSettings | None = None,
 ) -> BearishDecision:
     """Functional alias for `DonchianBearishSignalGenerator(...).latest_signal(data)`."""
     generator = DonchianBearishSignalGenerator(settings=settings)
@@ -730,10 +732,10 @@ def get_latest_donchian_bearish_signal(
 # `__all__` controls what `from module import *` exposes. Listing public
 # names here also serves as a quick table-of-contents for readers.
 __all__ = [
-    "Direction",
-    "DonchianSettings",
     "BearishDecision",
+    "Direction",
     "DonchianBearishSignalGenerator",
+    "DonchianSettings",
     "generate_donchian_bearish_signals",
     "get_latest_donchian_bearish_signal",
 ]

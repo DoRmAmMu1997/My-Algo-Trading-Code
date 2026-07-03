@@ -16,11 +16,10 @@ Important:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from subhamoy_strategy_common import (
     add_candle_anatomy,
     atr,
@@ -186,7 +185,7 @@ def _price_near_sma20(frame: pd.DataFrame, config: GoldmineStrategyConfig) -> pd
 
 def build_goldmine_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[GoldmineStrategyConfig] = None,
+    config: GoldmineStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """
     Return OHLC candles enriched with Goldmine indicators and setup columns.
@@ -274,7 +273,7 @@ def build_goldmine_with_indicators(
 class GoldmineSignalEngine:
     """Decision engine for Goldmine entries and exits."""
 
-    def __init__(self, config: Optional[GoldmineStrategyConfig] = None) -> None:
+    def __init__(self, config: GoldmineStrategyConfig | None = None) -> None:
         """
         Store one config object for all later evaluations.
 
@@ -343,7 +342,7 @@ class GoldmineSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[GoldminePositionContext] = None,
+        position: GoldminePositionContext | None = None,
     ) -> GoldmineDecision:
         """Evaluate the newest candle and return HOLD, ENTER_LONG, ENTER_SHORT, or EXIT."""
         if candles_with_indicators is None or candles_with_indicators.empty:
@@ -427,7 +426,7 @@ class GoldmineSignalEngine:
 class GoldmineSignalGenerator:
     """Convenience wrapper for full-history and latest-candle Goldmine signals."""
 
-    def __init__(self, config: Optional[GoldmineStrategyConfig] = None) -> None:
+    def __init__(self, config: GoldmineStrategyConfig | None = None) -> None:
         """
         Create one reusable signal engine for this generator instance.
 
@@ -448,7 +447,7 @@ class GoldmineSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[GoldminePositionContext] = None
+        position: GoldminePositionContext | None = None
 
         for index in range(len(frame)):
             # The generator simulates a very simple single-position stream:
@@ -495,7 +494,7 @@ class GoldmineSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[GoldminePositionContext] = None,
+        position: GoldminePositionContext | None = None,
     ) -> GoldmineDecision:
         """Return only the newest Goldmine decision."""
         frame = build_goldmine_with_indicators(data, self.config)
@@ -504,7 +503,7 @@ class GoldmineSignalGenerator:
 
 def generate_goldmine_signals(
     data: pd.DataFrame,
-    config: Optional[GoldmineStrategyConfig] = None,
+    config: GoldmineStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """Functional wrapper for full-history Goldmine signals."""
     return GoldmineSignalGenerator(config=config).generate(data)
@@ -512,20 +511,20 @@ def generate_goldmine_signals(
 
 def get_latest_goldmine_signal(
     data: pd.DataFrame,
-    config: Optional[GoldmineStrategyConfig] = None,
-    position: Optional[GoldminePositionContext] = None,
+    config: GoldmineStrategyConfig | None = None,
+    position: GoldminePositionContext | None = None,
 ) -> GoldmineDecision:
     """Functional wrapper for the latest Goldmine decision."""
     return GoldmineSignalGenerator(config=config).latest_signal(data, position=position)
 
 
 __all__ = [
-    "GoldmineStrategyConfig",
-    "GoldminePositionContext",
     "GoldmineDecision",
-    "build_goldmine_with_indicators",
+    "GoldminePositionContext",
     "GoldmineSignalEngine",
     "GoldmineSignalGenerator",
+    "GoldmineStrategyConfig",
+    "build_goldmine_with_indicators",
     "generate_goldmine_signals",
     "get_latest_goldmine_signal",
 ]

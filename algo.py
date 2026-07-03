@@ -61,7 +61,7 @@ script's own exit code is returned, so this CLI is transparent to automation.
 """
 
 import argparse
-import subprocess
+import subprocess  # nosec B404 - this CLI exists to launch the repo's own scripts
 import sys
 from pathlib import Path
 
@@ -122,7 +122,8 @@ def _run(relative_path: str, forwarded_args: list) -> int:
     command = [sys.executable, str(script), *forwarded_args]
     # Echo what we're about to do so it's obvious which script is running.
     print(f"[algo] running: {script.name} {' '.join(forwarded_args)}".rstrip())
-    return subprocess.run(command, cwd=str(REPO_ROOT)).returncode
+    # nosec B603 - argv is [sys.executable, <repo-root script>, *user args]; no shell.
+    return subprocess.run(command, cwd=str(REPO_ROOT)).returncode  # nosec B603
 
 
 def build_parser() -> argparse.ArgumentParser:

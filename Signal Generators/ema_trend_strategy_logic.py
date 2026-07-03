@@ -35,7 +35,6 @@ Beginner mental model:
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -46,8 +45,9 @@ try:
     import talib
 except ImportError:  # pragma: no cover - fallback only used when TA-Lib is unavailable
     # The strategy can still run without TA-Lib because beginner users may not
-    # always have the package installed on the first attempt.
-    talib = None
+    # always have the package installed on the first attempt. (The ignore
+    # carries both codes because the error only exists where stubs are present.)
+    talib = None  # type: ignore[assignment, unused-ignore]
 
 
 @dataclass(frozen=True)
@@ -261,7 +261,7 @@ def _build_short_setup(frame: pd.DataFrame, config: EMATrendConfig) -> pd.Series
 
 def build_ema_trend_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[EMATrendConfig] = None,
+    config: EMATrendConfig | None = None,
 ) -> pd.DataFrame:
     """
     Enrich OHLC candles with the indicators and derived signals used by the strategy.
@@ -391,7 +391,7 @@ class EMATrendSignalEngine:
     DataFrame built by `build_ema_trend_with_indicators()`.
     """
 
-    def __init__(self, config: Optional[EMATrendConfig] = None):
+    def __init__(self, config: EMATrendConfig | None = None):
         # Keeping config on the engine means backtests, front-tests, and any
         # future live-trading script can all share the exact same rules.
         self.config = config or EMATrendConfig()
@@ -454,7 +454,7 @@ class EMATrendSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[EMATrendPositionContext] = None,
+        position: EMATrendPositionContext | None = None,
     ) -> EMATrendDecision:
         """
         Evaluate the latest candle and return one decision.

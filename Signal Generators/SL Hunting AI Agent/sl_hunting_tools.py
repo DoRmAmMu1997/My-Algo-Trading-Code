@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-
+from sl_hunting_executor import TradeExecutor, execution_tool_name
 from sl_hunting_indicators import (
     SLHuntingIndicatorConfig,
     candle_patterns,
@@ -45,7 +45,6 @@ from sl_hunting_indicators import (
     pivot_and_levels,
     prepare_candles,
 )
-from sl_hunting_executor import TradeExecutor, execution_tool_name
 
 SERVER_NAME = "slhunting"
 
@@ -90,7 +89,7 @@ class SLHuntingToolContext:
         live_active: bool = False,
         broker: str | None = None,
         bnf_candles: pd.DataFrame | None = None,
-    ) -> "SLHuntingToolContext":
+    ) -> SLHuntingToolContext:
         """Prepare the per-bar context: clean the candles, cache the last price, attach BNF.
 
         Normalises the NIFTY (and optional BankNIFTY) frames once here so each tool call
@@ -177,36 +176,56 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
     """
     from claude_agent_sdk import create_sdk_mcp_server, tool  # type: ignore[import-not-found, unused-ignore]
 
-    @tool("pivot_and_levels", "Day pivot, previous-day OHLC, today's O/H/L, first-candle hi/lo, psych levels and the previous close, with distances from current price.", {})
+    @tool("pivot_and_levels",
+          "Day pivot, previous-day OHLC, today's O/H/L, first-candle hi/lo, psych levels "
+          "and the previous close, with distances from current price.", {})
     async def _pivot(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.pivot_and_levels_payload())
 
-    @tool("fibo_levels", "Fibonacci 50/61/78 retracement and 161/261 extension levels of the most recent significant swing, and where price sits relative to them.", {})
+    @tool("fibo_levels",
+          "Fibonacci 50/61/78 retracement and 161/261 extension levels of the most recent "
+          "significant swing, and where price sits relative to them.", {})
     async def _fibo(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.fibo_levels_payload())
 
-    @tool("candle_patterns", "Reversal candlestick patterns (hammer/doji, engulfing, inside-bar, reversal-bar, star) on recent candles, each tagged with whether a confirmation candle has already printed.", {})
+    @tool("candle_patterns",
+          "Reversal candlestick patterns (hammer/doji, engulfing, inside-bar, reversal-bar, "
+          "star) on recent candles, each tagged with whether a confirmation candle has "
+          "already printed.", {})
     async def _patterns(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.candle_patterns_payload())
 
-    @tool("market_structure", "Swing points, trend, fast/slow read, trendline points, and W/M / double top-bottom detection.", {})
+    @tool("market_structure",
+          "Swing points, trend, fast/slow read, trendline points, and W/M / double "
+          "top-bottom detection.", {})
     async def _structure(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.market_structure_payload())
 
-    @tool("position_state", "Your current open position (direction, entry, stop, target, unrealised P&L) or 'flat'.", {})
+    @tool("position_state",
+          "Your current open position (direction, entry, stop, target, unrealised P&L) "
+          "or 'flat'.", {})
     async def _position(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.position_state_payload())
 
-    @tool("bank_nifty", "BankNIFTY's OWN pivot/levels, market structure and recent candle patterns (for cross-confirmation). Returns available:false when BankNIFTY data is unavailable.", {})
+    @tool("bank_nifty",
+          "BankNIFTY's OWN pivot/levels, market structure and recent candle patterns (for "
+          "cross-confirmation). Returns available:false when BankNIFTY data is unavailable.", {})
     async def _bank_nifty(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.bank_nifty_payload())
 
-    @tool("cross_index", "NIFTY-vs-BankNIFTY alignment verdict per the NF/BNF rules (both at support -> bias down; both breakdown -> bias up; one fails -> the holder wins; opposite sides of pivot -> wait). Advisory. available:false when BankNIFTY data is unavailable.", {})
+    @tool("cross_index",
+          "NIFTY-vs-BankNIFTY alignment verdict per the NF/BNF rules (both at support -> "
+          "bias down; both breakdown -> bias up; one fails -> the holder wins; opposite "
+          "sides of pivot -> wait). Advisory. available:false when BankNIFTY data is "
+          "unavailable.", {})
     async def _cross_index(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.cross_index_payload())
 
     order_name = context.action_tool_name()
-    venue = "PAPER" if order_name == "place_paper_order" else ("KOTAK (LIVE)" if order_name == "place_kotak_order" else "SHOONYA (LIVE)")
+    venue = (
+        "PAPER" if order_name == "place_paper_order"
+        else ("KOTAK (LIVE)" if order_name == "place_kotak_order" else "SHOONYA (LIVE)")
+    )
 
     @tool(
         order_name,
@@ -231,5 +250,5 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
         version="1.0.0",
         tools=[_pivot, _fibo, _patterns, _structure, _position, _bank_nifty, _cross_index, _order],
     )
-    allowed = list(CONTEXT_TOOL_NAMES) + [f"mcp__{SERVER_NAME}__{order_name}"]
+    allowed = [*CONTEXT_TOOL_NAMES, f"mcp__{SERVER_NAME}__{order_name}"]
     return {SERVER_NAME: server}, allowed

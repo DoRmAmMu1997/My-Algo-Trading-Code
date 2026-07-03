@@ -35,10 +35,9 @@ This module does not resample - feed it already-prepared OHLC candles.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 from misc_strategy_common import bollinger_bands, finite, normalize_ohlc_frame, require_columns
 
 
@@ -82,7 +81,7 @@ class BollingerBandsDecision:
 
 def build_bollinger_bands_with_indicators(
     ohlc: pd.DataFrame,
-    config: Optional[BollingerBandsConfig] = None,
+    config: BollingerBandsConfig | None = None,
 ) -> pd.DataFrame:
     """Enrich OHLC candles with Bollinger Bands, bounce flags, and risk levels."""
     config = config or BollingerBandsConfig()
@@ -118,7 +117,7 @@ def build_bollinger_bands_with_indicators(
 class BollingerBandsSignalEngine:
     """Decision engine for Bollinger Bands mean-reversion entries and exits."""
 
-    def __init__(self, config: Optional[BollingerBandsConfig] = None) -> None:
+    def __init__(self, config: BollingerBandsConfig | None = None) -> None:
         self.config = config or BollingerBandsConfig()
 
     def minimum_history_bars(self) -> int:
@@ -160,7 +159,7 @@ class BollingerBandsSignalEngine:
     def evaluate_candle(
         self,
         candles_with_indicators: pd.DataFrame,
-        position: Optional[BollingerBandsPositionContext] = None,
+        position: BollingerBandsPositionContext | None = None,
     ) -> BollingerBandsDecision:
         if candles_with_indicators is None or candles_with_indicators.empty:
             return self._hold("No candles supplied.")
@@ -217,7 +216,7 @@ class BollingerBandsSignalEngine:
 class BollingerBandsSignalGenerator:
     """Convenience wrapper for full-history and latest-candle Bollinger signals."""
 
-    def __init__(self, config: Optional[BollingerBandsConfig] = None) -> None:
+    def __init__(self, config: BollingerBandsConfig | None = None) -> None:
         self.config = config or BollingerBandsConfig()
         self.engine = BollingerBandsSignalEngine(self.config)
 
@@ -231,7 +230,7 @@ class BollingerBandsSignalGenerator:
         stops: list[float] = []
         targets: list[float] = []
         stream: list[int] = []
-        position: Optional[BollingerBandsPositionContext] = None
+        position: BollingerBandsPositionContext | None = None
 
         for index in range(len(frame)):
             decision = self.engine.evaluate_candle(frame.iloc[: index + 1], position=position)
@@ -267,7 +266,7 @@ class BollingerBandsSignalGenerator:
     def latest_signal(
         self,
         data: pd.DataFrame,
-        position: Optional[BollingerBandsPositionContext] = None,
+        position: BollingerBandsPositionContext | None = None,
     ) -> BollingerBandsDecision:
         frame = build_bollinger_bands_with_indicators(data, self.config)
         return self.engine.evaluate_candle(frame, position=position)
@@ -275,15 +274,15 @@ class BollingerBandsSignalGenerator:
 
 def generate_bollinger_bands_signals(
     data: pd.DataFrame,
-    config: Optional[BollingerBandsConfig] = None,
+    config: BollingerBandsConfig | None = None,
 ) -> pd.DataFrame:
     return BollingerBandsSignalGenerator(config=config).generate(data)
 
 
 def get_latest_bollinger_bands_signal(
     data: pd.DataFrame,
-    config: Optional[BollingerBandsConfig] = None,
-    position: Optional[BollingerBandsPositionContext] = None,
+    config: BollingerBandsConfig | None = None,
+    position: BollingerBandsPositionContext | None = None,
 ) -> BollingerBandsDecision:
     return BollingerBandsSignalGenerator(config=config).latest_signal(data, position=position)
 
@@ -295,14 +294,14 @@ get_latest_nifty_bollinger_bands_signal = get_latest_bollinger_bands_signal
 
 __all__ = [
     "BollingerBandsConfig",
-    "BollingerBandsPositionContext",
     "BollingerBandsDecision",
-    "build_bollinger_bands_with_indicators",
+    "BollingerBandsPositionContext",
     "BollingerBandsSignalEngine",
     "BollingerBandsSignalGenerator",
-    "generate_bollinger_bands_signals",
-    "get_latest_bollinger_bands_signal",
     "NiftyBollingerBandsSignalGenerator",
+    "build_bollinger_bands_with_indicators",
+    "generate_bollinger_bands_signals",
     "generate_nifty_bollinger_bands_signals",
+    "get_latest_bollinger_bands_signal",
     "get_latest_nifty_bollinger_bands_signal",
 ]

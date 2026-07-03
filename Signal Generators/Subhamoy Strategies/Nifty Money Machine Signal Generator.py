@@ -7,10 +7,7 @@ actual strategy math lives in `money_machine_strategy_logic.py`.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
-
 from money_machine_strategy_logic import (
     MoneyMachineDecision,
     MoneyMachinePositionContext,
@@ -27,7 +24,7 @@ class NiftyMoneyMachineSignalGenerator(MoneyMachineSignalGenerator):
 
 def generate_nifty_money_machine_signals(
     data: pd.DataFrame,
-    config: Optional[MoneyMachineStrategyConfig] = None,
+    config: MoneyMachineStrategyConfig | None = None,
 ) -> pd.DataFrame:
     """Return full-history NIFTY Money Machine signals."""
     return generate_money_machine_signals(data, config=config)
@@ -35,8 +32,8 @@ def generate_nifty_money_machine_signals(
 
 def get_latest_nifty_money_machine_signal(
     data: pd.DataFrame,
-    config: Optional[MoneyMachineStrategyConfig] = None,
-    position: Optional[MoneyMachinePositionContext] = None,
+    config: MoneyMachineStrategyConfig | None = None,
+    position: MoneyMachinePositionContext | None = None,
 ) -> MoneyMachineDecision:
     """Return only the newest NIFTY Money Machine decision."""
     return get_latest_money_machine_signal(data, config=config, position=position)

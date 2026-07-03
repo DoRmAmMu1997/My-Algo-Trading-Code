@@ -53,8 +53,9 @@ import threading
 import time
 import webbrowser
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -316,10 +317,10 @@ class FlattradeExecutionClient:
             return False
 
         digest = hashlib.sha256(
-            f"{api_key}{request_code}{raw_secret}".encode("utf-8")
+            f"{api_key}{request_code}{raw_secret}".encode()
         ).hexdigest()
         try:
-            response = self.client.post(
+            response = self._ensure_session_locked().post(
                 _TOKEN_URL,
                 json={
                     "api_key": api_key,
@@ -565,6 +566,8 @@ class FlattradeExecutionClient:
             if not self._ensure_scrip_master_locked():
                 return ""
             frame = self._scrip_df
+            if frame is None:
+                return ""
             matches = frame[
                 (frame["_symbol_u"] == underlying_u)
                 & (frame["_option_u"] == option_u)
@@ -690,7 +693,10 @@ class FlattradeExecutionClient:
                 _as_int(row.get("qty")),
                 str(row.get("rejreason") or row.get("emsg") or "").strip(),
             )
-        reason = response.get("emsg", "unrecognised response") if isinstance(response, dict) else "unrecognised response"
+        reason = (
+            response.get("emsg", "unrecognised response")
+            if isinstance(response, dict) else "unrecognised response"
+        )
         return (None, 0, 0, str(reason))
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> None:
@@ -703,7 +709,7 @@ class FlattradeExecutionClient:
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_state = None
         while time.monotonic() < deadline:
-            state, filled, order_qty, reason = self._order_status(order_id)
+            state, filled, _order_qty, reason = self._order_status(order_id)
             last_state = state
             if state == "complete":
                 if filled >= want_qty:

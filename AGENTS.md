@@ -1,9 +1,9 @@
-# CLAUDE.md — My-Algo-Trading-Code
+# AGENTS.md — My-Algo-Trading-Code
 
-> **Before doing any work in this repo**, invoke the **`anthropic-skills:using-superpowers`** skill (it
-> surfaces any other relevant skills) and the **`anthropic-skills:karpathy-guidelines`** skill, then
-> follow them: simplicity first, surgical changes, surface tradeoffs, and verify before claiming done.
-> This is live-money trading code — bias toward caution.
+> Working principles for ANY coding agent in this repo: simplicity first, surgical changes,
+> surface tradeoffs, and verify before claiming done. This is live-money trading code — bias
+> toward caution. (Claude Code additionally loads its skills per `CLAUDE.md`; both files must
+> be kept factually in sync.)
 
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
@@ -71,12 +71,10 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
   (`KOTAK` | `SHOONYA`) selects the broker; an unknown value **fails closed** (live disabled, paper only).
   Any order failure falls back to paper for that trade. Every broker HTTP call must have a timeout.
-- **Broker layer:** the Kotak, Shoonya and Flattrade clients expose the SAME surface —
-  `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
-  `extract_order_id`, `logout`, `is_logged_in` — so the runner only ever touches the generic
-  `execution_client`. The Shoonya `NorenApi` client is vendored under `Dependencies/Shoonya API/`.
-  Flattrade is DIAGNOSTICS-ONLY so far (`algo.py diagnose --broker flattrade`); wiring it into
-  `LIVE_BROKER` is a separate, deliberate step.
+- **Broker layer:** the Kotak and Shoonya clients expose the SAME surface — `ensure_logged_in`,
+  `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`, `extract_order_id`, `logout`,
+  `is_logged_in` — so the runner only ever touches the generic `execution_client`. The Shoonya `NorenApi`
+  client is vendored under `Dependencies/Shoonya API/`.
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module
@@ -88,10 +86,10 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
 - **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
   mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
   under `Signal Generators/`.
-- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):** the two test suites plus
-  `python -m ruff check .`, `python -m mypy` (scoped in `pyproject.toml` — the spaced-name master is
-  covered by `compileall` + tests instead), `python -m compileall -q .`, and `python -m bandit` per the
-  CI workflow. Dev tools install via `pip install -r requirements-dev.txt`.
 - **Dependencies:** `pip install -r requirements.txt`; optional broker/ML extras are documented (commented) inside it.
-- **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with the
-  `Co-Authored-By: Claude <noreply@anthropic.com>` trailer. `.env`, `Backtest Outputs/`, and `*.log` stay gitignored.
+- **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with a
+  `Co-Authored-By:` trailer identifying the agent that produced the change. `.env`,
+  `Backtest Outputs/`, and `*.log` stay gitignored.
+- **Quality gates (run locally before pushing):** `python -m unittest test_nifty_multi_strategy_master`,
+  `python -m pytest "Signal Generators" -q`, `python -m ruff check .`, `python -m mypy`,
+  `python -m compileall -q .` — CI enforces the same set on Python 3.12 + 3.13.
