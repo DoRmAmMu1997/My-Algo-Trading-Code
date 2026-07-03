@@ -336,8 +336,26 @@ class FlattradeExecutionClient:
             return False
 
         if not isinstance(payload, dict) or str(payload.get("status", "")).lower() != "ok":
-            message = payload.get("emsg", "unknown error") if isinstance(payload, dict) else "malformed response"
-            log.error("Flattrade token exchange rejected: %s", message)
+            # Flattrade's apitoken endpoint often rejects with an EMPTY emsg, so
+            # log every non-secret clue we have. Note this endpoint (uniquely)
+            # uses "status", not the Noren-wide "stat". A silent rejection with
+            # a valid request_code usually means the caller's public IP does not
+            # match the STATIC IP registered with this API key (documented
+            # requirement), or the API secret does not belong to this key.
+            if isinstance(payload, dict):
+                log.error(
+                    "Flattrade token exchange rejected: emsg=%r status=%r "
+                    "(token_present=%s, client=%r). If emsg is empty with a fresh "
+                    "request_code, check that your CURRENT public IP matches the "
+                    "static IP registered for this API key, and that "
+                    "FLATTRADE_API_SECRET belongs to FLATTRADE_API_KEY.",
+                    payload.get("emsg", ""),
+                    payload.get("status", "<missing>"),
+                    bool(str(payload.get("token") or "").strip()),
+                    payload.get("client", ""),
+                )
+            else:
+                log.error("Flattrade token exchange rejected: malformed response %r", type(payload).__name__)
             return False
         token = str(payload.get("token") or "").strip()
         returned_client = str(payload.get("client") or "").strip()

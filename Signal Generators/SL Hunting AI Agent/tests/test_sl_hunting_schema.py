@@ -110,3 +110,12 @@ def test_system_prompt_has_v3d_conditional_gap_knowledge():
     assert "Variant B" in prompt
     # v3c's opening-drive exception must still be present and scoped.
     assert "OPENING DRIVE" in prompt
+
+
+def test_system_prompt_has_v3e_participation_knowledge():
+    """v3e: both-sides participation, huge-gap nuance, third-index lag, setup staleness."""
+    prompt = build_system_prompt()
+    assert "BOTH-SIDES PARTICIPATION" in prompt
+    assert "HUGE gap" in prompt
+    assert "THIRD-INDEX LAG" in prompt
+    assert "SETUP STALENESS" in prompt
