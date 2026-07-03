@@ -19,6 +19,27 @@ Safety rules followed here:
 
 Flattrade Pi v2 currently documents no logout endpoint.  ``logout()`` therefore
 closes the local HTTP session and erases the in-memory token.
+
+Beginner's mental model — one live order travels through this file as follows:
+
+1. ``ensure_logged_in()`` obtains or validates today's access token.
+2. ``preload_scrip_master()`` downloads Flattrade's list of real NFO contracts.
+3. ``resolve_option_symbol()`` converts strategy details such as
+   NIFTY/14-JUL-2026/CE/24150 into Flattrade's exact trading symbol.
+4. ``place_market_order()`` translates friendly values such as BUY and INTRADAY
+   into Flattrade's short API codes, then submits the order.
+5. ``_confirm_fill()`` checks order history; an acknowledgement alone is never
+   treated as proof that money changed hands.
+
+Small glossary:
+
+* ``jData`` is the JSON request object Flattrade expects inside the POST body.
+* ``jKey`` is today's access token. It is sensitive and is never logged here.
+* A *scrip master* is the broker's contract catalogue: symbol, expiry, strike,
+  option type, token, and lot size for every listed instrument.
+* ``norenordno`` is Flattrade's order number, used to query fill status later.
+* *Market protection* limits how far a market order may chase a rapidly moving
+  price; the default value comes from Flattrade's official Postman example.
 """
 
 from __future__ import annotations
@@ -125,15 +146,25 @@ class _RollingWindowRateLimiter:
         self._lock = threading.Lock()
 
     def acquire(self) -> None:
-        """Reserve one request slot or raise before a long/stale wait."""
+        """Reserve one request slot or raise before a long/stale wait.
+
+        The deque stores only timestamps from the last minute. We separately
+        count its last one-second slice because Flattrade publishes both limits.
+        A short wait is acceptable; a long wait would make a trading decision
+        stale, so it raises *before* any broker request is sent.
+        """
         started = self._clock()
         with self._lock:
             while True:
                 now = self._clock()
+                # Discard calls that are older than the longest (60-second)
+                # window. Keeping the deque small also makes each check cheap.
                 minute_cutoff = now - 60.0
                 while self._timestamps and self._timestamps[0] <= minute_cutoff:
                     self._timestamps.popleft()
 
+                # The minute deque includes the one-second window, so select its
+                # recent tail instead of maintaining a second source of truth.
                 recent_second = [
                     stamp for stamp in self._timestamps if stamp > now - 1.0
                 ]
@@ -141,6 +172,8 @@ class _RollingWindowRateLimiter:
                 minute_full = len(self._timestamps) >= self.per_minute
 
                 if not second_full and not minute_full:
+                    # Reserving the timestamp before returning prevents two
+                    # strategy threads from claiming the same final slot.
                     self._timestamps.append(now)
                     return
 
@@ -165,7 +198,13 @@ class _RollingWindowRateLimiter:
 
 
 class FlattradeExecutionClient:
-    """One lazily authenticated, lock-guarded Flattrade execution session."""
+    """One lazily authenticated, lock-guarded Flattrade execution session.
+
+    The master creates many strategy threads but imports one singleton from the
+    bottom of this module. All those threads therefore share one HTTP session,
+    one token, one contract cache, and one pair of rate-limit counters. ``RLock``
+    makes nested helper calls safe without allowing simultaneous session writes.
+    """
 
     def __init__(self) -> None:
         self.client: requests.Session | None = None
@@ -198,14 +237,31 @@ class FlattradeExecutionClient:
         return self.client
 
     def ensure_logged_in(self) -> bool:
-        """Return True only when a validated Flattrade daily token is available."""
+        """Return True only when a validated Flattrade daily token is available.
+
+        This method is intentionally safe to call before every operation. The
+        normal fast path only checks in-memory state; the interactive browser
+        flow runs once when the session has not yet been established.
+        """
         with self._lock:
             if self.is_logged_in and self._access_token and self.client is not None:
                 return True
             return self._login_locked()
 
     def _login_locked(self) -> bool:
-        """Validate an env token or perform Flattrade's browser request-code flow."""
+        """Validate an env token or perform Flattrade's browser request-code flow.
+
+        Authentication order is deliberate:
+
+        1. Require the client id used by all later ``jData`` payloads.
+        2. Prefer a manually supplied daily token, but verify it with UserDetails.
+        3. If absent/expired, open the official authorization page.
+        4. Hash API key + request code + API secret exactly as Flattrade documents.
+        5. Exchange that digest for a token and verify the resulting session.
+
+        Returns ``False`` instead of raising so startup can force every strategy
+        back to paper mode. Secrets, request codes, and tokens are never logged.
+        """
         self.is_logged_in = False
         self._client_id = _env_str("FLATTRADE_CLIENT_ID")
         if not self._client_id:
@@ -327,7 +383,23 @@ class FlattradeExecutionClient:
         *,
         is_order: bool = False,
     ) -> Any:
-        """POST one documented ``jData``/``jKey`` request with limits and timeout."""
+        """POST one documented ``jData``/``jKey`` request with limits and timeout.
+
+        Args:
+            endpoint: Final Pi endpoint name, such as ``UserDetails``.
+            payload: Plain Python dictionary that becomes compact JSON in jData.
+            is_order: Also consume the stricter order budget for write endpoints.
+
+        Returns:
+            The decoded JSON object/list supplied by Flattrade.
+
+        Raises:
+            RuntimeError: No token, rate budget, or valid JSON is available.
+            requests.RequestException: The network or HTTP status failed.
+
+        ``urlencode`` matters even though jData itself is JSON: it protects symbols
+        containing characters such as ``&`` from corrupting the outer POST body.
+        """
         if not self._access_token:
             raise RuntimeError("Flattrade has no validated access token.")
         self._api_limiter.acquire()
@@ -356,7 +428,12 @@ class FlattradeExecutionClient:
                 ) from exc
 
     def preload_scrip_master(self) -> bool:
-        """Log in and cache Flattrade's official NSE index-derivative CSV."""
+        """Log in and cache Flattrade's official NSE index-derivative CSV.
+
+        The master calls this once before worker threads start. Returning ``False``
+        makes startup disable live trading instead of discovering a missing or
+        malformed contract catalogue during the first real order.
+        """
         if not self.ensure_logged_in():
             return False
         with self._lock:
@@ -387,7 +464,16 @@ class FlattradeExecutionClient:
 
     @staticmethod
     def _prepare_scrip_master(raw: pd.DataFrame) -> pd.DataFrame:
-        """Validate official CSV columns and add normalized lookup fields."""
+        """Validate official CSV columns and add normalized lookup fields.
+
+        Human-facing CSV values vary in case and type (for example, strike may be
+        text ``"24150.00"``). Columns prefixed with ``_`` are internal, normalized
+        forms used for reliable comparisons; the original broker columns remain
+        available to the diagnostic for display and lot-size inspection.
+
+        Raises:
+            ValueError: Required columns or usable NFO rows are missing.
+        """
         required = {
             "Exchange",
             "Lotsize",
@@ -432,7 +518,19 @@ class FlattradeExecutionClient:
         strike: Any,
         exchange_segment: str = "NFO",
     ) -> str:
-        """Return the exact Flattrade ``Tradingsymbol`` or ``""`` on a miss."""
+        """Return the exact Flattrade ``Tradingsymbol`` or ``""`` on a miss.
+
+        Args:
+            underlying: Index name, currently ``NIFTY`` from the master runner.
+            expiry: Date-like option expiry supplied by the Dhan contract lookup.
+            option_type: ``CE`` for calls or ``PE`` for puts.
+            strike: Human-scale strike such as 24150 (not a paise multiplier).
+            exchange_segment: Must be ``NFO`` for this index-options helper.
+
+        Resolution is exact rather than pattern-based: the requested expiry,
+        strike, and option type must all occur in Flattrade's downloaded catalogue.
+        Returning an empty string makes the caller skip the real order safely.
+        """
         underlying_u = str(underlying).upper().strip()
         option_u = str(option_type).upper().strip()
         exchange_u = str(exchange_segment).upper().strip() or "NFO"
@@ -494,7 +592,26 @@ class FlattradeExecutionClient:
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
     ) -> dict[str, Any]:
-        """Place one MKT order and return only after the full fill is confirmed."""
+        """Place one MKT order and return only after the full fill is confirmed.
+
+        Args:
+            symbol: Exact Flattrade trading symbol returned by the resolver.
+            side: Friendly ``BUY`` or ``SELL`` value used by every broker helper.
+            quantity: Number of option units, normally a whole-number lot multiple.
+            exchange_segment: ``NFO``; other exchanges fail closed in this helper.
+            product_type: ``INTRADAY`` (Flattrade ``I``) or ``NORMAL`` (``M``).
+
+        Returns:
+            Flattrade's successful PlaceOrder acknowledgement dictionary.
+
+        Raises:
+            ValueError: A caller supplied an unsupported order value.
+            RuntimeError: Login, acknowledgement, rejection, or fill failed.
+            TimeoutError: The broker did not confirm the complete fill in time.
+
+        Important: ``stat=Ok`` only means the broker accepted the request. The
+        method still polls SingleOrdHist before reporting success to the strategy.
+        """
         side_u = str(side).upper().strip()
         product_u = str(product_type).upper().strip()
         exchange_u = str(exchange_segment).upper().strip() or "NFO"
@@ -577,7 +694,12 @@ class FlattradeExecutionClient:
         return (None, 0, 0, str(reason))
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> None:
-        """Poll SingleOrdHist until fully filled, rejected, or timed out."""
+        """Poll SingleOrdHist until fully filled, rejected, or timed out.
+
+        ``COMPLETE`` must include at least the requested filled quantity. A partial
+        completion, rejection, cancellation, or timeout raises with the order id
+        so operators can locate the possibly open order in Flattrade immediately.
+        """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_state = None
         while time.monotonic() < deadline:
@@ -624,7 +746,12 @@ class FlattradeExecutionClient:
         return ""
 
     def logout(self) -> dict[str, Any]:
-        """Close the local session and erase sensitive in-memory state."""
+        """Close the local session and erase sensitive in-memory state.
+
+        Flattrade Pi v2 exposes no documented remote logout call. Closing requests'
+        connection pool, clearing the token/account fields, contract cache, and
+        rate histories is therefore the complete local logout operation.
+        """
         with self._lock:
             if self.client is not None:
                 try:

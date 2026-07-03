@@ -91,7 +91,9 @@ BACKTEST_SCRIPTS = {
     "money-machine": "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Money Machine Strategy Backtest.py",
 }
 
-# `diagnose --broker <key>`
+# `diagnose --broker <key>`. argparse builds its allowed --broker choices from
+# these keys automatically; each value is the script that receives the remaining
+# CE/PE, strike, expiry, and --place-order arguments unchanged.
 BROKER_DIAGNOSTICS = {
     "flattrade": "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
     "kotak": "Dependencies/Kotak API/diagnose_kotak_symbol.py",

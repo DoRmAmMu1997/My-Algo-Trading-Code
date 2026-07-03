@@ -1011,6 +1011,11 @@ def _select_execution_client(broker_name: str):
 
     Keeping this decision in one small function makes the fail-closed behaviour
     easy to test.  A typo must never route real-money orders to another broker.
+
+    Returns:
+        ``(client, exchange_segment, product_type)``. Unknown names deliberately
+        return ``(None, "", "INTRADAY")``; startup sees the missing client and
+        forces every would-be live strategy back to paper mode.
     """
     broker = str(broker_name).upper().strip()
     if broker == "KOTAK":

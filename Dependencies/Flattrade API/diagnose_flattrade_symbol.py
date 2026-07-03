@@ -10,6 +10,11 @@ used by live execution, prints the exact contract row, and checks the shared
 resolver.  It does not place an order unless ``--place-order`` is supplied and
 the operator then types exactly ``YES``.  The real-money path buys one lot and
 immediately sells it to flatten.
+
+The normal read-only flow has four visible checkpoints: authenticate, download
+the official contract list, select one exact row, and ask the production resolver
+for the same symbol. A mismatch is reported before the optional order prompt, so
+the diagnostic tests the same boundary that live strategies depend upon.
 """
 
 from __future__ import annotations
@@ -29,7 +34,12 @@ UNDERLYING = "NIFTY"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the small broker-specific parser used directly and through algo.py."""
+    """Build the parser used directly and through ``algo.py diagnose``.
+
+    ``algo.py`` consumes only ``--broker flattrade`` and forwards every remaining
+    argument unchanged, so this parser remains the single source of truth for the
+    broker-specific option type, strike, expiry, quantity, and real-order switch.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Validate a Flattrade NIFTY option symbol. Read-only unless "
@@ -95,6 +105,21 @@ def select_contract(
     When no expiry is supplied, the nearest non-expired contract containing the
     requested strike is chosen.  Filtering the strike before choosing the date
     avoids selecting an expiry that does not list that particular contract.
+
+    Args:
+        client: Logged-in FlattradeExecutionClient with ``_scrip_df`` preloaded.
+        underlying: Index name (the CLI currently fixes this to NIFTY).
+        option_type: ``CE`` or ``PE``.
+        strike: Whole-number option strike.
+        requested_expiry: Exact date, or ``None`` to choose the nearest future row.
+        today: Injectable clock used by deterministic unit tests.
+
+    Returns:
+        ``(expiry_date, trading_symbol, lot_size)`` from one official CSV row.
+
+    Raises:
+        ValueError: The master is unavailable, no exact row exists, or lot size is
+            invalid. It never guesses a symbol or quantity.
     """
     frame = getattr(client, "_scrip_df", None)
     if frame is None or frame.empty:
@@ -133,7 +158,13 @@ def select_contract(
 
 
 def place_round_trip_test_order(client: Any, symbol: str, quantity: int) -> bool:
-    """Place a confirmation-gated REAL BUY then SELL; return True only if flat."""
+    """Place a confirmation-gated REAL BUY then SELL; return True only if flat.
+
+    This is deliberately separate from ``main`` so tests can prove that anything
+    except uppercase ``YES`` sends zero orders. If entry or exit confirmation is
+    ambiguous, the message assumes a live position *may* exist and directs the
+    operator to Flattrade; silence would be unsafe in a real-money diagnostic.
+    """
     print("\n" + "=" * 72)
     print("REAL ROUND-TRIP TEST ORDER on Flattrade")
     print(
@@ -191,7 +222,13 @@ def place_round_trip_test_order(client: Any, symbol: str, quantity: int) -> bool
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the safe symbol diagnostic and optional confirmation-gated order."""
+    """Run the safe symbol diagnostic and optional confirmation-gated order.
+
+    Return codes follow normal CLI convention: 0 success, 1 operational failure
+    (login/resolution/order), and 2 invalid command-line input.
+    """
+    # Parse and validate all local input before login. Typos should never open a
+    # browser or touch the broker API.
     args = build_parser().parse_args(argv)
     if args.qty is not None and args.qty <= 0:
         print("--qty must be a positive integer.", file=sys.stderr)
@@ -208,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     client = fe.flattrade_execution_client
     try:
+        # ``preload_scrip_master`` authenticates first, then downloads once. The
+        # production resolver below reuses the already-normalized in-memory table.
         print("Logging in to Flattrade and loading the official NFO index master...")
         if not client.preload_scrip_master():
             print("Could not log in / load the Flattrade scrip master.")
@@ -239,6 +278,8 @@ def main(argv: list[str] | None = None) -> int:
             print("Resolver did not reproduce the exact official CSV symbol.")
             return 1
 
+        # Read-only is the default. Reaching the order helper requires both the
+        # explicit flag here and its second, typed-YES confirmation inside.
         if not args.place_order:
             print("\nRead-only diagnostic complete. No order was placed.")
             return 0
@@ -248,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Flattrade diagnostic failed: {exc}", file=sys.stderr)
         return 1
     finally:
+        # Also runs on parse/resolution/order exceptions. Flattrade has no remote
+        # logout endpoint, so this clears the local token/session/cache state.
         client.logout()
 
 
