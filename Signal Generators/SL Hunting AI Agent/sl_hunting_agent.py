@@ -119,6 +119,10 @@ RunnerFn = Callable[..., Awaitable[AgentRunResult]]
 # ---------------------------------------------------------------------------
 
 Action = Literal["ENTER_LONG", "ENTER_SHORT", "EXIT", "HOLD"]
+# Which leg an EXIT applies to. The NIFTY leg and its mechanical BankNIFTY mirror
+# are TIED for hard risk (stop/target/max-loss/square-off close both), but the
+# agent may cut them INDEPENDENTLY on premise-invalidation via this selector.
+ExitLeg = Literal["NIFTY", "BNF", "BOTH"]
 
 
 class SLHuntingDecision(StrictAIModel):
@@ -132,6 +136,10 @@ class SLHuntingDecision(StrictAIModel):
     action: Action = Field(description="ENTER_LONG, ENTER_SHORT, EXIT or HOLD.")
     stop: float = Field(default=0.0, description="Underlying stop level for an entry; 0 for EXIT/HOLD.")
     target: float = Field(default=0.0, description="Underlying target level for an entry; 0 for EXIT/HOLD.")
+    exit_leg: ExitLeg = Field(
+        default="BOTH",
+        description="For EXIT only: which basket leg to close — NIFTY, BNF, or BOTH (default).",
+    )
     confidence: int = Field(description="0-10 confidence in the decision (10 = textbook).")
     setup: str = Field(default="none", description="Short name of the setup acted on, or 'none'.")
     reasoning: str = Field(description="2-4 sentences: level, pattern+confirmation, stop/target, why now.")

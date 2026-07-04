@@ -208,14 +208,23 @@ addendum of `sl_hunting_doc.md`.
 ## BankNIFTY mirror basket (v4)
 Intraday Hunter trades a multi-index basket; the worker now mirrors him: every NIFTY entry
 also BUYS the **same lot count** on the **BankNIFTY ATM** option (BankNIFTY's own target
-expiry — BNF has no weekly series), and the mirror **exits the moment the NIFTY leg exits**
-(AI exit, stop/target, max-loss, 15:15 square-off — one basket). The mirror is mechanical:
-the agent still decides ONLY on NIFTY; its prompt just tells it the P&L it sees is basket
-P&L. Same paper/live gates as the NIFTY leg; fail-soft (a mirror problem only skips the
-mirror); **basket risk ≈ 2× the ~Rs.2500 budget** (operator-accepted — the daily max-loss
-kill-switch still caps the day). Toggle: `SL_HUNTING_BNF_MIRROR` (default true). Journal
-rows' `option_pnl` includes both legs; MIRROR ENTRY/EXIT lines appear in the log and
-Telegram.
+expiry — BNF has no weekly series). Entry stays NIFTY-only (the mirror copies it). The mirror
+is mechanical; same paper/live gates as the NIFTY leg; fail-soft (a mirror problem only skips
+the mirror); **basket risk ≈ 2× the ~Rs.2500 budget** (operator-accepted — the daily max-loss
+kill-switch still caps the day). Toggle: `SL_HUNTING_BNF_MIRROR` (default true). Journal rows'
+`option_pnl` includes both legs; MIRROR ENTRY/EXIT lines appear in the log and Telegram.
+
+### Exit coupling (v5): tied for hard risk, independent for premise
+The two legs are coupled **differently on the way out**:
+- **Hard risk stays TIED** — the NIFTY leg's stop/target, the daily max-loss, and the 15:15
+  square-off each close **both** legs. The mirror carries no stop/target of its own.
+- **Premise-invalidation is PER-LEG** — the agent judges each leg on its own read (NIFTY on
+  NIFTY structure, the mirror on BankNIFTY's own structure via `bank_nifty`/`cross_index`) and
+  can cut just one. It acts through a new `exit_leg` on the EXIT decision: `NIFTY` (cut NIFTY,
+  keep the mirror), `BNF` (cut the mirror, keep NIFTY), or `BOTH` (default). `position_state`
+  now shows the mirror as its own leg with `nifty_leg_pnl` + a `mirror` block alongside the
+  basket `unrealized_pnl`. If the agent cuts one leg, the lone survivor is still swept by
+  max-loss + the 15:15 square-off (no orphan can leak open).
 
 ## Decision log
 The agent decides once per completed bar, but the worker only *logs* the bars where it

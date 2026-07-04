@@ -150,15 +150,25 @@ class SLHuntingToolContext:
     def action_tool_name(self) -> str:
         return execution_tool_name(self.live_active, self.broker)
 
-    def do_order(self, action: str, stop: float, target: float, reason: str) -> dict[str, Any]:
-        """Route an agent order through the injected executor (single source of truth)."""
+    def do_order(
+        self, action: str, stop: float, target: float, reason: str, exit_leg: str = "BOTH"
+    ) -> dict[str, Any]:
+        """Route an agent order through the injected executor (single source of truth).
+
+        `exit_leg` applies only to EXIT: NIFTY / BNF / BOTH (default). It lets the agent
+        cut one leg of the BankNIFTY-mirror basket on premise-invalidation while leaving
+        the other running; hard risk (stop/target/max-loss/square-off) still ties both.
+        """
         action = (action or "").strip().upper()
         if action == "ENTER_LONG":
             return self.executor.enter("LONG", float(stop or 0.0), float(target or 0.0), reason, self.last_price)
         if action == "ENTER_SHORT":
             return self.executor.enter("SHORT", float(stop or 0.0), float(target or 0.0), reason, self.last_price)
         if action == "EXIT":
-            return self.executor.exit(reason, self.last_price)
+            leg = (exit_leg or "BOTH").strip().upper()
+            if leg not in ("NIFTY", "BNF", "BOTH"):
+                return {"accepted": False, "reason": f"invalid exit_leg {exit_leg!r}; expected NIFTY, BNF or BOTH"}
+            return self.executor.exit(reason, self.last_price, leg=leg)
         return {"accepted": False, "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT or EXIT"}
 
 
@@ -233,8 +243,12 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
         "configuration chose this venue; you cannot change it). action is ENTER_LONG "
         "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
         "UNDERLYING price levels (required for entries; ignored for EXIT). reason is "
-        "a one-line justification. Returns whether the order was accepted or rejected.",
-        {"action": str, "stop": float, "target": float, "reason": str},
+        "a one-line justification. exit_leg (EXIT only) is NIFTY, BNF or BOTH (default "
+        "BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, and "
+        "you may cut ONE leg on premise-invalidation while the other runs — but hard "
+        "risk (stop/target/max-loss/square-off) always closes both. Returns whether "
+        "the order was accepted or rejected.",
+        {"action": str, "stop": float, "target": float, "reason": str, "exit_leg": str},
     )
     async def _order(args: dict[str, Any]) -> dict[str, Any]:
         result = context.do_order(
@@ -242,6 +256,7 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
             args.get("stop", 0.0),
             args.get("target", 0.0),
             args.get("reason", ""),
+            args.get("exit_leg", "BOTH"),
         )
         return _as_tool_text(result)
 

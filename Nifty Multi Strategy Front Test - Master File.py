@@ -8914,6 +8914,12 @@ if SL_HUNTING_AVAILABLE:
                 if self._mirror_enabled else None
             )
             self._mirror_pos = PaperPosition()
+            # When True, the next after_exit() will NOT close the mirror -- set only by
+            # exit_nifty_leg_only() so the agent can cut the NIFTY leg alone on
+            # premise-invalidation while the BankNIFTY mirror keeps running. Every other
+            # exit path (SL/target, max-loss, square-off, EXIT BOTH) leaves it False, so
+            # the mirror stays tied for hard risk exactly as before.
+            self._suppress_mirror_close = False
             # Latest BankNIFTY close seen this session (refreshed each decision
             # bar from the same fetch that feeds cross-confirmation); used to
             # pick the mirror's ATM strike.
@@ -9074,23 +9080,87 @@ if SL_HUNTING_AVAILABLE:
             whole basket."""
             pnl = super()._get_open_position_pnl()
             if self._mirror_pos.active:
-                live = self._get_option_ltp(
-                    self._mirror_pos.option_exchange_segment,
-                    self._mirror_pos.option_security_id,
-                    fallback=self._mirror_pos.entry_trade_price,
-                )
-                pnl += (live - self._mirror_pos.entry_trade_price) * self._mirror_pos.quantity
+                pnl += self._mirror_leg_pnl()
             return pnl
 
-        def after_exit(self, closed_position, reason: str) -> None:
-            """Universal post-close hook (fires for AI exit, stop/target, max-loss,
-            square-off). Close the BankNIFTY mirror FIRST (so the journal row's
-            option_pnl below reflects the whole basket), then the journal row."""
-            super().after_exit(closed_position, reason)
+        def _mirror_leg_pnl(self) -> float:
+            """Mark-to-market of the BankNIFTY mirror leg alone (0 when flat)."""
+            if not self._mirror_pos.active:
+                return 0.0
+            live = self._get_option_ltp(
+                self._mirror_pos.option_exchange_segment,
+                self._mirror_pos.option_security_id,
+                fallback=self._mirror_pos.entry_trade_price,
+            )
+            return (live - self._mirror_pos.entry_trade_price) * self._mirror_pos.quantity
+
+        def nifty_leg_pnl(self) -> float:
+            """MTM of the NIFTY leg ALONE (excludes the mirror) for the agent's per-leg read."""
+            return super()._get_open_position_pnl()
+
+        def mirror_snapshot(self):
+            """The BankNIFTY mirror as its own position for the agent's `position_state`,
+            or None when there is no open mirror. Lets the agent judge the mirror's
+            premise independently of the NIFTY leg."""
+            if not self._mirror_pos.active:
+                return None
+            return {
+                "in_position": True,
+                "underlying": "BANKNIFTY",
+                "direction": self._mirror_pos.direction,
+                "entry": round(float(self._mirror_pos.entry_underlying), 2),
+                "strike": round(float(self._mirror_pos.option_strike), 2),
+                "unrealized_pnl": round(self._mirror_leg_pnl(), 2),
+            }
+
+        def exit_nifty_leg_only(self, reason: str) -> None:
+            """Close ONLY the NIFTY leg (premise-invalidation on NIFTY), leaving the
+            BankNIFTY mirror running. Sets the suppress flag so after_exit does not
+            drag the mirror; the flag is always reset, even on error."""
+            self._suppress_mirror_close = True
             try:
-                self._close_bnf_mirror(reason)
-            except Exception as exc:  # noqa: BLE001 - mirror close must never block the journal
-                self.log.warning("BNF mirror close failed: %s", exc)
+                self.exit_position(reason)
+            finally:
+                self._suppress_mirror_close = False
+
+        def exit_bnf_mirror_only(self, reason: str) -> None:
+            """Close ONLY the BankNIFTY mirror (premise-invalidation on BankNIFTY),
+            leaving the NIFTY leg running. Does not touch self.pos or the journal row."""
+            self._close_bnf_mirror(reason)
+
+        def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
+            """Basket-level max-loss closes BOTH legs. The base closes the NIFTY leg (and
+            its mirror via after_exit); if only a lone mirror remains (agent had cut the
+            NIFTY leg alone earlier), sweep it too so nothing leaks open."""
+            super().handle_max_loss_and_stop(total_pnl, open_pnl)
+            if self._mirror_pos.active:
+                try:
+                    self._close_bnf_mirror("MAX_LOSS_BREACH")
+                except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
+                    self.log.warning("Lone BNF mirror max-loss close failed: %s", exc)
+
+        def handle_square_off_and_stop(self) -> None:
+            """15:15 square-off closes BOTH legs. Same orphan-mirror sweep as max-loss."""
+            super().handle_square_off_and_stop()
+            if self._mirror_pos.active:
+                try:
+                    self._close_bnf_mirror("TIME_CUTOFF")
+                except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
+                    self.log.warning("Lone BNF mirror square-off close failed: %s", exc)
+
+        def after_exit(self, closed_position, reason: str) -> None:
+            """Universal post-close hook for the NIFTY leg (fires for stop/target,
+            max-loss, square-off, and the agent's EXIT). Normally closes the BankNIFTY
+            mirror too (basket), so the journal row's option_pnl reflects the whole
+            basket -- UNLESS `_suppress_mirror_close` is set, which happens only when the
+            agent cut the NIFTY leg alone (exit_leg=NIFTY) and the mirror must keep
+            running. Then the journal row."""
+            super().after_exit(closed_position, reason)
+            if not self._suppress_mirror_close:
+                try:
+                    self._close_bnf_mirror(reason)
+                except Exception as exc:  # noqa: BLE001 - mirror close must never block the journal
+                    self.log.warning("BNF mirror close failed: %s", exc)
             if self._journal is None or self._open_trade_id is None:
                 return
             try:

@@ -117,8 +117,10 @@ class TradeExecutor(Protocol):
         """Open a position (or reject if already in one). Returns a result dict."""
         ...
 
-    def exit(self, reason: str, price: float) -> dict[str, Any]:
-        """Close the open position (or reject if flat). Returns a result dict."""
+    def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
+        """Close the open position (or reject if flat). `leg` selects a basket leg
+        (NIFTY/BNF/BOTH) for the BankNIFTY-mirror worker; ignored where there's no
+        mirror. Returns a result dict."""
         ...
 
     def snapshot(self) -> dict[str, Any]:
@@ -187,12 +189,18 @@ class StandaloneExecutor:
             "lots": lots, "quantity": lots * self.lot_size,
         }
 
-    def exit(self, reason: str, price: float) -> dict[str, Any]:
+    def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
         """Close the open position at ``price``, append it to the trade log, go flat.
 
         P&L is the simple underlying-points proxy (LONG profits as price rises, SHORT as
         it falls) x lots x lot_size. Rejects if there is nothing open to close.
+
+        The standalone paper runner has NO BankNIFTY mirror leg, so ``leg`` only accepts
+        NIFTY/BOTH (both close the single position); BNF is rejected cleanly.
         """
+        leg = (leg or "BOTH").strip().upper()
+        if leg == "BNF":
+            return {"accepted": False, "reason": "no BankNIFTY mirror leg in the standalone runner"}
         if not self.pos.active:
             return {"accepted": False, "reason": "no open position to exit"}
         last = float(price)
@@ -287,13 +295,50 @@ class MasterWorkerExecutor:
             "stop": round(float(stop), 2), "target": round(float(target), 2),
         }
 
-    def exit(self, reason: str, price: float) -> dict[str, Any]:
-        """Delegate the close to the worker's `exit_position` (which handles P&L/alerts)."""
+    def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
+        """Delegate the close to the worker (which handles P&L/alerts).
+
+        ``leg`` selects which basket leg to close on a premise-invalidation EXIT:
+        - BOTH  -> `exit_position` (closes the NIFTY leg; the worker's after_exit
+                   closes the BankNIFTY mirror too, as today).
+        - NIFTY -> `exit_nifty_leg_only` (closes only NIFTY; mirror keeps running).
+        - BNF   -> `exit_bnf_mirror_only` (closes only the mirror; NIFTY keeps running).
+        Hard risk (stop/target/max-loss/square-off) is enforced elsewhere and always
+        closes both. Falls back gracefully when the worker has no mirror hooks.
+        """
+        leg = (leg or "BOTH").strip().upper()
+        reason_s = str(reason)[:300] or "AI_EXIT"
         pos = getattr(self._w, "pos", None)
-        if pos is None or not getattr(pos, "active", False):
-            return {"accepted": False, "reason": "no open position to exit"}
-        self._w.exit_position(str(reason)[:300] or "AI_EXIT")
-        return {"accepted": True, "action": "EXIT", "reason": str(reason)[:300]}
+        nifty_active = pos is not None and getattr(pos, "active", False)
+        mirror = getattr(self._w, "_mirror_pos", None)
+        mirror_active = mirror is not None and getattr(mirror, "active", False)
+
+        if leg == "BNF":
+            closer = getattr(self._w, "exit_bnf_mirror_only", None)
+            if not callable(closer):
+                return {"accepted": False, "reason": "no BankNIFTY mirror leg to exit"}
+            if not mirror_active:
+                return {"accepted": False, "reason": "BankNIFTY mirror is not open"}
+            closer(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "BNF", "reason": reason_s}
+
+        if leg == "NIFTY":
+            closer = getattr(self._w, "exit_nifty_leg_only", None)
+            if not nifty_active:
+                return {"accepted": False, "reason": "no open NIFTY position to exit"}
+            # Worker without the mirror hooks (standalone-style) just closes normally.
+            (closer or self._w.exit_position)(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "NIFTY", "reason": reason_s}
+
+        # BOTH: close the NIFTY leg (which drags the mirror via after_exit). If only a
+        # lone mirror remains (NIFTY already flat), still sweep it.
+        if nifty_active:
+            self._w.exit_position(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}
+        if mirror_active and callable(getattr(self._w, "exit_bnf_mirror_only", None)):
+            self._w.exit_bnf_mirror_only(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}
+        return {"accepted": False, "reason": "no open position to exit"}
 
     def snapshot(self) -> dict[str, Any]:
         """Read the worker's open position (duck-typed) into the `position_state` shape.
@@ -316,5 +361,19 @@ class MasterWorkerExecutor:
         if callable(getter):
             # Best-effort enrichment only: any failure just omits the field.
             with contextlib.suppress(Exception):
+                # NOTE: this is BASKET MTM (NIFTY leg + BankNIFTY mirror), matching the
+                # daily max-loss kill-switch. Per-leg P&L is split out below.
                 snap["unrealized_pnl"] = round(float(getter()), 2)
+        # Expose the BankNIFTY mirror as its OWN leg so the agent can judge each leg's
+        # premise independently. `mirror_snapshot` is None when there is no mirror (e.g.
+        # the standalone runner) or it is flat.
+        mirror_getter = getattr(self._w, "mirror_snapshot", None)
+        if callable(mirror_getter):
+            with contextlib.suppress(Exception):
+                mirror = mirror_getter()
+                if mirror:
+                    snap["mirror"] = mirror
+                leg_getter = getattr(self._w, "nifty_leg_pnl", None)
+                if callable(leg_getter):
+                    snap["nifty_leg_pnl"] = round(float(leg_getter()), 2)
         return snap

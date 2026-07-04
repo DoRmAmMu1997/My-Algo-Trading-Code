@@ -48,6 +48,15 @@ def test_invalid_action_rejected():
         SLHuntingDecision.model_validate(_valid_payload(action="BUY"))
 
 
+def test_exit_leg_defaults_to_both_and_validates():
+    """Per-leg exit selector: default BOTH, accepts the three literals, rejects others."""
+    assert SLHuntingDecision.model_validate(_valid_payload()).exit_leg == "BOTH"
+    for leg in ("NIFTY", "BNF", "BOTH"):
+        assert SLHuntingDecision.model_validate(_valid_payload(exit_leg=leg)).exit_leg == leg
+    with pytest.raises(Exception):
+        SLHuntingDecision.model_validate(_valid_payload(exit_leg="SENSEX"))
+
+
 def test_json_schema_omits_min_max_on_confidence():
     """Regression guard: Claude rejects minimum/maximum on integer types."""
     schema = SLHuntingDecision.model_json_schema()
@@ -63,6 +72,14 @@ def test_system_prompt_has_final_output_marker():
     # The method's core rules should be present in the agent's "brain".
     assert "pivot" in prompt.lower()
     assert "confirmation" in prompt.lower()
+
+
+def test_system_prompt_has_per_leg_exit_knowledge():
+    """v5: the mirror is tied for hard risk but per-leg for premise exits (exit_leg)."""
+    prompt = build_system_prompt() + FINAL_OUTPUT_INSTRUCTION
+    assert "exit_leg" in prompt
+    assert "PREMISE-INVALIDATION is PER-LEG" in prompt
+    assert "HARD RISK stays TIED" in prompt
 
 
 def test_system_prompt_has_v2_markers():
