@@ -224,7 +224,10 @@ The two legs are coupled **differently on the way out**:
   keep the mirror), `BNF` (cut the mirror, keep NIFTY), or `BOTH` (default). `position_state`
   now shows the mirror as its own leg with `nifty_leg_pnl` + a `mirror` block alongside the
   basket `unrealized_pnl`. If the agent cuts one leg, the lone survivor is still swept by
-  max-loss + the 15:15 square-off (no orphan can leak open).
+  max-loss + the 15:15 square-off (no orphan can leak open). A **lone mirror still reads as
+  "in position"**, and a fresh NIFTY entry is refused until it is closed (one basket at a
+  time — no stale-mirror pairing). When the NIFTY leg is cut first, its **journal row is held
+  open** until the mirror closes too, so `option_pnl` always reflects the whole basket.
 
 ## Decision log
 The agent decides once per completed bar, but the worker only *logs* the bars where it

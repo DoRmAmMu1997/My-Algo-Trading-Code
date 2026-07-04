@@ -8895,6 +8895,11 @@ if SL_HUNTING_AVAILABLE:
             )
             self._open_trade_id = None
             self._entry_realized_pnl = 0.0
+            # When the NIFTY leg is cut alone (exit_leg=NIFTY) but the mirror survives,
+            # we DEFER the journal close so option_pnl captures BOTH legs. This holds the
+            # NIFTY-leg exit context until the mirror finally closes (BNF exit / square-off
+            # / max-loss), at which point the row is finalized with basket P&L.
+            self._pending_journal_exit = None
             # Separate per-bar decision log (HOLD included); None disables it.
             self._decisions_path = (
                 SL_HUNTING_DECISIONS_PATH if SL_HUNTING_DECISIONS_ENABLED else None
@@ -9073,6 +9078,11 @@ if SL_HUNTING_AVAILABLE:
                 }],
             })
             self._mirror_pos = PaperPosition()
+            # If the NIFTY leg was cut alone earlier, its journal row was held open so
+            # option_pnl would include this mirror leg. Now that the mirror is realized
+            # (folded into realized_pnl above), finalize that row with the basket P&L.
+            if self._pending_journal_exit is not None:
+                self._finalize_journal(self._pending_journal_exit)
 
         def _get_open_position_pnl(self) -> float:
             """Basket MTM: the NIFTY leg plus the BankNIFTY mirror, so the daily
@@ -9148,13 +9158,46 @@ if SL_HUNTING_AVAILABLE:
                 except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
                     self.log.warning("Lone BNF mirror square-off close failed: %s", exc)
 
+        def _journal_exit_static(self, closed_position, reason: str) -> dict:
+            """The NIFTY-leg exit context for the journal row (everything EXCEPT the
+            option_pnl, which is computed at finalize time so it reflects the whole
+            basket once both legs are realized)."""
+            entry_u = float(getattr(closed_position, "entry_underlying", 0.0))
+            direction = getattr(closed_position, "direction", "")
+            spot = self._get_underlying_spot(fallback=entry_u)
+            points = (spot - entry_u) if direction == "LONG" else (entry_u - spot)
+            lot_size = max(int(getattr(closed_position, "option_lot_size", 0)), 1)
+            return {
+                "exit_underlying": round(spot, 2),
+                "exit_reason": reason,
+                "points": round(points, 2),
+                "lots": int(getattr(closed_position, "quantity", 0)) // lot_size,
+            }
+
+        def _finalize_journal(self, static: dict) -> None:
+            """Close the open journal row: `static` (NIFTY-leg exit context) plus the
+            LIVE basket option_pnl (realized delta since entry -- both legs by now)."""
+            if self._journal is None or self._open_trade_id is None:
+                self._pending_journal_exit = None
+                return
+            try:
+                self._journal.close_trade(self._open_trade_id, {
+                    **static,
+                    "option_pnl": round(self.realized_pnl - self._entry_realized_pnl, 2),
+                })
+            except Exception as exc:  # noqa: BLE001
+                self.log.warning("SL Hunting journal close failed: %s", exc)
+            finally:
+                self._open_trade_id = None
+                self._pending_journal_exit = None
+
         def after_exit(self, closed_position, reason: str) -> None:
             """Universal post-close hook for the NIFTY leg (fires for stop/target,
             max-loss, square-off, and the agent's EXIT). Normally closes the BankNIFTY
-            mirror too (basket), so the journal row's option_pnl reflects the whole
-            basket -- UNLESS `_suppress_mirror_close` is set, which happens only when the
-            agent cut the NIFTY leg alone (exit_leg=NIFTY) and the mirror must keep
-            running. Then the journal row."""
+            mirror too (basket) then closes the journal row with basket P&L. When the
+            agent cut the NIFTY leg ALONE (exit_leg=NIFTY) and the mirror survives, the
+            mirror stays open AND the journal close is DEFERRED so option_pnl still
+            captures both legs -- finalized when the mirror closes."""
             super().after_exit(closed_position, reason)
             if not self._suppress_mirror_close:
                 try:
@@ -9164,22 +9207,16 @@ if SL_HUNTING_AVAILABLE:
             if self._journal is None or self._open_trade_id is None:
                 return
             try:
-                entry_u = float(getattr(closed_position, "entry_underlying", 0.0))
-                direction = getattr(closed_position, "direction", "")
-                spot = self._get_underlying_spot(fallback=entry_u)
-                points = (spot - entry_u) if direction == "LONG" else (entry_u - spot)
-                lot_size = max(int(getattr(closed_position, "option_lot_size", 0)), 1)
-                self._journal.close_trade(self._open_trade_id, {
-                    "exit_underlying": round(spot, 2),
-                    "exit_reason": reason,
-                    "points": round(points, 2),
-                    "option_pnl": round(self.realized_pnl - self._entry_realized_pnl, 2),
-                    "lots": int(getattr(closed_position, "quantity", 0)) // lot_size,
-                })
+                static = self._journal_exit_static(closed_position, reason)
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("SL Hunting journal close failed: %s", exc)
-            finally:
                 self._open_trade_id = None
+                return
+            if self._suppress_mirror_close and self._mirror_pos.active:
+                # NIFTY cut alone, mirror still open -> defer until the mirror closes.
+                self._pending_journal_exit = static
+                return
+            self._finalize_journal(static)
 
         def minimum_strategy_rows(self) -> int:
             # Enough derived bars for swings / fibo / structure, with a margin.

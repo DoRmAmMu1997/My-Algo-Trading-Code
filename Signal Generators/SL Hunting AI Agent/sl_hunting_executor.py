@@ -279,6 +279,15 @@ class MasterWorkerExecutor:
         pos = getattr(self._w, "pos", None)
         if pos is not None and getattr(pos, "active", False):
             return {"accepted": False, "reason": "already in a position; EXIT first before entering again"}
+        # A lone BankNIFTY mirror (NIFTY leg cut alone) still occupies the basket: a new
+        # NIFTY entry can't be mirrored while the old mirror is live (it would pair the
+        # new trade with a stale leg). Require closing it (exit_leg=BNF) first.
+        mirror = getattr(self._w, "_mirror_pos", None)
+        if mirror is not None and getattr(mirror, "active", False):
+            return {
+                "accepted": False,
+                "reason": "BankNIFTY mirror leg still open; EXIT it (exit_leg=BNF) before a new entry",
+            }
         ok = bool(self._w.enter_position(
             direction,
             float(price),
@@ -346,17 +355,33 @@ class MasterWorkerExecutor:
         The worker stores entry/stop/target on its ``pos`` object as ``*_underlying``
         attributes; we copy those across and best-effort attach unrealised P&L if the
         worker exposes a getter for it.
+
+        A LONE BankNIFTY mirror (the agent cut the NIFTY leg alone, the mirror still
+        runs) also counts as "in_position": otherwise the agent would be told it is flat
+        and could open a fresh basket on top of the surviving leg.
         """
         pos = getattr(self._w, "pos", None)
-        if pos is None or not getattr(pos, "active", False):
+        nifty_active = pos is not None and getattr(pos, "active", False)
+        mirror = None
+        mirror_getter = getattr(self._w, "mirror_snapshot", None)
+        if callable(mirror_getter):
+            with contextlib.suppress(Exception):
+                mirror = mirror_getter()
+        if not nifty_active and not mirror:
             return {"in_position": False}
-        snap: dict[str, Any] = {
-            "in_position": True,
-            "direction": getattr(pos, "direction", ""),
-            "entry": round(float(getattr(pos, "entry_underlying", 0.0) or 0.0), 2),
-            "stop": round(float(getattr(pos, "stop_underlying", 0.0) or 0.0), 2),
-            "target": round(float(getattr(pos, "target_underlying", 0.0) or 0.0), 2),
-        }
+
+        snap: dict[str, Any] = {"in_position": True}
+        if nifty_active:
+            snap.update({
+                "direction": getattr(pos, "direction", ""),
+                "entry": round(float(getattr(pos, "entry_underlying", 0.0) or 0.0), 2),
+                "stop": round(float(getattr(pos, "stop_underlying", 0.0) or 0.0), 2),
+                "target": round(float(getattr(pos, "target_underlying", 0.0) or 0.0), 2),
+            })
+        else:
+            # Only the BankNIFTY mirror remains: no fresh NIFTY entry until it is
+            # closed (EXIT exit_leg=BNF) -- the agent should manage this leg, not enter.
+            snap["nifty_leg_flat"] = True
         getter = getattr(self._w, "_get_open_position_pnl", None)
         if callable(getter):
             # Best-effort enrichment only: any failure just omits the field.
@@ -365,15 +390,11 @@ class MasterWorkerExecutor:
                 # daily max-loss kill-switch. Per-leg P&L is split out below.
                 snap["unrealized_pnl"] = round(float(getter()), 2)
         # Expose the BankNIFTY mirror as its OWN leg so the agent can judge each leg's
-        # premise independently. `mirror_snapshot` is None when there is no mirror (e.g.
-        # the standalone runner) or it is flat.
-        mirror_getter = getattr(self._w, "mirror_snapshot", None)
-        if callable(mirror_getter):
+        # premise independently.
+        if mirror:
+            snap["mirror"] = mirror
+        leg_getter = getattr(self._w, "nifty_leg_pnl", None)
+        if callable(leg_getter):
             with contextlib.suppress(Exception):
-                mirror = mirror_getter()
-                if mirror:
-                    snap["mirror"] = mirror
-                leg_getter = getattr(self._w, "nifty_leg_pnl", None)
-                if callable(leg_getter):
-                    snap["nifty_leg_pnl"] = round(float(leg_getter()), 2)
+                snap["nifty_leg_pnl"] = round(float(leg_getter()), 2)
         return snap
