@@ -1339,6 +1339,41 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             self.assertTrue(master and per)
 
 
+class TestVirtualTradingToggle(unittest.TestCase):
+    """The per-strategy virtual (paper) gate: a strategy runs unless its
+    `<PREFIX>_VIRTUAL_TRADING` is explicitly false. Default is everything runs,
+    and there is deliberately NO global master switch."""
+
+    def test_default_is_enabled_when_key_absent(self):
+        os.environ.pop("RENKO_VIRTUAL_TRADING", None)
+        self.assertTrue(master_file._strategy_virtual_trading_enabled("Renko"))
+
+    def test_explicit_false_disables(self):
+        with patch.dict(os.environ, {"RENKO_VIRTUAL_TRADING": "false"}):
+            self.assertFalse(master_file._strategy_virtual_trading_enabled("Renko"))
+
+    def test_explicit_true_enables(self):
+        with patch.dict(os.environ, {"RENKO_VIRTUAL_TRADING": "true"}):
+            self.assertTrue(master_file._strategy_virtual_trading_enabled("Renko"))
+
+    def test_unmapped_strategy_fails_open(self):
+        """A strategy name with no env prefix must never be silently disabled."""
+        self.assertTrue(master_file._strategy_virtual_trading_enabled("NoSuchStrategy"))
+
+    def test_toggle_is_independent_per_strategy(self):
+        """Disabling one strategy does not affect another."""
+        with patch.dict(os.environ, {"RENKO_VIRTUAL_TRADING": "false"}):
+            self.assertFalse(master_file._strategy_virtual_trading_enabled("Renko"))
+            self.assertTrue(master_file._strategy_virtual_trading_enabled("EMA"))
+
+    def test_sl_hunting_prefix_respected(self):
+        """The optional agent maps to SL_HUNTING; its virtual gate must work too."""
+        if "SL Hunting AI" not in master_file.STRATEGY_ENV_PREFIX:
+            self.skipTest("SL Hunting worker not loaded in this environment.")
+        with patch.dict(os.environ, {"SL_HUNTING_VIRTUAL_TRADING": "false"}):
+            self.assertFalse(master_file._strategy_virtual_trading_enabled("SL Hunting AI"))
+
+
 # =============================================================================
 # TEST SUITE: LONG STRANGLE WORKER
 # =============================================================================

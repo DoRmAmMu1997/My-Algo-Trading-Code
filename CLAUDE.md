@@ -74,6 +74,10 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   (`KOTAK` | `SHOONYA` | `FLATTRADE`) selects the broker; an unknown value **fails closed** (live
   disabled, paper only).
   Any order failure falls back to paper for that trade. Every broker HTTP call must have a timeout.
+- **Per-strategy on/off:** each strategy also has a `<PREFIX>_VIRTUAL_TRADING` gate (default true).
+  Set it false to stop that strategy's worker thread from starting at all (so it does neither paper
+  nor live). Unlike live trading there is **no** global master switch — default is everything runs.
+  `main()` filters the `workers` list via `_strategy_virtual_trading_enabled` before starting threads.
 - **Broker layer:** the Kotak, Shoonya and Flattrade clients expose the SAME surface —
   `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
   `extract_order_id`, `logout`, `is_logged_in` — so the runner only ever touches the generic
