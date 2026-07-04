@@ -65,7 +65,9 @@ or stateful engines that compute a signal from a formula), the **SL Hunting AI A
 on your Claude subscription (no API key) — reasons over the recent NIFTY chart each completed
 bar and acts through **tool calls**, rather than returning a computed signal. It trades the
 discretionary *SL Hunting* price-action method on NIFTY ATM options, with **BankNIFTY
-cross-confirmation** and dynamic **~₹2,500 risk-per-trade** sizing, and is wired into the
+cross-confirmation** and dynamic **~₹2,500 risk-per-trade** sizing. Every NIFTY entry is also
+mirrored with an **equal-lot BankNIFTY ATM** leg (`SL_HUNTING_BNF_MIRROR`) — tied for hard risk,
+but cut per-leg on premise-invalidation (see its README). It is wired into the
 front-test master as the **optional, opt-in 27th worker** (`SL_HUNTING_ENABLED`, off by default;
 paper unless explicitly enabled; **fail-soft** — a safe HOLD on any error). It also **learns
 from its own trades** (a per-trade journal → an off-loop reflection coach → human-gated lessons

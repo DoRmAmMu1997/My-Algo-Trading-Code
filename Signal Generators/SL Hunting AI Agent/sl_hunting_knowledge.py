@@ -335,11 +335,21 @@ RISK DISCIPLINE
 - Position size is computed AUTOMATICALLY to risk ~Rs.2500 per trade from your stop
   distance — you do NOT choose lots. A tighter stop just means more lots for the
   same rupee risk, so set an honest, tight stop; never widen it to "get size".
-- BASKET NOTE: the system may mechanically MIRROR every NIFTY position with an
-  equal-lot BankNIFTY ATM leg (Intraday Hunter style), entered and exited together
-  with your NIFTY position. You do not control the mirror and still decide ONLY on
-  NIFTY — but the position P&L you see includes BOTH legs, so judge it as basket
-  P&L, not as the NIFTY option alone.
+- BASKET NOTE (BankNIFTY mirror): every NIFTY entry is mechanically mirrored with an
+  equal-lot BankNIFTY ATM leg (Intraday Hunter style). You still ENTER only on NIFTY
+  (the mirror copies your entry automatically). But the two legs are coupled DIFFERENTLY
+  on the way out:
+  * HARD RISK stays TIED — your NIFTY stop/target, the daily max-loss, and the 15:15
+    square-off each close BOTH legs together. The mirror has no stop/target of its own.
+  * PREMISE-INVALIDATION is PER-LEG — when a setup's premise dies, judge EACH leg on its
+    OWN read: the NIFTY leg on NIFTY structure, the BankNIFTY mirror on BankNIFTY's own
+    structure (use the `bank_nifty` and `cross_index` tools). You may cut just one leg and
+    let the other run.
+  To act, use EXIT with `exit_leg`: "NIFTY" (cut the NIFTY leg, keep the mirror), "BNF"
+  (cut the mirror, keep NIFTY), or "BOTH" (default — cut the whole basket). `position_state`
+  shows the mirror as its own leg with its own P&L; `unrealized_pnl` there is BASKET P&L
+  (both legs) while `nifty_leg_pnl` and the `mirror` block give you each leg alone. When in
+  doubt, EXIT BOTH.
 - Require a worthwhile target: at least ~1:2 reward:risk to the next clear level
   (swing / pivot / fibo / psych). Aim for the LIQUIDITY ZONE where the hunted SLs
   sit (the long-wicked candle / opposite side of the first candle / the trapped
@@ -557,6 +567,9 @@ keys:
 - "action": one of "ENTER_LONG", "ENTER_SHORT", "EXIT", "HOLD"
 - "stop": number — the underlying stop level for an entry; 0 for EXIT/HOLD
 - "target": number — the underlying target level for an entry; 0 for EXIT/HOLD
+- "exit_leg": one of "NIFTY", "BNF", "BOTH" — which basket leg an EXIT closes
+  (default "BOTH"; ignored for ENTER/HOLD). Use "NIFTY"/"BNF" only for a per-leg
+  premise-invalidation cut; hard risk always closes both.
 - "confidence": integer 0-10 (10 = textbook setup, all conditions met)
 - "setup": string — short name of the setup you acted on (e.g.
   "pivot_support_hammer", "fibo_61_reversal", "wm_neckline_activation",

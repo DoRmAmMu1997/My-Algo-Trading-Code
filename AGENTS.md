@@ -25,8 +25,10 @@ One process, cooperating threads:
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
   sizing) and acts through the same ATM `enter_position`/`exit_position`; its deps are lazily imported
   so a missing dep just disables it. Every NIFTY entry is mechanically MIRRORED with an equal-lot
-  BankNIFTY ATM leg (`SL_HUNTING_BNF_MIRROR`, default true) entered/exited as one basket — the agent
-  still decides only on NIFTY. It stops opening NEW positions after noon
+  BankNIFTY ATM leg (`SL_HUNTING_BNF_MIRROR`, default true): the legs are TIED for hard risk
+  (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's
+  premise INDEPENDENTLY and can cut one alone via the EXIT `exit_leg` selector (NIFTY|BNF|BOTH).
+  Entry stays NIFTY-only (the mirror copies it). It stops opening NEW positions after noon
   (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — not a square-off (exits + the 15:15 square-off
   still run; when flat past the cutoff it skips the LLM call entirely). It can also **learn from its own trades** (v3): a per-trade journal
   feeds an off-loop reflection coach (`sl_hunting_coach.py`) that proposes lessons; the operator promotes

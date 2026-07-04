@@ -117,8 +117,10 @@ class TradeExecutor(Protocol):
         """Open a position (or reject if already in one). Returns a result dict."""
         ...
 
-    def exit(self, reason: str, price: float) -> dict[str, Any]:
-        """Close the open position (or reject if flat). Returns a result dict."""
+    def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
+        """Close the open position (or reject if flat). `leg` selects a basket leg
+        (NIFTY/BNF/BOTH) for the BankNIFTY-mirror worker; ignored where there's no
+        mirror. Returns a result dict."""
         ...
 
     def snapshot(self) -> dict[str, Any]:
@@ -187,12 +189,18 @@ class StandaloneExecutor:
             "lots": lots, "quantity": lots * self.lot_size,
         }
 
-    def exit(self, reason: str, price: float) -> dict[str, Any]:
+    def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
         """Close the open position at ``price``, append it to the trade log, go flat.
 
         P&L is the simple underlying-points proxy (LONG profits as price rises, SHORT as
         it falls) x lots x lot_size. Rejects if there is nothing open to close.
+
+        The standalone paper runner has NO BankNIFTY mirror leg, so ``leg`` only accepts
+        NIFTY/BOTH (both close the single position); BNF is rejected cleanly.
         """
+        leg = (leg or "BOTH").strip().upper()
+        if leg == "BNF":
+            return {"accepted": False, "reason": "no BankNIFTY mirror leg in the standalone runner"}
         if not self.pos.active:
             return {"accepted": False, "reason": "no open position to exit"}
         last = float(price)
@@ -271,6 +279,15 @@ class MasterWorkerExecutor:
         pos = getattr(self._w, "pos", None)
         if pos is not None and getattr(pos, "active", False):
             return {"accepted": False, "reason": "already in a position; EXIT first before entering again"}
+        # A lone BankNIFTY mirror (NIFTY leg cut alone) still occupies the basket: a new
+        # NIFTY entry can't be mirrored while the old mirror is live (it would pair the
+        # new trade with a stale leg). Require closing it (exit_leg=BNF) first.
+        mirror = getattr(self._w, "_mirror_pos", None)
+        if mirror is not None and getattr(mirror, "active", False):
+            return {
+                "accepted": False,
+                "reason": "BankNIFTY mirror leg still open; EXIT it (exit_leg=BNF) before a new entry",
+            }
         ok = bool(self._w.enter_position(
             direction,
             float(price),
@@ -287,13 +304,50 @@ class MasterWorkerExecutor:
             "stop": round(float(stop), 2), "target": round(float(target), 2),
         }
 
-    def exit(self, reason: str, price: float) -> dict[str, Any]:
-        """Delegate the close to the worker's `exit_position` (which handles P&L/alerts)."""
+    def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
+        """Delegate the close to the worker (which handles P&L/alerts).
+
+        ``leg`` selects which basket leg to close on a premise-invalidation EXIT:
+        - BOTH  -> `exit_position` (closes the NIFTY leg; the worker's after_exit
+                   closes the BankNIFTY mirror too, as today).
+        - NIFTY -> `exit_nifty_leg_only` (closes only NIFTY; mirror keeps running).
+        - BNF   -> `exit_bnf_mirror_only` (closes only the mirror; NIFTY keeps running).
+        Hard risk (stop/target/max-loss/square-off) is enforced elsewhere and always
+        closes both. Falls back gracefully when the worker has no mirror hooks.
+        """
+        leg = (leg or "BOTH").strip().upper()
+        reason_s = str(reason)[:300] or "AI_EXIT"
         pos = getattr(self._w, "pos", None)
-        if pos is None or not getattr(pos, "active", False):
-            return {"accepted": False, "reason": "no open position to exit"}
-        self._w.exit_position(str(reason)[:300] or "AI_EXIT")
-        return {"accepted": True, "action": "EXIT", "reason": str(reason)[:300]}
+        nifty_active = pos is not None and getattr(pos, "active", False)
+        mirror = getattr(self._w, "_mirror_pos", None)
+        mirror_active = mirror is not None and getattr(mirror, "active", False)
+
+        if leg == "BNF":
+            closer = getattr(self._w, "exit_bnf_mirror_only", None)
+            if not callable(closer):
+                return {"accepted": False, "reason": "no BankNIFTY mirror leg to exit"}
+            if not mirror_active:
+                return {"accepted": False, "reason": "BankNIFTY mirror is not open"}
+            closer(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "BNF", "reason": reason_s}
+
+        if leg == "NIFTY":
+            closer = getattr(self._w, "exit_nifty_leg_only", None)
+            if not nifty_active:
+                return {"accepted": False, "reason": "no open NIFTY position to exit"}
+            # Worker without the mirror hooks (standalone-style) just closes normally.
+            (closer or self._w.exit_position)(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "NIFTY", "reason": reason_s}
+
+        # BOTH: close the NIFTY leg (which drags the mirror via after_exit). If only a
+        # lone mirror remains (NIFTY already flat), still sweep it.
+        if nifty_active:
+            self._w.exit_position(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}
+        if mirror_active and callable(getattr(self._w, "exit_bnf_mirror_only", None)):
+            self._w.exit_bnf_mirror_only(reason_s)
+            return {"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}
+        return {"accepted": False, "reason": "no open position to exit"}
 
     def snapshot(self) -> dict[str, Any]:
         """Read the worker's open position (duck-typed) into the `position_state` shape.
@@ -301,20 +355,46 @@ class MasterWorkerExecutor:
         The worker stores entry/stop/target on its ``pos`` object as ``*_underlying``
         attributes; we copy those across and best-effort attach unrealised P&L if the
         worker exposes a getter for it.
+
+        A LONE BankNIFTY mirror (the agent cut the NIFTY leg alone, the mirror still
+        runs) also counts as "in_position": otherwise the agent would be told it is flat
+        and could open a fresh basket on top of the surviving leg.
         """
         pos = getattr(self._w, "pos", None)
-        if pos is None or not getattr(pos, "active", False):
+        nifty_active = pos is not None and getattr(pos, "active", False)
+        mirror = None
+        mirror_getter = getattr(self._w, "mirror_snapshot", None)
+        if callable(mirror_getter):
+            with contextlib.suppress(Exception):
+                mirror = mirror_getter()
+        if not nifty_active and not mirror:
             return {"in_position": False}
-        snap: dict[str, Any] = {
-            "in_position": True,
-            "direction": getattr(pos, "direction", ""),
-            "entry": round(float(getattr(pos, "entry_underlying", 0.0) or 0.0), 2),
-            "stop": round(float(getattr(pos, "stop_underlying", 0.0) or 0.0), 2),
-            "target": round(float(getattr(pos, "target_underlying", 0.0) or 0.0), 2),
-        }
+
+        snap: dict[str, Any] = {"in_position": True}
+        if nifty_active:
+            snap.update({
+                "direction": getattr(pos, "direction", ""),
+                "entry": round(float(getattr(pos, "entry_underlying", 0.0) or 0.0), 2),
+                "stop": round(float(getattr(pos, "stop_underlying", 0.0) or 0.0), 2),
+                "target": round(float(getattr(pos, "target_underlying", 0.0) or 0.0), 2),
+            })
+        else:
+            # Only the BankNIFTY mirror remains: no fresh NIFTY entry until it is
+            # closed (EXIT exit_leg=BNF) -- the agent should manage this leg, not enter.
+            snap["nifty_leg_flat"] = True
         getter = getattr(self._w, "_get_open_position_pnl", None)
         if callable(getter):
             # Best-effort enrichment only: any failure just omits the field.
             with contextlib.suppress(Exception):
+                # NOTE: this is BASKET MTM (NIFTY leg + BankNIFTY mirror), matching the
+                # daily max-loss kill-switch. Per-leg P&L is split out below.
                 snap["unrealized_pnl"] = round(float(getter()), 2)
+        # Expose the BankNIFTY mirror as its OWN leg so the agent can judge each leg's
+        # premise independently.
+        if mirror:
+            snap["mirror"] = mirror
+        leg_getter = getattr(self._w, "nifty_leg_pnl", None)
+        if callable(leg_getter):
+            with contextlib.suppress(Exception):
+                snap["nifty_leg_pnl"] = round(float(leg_getter()), 2)
         return snap

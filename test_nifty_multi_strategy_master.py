@@ -1788,6 +1788,124 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         nifty_legs = [(s, leg) for s, leg in captured if "underlying" not in leg]
         self.assertEqual([s for s, _ in nifty_legs], ["BUY", "SELL"])
 
+    # ----- Per-leg exit independence (premise-invalidation) -----------------
+    def test_exit_nifty_leg_only_keeps_mirror(self):
+        """Cutting the NIFTY leg alone must leave the BankNIFTY mirror running."""
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        self.assertTrue(worker._mirror_pos.active)
+        worker.exit_nifty_leg_only("nifty_premise_dead")
+        self.assertFalse(worker.pos.active)
+        self.assertTrue(worker._mirror_pos.active)     # mirror rides on
+        self.assertFalse(worker._suppress_mirror_close)  # flag reset
+
+    def test_exit_bnf_mirror_only_keeps_nifty(self):
+        """Cutting the mirror alone must leave the NIFTY leg running."""
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker.exit_bnf_mirror_only("bnf_premise_dead")
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertTrue(worker.pos.active)             # NIFTY rides on
+
+    def test_executor_routes_exit_leg(self):
+        """The MasterWorkerExecutor routes NIFTY/BNF/BOTH to the right leg."""
+        ex_mod = master_file.SL_HUNTING_EXECUTOR_MODULE
+        if ex_mod is None:
+            self.skipTest("SL Hunting executor module not loaded in this environment.")
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        ex = ex_mod.MasterWorkerExecutor(worker)
+        # BNF leg only.
+        res = ex.exit("bnf gone", 24300.0, leg="BNF")
+        self.assertTrue(res["accepted"])
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertTrue(worker.pos.active)
+        # BNF again with no mirror -> clean reject.
+        res2 = ex.exit("bnf gone", 24300.0, leg="BNF")
+        self.assertFalse(res2["accepted"])
+        # BOTH now closes the surviving NIFTY leg.
+        res3 = ex.exit("all done", 24300.0, leg="BOTH")
+        self.assertTrue(res3["accepted"])
+        self.assertFalse(worker.pos.active)
+
+    def test_square_off_sweeps_lone_mirror(self):
+        """After a NIFTY-only cut, the 15:15 square-off must still close the orphan mirror."""
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker.exit_nifty_leg_only("nifty_premise_dead")
+        self.assertTrue(worker._mirror_pos.active)
+        worker.handle_square_off_and_stop()
+        self.assertFalse(worker._mirror_pos.active)
+
+    def test_max_loss_sweeps_lone_mirror(self):
+        """Same orphan sweep on a max-loss breach."""
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker.exit_nifty_leg_only("nifty_premise_dead")
+        worker.handle_max_loss_and_stop(-9999.0, -9999.0)
+        self.assertFalse(worker._mirror_pos.active)
+
+    def test_mirror_snapshot_exposes_the_leg(self):
+        """position_state must be able to see the mirror as its own leg."""
+        worker, _ = self._make_worker()
+        self.assertIsNone(worker.mirror_snapshot())
+        worker.enter_position("SHORT", 24300.0, 24310.0, 24200.0)
+        snap = worker.mirror_snapshot()
+        self.assertEqual(snap["underlying"], "BANKNIFTY")
+        self.assertEqual(snap["direction"], "SHORT")
+        self.assertIn("unrealized_pnl", snap)
+
+    # ----- P1: a lone mirror must not read as "flat" ------------------------
+    def _executor(self, worker):
+        ex_mod = master_file.SL_HUNTING_EXECUTOR_MODULE
+        if ex_mod is None:
+            self.skipTest("SL Hunting executor module not loaded in this environment.")
+        return ex_mod.MasterWorkerExecutor(worker)
+
+    def test_lone_mirror_reads_as_in_position(self):
+        """After a NIFTY-only cut, position_state must report in_position (not flat)."""
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker.exit_nifty_leg_only("nifty_premise_dead")
+        snap = self._executor(worker).snapshot()
+        self.assertTrue(snap["in_position"])
+        self.assertIn("mirror", snap)
+        self.assertTrue(snap.get("nifty_leg_flat"))
+
+    def test_entry_rejected_while_lone_mirror_open(self):
+        """A fresh entry must be refused while a lone BankNIFTY mirror is still open."""
+        worker, _ = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker.exit_nifty_leg_only("nifty_premise_dead")
+        res = self._executor(worker).enter("LONG", 24290.0, 24400.0, "new setup", 24300.0)
+        self.assertFalse(res["accepted"])
+        self.assertIn("mirror", res["reason"].lower())
+        self.assertTrue(worker._mirror_pos.active)  # unchanged
+
+    # ----- P2: journal close defers until BOTH legs are flat ----------------
+    def test_journal_close_deferred_until_mirror_closes(self):
+        """A NIFTY-only cut must NOT close the journal row until the mirror closes, so
+        option_pnl reflects the whole basket (both legs)."""
+        worker, store = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        # Simulate an open journal row (process_strategy_frame opens it live).
+        worker._journal = MagicMock()
+        worker._open_trade_id = "t1"
+        worker._entry_realized_pnl = 0.0
+        worker.exit_nifty_leg_only("nifty_premise_dead")
+        worker._journal.close_trade.assert_not_called()   # deferred
+        self.assertIsNotNone(worker._pending_journal_exit)
+        self.assertEqual(worker._open_trade_id, "t1")
+        # Mirror option +20 -> a positive mirror leg; then close it.
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0})
+        worker.exit_bnf_mirror_only("bnf_premise_dead")
+        worker._journal.close_trade.assert_called_once()
+        _tid, payload = worker._journal.close_trade.call_args[0]
+        self.assertEqual(_tid, "t1")
+        self.assertGreater(payload["option_pnl"], 0.0)    # mirror P&L is captured
+        self.assertIsNone(worker._pending_journal_exit)
+        self.assertIsNone(worker._open_trade_id)
+
 
 class TestLiveOrderRouting(unittest.TestCase):
     """
