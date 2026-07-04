@@ -9876,6 +9876,25 @@ def _update_pnl_google_sheet() -> None:
         )
 
 
+def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
+    """Per-strategy virtual (paper) trading gate.
+
+    A strategy's worker thread STARTS unless its `<PREFIX>_VIRTUAL_TRADING` is
+    explicitly false. Default: everything runs. Deliberately has NO global master
+    switch (unlike `LIVE_TRADING_ENABLED`) -- turning virtual trading off is a
+    per-strategy decision only. A strategy with no known env prefix always runs
+    (fail-open, so a mapping gap can never silently disable a strategy).
+
+    Note: because a disabled strategy's thread never starts, this also stops it
+    trading LIVE regardless of its `<PREFIX>_LIVE_TRADING` flag -- a thread that
+    does not run trades nothing.
+    """
+    prefix = STRATEGY_ENV_PREFIX.get(strategy_name)
+    if not prefix:
+        return True
+    return _env_bool(f"{prefix}_VIRTUAL_TRADING", True)
+
+
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
@@ -9986,6 +10005,26 @@ def main() -> None:
     #       (the live-wiring below applies the same double-gate as every strategy).
     if SLHuntingAIWorker is not None:
         workers.append(SLHuntingAIWorker(store, stop_event, broker))
+
+    # -------------------------------------------------------------------------
+    # Per-strategy virtual (paper) trading gate.
+    # -------------------------------------------------------------------------
+    # Drop any strategy whose <PREFIX>_VIRTUAL_TRADING is false so its thread is
+    # never started (and thus never live-gated, wired to Telegram, joined, or in
+    # the EOD summary -- filtering this one list handles all of that uniformly).
+    # Default is true: everything runs. There is intentionally no master switch.
+    enabled_workers, disabled_workers = [], []
+    for worker in workers:
+        target = enabled_workers if _strategy_virtual_trading_enabled(worker.strategy_name) else disabled_workers
+        target.append(worker)
+    for worker in disabled_workers:
+        logger.warning(
+            "VIRTUAL TRADING DISABLED for %s (%s_VIRTUAL_TRADING=false); thread will NOT start.",
+            worker.strategy_name, STRATEGY_ENV_PREFIX.get(worker.strategy_name, "?"),
+        )
+    workers = enabled_workers
+    if not workers:
+        logger.warning("No strategies enabled for virtual trading; nothing will run this session.")
 
     # -------------------------------------------------------------------------
     # Decide which strategies trade for real vs on paper.
