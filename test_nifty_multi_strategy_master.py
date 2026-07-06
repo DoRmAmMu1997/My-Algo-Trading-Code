@@ -645,6 +645,148 @@ class TestOptionsContractResolver(unittest.TestCase):
 
 
 # =============================================================================
+# TEST SUITE: RESOLVER PER-UNDERLYING FILTER + MIRROR EXPIRY RULE (BNF-001)
+# =============================================================================
+class TestOptionsContractResolverUnderlyings(unittest.TestCase):
+    """
+    BNF-001 regression suite. The instrument-master filter used to hardcode
+    `~startswith("BANKNIFTY-")`-style exclusions regardless of the resolver's
+    own underlying, so a BANKNIFTY resolver could never see a single row
+    ("No valid BANKNIFTY option rows found" even though the CSV had them).
+    These tests pin the fixed behaviour: each resolver sees ONLY its own
+    underlying's rows, and the SL Hunting mirror's monthly-rollover expiry
+    picker chooses the current expiry unless it is about to expire.
+    """
+
+    @staticmethod
+    def _option_rows(underlying: str, expiries, strikes, lot_size: str, sec_start: int):
+        """Build DhanHQ-master-schema rows for one underlying (CE+PE per strike)."""
+        rows = []
+        sec = sec_start
+        for exp in expiries:
+            for strike in strikes:
+                for right in ("CE", "PE"):
+                    rows.append({
+                        "EXCH_ID": "NSE",
+                        "SEGMENT": "D",
+                        "INSTRUMENT": "OPTIDX",
+                        "SYMBOL_NAME": f"{underlying}-{exp}-{strike}-{right}",
+                        "DISPLAY_NAME": f"{underlying} {exp} {strike} {right}",
+                        "SM_EXPIRY_DATE": str(exp),
+                        "LOT_SIZE": lot_size,
+                        "SECURITY_ID": str(sec),
+                        "STRIKE_PRICE": str(strike),
+                        "OPTION_TYPE": right,
+                        "UNDERLYING_SYMBOL": underlying,
+                    })
+                    sec += 1
+        return rows
+
+    def _write_master(self, rows) -> tempfile.TemporaryDirectory:
+        """Write one synthetic instrument master; caller owns the tempdir."""
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        pd.DataFrame(rows).to_csv(Path(tmpdir.name) / "all_instrument 1.csv", index=False)
+        return tmpdir
+
+    def _resolver(self, tmpdir, underlying: str):
+        import logging
+        return master_file.OptionsContractResolver(
+            underlying=underlying,
+            instrument_master_glob=str(Path(tmpdir.name) / "all_instrument *.csv"),
+            log=logging.getLogger("test_resolver_underlyings"),
+        )
+
+    def _mixed_master(self):
+        """One CSV holding NIFTY + BANKNIFTY + FINNIFTY rows over two expiries."""
+        self.exp_first = date.today() + timedelta(days=10)
+        self.exp_second = date.today() + timedelta(days=40)
+        expiries = (self.exp_first.isoformat(), self.exp_second.isoformat())
+        rows = (
+            self._option_rows("NIFTY", expiries, (24200, 24300, 24400), "75", 20000)
+            + self._option_rows("BANKNIFTY", expiries, (57800, 57900, 58000), "35", 30000)
+            + self._option_rows("FINNIFTY", expiries, (26300, 26400), "65", 40000)
+        )
+        return self._write_master(rows)
+
+    def test_banknifty_resolver_returns_banknifty_atm_contract(self):
+        """A BANKNIFTY resolver must resolve a BANKNIFTY contract from a mixed master."""
+        tmpdir = self._mixed_master()
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        contract = resolver.get_atm_option(spot_price=57910.0, direction="LONG")
+        self.assertTrue(str(contract["trading_symbol"]).startswith("BANKNIFTY-"))
+        self.assertEqual(contract["option_type"], "CE")
+        self.assertEqual(contract["strike"], 57900.0)
+        self.assertEqual(contract["lot_size"], 35)
+
+    def test_banknifty_chain_contains_only_banknifty_rows(self):
+        """The BANKNIFTY chain must include every BNF row and nothing else."""
+        tmpdir = self._mixed_master()
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        chain = resolver._load_option_chain()
+        self.assertEqual(len(chain), 12)  # 2 expiries x 3 strikes x CE/PE
+        self.assertTrue(chain["trading_symbol"].str.startswith("BANKNIFTY-").all())
+
+    def test_nifty_resolver_excludes_other_underlyings(self):
+        """The NIFTY chain must still exclude BANKNIFTY/FINNIFTY rows (regression lock)."""
+        tmpdir = self._mixed_master()
+        resolver = self._resolver(tmpdir, "NIFTY")
+        chain = resolver._load_option_chain()
+        self.assertEqual(len(chain), 12)  # 2 expiries x 3 strikes x CE/PE
+        self.assertTrue(chain["trading_symbol"].str.startswith("NIFTY-").all())
+
+    def test_get_atm_option_accepts_explicit_expiry(self):
+        """An explicit expiry overrides the default next-next rule (mirror wiring)."""
+        tmpdir = self._mixed_master()
+        resolver = self._resolver(tmpdir, "NIFTY")
+        contract = resolver.get_atm_option(
+            spot_price=24310.0, direction="LONG", expiry_date=self.exp_first
+        )
+        self.assertEqual(contract["expiry_date"], self.exp_first)
+        # And the default still lands on the next-next expiry.
+        default_contract = resolver.get_atm_option(spot_price=24310.0, direction="LONG")
+        self.assertEqual(default_contract["expiry_date"], self.exp_second)
+
+    def _bnf_two_expiry_master(self, days_to_first: int, days_to_second: int = 40):
+        self.exp_near = date.today() + timedelta(days=days_to_first)
+        self.exp_far = date.today() + timedelta(days=days_to_second)
+        rows = self._option_rows(
+            "BANKNIFTY",
+            (self.exp_near.isoformat(), self.exp_far.isoformat()),
+            (57900,),
+            "35",
+            30000,
+        )
+        return self._write_master(rows)
+
+    def test_rollover_keeps_current_expiry_when_far(self):
+        """>= min_days to the current expiry -> stay on the current expiry."""
+        tmpdir = self._bnf_two_expiry_master(days_to_first=10)
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_near)
+
+    def test_rollover_rolls_to_next_expiry_when_near(self):
+        """< min_days to the current expiry -> roll to the next expiry."""
+        tmpdir = self._bnf_two_expiry_master(days_to_first=3)
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_far)
+
+    def test_rollover_boundary_day_keeps_current_expiry(self):
+        """Exactly min_days away is NOT 'fewer than' -> keep the current expiry."""
+        tmpdir = self._bnf_two_expiry_master(days_to_first=7)
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_near)
+
+    def test_rollover_returns_only_expiry_when_single(self):
+        """With a single listed expiry there is nothing to roll to -> return it."""
+        self.exp_only = date.today() + timedelta(days=3)
+        rows = self._option_rows("BANKNIFTY", (self.exp_only.isoformat(),), (57900,), "35", 30000)
+        tmpdir = self._write_master(rows)
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_only)
+
+
+# =============================================================================
 # TEST SUITE: DHAN BROKER CLIENT (mocked dhanhq SDK)
 # =============================================================================
 class TestDhanBrokerClient(unittest.TestCase):
@@ -1729,8 +1871,12 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertTrue(worker._mirror_pos.active)
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
-        # The mirror asked BankNIFTY's resolver with the BNF spot + direction.
-        worker._bnf_resolver.get_atm_option.assert_called_once_with(57910.0, "LONG")
+        # The mirror asked BankNIFTY's resolver with the BNF spot + direction,
+        # pinning the expiry to the monthly-rollover rule (BNF-001).
+        worker._bnf_resolver.get_atm_option.assert_called_once_with(
+            57910.0, "LONG",
+            expiry_date=worker._bnf_resolver.get_monthly_rollover_expiry.return_value,
+        )
 
     def test_basket_exits_together_and_pnl_includes_both_legs(self):
         worker, store = self._make_worker()
@@ -1905,6 +2051,56 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertGreater(payload["option_pnl"], 0.0)    # mirror P&L is captured
         self.assertIsNone(worker._pending_journal_exit)
         self.assertIsNone(worker._open_trade_id)
+
+    # ----- BNF-001: the REAL resolver must be able to open the mirror -------
+    def test_mirror_opens_with_real_resolver_and_rollover_expiry(self):
+        """Integration lock for BNF-001: with a real OptionsContractResolver over
+        a synthetic instrument master, the mirror must open a BANKNIFTY contract
+        at the current monthly expiry -- rolled to the NEXT month here because
+        the near expiry is inside the SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS window.
+        (The other mirror tests mock `_bnf_resolver`, which is exactly how the
+        original always-empty-chain bug slipped through.)"""
+        import logging
+
+        worker, store = self._make_worker()
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        near = date.today() + timedelta(days=3)    # < 7 days -> must roll
+        far = date.today() + timedelta(days=40)
+        rows = []
+        sec = 30000
+        for exp in (near.isoformat(), far.isoformat()):
+            for strike in (57800, 57900, 58000):
+                for right in ("CE", "PE"):
+                    rows.append({
+                        "EXCH_ID": "NSE", "SEGMENT": "D", "INSTRUMENT": "OPTIDX",
+                        "SYMBOL_NAME": f"BANKNIFTY-{exp}-{strike}-{right}",
+                        "DISPLAY_NAME": f"BANKNIFTY {exp} {strike} {right}",
+                        "SM_EXPIRY_DATE": exp, "LOT_SIZE": "35",
+                        "SECURITY_ID": str(sec), "STRIKE_PRICE": str(strike),
+                        "OPTION_TYPE": right, "UNDERLYING_SYMBOL": "BANKNIFTY",
+                    })
+                    sec += 1
+        csv_path = Path(tmpdir.name) / "all_instrument 1.csv"
+        pd.DataFrame(rows).to_csv(csv_path, index=False)
+        worker._bnf_resolver = master_file.OptionsContractResolver(
+            underlying="BANKNIFTY",
+            instrument_master_glob=str(Path(tmpdir.name) / "all_instrument *.csv"),
+            log=logging.getLogger("test_bnf_mirror_real_resolver"),
+        )
+        # Give every synthetic BNF option a live LTP so whichever row the
+        # resolver picks has a price in the shared cache.
+        store.update_ltp_map({
+            (master_file.OPTION_EXCHANGE_SEGMENT, int(row["SECURITY_ID"])): 500.0
+            for row in rows
+        })
+
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        self.assertTrue(worker._mirror_pos.active)
+        self.assertTrue(worker._mirror_pos.symbol.startswith("BANKNIFTY-"))
+        self.assertEqual(worker._mirror_pos.option_strike, 57900.0)  # ATM for 57910 spot
+        self.assertEqual(worker._mirror_pos.option_right, "CE")
+        self.assertEqual(worker._mirror_pos.option_expiry, far)      # rolled past `near`
 
 
 class TestLiveOrderRouting(unittest.TestCase):

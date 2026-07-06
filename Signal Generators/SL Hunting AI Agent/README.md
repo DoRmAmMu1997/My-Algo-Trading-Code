@@ -207,8 +207,10 @@ addendum of `sl_hunting_doc.md`.
 
 ## BankNIFTY mirror basket (v4)
 Intraday Hunter trades a multi-index basket; the worker now mirrors him: every NIFTY entry
-also BUYS the **same lot count** on the **BankNIFTY ATM** option (BankNIFTY's own target
-expiry — BNF has no weekly series). Entry stays NIFTY-only (the mirror copies it). The mirror
+also BUYS the **same lot count** on the **BankNIFTY ATM** option of the **current BNF monthly
+expiry** (BNF has no weekly series), rolling to the next month once fewer than
+`SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS` (default 7) days remain to it — never the illiquid
+second month out. Entry stays NIFTY-only (the mirror copies it). The mirror
 is mechanical; same paper/live gates as the NIFTY leg; fail-soft (a mirror problem only skips
 the mirror); **basket risk ≈ 2× the ~Rs.2500 budget** (operator-accepted — the daily max-loss
 kill-switch still caps the day). Toggle: `SL_HUNTING_BNF_MIRROR` (default true). Journal rows'
