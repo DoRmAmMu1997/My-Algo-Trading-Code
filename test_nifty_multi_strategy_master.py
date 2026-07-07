@@ -2065,15 +2065,162 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50), ("SELL", 25)])
 
     def test_hedged_exit_buys_main_sells_hedge(self):
-        """Hedged exit: BUY-to-close main, SELL-to-close hedge."""
+        """Hedged exit: BUY-to-close main, SELL-to-close hedge (real legs open)."""
         fake = _FakeShoonya()
         self.worker.live_trading = True
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg)
+            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=True)
         self.assertTrue(ok)
         self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
+
+    def test_hedged_exit_sends_no_orders_for_paper_fallback_position(self):
+        """A live worker whose entry fell back to paper (live_legs_open False) must
+        NOT send closing orders -- there are no real legs, and a BUY main / SELL
+        hedge here would open phantom exposure (P1, Codex on PR #42)."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=False)
+        self.assertTrue(ok)             # caller flattens its paper books normally
+        self.assertEqual(fake.calls, [])  # but nothing was sent to the broker
+
+
+class TestOrphanHedgeLegRecovery(unittest.TestCase):
+    """
+    HEDGE-001: when a hedged entry DOUBLE-fails live (the hedge BUY filled, then
+    the main SELL and the unwind SELL both failed), a real bought option is open
+    with no paper record. Recovery used to be a log line + Telegram alert only.
+    The worker must REMEMBER the orphan and keep trying to close it itself -- on
+    a slow poll cadence, and one final forced attempt at the daily shutdown --
+    so an unnoticed alert cannot leave real money bleeding all afternoon.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        self.worker.live_trading = True
+        self.main_leg = {"option_type": "PE", "strike": 22000.0,
+                         "expiry": date.today() + timedelta(days=2), "quantity": 50,
+                         "dhan_symbol": "MAIN"}
+        self.hedge_leg = {"option_type": "PE", "strike": 21000.0,
+                          "expiry": date.today() + timedelta(days=2), "quantity": 25,
+                          "dhan_symbol": "HEDGE"}
+
+    @staticmethod
+    def _sides(fake):
+        return [(side, qty) for (_sym, side, qty) in fake.calls]
+
+    def _double_fail_entry(self):
+        """Drive the double failure: hedge BUY fills, every SELL is rejected."""
+        fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL")
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+        self.assertFalse(ok)
+        return fake
+
+    def test_double_failure_records_the_orphaned_hedge_leg(self):
+        self._double_fail_entry()
+        self.assertEqual(len(self.worker._orphan_live_legs), 1)
+        orphan = self.worker._orphan_live_legs[0]
+        self.assertEqual(orphan["quantity"], 25)       # the bought hedge, not the main
+        self.assertEqual(orphan["strike"], 21000.0)
+
+    def test_single_failure_with_clean_unwind_records_nothing(self):
+        # Only the MAIN SELL fails (strike 22000); the unwind SELL succeeds.
+        fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL" and "22000" in symbol)
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+        self.assertFalse(ok)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_sweep_retries_and_closes_orphan_when_broker_recovers(self):
+        self._double_fail_entry()
+        events = MagicMock()
+        self.worker.trade_event_queue = events
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            self.worker._sweep_orphan_live_legs(force=True)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+        self.assertEqual(self._sides(ok_fake), [("SELL", 25)])  # closed the bought leg
+        actions = [c.args[0].get("action") for c in events.put_nowait.call_args_list]
+        self.assertIn("UNHEDGED_LEG_CLOSED", actions)
+
+    def test_sweep_is_rate_limited_between_retries(self):
+        self._double_fail_entry()
+        fail_fake = _FakeShoonya(fail_on=lambda symbol, side: True)
+        with patch.object(master_file, "execution_client", fail_fake):
+            self.worker._sweep_orphan_live_legs(force=True)    # one attempt, fails
+            attempts_after_first = len(fail_fake.calls)
+            self.worker._sweep_orphan_live_legs()              # inside the cadence -> skipped
+        self.assertEqual(len(fail_fake.calls), attempts_after_first)
+        self.assertEqual(len(self.worker._orphan_live_legs), 1)   # still tracked
+
+    def test_wait_for_next_poll_sweeps_orphans_each_cadence(self):
+        self._double_fail_entry()
+        self.worker.poll_seconds = 0
+        self.worker._next_orphan_retry_ts = 0.0                # cadence elapsed
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            self.worker.wait_for_next_poll()
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_square_off_shutdown_takes_a_final_forced_attempt(self):
+        self._double_fail_entry()
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            self.worker.handle_square_off_and_stop()
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+
+class TestHedgedPaperFallbackExit(unittest.TestCase):
+    """P1 (Codex on PR #42): a live hedged worker whose entry fell back to paper
+    (live_legs_open False -- rejected/partial fill, or the double-failure orphan
+    path) must NOT send real closing orders at exit. A BUY for the never-opened
+    main leg plus a SELL for the already-closed hedge would open phantom live
+    exposure. The exit still flattens the paper books."""
+
+    def _make_bullish_worker(self, *, live_legs_open: bool):
+        store = master_file.SharedMarketDataStore()
+        worker = master_file.SupertrendBullishWorker(
+            store=store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        worker.live_trading = True
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        worker.pos = master_file.HedgedPaperPosition(
+            active=True, direction="LONG", live_legs_open=live_legs_open,
+            entry_underlying=22500.0,
+            main_symbol="NIFTY-22000-PE", main_side="SELL", main_security_id=5001,
+            main_exchange_segment=seg, main_right="PE", main_strike=22000.0,
+            main_quantity=50, main_entry_price=160.0,
+            hedge_symbol="NIFTY-21000-PE", hedge_side="BUY", hedge_security_id=5002,
+            hedge_exchange_segment=seg, hedge_right="PE", hedge_strike=21000.0,
+            hedge_quantity=50, hedge_entry_price=10.0,
+        )
+        store.update_ltp_map({(seg, 5001): 120.0, (seg, 5002): 8.0})
+        return worker
+
+    def test_paper_fallback_exit_sends_no_real_orders_but_flattens(self):
+        worker = self._make_bullish_worker(live_legs_open=False)
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            worker.exit_position("TIME_CUTOFF")
+        self.assertEqual(fake.calls, [])            # no phantom broker orders
+        self.assertFalse(worker.pos.active)         # paper books flattened
+
+    def test_confirmed_live_exit_still_sends_both_closing_orders(self):
+        worker = self._make_bullish_worker(live_legs_open=True)
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            worker.exit_position("TIME_CUTOFF")
+        sides = [(side, qty) for (_sym, side, qty) in fake.calls]
+        self.assertEqual(sides, [("BUY", 50), ("SELL", 50)])  # BUY main, SELL hedge
+        self.assertFalse(worker.pos.active)
 
 
 class TestShoonyaOrderAck(unittest.TestCase):
