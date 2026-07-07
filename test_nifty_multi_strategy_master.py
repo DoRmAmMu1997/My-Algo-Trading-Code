@@ -1301,6 +1301,98 @@ class TestEnvBool(unittest.TestCase):
         self.assertFalse(master_file._env_bool("X_FLAG", False))
 
 
+class TestTimezoneAssumption(unittest.TestCase):
+    """OPS-001: every trading-window gate compares against the LOCAL wall clock
+    (naive datetime.now()), assuming the box runs in IST. A wrong system
+    timezone silently shifts market-open, entry cutoffs and the 15:15
+    square-off, so startup must call it out loudly."""
+
+    def test_ist_offset_produces_no_warning(self):
+        offset = timedelta(hours=5, minutes=30)
+        self.assertIsNone(master_file._timezone_assumption_warning(offset))
+
+    def test_non_ist_offset_produces_actionable_warning(self):
+        for offset in (timedelta(0), timedelta(hours=-5), timedelta(hours=5, minutes=45)):
+            warning = master_file._timezone_assumption_warning(offset)
+            self.assertIsNotNone(warning, offset)
+            self.assertIn("IST", warning)
+            self.assertIn("timezone", warning.lower())
+
+    def test_default_uses_system_offset(self):
+        # Whatever this machine's offset is, the helper must not crash and must
+        # answer consistently with an explicit call using the same offset.
+        system_offset = datetime.now().astimezone().utcoffset()
+        self.assertEqual(
+            master_file._timezone_assumption_warning(),
+            master_file._timezone_assumption_warning(system_offset),
+        )
+
+
+class TestGoogleSheetRetry(unittest.TestCase):
+    """OPS-001: one transient gspread/network hiccup used to skip the day's P&L
+    write entirely. The writer now takes a few slow retries before giving up
+    (still strictly non-fatal)."""
+
+    def _fake_gspread(self, fail_times: int):
+        import types as _types
+
+        calls = {"oauth": 0, "updates": []}
+
+        class _WorksheetNotFound(Exception):
+            pass
+
+        class _FakeWorksheet:
+            def get_all_values(self):
+                return [["Strategy", "2026-07-07"], ["Renko", ""]]
+
+            def update_cells(self, cells, value_input_option=""):
+                calls["updates"].append(list(cells))
+
+        class _FakeSpreadsheet:
+            def worksheet(self, name):
+                return _FakeWorksheet()
+
+        class _FakeClient:
+            def open_by_key(self, key):
+                return _FakeSpreadsheet()
+
+        def _oauth(**kwargs):
+            calls["oauth"] += 1
+            if calls["oauth"] <= fail_times:
+                raise ConnectionError("simulated transient Google outage")
+            return _FakeClient()
+
+        module = _types.ModuleType("gspread")
+        module.oauth = _oauth
+        module.WorksheetNotFound = _WorksheetNotFound
+        module.Cell = lambda row, col, value: (row, col, value)
+        return module, calls
+
+    def _run_writer(self, fake_module):
+        with (
+            patch.dict(sys.modules, {"gspread": fake_module}),
+            patch.dict(os.environ, {"GSHEET_ID": "sheet-id"}),
+            patch.object(master_file, "_parse_eod_pnl_by_day",
+                         return_value={"2026-07-07": {"Renko": 123.0}}),
+            patch.object(master_file, "_compute_pnl_sheet_updates",
+                         return_value=([(1, 1, 123.0)], [])),
+            patch.object(master_file.time, "sleep"),   # retries must not slow tests
+        ):
+            master_file._update_pnl_google_sheet()
+
+    def test_transient_failure_is_retried_then_writes(self):
+        fake, calls = self._fake_gspread(fail_times=1)
+        self._run_writer(fake)
+        self.assertEqual(calls["oauth"], 2)            # failed once, then succeeded
+        self.assertEqual(len(calls["updates"]), 1)     # the day's P&L was written
+
+    def test_persistent_failure_stays_bounded_and_nonfatal(self):
+        fake, calls = self._fake_gspread(fail_times=99)
+        self._run_writer(fake)                          # must not raise
+        self.assertEqual(calls["oauth"], 3)             # bounded attempts
+        self.assertEqual(calls["updates"], [])
+
+
 class TestStrategyEnvPrefixMap(unittest.TestCase):
     """Every worker's `strategy_name` must map to an env prefix, or it can never
     be switched live (it would silently stay paper)."""
