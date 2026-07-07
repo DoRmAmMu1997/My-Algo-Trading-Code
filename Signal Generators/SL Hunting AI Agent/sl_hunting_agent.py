@@ -27,11 +27,11 @@ safe HOLD decision.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import logging
 import re
 import sys
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -66,6 +66,23 @@ class SLHuntingAgentError(RuntimeError):
 
 class SLHuntingUsageLimitError(SLHuntingAgentError):
     """The Claude subscription's Agent SDK usage/rate limit was hit (HTTP 429)."""
+
+
+class SLHuntingTimeoutError(SLHuntingAgentError):
+    """The SDK call exceeded its time budget and was abandoned (SLH-001).
+
+    decide() runs on the strategy worker's OWN thread; while it blocks, the
+    worker's per-poll stop/target check, max-loss and 15:15 square-off are all
+    frozen. Bounding the call means a hung Claude CLI costs one bar's decision
+    (a fail-soft HOLD), not the position's entire mechanical safety net.
+    """
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.timeout_seconds = float(timeout_seconds)
+        super().__init__(
+            f"Claude Agent SDK call exceeded {self.timeout_seconds:.0f}s and was "
+            "abandoned; this bar's order tool has been disarmed."
+        )
 
 
 class SLHuntingAuthError(SLHuntingAgentError):
@@ -231,6 +248,7 @@ class SLHuntingAgent:
         fast_mode: bool = False,
         indicator_config: SLHuntingIndicatorConfig | None = None,
         lessons_block: str = "",
+        sdk_timeout_seconds: float = 90.0,
     ) -> None:
         if not model:
             raise ValueError("SLHuntingAgent: model is required.")
@@ -238,6 +256,13 @@ class SLHuntingAgent:
         self._runner = runner
         self._fast_mode = bool(fast_mode)
         self._cfg = indicator_config or SLHuntingIndicatorConfig()
+        # SLH-001: hard budget for one SDK call. decide() blocks the worker
+        # thread that also enforces stop/target/max-loss/square-off, so a hung
+        # CLI call must cost one bar (fail-soft HOLD), not the safety net.
+        # <= 0 disables the bound (not recommended for the live runner).
+        self._sdk_timeout_seconds: float | None = (
+            float(sdk_timeout_seconds) if float(sdk_timeout_seconds) > 0 else None
+        )
         # Optional v3 LEARNED LESSONS block (loaded + formatted by the caller, gated by
         # SL_HUNTING_LESSONS_ENABLED). Injected ONCE here, before the output contract,
         # so the system prefix stays stable per session and prompt caching is preserved.
@@ -384,29 +409,51 @@ class SLHuntingAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _run_sync(coro: Awaitable[AgentRunResult]) -> AgentRunResult:
+    def _run_sync(
+        coro: Awaitable[AgentRunResult], *, timeout_seconds: float | None = None
+    ) -> AgentRunResult:
         """Run an async coroutine to completion from sync/threaded code.
 
         Uses a dedicated worker thread with its OWN event loop so we never collide
         with any running loop. On Windows a ProactorEventLoop is required because
         the Agent SDK launches the Claude CLI as a subprocess (identical to the
         Scanner app's bridge).
-        """
 
-        def _runner() -> AgentRunResult:
+        `timeout_seconds` bounds the wait (SLH-001). The worker is a DAEMON
+        thread: when the budget is exceeded we stop waiting and raise
+        `SLHuntingTimeoutError`, abandoning the thread (a daemon can never block
+        process exit, and a hung CLI subprocess dies with the process). The
+        caller must then treat this bar's tool context as expired -- the
+        abandoned loop may wake later and must not be allowed to act.
+        """
+        # ("ok", result) or ("err", exception), appended by the worker thread.
+        outcome: list[tuple[str, Any]] = []
+
+        def _runner() -> None:
             if sys.platform == "win32":
                 loop = asyncio.ProactorEventLoop()
             else:
                 loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
-                return loop.run_until_complete(coro)
+                outcome.append(("ok", loop.run_until_complete(coro)))
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread below
+                outcome.append(("err", exc))
             finally:
                 asyncio.set_event_loop(None)
                 loop.close()
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            return executor.submit(_runner).result()
+        thread = threading.Thread(target=_runner, name="sl-hunting-sdk-call", daemon=True)
+        thread.start()
+        thread.join(timeout=timeout_seconds)
+        if thread.is_alive():
+            raise SLHuntingTimeoutError(timeout_seconds or 0.0)
+        if not outcome:  # pragma: no cover - the runner always records one entry
+            raise SLHuntingAgentError("SDK call thread ended without recording a result.")
+        kind, value = outcome[0]
+        if kind == "err":
+            raise value
+        return value
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -453,7 +500,8 @@ class SLHuntingAgent:
                     model=self._model,
                     max_turns=self.MAX_TURNS,
                     tool_context=tool_context,
-                )
+                ),
+                timeout_seconds=self._sdk_timeout_seconds,
             )
             if run_result.cost_usd is not None:
                 logger.info("SLHuntingAgent decision cost ~$%.4f", run_result.cost_usd)
@@ -480,6 +528,13 @@ class SLHuntingAgent:
         # a bad/missing final JSON simply yields a safe HOLD record (no further action).
         try:
             text = _run_once()
+        except SLHuntingTimeoutError as exc:
+            # SLH-001: the call was ABANDONED, not finished -- the agentic loop may
+            # still be alive on its daemon thread. Disarm this bar's order tool so
+            # a late-waking loop cannot fire a zombie order, then fail-soft HOLD.
+            tool_context.expire("sdk_timeout")
+            logger.warning("SL Hunting agent holding — %s", exc)
+            return _hold("Agent call timed out; holding.")
         except SLHuntingUsageLimitError as exc:
             # Actionable, content-free message (e.g. "...usage limit was hit (HTTP 429)").
             logger.warning("SL Hunting agent holding — %s", exc)

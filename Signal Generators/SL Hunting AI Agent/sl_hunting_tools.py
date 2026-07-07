@@ -78,6 +78,12 @@ class SLHuntingToolContext:
     broker: str | None = None
     last_price: float = field(default=0.0)
     bnf_candles: pd.DataFrame | None = None
+    # Set via `expire()` when the agent abandons this bar's SDK call (SLH-001,
+    # e.g. a timed-out CLI call). The abandoned agentic loop keeps running on
+    # its daemon thread and could otherwise still call the order tool MINUTES
+    # later, against a market that has moved on; once expired, `do_order`
+    # refuses instead of touching the executor.
+    expired_reason: str | None = field(default=None)
 
     @classmethod
     def build(
@@ -150,6 +156,10 @@ class SLHuntingToolContext:
     def action_tool_name(self) -> str:
         return execution_tool_name(self.live_active, self.broker)
 
+    def expire(self, reason: str) -> None:
+        """Disarm this bar's order tool (the decision window is over -- SLH-001)."""
+        self.expired_reason = str(reason)
+
     def do_order(
         self, action: str, stop: float, target: float, reason: str, exit_leg: str = "BOTH"
     ) -> dict[str, Any]:
@@ -159,6 +169,11 @@ class SLHuntingToolContext:
         cut one leg of the BankNIFTY-mirror basket on premise-invalidation while leaving
         the other running; hard risk (stop/target/max-loss/square-off) still ties both.
         """
+        if self.expired_reason:
+            return {
+                "accepted": False,
+                "reason": f"decision window expired ({self.expired_reason}); order refused",
+            }
         action = (action or "").strip().upper()
         if action == "ENTER_LONG":
             return self.executor.enter("LONG", float(stop or 0.0), float(target or 0.0), reason, self.last_price)
