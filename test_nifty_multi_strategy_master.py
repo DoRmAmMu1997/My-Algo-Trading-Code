@@ -2065,15 +2065,28 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50), ("SELL", 25)])
 
     def test_hedged_exit_buys_main_sells_hedge(self):
-        """Hedged exit: BUY-to-close main, SELL-to-close hedge."""
+        """Hedged exit: BUY-to-close main, SELL-to-close hedge (real legs open)."""
         fake = _FakeShoonya()
         self.worker.live_trading = True
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg)
+            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=True)
         self.assertTrue(ok)
         self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
+
+    def test_hedged_exit_sends_no_orders_for_paper_fallback_position(self):
+        """A live worker whose entry fell back to paper (live_legs_open False) must
+        NOT send closing orders -- there are no real legs, and a BUY main / SELL
+        hedge here would open phantom exposure (P1, Codex on PR #42)."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=False)
+        self.assertTrue(ok)             # caller flattens its paper books normally
+        self.assertEqual(fake.calls, [])  # but nothing was sent to the broker
 
 
 class TestOrphanHedgeLegRecovery(unittest.TestCase):
@@ -2163,6 +2176,51 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
         with patch.object(master_file, "execution_client", ok_fake):
             self.worker.handle_square_off_and_stop()
         self.assertEqual(self.worker._orphan_live_legs, [])
+
+
+class TestHedgedPaperFallbackExit(unittest.TestCase):
+    """P1 (Codex on PR #42): a live hedged worker whose entry fell back to paper
+    (live_legs_open False -- rejected/partial fill, or the double-failure orphan
+    path) must NOT send real closing orders at exit. A BUY for the never-opened
+    main leg plus a SELL for the already-closed hedge would open phantom live
+    exposure. The exit still flattens the paper books."""
+
+    def _make_bullish_worker(self, *, live_legs_open: bool):
+        store = master_file.SharedMarketDataStore()
+        worker = master_file.SupertrendBullishWorker(
+            store=store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        worker.live_trading = True
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        worker.pos = master_file.HedgedPaperPosition(
+            active=True, direction="LONG", live_legs_open=live_legs_open,
+            entry_underlying=22500.0,
+            main_symbol="NIFTY-22000-PE", main_side="SELL", main_security_id=5001,
+            main_exchange_segment=seg, main_right="PE", main_strike=22000.0,
+            main_quantity=50, main_entry_price=160.0,
+            hedge_symbol="NIFTY-21000-PE", hedge_side="BUY", hedge_security_id=5002,
+            hedge_exchange_segment=seg, hedge_right="PE", hedge_strike=21000.0,
+            hedge_quantity=50, hedge_entry_price=10.0,
+        )
+        store.update_ltp_map({(seg, 5001): 120.0, (seg, 5002): 8.0})
+        return worker
+
+    def test_paper_fallback_exit_sends_no_real_orders_but_flattens(self):
+        worker = self._make_bullish_worker(live_legs_open=False)
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            worker.exit_position("TIME_CUTOFF")
+        self.assertEqual(fake.calls, [])            # no phantom broker orders
+        self.assertFalse(worker.pos.active)         # paper books flattened
+
+    def test_confirmed_live_exit_still_sends_both_closing_orders(self):
+        worker = self._make_bullish_worker(live_legs_open=True)
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            worker.exit_position("TIME_CUTOFF")
+        sides = [(side, qty) for (_sym, side, qty) in fake.calls]
+        self.assertEqual(sides, [("BUY", 50), ("SELL", 50)])  # BUY main, SELL hedge
+        self.assertFalse(worker.pos.active)
 
 
 class TestShoonyaOrderAck(unittest.TestCase):

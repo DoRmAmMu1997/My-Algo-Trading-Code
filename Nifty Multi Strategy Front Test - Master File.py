@@ -1547,6 +1547,14 @@ class HedgedPaperPosition:
     hedge_entry_price: float = 0.0
     hedge_entry_order_id: str = ""
 
+    # True only when BOTH real legs were actually opened at the broker (a live
+    # entry that fully confirmed). A live entry that fell back to paper -- a
+    # rejected/partial fill, or the double-failure orphan path -- leaves this
+    # False, so the later exit must NOT send real closing orders (that would BUY
+    # a never-opened main leg and re-SELL an already-closed hedge, opening
+    # phantom exposure). Paper-mode workers never place live orders regardless.
+    live_legs_open: bool = False
+
 
 @dataclass
 class LTPSnapshot:
@@ -3081,7 +3089,7 @@ class BasePaperStrategyWorker(threading.Thread):
             return False
         return True
 
-    def _place_real_hedged_exit(self, main_leg: dict, hedge_leg: dict) -> bool:
+    def _place_real_hedged_exit(self, main_leg: dict, hedge_leg: dict, *, live_legs_open: bool) -> bool:
         """
         Close a real two-leg hedged position: BUY back the main leg we sold, and
         SELL the hedge leg we bought ("BUY-to-close" / "SELL-to-close").
@@ -3089,8 +3097,14 @@ class BasePaperStrategyWorker(threading.Thread):
         We try BOTH legs no matter what, to close as much as possible. The caller
         always flattens its own paper books afterward either way. Returns True
         only if both legs closed cleanly. No-op returning True in paper mode.
+
+        `live_legs_open` is the closing position's flag: when False the entry
+        never opened real legs (paper mode, or a live entry that fell back to
+        paper / orphaned), so there is nothing to close at the broker and we must
+        NOT send orders -- doing so would open phantom exposure. Returning True
+        here lets the caller flatten its paper books normally.
         """
-        if not self.live_trading:
+        if not self.live_trading or not live_legs_open:
             return True
         main_ok = self._place_real_leg("BUY", main_leg)
         hedge_ok = self._place_real_leg("SELL", hedge_leg)
@@ -5769,6 +5783,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="LONG",
+            live_legs_open=(self.live_trading and real_ok),
             entry_underlying=float(entry_underlying),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -5902,6 +5917,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
                        "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
                        "dhan_symbol": closed.hedge_symbol},
+            live_legs_open=closed.live_legs_open,
         )
         exec_mode = self._exec_mode_tag(real_ok)
 
@@ -6313,6 +6329,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="SHORT",
+            live_legs_open=(self.live_trading and real_ok),
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -6565,6 +6582,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
                        "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
                        "dhan_symbol": closed.hedge_symbol},
+            live_legs_open=closed.live_legs_open,
         )
         exec_mode = self._exec_mode_tag(real_ok)
 
@@ -7597,6 +7615,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         new_pos = HedgedPaperPosition(
             active=True,
             direction=side,  # "CE" or "PE" (used purely for log labelling)
+            live_legs_open=(self.live_trading and real_ok),
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(monitor_meta["trading_symbol"]),
@@ -7740,6 +7759,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
                        "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
                        "dhan_symbol": closed.hedge_symbol},
+            live_legs_open=closed.live_legs_open,
         )
         exec_mode = self._exec_mode_tag(real_ok)
 
