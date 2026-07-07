@@ -31,6 +31,7 @@ names are namespaced ``mcp__<server>__<tool>``.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,6 +48,38 @@ from sl_hunting_indicators import (
 )
 
 SERVER_NAME = "slhunting"
+
+# SLH-002: sanity bands for the agent's ENTRY stop/target, as fractions of the
+# current underlying price. Generous on purpose -- real SL-Hunting stops are a
+# few dozen points (<<1% of NIFTY), so these only catch hallucinated garbage
+# (wrong-instrument levels, sign flips, absurd numbers), never a real setup.
+MAX_STOP_DISTANCE_FRACTION = 0.03
+MAX_TARGET_DISTANCE_FRACTION = 0.10
+
+
+def _entry_levels_error(direction: str, stop: float, target: float, price: float) -> str | None:
+    """Explain why these entry levels are unusable, or return None when sane.
+
+    The mechanical per-poll exit uses these UNDERLYING levels verbatim: a stop on
+    the wrong side either fires instantly or never fires at all, and a non-finite
+    or far-away level silently disables the stop, leaving only max-loss and the
+    15:15 square-off. Checked at the order tool because only it knows the price.
+    """
+    if price <= 0:
+        return "no current underlying price available to validate the levels"
+    if not (math.isfinite(stop) and math.isfinite(target)):
+        return "stop and target must be finite numbers"
+    if stop <= 0 or target <= 0:
+        return "an entry requires a positive stop AND target on the underlying"
+    if direction == "LONG" and not (stop < price < target):
+        return f"a LONG needs stop below and target above the current price {price:.2f}"
+    if direction == "SHORT" and not (target < price < stop):
+        return f"a SHORT needs stop above and target below the current price {price:.2f}"
+    if abs(stop - price) > MAX_STOP_DISTANCE_FRACTION * price:
+        return f"stop is more than {MAX_STOP_DISTANCE_FRACTION:.0%} away from the current price"
+    if abs(target - price) > MAX_TARGET_DISTANCE_FRACTION * price:
+        return f"target is more than {MAX_TARGET_DISTANCE_FRACTION:.0%} away from the current price"
+    return None
 
 # Read-only context tools are always present; the action tool's name is decided at
 # build time by the environment, so it is appended in `build_sl_hunting_mcp_server`.
@@ -168,6 +201,11 @@ class SLHuntingToolContext:
         `exit_leg` applies only to EXIT: NIFTY / BNF / BOTH (default). It lets the agent
         cut one leg of the BankNIFTY-mirror basket on premise-invalidation while leaving
         the other running; hard risk (stop/target/max-loss/square-off) still ties both.
+
+        SLH-002: entry stop/target are validated against the CURRENT price here --
+        this is the one price-aware choke point for the agent's numbers. A rejected
+        entry goes back to the model mid-loop as `accepted: false` with the reason,
+        so it can correct its levels; the executor is never touched.
         """
         if self.expired_reason:
             return {
@@ -175,10 +213,14 @@ class SLHuntingToolContext:
                 "reason": f"decision window expired ({self.expired_reason}); order refused",
             }
         action = (action or "").strip().upper()
-        if action == "ENTER_LONG":
-            return self.executor.enter("LONG", float(stop or 0.0), float(target or 0.0), reason, self.last_price)
-        if action == "ENTER_SHORT":
-            return self.executor.enter("SHORT", float(stop or 0.0), float(target or 0.0), reason, self.last_price)
+        if action in ("ENTER_LONG", "ENTER_SHORT"):
+            direction = "LONG" if action == "ENTER_LONG" else "SHORT"
+            stop = float(stop or 0.0)
+            target = float(target or 0.0)
+            problem = _entry_levels_error(direction, stop, target, self.last_price)
+            if problem:
+                return {"accepted": False, "reason": f"invalid entry levels: {problem}"}
+            return self.executor.enter(direction, stop, target, reason, self.last_price)
         if action == "EXIT":
             leg = (exit_leg or "BOTH").strip().upper()
             if leg not in ("NIFTY", "BNF", "BOTH"):
@@ -257,7 +299,10 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
         f"Place an SL-Hunting order on NIFTY ATM options via the {venue} venue (the "
         "configuration chose this venue; you cannot change it). action is ENTER_LONG "
         "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
-        "UNDERLYING price levels (required for entries; ignored for EXIT). reason is "
+        "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
+        "BRACKET the current price on the correct side (LONG: stop below, target "
+        "above; SHORT: reversed), with the stop within ~3% and the target within "
+        "~10% of the current price -- otherwise the order is rejected. reason is "
         "a one-line justification. exit_leg (EXIT only) is NIFTY, BNF or BOTH (default "
         "BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, and "
         "you may cut ONE leg on premise-invalidation while the other runs — but hard "

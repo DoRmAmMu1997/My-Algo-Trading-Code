@@ -115,6 +115,10 @@ cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of
   max-loss and the 15:15 square-off, so a hung CLI call is abandoned at the budget:
   that bar's order tool is disarmed (a late-waking loop cannot fire a zombie order)
   and the agent records a fail-soft `HOLD`.
+- Entry **stop/target are sanity-checked at the order tool** against the live price
+  (correct side; stop within ~3%, target within ~10%) and bounded in the schema —
+  a hallucinated level cannot silently disable the mechanical stop; the rejected
+  order returns to the agent mid-loop so it can correct its levels.
 - Both extra deps are **lazily imported**, so a missing dep just disables this one
   worker — the rest of the master and its test suite are unaffected.
 
