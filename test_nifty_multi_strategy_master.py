@@ -2076,6 +2076,95 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
 
 
+class TestOrphanHedgeLegRecovery(unittest.TestCase):
+    """
+    HEDGE-001: when a hedged entry DOUBLE-fails live (the hedge BUY filled, then
+    the main SELL and the unwind SELL both failed), a real bought option is open
+    with no paper record. Recovery used to be a log line + Telegram alert only.
+    The worker must REMEMBER the orphan and keep trying to close it itself -- on
+    a slow poll cadence, and one final forced attempt at the daily shutdown --
+    so an unnoticed alert cannot leave real money bleeding all afternoon.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        self.worker.live_trading = True
+        self.main_leg = {"option_type": "PE", "strike": 22000.0,
+                         "expiry": date.today() + timedelta(days=2), "quantity": 50,
+                         "dhan_symbol": "MAIN"}
+        self.hedge_leg = {"option_type": "PE", "strike": 21000.0,
+                          "expiry": date.today() + timedelta(days=2), "quantity": 25,
+                          "dhan_symbol": "HEDGE"}
+
+    @staticmethod
+    def _sides(fake):
+        return [(side, qty) for (_sym, side, qty) in fake.calls]
+
+    def _double_fail_entry(self):
+        """Drive the double failure: hedge BUY fills, every SELL is rejected."""
+        fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL")
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+        self.assertFalse(ok)
+        return fake
+
+    def test_double_failure_records_the_orphaned_hedge_leg(self):
+        self._double_fail_entry()
+        self.assertEqual(len(self.worker._orphan_live_legs), 1)
+        orphan = self.worker._orphan_live_legs[0]
+        self.assertEqual(orphan["quantity"], 25)       # the bought hedge, not the main
+        self.assertEqual(orphan["strike"], 21000.0)
+
+    def test_single_failure_with_clean_unwind_records_nothing(self):
+        # Only the MAIN SELL fails (strike 22000); the unwind SELL succeeds.
+        fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL" and "22000" in symbol)
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+        self.assertFalse(ok)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_sweep_retries_and_closes_orphan_when_broker_recovers(self):
+        self._double_fail_entry()
+        events = MagicMock()
+        self.worker.trade_event_queue = events
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            self.worker._sweep_orphan_live_legs(force=True)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+        self.assertEqual(self._sides(ok_fake), [("SELL", 25)])  # closed the bought leg
+        actions = [c.args[0].get("action") for c in events.put_nowait.call_args_list]
+        self.assertIn("UNHEDGED_LEG_CLOSED", actions)
+
+    def test_sweep_is_rate_limited_between_retries(self):
+        self._double_fail_entry()
+        fail_fake = _FakeShoonya(fail_on=lambda symbol, side: True)
+        with patch.object(master_file, "execution_client", fail_fake):
+            self.worker._sweep_orphan_live_legs(force=True)    # one attempt, fails
+            attempts_after_first = len(fail_fake.calls)
+            self.worker._sweep_orphan_live_legs()              # inside the cadence -> skipped
+        self.assertEqual(len(fail_fake.calls), attempts_after_first)
+        self.assertEqual(len(self.worker._orphan_live_legs), 1)   # still tracked
+
+    def test_wait_for_next_poll_sweeps_orphans_each_cadence(self):
+        self._double_fail_entry()
+        self.worker.poll_seconds = 0
+        self.worker._next_orphan_retry_ts = 0.0                # cadence elapsed
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            self.worker.wait_for_next_poll()
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_square_off_shutdown_takes_a_final_forced_attempt(self):
+        self._double_fail_entry()
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            self.worker.handle_square_off_and_stop()
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+
 class TestShoonyaOrderAck(unittest.TestCase):
     """
     NorenApi.place_order returns None on failure and a dict with stat == "Ok" and

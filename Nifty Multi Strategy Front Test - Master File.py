@@ -202,6 +202,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -2873,6 +2874,10 @@ class BasePaperStrategyWorker(threading.Thread):
     trading_start_minute = 15
     square_off_hour = 15
     square_off_minute = 15
+    # HEDGE-001: how often to retry selling-to-close a live leg orphaned by a
+    # hedged-entry double failure. Slow on purpose -- the broker just rejected
+    # the same order, so hammering it seconds later only burns rate limit.
+    ORPHAN_UNWIND_RETRY_SECONDS = 60.0
 
     def __init__(
         self,
@@ -2925,6 +2930,15 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+
+        # HEDGE-001: live legs orphaned by a hedged-entry DOUBLE failure (the
+        # protective hedge BUY filled, then the main SELL and the unwind SELL
+        # both failed). Each entry is the original leg dict. The worker keeps
+        # retrying to sell these to close (`_sweep_orphan_live_legs`, driven
+        # from wait_for_next_poll + a final forced attempt at shutdown) so
+        # recovery does not depend on a human spotting the Telegram alert.
+        self._orphan_live_legs: list[dict] = []
+        self._next_orphan_retry_ts = 0.0
 
     def _place_real_leg(self, side: str, leg: dict) -> bool:
         """
@@ -3043,9 +3057,11 @@ class BasePaperStrategyWorker(threading.Thread):
                 self.log.error(
                     "MANUAL ACTION NEEDED | %s hedged entry: hedge filled but main "
                     "AND unwind failed -> a LIVE BUY %s strike=%s qty=%s is OPEN and "
-                    "untracked. Square it off manually.",
+                    "untracked. The worker will keep retrying the unwind (every ~%.0fs "
+                    "and at shutdown); square it off manually if it persists.",
                     self.strategy_name, hedge_leg.get("option_type"),
                     hedge_leg.get("strike"), hedge_leg.get("quantity"),
+                    self.ORPHAN_UNWIND_RETRY_SECONDS,
                 )
                 self.publish_trade_event({
                     "action": "UNHEDGED_LEG_OPEN",
@@ -3055,6 +3071,13 @@ class BasePaperStrategyWorker(threading.Thread):
                     "strike": hedge_leg.get("strike"),
                     "quantity": hedge_leg.get("quantity"),
                 })
+                # HEDGE-001: remember the orphan so the worker ITSELF keeps
+                # retrying the unwind (poll cadence + a final forced attempt at
+                # shutdown) instead of relying on the alert being seen. First
+                # retry waits one full cadence -- the broker rejected this very
+                # order milliseconds ago, so an instant retry would just fail.
+                self._orphan_live_legs.append(dict(hedge_leg))
+                self._next_orphan_retry_ts = time.monotonic() + self.ORPHAN_UNWIND_RETRY_SECONDS
             return False
         return True
 
@@ -3072,6 +3095,51 @@ class BasePaperStrategyWorker(threading.Thread):
         main_ok = self._place_real_leg("BUY", main_leg)
         hedge_ok = self._place_real_leg("SELL", hedge_leg)
         return main_ok and hedge_ok
+
+    def _sweep_orphan_live_legs(self, *, force: bool = False) -> None:
+        """Retry selling-to-close any live leg orphaned by a hedged double failure.
+
+        HEDGE-001. Rate-limited to one attempt per ORPHAN_UNWIND_RETRY_SECONDS
+        (a rejected order rarely succeeds seconds later, and retries must never
+        spam the broker); `force=True` -- used by the shutdown handlers -- takes
+        an immediate final attempt regardless of the cadence. Best-effort and
+        exception-proof: a failing sweep only logs and keeps the leg tracked
+        for the next pass. No-op in paper mode and when nothing is orphaned,
+        which is every poll in a normal session.
+        """
+        if not self._orphan_live_legs or not self.live_trading:
+            return
+        now = time.monotonic()
+        if not force and now < self._next_orphan_retry_ts:
+            return
+        self._next_orphan_retry_ts = now + self.ORPHAN_UNWIND_RETRY_SECONDS
+        still_open: list[dict] = []
+        for leg in self._orphan_live_legs:
+            try:
+                closed = self._place_real_leg("SELL", leg)
+            except Exception:  # noqa: BLE001 - the sweep must never kill the worker loop
+                closed = False
+            if closed:
+                self.log.warning(
+                    "Orphaned live leg RECOVERED (sold to close) | %s strike=%s qty=%s",
+                    leg.get("option_type"), leg.get("strike"), leg.get("quantity"),
+                )
+                self.publish_trade_event({
+                    "action": "UNHEDGED_LEG_CLOSED",
+                    "mode": "LIVE",
+                    "leg": "hedge",
+                    "option_type": leg.get("option_type"),
+                    "strike": leg.get("strike"),
+                    "quantity": leg.get("quantity"),
+                })
+            else:
+                still_open.append(leg)
+                self.log.error(
+                    "Orphaned live leg STILL OPEN (unwind retry failed) | %s strike=%s "
+                    "qty=%s | will keep retrying; square it off manually if this persists.",
+                    leg.get("option_type"), leg.get("strike"), leg.get("quantity"),
+                )
+        self._orphan_live_legs = still_open
 
     def publish_trade_event(self, event: dict) -> None:
         """
@@ -3232,6 +3300,11 @@ class BasePaperStrategyWorker(threading.Thread):
         means the worker wakes up immediately when the supervisor sets the
         stop event during Ctrl+C, keeping `join` timeouts meaningful.
         """
+        # HEDGE-001: every worker loop (base and the overriding workers alike)
+        # passes through here each poll, so this is the one shared spot to keep
+        # retrying an orphaned live leg. Rate-limited inside the sweep; a no-op
+        # on the overwhelming majority of polls.
+        self._sweep_orphan_live_legs()
         self.stop_event.wait(self.poll_seconds)
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
@@ -3251,6 +3324,9 @@ class BasePaperStrategyWorker(threading.Thread):
                 self.exit_position("MAX_LOSS_BREACH")
         except Exception as exc:
             self.log.exception("Error while exiting active position on max-loss breach: %s", exc)
+        # HEDGE-001: last forced attempt to close any orphaned live leg before
+        # this worker stops for the day (no more poll sweeps after this).
+        self._sweep_orphan_live_legs(force=True)
         self.log.info("Paper summary | %s", self.summary_text())
         self.log.info("Strategy stopped for the day due to max-loss shutdown.")
 
@@ -3269,6 +3345,9 @@ class BasePaperStrategyWorker(threading.Thread):
                 self.exit_position("TIME_CUTOFF")
         except Exception as exc:
             self.log.exception("Error while exiting active position at cutoff: %s", exc)
+        # HEDGE-001: last forced attempt to close any orphaned live leg before
+        # this worker stops for the day (no more poll sweeps after this).
+        self._sweep_orphan_live_legs(force=True)
         self.log.info("Paper summary | %s", self.summary_text())
         self.log.info("Strategy stopped for the day.")
 
@@ -6853,6 +6932,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         except Exception as exc:
             self.log.exception("Error while exiting on max-loss breach: %s", exc)
         self._unsubscribe_unentered_legs()
+        # HEDGE-001: last forced attempt to close any orphaned live leg.
+        self._sweep_orphan_live_legs(force=True)
         self.log.info("Paper summary | %s", self.summary_text())
         self.log.info("Strategy stopped for the day due to max-loss shutdown.")
 
@@ -6871,6 +6952,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         except Exception as exc:
             self.log.exception("Error while exiting at cutoff: %s", exc)
         self._unsubscribe_unentered_legs()
+        # HEDGE-001: last forced attempt to close any orphaned live leg.
+        self._sweep_orphan_live_legs(force=True)
         self.log.info("Paper summary | %s", self.summary_text())
         self.log.info("Strategy stopped for the day.")
 
