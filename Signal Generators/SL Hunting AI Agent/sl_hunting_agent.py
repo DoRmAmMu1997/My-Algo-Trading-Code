@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import sys
 import threading
@@ -171,6 +172,27 @@ class SLHuntingDecision(StrictAIModel):
     def _validate_confidence_range(cls, value: int) -> int:
         if not 0 <= value <= 10:
             raise ValueError(f"confidence must be between 0 and 10 inclusive, got {value}")
+        return value
+
+    @field_validator("stop", "target")
+    @classmethod
+    def _validate_level_sanity(cls, value: float) -> float:
+        """Reject hallucinated stop/target garbage (SLH-002).
+
+        These are UNDERLYING price levels the mechanical per-poll exit uses
+        verbatim -- a negative or absurd stop silently disables the stop for
+        the whole trade. 0.0 stays valid as the documented EXIT/HOLD
+        placeholder. Bounds live here (not `Field(ge=/le=)`) for the same
+        reason as `confidence`: Claude rejects `minimum`/`maximum` keys in
+        the JSON schema we describe to it. Price-aware checks (side, distance
+        band) happen in the order tool, which knows the current price.
+        """
+        if not math.isfinite(value):
+            raise ValueError(f"stop/target must be a finite number, got {value!r}")
+        if value < 0:
+            raise ValueError(f"stop/target must be >= 0, got {value}")
+        if value > 10_000_000:
+            raise ValueError(f"stop/target is implausibly large for an index level: {value}")
         return value
 
 
