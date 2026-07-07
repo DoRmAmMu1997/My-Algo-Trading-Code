@@ -12,7 +12,9 @@ backtesting==0.6.5
 python-dotenv==1.0.0
 gspread==6.2.1
 pytz==2026.2
-requests==2.32.3
+# 2.32.4 fixes CVE-2024-47081 (.netrc credential leak) present in 2.32.3; the
+# broker, symbol-master and Telegram HTTP paths all use requests.
+requests==2.32.4
 
 # ---- Live trading (optional) — install only for the broker you use ----
 # The commented pins below are the versions verified on the live runner; keep
