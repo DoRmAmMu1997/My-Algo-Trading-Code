@@ -94,6 +94,13 @@ expiry rule it uses:
 (CPR Algo 3 is "else" -- it TRADES the next-next ATM -- even though its read-only
 observation legs use the current-week expiry.)
 
+One deliberate exception (BNF-001): the SL Hunting BankNIFTY MIRROR leg uses
+OptionsContractResolver.get_monthly_rollover_expiry() -- the CURRENT BankNIFTY
+monthly expiry, rolling to the next month once fewer than
+SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS days remain. BankNIFTY lists only monthly
+series, so "next-next" would park an intraday mirror in the illiquid second
+month out.
+
 Both methods live on the same resolver so the choice is one line at
 the call site. That keeps the rule visible in the code and easy to
 audit later without chasing a hidden flag.
@@ -426,6 +433,11 @@ OPTION_INSTRUMENT_TYPE = _env_str("OPTION_INSTRUMENT_TYPE", "OPTIDX")
 # NIFTY listed strikes step in 50-point increments. The ATM rule rounds the
 # live spot to the nearest multiple of this step.
 ATM_STRIKE_STEP = _env_float("ATM_STRIKE_STEP", 50.0)
+# BankNIFTY monthly strikes step in 100-point increments (per NSE), so the ATM
+# seed must use 100 for the BankNIFTY mirror -- rounding a BNF spot on the 50
+# step lands between two listed strikes and the lower-strike tie-break then
+# buys the wrong one. Keyed per underlying in OptionsContractResolver.
+BANKNIFTY_STRIKE_STEP = _env_float("BANKNIFTY_STRIKE_STEP", 100.0)
 
 
 # =============================================================================
@@ -2178,6 +2190,10 @@ class OptionsContractResolver:
         self.underlying = str(underlying).upper().strip()
         self.instrument_master_glob = instrument_master_glob
         self.log = log
+        # ATM-seed step for THIS underlying: BankNIFTY lists 100-point strikes,
+        # NIFTY (and anything else) 50. Using the right step keeps the rounded
+        # seed on a real listed strike so the nearest-strike pick is exact.
+        self.strike_step = BANKNIFTY_STRIKE_STEP if self.underlying == "BANKNIFTY" else ATM_STRIKE_STEP
         self._option_chain_cache: pd.DataFrame | None = None
         self._cache_date: date | None = None
 
@@ -2276,10 +2292,16 @@ class OptionsContractResolver:
             & (work["expiry"] >= today)
         )
         opt_mask &= work["trading_symbol"].str.upper().str.startswith(underlying_prefix)
-        opt_mask &= ~work["trading_symbol"].str.upper().str.startswith("BANKNIFTY-")
-        opt_mask &= ~work["trading_symbol"].str.upper().str.startswith("FINNIFTY-")
-        opt_mask &= ~work["trading_symbol"].str.upper().str.startswith("MIDCPNIFTY-")
-        opt_mask &= ~work["trading_symbol"].str.upper().str.startswith("NIFTYNXT50-")
+        # Belt-and-braces: explicitly reject the OTHER index families, but never
+        # the resolver's OWN underlying (BNF-001). The old unconditional list
+        # excluded "BANKNIFTY-" even when self.underlying == "BANKNIFTY", which
+        # made a BankNIFTY resolver's chain provably empty ("No valid BANKNIFTY
+        # option rows found" despite the CSV having them) -- the SL Hunting
+        # mirror could never open. Subtracting our own prefix keeps the guard
+        # for cousins while letting each underlying see its own rows.
+        sibling_prefixes = {"BANKNIFTY-", "FINNIFTY-", "MIDCPNIFTY-", "NIFTYNXT50-"}
+        for sibling_prefix in sorted(sibling_prefixes - {underlying_prefix}):
+            opt_mask &= ~work["trading_symbol"].str.upper().str.startswith(sibling_prefix)
 
         options = work.loc[
             opt_mask,
@@ -2353,13 +2375,40 @@ class OptionsContractResolver:
             raise ValueError(f"No future {self.underlying} expiry found in instrument master.")
         return expiries[0]
 
+    def get_monthly_rollover_expiry(self, min_days_to_expiry: int) -> date:
+        """
+        Return the FIRST expiry on or after today, rolling to the SECOND when
+        fewer than `min_days_to_expiry` days remain to the first.
+
+        Used by the SL Hunting BankNIFTY mirror leg (BNF-001). BankNIFTY lists
+        only MONTHLY series, so the ATM family's "next-next" rule would park an
+        intraday mirror in the SECOND month out -- low gamma, wide spreads. The
+        operator's rule instead: trade the CURRENT monthly normally, and only
+        roll to the next month once the current contract is inside its final
+        week (threshold via SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS, default 7).
+
+        Boundary semantics: exactly `min_days_to_expiry` days away is NOT
+        "fewer than", so the current expiry is kept. With a single listed
+        expiry there is nothing to roll to, so it is returned even inside the
+        window -- the mirror is fail-soft and trading the only listed contract
+        beats silently skipping the leg.
+        """
+        options = self._load_option_chain()
+        today = datetime.now().date()
+        expiries = sorted({exp for exp in options["expiry"].tolist() if exp is not None and exp >= today})
+        if not expiries:
+            raise ValueError(f"No future {self.underlying} expiry found in instrument master.")
+        if len(expiries) >= 2 and (expiries[0] - today).days < int(min_days_to_expiry):
+            return expiries[1]
+        return expiries[0]
+
     # ------------------------------------------------------------------
     # ATM strike rule (used by the 8 ATM workers)
     # ------------------------------------------------------------------
-    def get_atm_option(self, spot_price: float, direction: str) -> dict:
+    def get_atm_option(self, spot_price: float, direction: str, expiry_date: date | None = None) -> dict:
         """
         Resolve the ATM option row for the given direction and the
-        next-next expiry.
+        next-next expiry (or an explicitly supplied expiry).
 
         Direction mapping:
         - "LONG"  -> CE
@@ -2370,6 +2419,14 @@ class OptionsContractResolver:
         - If that exact strike is not listed, pick the closest available
           strike (smallest absolute difference, with the lower strike
           breaking ties).
+
+        Expiry rule:
+        - Default (expiry_date=None): `get_target_expiry()` -- the ATM
+          family's "next-next" rule, unchanged for every existing caller.
+        - Explicit `expiry_date`: used as-is. The SL Hunting BankNIFTY
+          mirror passes `get_monthly_rollover_expiry(...)` here (BNF-001),
+          keeping the expiry choice visible at the call site like the rest
+          of this file's explicit if-else expiry rules.
         """
         direction_upper = str(direction).strip().upper()
         if direction_upper == "LONG":
@@ -2384,9 +2441,9 @@ class OptionsContractResolver:
             raise ValueError(f"Invalid spot price for ATM resolution: {spot_price!r}")
 
         options = self._load_option_chain()
-        target_expiry = self.get_target_expiry()
+        target_expiry = expiry_date if expiry_date is not None else self.get_target_expiry()
 
-        atm_strike = round(spot / ATM_STRIKE_STEP) * ATM_STRIKE_STEP
+        atm_strike = round(spot / self.strike_step) * self.strike_step
 
         subset = options[(options["expiry"] == target_expiry) & (options["option_type"] == right)].copy()
         if subset.empty:
@@ -8911,13 +8968,19 @@ if SL_HUNTING_AVAILABLE:
     # computed from the agent's underlying stop distance.
     SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
     # BankNIFTY mirror (Intraday Hunter style): every NIFTY entry is mirrored
-    # with the SAME lot count on the BankNIFTY ATM option of BankNIFTY's own
-    # target expiry, entered and exited together as ONE basket. The mirror is
+    # with the SAME lot count on the BankNIFTY ATM option of the CURRENT
+    # BankNIFTY monthly expiry (rolling forward inside its final week -- see
+    # the knob below), entered and exited together as ONE basket. The mirror is
     # mechanical -- the agent does not choose it -- and NOTE: it roughly doubles
     # the basket's rupee risk beyond SL_HUNTING_RISK_BUDGET (operator-accepted;
     # the daily max-loss kill-switch still caps the day). Fail-soft: any mirror
     # problem only skips the mirror, never the NIFTY leg.
     SL_HUNTING_BNF_MIRROR = _env_bool("SL_HUNTING_BNF_MIRROR", True)
+    # Mirror expiry rule (BNF-001): BankNIFTY lists only MONTHLY series, so the
+    # ATM family's "next-next" rule would put an intraday mirror in the SECOND
+    # month out. Instead the mirror trades the CURRENT monthly expiry, rolling
+    # to the NEXT one once fewer than this many days remain to the current.
+    SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS = _env_int("SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS", 7)
     # Trade journal (v3): record each trade's entry context + exit outcome to a
     # gitignored JSONL the reflection coach reads. Best-effort; never blocks trading.
     SL_HUNTING_JOURNAL_ENABLED = _env_bool("SL_HUNTING_JOURNAL_ENABLED", True)
@@ -9073,8 +9136,9 @@ if SL_HUNTING_AVAILABLE:
             return ok
 
         def _open_bnf_mirror(self, direction: str) -> None:
-            """Buy the BankNIFTY ATM CE/PE (BankNIFTY's own target expiry) at the
-            same lot COUNT as the just-opened NIFTY leg."""
+            """Buy the BankNIFTY ATM CE/PE at the same lot COUNT as the
+            just-opened NIFTY leg, on the CURRENT BankNIFTY monthly expiry
+            (rolled to the next month inside its final week -- BNF-001)."""
             if self._mirror_pos.active or self._bnf_resolver is None:
                 return
             nifty_lot_size = max(int(self.pos.option_lot_size), 1)
@@ -9084,7 +9148,12 @@ if SL_HUNTING_AVAILABLE:
             if bnf_spot <= 0:
                 self.log.warning("BNF mirror skipped: no BankNIFTY close seen yet this session.")
                 return
-            contract = self._bnf_resolver.get_atm_option(bnf_spot, direction)
+            # Explicit expiry at the call site, like every other expiry rule in
+            # this file: current monthly, rolling inside the last-week window.
+            mirror_expiry = self._bnf_resolver.get_monthly_rollover_expiry(
+                SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS
+            )
+            contract = self._bnf_resolver.get_atm_option(bnf_spot, direction, expiry_date=mirror_expiry)
             sec_id = int(contract["security_id"])
             segment = str(contract["exchange_segment"])
             symbol = str(contract["trading_symbol"])
