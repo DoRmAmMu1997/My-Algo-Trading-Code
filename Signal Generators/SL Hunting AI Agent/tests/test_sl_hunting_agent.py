@@ -298,6 +298,75 @@ def test_master_worker_executor_delegates():
 
 
 # --------------------------------------------------------------------------
+# SLH-002: agent-provided ENTRY stop/target must be sane at the order tool.
+# The mechanical per-poll exit uses these UNDERLYING levels verbatim, so a
+# hallucinated stop (wrong side / absurd distance / non-finite) silently
+# disables the stop for that trade -- only max-loss and square-off remain.
+# The order tool is the one price-aware choke point, so it validates there
+# and rejects, which the agent sees mid-loop and can correct.
+# --------------------------------------------------------------------------
+
+def test_do_order_rejects_wrong_side_stop_for_long():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    res = ctx.do_order("ENTER_LONG", stop=price + 50, target=price + 100, reason="stop above price")
+    assert res["accepted"] is False
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_do_order_rejects_wrong_side_target_for_short():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    res = ctx.do_order("ENTER_SHORT", stop=price + 50, target=price + 100, reason="target above price")
+    assert res["accepted"] is False
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_do_order_rejects_nonpositive_and_nonfinite_levels():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    bad_pairs = [
+        (0.0, price + 100),            # missing stop on an entry
+        (-1e9, price + 100),           # hallucinated negative stop
+        (float("nan"), price + 100),   # non-finite stop
+        (price - 50, float("inf")),    # non-finite target
+    ]
+    for stop, target in bad_pairs:
+        res = ctx.do_order("ENTER_LONG", stop=stop, target=target, reason="garbage levels")
+        assert res["accepted"] is False, (stop, target)
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_do_order_rejects_levels_too_far_from_price():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    # A stop 10% away dwarfs any real SL-Hunting stop (>3% band).
+    res = ctx.do_order("ENTER_LONG", stop=price * 0.90, target=price + 100, reason="stop too far")
+    assert res["accepted"] is False
+    # A target 20% away is outside the 10% band.
+    res2 = ctx.do_order("ENTER_LONG", stop=price - 30, target=price * 1.20, reason="target too far")
+    assert res2["accepted"] is False
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_do_order_accepts_sane_entry_and_exit_ignores_levels():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    res = ctx.do_order("ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce")
+    assert res["accepted"] is True
+    assert ex.snapshot()["in_position"] is True
+    # EXIT carries no meaningful levels (schema placeholder 0) -- never blocked by them.
+    out = ctx.do_order("EXIT", stop=0.0, target=0.0, reason="premise done")
+    assert out["accepted"] is True
+    assert ex.snapshot()["in_position"] is False
+
+
+# --------------------------------------------------------------------------
 # SLH-001: the SDK call must be TIME-BOUNDED. decide() runs on the strategy
 # worker's own thread -- while it blocks, the per-poll stop/target check,
 # max-loss and the 15:15 square-off are all frozen, so a hung CLI call would

@@ -34,6 +34,58 @@ def test_confidence_out_of_range_is_rejected():
         SLHuntingDecision.model_validate(_valid_payload(confidence=-1))
 
 
+def test_stop_and_target_bounds_are_enforced():
+    """SLH-002: hallucinated stop/target garbage must fail schema validation.
+
+    A negative or absurd stop silently disables the mechanical underlying
+    stop for the trade (only max-loss/square-off remain), so the record of
+    the decision must never carry such values.
+    """
+    for bad in (-1.0, -1e9, float("nan"), float("inf"), 10_000_001.0):
+        with pytest.raises(Exception):
+            SLHuntingDecision.model_validate(_valid_payload(stop=bad))
+        with pytest.raises(Exception):
+            SLHuntingDecision.model_validate(_valid_payload(target=bad))
+    # 0.0 stays valid -- the documented placeholder for EXIT/HOLD decisions.
+    decision = SLHuntingDecision.model_validate(
+        _valid_payload(action="HOLD", stop=0.0, target=0.0)
+    )
+    assert decision.stop == 0.0 and decision.target == 0.0
+
+
+def test_entry_actions_require_positive_stop_and_target():
+    """SLH-002 / Codex (PR #43): an ENTER decision with a 0 (or omitted) stop or
+    target must fail validation, so a hallucinated entry can't be recorded as a
+    real trade with no levels (which would defeat the order-tool guard and
+    corrupt the decision journal). EXIT/HOLD keep their 0.0 placeholders."""
+    for action in ("ENTER_LONG", "ENTER_SHORT"):
+        with pytest.raises(Exception):
+            SLHuntingDecision.model_validate(_valid_payload(action=action, stop=0.0))
+        with pytest.raises(Exception):
+            SLHuntingDecision.model_validate(_valid_payload(action=action, target=0.0))
+        # Omitted stop/target default to 0.0 -> also rejected for entries.
+        with pytest.raises(Exception):
+            payload = _valid_payload(action=action)
+            payload.pop("stop")
+            payload.pop("target")
+            SLHuntingDecision.model_validate(payload)
+        # Both positive -> valid.
+        ok = SLHuntingDecision.model_validate(_valid_payload(action=action, stop=24950.0, target=25100.0))
+        assert ok.action == action
+    for action in ("EXIT", "HOLD"):
+        ok = SLHuntingDecision.model_validate(_valid_payload(action=action, stop=0.0, target=0.0))
+        assert ok.action == action
+
+
+def test_json_schema_omits_min_max_on_stop_and_target():
+    """Same Claude-schema constraint as confidence: bounds live in validators,
+    never as minimum/maximum keys in the described JSON schema."""
+    schema = SLHuntingDecision.model_json_schema()
+    for field_name in ("stop", "target"):
+        props = schema["properties"][field_name]
+        assert "minimum" not in props and "maximum" not in props
+
+
 def test_strict_rejects_unknown_fields_and_coercion():
     # extra field forbidden
     with pytest.raises(Exception):

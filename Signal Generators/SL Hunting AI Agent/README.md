@@ -117,6 +117,10 @@ cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of
   and the agent records a fail-soft `HOLD`. If the CLI stays hung, subsequent bars
   are **gated** until the abandoned call finishes — so at most one hung agent
   call/subprocess exists at a time instead of one accumulating per bar.
+- Entry **stop/target are sanity-checked at the order tool** against the live price
+  (correct side; stop within ~3%, target within ~10%) and bounded in the schema —
+  a hallucinated level cannot silently disable the mechanical stop; the rejected
+  order returns to the agent mid-loop so it can correct its levels.
 - Both extra deps are **lazily imported**, so a missing dep just disables this one
   worker — the rest of the master and its test suite are unaffected.
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import sys
 import threading
@@ -37,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pandas as pd
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from sl_hunting_ai_validation import StrictAIModel
 from sl_hunting_executor import TradeExecutor
 from sl_hunting_indicators import SLHuntingIndicatorConfig, prepare_candles
@@ -172,6 +173,44 @@ class SLHuntingDecision(StrictAIModel):
         if not 0 <= value <= 10:
             raise ValueError(f"confidence must be between 0 and 10 inclusive, got {value}")
         return value
+
+    @field_validator("stop", "target")
+    @classmethod
+    def _validate_level_sanity(cls, value: float) -> float:
+        """Reject hallucinated stop/target garbage (SLH-002).
+
+        These are UNDERLYING price levels the mechanical per-poll exit uses
+        verbatim -- a negative or absurd stop silently disables the stop for
+        the whole trade. 0.0 stays valid as the documented EXIT/HOLD
+        placeholder. Bounds live here (not `Field(ge=/le=)`) for the same
+        reason as `confidence`: Claude rejects `minimum`/`maximum` keys in
+        the JSON schema we describe to it. Price-aware checks (side, distance
+        band) happen in the order tool, which knows the current price.
+        """
+        if not math.isfinite(value):
+            raise ValueError(f"stop/target must be a finite number, got {value!r}")
+        if value < 0:
+            raise ValueError(f"stop/target must be >= 0, got {value}")
+        if value > 10_000_000:
+            raise ValueError(f"stop/target is implausibly large for an index level: {value}")
+        return value
+
+    @model_validator(mode="after")
+    def _require_levels_for_entries(self) -> SLHuntingDecision:
+        """An ENTER decision must carry a positive stop AND target (SLH-002 / Codex).
+
+        The order tool already rejects zero/omitted levels when the agent CALLS
+        it, but the final JSON is a separate self-report: without this, an
+        ENTER_LONG/ENTER_SHORT with the 0.0 defaults would still validate and be
+        recorded as a real entry with no levels, corrupting the decision journal
+        and defeating the tool-side guard. EXIT/HOLD keep their 0.0 placeholders.
+        """
+        if self.action in ("ENTER_LONG", "ENTER_SHORT") and not (self.stop > 0 and self.target > 0):
+            raise ValueError(
+                f"{self.action} requires a positive stop and target, got "
+                f"stop={self.stop}, target={self.target}"
+            )
+        return self
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
