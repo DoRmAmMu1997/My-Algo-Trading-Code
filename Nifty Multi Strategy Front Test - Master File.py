@@ -3020,17 +3020,26 @@ class BasePaperStrategyWorker(threading.Thread):
             )
             return False
 
-    def _exec_mode_tag(self, real_ok: bool) -> str:
+    def _exec_mode_tag(self, real_ok: bool, *, live_legs_open: bool = True) -> str:
         """
         Return a short label describing how a trade was actually executed, used in
         logs and Telegram messages so you can tell real fills from paper ones:
         - "PAPER"          : strategy is in paper mode.
         - "LIVE"           : live mode and the real order(s) succeeded.
-        - "PAPER_FALLBACK" : live mode but the real order failed, so it was
+        - "PAPER_FALLBACK" : live mode but no real order confirmed, so it was
                              recorded/closed as paper instead.
+
+        `live_legs_open` matters for EXITS: a live worker closing a position whose
+        entry fell back to paper sends NO broker order (there is nothing to close),
+        so `real_ok` is a vacuous True. Passing `live_legs_open=False` labels that
+        as PAPER_FALLBACK instead of LIVE, so an operator is never told a broker
+        leg was closed when it was deliberately skipped. Entry callers keep the
+        default (True) and are unaffected.
         """
         if not self.live_trading:
             return "PAPER"
+        if not live_legs_open:
+            return "PAPER_FALLBACK"
         return "LIVE" if real_ok else "PAPER_FALLBACK"
 
     def _place_real_hedged_entry(self, main_leg: dict, hedge_leg: dict) -> bool:
@@ -5919,7 +5928,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                        "dhan_symbol": closed.hedge_symbol},
             live_legs_open=closed.live_legs_open,
         )
-        exec_mode = self._exec_mode_tag(real_ok)
+        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
 
         # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
         # is still open. Do NOT flatten the books - keep the position so the worker
@@ -6584,7 +6593,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                        "dhan_symbol": closed.hedge_symbol},
             live_legs_open=closed.live_legs_open,
         )
-        exec_mode = self._exec_mode_tag(real_ok)
+        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
 
         # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
         # is still open. Do NOT flatten the books - keep the position so the worker
@@ -7761,7 +7770,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                        "dhan_symbol": closed.hedge_symbol},
             live_legs_open=closed.live_legs_open,
         )
-        exec_mode = self._exec_mode_tag(real_ok)
+        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
 
         # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
         # is still open. Do NOT flatten the books - keep the position so the worker
