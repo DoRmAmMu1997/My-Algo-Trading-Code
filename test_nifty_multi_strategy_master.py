@@ -1925,6 +1925,64 @@ class TestLongStrangleWorker(unittest.TestCase):
         self.assertFalse(worker.ce_pos.active)
         self.assertEqual(worker.ce_reentry_count, 0)
 
+    def test_paper_fallback_leg_then_exit_sends_no_real_order_but_flattens(self):
+        """P1 (LongStrangle sibling of PR #42 / HEDGE-001 and the single-leg guard):
+        a LIVE worker whose leg BUY fell back to paper (rejected order / symbol-master
+        miss) opened no real leg at the broker, so closing that leg must NOT send a
+        real SELL -- that would be a naked short of an OTM option we never bought.
+        The exit still flattens the paper books (nothing real is open to keep for
+        retry). Mirrors TestLiveOrderRouting.<same name for the single-leg worker>."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        # Every real order is rejected -> both legs are recorded as paper (no live leg).
+        reject_fake = _FakeShoonya(fail_on=lambda symbol, side: True)
+        with patch.object(master_file, "execution_client", reject_fake):
+            worker._enter_both_legs()
+        self.assertTrue(worker.ce_pos.active)               # tracked as paper
+        self.assertTrue(worker.pe_pos.active)
+        self.assertFalse(worker.ce_pos.live_legs_open)      # ...but no real leg opened
+        self.assertFalse(worker.pe_pos.live_legs_open)
+
+        # A fresh client for the exits must receive ZERO orders...
+        exit_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", exit_fake):
+            worker._exit_leg("CE", "TEST_EXIT")
+            worker._exit_leg("PE", "TEST_EXIT")
+        self.assertEqual(exit_fake.calls, [])               # no phantom naked short
+        self.assertFalse(worker.ce_pos.active)              # ...yet both legs flattened
+        self.assertFalse(worker.pe_pos.active)
+        self.assertEqual(worker.completed_trades, 2)
+
+    def test_confirmed_live_leg_marks_legs_open_and_exit_sells(self):
+        """The invariant's other side (non-regression): a confirmed live leg BUY marks
+        live_legs_open True, and closing that leg DOES send the real SELL exactly once.
+        Also covers the shared `_buy_leg` path used by momentum re-entries."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        entry_fake = _FakeShoonya()                          # every order fills
+        with patch.object(master_file, "execution_client", entry_fake):
+            worker._enter_both_legs()
+        self.assertTrue(worker.ce_pos.live_legs_open)        # both legs really open
+        self.assertTrue(worker.pe_pos.live_legs_open)
+
+        # Closing the CE leg sends exactly one real SELL for that leg; PE untouched.
+        exit_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", exit_fake):
+            worker._exit_leg("CE", "TEST_EXIT")
+        self.assertEqual([s for (_sym, s, _q) in exit_fake.calls], ["SELL"])
+        self.assertFalse(worker.ce_pos.active)
+        self.assertTrue(worker.pe_pos.active)
+
 
 @unittest.skipIf(
     getattr(master_file, "SLHuntingAIWorker", None) is None,
