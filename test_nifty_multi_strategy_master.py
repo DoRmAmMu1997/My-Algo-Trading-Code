@@ -785,6 +785,29 @@ class TestOptionsContractResolverUnderlyings(unittest.TestCase):
         resolver = self._resolver(tmpdir, "BANKNIFTY")
         self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_only)
 
+    def test_banknifty_atm_uses_100_point_strike_step(self):
+        """BankNIFTY strikes are 100-point. A 57,960 spot must resolve to the
+        nearest listed 58,000 -- the old global 50-point seed rounded to 57,950,
+        which ties 57,900/58,000 and the lower-strike tie-break wrongly bought
+        57,900 (Codex P2 on PR #40)."""
+        tmpdir = self._mixed_master()  # BANKNIFTY strikes 57800/57900/58000
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        contract = resolver.get_atm_option(spot_price=57960.0, direction="LONG")
+        self.assertEqual(contract["strike"], 58000.0)
+        self.assertEqual(contract["atm_strike_rounded"], 58000.0)
+
+    def test_nifty_atm_keeps_50_point_strike_step(self):
+        """NIFTY must be untouched: a 50-point step still seeds the ATM strike,
+        so a spot 40 points above a strike rounds up to it."""
+        exp = (date.today() + timedelta(days=10)).isoformat()
+        rows = self._option_rows("NIFTY", (exp,), (24950, 25000, 25050), "75", 20000)
+        tmpdir = self._write_master(rows)
+        resolver = self._resolver(tmpdir, "NIFTY")
+        # 24,990 rounds to 25,000 on a 50-step; a 100-step would wrongly seed 25,000
+        # too here, so use 24,940 -> 50-step seeds 24,950 (its nearest listed strike).
+        contract = resolver.get_atm_option(spot_price=24940.0, direction="LONG", expiry_date=date.fromisoformat(exp))
+        self.assertEqual(contract["strike"], 24950.0)
+
 
 # =============================================================================
 # TEST SUITE: DHAN BROKER CLIENT (mocked dhanhq SDK)

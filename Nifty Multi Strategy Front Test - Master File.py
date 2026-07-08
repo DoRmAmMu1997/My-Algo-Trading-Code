@@ -432,6 +432,11 @@ OPTION_INSTRUMENT_TYPE = _env_str("OPTION_INSTRUMENT_TYPE", "OPTIDX")
 # NIFTY listed strikes step in 50-point increments. The ATM rule rounds the
 # live spot to the nearest multiple of this step.
 ATM_STRIKE_STEP = _env_float("ATM_STRIKE_STEP", 50.0)
+# BankNIFTY monthly strikes step in 100-point increments (per NSE), so the ATM
+# seed must use 100 for the BankNIFTY mirror -- rounding a BNF spot on the 50
+# step lands between two listed strikes and the lower-strike tie-break then
+# buys the wrong one. Keyed per underlying in OptionsContractResolver.
+BANKNIFTY_STRIKE_STEP = _env_float("BANKNIFTY_STRIKE_STEP", 100.0)
 
 
 # =============================================================================
@@ -2176,6 +2181,10 @@ class OptionsContractResolver:
         self.underlying = str(underlying).upper().strip()
         self.instrument_master_glob = instrument_master_glob
         self.log = log
+        # ATM-seed step for THIS underlying: BankNIFTY lists 100-point strikes,
+        # NIFTY (and anything else) 50. Using the right step keeps the rounded
+        # seed on a real listed strike so the nearest-strike pick is exact.
+        self.strike_step = BANKNIFTY_STRIKE_STEP if self.underlying == "BANKNIFTY" else ATM_STRIKE_STEP
         self._option_chain_cache: pd.DataFrame | None = None
         self._cache_date: date | None = None
 
@@ -2425,7 +2434,7 @@ class OptionsContractResolver:
         options = self._load_option_chain()
         target_expiry = expiry_date if expiry_date is not None else self.get_target_expiry()
 
-        atm_strike = round(spot / ATM_STRIKE_STEP) * ATM_STRIKE_STEP
+        atm_strike = round(spot / self.strike_step) * self.strike_step
 
         subset = options[(options["expiry"] == target_expiry) & (options["option_type"] == right)].copy()
         if subset.empty:
