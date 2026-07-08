@@ -295,3 +295,146 @@ def test_master_worker_executor_delegates():
     assert ex.enter("SHORT", 1, 2, "y", 25000)["accepted"] is False
     assert ex.exit("done", price=25050)["accepted"] is True
     assert ex.snapshot()["in_position"] is False
+
+
+# --------------------------------------------------------------------------
+# SLH-001: the SDK call must be TIME-BOUNDED. decide() runs on the strategy
+# worker's own thread -- while it blocks, the per-poll stop/target check,
+# max-loss and the 15:15 square-off are all frozen, so a hung CLI call would
+# suspend every mechanical protection for the open basket. And because the
+# order tool has side effects, an ABANDONED call must also be disarmed so a
+# late-waking loop cannot fire a zombie order against a market that moved on.
+# --------------------------------------------------------------------------
+
+def test_run_sync_raises_timeout_when_coroutine_hangs():
+    import asyncio
+    import time
+
+    import pytest
+    from sl_hunting_agent import SLHuntingTimeoutError
+
+    async def _hang():
+        await asyncio.sleep(30)
+        return AgentRunResult(text="never")
+
+    start = time.monotonic()
+    with pytest.raises(SLHuntingTimeoutError):
+        SLHuntingAgent._run_sync(_hang(), timeout_seconds=0.2)
+    assert time.monotonic() - start < 5  # abandoned promptly, not after 30s
+
+
+def test_run_sync_without_timeout_still_returns_result():
+    async def _quick():
+        return AgentRunResult(text="done", cost_usd=None)
+
+    result = SLHuntingAgent._run_sync(_quick())
+    assert result.text == "done"
+
+
+def test_expired_tool_context_rejects_orders():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    ctx.expire("sdk_timeout")
+    res = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="late")
+    assert res["accepted"] is False
+    assert "expired" in res["reason"]
+    assert ex.snapshot()["in_position"] is False  # the executor was never touched
+
+
+def test_agent_decide_times_out_holds_and_disarms_order_tool():
+    """A hung SDK call ends as a fail-soft HOLD within the budget, and the
+    abandoned loop's order tool is disarmed (no zombie orders later)."""
+    import asyncio
+    import time
+
+    captured = {}
+
+    class _HangingRunner:
+        async def __call__(self, prompt, *, system_prompt, model, max_turns, tool_context=None):
+            captured["tool_context"] = tool_context
+            await asyncio.sleep(30)
+            return AgentRunResult(text="{}")
+
+    ex = StandaloneExecutor()
+    agent = SLHuntingAgent(model="test-model", runner=_HangingRunner(), sdk_timeout_seconds=0.2)
+    start = time.monotonic()
+    decision = agent.decide(_candles(), ex)
+    assert time.monotonic() - start < 5          # bounded, not 30s
+    assert decision.action == "HOLD"
+    assert decision.setup == "agent_error"       # fail-soft, same family as other infra failures
+    assert "timed out" in decision.reasoning.lower()
+
+    # The runner's coroutine body runs on the abandoned daemon thread; give it a
+    # beat to have captured the context (it starts well before the timeout).
+    for _ in range(100):
+        if "tool_context" in captured:
+            break
+        time.sleep(0.02)
+    ctx = captured["tool_context"]
+    late = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="zombie order")
+    assert late["accepted"] is False             # disarmed: refused, executor untouched
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_timeout_error_carries_the_abandoned_thread():
+    import asyncio
+
+    import pytest
+    from sl_hunting_agent import SLHuntingTimeoutError
+
+    async def _hang():
+        await asyncio.sleep(30)
+        return AgentRunResult(text="never")
+
+    with pytest.raises(SLHuntingTimeoutError) as ei:
+        SLHuntingAgent._run_sync(_hang(), timeout_seconds=0.2)
+    assert ei.value.thread is not None
+    assert ei.value.thread.is_alive()  # still running -> the caller must gate on it
+
+
+def test_hung_call_gates_next_bars_then_resumes_when_it_finishes():
+    """Codex (PR #41): if the CLI keeps hanging, decide() must NOT spawn a fresh
+    daemon thread + subprocess every bar. While a prior timed-out call is still
+    alive, new bars are gated (fail-soft HOLD, no new call); once it finishes the
+    agent resumes normally -- so at most ONE abandoned call exists at a time."""
+    import asyncio
+    import threading
+    import time
+
+    release = threading.Event()
+    calls = {"n": 0}
+    hold_json = '{"action": "HOLD", "confidence": 0, "reasoning": "ok", "setup": "none"}'
+
+    async def _runner(prompt, *, system_prompt, model, max_turns, tool_context=None):
+        calls["n"] += 1
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return AgentRunResult(text=hold_json)
+
+    ex = StandaloneExecutor()
+    agent = SLHuntingAgent(model="test-model", runner=_runner, sdk_timeout_seconds=0.2)
+
+    # Bar 1: the call hangs -> times out -> HOLD, one abandoned thread tracked.
+    d1 = agent.decide(_candles(), ex)
+    assert d1.action == "HOLD"
+    assert calls["n"] == 1
+    assert agent._abandoned_call is not None and agent._abandoned_call.is_alive()
+
+    # Bar 2: prior call still hung -> gated, runner NOT invoked again.
+    d2 = agent.decide(_candles(), ex)
+    assert d2.action == "HOLD"
+    assert "still" in d2.reasoning.lower()
+    assert calls["n"] == 1
+
+    # Let the abandoned call finish; once its thread dies the gate clears.
+    release.set()
+    for _ in range(200):
+        if agent._abandoned_call is None or not agent._abandoned_call.is_alive():
+            break
+        time.sleep(0.02)
+
+    # Bar 3: resumes normally -- a fresh call runs to completion.
+    d3 = agent.decide(_candles(), ex)
+    assert d3.action == "HOLD"
+    assert calls["n"] == 2
+    assert agent._abandoned_call is None

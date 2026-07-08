@@ -9045,6 +9045,11 @@ if SL_HUNTING_AVAILABLE:
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
                 lessons_block=lessons_block,
+                # SLH-001: bound each SDK call. decide() blocks THIS worker's
+                # thread -- the same thread that enforces the per-poll
+                # stop/target check, max-loss and the 15:15 square-off -- so a
+                # hung CLI call must cost one bar's decision, not the safety net.
+                sdk_timeout_seconds=_env_float("SL_HUNTING_SDK_TIMEOUT_SECONDS", 90.0),
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)

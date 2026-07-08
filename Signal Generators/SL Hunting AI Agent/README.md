@@ -110,6 +110,13 @@ cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of
   malformed output, **auth 401 / usage-limit 429**, …) returns a safe `HOLD`, and the
   warning log names the cause (e.g. "authentication failed (HTTP 401) — run
   `claude setup-token`") so it's actionable.
+- Each SDK call is **time-bounded** (`SL_HUNTING_SDK_TIMEOUT_SECONDS`, default 90s).
+  The per-bar decision blocks the worker thread that also enforces stop/target,
+  max-loss and the 15:15 square-off, so a hung CLI call is abandoned at the budget:
+  that bar's order tool is disarmed (a late-waking loop cannot fire a zombie order)
+  and the agent records a fail-soft `HOLD`. If the CLI stays hung, subsequent bars
+  are **gated** until the abandoned call finishes — so at most one hung agent
+  call/subprocess exists at a time instead of one accumulating per bar.
 - Both extra deps are **lazily imported**, so a missing dep just disables this one
   worker — the rest of the master and its test suite are unaffected.
 
