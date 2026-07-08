@@ -1,28 +1,38 @@
 # Core dependencies — data extractors, backtests, and the front-test runner.
-dhanhq
-pandas
-numpy
-backtesting
-python-dotenv
-gspread
-pytz
-requests
+#
+# DEPS-001: pinned to the exact versions verified together on the live runner
+# (pip freeze, 2026-07-07). This is live-money code — a reinstall must never
+# silently pick up a new pandas/dhanhq mid-week. Bump these deliberately in a
+# dependency-maintenance PR and re-run the full gate suite (CI installs this
+# file, so the gates always test the pinned set).
+dhanhq==2.2.0
+pandas==3.0.3
+numpy==2.4.6
+backtesting==0.6.5
+python-dotenv==1.0.0
+gspread==6.2.1
+pytz==2026.2
+# 2.32.4 fixes CVE-2024-47081 (.netrc credential leak) present in 2.32.3; the
+# broker, symbol-master and Telegram HTTP paths all use requests.
+requests==2.32.4
 
 # ---- Live trading (optional) — install only for the broker you use ----
+# The commented pins below are the versions verified on the live runner; keep
+# them when installing an extra so the whole box stays on one verified set.
 # Kotak Neo:
 #   neo_api_client
 # Shoonya (Finvasia) — the NorenApi client is vendored in "Dependencies/Shoonya API/",
 # but it needs these at runtime:
-#   pyotp
-#   websocket-client
+#   pyotp==2.9.0
+#   websocket-client==1.8.0
 # ML Ensemble signal generator:
-#   scikit-learn
+#   scikit-learn==1.8.0
 # Optional faster indicators (the signal generators fall back to pandas if absent):
-#   TA-Lib
+#   TA-Lib==0.6.8
 # SL Hunting AI Agent (optional, LLM-driven strategy under "Signal Generators/
 # SL Hunting AI Agent/") — only needed when SL_HUNTING_ENABLED=true. The Claude
 # Agent SDK runs on your Claude subscription (bundled Claude CLI login; keep
 # ANTHROPIC_API_KEY UNSET). pydantic validates the agent's JSON decisions. Both
 # are lazily imported, so the master and its test suite run fine without them:
-#   claude-agent-sdk
-#   pydantic
+#   claude-agent-sdk==0.2.87
+#   pydantic==2.13.4

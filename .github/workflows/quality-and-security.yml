@@ -47,9 +47,9 @@ jobs:
         run: python -m unittest test_nifty_multi_strategy_master
 
       - name: Run the pytest suites
-        # Signal-generator + SL Hunting agent + broker-helper tests. SDK-gated
-        # cases skip cleanly when an optional dependency is absent.
-        run: python -m pytest "Signal Generators" "Dependencies" -q
+        # Signal-generator + SL Hunting agent + broker-helper + data-fetcher
+        # tests. SDK-gated cases skip cleanly when an optional dependency is absent.
+        run: python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
 
       - name: Compile every Python file
         # The master runner and most strategy files have SPACES in their names,

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 import pandas as pd
-from dhanhq import dhanhq
+from dhanhq import DhanContext, dhanhq
 
 
 @dataclass(frozen=True)
@@ -342,7 +342,12 @@ def fetch_1m_history(args, defaults: IndexFetchDefaults) -> pd.DataFrame:
       and then merge them into one final DataFrame.
     """
     start_dt, end_dt = resolve_date_range(args)
-    dhan = dhanhq(args.client_id, args.access_token)
+    # dhanhq >= 2.1 (we pin 2.2.0) takes a DhanContext(client_id, access_token),
+    # not two positional args -- the old `dhanhq(client_id, access_token)` form
+    # raises TypeError under the pinned SDK. Build the context explicitly, the
+    # same way the master runner's DhanBrokerClient does.
+    dhan_context = DhanContext(args.client_id, args.access_token)
+    dhan = dhanhq(dhan_context)
     exchange_segment = normalize_exchange_segment(args.exchange_segment)
 
     all_chunks = []
