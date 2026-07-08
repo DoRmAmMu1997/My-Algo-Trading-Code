@@ -3793,7 +3793,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             })
         else:
             real_ok = True  # no real leg was ever opened -> nothing to close
-        exec_mode = self._exec_mode_tag(real_ok)
+        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed_position.live_legs_open)
 
         # If a LIVE exit did not confirm a fill, the real broker position is still
         # open. Do NOT flatten the books - keep the position active so the worker
@@ -9281,7 +9281,7 @@ if SL_HUNTING_AVAILABLE:
                 mirror.entry_trade_price, exit_ltp, pnl, self.realized_pnl,
             )
             self.publish_trade_event({
-                "action": "EXIT", "mode": self._exec_mode_tag(real_ok),
+                "action": "EXIT", "mode": self._exec_mode_tag(real_ok, live_legs_open=mirror.live_legs_open),
                 "direction": mirror.direction, "reason": reason, "pnl": pnl,
                 "quantity": mirror.quantity,
                 "legs": [{
