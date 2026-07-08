@@ -1494,6 +1494,14 @@ class PaperPosition:
     option_strike: float = 0.0
     option_expiry: date | None = None
     option_lot_size: int = 0
+    # True only when a REAL broker leg was actually opened for this position (a
+    # live entry that confirmed). A live entry that fell back to paper -- a
+    # rejected/partial order or a symbol-master miss -- still records the position
+    # for paper tracking but leaves this False, so the later exit must NOT send a
+    # real closing order: SELLing an option we never bought would be a naked short,
+    # opening phantom live exposure. Paper-mode workers never place live orders
+    # regardless. Mirrors HedgedPaperPosition.live_legs_open (PR #42 / HEDGE-001).
+    live_legs_open: bool = False
 
 
 @dataclass
@@ -3616,6 +3624,9 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         self.pos = PaperPosition(
             active=True,
             direction=direction,
+            # True only if a real broker leg actually opened; a live entry that fell
+            # back to paper leaves this False so the exit sends no real SELL.
+            live_legs_open=(self.live_trading and real_ok),
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -3701,12 +3712,21 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             fallback=closed_position.entry_trade_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode).
-        real_ok = self._place_real_leg(exit_side, {
-            "option_type": closed_position.option_right, "strike": closed_position.option_strike,
-            "expiry": closed_position.option_expiry, "quantity": closed_position.quantity,
-            "dhan_symbol": closed_position.symbol,
-        })
+        # Real execution -- but ONLY when this position actually opened a real leg
+        # at the broker. A live entry that fell back to paper (rejected order or a
+        # symbol-master miss) recorded no live leg, so a SELL now would be a naked
+        # short of an option we never bought. In that case there is nothing to close
+        # at the broker: skip the order and treat the exit as paper (real_ok stays
+        # True so we flatten the books normally, exactly like paper mode). Mirrors
+        # the HedgedPaperPosition.live_legs_open guard (PR #42 / HEDGE-001).
+        if closed_position.live_legs_open:
+            real_ok = self._place_real_leg(exit_side, {
+                "option_type": closed_position.option_right, "strike": closed_position.option_strike,
+                "expiry": closed_position.option_expiry, "quantity": closed_position.quantity,
+                "dhan_symbol": closed_position.symbol,
+            })
+        else:
+            real_ok = True  # no real leg was ever opened -> nothing to close
         exec_mode = self._exec_mode_tag(real_ok)
 
         # If a LIVE exit did not confirm a fill, the real broker position is still
@@ -9111,6 +9131,9 @@ if SL_HUNTING_AVAILABLE:
             ))
             self._mirror_pos = PaperPosition(
                 active=True, direction=direction, symbol=symbol, quantity=quantity,
+                # True only if the mirror BUY actually opened live; a paper fallback
+                # leaves it False so _close_bnf_mirror sends no real SELL.
+                live_legs_open=(self.live_trading and real_ok),
                 entry_order_id=str(order_id), entry_underlying=bnf_spot,
                 entry_trade_price=float(option_ltp), option_security_id=sec_id,
                 option_exchange_segment=segment, option_right=str(contract["option_type"]),
@@ -9149,11 +9172,19 @@ if SL_HUNTING_AVAILABLE:
                 mirror.option_exchange_segment, mirror.option_security_id,
                 fallback=mirror.entry_trade_price,
             )
-            real_ok = self._place_real_leg("SELL", {
-                "option_type": mirror.option_right, "strike": mirror.option_strike,
-                "expiry": mirror.option_expiry, "quantity": mirror.quantity,
-                "dhan_symbol": mirror.symbol, "underlying": "BANKNIFTY",
-            })
+            # Only close a REAL mirror leg. A live mirror BUY that fell back to
+            # paper (rejected / symbol-master miss) opened nothing at the broker, so
+            # a SELL now would be a phantom BankNIFTY short. Skip it and treat the
+            # close as paper (real_ok stays True -> no false "manual action" alert;
+            # the books still flatten below). Mirrors PR #42 / HEDGE-001.
+            if mirror.live_legs_open:
+                real_ok = self._place_real_leg("SELL", {
+                    "option_type": mirror.option_right, "strike": mirror.option_strike,
+                    "expiry": mirror.option_expiry, "quantity": mirror.quantity,
+                    "dhan_symbol": mirror.symbol, "underlying": "BANKNIFTY",
+                })
+            else:
+                real_ok = True  # no real mirror leg was opened -> nothing to close
             if self.live_trading and not real_ok:
                 self.log.error(
                     "MANUAL ACTION NEEDED | BNF mirror SELL not confirmed | %s qty=%s -> a LIVE "
