@@ -110,9 +110,15 @@ def _port_under_test(filename: str, prefix: str, build_name: str, needs: str | N
 
 @pytest.mark.parametrize(("filename", "prefix", "build_name", "needs"), PORTS, ids=PORT_IDS)
 def test_port_exposes_the_factory_contract(filename, prefix, build_name, needs):
-    """The master's worker factory looks these attributes up by name."""
-    if needs:
-        pytest.importorskip(needs)
+    """The master's worker factory looks these attributes up by name.
+
+    Deliberately does NOT skip on `needs`: the ML Ensemble module imports
+    scikit-learn lazily (only when it trains), so its class/function NAMES are
+    present without the optional dep. Skipping here would leave the ML entry in
+    the master's factory table unguarded against name regressions in CI, which
+    has no scikit-learn (Codex PR #46). Only the tests that actually
+    construct/evaluate the engine (`_port_under_test`) keep the dependency skip.
+    """
     module = _load_port(filename)
     for attr in (f"{prefix}SignalEngine", f"build_{build_name}_with_indicators",
                  f"{prefix}PositionContext", f"{prefix}Config"):
