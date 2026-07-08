@@ -8444,6 +8444,10 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         new_pos = PaperPosition(
             active=True,
             direction=side,
+            # True only if a real broker leg actually opened; a live entry that fell
+            # back to paper leaves this False so `_exit_leg` sends no real SELL. This
+            # runs for the initial entry AND momentum re-entries (both share _buy_leg).
+            live_legs_open=(self.live_trading and real_ok),
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -8672,12 +8676,21 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             fallback=closed.entry_trade_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode).
-        real_ok = self._place_real_leg("SELL", {
-            "option_type": closed.option_right, "strike": closed.option_strike,
-            "expiry": closed.option_expiry, "quantity": closed.quantity,
-            "dhan_symbol": closed.symbol,
-        })
+        # Real execution -- but ONLY when this leg actually opened a real leg at the
+        # broker. A live entry that fell back to paper (rejected order or symbol-master
+        # miss) recorded no live leg, so a SELL now would be a naked short of an OTM
+        # option we never bought. In that case there is nothing to close at the broker:
+        # skip the order and treat the exit as paper (real_ok stays True so the books
+        # flatten normally, exactly like paper mode). Mirrors the single-leg ATM worker
+        # / HEDGE-001 live_legs_open guard.
+        if closed.live_legs_open:
+            real_ok = self._place_real_leg("SELL", {
+                "option_type": closed.option_right, "strike": closed.option_strike,
+                "expiry": closed.option_expiry, "quantity": closed.quantity,
+                "dhan_symbol": closed.symbol,
+            })
+        else:
+            real_ok = True  # no real leg was ever opened -> nothing to close
         exec_mode = self._exec_mode_tag(real_ok)
 
         # If a LIVE exit did not confirm a fill, keep the leg OPEN for retry /
