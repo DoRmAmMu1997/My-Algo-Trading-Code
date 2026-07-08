@@ -77,8 +77,12 @@ class SLHuntingTimeoutError(SLHuntingAgentError):
     (a fail-soft HOLD), not the position's entire mechanical safety net.
     """
 
-    def __init__(self, timeout_seconds: float) -> None:
+    def __init__(self, timeout_seconds: float, thread: threading.Thread | None = None) -> None:
         self.timeout_seconds = float(timeout_seconds)
+        # The still-running worker thread we abandoned. decide() keeps a reference
+        # so it can gate new calls until this one finishes -- otherwise a CLI that
+        # hangs every bar would pile up daemon threads + subprocesses.
+        self.thread = thread
         super().__init__(
             f"Claude Agent SDK call exceeded {self.timeout_seconds:.0f}s and was "
             "abandoned; this bar's order tool has been disarmed."
@@ -263,6 +267,10 @@ class SLHuntingAgent:
         self._sdk_timeout_seconds: float | None = (
             float(sdk_timeout_seconds) if float(sdk_timeout_seconds) > 0 else None
         )
+        # SLH-001 / Codex: a worker thread from a PRIOR timed-out call that is
+        # still alive. While set, decide() gates new calls (no fresh thread or
+        # subprocess) so a persistently hung CLI can accumulate at most one.
+        self._abandoned_call: threading.Thread | None = None
         # Optional v3 LEARNED LESSONS block (loaded + formatted by the caller, gated by
         # SL_HUNTING_LESSONS_ENABLED). Injected ONCE here, before the output contract,
         # so the system prefix stays stable per session and prompt caching is preserved.
@@ -447,7 +455,9 @@ class SLHuntingAgent:
         thread.start()
         thread.join(timeout=timeout_seconds)
         if thread.is_alive():
-            raise SLHuntingTimeoutError(timeout_seconds or 0.0)
+            # Hand the still-running thread back so the caller can gate future
+            # calls on it instead of spawning another abandoned worker each bar.
+            raise SLHuntingTimeoutError(timeout_seconds or 0.0, thread=thread)
         if not outcome:  # pragma: no cover - the runner always records one entry
             raise SLHuntingAgentError("SDK call thread ended without recording a result.")
         kind, value = outcome[0]
@@ -458,6 +468,23 @@ class SLHuntingAgent:
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
+
+    def _previous_call_still_running(self) -> bool:
+        """True while a PRIOR timed-out SDK call's thread is still alive.
+
+        SLH-001 / Codex (PR #41). A hung CLI would otherwise let each bar spawn
+        another abandoned daemon thread + subprocess, piling up resources and
+        stale agent loops. We gate new calls until the previous one finishes, so
+        at most one abandoned call exists at a time. Clears the reference once
+        the thread dies, resuming normal operation on the next bar.
+        """
+        thread = self._abandoned_call
+        if thread is None:
+            return False
+        if thread.is_alive():
+            return True
+        self._abandoned_call = None
+        return False
 
     def decide(
         self,
@@ -520,6 +547,16 @@ class SLHuntingAgent:
                 reasoning=reasoning, model_used=self._model,
             )
 
+        # Codex (PR #41): if a prior call timed out and its worker thread is still
+        # hung, do NOT start another one -- gate to a fail-soft HOLD until it
+        # finishes so we never accumulate abandoned threads/subprocesses.
+        if self._previous_call_still_running():
+            logger.warning(
+                "SL Hunting agent holding — a previous SDK call is still running past its "
+                "timeout; skipping this bar to avoid stacking hung agent loops."
+            )
+            return _hold("Previous agent call still running; holding.")
+
         # IMPORTANT: do NOT retry the agentic loop. Unlike the read-only Scanner
         # agents, our order tool has SIDE EFFECTS — the agent ENTERS/EXITS via the
         # executor DURING the loop. Re-running the loop after a malformed final JSON
@@ -533,6 +570,9 @@ class SLHuntingAgent:
             # still be alive on its daemon thread. Disarm this bar's order tool so
             # a late-waking loop cannot fire a zombie order, then fail-soft HOLD.
             tool_context.expire("sdk_timeout")
+            # Track the still-running thread so the NEXT bar gates on it instead of
+            # spawning another (Codex PR #41). Cleared once it finally finishes.
+            self._abandoned_call = exc.thread
             logger.warning("SL Hunting agent holding — %s", exc)
             return _hold("Agent call timed out; holding.")
         except SLHuntingUsageLimitError as exc:

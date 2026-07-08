@@ -374,3 +374,67 @@ def test_agent_decide_times_out_holds_and_disarms_order_tool():
     late = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="zombie order")
     assert late["accepted"] is False             # disarmed: refused, executor untouched
     assert ex.snapshot()["in_position"] is False
+
+
+def test_timeout_error_carries_the_abandoned_thread():
+    import asyncio
+
+    import pytest
+    from sl_hunting_agent import SLHuntingTimeoutError
+
+    async def _hang():
+        await asyncio.sleep(30)
+        return AgentRunResult(text="never")
+
+    with pytest.raises(SLHuntingTimeoutError) as ei:
+        SLHuntingAgent._run_sync(_hang(), timeout_seconds=0.2)
+    assert ei.value.thread is not None
+    assert ei.value.thread.is_alive()  # still running -> the caller must gate on it
+
+
+def test_hung_call_gates_next_bars_then_resumes_when_it_finishes():
+    """Codex (PR #41): if the CLI keeps hanging, decide() must NOT spawn a fresh
+    daemon thread + subprocess every bar. While a prior timed-out call is still
+    alive, new bars are gated (fail-soft HOLD, no new call); once it finishes the
+    agent resumes normally -- so at most ONE abandoned call exists at a time."""
+    import asyncio
+    import threading
+    import time
+
+    release = threading.Event()
+    calls = {"n": 0}
+    hold_json = '{"action": "HOLD", "confidence": 0, "reasoning": "ok", "setup": "none"}'
+
+    async def _runner(prompt, *, system_prompt, model, max_turns, tool_context=None):
+        calls["n"] += 1
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return AgentRunResult(text=hold_json)
+
+    ex = StandaloneExecutor()
+    agent = SLHuntingAgent(model="test-model", runner=_runner, sdk_timeout_seconds=0.2)
+
+    # Bar 1: the call hangs -> times out -> HOLD, one abandoned thread tracked.
+    d1 = agent.decide(_candles(), ex)
+    assert d1.action == "HOLD"
+    assert calls["n"] == 1
+    assert agent._abandoned_call is not None and agent._abandoned_call.is_alive()
+
+    # Bar 2: prior call still hung -> gated, runner NOT invoked again.
+    d2 = agent.decide(_candles(), ex)
+    assert d2.action == "HOLD"
+    assert "still" in d2.reasoning.lower()
+    assert calls["n"] == 1
+
+    # Let the abandoned call finish; once its thread dies the gate clears.
+    release.set()
+    for _ in range(200):
+        if agent._abandoned_call is None or not agent._abandoned_call.is_alive():
+            break
+        time.sleep(0.02)
+
+    # Bar 3: resumes normally -- a fresh call runs to completion.
+    d3 = agent.decide(_candles(), ex)
+    assert d3.action == "HOLD"
+    assert calls["n"] == 2
+    assert agent._abandoned_call is None
