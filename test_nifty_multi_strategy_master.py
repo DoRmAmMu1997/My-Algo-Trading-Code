@@ -1983,6 +1983,28 @@ class TestLongStrangleWorker(unittest.TestCase):
         self.assertFalse(worker.ce_pos.active)
         self.assertTrue(worker.pe_pos.active)
 
+    def test_paper_fallback_leg_exit_is_tagged_paper_fallback(self):
+        """Codex on PR #47 (propagated to this stacked PR): a paper-fallback
+        LongStrangle leg exit sends no broker order, so its EXIT event must read
+        PAPER_FALLBACK, not LIVE."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        events = MagicMock()
+        worker.trade_event_queue = events
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        with patch.object(master_file, "execution_client", _FakeShoonya(fail_on=lambda s, side: True)):
+            worker._enter_both_legs()
+        self.assertFalse(worker.ce_pos.live_legs_open)
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            worker._exit_leg("CE", "TEST_EXIT")
+        exit_modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
+                      if c.args[0].get("action") == "EXIT"]
+        self.assertEqual(exit_modes, ["PAPER_FALLBACK"])
+
 
 @unittest.skipIf(
     getattr(master_file, "SLHuntingAIWorker", None) is None,

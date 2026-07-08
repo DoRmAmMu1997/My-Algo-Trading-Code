@@ -8727,7 +8727,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             })
         else:
             real_ok = True  # no real leg was ever opened -> nothing to close
-        exec_mode = self._exec_mode_tag(real_ok)
+        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
 
         # If a LIVE exit did not confirm a fill, keep the leg OPEN for retry /
         # manual square-off rather than flattening the books (same safety rule
