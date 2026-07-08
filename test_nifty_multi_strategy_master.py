@@ -2041,6 +2041,10 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             return True
 
         worker._place_real_leg = fake_real_leg
+        # Exit orders are now gated on live_legs_open, which is only set True when the
+        # entry ran live and confirmed. Run this worker live so both legs' exits fire
+        # and we can assert the BANKNIFTY underlying on every real call.
+        worker.live_trading = True
         worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
         worker.exit_position("AI_TARGET")
         mirror_legs = [(s, leg) for s, leg in captured if leg.get("underlying") == "BANKNIFTY"]
@@ -2166,6 +2170,71 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertGreater(payload["option_pnl"], 0.0)    # mirror P&L is captured
         self.assertIsNone(worker._pending_journal_exit)
         self.assertIsNone(worker._open_trade_id)
+
+    # ----- P1: a paper-fallback mirror must not phantom-short (sibling of PR #42) --
+    def test_mirror_paper_fallback_close_sends_no_real_order(self):
+        """If the BankNIFTY mirror BUY fell back to paper (rejected / symbol-master
+        miss) the mirror opened no real leg, so closing it must NOT send a real
+        SELL -- that would be a phantom BankNIFTY short of an option never bought.
+        The NIFTY leg (really open) still sells; the mirror books flatten silently."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        # Only the BankNIFTY mirror leg is rejected at the broker; the NIFTY leg fills.
+        entry_fake = _FakeShoonya(fail_on=lambda symbol, side: "BANKNIFTY" in symbol)
+        with patch.object(master_file, "execution_client", entry_fake):
+            worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        self.assertTrue(worker.pos.live_legs_open)           # NIFTY leg really open
+        self.assertTrue(worker._mirror_pos.active)           # mirror tracked (paper)
+        self.assertFalse(worker._mirror_pos.live_legs_open)  # ...but no real BNF leg
+
+        exit_fake = _FakeShoonya()
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0})
+        with patch.object(master_file, "execution_client", exit_fake):
+            worker.exit_position("AI_TARGET")
+        self.assertFalse(worker._mirror_pos.active)          # mirror books flattened
+        self.assertFalse(worker.pos.active)
+        bnf_orders = [c for c in exit_fake.calls if "BANKNIFTY" in c[0]]
+        self.assertEqual(bnf_orders, [])                     # no phantom BNF short
+        # The real NIFTY leg still sold exactly once.
+        self.assertEqual([s for (_sym, s, _q) in exit_fake.calls], ["SELL"])
+
+    def test_confirmed_live_mirror_close_sends_real_sell(self):
+        """Non-regression: when BOTH legs opened live, closing the basket still
+        SELLs the BankNIFTY mirror leg exactly once."""
+        worker, _ = self._make_worker()
+        worker.live_trading = True
+        ok_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", ok_fake):
+            worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        self.assertTrue(worker._mirror_pos.live_legs_open)
+        exit_fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", exit_fake):
+            worker.exit_position("AI_TARGET")
+        bnf_sells = [c for c in exit_fake.calls if "BANKNIFTY" in c[0] and c[1] == "SELL"]
+        self.assertEqual(len(bnf_sells), 1)
+
+    def test_mirror_paper_fallback_close_is_tagged_paper_fallback(self):
+        """Codex on PR #47: a paper-fallback mirror close sends no broker SELL, so
+        its MIRROR EXIT event must read PAPER_FALLBACK, not LIVE."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        events = MagicMock()
+        worker.trade_event_queue = events
+        with patch.object(master_file, "execution_client",
+                          _FakeShoonya(fail_on=lambda symbol, side: "BANKNIFTY" in symbol)):
+            worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        self.assertFalse(worker._mirror_pos.live_legs_open)
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0})
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            worker.exit_position("AI_TARGET")
+
+        def _is_mirror_exit(ev):
+            legs = ev.get("legs") or [{}]
+            return ev.get("action") == "EXIT" and "BANKNIFTY" in str(legs[0].get("symbol", ""))
+
+        mirror_exit_modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
+                             if _is_mirror_exit(c.args[0])]
+        self.assertEqual(mirror_exit_modes, ["PAPER_FALLBACK"])
 
     # ----- BNF-001: the REAL resolver must be able to open the mirror -------
     def test_mirror_opens_with_real_resolver_and_rollover_expiry(self):
@@ -2345,6 +2414,57 @@ class TestLiveOrderRouting(unittest.TestCase):
             ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
         self.assertTrue(ok)
         self.assertTrue(self.worker.pos.active)
+
+    def test_paper_fallback_entry_then_exit_sends_no_real_order_but_flattens(self):
+        """P1 (single-leg sibling of PR #42 / HEDGE-001): a LIVE worker whose ENTRY
+        fell back to paper (rejected order / symbol-master miss) opened no real leg,
+        so its exit must NOT send a real SELL -- that would be a naked short of an
+        option we never bought at the broker. The exit still flattens the paper
+        books (the position is not a real one to keep open for retry)."""
+        # Entry rejected at the broker -> position recorded as paper (no live leg).
+        reject_fake = _FakeShoonya(fail_on=lambda symbol, side: True)
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", reject_fake):
+            self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        self.assertTrue(self.worker.pos.active)             # tracked as paper
+        self.assertFalse(self.worker.pos.live_legs_open)    # but no real leg opened
+
+        # A fresh client for the exit must receive ZERO orders...
+        exit_fake = _FakeShoonya()
+        self.store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 49081): 130.0})
+        with patch.object(master_file, "execution_client", exit_fake):
+            self.worker.exit_position("TEST_EXIT")
+        self.assertEqual(exit_fake.calls, [])               # no phantom naked short
+        self.assertFalse(self.worker.pos.active)            # ...yet books flattened
+        self.assertEqual(self.worker.completed_trades, 1)
+
+    def test_confirmed_live_entry_marks_legs_open_and_exit_sells(self):
+        """The invariant's other side (non-regression): a confirmed live entry marks
+        live_legs_open True and its exit DOES send the real SELL."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", fake):
+            self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            self.assertTrue(self.worker.pos.live_legs_open)
+            self.store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 49081): 130.0})
+            self.worker.exit_position("TEST_EXIT")
+        self.assertIn(("SELL", 50 * self.worker.lots), self._sides(fake))
+        self.assertFalse(self.worker.pos.active)
+
+    def test_paper_fallback_single_leg_exit_is_tagged_paper_fallback(self):
+        """Codex on PR #47: a paper-fallback single-leg exit sends no broker order,
+        so its EXIT event must read PAPER_FALLBACK, not LIVE."""
+        self.worker.live_trading = True
+        events = MagicMock()
+        self.worker.trade_event_queue = events
+        with patch.object(master_file, "execution_client", _FakeShoonya(fail_on=lambda s, side: True)):
+            self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        self.store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 49081): 130.0})
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            self.worker.exit_position("TEST_EXIT")
+        exit_modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
+                      if c.args[0].get("action") == "EXIT"]
+        self.assertEqual(exit_modes, ["PAPER_FALLBACK"])
 
     # --- Hedged helpers: leg dicts as built by the call sites. ---
     def _leg(self, option_type, strike, qty, dhan):
@@ -2532,6 +2652,55 @@ class TestHedgedPaperFallbackExit(unittest.TestCase):
         sides = [(side, qty) for (_sym, side, qty) in fake.calls]
         self.assertEqual(sides, [("BUY", 50), ("SELL", 50)])  # BUY main, SELL hedge
         self.assertFalse(worker.pos.active)
+
+    def test_paper_fallback_exit_is_tagged_paper_fallback_not_live(self):
+        """Codex on PR #47: the EXIT event for a paper-fallback position must NOT
+        claim `LIVE` -- no broker order was sent -- or an operator would think a
+        real leg was closed. It must read PAPER_FALLBACK."""
+        worker = self._make_bullish_worker(live_legs_open=False)
+        events = MagicMock()
+        worker.trade_event_queue = events
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            worker.exit_position("TIME_CUTOFF")
+        modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
+                 if c.args[0].get("action") == "EXIT"]
+        self.assertEqual(modes, ["PAPER_FALLBACK"])
+
+    def test_confirmed_live_exit_is_tagged_live(self):
+        worker = self._make_bullish_worker(live_legs_open=True)
+        events = MagicMock()
+        worker.trade_event_queue = events
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            worker.exit_position("TIME_CUTOFF")
+        modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
+                 if c.args[0].get("action") == "EXIT"]
+        self.assertEqual(modes, ["LIVE"])
+
+
+class TestExecModeTag(unittest.TestCase):
+    """`_exec_mode_tag` labels how a trade actually executed (Codex PR #47)."""
+
+    def _worker(self, *, live: bool):
+        w = master_file.AtmSingleLegStrategyWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(), broker=MagicMock(),
+        )
+        w.live_trading = live
+        return w
+
+    def test_paper_worker_is_always_paper(self):
+        w = self._worker(live=False)
+        self.assertEqual(w._exec_mode_tag(True), "PAPER")
+        self.assertEqual(w._exec_mode_tag(True, live_legs_open=False), "PAPER")
+
+    def test_live_worker_labels(self):
+        w = self._worker(live=True)
+        self.assertEqual(w._exec_mode_tag(True), "LIVE")                       # confirmed real order
+        self.assertEqual(w._exec_mode_tag(False), "PAPER_FALLBACK")            # real order failed
+        # No real legs open -> no broker order sent -> PAPER_FALLBACK even though real_ok is a vacuous True.
+        self.assertEqual(w._exec_mode_tag(True, live_legs_open=False), "PAPER_FALLBACK")
 
 
 class TestShoonyaOrderAck(unittest.TestCase):
