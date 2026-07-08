@@ -2774,6 +2774,33 @@ class OptionsContractResolver:
 # =============================================================================
 # TIME HELPERS
 # =============================================================================
+# Every trading-time gate below compares against the machine's LOCAL wall
+# clock and assumes the box runs in IST. main() checks this at startup.
+IST_UTC_OFFSET = timedelta(hours=5, minutes=30)
+
+
+def _timezone_assumption_warning(offset: timedelta | None = None) -> str | None:
+    """Return a loud warning when the system clock's UTC offset is not IST.
+
+    OPS-001. `is_before_time`/`is_after_time` (market open, entry cutoffs, the
+    15:15 square-off) all use naive `datetime.now()` -- the code assumes an IST
+    machine. On a mis-configured box (a UTC VPS, a travelling laptop) every
+    gate silently shifts by hours, so main() logs this check at startup rather
+    than trading at the wrong times. Returns None when the offset is IST.
+    The offset parameter exists for tests; the default reads the system clock.
+    """
+    if offset is None:
+        offset = datetime.now().astimezone().utcoffset()
+    if offset == IST_UTC_OFFSET:
+        return None
+    return (
+        f"System clock UTC offset is {offset}, but every trading-time gate in this "
+        "runner assumes IST (+5:30). Market-open, entry-cutoff and square-off gates "
+        "will fire at the WRONG local times -- fix the machine's timezone before "
+        "trading."
+    )
+
+
 def is_before_time(hour: int, minute: int) -> bool:
     """Return True when local wall-clock time is before HH:MM."""
     now = datetime.now()
@@ -10095,7 +10122,7 @@ def _update_pnl_google_sheet() -> None:
         )
         return
 
-    try:
+    def _attempt() -> None:
         # Step 4: authenticate with the cached OAuth user token. The very first
         # run opens a browser for consent and writes the token file; later runs
         # reuse (and silently refresh) it.
@@ -10149,15 +10176,34 @@ def _update_pnl_google_sheet() -> None:
         logger.info(
             "Google Sheet P&L updated: %d cell(s) written (today=%s).", len(cells), today_str
         )
-    except Exception as exc:
-        # gspread turns some API failures (e.g. a 403 when the Google Sheets API
-        # is disabled for the project, or the account can't access the sheet)
-        # into a *bare* exception whose str() is empty -- which would log a
-        # blank reason. Use %r + exc_info so the type and the full chained
-        # traceback (which carries Google's own message and fix URL) are shown.
-        logger.warning(
-            "Google Sheet P&L update failed (non-fatal): %r", exc, exc_info=True
-        )
+
+    # OPS-001: one transient Google/network hiccup used to skip the day's write
+    # entirely. Take a few slow attempts (this runs AFTER the session, so a
+    # short sleep costs nothing) before the existing non-fatal give-up. The
+    # skip paths inside _attempt (missing tab, nothing to write) return
+    # normally and are never retried.
+    attempts = 3
+    retry_delay_seconds = 5.0
+    for attempt in range(1, attempts + 1):
+        try:
+            _attempt()
+            return
+        except Exception as exc:
+            if attempt < attempts:
+                logger.warning(
+                    "Google Sheet P&L update attempt %d/%d failed (%r); retrying in %.0fs.",
+                    attempt, attempts, exc, retry_delay_seconds,
+                )
+                time.sleep(retry_delay_seconds)
+                continue
+            # gspread turns some API failures (e.g. a 403 when the Google Sheets API
+            # is disabled for the project, or the account can't access the sheet)
+            # into a *bare* exception whose str() is empty -- which would log a
+            # blank reason. Use %r + exc_info so the type and the full chained
+            # traceback (which carries Google's own message and fix URL) are shown.
+            logger.warning(
+                "Google Sheet P&L update failed (non-fatal): %r", exc, exc_info=True
+            )
 
 
 def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
@@ -10200,6 +10246,13 @@ def main() -> None:
     The MAIN thread does NOT trade. It is purely a supervisor.
     """
     setup_logging()
+    # OPS-001: all trading-time gates assume an IST wall clock -- say so loudly
+    # at startup when the box disagrees, before any worker takes a decision.
+    tz_warning = _timezone_assumption_warning()
+    if tz_warning:
+        logger.warning("%s", tz_warning)
+    else:
+        logger.info("Timezone check: system offset is IST (+5:30), as the trading windows assume.")
     os.chdir(ROOT_DIR)
 
     # Credentials must come from `.env` (or the shell env). We never carry

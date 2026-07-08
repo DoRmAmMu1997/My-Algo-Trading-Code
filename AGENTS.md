@@ -25,7 +25,9 @@ One process, cooperating threads:
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
   sizing) and acts through the same ATM `enter_position`/`exit_position`; its deps are lazily imported
   so a missing dep just disables it. Every NIFTY entry is mechanically MIRRORED with an equal-lot
-  BankNIFTY ATM leg (`SL_HUNTING_BNF_MIRROR`, default true): the legs are TIED for hard risk
+  BankNIFTY ATM leg (`SL_HUNTING_BNF_MIRROR`, default true) — NOTE: the mirror roughly DOUBLES the
+  basket's rupee risk beyond `SL_HUNTING_RISK_BUDGET` (operator-accepted; the daily max-loss
+  kill-switch still caps the day): the legs are TIED for hard risk
   (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's
   premise INDEPENDENTLY and can cut one alone via the EXIT `exit_leg` selector (NIFTY|BNF|BOTH).
   Entry stays NIFTY-only (the mirror copies it). It stops opening NEW positions after noon
