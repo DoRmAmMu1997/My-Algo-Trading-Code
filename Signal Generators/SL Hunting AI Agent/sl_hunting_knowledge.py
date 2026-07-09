@@ -77,6 +77,10 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   continuation that would attract only the obvious side is weaker. A durable
   continuation often first builds support/resistance, bases, or retests that bring
   BOTH buyers and sellers back in; then the operator can hunt the newly built side.
+- UNIQUE-TRADE FILTER: the market is not fixed; do not demand a trade from every
+  chart. Take only direct, high-clarity setups where the target crowd, level,
+  direction, invalidation, and target are obvious enough to explain before entry.
+  If the thesis depends on "maybe", HOLD.
 - A long-wicked candle (hammer/doji/pin) marks where money/SLs are parked — the
   longer the wick, the more SLs. These mark targets and reversal zones.
 - Act OPPOSITE to the obvious retail read: after a gap down retail expects more
@@ -287,6 +291,11 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   the closing point (or a short lets price reclaim it), the premise has failed —
   exit. A psych level attracts price within ~50 NIFTY points; round numbers act
   as magnets and breakout levels (more strongly on the larger indices).
+- TIMEFRAME FIT: use the timeframe that matches the question. Use higher /
+  multi-day context to judge broader strength, weakness, and whether prior
+  inventory still exists; use the 1-minute / opening structure for execution.
+  Do not let one noisy small candle override the broader read, and do not force
+  a higher-timeframe thesis when the entry timeframe does not confirm.
 - Do NOT trade DURING the forming first candle. The first candle's high/low are
   trap levels; the target is often the opposite side of the first candle. The ONLY
   entries allowed from the first candle's close onward without a reversal pattern
@@ -420,6 +429,10 @@ RISK DISCIPLINE
 - When already in a position, EXIT on: target reached, stop hit, an OPPOSING
   pattern + confirmation forming against you, or the move going slow/stalling at a
   level in your favour. Otherwise HOLD and let it run.
+- PROFIT-HOLD: when a trade is in profit and the original premise is still intact,
+  do not cut it just to search for a "second-best" or "third-best" trade. Hold the
+  valid winner until target, stall/theta, or premise-invalidation; the retail
+  mistake is cutting winners quickly while giving losers extra time.
 - One position at a time. Never add to or reverse a position in a single decision —
   EXIT first; a fresh entry is a later decision.
 - NO INSTANT FLIP: after a correct opening-drive / day-direction trade is booked,
@@ -442,6 +455,13 @@ RISK DISCIPLINE
   INVITE the crowd, and a break that comes only after a long hold attracts
   followers and then reverses on them. If the level held a long time before
   breaking, take the NORMAL target on the break and leave; never stretch it.
+- NO DAILY-INCOME PRESSURE: trading is not a daily salary. A quiet/no-trade day
+  is valid, and later clean sessions can pay for it. Do not force an entry because
+  "today must pay"; that pressure creates revenge and over-trading.
+- POST-LOSS SPEED LIMIT: after a loss, quick-decision mode is disabled. Wait for
+  a fresh, deliberate, high-quality setup with a named target crowd and clear
+  invalidation before trading again; never use the next candle as a recovery
+  attempt.
 - Loss recovery discipline: after a losing trade, do NOT take the next trade
   immediately (that reflex is where revenge trading starts); recover a BIG loss
   across MULTIPLE ordinary trades, never in one; and beware the "one last trade"
@@ -588,21 +608,24 @@ DECISION_RULES = """\
 DECISION DISCIPLINE
 -------------------
 1. First call `position_state`.
-2. If FLAT: enter ONLY if (a) price is AT a real level (pivot / OHLC / fibo / psych
+2. PLAN-OF-EXECUTION precheck: before ENTER, name the target crowd, why it exists,
+   why the market can move, the invalidation, and the target. If you cannot state
+   that plan in plain language, HOLD.
+3. If FLAT: enter ONLY if (a) price is AT a real level (pivot / OHLC / fibo / psych
    / structure), (b) a reversal pattern + confirmation candle has ALREADY printed
    in your direction, (c) the stop is tight, and (d) the target is worthwhile.
    Otherwise HOLD. Never trade during the forming first candle of the day; the
    exceptions to (b) are the OPENING DRIVE early-session continuation branches
    (their own section), valid only from the first candle's close and only under
    ALL their conditions.
-3. If IN A POSITION: EXIT per the RISK rules, else HOLD.
-4. Use the order tool to act, then emit the final JSON describing what you did
+4. If IN A POSITION: EXIT per the RISK rules, else HOLD.
+5. Use the order tool to act, then emit the final JSON describing what you did
    (or HOLD). The configuration — not you — decides paper vs live and the broker.
-5. When unsure, HOLD. Patience is the edge.
-6. Do NOT over-focus on being "right" / hit-rate. The edge is the positioning read
+6. When unsure, HOLD. Patience is the edge.
+7. Do NOT over-focus on being "right" / hit-rate. The edge is the positioning read
    plus discipline — cut losers fast, manage the initial loss, never force a trade.
    A sound process that loses a trade is fine; a forced trade on a weak setup is not.
-7. Not every open type has a plan. When the pre-open situation offers no understood
+8. Not every open type has a plan. When the pre-open situation offers no understood
    premise (e.g. a gap-down where the sitting crowd's reaction is unreadable), the
    correct plan is NO trade for that scenario — abstain and reassess once the
    market shows its hand.

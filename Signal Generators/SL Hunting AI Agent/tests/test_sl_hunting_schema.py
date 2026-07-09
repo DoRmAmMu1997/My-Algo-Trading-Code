@@ -207,3 +207,14 @@ def test_system_prompt_has_v3g_full_2026_sweep_knowledge():
     assert "CONSTRUCTED-BASE CONTINUATION" in prompt
     assert "PREVIOUS-CHART LINKAGE" in prompt
     assert "WEEKEND / HOLIDAY CARRY-RISK" in prompt
+
+
+def test_system_prompt_has_v3h_remaining_transcript_knowledge():
+    """v3h: remaining-video fallback transcript lessons are present."""
+    prompt = build_system_prompt()
+    assert "UNIQUE-TRADE FILTER" in prompt
+    assert "PROFIT-HOLD" in prompt
+    assert "TIMEFRAME FIT" in prompt
+    assert "PLAN-OF-EXECUTION" in prompt
+    assert "NO DAILY-INCOME PRESSURE" in prompt
+    assert "POST-LOSS SPEED LIMIT" in prompt

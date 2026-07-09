@@ -632,3 +632,62 @@ Sweep result:
 - `RETAIL_POSITIONING`: PREVIOUS-CHART LINKAGE and WEEKEND / HOLIDAY CARRY-RISK.
 - Not encoded: any rule from the 65 blocked public videos or 24 inaccessible rows.
 - Test marker: `test_system_prompt_has_v3g_full_2026_sweep_knowledge`.
+
+---
+
+## Video addendum - remaining blocked public transcripts via NoteGPT fallback (v3h)
+
+> Sources: the 65 public 2026 Intraday Hunter videos that v3g could not extract
+> from YouTube's transcript panel. The operator approved NoteGPT
+> (`https://notegpt.io/youtube-transcript-generator`) as a third-party fallback
+> source for this pass. The temporary extraction ledger is
+> `%TEMP%\intradayhunter-2026-transcripts\notegpt_remaining_ui_2026.jsonl`.
+
+Fallback extraction result:
+- 64 of 65 previously blocked public videos recovered transcript text through
+  the NoteGPT UI fallback.
+- `st8p4CkP8mo` remains unresolved: the YouTube UI had no transcript button, and
+  NoteGPT returned `message: no transcript` with no usable segments.
+- Combined 2026 public coverage is now 249 of 250 public videos: 185 direct
+  YouTube-panel transcripts + 64 NoteGPT fallback transcripts.
+- The 24 inaccessible/member-only rows remain excluded. No knowledge below is
+  derived from those rows or from the unresolved `st8p4CkP8mo` video.
+
+High-signal recovered sources:
+- `lxY9snUinyg` (4 Jul hidden psychology): choose only direct, high-clarity
+  unique trades; do not convert uncertain reads into trades.
+- `YRTuOxYDKhw` (7 Jun position holding): hold a valid winning trade while the
+  premise remains intact instead of cutting it to chase a weaker second trade.
+- `wBHAjFxfXJE` (14 Jun revenge trading): no daily-income pressure, no immediate
+  recovery trade after a loss, and no revenge loop after one failed setup.
+- `ZLpWNw34zGQ` (22 Mar candlestick/timeframe): match timeframe to the question;
+  broader context guides the read, entry timeframe controls execution.
+- `0lWj6kaDpFU` (4 Jan quick decisions): fast execution is acceptable only when
+  the plan is already defined: trapped crowd, reason to move, invalidation, target.
+- Confirmatory recovered weekly/live sessions: `s41N7OS17Wk`, `dVGgbkCtCGM`,
+  `QXMuGzdu0CE`, `yRITNBXsAXY`, and `7NDj21y5K60`.
+
+**Net-new method distilled from the 64 recovered fallback transcripts:**
+- Unique-trade filter: the market is not fixed. The agent should trade only
+  obvious, direct setups where the target crowd, level, direction, invalidation,
+  and target can be named before entry; guess trades are HOLD.
+- Profit-hold: once a valid trade is working, do not exit merely to hunt a
+  second-best or third-best setup. Hold until target, stall/theta, or premise
+  invalidation.
+- Timeframe fit: use higher/multi-day context for broader strength, weakness,
+  and inventory; use the 1-minute/opening chart for execution. A noisy small
+  candle should not override the broader read by itself.
+- Plan-of-execution: quick decisions are allowed only when the trade was already
+  pre-defined. If the agent cannot state who is trapped, why price can move,
+  where invalidation is, and where profit is expected, it must HOLD.
+- No daily-income pressure: a quiet/no-trade day is valid. Forcing a trade
+  because "today must pay" is a revenge/over-trading seed.
+- Post-loss speed limit: after a loss, disable quick-decision mode and wait for
+  a fresh, deliberate, high-quality setup instead of trying to recover immediately.
+
+**Knowledge changes (v3h, all prose):**
+- `PSYCHOLOGY`: UNIQUE-TRADE FILTER.
+- `LEVELS_AND_PIVOT`: TIMEFRAME FIT.
+- `RISK`: PROFIT-HOLD, NO DAILY-INCOME PRESSURE, and POST-LOSS SPEED LIMIT.
+- `DECISION_RULES`: PLAN-OF-EXECUTION.
+- Test marker: `test_system_prompt_has_v3h_remaining_transcript_knowledge`.
