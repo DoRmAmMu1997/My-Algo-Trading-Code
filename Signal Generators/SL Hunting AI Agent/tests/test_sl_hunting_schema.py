@@ -188,3 +188,13 @@ def test_system_prompt_has_v3e_participation_knowledge():
     assert "HUGE gap" in prompt
     assert "THIRD-INDEX LAG" in prompt
     assert "SETUP STALENESS" in prompt
+
+
+def test_system_prompt_has_v3f_transcript_match_knowledge():
+    """v3f: July 4-8 transcript + agent-match lessons are present."""
+    prompt = build_system_prompt()
+    assert "BUYER-INVENTORY FADE" in prompt
+    assert "TARGET-BOOKED" in prompt
+    assert "GAP-DOWN CONTINUATION SHORT" in prompt
+    assert "NO INSTANT FLIP" in prompt
+    assert "MASKED BNF LAG" in prompt

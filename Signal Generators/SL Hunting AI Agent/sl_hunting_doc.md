@@ -533,3 +533,59 @@ Videos (id — session — type — outcome/signal):
 - NOT encoded: the lecture's "observe-only first 1-1.5 hours" rule — it is beginner-discipline
   framing that contradicts the operator's opening-drive edge (IH himself trades the open).
 - Test marker: `test_system_prompt_has_v3e_participation_knowledge`.
+
+---
+
+## Video addendum - July 4-8 transcript sweep + agent match (v3f)
+
+> Sources: Intraday Hunter channel uploads published 4 Jul 2026 through 8 Jul 2026,
+> extracted via YouTube's transcript panel where available, then matched against
+> `Backtest Outputs/sl_hunting_decisions.jsonl` and `Backtest Outputs/sl_hunting_journal.jsonl`.
+> The 4 Jul lecture `lxY9snUinyg` advertised Hindi ASR captions but yielded no transcript
+> segments in the UI/timedtext path, so no knowledge is added from it.
+
+Videos captured for the trade-method sweep:
+- `F9APQ4MnAcA` - prediction for 6 Jul.
+- `ohxweLy3H2Q` - live BankNIFTY session on 6 Jul.
+- `P3dFob-ZHtw` - prediction for 7 Jul.
+- `pEXtxlA1u-k` - live BankNIFTY session on 7 Jul.
+- `DTd4Mtz1ppg` - prediction for 8 Jul.
+- `4oV5tP8nzv4` - live BankNIFTY session on 8 Jul.
+- `_y-hk-sl-aQ` - prediction for 9 Jul; captured for provenance, but no 2026-07-09
+  agent decision rows existed in the log, so there is no same-day agent match yet.
+
+**Transcript + agent match ledger:**
+- **6 Jul:** IH took CALL/long after huge first-minute positive momentum, then waited
+  for a pullback/rejection read: prior Friday was negative and a holiday followed, so
+  buyers had not built a reachable SL base; early rejection lured sellers, making the
+  long the operator-side trade. The agent matched the first trade (`opening_drive_gapup_continuation`
+  at 09:17, booked profit), but then immediately took four short fades. Those shorts
+  contradicted the still-live opening thesis: after profit booking, a small pullback
+  was more likely a seller lure unless price spent enough time/space recruiting fresh
+  buyers first.
+- **7 Jul:** IH took PUT/short because several positive sessions with only shallow
+  retracement meant buyers could still be holding; a modest gap-up/flat-to-gap-down
+  open could hunt that buyer inventory. The agent did not cleanly take this trade:
+  the decision log mostly held around the open, and the journal contains timeout /
+  `agent_error` noise including an opposite long. Only the repeated method mismatch
+  is encoded as knowledge: buyer inventory after a shallow up-streak can be the short
+  target, and the agent must not auto-read every modest gap-up as continuation.
+- **8 Jul:** IH took PUT/short after prior breakdown + retracement + continuation:
+  the prior put buyers had likely booked profit and left, so they were not the day's
+  target; the flat/gap-down open plus incomplete recovery failed to reclaim the close
+  / round area, allowing put-side continuation. The agent stayed flat, first waiting
+  for the old bullish gap-down reversal pattern, then becoming usage-limited. The
+  durable knowledge change is the target-booked crowd test plus a narrow gap-down
+  continuation-short exception; the usage-limit behaviour is not a prompt rule.
+
+**Knowledge changes (v3f, all prose):**
+- `RETAIL_POSITIONING`: BUYER-INVENTORY FADE; TARGET-BOOKED crowd test; direct-momentum
+  / current-session trap reset after the old crowd has been paid/flushed.
+- `OPENING_DRIVE`: replaces the absolute no-short/no-gap-down wording with the strict
+  GAP-DOWN CONTINUATION SHORT exception: only narrow/moderate gap-down, sellers not
+  huntable, early recovery fails below close/round/opening range, no bullish reclaim.
+- `RISK`: NO INSTANT FLIP after a correct opening/day-direction trade has been booked;
+  plus the 2-3 hour open-thesis timeout for stalled option-buyer premises.
+- `BNF_SPECIFIC`: MASKED BNF LAG - temporary BankNIFTY weakness can keep NIFTY/Sensex
+  breakout buyers away; it invalidates only when it actually breaks the trade premise.
+- Test marker: `test_system_prompt_has_v3f_transcript_match_knowledge`.
