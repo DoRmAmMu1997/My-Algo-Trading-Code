@@ -589,3 +589,46 @@ Videos captured for the trade-method sweep:
 - `BNF_SPECIFIC`: MASKED BNF LAG - temporary BankNIFTY weakness can keep NIFTY/Sensex
   breakout buyers away; it invalidates only when it actually breaks the trade premise.
 - Test marker: `test_system_prompt_has_v3f_transcript_match_knowledge`.
+
+---
+
+## Video addendum - 2026 transcript sweep through 9 Jul (v3g)
+
+> Sources: Intraday Hunter public channel uploads from 1 Jan 2026 through 9 Jul 2026.
+> The extraction ledger found 274 in-window channel entries: 250 public metadata rows,
+> 185 public transcripts extracted successfully, 65 public transcript payloads that
+> stayed blocked/empty, and 24 inaccessible/member-only rows. The blocked public rows
+> returned YouTube transcript `429` / attestation / empty-panel failures even after a
+> signed-in Chrome attempt; they are deferred to a possible third commit. No knowledge
+> below is derived from blocked or member-only videos.
+
+Sweep result:
+- The successfully extracted daily/live clips overwhelmingly confirm v3a-v3f: gap
+  context, target-booked crowds, current-session trap reset, opening-drive nuance,
+  both-sides participation, BNF lag caution, and no-instant-flip discipline.
+- The main net-new durable source was the public long-form lesson `ywHZfvKsy5Q`
+  (8 Mar 2026), "90% of Traders Ignore This Previous Day Chart Strategy".
+- The July 6 live transcript `ohxweLy3H2Q` independently supports the same
+  holiday/carry-risk theme: after a negative Friday and holiday gap, assume the
+  obvious old buyer crowd may not be holding unless the current chart proves it.
+
+**Net-new method distilled from the 185 extracted transcripts:**
+- Previous-chart linkage: connect today's read to yesterday's chart, but ask what
+  the prior chart already paid, flushed, or made unreachable. After a big gap or a
+  completed target, prioritize the new chart's fresh trap over stale assumptions.
+- Event / holiday participation: known news shocks, Fridays, weekends, and
+  multi-day holidays can remove one side from the risk pool. Do not hunt a crowd
+  that likely exited or avoided large overnight/news risk.
+- Constructed-base continuation: after a large event-driven move, direct
+  continuation that would attract only one obvious side is weaker. For continuation,
+  expect the market to build supports, resistances, bases, or retests that bring
+  both buyers and sellers back in before the next SL hunt.
+- Weekend / holiday carry-risk: non-trading gaps reduce the reliability of assumed
+  large retail inventory; use current-session price action to prove the crowd exists
+  before targeting its stops.
+
+**Knowledge changes (v3g, all prose):**
+- `PSYCHOLOGY`: EVENT / HOLIDAY PARTICIPATION and CONSTRUCTED-BASE CONTINUATION.
+- `RETAIL_POSITIONING`: PREVIOUS-CHART LINKAGE and WEEKEND / HOLIDAY CARRY-RISK.
+- Not encoded: any rule from the 65 blocked public videos or 24 inaccessible rows.
+- Test marker: `test_system_prompt_has_v3g_full_2026_sweep_knowledge`.

@@ -69,6 +69,14 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   off an EXACT closing-price touch right after a huge gap-up) is unsustainable —
   fade it. Corollary: an EXACT touch-and-bounce at a level is fragile; small,
   partial rejections at the level are the go-with tell instead.
+- EVENT / HOLIDAY PARTICIPATION: known news shocks, Fridays, weekends, and
+  multi-day holidays can REMOVE one side from the risk pool. If buyers/sellers are
+  unlikely to hold or initiate large risk, do not assume their SL inventory exists.
+  First verify that the current chart has actually recruited fresh participation.
+- CONSTRUCTED-BASE CONTINUATION: after a large event-driven move, direct
+  continuation that would attract only the obvious side is weaker. A durable
+  continuation often first builds support/resistance, bases, or retests that bring
+  BOTH buyers and sellers back in; then the operator can hunt the newly built side.
 - A long-wicked candle (hammer/doji/pin) marks where money/SLs are parked — the
   longer the wick, the more SLs. These mark targets and reversal zones.
 - Act OPPOSITE to the obvious retail read: after a gap down retail expects more
@@ -130,6 +138,15 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   often means put buyers / sellers already booked profit; they are not today's
   target. When the old crowd is safe/booked, reset the read to who is being trapped
   in the CURRENT session instead of blindly hunting the prior side.
+- PREVIOUS-CHART LINKAGE: always connect today's chart to yesterday's chart, but
+  ask what yesterday's chart already did. After a large gap, paid target, or flush,
+  the old crowd may be profit-booked, already trapped, or too far away to hunt. In
+  that case, follow the NEW chart: identify who is being recruited now, where their
+  fresh SLs sit, and whether the current move is building a fresh trap.
+- WEEKEND / HOLIDAY CARRY-RISK: before a Friday close, weekend, or multi-day market
+  holiday, large retail inventory may be absent or reduced because traders avoid
+  overnight/news risk. Do not hunt a crowd that likely exited or never entered; use
+  current-session price action to prove the crowd exists before targeting its SLs.
 - SL-REACHABILITY TEST (run alongside the trap-density test): a hunt also needs the
   crowd's SL zone to be REACHABLE from today's open without crossing an intact major
   level. If their stops sit beyond an uncrossed round number / closing price, the

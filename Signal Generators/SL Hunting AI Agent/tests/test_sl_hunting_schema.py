@@ -198,3 +198,12 @@ def test_system_prompt_has_v3f_transcript_match_knowledge():
     assert "GAP-DOWN CONTINUATION SHORT" in prompt
     assert "NO INSTANT FLIP" in prompt
     assert "MASKED BNF LAG" in prompt
+
+
+def test_system_prompt_has_v3g_full_2026_sweep_knowledge():
+    """v3g: the Jan-Jul 2026 transcript sweep's carry-risk refinements are present."""
+    prompt = build_system_prompt()
+    assert "EVENT / HOLIDAY PARTICIPATION" in prompt
+    assert "CONSTRUCTED-BASE CONTINUATION" in prompt
+    assert "PREVIOUS-CHART LINKAGE" in prompt
+    assert "WEEKEND / HOLIDAY CARRY-RISK" in prompt
