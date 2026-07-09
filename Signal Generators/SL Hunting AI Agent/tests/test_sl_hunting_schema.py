@@ -188,3 +188,33 @@ def test_system_prompt_has_v3e_participation_knowledge():
     assert "HUGE gap" in prompt
     assert "THIRD-INDEX LAG" in prompt
     assert "SETUP STALENESS" in prompt
+
+
+def test_system_prompt_has_v3f_transcript_match_knowledge():
+    """v3f: July 4-8 transcript + agent-match lessons are present."""
+    prompt = build_system_prompt()
+    assert "BUYER-INVENTORY FADE" in prompt
+    assert "TARGET-BOOKED" in prompt
+    assert "GAP-DOWN CONTINUATION SHORT" in prompt
+    assert "NO INSTANT FLIP" in prompt
+    assert "MASKED BNF LAG" in prompt
+
+
+def test_system_prompt_has_v3g_full_2026_sweep_knowledge():
+    """v3g: the Jan-Jul 2026 transcript sweep's carry-risk refinements are present."""
+    prompt = build_system_prompt()
+    assert "EVENT / HOLIDAY PARTICIPATION" in prompt
+    assert "CONSTRUCTED-BASE CONTINUATION" in prompt
+    assert "PREVIOUS-CHART LINKAGE" in prompt
+    assert "WEEKEND / HOLIDAY CARRY-RISK" in prompt
+
+
+def test_system_prompt_has_v3h_remaining_transcript_knowledge():
+    """v3h: remaining-video fallback transcript lessons are present."""
+    prompt = build_system_prompt()
+    assert "UNIQUE-TRADE FILTER" in prompt
+    assert "PROFIT-HOLD" in prompt
+    assert "TIMEFRAME FIT" in prompt
+    assert "PLAN-OF-EXECUTION" in prompt
+    assert "NO DAILY-INCOME PRESSURE" in prompt
+    assert "POST-LOSS SPEED LIMIT" in prompt

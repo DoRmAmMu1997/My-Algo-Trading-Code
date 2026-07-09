@@ -533,3 +533,161 @@ Videos (id — session — type — outcome/signal):
 - NOT encoded: the lecture's "observe-only first 1-1.5 hours" rule — it is beginner-discipline
   framing that contradicts the operator's opening-drive edge (IH himself trades the open).
 - Test marker: `test_system_prompt_has_v3e_participation_knowledge`.
+
+---
+
+## Video addendum - July 4-8 transcript sweep + agent match (v3f)
+
+> Sources: Intraday Hunter channel uploads published 4 Jul 2026 through 8 Jul 2026,
+> extracted via YouTube's transcript panel where available, then matched against
+> `Backtest Outputs/sl_hunting_decisions.jsonl` and `Backtest Outputs/sl_hunting_journal.jsonl`.
+> The 4 Jul lecture `lxY9snUinyg` advertised Hindi ASR captions but yielded no transcript
+> segments in the UI/timedtext path, so no knowledge is added from it.
+
+Videos captured for the trade-method sweep:
+- `F9APQ4MnAcA` - prediction for 6 Jul.
+- `ohxweLy3H2Q` - live BankNIFTY session on 6 Jul.
+- `P3dFob-ZHtw` - prediction for 7 Jul.
+- `pEXtxlA1u-k` - live BankNIFTY session on 7 Jul.
+- `DTd4Mtz1ppg` - prediction for 8 Jul.
+- `4oV5tP8nzv4` - live BankNIFTY session on 8 Jul.
+- `_y-hk-sl-aQ` - prediction for 9 Jul; captured for provenance, but no 2026-07-09
+  agent decision rows existed in the log, so there is no same-day agent match yet.
+
+**Transcript + agent match ledger:**
+- **6 Jul:** IH took CALL/long after huge first-minute positive momentum, then waited
+  for a pullback/rejection read: prior Friday was negative and a holiday followed, so
+  buyers had not built a reachable SL base; early rejection lured sellers, making the
+  long the operator-side trade. The agent matched the first trade (`opening_drive_gapup_continuation`
+  at 09:17, booked profit), but then immediately took four short fades. Those shorts
+  contradicted the still-live opening thesis: after profit booking, a small pullback
+  was more likely a seller lure unless price spent enough time/space recruiting fresh
+  buyers first.
+- **7 Jul:** IH took PUT/short because several positive sessions with only shallow
+  retracement meant buyers could still be holding; a modest gap-up/flat-to-gap-down
+  open could hunt that buyer inventory. The agent did not cleanly take this trade:
+  the decision log mostly held around the open, and the journal contains timeout /
+  `agent_error` noise including an opposite long. Only the repeated method mismatch
+  is encoded as knowledge: buyer inventory after a shallow up-streak can be the short
+  target, and the agent must not auto-read every modest gap-up as continuation.
+- **8 Jul:** IH took PUT/short after prior breakdown + retracement + continuation:
+  the prior put buyers had likely booked profit and left, so they were not the day's
+  target; the flat/gap-down open plus incomplete recovery failed to reclaim the close
+  / round area, allowing put-side continuation. The agent stayed flat, first waiting
+  for the old bullish gap-down reversal pattern, then becoming usage-limited. The
+  durable knowledge change is the target-booked crowd test plus a narrow gap-down
+  continuation-short exception; the usage-limit behaviour is not a prompt rule.
+
+**Knowledge changes (v3f, all prose):**
+- `RETAIL_POSITIONING`: BUYER-INVENTORY FADE; TARGET-BOOKED crowd test; direct-momentum
+  / current-session trap reset after the old crowd has been paid/flushed.
+- `OPENING_DRIVE`: replaces the absolute no-short/no-gap-down wording with the strict
+  GAP-DOWN CONTINUATION SHORT exception: only narrow/moderate gap-down, sellers not
+  huntable, early recovery fails below close/round/opening range, no bullish reclaim.
+- `RISK`: NO INSTANT FLIP after a correct opening/day-direction trade has been booked;
+  plus the 2-3 hour open-thesis timeout for stalled option-buyer premises.
+- `BNF_SPECIFIC`: MASKED BNF LAG - temporary BankNIFTY weakness can keep NIFTY/Sensex
+  breakout buyers away; it invalidates only when it actually breaks the trade premise.
+- Test marker: `test_system_prompt_has_v3f_transcript_match_knowledge`.
+
+---
+
+## Video addendum - 2026 transcript sweep through 9 Jul (v3g)
+
+> Sources: Intraday Hunter public channel uploads from 1 Jan 2026 through 9 Jul 2026.
+> The extraction ledger found 274 in-window channel entries: 250 public metadata rows,
+> 185 public transcripts extracted successfully, 65 public transcript payloads that
+> stayed blocked/empty, and 24 inaccessible/member-only rows. The blocked public rows
+> returned YouTube transcript `429` / attestation / empty-panel failures even after a
+> signed-in Chrome attempt; they are deferred to a possible third commit. No knowledge
+> below is derived from blocked or member-only videos.
+
+Sweep result:
+- The successfully extracted daily/live clips overwhelmingly confirm v3a-v3f: gap
+  context, target-booked crowds, current-session trap reset, opening-drive nuance,
+  both-sides participation, BNF lag caution, and no-instant-flip discipline.
+- The main net-new durable source was the public long-form lesson `ywHZfvKsy5Q`
+  (8 Mar 2026), "90% of Traders Ignore This Previous Day Chart Strategy".
+- The July 6 live transcript `ohxweLy3H2Q` independently supports the same
+  holiday/carry-risk theme: after a negative Friday and holiday gap, assume the
+  obvious old buyer crowd may not be holding unless the current chart proves it.
+
+**Net-new method distilled from the 185 extracted transcripts:**
+- Previous-chart linkage: connect today's read to yesterday's chart, but ask what
+  the prior chart already paid, flushed, or made unreachable. After a big gap or a
+  completed target, prioritize the new chart's fresh trap over stale assumptions.
+- Event / holiday participation: known news shocks, Fridays, weekends, and
+  multi-day holidays can remove one side from the risk pool. Do not hunt a crowd
+  that likely exited or avoided large overnight/news risk.
+- Constructed-base continuation: after a large event-driven move, direct
+  continuation that would attract only one obvious side is weaker. For continuation,
+  expect the market to build supports, resistances, bases, or retests that bring
+  both buyers and sellers back in before the next SL hunt.
+- Weekend / holiday carry-risk: non-trading gaps reduce the reliability of assumed
+  large retail inventory; use current-session price action to prove the crowd exists
+  before targeting its stops.
+
+**Knowledge changes (v3g, all prose):**
+- `PSYCHOLOGY`: EVENT / HOLIDAY PARTICIPATION and CONSTRUCTED-BASE CONTINUATION.
+- `RETAIL_POSITIONING`: PREVIOUS-CHART LINKAGE and WEEKEND / HOLIDAY CARRY-RISK.
+- Not encoded: any rule from the 65 blocked public videos or 24 inaccessible rows.
+- Test marker: `test_system_prompt_has_v3g_full_2026_sweep_knowledge`.
+
+---
+
+## Video addendum - remaining blocked public transcripts via NoteGPT fallback (v3h)
+
+> Sources: the 65 public 2026 Intraday Hunter videos that v3g could not extract
+> from YouTube's transcript panel. The operator approved NoteGPT
+> (`https://notegpt.io/youtube-transcript-generator`) as a third-party fallback
+> source for this pass. The temporary extraction ledger is
+> `%TEMP%\intradayhunter-2026-transcripts\notegpt_remaining_ui_2026.jsonl`.
+
+Fallback extraction result:
+- 64 of 65 previously blocked public videos recovered transcript text through
+  the NoteGPT UI fallback.
+- `st8p4CkP8mo` remains unresolved: the YouTube UI had no transcript button, and
+  NoteGPT returned `message: no transcript` with no usable segments.
+- Combined 2026 public coverage is now 249 of 250 public videos: 185 direct
+  YouTube-panel transcripts + 64 NoteGPT fallback transcripts.
+- The 24 inaccessible/member-only rows remain excluded. No knowledge below is
+  derived from those rows or from the unresolved `st8p4CkP8mo` video.
+
+High-signal recovered sources:
+- `lxY9snUinyg` (4 Jul hidden psychology): choose only direct, high-clarity
+  unique trades; do not convert uncertain reads into trades.
+- `YRTuOxYDKhw` (7 Jun position holding): hold a valid winning trade while the
+  premise remains intact instead of cutting it to chase a weaker second trade.
+- `wBHAjFxfXJE` (14 Jun revenge trading): no daily-income pressure, no immediate
+  recovery trade after a loss, and no revenge loop after one failed setup.
+- `ZLpWNw34zGQ` (22 Mar candlestick/timeframe): match timeframe to the question;
+  broader context guides the read, entry timeframe controls execution.
+- `0lWj6kaDpFU` (4 Jan quick decisions): fast execution is acceptable only when
+  the plan is already defined: trapped crowd, reason to move, invalidation, target.
+- Confirmatory recovered weekly/live sessions: `s41N7OS17Wk`, `dVGgbkCtCGM`,
+  `QXMuGzdu0CE`, `yRITNBXsAXY`, and `7NDj21y5K60`.
+
+**Net-new method distilled from the 64 recovered fallback transcripts:**
+- Unique-trade filter: the market is not fixed. The agent should trade only
+  obvious, direct setups where the target crowd, level, direction, invalidation,
+  and target can be named before entry; guess trades are HOLD.
+- Profit-hold: once a valid trade is working, do not exit merely to hunt a
+  second-best or third-best setup. Hold until target, stall/theta, or premise
+  invalidation.
+- Timeframe fit: use higher/multi-day context for broader strength, weakness,
+  and inventory; use the 1-minute/opening chart for execution. A noisy small
+  candle should not override the broader read by itself.
+- Plan-of-execution: quick decisions are allowed only when the trade was already
+  pre-defined. If the agent cannot state who is trapped, why price can move,
+  where invalidation is, and where profit is expected, it must HOLD.
+- No daily-income pressure: a quiet/no-trade day is valid. Forcing a trade
+  because "today must pay" is a revenge/over-trading seed.
+- Post-loss speed limit: after a loss, disable quick-decision mode and wait for
+  a fresh, deliberate, high-quality setup instead of trying to recover immediately.
+
+**Knowledge changes (v3h, all prose):**
+- `PSYCHOLOGY`: UNIQUE-TRADE FILTER.
+- `LEVELS_AND_PIVOT`: TIMEFRAME FIT.
+- `RISK`: PROFIT-HOLD, NO DAILY-INCOME PRESSURE, and POST-LOSS SPEED LIMIT.
+- `DECISION_RULES`: PLAN-OF-EXECUTION.
+- Test marker: `test_system_prompt_has_v3h_remaining_transcript_knowledge`.
