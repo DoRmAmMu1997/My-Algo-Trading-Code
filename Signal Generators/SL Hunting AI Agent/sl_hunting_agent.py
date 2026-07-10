@@ -30,8 +30,10 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 import sys
+import tempfile
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -315,6 +317,11 @@ class SLHuntingAgent:
         # so the system prefix stays stable per session and prompt caching is preserved.
         learned = ("\n\n" + lessons_block.strip()) if lessons_block and lessons_block.strip() else ""
         self._system_prompt = build_system_prompt() + learned + FINAL_OUTPUT_INSTRUCTION
+        # SLH-003: cache for the system-prompt temp FILE handed to the SDK by
+        # `_default_run` (written once per unique text, reused every bar) — see
+        # `_system_prompt_as_file` for why a string system prompt cannot be used.
+        self._system_prompt_file_path: str | None = None
+        self._system_prompt_file_text: str | None = None
 
     # ------------------------------------------------------------------
     # Prompt construction
@@ -359,6 +366,30 @@ class SLHuntingAgent:
     # Default runner (Claude Agent SDK)
     # ------------------------------------------------------------------
 
+    def _system_prompt_as_file(self, system_prompt: str) -> dict[str, str]:
+        """Persist ``system_prompt`` to a temp file and return the SDK's file form.
+
+        SLH-003: the SDK passes a *string* system prompt to the spawned ``claude``
+        CLI as a literal ``--system-prompt`` argv entry, and Windows caps a child
+        process command line at 32,767 characters. ``build_system_prompt()`` alone
+        is ~37k chars (since the v3f-v3h knowledge additions), so a string spawn
+        dies with WinError 206 before any model call — misreported by the SDK as
+        ``CLINotFoundError``. The file form (``--system-prompt-file``) keeps the
+        command line tiny no matter how much knowledge is added. The file is
+        written once per unique text and reused across bars, so the system prefix
+        stays byte-identical per session and prompt caching is preserved.
+        """
+        if (
+            self._system_prompt_file_path is None
+            or self._system_prompt_file_text != system_prompt
+        ):
+            fd, path = tempfile.mkstemp(prefix="sl_hunting_system_prompt_", suffix=".md")
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(system_prompt)
+            self._system_prompt_file_path = path
+            self._system_prompt_file_text = system_prompt
+        return {"type": "file", "path": self._system_prompt_file_path}
+
     async def _default_run(
         self,
         prompt: str,
@@ -396,7 +427,9 @@ class SLHuntingAgent:
 
         options_kwargs: dict[str, Any] = {
             "model": model,
-            "system_prompt": system_prompt,
+            # File form, NOT the raw string — a string is passed on the CLI
+            # command line and blows Windows' 32,767-char cap (SLH-003).
+            "system_prompt": self._system_prompt_as_file(system_prompt),
             "max_turns": max_turns,
             "mcp_servers": mcp_servers,
             "allowed_tools": allowed_tools,
@@ -430,6 +463,17 @@ class SLHuntingAgent:
                         if block_text:
                             final_text = block_text
         except CLINotFoundError as exc:
+            # The SDK raises CLINotFoundError for ANY FileNotFoundError from the
+            # spawn — including WinError 206, where the CLI exists but the spawn's
+            # COMMAND LINE exceeded Windows' 32,767-char cap. Telling the operator
+            # to reinstall for that case sends them down the wrong path (SLH-003).
+            if getattr(exc.__cause__, "winerror", None) == 206:
+                raise SLHuntingAgentError(
+                    "Claude CLI spawn failed: the command line exceeded Windows' "
+                    "32,767-character limit (WinError 206). An oversized option is "
+                    "being passed as a CLI argument (a string system prompt is the "
+                    "usual culprit — it must go through _system_prompt_as_file)."
+                ) from exc
             raise SLHuntingAgentError(
                 "The bundled Claude CLI could not be found. Reinstall with "
                 "`pip install --force-reinstall claude-agent-sdk`."

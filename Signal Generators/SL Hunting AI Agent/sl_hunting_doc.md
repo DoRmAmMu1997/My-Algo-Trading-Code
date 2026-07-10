@@ -691,3 +691,45 @@ High-signal recovered sources:
 - `RISK`: PROFIT-HOLD, NO DAILY-INCOME PRESSURE, and POST-LOSS SPEED LIMIT.
 - `DECISION_RULES`: PLAN-OF-EXECUTION.
 - Test marker: `test_system_prompt_has_v3h_remaining_transcript_knowledge`.
+
+---
+
+## Video addendum - 10 Jul live gap-up seller-hunt session (v3i)
+
+> Source: `sImrqns7fBo` (10 Jul 2026, "Live Bank Nifty Option Trading", 10:35).
+> Full Hindi auto-transcript captured the same morning from YouTube's transcript
+> panel (the ≤12-min recipe worked first try). The 1:51 daily prediction clip
+> (`LoT91UMHeVo`) was not mined, per the v3b finding that the daily prediction
+> clips are ephemeral day-calls whose durable themes are already captured.
+
+Session summary and match:
+- After the prior day's big selling with only a weak recovery, IH read the crowd
+  as sellers built on the retracement with no buyer inventory. On the
+  flat-to-gap-up open he went LONG calls on all three indices right at open
+  (BankNIFTY 1170 qty, Sensex 900, NIFTY 1365), sat through early drawdown while
+  no major rejection printed, and booked an "average target" in profit.
+- Textbook execution of EXISTING knowledge — OPENING DRIVE gap-up branch /
+  variant B seller-hunt, MULTI-DAY ACCUMULATION, TRAP-DENSITY and
+  SL-REACHABILITY tests, round-number magnets (BNF_SPECIFIC). Strong
+  confirmation; nothing to change in the day-direction read.
+
+**Net-new method distilled:**
+- Premium non-confirmation exit: he booked the AVERAGE target instead of
+  stretching for the breakout specifically because option premiums were not
+  rising with the spot move on a NON-expiry day (Sensex legs lagging), with a
+  BankNIFTY round number approaching — "after seeing this profit, watching it
+  become a loss is not right."
+- R:R-bait at round-number rejections: small rejections at a round number during
+  a with-trend grind are the market MANUFACTURING put trades whose SL/target
+  ratio "looks right" (SL just past the round number, target at the prior low)
+  but has no premise; those freshly built stops fuel the next leg up. Round-number
+  "resistance" during momentum is an invitation, not an inability to cross.
+- Confirmed but deliberately NOT re-encoded: the averaging-destroys-capital
+  lecture (the agent structurally cannot average — one position at a time and
+  the order tool rejects entries while positioned) and the seller-hunt long
+  itself (already OPENING DRIVE variant B / gap-up branch).
+
+**Knowledge changes (v3i, all prose):**
+- `RETAIL_POSITIONING`: R:R-BAIT AT ROUND-NUMBER REJECTIONS.
+- `RISK`: PREMIUM NON-CONFIRMATION.
+- Test marker: `test_system_prompt_has_v3i_premium_rr_knowledge`.

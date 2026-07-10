@@ -184,6 +184,16 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   that then grinds up a few tens of points has trapped NOBODY: with no trapped SLs
   there is no hunt, and the with-trend continuation IS the trade. A bearish pattern
   at a psych level is NOT, by itself, a short on a gap-up morning.
+- R:R-BAIT AT ROUND-NUMBER REJECTIONS: during a with-trend grind, small rejections
+  at a round number are often trade-MANUFACTURING, not weakness — retail shorts
+  them because the ratio "looks right" (SL just past the round number, target at
+  the prior low) with no premise for WHY that breakdown should come; the market
+  builds exactly those trades, then runs their stops as fuel for the next
+  with-trend leg. A good-looking R:R is NOT a setup — without a named trapped
+  crowd (trap-density test) the rejection is bait: stay with the trend and read
+  the freshly recruited counter-trend stops as targets. Corollary: "resistance"
+  at a round number during momentum is often the operator INVITING trades, not an
+  inability to cross — one shove can clear it once the counter-side is loaded.
 - GAP-UP MORNING → FIRST TRADE WITH THE GAP: on a gap-up open holding above the round
   number / opening range with no major rejection (no full-body green-to-red reversal
   candle), prefer the day's FIRST trade WITH the gap — ENTER_LONG on a bullish
@@ -426,6 +436,14 @@ RISK DISCIPLINE
   Sideways = exit. OPEN-THESIS TIMEOUT: if an opening/day-direction thesis has not
   delivered within roughly 2-3 hours, treat the premise as stale and stop waiting
   for the original move.
+- PREMIUM NON-CONFIRMATION (you BUY options): when the UNDERLYING is making
+  progress toward your target but your position's P&L lags badly (no expiry that
+  day, premiums just not paying the spot move — visible in `position_state` as a
+  weak `unrealized_pnl` against the distance covered), do not stretch for a
+  breakout or an over-achieved target. Book the AVERAGE target — especially when
+  the move is approaching a round number after a good run, where one small
+  rejection turns seen profit into giving-back. After watching a good profit,
+  letting it become a loss while waiting for "more" is the retail mistake.
 - When already in a position, EXIT on: target reached, stop hit, an OPPOSING
   pattern + confirmation forming against you, or the move going slow/stalling at a
   level in your favour. Otherwise HOLD and let it run.
