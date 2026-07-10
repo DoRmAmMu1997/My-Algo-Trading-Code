@@ -367,6 +367,96 @@ def test_do_order_accepts_sane_entry_and_exit_ignores_levels():
 
 
 # --------------------------------------------------------------------------
+# SLH-003: the system prompt must reach the SDK as a FILE, never a string.
+# The SDK passes a string system prompt to the spawned `claude` CLI as a
+# literal `--system-prompt` argv entry; Windows caps a child process command
+# line at 32,767 characters and build_system_prompt() alone exceeds that
+# (~37k chars since v3f-v3h), so the spawn dies with WinError 206 — which the
+# SDK misreports as CLINotFoundError ("reinstall claude-agent-sdk").
+# --------------------------------------------------------------------------
+
+def test_system_prompt_as_file_writes_text_and_reuses_path():
+    agent = SLHuntingAgent(model="test-model", runner=_FakeRunner("{}"))
+    text = "K" * 40_000  # comfortably past the 32,767-char argv cap
+    opt = agent._system_prompt_as_file(text)
+    assert opt["type"] == "file"
+    with open(opt["path"], encoding="utf-8") as fh:
+        assert fh.read() == text
+    # The next bar reuses the same file — no per-bar temp-file churn.
+    assert agent._system_prompt_as_file(text)["path"] == opt["path"]
+
+
+def test_default_run_hands_the_sdk_a_system_prompt_file(monkeypatch):
+    import pytest
+
+    sdk = pytest.importorskip("claude_agent_sdk")
+    captured = {}
+
+    def _fake_query(*, prompt, options):
+        captured["options"] = options
+
+        async def _gen():
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+        return _gen()
+
+    monkeypatch.setattr(sdk, "query", _fake_query)
+
+    ctx = SLHuntingToolContext.build(_candles(), StandaloneExecutor())
+    agent = SLHuntingAgent(model="test-model")
+    big = "K" * 40_000
+    result = SLHuntingAgent._run_sync(
+        agent._default_run(
+            "prompt", system_prompt=big, model="test-model", max_turns=3, tool_context=ctx
+        )
+    )
+    assert result.text == ""
+    sp = captured["options"].system_prompt
+    assert isinstance(sp, dict) and sp.get("type") == "file"  # never a raw argv string
+    with open(sp["path"], encoding="utf-8") as fh:
+        assert fh.read() == big
+
+
+def test_cli_spawn_winerror_206_maps_to_actionable_message():
+    """A WinError-206 CLINotFoundError must NOT tell the operator to reinstall."""
+    import pytest
+
+    sdk = pytest.importorskip("claude_agent_sdk")
+    from sl_hunting_agent import SLHuntingAgentError
+
+    class _Win206Error(FileNotFoundError):
+        # Class attribute stands in for OSError.winerror so this test also runs
+        # on the POSIX CI runners, where OSError has no winerror at all.
+        winerror = 206
+
+    def _fake_query(*, prompt, options):
+        async def _gen():
+            raise sdk.CLINotFoundError("Claude Code not found at: X") from _Win206Error(
+                2, "The filename or extension is too long"
+            )
+            yield  # pragma: no cover - makes this an async generator
+
+        return _gen()
+
+    ctx = SLHuntingToolContext.build(_candles(), StandaloneExecutor())
+    agent = SLHuntingAgent(model="test-model")
+
+    import unittest.mock as mock
+
+    with mock.patch.object(sdk, "query", _fake_query), pytest.raises(SLHuntingAgentError) as ei:
+        SLHuntingAgent._run_sync(
+            agent._default_run(
+                "prompt", system_prompt="short", model="test-model",
+                max_turns=3, tool_context=ctx,
+            )
+        )
+    message = str(ei.value)
+    assert "32,767" in message and "command line" in message.lower()
+    assert "reinstall" not in message.lower()
+
+
+# --------------------------------------------------------------------------
 # SLH-001: the SDK call must be TIME-BOUNDED. decide() runs on the strategy
 # worker's own thread -- while it blocks, the per-poll stop/target check,
 # max-loss and the 15:15 square-off are all frozen, so a hung CLI call would
