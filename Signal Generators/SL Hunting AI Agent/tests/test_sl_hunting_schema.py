@@ -218,3 +218,12 @@ def test_system_prompt_has_v3h_remaining_transcript_knowledge():
     assert "PLAN-OF-EXECUTION" in prompt
     assert "NO DAILY-INCOME PRESSURE" in prompt
     assert "POST-LOSS SPEED LIMIT" in prompt
+
+
+def test_system_prompt_has_v3i_premium_rr_knowledge():
+    """v3i: 10 Jul live session — premium non-confirmation exit + R:R-bait read."""
+    prompt = build_system_prompt()
+    assert "PREMIUM NON-CONFIRMATION" in prompt
+    assert "R:R-BAIT AT ROUND-NUMBER REJECTIONS" in prompt
+    # The actionable exit rule: book the average target when premiums lag the spot move.
+    assert "AVERAGE target" in prompt
