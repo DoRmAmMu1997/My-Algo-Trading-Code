@@ -4,7 +4,7 @@ This contains all the code I have written for the signal generation and the fron
 # Live track record
 I have been running these strategies **live** (real broker orders) since **May 2026**. The day-by-day results are recorded here:
 
-📈 **[Live results spreadsheet](https://docs.google.com/spreadsheets/d/1y4VgThcLywZbOibKC_pyKbh0A5u1xtgL_cZvyHp3FYg/edit?gid=0#gid=0)**
+📈 **[Live results spreadsheet](https://docs.google.com/spreadsheets/d/1y4VgThcLywZbOibKC_pyKbh0A5u1xtgL_cZvyHp3FYg/edit?gid=1960070915#gid=1960070915)**
 
 # The code
 Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh, GPT-5.5-xhigh and Claude Opus 4.7, Claude Opus 4.8 on Max effort. GPT wrote majority of the signal generators and the data fetch files. Claude wrote the big one - the multithreaded Front Test worker. I just did the reviews and the testing
