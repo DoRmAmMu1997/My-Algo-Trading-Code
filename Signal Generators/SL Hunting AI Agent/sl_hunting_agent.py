@@ -93,19 +93,24 @@ class SLHuntingTimeoutError(SLHuntingAgentError):
 
 
 class SLHuntingAuthError(SLHuntingAgentError):
-    """The bundled Claude CLI could not authenticate to Anthropic (HTTP 401/403).
+    """The bundled Claude CLI could not authenticate to Anthropic.
 
     The Claude SUBSCRIPTION token is missing or expired in the runner's environment.
     A headless runner (unlike a Claude Code/IDE session) has nothing to refresh an
-    expired OAuth login, so the spawned CLI 401s on every call. Fix by running
+    expired OAuth login, so the spawned CLI fails on every call — either as an HTTP
+    401/403 from the API, or (SLH-004) as a LOCAL failure with no HTTP status at all
+    when the CLI finds its stored token expired and unrefreshable. Fix by running
     `claude setup-token` (preferred for an unattended runner) or `claude login` in the
     terminal that launches the runner, with ANTHROPIC_API_KEY UNSET, then restart.
     """
 
-    def __init__(self, status: int) -> None:
-        self.status = int(status)
+    def __init__(self, status: int | None = None) -> None:
+        # None = the CLI reported the failure locally (expired/unrefreshable stored
+        # OAuth token) with no HTTP status attached.
+        self.status = int(status) if status is not None else None
+        cause = f"HTTP {self.status}" if self.status is not None else "expired local OAuth token"
         super().__init__(
-            f"Claude subscription authentication failed (HTTP {self.status}). The "
+            f"Claude subscription authentication failed ({cause}). The "
             "spawned `claude` CLI has no valid token in the runner's environment. Run "
             "`claude setup-token` (or `claude login`) in that terminal with "
             "ANTHROPIC_API_KEY unset, then restart the runner."
@@ -129,6 +134,18 @@ def _raise_for_error_result(result_message: Any) -> None:
         raise SLHuntingAuthError(status)
     if status == 429:
         raise SLHuntingUsageLimitError()
+    if status is None:
+        # SLH-004: the CLI ALSO uses this error-result shape for LOCAL failures
+        # carrying no HTTP status. The canonical one is an expired OAuth token it
+        # cannot refresh headlessly (seen live 2026-07-13; result text "Failed to
+        # authenticate: OAuth session expired and could not be refreshed").
+        # Classify by the result text, but raise typed errors whose messages are
+        # CANNED — nothing from the result body reaches the logs.
+        text = str(getattr(result_message, "result", "") or "")
+        if _mentions_usage_limit(text):
+            raise SLHuntingUsageLimitError()
+        if re.search(r"authenticat|oauth|log ?in|api key", text, re.IGNORECASE):
+            raise SLHuntingAuthError()
     detail = f"HTTP {status}" if status else "no api_error_status"
     raise SLHuntingAgentError(f"Claude Agent SDK returned an error result ({detail}).")
 
