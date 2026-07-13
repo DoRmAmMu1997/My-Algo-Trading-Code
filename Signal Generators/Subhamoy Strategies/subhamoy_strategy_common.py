@@ -16,6 +16,7 @@ Beginner mental model:
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -117,7 +118,11 @@ def validate_five_minute_spacing(frame: pd.DataFrame) -> None:
     if frame is None or frame.empty or len(frame) < 2:
         return
     require_columns(frame, ["timestamp"])
-    deltas = frame["timestamp"].diff().dropna().dt.total_seconds() / 60.0
+    # pandas-stubs types .diff() on an untyped column as Series[float]; the
+    # timestamp column holds datetimes, so tell mypy the gaps are Timedeltas
+    # before using the .dt accessor (no runtime effect).
+    gaps = cast("pd.Series[pd.Timedelta]", frame["timestamp"].diff().dropna())
+    deltas = gaps.dt.total_seconds() / 60.0
     positive_deltas = deltas[deltas > 0]
     if positive_deltas.empty:
         return
@@ -146,11 +151,14 @@ def atr(frame: pd.DataFrame, period: int) -> pd.Series:
     low = frame["low"].astype(float)
     close = frame["close"].astype(float)
     if talib is not None:
+        # np.asarray with an explicit np.float64 dtype does the same conversion
+        # as .to_numpy(dtype="float64") but is typed as a float64 array, which
+        # is exactly what TA-Lib's type stubs require.
         return pd.Series(
             talib.ATR(
-                high.to_numpy(dtype="float64"),
-                low.to_numpy(dtype="float64"),
-                close.to_numpy(dtype="float64"),
+                np.asarray(high, dtype=np.float64),
+                np.asarray(low, dtype=np.float64),
+                np.asarray(close, dtype=np.float64),
                 timeperiod=int(period),
             ),
             index=frame.index,

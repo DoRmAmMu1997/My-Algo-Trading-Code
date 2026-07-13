@@ -5,8 +5,11 @@ ruff==0.15.1
 mypy==1.19.1
 bandit==1.9.4
 pre-commit==4.6.0
-# Type stubs for typed third-party usage in the mypy scope.
+# Type stubs for typed third-party usage in the mypy scope. pandas-stubs is
+# pinned so local and CI mypy see the exact same pandas typing (an out-of-band
+# stubs install once made local mypy fail while CI stayed green).
 types-requests==2.33.0.20260518
+pandas-stubs==2.3.3.260113
 # Optional runtime deps installed in CI so the SL Hunting and Shoonya suites
 # run fully instead of skipping (they stay optional for live operation).
 pydantic

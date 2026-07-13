@@ -311,9 +311,12 @@ def build_ema_trend_with_indicators(
 
     if talib is not None:
         # Preferred path: use TA-Lib's standard indicator implementations.
-        close_values = close.to_numpy(dtype="float64")
-        high_values = high.to_numpy(dtype="float64")
-        low_values = low.to_numpy(dtype="float64")
+        # np.asarray with an explicit np.float64 dtype does the same conversion
+        # as .to_numpy(dtype="float64") but is typed as a float64 array, which
+        # is exactly what TA-Lib's type stubs require.
+        close_values = np.asarray(close, dtype=np.float64)
+        high_values = np.asarray(high, dtype=np.float64)
+        low_values = np.asarray(low, dtype=np.float64)
         frame["ema4"] = talib.EMA(close_values, timeperiod=config.ema_fast_period)
         frame["ema11"] = talib.EMA(close_values, timeperiod=config.ema_mid_period)
         frame["ema18"] = talib.EMA(close_values, timeperiod=config.ema_slow_period)

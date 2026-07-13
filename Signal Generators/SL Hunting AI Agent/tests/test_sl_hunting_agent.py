@@ -159,11 +159,12 @@ def test_agent_decide_on_empty_candles_holds():
 # --------------------------------------------------------------------------
 
 class _FakeResult:
-    """Minimal stand-in for the SDK ResultMessage (is_error + api_error_status)."""
+    """Minimal stand-in for the SDK ResultMessage (is_error / api_error_status / result)."""
 
-    def __init__(self, is_error: bool, api_error_status=None):
+    def __init__(self, is_error: bool, api_error_status=None, result: str | None = None):
         self.is_error = is_error
         self.api_error_status = api_error_status
+        self.result = result
 
 
 def test_raise_for_error_result_classifies_api_status():
@@ -195,6 +196,40 @@ def test_raise_for_error_result_classifies_api_status():
     # Not an error result, or no result at all -> no raise (returns None).
     assert _raise_for_error_result(_FakeResult(False, None)) is None
     assert _raise_for_error_result(None) is None
+
+
+def test_raise_for_error_result_classifies_no_status_auth_and_usage_text():
+    """SLH-004 (live 2026-07-13): an expired LOCAL OAuth token the CLI cannot refresh
+    headlessly comes back as an error result with NO api_error_status — the result
+    text is the only tell. It must map to the actionable auth error (run
+    `claude setup-token`), not the opaque generic one."""
+    import pytest
+    from sl_hunting_agent import (
+        SLHuntingAgentError,
+        SLHuntingAuthError,
+        SLHuntingUsageLimitError,
+        _raise_for_error_result,
+    )
+
+    with pytest.raises(SLHuntingAuthError) as ei:
+        _raise_for_error_result(_FakeResult(
+            True, None,
+            result="Failed to authenticate: OAuth session expired and could not be refreshed",
+        ))
+    msg = str(ei.value)
+    assert "setup-token" in msg
+    assert "HTTP" not in msg  # no invented status code in the message
+
+    # A no-status usage-limit text maps to the usage-limit error (same markers as
+    # the ProcessError path's _mentions_usage_limit).
+    with pytest.raises(SLHuntingUsageLimitError):
+        _raise_for_error_result(_FakeResult(True, None, result="You have hit your usage limit."))
+
+    # Unrecognised no-status text stays the generic, content-free error.
+    with pytest.raises(SLHuntingAgentError) as ei2:
+        _raise_for_error_result(_FakeResult(True, None, result="something exploded"))
+    assert not isinstance(ei2.value, (SLHuntingAuthError, SLHuntingUsageLimitError))
+    assert "no api_error_status" in str(ei2.value)
 
 
 def test_agent_decide_logs_actionable_auth_error(caplog):
