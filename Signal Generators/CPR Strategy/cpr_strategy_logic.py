@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -187,7 +187,11 @@ def prepare_cpr_ohlc_input(data: pd.DataFrame) -> pd.DataFrame:
     if len(frame) < 2:
         return frame
 
-    deltas = frame["timestamp"].diff().dropna().dt.total_seconds() / 60.0
+    # pandas-stubs types .diff() on an untyped column as Series[float]; the
+    # timestamp column holds datetimes, so tell mypy the gaps are Timedeltas
+    # before using the .dt accessor (no runtime effect).
+    gaps = cast("pd.Series[pd.Timedelta]", frame["timestamp"].diff().dropna())
+    deltas = gaps.dt.total_seconds() / 60.0
     positive_deltas = deltas[deltas > 0]
     if positive_deltas.empty:
         return frame

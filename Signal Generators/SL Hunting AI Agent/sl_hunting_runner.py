@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from collections.abc import Hashable
 
 import numpy as np
 import pandas as pd
@@ -149,7 +150,9 @@ def resample_1m_to_n(candles: pd.DataFrame, minutes: int) -> pd.DataFrame:
         return prepare_candles(candles)
     df = prepare_candles(candles).set_index("timestamp")
     rule = f"{minutes}min"
-    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    # The Hashable key annotation matches the Mapping type that pandas-stubs
+    # expects for .agg(); a plain dict[str, str] is rejected (invariant keys).
+    agg: dict[Hashable, str] = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     out = df.resample(rule, label="left", closed="left").agg(agg).dropna(subset=["open"])
     counts = df["close"].resample(rule, label="left", closed="left").count()
     out = out[counts.reindex(out.index) == minutes]

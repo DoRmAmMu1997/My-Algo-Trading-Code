@@ -405,9 +405,12 @@ def build_profit_shooter_with_indicators(
     # for. If TA-Lib is missing, fall back to pandas implementations so the
     # file remains portable.
     if talib is not None:
-        close_values = close.to_numpy(dtype="float64")
-        high_values = high.to_numpy(dtype="float64")
-        low_values = low.to_numpy(dtype="float64")
+        # np.asarray with an explicit np.float64 dtype does the same conversion
+        # as .to_numpy(dtype="float64") but is typed as a float64 array, which
+        # is exactly what TA-Lib's type stubs require.
+        close_values = np.asarray(close, dtype=np.float64)
+        high_values = np.asarray(high, dtype=np.float64)
+        low_values = np.asarray(low, dtype=np.float64)
 
         # TA-Lib path:
         # - SMA20 and SMA200 for trend structure

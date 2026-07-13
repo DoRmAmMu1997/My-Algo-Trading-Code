@@ -103,12 +103,11 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 # Third-party packages that ship no type stubs, optional broker/ML SDKs that
-# are absent on CI, and the vendored NorenApi client. pandas is deliberately
-# untyped here: pandas-stubs would surface a wall of new errors in this
-# pandas-heavy codebase and is its own future migration.
+# are absent on CI, and the vendored NorenApi client. pandas is NOT listed:
+# it is typed via pandas-stubs (pinned in requirements-dev.txt so local and
+# CI check against the exact same stubs).
 module = [
     "dhanhq.*",
-    "pandas.*",
     "gspread.*",
     "dotenv.*",
     "pytz.*",

@@ -37,7 +37,7 @@ import tempfile
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, SupportsFloat, cast
 
 import pandas as pd
 from pydantic import Field, ValidationError, field_validator, model_validator
@@ -354,7 +354,10 @@ class SLHuntingAgent:
         lines = ["time,open,high,low,close"]
         for row in recent.itertuples(index=False):
             ts = str(getattr(row, "timestamp", ""))[:19]
-            lines.append(f"{ts},{float(row.open):.2f},{float(row.high):.2f},{float(row.low):.2f},{float(row.close):.2f}")
+            # pandas-stubs types itertuples() fields as a broad Scalar union;
+            # prepared candles always hold numeric OHLC, so treat them as floats.
+            o, h, lo, c = (cast(SupportsFloat, getattr(row, f)) for f in ("open", "high", "low", "close"))
+            lines.append(f"{ts},{float(o):.2f},{float(h):.2f},{float(lo):.2f},{float(c):.2f}")
         return "\n".join(lines)
 
     def _build_user_prompt(self, candles: pd.DataFrame, position: dict[str, Any]) -> str:

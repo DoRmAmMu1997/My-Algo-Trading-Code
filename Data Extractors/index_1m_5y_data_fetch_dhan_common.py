@@ -23,6 +23,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 import pandas as pd
 from dhanhq import DhanContext, dhanhq
@@ -165,7 +166,7 @@ def resolve_date_range(args):
     return start_dt, end_dt
 
 
-def infer_epoch_unit(values: pd.Series) -> str:
+def infer_epoch_unit(values: pd.Series) -> Literal["s", "ms", "us"]:
     """
     Guess the timestamp unit from the size of the numbers.
 
