@@ -65,11 +65,12 @@ Product/exchange per broker is derived from `LIVE_BROKER`: Kotak uses `nse_fo` +
 
 ## Diagnostics (read-only, with an optional REAL test order)
 Each broker has a diagnostic that logs in and shows whether a contract resolves to a
-valid trading symbol. Passing `--place-order` additionally places a **real**,
-confirmation-gated **round-trip** order (1-lot BUY, confirm fill, then auto SELL to
-flatten) — it asks you to type `YES` first:
+valid trading symbol. Passing `--place-order` and an explicit `--qty` additionally
+places a **real**, confirmation-gated BUY. It attempts the matching SELL only after
+the BUY is confirmed fully filled; an ambiguous result requires broker reconciliation.
+The diagnostic asks you to type `YES` before submitting anything:
 ```
-python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order
-python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
-python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 14JUL26 --place-order
+python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order --qty <current-lot-size>
+python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 DDMMMYY --place-order --qty <current-lot-size>
+python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 DDMMMYY --place-order --qty <current-lot-size>
 ```

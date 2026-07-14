@@ -50,7 +50,7 @@ One process, cooperating threads:
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose
-test_nifty_multi_strategy_master.py                # unittest suite for the master (127 tests)
+test_nifty_multi_strategy_master.py                # unittest suite for the master
 requirements.txt                                   # core deps (+ commented optional broker/ML deps)
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
@@ -77,15 +77,21 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
   (`KOTAK` | `SHOONYA` | `FLATTRADE`) selects the broker; an unknown value **fails closed** (live
   disabled, paper only).
-  Any order failure falls back to paper for that trade. Every broker HTTP call must have a timeout.
+  An entry falls back to paper only after an explicit `REJECTED` result with zero fill. `PARTIAL` or
+  `UNKNOWN` means exposure may exist: freeze new live entries, keep exits available, and reconcile;
+  never treat an acknowledgement, truthy value, or order ID as proof of fill. A rejected live exit
+  keeps the position open. Every broker network/SDK call has a ten-second deadline that includes its
+  shared lock/rate-limit wait; native HTTP timeouts remain enabled for Shoonya and Flattrade.
 - **Per-strategy on/off:** each strategy also has a `<PREFIX>_VIRTUAL_TRADING` gate (default true).
   Set it false to stop that strategy's worker thread from starting at all (neither paper nor live).
   Unlike live trading there is **no** global master switch — default is everything runs. `main()`
   filters the `workers` list via `_strategy_virtual_trading_enabled` before starting threads.
-- **Broker layer:** the Kotak and Shoonya clients expose the SAME surface — `ensure_logged_in`,
-  `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`, `extract_order_id`, `logout`,
-  `is_logged_in` — so the runner only ever touches the generic `execution_client`. The Shoonya `NorenApi`
-  client is vendored under `Dependencies/Shoonya API/`.
+- **Broker layer:** the Kotak, Shoonya, and Flattrade clients expose the SAME surface —
+  `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
+  `get_order_status`, `cancel_order`, `list_open_orders`, `list_open_positions`,
+  `recover_after_reconciliation`, `extract_order_id`, `logout`, `is_logged_in` — so the runner only
+  touches the generic `execution_client`. The Shoonya
+  `NorenApi` client is vendored under `Dependencies/Shoonya API/`.
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module

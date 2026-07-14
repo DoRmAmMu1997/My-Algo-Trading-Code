@@ -8,10 +8,10 @@ send that order to Shoonya. When a strategy is in "paper" mode it never touches
 this file at all; only "real"/live strategies do.
 
 It is a drop-in replacement for the old Kotak Neo execution layer: it exposes the
-SAME public methods the master runner already calls -- ensure_logged_in(),
-preload_scrip_master(), resolve_option_symbol(), place_market_order(),
-extract_order_id(), logout(), and the `is_logged_in` flag -- so the rest of the
-runner did not have to change shape.
+SAME broker-neutral contract the master runner calls -- login/symbol resolution,
+typed place/status/cancel outcomes, explicit open-order/open-position query
+results, order-id extraction, logout, and the `is_logged_in` flag -- so the rest
+of the runner stays broker-agnostic.
 
 Glossary for newcomers (the broker world is full of jargon):
 - TOTP   : the 6-digit code from an authenticator app that changes every 30s.
@@ -54,15 +54,36 @@ How the master file uses this module:
 3. `logout()` is called during graceful shutdown.
 """
 
+import io
 import logging
+import math
 import os
 import sys
 import threading
 import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import requests
+
+# Make the broker-neutral contract available both when the master dynamically
+# loads this file and when the sibling diagnostic runs it as a standalone script.
+_DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
+if str(_DEPENDENCIES_DIR) not in sys.path:
+    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+
+from broker_contract import (  # noqa: E402
+    BrokerQueryResult,
+    OpenOrder,
+    OpenPosition,
+    OrderResult,
+    OrderStatus,
+    normalize_order_result,
+)
 
 # --- Make the vendored "Shoonya API" SDK importable ---------------------------
 # The NorenApi client may live in a "Shoonya API" folder somewhere above this
@@ -112,9 +133,37 @@ _NFO_SYMBOL_MASTER_URL = "https://api.shoonya.com/NFO_symbols.txt.zip"
 # normally fill in well under a second; we wait a few seconds then give up.
 _FILL_TIMEOUT_SECONDS = 8.0
 _FILL_POLL_INTERVAL = 0.5
+_BROKER_TIMEOUT_SECONDS = 10.0
+_BROKER_CALL_DEADLINE_SECONDS = 10.0
 # Shoonya order-status values, lower-cased.
 _FILLED_ORDER_STATES = {"complete", "completed"}
 _FAILED_ORDER_STATES = {"rejected", "cancelled", "canceled"}
+
+
+def _exact_int(value: Any) -> int | None:
+    """Parse a broker quantity only when it is a finite whole number."""
+
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _is_no_data_envelope(value: Any) -> bool:
+    """Return True only for Shoonya's explicit, determinate empty-book reply."""
+
+    if not isinstance(value, dict):
+        return False
+    state = str(value.get("stat") or "").strip().lower().replace("_", "")
+    message = " ".join(
+        str(value.get("emsg") or value.get("msg") or "").strip().lower().split()
+    )
+    return state in {"notok", "rejected"} and message == "no data"
 
 
 class ShoonyaExecutionClient:
@@ -138,7 +187,20 @@ class ShoonyaExecutionClient:
         # Simple flag so we don't re-login every call once we're authenticated.
         self.is_logged_in = False
         # The "one thread at a time" gate for login + orders + symbol lookups.
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        # Noren's timeout is an inactivity limit, not a total wall-clock budget.
+        # A single native worker plus a caller-side deadline covers lock wait and
+        # slow-dribble responses without allowing overlapping session calls.
+        self._native_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="shoonya-native",
+        )
+        self._native_poisoned = False
+        self._timed_out_future: Future[Any] | None = None
+        # Keep one order's acknowledgement and fill confirmation atomic at the
+        # adapter boundary. Otherwise another strategy can submit in the small
+        # gap before a timed-out status call poisons the shared session.
+        self._order_submission_lock = threading.Lock()
         # Remember symbols we've already resolved, so we don't rebuild/re-validate
         # for the same contract. Key = (underlying, expiry "DDMMMYY", "CE"/"PE",
         # strike-as-int) -> Shoonya tsym string.
@@ -146,6 +208,76 @@ class ShoonyaExecutionClient:
         # The set of valid NFO trading symbols (uppercased), downloaded once and
         # reused for validation. Stays None until first loaded.
         self._symbol_set: set | None = None
+
+    @staticmethod
+    def _remaining_broker_budget(started: float) -> float:
+        """Return seconds left in one complete native-call wall-clock budget."""
+
+        return _BROKER_CALL_DEADLINE_SECONDS - (time.monotonic() - started)
+
+    def _native_call(
+        self,
+        operation: str,
+        call: Callable[[], Any],
+        *,
+        started: float | None = None,
+        allow_after_poison: bool = False,
+    ) -> Any:
+        """Run one Noren/HTTP call within one budget including session-lock wait.
+
+        A timed-out native function may still own a socket. The session is then
+        poisoned so another strategy cannot queue a second order behind work
+        whose broker outcome is unknown.
+        """
+
+        call_started = time.monotonic() if started is None else started
+        remaining = self._remaining_broker_budget(call_started)
+        if remaining <= 0 or not self._lock.acquire(timeout=max(0.0, remaining)):
+            raise TimeoutError(
+                "Shoonya broker deadline expired while waiting for the shared session lock."
+            )
+        try:
+            if self._native_poisoned:
+                abandoned_finished = (
+                    self._timed_out_future is not None
+                    and self._timed_out_future.done()
+                )
+                if not allow_after_poison or not abandoned_finished:
+                    raise RuntimeError(
+                        "Shoonya session is indeterminate after a broker deadline; "
+                        "new orders are blocked pending reconciliation."
+                    )
+            remaining = self._remaining_broker_budget(call_started)
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Shoonya {operation} deadline expired before native submission."
+                )
+            future = self._native_executor.submit(call)
+            try:
+                return future.result(timeout=remaining)
+            except FuturesTimeoutError as exc:
+                if future.done():
+                    return future.result()
+                self._native_poisoned = True
+                self._timed_out_future = future
+                future.cancel()
+                raise TimeoutError(
+                    f"Shoonya {operation} exceeded the total "
+                    f"{_BROKER_CALL_DEADLINE_SECONDS:.0f}s broker deadline; "
+                    "session state is indeterminate."
+                ) from exc
+        finally:
+            self._lock.release()
+
+    def recover_after_reconciliation(self) -> bool:
+        """Explicitly clear deadline poison after the abandoned call has ended."""
+
+        with self._lock:
+            if self._timed_out_future is not None and not self._timed_out_future.done():
+                return False
+            self._native_poisoned = False
+            self._timed_out_future = None
+            return True
 
     # ------------------------------------------------------------------
     # Authentication
@@ -229,13 +361,17 @@ class ShoonyaExecutionClient:
 
             # Initialise the client and perform the login handshake.
             self.client = NorenApi()
-            resp = self.client.login(
-                userid=userid,
-                password=password,
-                twoFA=two_fa,
-                vendor_code=vendor_code,
-                api_secret=api_secret,
-                imei=imei,
+            native_client = self.client
+            resp = self._native_call(
+                "login",
+                lambda: native_client.login(
+                    userid=userid,
+                    password=password,
+                    twoFA=two_fa,
+                    vendor_code=vendor_code,
+                    api_secret=api_secret,
+                    imei=imei,
+                ),
             )
 
             # NorenApi.login returns the response dict (with susertoken) on
@@ -307,9 +443,17 @@ class ShoonyaExecutionClient:
         if self._symbol_set is not None:
             return True  # already downloaded earlier in this run
         try:
-            # pandas infers compression="zip" from the .zip URL extension (the
-            # same call helper_shoonya.py uses for the symbol master).
-            df = pd.read_csv(_NFO_SYMBOL_MASTER_URL)
+            # Download through requests so the symbol-master interaction has the
+            # same ten-second native HTTP deadline as every Noren API call.
+            response = self._native_call(
+                "scrip-master download",
+                lambda: requests.get(
+                    _NFO_SYMBOL_MASTER_URL,
+                    timeout=_BROKER_TIMEOUT_SECONDS,
+                ),
+            )
+            response.raise_for_status()
+            df = pd.read_csv(io.BytesIO(response.content), compression="zip")
             df = df.rename(columns=lambda c: str(c).strip())  # trim stray spaces
         except Exception as exc:
             log.warning(f"Shoonya NFO symbol master download/parse failed: {exc}")
@@ -412,7 +556,55 @@ class ShoonyaExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
-    ) -> dict[str, Any]:
+    ) -> OrderResult:
+        """Serialize one submission through its typed fill confirmation."""
+
+        quantity_i = _exact_int(quantity)
+        if quantity_i is None or quantity_i <= 0:
+            raise ValueError(f"Invalid quantity: {quantity!r}")
+        if not self._order_submission_lock.acquire(
+            timeout=_BROKER_CALL_DEADLINE_SECONDS
+        ):
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="ORDER_GATE_TIMEOUT",
+                reason=(
+                    "Shoonya order was not submitted because another order's "
+                    "outcome remained unresolved past the broker deadline."
+                ),
+            )
+        try:
+            if self._native_poisoned:
+                return normalize_order_result(
+                    order_id="",
+                    requested_quantity=quantity_i,
+                    filled_quantity=0,
+                    broker_state="SESSION_POISONED",
+                    reason=(
+                        "Shoonya session is indeterminate after an earlier "
+                        "deadline; reconcile before submitting another order."
+                    ),
+                )
+            return self._place_market_order_serialized(
+                symbol,
+                side,
+                quantity_i,
+                exchange_segment,
+                product_type,
+            )
+        finally:
+            self._order_submission_lock.release()
+
+    def _place_market_order_serialized(
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        exchange_segment: str = "NFO",
+        product_type: str = "INTRADAY",
+    ) -> OrderResult:
         """
         Place ONE market order (buy or sell at the current price) on Shoonya.
 
@@ -422,37 +614,43 @@ class ShoonyaExecutionClient:
           quantity : total units (lot_size * lots), NOT number of lots.
           product_type : "INTRADAY" (MIS, same-day) or "NORMAL" (NRML, overnight).
 
-        This RAISES an exception on ANY problem (bad input, not logged in, or the
-        broker rejecting the order). The caller catches that and falls back to
-        paper, so we never silently record an order that didn't actually happen.
+        Local input errors still raise before submission. Every broker-side
+        outcome is returned as an ``OrderResult`` so acknowledgement, partial
+        fill, rejection, and response loss cannot collapse into one boolean.
         """
-        if not self.ensure_logged_in():
-            raise RuntimeError("Shoonya login failed; cannot place real order.")
-
         # Normalise + validate inputs before sending anything to the broker.
         side_norm = str(side).upper().strip()
         product_norm = str(product_type).upper().strip()
+        quantity_i = _exact_int(quantity)
         if side_norm not in _SIDE_MAP:
             raise ValueError(f"Invalid side: {side!r}")
         if product_norm not in _PRODUCT_MAP:
             raise ValueError(f"Invalid product_type: {product_type!r}")
         if not symbol:
             raise ValueError("Missing trading symbol for order.")
-        if int(quantity) <= 0:
+        if quantity_i is None or quantity_i <= 0:
             raise ValueError(f"Invalid quantity: {quantity!r}")
+        if not self.ensure_logged_in():
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="REJECTED",
+                reason="Order was not submitted because Shoonya login failed.",
+            )
 
         exchange = str(exchange_segment).strip() or "NFO"
 
-        with self._lock:  # only one order goes over the shared session at a time
-            if self.client is None:
+        def submit_order() -> Any:
+            native_client = self.client
+            if native_client is None:
                 raise RuntimeError("Shoonya client is not initialised.")
-            try:
-                resp = self.client.place_order(
+            return native_client.place_order(
                     buy_or_sell=_SIDE_MAP[side_norm],
                     product_type=_PRODUCT_MAP[product_norm],
                     exchange=exchange,
                     tradingsymbol=str(symbol),
-                    quantity=int(quantity),
+                    quantity=quantity_i,
                     discloseqty=0,
                     price_type="MKT",
                     price=0,
@@ -460,22 +658,52 @@ class ShoonyaExecutionClient:
                     retention="DAY",
                     remarks="multistrategy_master",
                 )
-            except Exception as exc:
-                raise Exception(f"Order placement failed: {exc}") from exc
 
-        # NorenApi.place_order returns the response dict (with norenordno) on
-        # success and None when stat != "Ok". Treat anything without a genuine
-        # order acknowledgement as a failure so the caller falls back to paper.
+        try:
+            resp = self._native_call("PlaceOrder", submit_order)
+        except Exception as exc:
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Shoonya PlaceOrder response is indeterminate: {exc}",
+            )
+
+        # NorenApi.place_order preserves both success and error dictionaries.
+        # A genuine Not_Ok reply is a known rejection; malformed/response-lost
+        # evidence stays UNKNOWN and therefore cannot trigger paper fallback.
         if not self._is_order_ack(resp):
-            raise Exception(f"Shoonya did not acknowledge the order: {resp}")
+            explicit_rejection = (
+                isinstance(resp, dict)
+                and str(resp.get("stat", "")).strip().lower()
+                in {"not_ok", "notok", "rejected"}
+            )
+            reason = (
+                str(resp.get("emsg") or resp.get("rejreason") or resp)
+                if isinstance(resp, dict)
+                else f"Malformed acknowledgement: {resp!r}"
+            )
+            return normalize_order_result(
+                order_id=self.extract_order_id(resp),
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="REJECTED" if explicit_rejection else "",
+                reason=reason,
+            )
 
         # Acceptance != fill: the broker can still reject or leave it unfilled
         # after the ack. Confirm a REAL fill before returning success.
         order_id = self.extract_order_id(resp)
         if not order_id:
-            raise Exception(f"Shoonya acknowledged the order but returned no order id: {resp}")
-        self._confirm_fill(order_id, int(quantity))
-        return resp
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Shoonya acknowledged the order without an order id: {resp}",
+            )
+        return self._confirm_fill(order_id, quantity_i)
 
     def _order_status(self, order_id: str):
         """
@@ -485,62 +713,277 @@ class ShoonyaExecutionClient:
         status cannot be read yet (a transient error, or the order not visible
         yet), in which case the caller should simply keep polling.
         """
-        with self._lock:  # single_order_history is a broker call -> needs the session
-            if self.client is None:
-                return (None, 0, 0, "client not initialised")
-            try:
-                rows = self.client.single_order_history(order_id)
-            except Exception as exc:
-                return (None, 0, 0, f"single_order_history error: {exc}")
+        def read_history() -> Any:
+            native_client = self.client
+            if native_client is None:
+                raise RuntimeError("client not initialised")
+            return native_client.single_order_history(order_id)
+
+        try:
+            rows = self._native_call(
+                "SingleOrdHist",
+                read_history,
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return (None, None, None, f"single_order_history error: {exc}")
         # Shoonya shape: a LIST of history rows (newest first). Prefer a terminal
         # row (complete/rejected/cancelled); otherwise fall back to the newest.
         if not isinstance(rows, list) or not rows:
-            return (None, 0, 0, f"unrecognised single_order_history: {rows}")
+            return (None, None, None, f"unrecognised single_order_history: {rows}")
+        valid_rows = [row for row in rows if isinstance(row, dict)]
+        if not valid_rows:
+            return (None, None, None, "malformed single_order_history row")
         chosen = None
-        for row in rows:
+        for row in valid_rows:
             st = str(row.get("status", "")).strip().lower()
             if st in _FILLED_ORDER_STATES or st in _FAILED_ORDER_STATES:
                 chosen = row
                 break
         if chosen is None:
-            chosen = rows[0]
-
-        def _as_int(value) -> int:
-            try:
-                return int(float(value))
-            except (TypeError, ValueError):
-                return 0
+            chosen = valid_rows[0]
 
         return (
             str(chosen.get("status", "")).strip().lower(),
-            _as_int(chosen.get("fillshares", 0)),
-            _as_int(chosen.get("qty", 0)),
+            _exact_int(chosen.get("fillshares")),
+            _exact_int(chosen.get("qty")),
             str(chosen.get("rejreason", "")).strip(),
         )
 
-    def _confirm_fill(self, order_id: str, want_qty: int) -> None:
-        """
-        Poll single_order_history until the order is fully filled, then return.
+    def get_order_status(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult:
+        """Return a normalized order-history snapshot without throwing ambiguity."""
 
-        Raises if the order is rejected/cancelled, or if it has not filled within
-        `_FILL_TIMEOUT_SECONDS`. Polling happens OUTSIDE the lock (each status read
-        re-takes it briefly), so a slow fill never blocks other workers' orders.
+        requested = _exact_int(requested_quantity)
+        if requested is None or requested < 0:
+            requested = 0
+        state, filled, broker_qty, reason = self._order_status(str(order_id))
+        effective_requested = requested or broker_qty or 0
+        if requested and broker_qty not in {None, requested}:
+            return normalize_order_result(
+                order_id=order_id,
+                requested_quantity=requested,
+                filled_quantity=None,
+                broker_state=state or "",
+                reason=(
+                    f"Malformed Shoonya status: broker quantity {broker_qty} "
+                    f"does not match requested quantity {requested}. {reason}"
+                ),
+            )
+        return normalize_order_result(
+            order_id=order_id,
+            requested_quantity=effective_requested,
+            filled_quantity=filled,
+            broker_state=state or "",
+            reason=reason,
+        )
+
+    def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
+        """Poll briefly for a terminal result without hiding ambiguity.
+
+        Polling happens outside the lock; each history request re-takes it only
+        for the native, deadline-bound Noren call.
         """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
-        last_state = "unknown"
-        while time.monotonic() < deadline:
-            state, filled, _order_qty, reason = self._order_status(order_id)
-            if state is not None:
-                last_state = state
-                if state in _FAILED_ORDER_STATES:
-                    raise RuntimeError(f"order {order_id} {state} ({reason or 'no reason given'})")
-                if state in _FILLED_ORDER_STATES and (want_qty <= 0 or filled >= want_qty):
-                    return  # fully filled - confirmed
-            time.sleep(_FILL_POLL_INTERVAL)
-        raise RuntimeError(
-            f"order {order_id} not confirmed filled within "
-            f"{_FILL_TIMEOUT_SECONDS:.0f}s (last status: {last_state})"
+        last_result = normalize_order_result(
+            order_id=order_id,
+            requested_quantity=want_qty,
+            filled_quantity=0,
+            broker_state="",
+            reason="Shoonya acknowledgement received; fill status not read yet.",
         )
+        while time.monotonic() < deadline:
+            last_result = self.get_order_status(order_id, requested_quantity=want_qty)
+            if last_result.status is not OrderStatus.UNKNOWN:
+                return last_result
+            if "error:" in last_result.reason.lower():
+                return last_result
+            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                return last_result
+            time.sleep(_FILL_POLL_INTERVAL)
+        return normalize_order_result(
+            order_id=order_id,
+            requested_quantity=want_qty,
+            filled_quantity=last_result.filled_quantity,
+            broker_state=last_result.broker_state,
+            reason=(
+                f"Shoonya order {order_id} was not terminal within "
+                f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
+            ),
+        )
+
+    def cancel_order(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult:
+        """Request cancellation, then return the order's normalized state."""
+
+        order_id_s = str(order_id).strip()
+        requested = _exact_int(requested_quantity)
+        if not order_id_s:
+            raise ValueError("Missing order id for cancellation.")
+        if requested is None or requested < 0:
+            raise ValueError(f"Invalid requested_quantity: {requested_quantity!r}")
+        def submit_cancel() -> Any:
+            native_client = self.client
+            if native_client is None:
+                raise RuntimeError("client not initialised")
+            return native_client.cancel_order(order_id_s)
+
+        try:
+            self._native_call(
+                "CancelOrder",
+                submit_cancel,
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return normalize_order_result(
+                order_id=order_id_s,
+                requested_quantity=requested,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Shoonya cancellation response is indeterminate: {exc}",
+            )
+        return self.get_order_status(order_id_s, requested_quantity=requested)
+
+    def list_open_orders(self) -> BrokerQueryResult[OpenOrder]:
+        """Return non-terminal order-book rows or an indeterminate result."""
+
+        def read_order_book() -> Any:
+            native_client = self.client
+            if native_client is None:
+                raise RuntimeError("client not initialised")
+            return native_client.get_order_book()
+
+        try:
+            response = self._native_call(
+                "OrderBook",
+                read_order_book,
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return BrokerQueryResult.indeterminate(
+                f"Shoonya open-order query failed: {exc}"
+            )
+        if response is None:
+            return BrokerQueryResult.indeterminate(
+                "Shoonya open-order query returned no response."
+            )
+        if _is_no_data_envelope(response):
+            return BrokerQueryResult.success(())
+        if isinstance(response, dict):
+            return BrokerQueryResult.indeterminate(
+                f"Shoonya open-order query returned {response!r}"
+            )
+        if not isinstance(response, list):
+            return BrokerQueryResult.indeterminate(
+                f"Shoonya open-order query returned malformed data: {response!r}"
+            )
+
+        orders: list[OpenOrder] = []
+        for row in response:
+            if not isinstance(row, dict):
+                return BrokerQueryResult.indeterminate(
+                    "Shoonya open-order query contained a malformed row."
+                )
+            raw_state = str(row.get("status") or "").strip().upper()
+            snapshot = normalize_order_result(
+                order_id=row.get("norenordno"),
+                requested_quantity=row.get("qty"),
+                filled_quantity=row.get("fillshares"),
+                broker_state=row.get("status"),
+                reason="Open-order snapshot",
+            )
+            symbol = str(row.get("tsym") or "").strip()
+            if (
+                not snapshot.order_id
+                or not symbol
+                or "malformed" in snapshot.reason.lower()
+                or snapshot.requested_quantity <= 0
+            ):
+                return BrokerQueryResult.indeterminate(
+                    "Shoonya open-order query contained incomplete order data."
+                )
+            if raw_state in {
+                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
+                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
+            }:
+                continue
+            if snapshot.remaining_quantity <= 0:
+                continue
+            side = {"B": "BUY", "S": "SELL"}.get(
+                str(row.get("trantype") or "").strip().upper(),
+                str(row.get("trantype") or "").strip().upper(),
+            )
+            orders.append(
+                OpenOrder(
+                    order_id=snapshot.order_id,
+                    symbol=symbol,
+                    side=side,
+                    requested_quantity=snapshot.requested_quantity,
+                    filled_quantity=snapshot.filled_quantity,
+                    remaining_quantity=snapshot.remaining_quantity,
+                    broker_state=snapshot.broker_state,
+                )
+            )
+        return BrokerQueryResult.success(orders)
+
+    def list_open_positions(self) -> BrokerQueryResult[OpenPosition]:
+        """Return non-flat positions or an explicit indeterminate result."""
+
+        def read_positions() -> Any:
+            native_client = self.client
+            if native_client is None:
+                raise RuntimeError("client not initialised")
+            return native_client.get_positions()
+
+        try:
+            response = self._native_call(
+                "PositionBook",
+                read_positions,
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return BrokerQueryResult.indeterminate(
+                f"Shoonya open-position query failed: {exc}"
+            )
+        if _is_no_data_envelope(response):
+            return BrokerQueryResult.success(())
+        if response is None or isinstance(response, dict):
+            return BrokerQueryResult.indeterminate(
+                f"Shoonya open-position query returned {response!r}"
+            )
+        if not isinstance(response, list):
+            return BrokerQueryResult.indeterminate(
+                f"Shoonya open-position query returned malformed data: {response!r}"
+            )
+        positions: list[OpenPosition] = []
+        for row in response:
+            if not isinstance(row, dict):
+                return BrokerQueryResult.indeterminate(
+                    "Shoonya open-position query contained a malformed row."
+                )
+            quantity = _exact_int(row.get("netqty"))
+            symbol = str(row.get("tsym") or "").strip()
+            if quantity is None or not symbol:
+                return BrokerQueryResult.indeterminate(
+                    "Shoonya open-position query contained incomplete position data."
+                )
+            if quantity == 0:
+                continue
+            positions.append(
+                OpenPosition(
+                    symbol=symbol,
+                    quantity=quantity,
+                    product_type=str(row.get("prd") or "").strip(),
+                    broker_state="OPEN",
+                )
+            )
+        return BrokerQueryResult.success(positions)
 
     def _is_order_ack(self, resp: Any) -> bool:
         """
@@ -563,6 +1006,8 @@ class ShoonyaExecutionClient:
         recurses to search at any depth and returns the first order-id-looking
         value it finds (or "" if none). Used mainly for logging.
         """
+        if isinstance(order_response, OrderResult):
+            return order_response.order_id
         if order_response is None:
             return ""
         if isinstance(order_response, dict):
@@ -589,18 +1034,29 @@ class ShoonyaExecutionClient:
     # ------------------------------------------------------------------
     def logout(self) -> dict[str, Any]:
         """Close the Shoonya session cleanly at shutdown (safe to call if never logged in)."""
-        with self._lock:
-            if self.client is None:
-                return {"State": "NOT_OK", "message": "Client not initialised"}
-            try:
-                out = self.client.logout()
+        if self.client is None:
+            return {"State": "NOT_OK", "message": "Client not initialised"}
+
+        def submit_logout() -> Any:
+            native_client = self.client
+            if native_client is None:
+                raise RuntimeError("Client not initialised")
+            return native_client.logout()
+
+        try:
+            out = self._native_call(
+                "Logout",
+                submit_logout,
+                allow_after_poison=True,
+            )
+            result = out if isinstance(out, dict) else {"State": "OK", "message": str(out)}
+        except Exception as exc:
+            result = {"State": "NOT_OK", "message": str(exc)}
+        finally:
+            with self._lock:
                 self.is_logged_in = False
                 self.client = None
-                return out if isinstance(out, dict) else {"State": "OK", "message": str(out)}
-            except Exception as exc:
-                self.is_logged_in = False
-                self.client = None
-                return {"State": "NOT_OK", "message": str(exc)}
+        return result
 
 
 # The ONE shared instance the whole program uses. Every file that needs to place

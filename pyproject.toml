@@ -52,10 +52,11 @@ python_version = "3.12"
 # identifier. The master runner ("Nifty Multi Strategy Front Test - Master
 # File.py") and the per-strategy files with spaces in their names CANNOT be
 # mypy modules (invalid module name); they are covered by `compileall` plus
-# the 133-test master unittest suite instead.
+# the master unittest suite instead.
 files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
+    "Dependencies/broker_contract.py",
     "Dependencies/dhan_token_setup.py",
     "Dependencies/Kotak API/kotak_execution.py",
     "Dependencies/Kotak API/diagnose_kotak_symbol.py",
@@ -87,6 +88,7 @@ files = [
 # Sibling imports (sl_hunting_agent -> sl_hunting_knowledge, shoonya_execution
 # -> NorenApi, logic modules -> *_strategy_common) resolve through these roots.
 mypy_path = [
+    "Dependencies",
     "Signal Generators",
     "Signal Generators/CPR Strategy",
     "Signal Generators/Subhamoy Strategies",
