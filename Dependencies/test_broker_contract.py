@@ -21,6 +21,23 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class _NeoApiTestDouble:
+    """Import-only stand-in; behavioral tests inject their own SDK clients."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+# Kotak is an optional live dependency and is intentionally absent from the
+# core CI environment.  Install only the import surface before any adapter or
+# diagnostic module loads; every behavioral test replaces ``client`` with its
+# own broker-shaped fake, so no SDK behavior is being simulated here.
+_neo_api_test_module = ModuleType("neo_api_client")
+_neo_api_test_module.NeoAPI = _NeoApiTestDouble
+sys.modules["neo_api_client"] = _neo_api_test_module
+
+
 def _load_file_module(name: str, relative_path: str) -> ModuleType:
     """Load a broker helper whose parent folder contains spaces."""
 
@@ -1212,6 +1229,14 @@ def kotak_module() -> ModuleType:
         "mat101_kotak_execution",
         "Dependencies/Kotak API/kotak_execution.py",
     )
+
+
+def test_kotak_adapter_fixture_does_not_require_optional_sdk(
+    kotak_module: ModuleType,
+) -> None:
+    """Hosted tests use an import-only double instead of an installed SDK."""
+
+    assert kotak_module.NeoAPI is _NeoApiTestDouble
 
 
 class _FakeKotakSdk:
