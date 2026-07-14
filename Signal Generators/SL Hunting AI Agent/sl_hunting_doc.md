@@ -733,3 +733,84 @@ Session summary and match:
 - `RETAIL_POSITIONING`: R:R-BAIT AT ROUND-NUMBER REJECTIONS.
 - `RISK`: PREMIUM NON-CONFIRMATION.
 - Test marker: `test_system_prompt_has_v3i_premium_rr_knowledge`.
+
+## Video addendum - 13-14 Jul gap-down sessions + averaging trap (v3j)
+
+> Sources (full Hindi auto-transcripts from YouTube's transcript panel):
+> - `qjz6uAM81Jg` (12 Jul 2026, "Prediction For 13 JULY 2026", 1:42)
+> - `OvqxvtVbZFU` (13 Jul 2026, "Live Bank Nifty Option Trading", 9:20)
+> - `xssPyxt65Mc` (13 Jul 2026, "Prediction For 14 JULY 2026", 1:53)
+> - `DuaQYSrYK2U` (14 Jul 2026, "Live Bank Nifty Option Trading", 11:43 — NIFTY expiry)
+>
+> Unlike previous addenda, this one is cross-checked against the agent's OWN journal
+> (`Backtest Outputs/sl_hunting_journal.jsonl`, rows 17-19, all 2026-07-14). That
+> match is what makes the net-new below evidence-backed rather than speculative.
+
+Session summary:
+- **13 Jul** — big gap-down. IH refused to sell it: a direct fall is unlikely because
+  everyone seeing the gap-down will sell, so the market must first take THEIR stops.
+  He bought CALLs, rode the recovery, booked. Textbook EXISTING knowledge (gap-down
+  seller-hunt long).
+- **14 Jul (expiry)** — gap-down AGAIN, but yesterday's recovery had recruited BUYERS.
+  IH bought PUTs, and crucially **waited for the market to push up first** before
+  entering ("if we sell directly here the market will trap us"). One trade, booked,
+  stopped for the day.
+
+**Agent vs IH on 14 Jul** (IH: 1 trade; agent: 3 trades, net +Rs.3,793):
+
+| # | Agent trade | Time | Result |
+|---|---|---|---|
+| 1 | LONG `gap_down_trap_flush_reversal` | 09:20-09:24 | +Rs.1,488 |
+| 2 | SHORT `pivot_double_top_evening_star` | 09:40-09:55 | +Rs.3,176 (1.97R) |
+| 3 | SHORT `shooting_star_doubletop_fibo50_reversal` | 10:04-10:04 | **-Rs.871 (AI_STOP in 5s)** |
+
+- **Trade 2 IS IH's trade — full match.** The agent's own reasoning ("a confirmed
+  evening-star ... trapped buyers who chased that reclaim") names the same crowd and
+  direction as IH, and it booked the average target on stall. Strong confirmation;
+  nothing changed for this case.
+- **Trade 1 diverged from IH's read.** The agent called the gap-down "a trap for
+  starved sellers" and went LONG; IH read the same open as a trap for the BUYERS that
+  yesterday's recovery recruited, and was short from the pre-open. `BUYER-INVENTORY
+  FADE` was already in the prompt but never fired because nothing triggered on the
+  TWO-DAY sequence (gap-down -> strong recovery -> next-day gap-down). The agent
+  profited on the opposite premise, then had to flip into trade 2.
+- **Trade 3 is the exact mistake IH's outro warns against, and it is the only loser.**
+  Nine minutes after booking the move, the agent re-shorted the SAME exhausted move on
+  a smaller/later pattern into a stalling expiry tape and was stopped out in 5 seconds.
+  `NO INSTANT FLIP` did not catch it (same direction, not a flip). It also overrode an
+  opposing `cross_index` verdict by calling it "a stale mechanical ... label anchored to
+  yesterday's resistance levels" — but that escape hatch was written for the OPENING
+  HOUR, and this was 10:04 at confidence 6 (not "textbook").
+
+**Net-new method distilled:**
+- Averaging trap: the counter-bounce after a gap traps a crowd is BAIT to make them
+  AVERAGE DOWN; the real move comes only AFTER they add ("if it fell directly they'd
+  run away quickly — by making them average first, the market extracts far more").
+  Carries the two-day trigger the agent lacked, and the entry-timing rule: never enter
+  at the gap extreme, wait for the bounce — the bounce is not a threat to the fade, it
+  IS the setup. Corroborated by his 13 Jul self-critique ("the trade isn't wrong, the
+  entry was early").
+- Move-exhaustion: once the thesis's move is booked and momentum has stalled, the
+  thesis is SPENT — do not re-enter the same direction chasing its tail. On expiry days
+  the market then builds a wide RANGE and chops both sides; take what you got and stop
+  ("we won't make 10 days' profit in one day"). Expiry is context, never a premise on
+  its own — a deliberate counterweight to the existing "expiry = extra FUEL" note.
+- Cross-index "stale verdict" escape hatch scoped to the opening hour: outside it, an
+  opposing `cross_index` verdict is a veto, not a footnote.
+
+**Confirmed but deliberately NOT re-encoded (already present, executed correctly):**
+the gap-down seller-hunt long, the closing-price gate on targeting a crowd, the
+trap-density read, "don't capture both directions in one day" (NO INSTANT FLIP),
+loss-limit discipline, and `DECISION_RULES` #8 (a gap-down that falls directly is
+unreadable -> no trade). Dropped on purpose: "the counter-gap recovery must arrive
+FAST" (it would collide with the existing with-trend "SLOW-but-CONTINUOUS is the
+sustainable kind" rule, and the journal shows no need — trade 1's recovery was fast
+and booked in 4 minutes); the small-capital/psychology advice (agent sizing is
+automatic at ~Rs.2500 risk); and the prediction clips' level tables (ephemeral day
+calls, per the v3b finding).
+
+**Knowledge changes (v3j, all prose):**
+- `RETAIL_POSITIONING`: AVERAGING TRAP (mechanism + two-day trigger + entry timing).
+- `RISK`: MOVE-EXHAUSTION — ONE MOVE PER THESIS (incl. EXPIRY-DAY RANGE).
+- `BNF_CROSS_CONFIRMATION`: SCOPE OF THIS "STALE" ESCAPE HATCH + opposing-verdict veto.
+- Test marker: `test_system_prompt_has_v3j_averaging_trap_knowledge`.
