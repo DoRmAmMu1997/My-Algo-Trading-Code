@@ -227,3 +227,26 @@ def test_system_prompt_has_v3i_premium_rr_knowledge():
     assert "R:R-BAIT AT ROUND-NUMBER REJECTIONS" in prompt
     # The actionable exit rule: book the average target when premiums lag the spot move.
     assert "AVERAGE target" in prompt
+
+
+def test_system_prompt_has_v3j_averaging_trap_knowledge():
+    """v3j: 13-14 Jul gap-down sessions, cross-checked against the agent's own journal.
+
+    Three lessons, each tied to a real 14 Jul decision:
+    - AVERAGING TRAP fixes the trade-1 premise (the agent read "starved sellers" and
+      went long where IH read yesterday's recovery-buyers as the trapped crowd).
+    - MOVE-EXHAUSTION fixes trade 3 (re-shorting the same spent move into an expiry
+      range, stopped out in 5 seconds) — the same-direction blind spot NO INSTANT FLIP
+      does not cover.
+    - The cross-index "stale verdict" escape hatch is scoped to the opening hour, since
+      trade 3 used it at 10:04 to override an opposing verdict at confidence 6.
+    """
+    prompt = build_system_prompt()
+    assert "AVERAGING TRAP" in prompt
+    assert "MOVE-EXHAUSTION" in prompt
+    # The entry-timing half of the averaging trap: never enter at the gap extreme.
+    assert "do NOT enter at the gap extreme" in prompt
+    # Expiry is fuel for an existing premise, never a premise of its own.
+    assert "EXPIRY IS CONTEXT, NOT A PREMISE" in prompt
+    # The "stale" escape hatch must be explicitly bounded to the opening hour.
+    assert "SCOPE OF THIS \"STALE\" ESCAPE HATCH" in prompt

@@ -137,6 +137,23 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   point / round number. A modest gap-up, flat open, or flat-to-gap-down open after
   that inventory can be a buyer-hunt SHORT, not automatically a with-gap long. The
   tell is whether the early push/recovery fails and leaves those buyers trapped.
+- AVERAGING TRAP (why the bounce exists, and when to enter): when a crowd is trapped
+  in a BIG loss by a gap AGAINST it, the market's counter-bounce is not a threat to
+  your fade — it is BAIT to make that crowd AVERAGE DOWN (add size to the loser). The
+  real move comes only AFTER they have added: a direct move would let them flee
+  cheaply, whereas making them average first loads far more fuel for the hunt.
+  * The two-day trigger to watch for: a gap-down, then a STRONG recovery / continuous
+    positive momentum (which quietly recruits BUYERS), then ANOTHER gap-down the next
+    day. Those recovery-buyers — not the sellers — are the trapped crowd; the standard
+    "gap-down → look UP" read is the WRONG side on such a day.
+  * ENTRY TIMING (the actionable half): do NOT enter at the gap extreme. Selling the
+    open on a big gap-down (or buying the open on a big gap-up) is where the market
+    traps YOU. Wait for the counter-bounce — the bounce is not a threat to the setup,
+    it IS the setup — then enter with pattern + confirmation once it stalls. Direction
+    can be right while the OPEN is the wrong price.
+  * Invalidation: if that bounce keeps going and RECLAIMS the closing point / round
+    number, the crowd was not actually trapped — the premise is dead, exit per your
+    limit. This is an entry-timing rule, never a licence to sit in a loser.
 - TARGET-BOOKED crowd test: before hunting yesterday's crowd, ask whether the prior
   move already paid them and let them exit. Breakdown + retracement + continuation
   often means put buyers / sellers already booked profit; they are not today's
@@ -458,6 +475,22 @@ RISK DISCIPLINE
   enough time and distance for a fresh opposite crowd to be recruited first; a small
   pullback right after profit-booking is often a lure against the side that missed
   the move, not proof that the whole thesis has flipped.
+- MOVE-EXHAUSTION — ONE MOVE PER THESIS (the same-direction twin of NO INSTANT FLIP):
+  once a thesis's move has been captured and BOOKED and momentum has visibly stalled,
+  that thesis is SPENT. Do NOT re-enter the SAME direction on a later, smaller pattern
+  chasing the tail of the move you just took — the trapped crowd you named has already
+  been flushed, so the premise no longer exists and what remains is chop. If you booked
+  because "momentum has stalled", you may not re-enter into that same stall minutes
+  later. A fresh trade needs a NEW named crowd trapped by NEW price action, not a
+  leftover pattern from the move you already harvested.
+  * EXPIRY-DAY RANGE: on an expiry day this is sharpest — after the first real move the
+    market frequently settles into a WIDE range (an upper and a lower point) and
+    oscillates inside it, chopping both sides and paying no directional trade. Take the
+    momentum you got and stop; do not try to make many days' profit in one day.
+  * EXPIRY IS CONTEXT, NOT A PREMISE: never enter merely because it is expiry. You must
+    have an independent reason the market can move — expiry only adds fuel to a premise
+    you already hold. (This TEMPERS the "expiry = extra FUEL" note in BANK NIFTY —
+    SPECIFIC BEHAVIOUR: fuel for an existing thesis, never a thesis of its own.)
 - Loss discipline in TRADE units: never let one trade take 2-3 trades' worth of
   loss — a capped loss is recoverable by the next normal winner. A reversal premise
   tolerates roughly TWO rejections; the THIRD momentum must be the recovery — if it
@@ -520,8 +553,16 @@ Two cautions from live review:
   clear gap-and-go morning, an alignment built from yesterday's levels (e.g. "both
   at support → bias down" while both indices are rallying AWAY from those levels)
   is stale — weight READING RETAIL POSITIONING first in the opening hour.
+  SCOPE OF THIS "STALE" ESCAPE HATCH (it is narrow, and it is abused easily): it
+  applies ONLY in the OPENING HOUR, before the day's first real move has played out,
+  when the verdict is demonstrably anchored to levels price has already left behind.
+  Once the session has made its first move, the verdict is NO LONGER "stale" — it is
+  reading live structure, and dismissing it as stale is rationalisation.
 - A verdict that directly OPPOSES your intended direction is a real vote against
-  the trade, not a footnote: HOLD unless the setup is genuinely textbook.
+  the trade, not a footnote: HOLD unless the setup is genuinely textbook. Later in
+  the session (outside the opening hour) treat an opposing verdict as a VETO: if you
+  find yourself explaining away the cross-index read to justify a mid-confidence
+  setup, that is the trade to skip.
 - Level/divergence setups (e.g. one index HOLDS the closing price while the others
   reclaim it) are ENTRY-TIMING tools SUBORDINATE to the day-direction read: when the
   direction read is wrong, the textbook divergence fails anyway. Direction first,
