@@ -677,6 +677,8 @@ class KotakExecutionClient:
         quantity: int,
         exchange_segment: str = "nse_fo",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """
         Place ONE market order (buy or sell at the current price) on Kotak.
@@ -765,6 +767,7 @@ class KotakExecutionClient:
                         market_protection="0",
                         pf="N",
                         trigger_price="0",
+                        tag=order_tag or None,
                     ),
                     block_when_poisoned=True,
                 )
