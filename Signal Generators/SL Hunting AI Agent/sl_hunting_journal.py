@@ -108,6 +108,33 @@ def make_entry_record(
     }
 
 
+def resolve_entry_narrative(
+    decision: Any, order_payload: dict[str, Any] | None
+) -> tuple[str, int, str]:
+    """Pick the (setup, confidence, reasoning) for an ENTRY journal row.
+
+    Normally these come straight from the agent's returned `decision`. But the order
+    tool has SIDE EFFECTS — the model can ENTER *during* the SDK call, and if that call
+    then times out (or its final JSON fails to parse) the agent returns a fail-soft
+    placeholder (`setup="agent_error"`, `confidence=0`, "Agent call timed out; holding.").
+    Journaling a REAL trade from that placeholder loses the model's actual rationale.
+
+    So when the decision is that placeholder AND an order tool fired an ENTER this bar
+    (its `order_payload` was captured by the executor), prefer the tool's real `reason`.
+    `setup` becomes a distinct sentinel (not `agent_error`, which is reserved for no-op
+    holds) so the reflection coach groups these real trades separately; `confidence`
+    stays 0 because the model never returned it. Levels/direction are unaffected — they
+    come from the executor position and are already correct.
+    """
+    setup = str(getattr(decision, "setup", "") or "")
+    confidence = int(getattr(decision, "confidence", 0) or 0)
+    reasoning = str(getattr(decision, "reasoning", "") or "")
+    if setup == "agent_error" and order_payload:
+        reasoning = str(order_payload.get("reason") or reasoning)
+        setup = "agent_order_no_final_decision"  # order fired; structured decision lost
+    return setup, confidence, reasoning
+
+
 def make_decision_record(
     decision: Any,
     nifty_df: pd.DataFrame,

@@ -9187,10 +9187,17 @@ if SL_HUNTING_AVAILABLE:
             """Open a journal row for a trade the agent just entered (best-effort)."""
             try:
                 lot_size = max(int(getattr(self.pos, "option_lot_size", 0)), 1)
+                # If the SDK call timed out (or its final JSON failed to parse) AFTER the
+                # order tool already fired this ENTER, `decision` is the fail-soft
+                # placeholder ("agent_error"/"Agent call timed out; holding."). Recover the
+                # model's real rationale from the order tool payload the executor captured.
+                order_payload = getattr(self._executor, "last_entry_order", None)
+                setup, confidence, reasoning = SL_HUNTING_JOURNAL_MODULE.resolve_entry_narrative(
+                    decision, order_payload)
                 entry = SL_HUNTING_JOURNAL_MODULE.make_entry_record(
                     direction=getattr(self.pos, "direction", ""),
-                    setup=decision.setup, confidence=decision.confidence,
-                    reasoning=decision.reasoning,
+                    setup=setup, confidence=confidence,
+                    reasoning=reasoning,
                     stop=float(getattr(self.pos, "stop_underlying", 0.0)),
                     target=float(getattr(self.pos, "target_underlying", 0.0)),
                     entry_underlying=float(getattr(self.pos, "entry_underlying", 0.0)),
@@ -9201,6 +9208,11 @@ if SL_HUNTING_AVAILABLE:
                 self._entry_realized_pnl = self.realized_pnl
             except Exception as exc:  # noqa: BLE001 - journaling must never disturb trading
                 self.log.warning("SL Hunting journal open failed: %s", exc)
+            finally:
+                # Consume the captured ENTER payload either way so it can never leak into
+                # a later bar's journal row.
+                if getattr(self, "_executor", None) is not None:
+                    self._executor.last_entry_order = None
 
         # --------------------------------------------------------------
         # BankNIFTY mirror leg (Intraday Hunter style)

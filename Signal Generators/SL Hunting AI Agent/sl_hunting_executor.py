@@ -265,6 +265,11 @@ class MasterWorkerExecutor:
 
     def __init__(self, worker: Any) -> None:
         self._w = worker
+        # Payload of the ENTER the order tool fired THIS bar (action/reason/levels).
+        # The worker reads it in _journal_open_row so a real entry whose SDK call then
+        # timed out is journaled from the model's actual reason, not the fail-soft
+        # "Agent call timed out; holding." placeholder. Consumed (cleared) once journaled.
+        self.last_entry_order: dict[str, Any] | None = None
 
     def enter(self, direction: str, stop: float, target: float, reason: str, price: float) -> dict[str, Any]:
         """Delegate the entry to the master worker's safe `enter_position`.
@@ -299,6 +304,14 @@ class MasterWorkerExecutor:
                 "accepted": False,
                 "reason": "worker rejected the entry (e.g. could not resolve option / outside trading window)",
             }
+        # Remember what the tool actually sent so the journal can recover the real
+        # rationale if the SDK call times out (or its final JSON fails to parse) AFTER
+        # this ENTER has already fired. reason is dropped from enter_position (the safe
+        # path takes only levels); this is the one place it survives for journaling.
+        self.last_entry_order = {
+            "action": f"ENTER_{direction}", "reason": str(reason)[:300],
+            "stop": round(float(stop), 2), "target": round(float(target), 2),
+        }
         return {
             "accepted": True, "action": f"ENTER_{direction}", "entry": round(float(price), 2),
             "stop": round(float(stop), 2), "target": round(float(target), 2),

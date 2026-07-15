@@ -10,6 +10,7 @@ from sl_hunting_journal import (
     build_entry_context,
     followed_method,
     make_entry_record,
+    resolve_entry_narrative,
 )
 
 
@@ -80,6 +81,70 @@ def test_build_entry_context_and_make_record():
     assert rec["direction"] == "LONG" and rec["lots"] == 2
     assert "context" in rec and "followed_method" in rec
     assert rec["stop"] == 24985.0 and rec["target"] == 25060.0
+
+
+def test_timeout_entry_journals_order_reason_not_placeholder(tmp_path):
+    """A real ENTER whose SDK call then times out AFTER firing must journal the order
+    tool's real reason and levels -- not the fail-soft 'Agent call timed out; holding.'
+    placeholder (2026-07-15 journal-fidelity fix; see journal row 20)."""
+    from types import SimpleNamespace
+
+    # The agent returned the fail-soft placeholder (the call timed out AFTER the order
+    # tool had already placed the SHORT this bar).
+    placeholder = SimpleNamespace(
+        action="HOLD", confidence=0, setup="agent_error",
+        reasoning="Agent call timed out; holding.", model_used="m")
+    # ...but the executor captured what the order tool actually sent this bar.
+    order_payload = {
+        "action": "ENTER_SHORT",
+        "reason": "Gap-up-and-go rejected the psych level; hunting trapped buyers.",
+        "stop": 24230, "target": 24120,
+    }
+    setup, confidence, reasoning = resolve_entry_narrative(placeholder, order_payload)
+    assert reasoning == order_payload["reason"]
+    assert "Agent call timed out" not in reasoning
+    assert setup != "agent_error"          # a distinct sentinel, not the no-op-hold one
+    assert confidence == 0                  # never returned by the model; stays 0
+
+    # End-to-end through the journal (rows persist on close): the finished row carries
+    # the real rationale/levels, exactly as the master worker's _journal_open_row wires
+    # resolve_entry_narrative into make_entry_record.
+    df = _two_day()
+    j = TradeJournal(str(tmp_path / "j.jsonl"))
+    entry = make_entry_record(
+        direction="SHORT", setup=setup, confidence=confidence, reasoning=reasoning,
+        stop=order_payload["stop"], target=order_payload["target"],
+        entry_underlying=24195, lots=2, nifty_df=df, bnf_df=None,
+    )
+    tid = j.open_trade(entry)
+    j.close_trade(tid, {"exit_underlying": 24187, "exit_reason": "AI_EXIT", "points": 8})
+    lines = (tmp_path / "j.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    parsed = json.loads(lines[0])
+    assert parsed["trade_id"] == tid
+    assert parsed["reasoning"] == order_payload["reason"]
+    assert "Agent call timed out" not in parsed["reasoning"]
+    assert parsed["setup"] != "agent_error"
+    assert parsed["stop"] == 24230.0 and parsed["target"] == 24120.0
+
+
+def test_resolve_entry_narrative_leaves_genuine_decisions_untouched():
+    """The fallback fires ONLY for the placeholder-with-order case: a real parsed
+    decision is returned unchanged even if an order payload is present, and a genuine
+    fail-soft hold (no order this bar) keeps its placeholder text."""
+    from types import SimpleNamespace
+
+    real = SimpleNamespace(setup="pivot_support_hammer", confidence=7,
+                           reasoning="Hammer at pivot support with BNF confirmation.")
+    payload = {"action": "ENTER_LONG", "reason": "different tool reason", "stop": 1, "target": 2}
+    assert resolve_entry_narrative(real, payload) == (
+        "pivot_support_hammer", 7, "Hammer at pivot support with BNF confirmation.")
+
+    # Placeholder but NO order fired this bar (a true hold) -> left exactly as-is.
+    hold = SimpleNamespace(setup="agent_error", confidence=0,
+                           reasoning="Agent call timed out; holding.")
+    assert resolve_entry_narrative(hold, None) == (
+        "agent_error", 0, "Agent call timed out; holding.")
 
 
 def test_decision_log_records_holds_and_actions(tmp_path):
