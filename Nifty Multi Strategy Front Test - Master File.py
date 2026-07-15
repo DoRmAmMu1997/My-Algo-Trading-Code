@@ -15,7 +15,7 @@ the union of two earlier files plus one Greeks-driven addition:
            * Renko          (1-min source)
            * EMA Trend      (1-min source, locally resampled to 5-min)
            * Heikin Ashi    (1-min source)
-           * Profit Shooter (1-min source)
+           * Profit Shooter (1-min source, locally resampled to 5-min)
 
   2. "Nifty Supertrend Front Test - DhanHQ Hedged Puts.py"
        - 2 strategies that trade two-leg HEDGED option spreads of the
@@ -538,6 +538,11 @@ CPR_ALGO3_ITM_OFFSET = _env_float("CPR_ALGO3_ITM_OFFSET", 100.0)
 # Sizing/risk + trading window. Indicator/pin-bar tuning lives further down
 # inside `PROFIT_SHOOTER_STRATEGY_CONFIG` (also env-driven).
 PROFIT_SHOOTER_POLL_SECONDS = _env_int("PROFIT_SHOOTER_POLL_SECONDS", 2)
+
+# Strategy timeframe: Profit Shooter's pin-bar method is designed for 5-minute
+# candles, so the shared 1-minute OHLC is locally resampled into N-minute
+# candles before indicator evaluation (same pattern as EMA / Goldmine).
+PROFIT_SHOOTER_DERIVED_TIMEFRAME_MINUTES = _env_int("PROFIT_SHOOTER_DERIVED_TIMEFRAME_MINUTES", 5)
 
 PROFIT_SHOOTER_TRADING_START_HOUR = _env_int("PROFIT_SHOOTER_TRADING_START_HOUR", 9)
 PROFIT_SHOOTER_TRADING_START_MINUTE = _env_int("PROFIT_SHOOTER_TRADING_START_MINUTE", 25)
@@ -4187,7 +4192,9 @@ class HeikinAshiStrategyWorker(AtmSingleLegStrategyWorker):
 # =============================================================================
 class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
     """
-    Profit Shooter pin-bar strategy.
+    Profit Shooter pin-bar strategy. Reads 1-minute data from the shared
+    store, locally resamples it into complete 5-minute candles (the method's
+    native timeframe), then runs the SMA/ATR/pin-bar pipeline.
 
     What is unusual here:
     - The strategy is multi-stage. Once 1.5R is hit, the trade switches to
@@ -4200,6 +4207,7 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
     strategy_name = "ProfitShooter"
     timeframe = "1"
     poll_seconds = PROFIT_SHOOTER_POLL_SECONDS
+    derived_timeframe_minutes = PROFIT_SHOOTER_DERIVED_TIMEFRAME_MINUTES
     lots = PROFIT_SHOOTER_LOTS
     max_loss = PROFIT_SHOOTER_MAX_LOSS
     trading_start_hour = PROFIT_SHOOTER_TRADING_START_HOUR
@@ -4274,7 +4282,12 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
         return int(lots)
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
-        return PROFIT_SHOOTER_LOGIC.build_profit_shooter_with_indicators(ohlc, PROFIT_SHOOTER_STRATEGY_CONFIG)
+        """
+        Resample shared 1-minute OHLC into complete 5-minute candles, then
+        attach the Profit Shooter indicator columns.
+        """
+        ohlc_5m = resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+        return PROFIT_SHOOTER_LOGIC.build_profit_shooter_with_indicators(ohlc_5m, PROFIT_SHOOTER_STRATEGY_CONFIG)
 
     def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
         latest_candle_time = pd.to_datetime(strategy_frame.iloc[-1]["timestamp"]).time()
@@ -9174,10 +9187,17 @@ if SL_HUNTING_AVAILABLE:
             """Open a journal row for a trade the agent just entered (best-effort)."""
             try:
                 lot_size = max(int(getattr(self.pos, "option_lot_size", 0)), 1)
+                # If the SDK call timed out (or its final JSON failed to parse) AFTER the
+                # order tool already fired this ENTER, `decision` is the fail-soft
+                # placeholder ("agent_error"/"Agent call timed out; holding."). Recover the
+                # model's real rationale from the order tool payload the executor captured.
+                order_payload = getattr(self._executor, "last_entry_order", None)
+                setup, confidence, reasoning = SL_HUNTING_JOURNAL_MODULE.resolve_entry_narrative(
+                    decision, order_payload)
                 entry = SL_HUNTING_JOURNAL_MODULE.make_entry_record(
                     direction=getattr(self.pos, "direction", ""),
-                    setup=decision.setup, confidence=decision.confidence,
-                    reasoning=decision.reasoning,
+                    setup=setup, confidence=confidence,
+                    reasoning=reasoning,
                     stop=float(getattr(self.pos, "stop_underlying", 0.0)),
                     target=float(getattr(self.pos, "target_underlying", 0.0)),
                     entry_underlying=float(getattr(self.pos, "entry_underlying", 0.0)),
@@ -9188,6 +9208,11 @@ if SL_HUNTING_AVAILABLE:
                 self._entry_realized_pnl = self.realized_pnl
             except Exception as exc:  # noqa: BLE001 - journaling must never disturb trading
                 self.log.warning("SL Hunting journal open failed: %s", exc)
+            finally:
+                # Consume the captured ENTER payload either way so it can never leak into
+                # a later bar's journal row.
+                if getattr(self, "_executor", None) is not None:
+                    self._executor.last_entry_order = None
 
         # --------------------------------------------------------------
         # BankNIFTY mirror leg (Intraday Hunter style)

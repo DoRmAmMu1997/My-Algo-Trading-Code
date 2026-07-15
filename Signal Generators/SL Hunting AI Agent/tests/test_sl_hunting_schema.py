@@ -250,3 +250,19 @@ def test_system_prompt_has_v3j_averaging_trap_knowledge():
     assert "EXPIRY IS CONTEXT, NOT A PREMISE" in prompt
     # The "stale" escape hatch must be explicitly bounded to the opening hour.
     assert "SCOPE OF THIS \"STALE\" ESCAPE HATCH" in prompt
+
+
+def test_system_prompt_has_v3k_flat_open_gate_knowledge():
+    """v3k: 15 Jul sessions — the flat-open hunt needs a crowd that really participated.
+
+    After a WEAK-momentum down day, a flat open puts nobody in pain (and leaves the
+    closing-point support in the recovery's path) — the plan flips WITH the prior
+    direction, while a gap in EITHER direction re-arms the seller-hunt. Scopes the
+    blanket "FLAT or GAP-DOWN -> look UP" default.
+    """
+    prompt = build_system_prompt()
+    assert "FLAT-OPEN PARTICIPATION GATE" in prompt
+    # The asymmetry in one line: either-direction gap hunts, flat goes with-trend.
+    assert "flat" in prompt and "go with the selling" in prompt
+    # It must scope, not delete, the textbook flat/gap-down hunt above it.
+    assert "PRIME TRAP zone" in prompt

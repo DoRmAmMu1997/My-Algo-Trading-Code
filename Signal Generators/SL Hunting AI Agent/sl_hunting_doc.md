@@ -814,3 +814,63 @@ calls, per the v3b finding).
 - `RISK`: MOVE-EXHAUSTION — ONE MOVE PER THESIS (incl. EXPIRY-DAY RANGE).
 - `BNF_CROSS_CONFIRMATION`: SCOPE OF THIS "STALE" ESCAPE HATCH + opposing-verdict veto.
 - Test marker: `test_system_prompt_has_v3j_averaging_trap_knowledge`.
+
+## Video addendum - 15 Jul gap-up seller-hunt + flat-open participation gate (v3k)
+
+> Sources (full Hindi auto-transcripts from YouTube's transcript panel):
+> - `40j_l5DtwS4` (14 Jul 2026 evening, "Prediction For 15 JULY 2026", 1:48)
+> - `ciQ19XPXoXk` (15 Jul 2026, "Live Bank Nifty Option Trading", 8:35)
+>
+> Cross-checked against the agent's journal (`Backtest Outputs/sl_hunting_journal.jsonl`,
+> row 20, 2026-07-15).
+
+Session summary:
+- Pre-open plan (prediction clip): after 14 Jul's gap-down + persistent selling that
+  closed BankNIFTY below the round number, sellers may be seated — **gap-up OR
+  gap-down -> hunt those sellers (buy-side); FLAT -> "we cannot follow that structure",
+  go WITH the market (sell-side)**, because the fearful sellers may never have really
+  sized in ("the market made no big momentum; if no scared traders are seated, benefit
+  by going with the market") and a flat open parks price on the closing-point support.
+- Live session: mild gap-up + immediate positive momentum -> instant with-gap CALL
+  basket (BankNIFTY 1170 / Sensex 900 / NIFTY 1430 qty), sharp continuation with no
+  retracement, booked ~140 pts at the round-number test ("greed has a limit — we
+  tested the round number directly, cut and go"). Textbook EXISTING knowledge:
+  OPENING DRIVE gap-up branch, prior-day seller inventory, round-number booking, and
+  the momentum-quality read (his "fast momentum invites greedy buyers -> retracement
+  risk; small candles would be safer" is the RISK momentum-quality rule verbatim).
+
+**Agent vs IH on 15 Jul** (IH: 1 trade, ~+140 pts; agent: 1 trade):
+- The agent SHORTED at 09:32 (`shooting_star`/`evening_star`/`inside_bar` at the 24200
+  psych level, entry 24195) on a gap-up-and-go morning with price +123 pts above pivot
+  and `cross_index` reading "up_context" — the exact fade that GAP-UP MORNING /
+  TRAP-DENSITY / R:R-BAIT already prohibit ("a bearish pattern at a psych level is
+  NOT, by itself, a short on a gap-up morning"). IH rode the same morning long.
+- The exit redeemed it: 5 minutes later the agent named "gap-up-and-go continuation
+  confirmed", cut both legs ~10 pts before the stop, and the basket closed POSITIVE
+  (+Rs.832, the BankNIFTY mirror leg outran the NIFTY leg's -7.9 pts).
+- **Journal-fidelity finding (operational, not knowledge):** row 20 carries
+  `setup: "agent_error"`, `confidence: 0`, `reasoning: "Agent call timed out;
+  holding."` for a REAL trade. The LLM call that placed the short TIMED OUT after the
+  order tool had already fired, so the worker's timeout placeholder — not the model's
+  reasoning — became the journal row. The entry cannot be audited, and the reflection
+  coach would learn from placeholder text. Worth a separate fix (journal the order
+  tool's `reason` argument as a fallback); no knowledge change can address it.
+
+**Net-new method distilled:**
+- FLAT-OPEN PARTICIPATION GATE: the flat-open SL-hunt requires the prior crowd to have
+  really participated. After a WEAK-momentum down day (hesitant selling, no big move),
+  a flat open puts nobody in pain and leaves the closing-point support in the way —
+  plan WITH the prior direction there, while a gap in EITHER direction re-arms the
+  hunt (gap-up pressures the sellers; gap-down pays them into complacency and the
+  recovery hunts their stops). Scopes the blanket "FLAT or GAP-DOWN -> look UP" rule
+  and complements MULTI-DAY ACCUMULATION ("a crowd that only TRICKLED in is not
+  huntable").
+
+**Confirmed but deliberately NOT re-encoded (already present):** the with-gap opening
+drive and its behavioural confirmation, prior-day seller-inventory read, round-number
+booking without greed, momentum-quality (fast spike -> retracement risk), and the
+round-number-magnet notes. The live session contained no averaging/psychology segment.
+
+**Knowledge changes (v3k, all prose):**
+- `RETAIL_POSITIONING`: FLAT-OPEN PARTICIPATION GATE.
+- Test marker: `test_system_prompt_has_v3k_flat_open_gate_knowledge`.

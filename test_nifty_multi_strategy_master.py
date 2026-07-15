@@ -1281,6 +1281,26 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         self.assertIsInstance(lots, int)
         self.assertGreaterEqual(lots, 1)
 
+    def test_build_strategy_frame_resamples_to_five_minutes(self):
+        """Profit Shooter is a 5-minute method: the strategy frame must be built
+        from the 1-min source resampled to 5-min candles, not raw 1-min bars."""
+        n = 400
+        ts = pd.date_range("2026-05-15 09:15", periods=n, freq="1min")
+        close = pd.Series([22500.0 + i * 0.5 for i in range(n)])
+        ohlc = pd.DataFrame({
+            "timestamp": ts,
+            "open":  close.shift(1).fillna(22500.0).values,
+            "high":  (close + 1.5).values,
+            "low":   (close - 1.5).values,
+            "close": close.values,
+        })
+        frame = self.worker.build_strategy_frame(ohlc)
+        # 400 complete 1-min bars -> 80 complete 5-min buckets.
+        self.assertEqual(len(frame), n // 5)
+        spacing = pd.to_datetime(frame["timestamp"]).diff().dropna().unique()
+        self.assertEqual(len(spacing), 1)
+        self.assertEqual(pd.Timedelta(spacing[0]), pd.Timedelta(minutes=5))
+
 
 # =============================================================================
 # TEST SUITE: GOLDMINE DYNAMIC LOT SIZING
