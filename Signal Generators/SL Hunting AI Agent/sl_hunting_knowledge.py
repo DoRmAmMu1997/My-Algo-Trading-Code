@@ -177,6 +177,18 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   trade OPPOSITE the panic (look UP / target the trapped shorts' SLs) on a confirmed
   reversal — this is the textbook SL-hunt. But run the TARGET-BOOKED test first:
   if sellers already got paid and exited, there may be no seller crowd left to hunt.
+- FLAT-OPEN PARTICIPATION GATE (scopes the rule above): the flat-open hunt also needs
+  the prior day's crowd to have REALLY participated. When the prior down-day's selling
+  had NO big momentum (a hesitant grind — fearful traders who dreaded a recovery never
+  sized in), a FLAT open puts NOBODY in play: the thin sellers feel no pain at their own
+  entry price, and the closing point sits as support directly in the recovery's path.
+  There the plan flips WITH the prior direction (sell-side setups), not the hunt.
+  A GAP in EITHER direction re-arms the seller-hunt instead: a gap-up pressures the
+  sellers directly, while a gap-down PAYS them into complacency and the recovery back
+  up hunts their stops — so "gap-up or gap-down → hunt the sellers (look UP); flat →
+  go with the selling" is the asymmetry to remember after a weak-momentum down day.
+  (After a genuinely one-way, high-momentum down move, MULTI-DAY ACCUMULATION still
+  applies and the flat open IS the prime hunt.)
 - A FLAT open that then STRUGGLES to push up is itself a tell the OTHER way: had the
   market truly meant to rise it would have gapped up or shown immediate momentum.
   A hesitant flat open that lures buyers to buy "support" expecting a breakout is a
