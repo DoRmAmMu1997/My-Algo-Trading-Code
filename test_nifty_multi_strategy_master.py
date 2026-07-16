@@ -3152,9 +3152,11 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
             self.assertTrue(worker.pos.active)
             self.assertTrue(worker._mirror_pos.active)
-            self.assertEqual(worker._mirror_pos.quantity, 140)
+            # MAT-104 floor sizing: 10-pt stop -> floor(2500 / (10*75)) = 3
+            # NIFTY lots, mirrored as 3 BNF lots x 35 = 105 units.
+            self.assertEqual(worker._mirror_pos.quantity, 105)
             self.assertEqual(worker._mirror_pos.live_leg.confirmed_live_quantity, 35)
-            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 140)
+            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 105)
 
             worker.exit_position("ASYMMETRIC_ENTRY_RECOVERY")
 
@@ -3163,8 +3165,8 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             for symbol, side, quantity in fake.calls
             if "BANKNIFTY" in symbol
         ]
-        self.assertEqual(bnf_orders, [("BUY", 140), ("SELL", 35)])
-        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 140)])
+        self.assertEqual(bnf_orders, [("BUY", 105), ("SELL", 35)])
+        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 105)])
         self.assertFalse(worker._mirror_pos.active)
 
     def test_unknown_mirror_entry_uses_conservative_risk_quantity_for_mtm(self):
@@ -3214,17 +3216,18 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         mirror = worker._mirror_pos
         self.assertTrue(mirror.active)
         self.assertEqual(mirror.live_leg.confirmed_live_quantity, 0)
-        self.assertEqual(mirror.live_leg.risk_quantity, 140)
-        self.assertEqual(mirror.quantity, 140)
+        # MAT-104 floor sizing: 3 NIFTY lots -> 3 BNF lots x 35 = 105 units.
+        self.assertEqual(mirror.live_leg.risk_quantity, 105)
+        self.assertEqual(mirror.quantity, 105)
         store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 490.0})
-        self.assertEqual(worker._mirror_leg_pnl(), -1400.0)
+        self.assertEqual(worker._mirror_leg_pnl(), -1050.0)
         with (
             patch.object(master_file, "execution_client", fake),
             patch.object(worker, "_start_execution_reconciliation"),
         ):
             worker.exit_bnf_mirror_only("UNKNOWN_ENTRY_RECOVERY")
         self.assertTrue(worker._mirror_pos.active)
-        self.assertEqual(worker._mirror_pos.quantity, 140)
+        self.assertEqual(worker._mirror_pos.quantity, 105)
         self.assertFalse(
             any(
                 side == "SELL" and "BANKNIFTY" in symbol
