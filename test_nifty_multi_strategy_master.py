@@ -6465,6 +6465,49 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
             BrokerQueryResult.success(()),
         )
 
+    @staticmethod
+    def _store_with_tracked_leg():
+        """Build a store whose execution ledger tracks one unresolved live leg."""
+        from Dependencies.execution_ledger import LegSpec
+
+        store = master_file.SharedMarketDataStore()
+        spec = LegSpec(
+            strategy="Renko",
+            correlation_id="ABCD1234",
+            role="N",
+            underlying="NIFTY",
+            symbol="NIFTY16JUL2622500CE",
+            option_type="CE",
+            strike=22500.0,
+            expiry=None,
+            opening_side="BUY",
+            target_quantity=75,
+        )
+        state = store.execution_ledger.register(spec)
+        return store, state
+
+    @staticmethod
+    def _flatten_tracked_leg(store, state):
+        """Resolve the tracked leg with a terminal zero-fill rejection (flat)."""
+        from Dependencies.broker_contract import OrderResult, OrderStatus
+        from Dependencies.execution_ledger import OrderIntent
+
+        handle = store.execution_ledger.start_attempt(
+            state.exposure_id, OrderIntent.OPEN, 75
+        )
+        store.execution_ledger.apply_result(
+            handle,
+            OrderResult(
+                order_id="TEST-FLAT-1",
+                requested_quantity=75,
+                filled_quantity=0,
+                remaining_quantity=75,
+                status=OrderStatus.REJECTED,
+                broker_state="REJECTED",
+                reason="test rejection",
+            ),
+        )
+
     def test_ctrl_c_requests_worker_shutdown_without_setting_terminal_event(self):
         workers = [MagicMock(), MagicMock()]
         terminal_event = threading.Event()
@@ -6513,28 +6556,34 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         self.assertFalse(worker.alive)
         self.assertEqual(worker.shutdown_requests, ["KEYBOARD_INTERRUPT"])
 
-    def test_transient_account_audit_retries_then_proves_flat(self):
-        client = self._ShutdownClient(
-            [self._indeterminate_books(), self._flat_books()]
-        )
+    def test_wait_retries_until_runner_ledger_confirms_flat(self):
+        """Unresolved RUNNER exposure blocks; account books never block here."""
+
+        client = self._ShutdownClient([self._indeterminate_books()])
+        store, state = self._store_with_tracked_leg()
         sleeps = []
 
+        def flattening_sleep(delay):
+            sleeps.append(delay)
+            self._flatten_tracked_leg(store, state)
+
         flat = master_file._wait_for_shutdown_account_flat(
-            master_file.SharedMarketDataStore(),
+            store,
             client,
-            sleep=sleeps.append,
+            sleep=flattening_sleep,
             max_attempts=3,
         )
 
         self.assertTrue(flat)
         self.assertEqual(sleeps, [1.0])
 
-    def test_permanent_account_failure_never_allows_clean_finalization(self):
-        client = self._ShutdownClient([self._indeterminate_books()])
+    def test_permanent_runner_exposure_never_allows_clean_finalization(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, _state = self._store_with_tracked_leg()
         sleeps = []
 
         flat = master_file._wait_for_shutdown_account_flat(
-            master_file.SharedMarketDataStore(),
+            store,
             client,
             sleep=sleeps.append,
             max_attempts=4,
@@ -6547,7 +6596,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         store = master_file.SharedMarketDataStore()
         store.live_session_started = True
 
-        audit = master_file._shutdown_account_audit(store, None)
+        audit = master_file._advisory_account_audit(store, None)
 
         self.assertFalse(audit.safe_to_enable_live)
         self.assertIn("unavailable", " ".join(audit.reasons).lower())
@@ -6568,7 +6617,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         store.live_session_started = True
         client = RecoveringClient()
 
-        audit = master_file._shutdown_account_audit(store, client)
+        audit = master_file._advisory_account_audit(store, client)
 
         self.assertTrue(audit.safe_to_enable_live)
         self.assertEqual(client.ensure_calls, 1)
@@ -6580,33 +6629,34 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         store = master_file.SharedMarketDataStore()
         store.live_session_started = True
 
-        audit = master_file._shutdown_account_audit(store, client)
+        audit = master_file._advisory_account_audit(store, client)
 
         self.assertFalse(audit.safe_to_enable_live)
         client.ensure_logged_in.assert_called_once_with()
 
-    def test_additional_interrupt_cannot_bypass_final_account_reconciliation(self):
-        client = self._ShutdownClient(
-            [self._indeterminate_books(), self._flat_books()]
-        )
+    def test_additional_interrupt_cannot_bypass_final_runner_reconciliation(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, state = self._store_with_tracked_leg()
         sleeps = []
 
-        def interrupted_sleep(delay):
+        def interrupted_flattening_sleep(delay):
             sleeps.append(delay)
+            self._flatten_tracked_leg(store, state)
             raise KeyboardInterrupt
 
         flat = master_file._wait_for_shutdown_account_flat(
-            master_file.SharedMarketDataStore(),
+            store,
             client,
-            sleep=interrupted_sleep,
+            sleep=interrupted_flattening_sleep,
             max_attempts=3,
         )
 
         self.assertTrue(flat)
         self.assertEqual(sleeps, [1.0])
 
-    def test_logout_results_and_refresh_are_blocked_while_broker_is_indeterminate(self):
-        client = self._ShutdownClient([self._indeterminate_books()])
+    def test_logout_results_and_refresh_are_blocked_while_runner_exposure_open(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, _state = self._store_with_tracked_leg()
         workers = [MagicMock()]
         with (
             patch.object(master_file, "_publish_eod_summary") as summary,
@@ -6615,7 +6665,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         ):
             finalized = master_file._finalize_flat_session(
                 workers,
-                master_file.SharedMarketDataStore(),
+                store,
                 client,
                 trade_event_queue=None,
                 natural_eod=True,
@@ -6627,12 +6677,59 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         sheet.assert_not_called()
         refresh.assert_not_called()
 
+    def test_manual_account_exposure_warns_but_does_not_block_finalization(self):
+        """The operator's own positions alert loudly; results/logout proceed."""
+        from Dependencies.broker_contract import OpenPosition
+
+        client = self._ShutdownClient(
+            [
+                (
+                    BrokerQueryResult.success(()),
+                    BrokerQueryResult.success(
+                        (
+                            OpenPosition(
+                                symbol="NIFTY16JUL2622500CE",
+                                quantity=75,
+                                product_type="NRML",
+                            ),
+                        )
+                    ),
+                )
+            ]
+        )
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        event_queue = master_file.queue.Queue()
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                [MagicMock()],
+                store,
+                client,
+                trade_event_queue=event_queue,
+                natural_eod=True,
+            )
+
+        self.assertTrue(finalized)
+        self.assertEqual(client.logout_calls, 1)
+        summary.assert_called_once()
+        sheet.assert_called_once_with()
+        refresh.assert_called_once_with()
+        alert = event_queue.get_nowait()
+        self.assertEqual(alert["action"], "SHUTDOWN_ACCOUNT_WARNING")
+        self.assertIn("position", alert["reason"].lower())
+        # Fixed vocabulary only: the operator's symbol never reaches the alert.
+        self.assertNotIn("NIFTY16JUL2622500CE", repr(alert))
+
     def test_interrupt_during_final_flat_audit_blocks_finalization(self):
         client = self._ShutdownClient([self._flat_books()])
         with (
             patch.object(
                 master_file,
-                "_shutdown_account_audit",
+                "_runner_exposure_audit",
                 side_effect=KeyboardInterrupt,
             ),
             patch.object(master_file, "_publish_eod_summary") as summary,

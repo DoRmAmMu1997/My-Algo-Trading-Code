@@ -12967,11 +12967,17 @@ def _start_and_supervise_runtime_threads(
     return False
 
 
-def _shutdown_account_audit(
-    store: SharedMarketDataStore,
-    client: ExecutionClient | None,
-) -> StartupExposureAudit:
-    """Return fixed-vocabulary evidence that process-wide exposure is flat."""
+def _runner_exposure_audit(store: SharedMarketDataStore) -> StartupExposureAudit:
+    """Hard finalization gate: is the RUNNER's own tracked exposure flat?
+
+    The execution ledger registers every live order attempt BEFORE it is
+    submitted and keeps the leg active while any quantity is confirmed open or
+    still indeterminate, so an empty ledger means every order this process
+    placed is broker-confirmed flat.  Exposure the runner did not create --
+    the operator's own manual trades in the same account -- is deliberately
+    NOT part of this gate: it is reported loudly by the advisory account
+    audit below instead of blocking results/logout forever.
+    """
 
     active_states = store.execution_ledger.active_states()
     if active_states:
@@ -12983,23 +12989,44 @@ def _shutdown_account_audit(
                 f"risk_quantity={sum(state.risk_quantity for state in active_states)}",
             ),
         )
+    return StartupExposureAudit(
+        safe_to_enable_live=True,
+        reasons=(),
+        evidence=("tracked_legs=0",),
+    )
+
+
+def _advisory_account_audit(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+) -> StartupExposureAudit:
+    """Best-effort ACCOUNT-level book check, reported but never blocking.
+
+    The operator may hold manual positions or working orders in the same
+    account, so a non-flat account combined with a flat runner ledger is a
+    WARNING (log + Telegram alert), not a reason to withhold the day's
+    results or the logout forever.  Fixed vocabulary only: raw broker
+    payloads, symbols and order ids never reach the alert text.
+    """
 
     if client is None:
         if store.live_session_started:
             return StartupExposureAudit(
                 safe_to_enable_live=False,
                 reasons=("The live broker client was unavailable at shutdown.",),
-                evidence=("execution_client=unavailable", "tracked_legs=0"),
+                evidence=("execution_client=unavailable",),
             )
         return StartupExposureAudit(
             safe_to_enable_live=True,
             reasons=(),
-            evidence=("execution_client=unavailable", "tracked_legs=0"),
+            evidence=("execution_client=unavailable",),
         )
 
     login_state = getattr(client, "is_logged_in", None)
     if login_state is False:
         if store.live_session_started:
+            # One best-effort re-login so the books can actually be read for
+            # the warning; a failure downgrades to "session unavailable".
             try:
                 recovered = client.ensure_logged_in()
             except Exception:  # noqa: BLE001 - never log broker auth payloads
@@ -13008,23 +13035,20 @@ def _shutdown_account_audit(
                 return StartupExposureAudit(
                     safe_to_enable_live=False,
                     reasons=("The live broker session was unavailable at shutdown.",),
-                    evidence=(
-                        "broker_session=recovery_failed",
-                        "tracked_legs=0",
-                    ),
+                    evidence=("broker_session=recovery_failed",),
                 )
             login_state = True
         else:
             return StartupExposureAudit(
                 safe_to_enable_live=True,
                 reasons=(),
-                evidence=("broker_session=not_logged_in", "tracked_legs=0"),
+                evidence=("broker_session=not_logged_in",),
             )
     if login_state is not True:
         return StartupExposureAudit(
             safe_to_enable_live=False,
             reasons=("Broker session state was indeterminate at shutdown.",),
-            evidence=("broker_session=indeterminate", "tracked_legs=0"),
+            evidence=("broker_session=indeterminate",),
         )
 
     try:
@@ -13037,6 +13061,48 @@ def _shutdown_account_audit(
         )
 
 
+def _warn_if_account_not_flat(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    event_queue: queue.Queue | None,
+) -> bool:
+    """Alert (never block) when the ACCOUNT shows exposure after the runner is flat.
+
+    Returns True when a warning was raised, so tests can assert the alert path.
+    """
+
+    try:
+        advisory = _advisory_account_audit(store, client)
+    except KeyboardInterrupt:
+        logger.error(
+            "Advisory account check interrupted; finalizing on the flat runner ledger."
+        )
+        return False
+    if advisory.safe_to_enable_live:
+        return False
+    safe_detail = " ".join((*advisory.reasons, *advisory.evidence))
+    logger.error(
+        "SHUTDOWN ACCOUNT WARNING | the runner's own exposure is flat, but the "
+        "account books are not proven flat (manual positions/orders, or an "
+        "unreadable book) | %s",
+        safe_detail,
+    )
+    if event_queue is not None:
+        with contextlib.suppress(Exception):
+            event_queue.put_nowait(
+                {
+                    "action": "SHUTDOWN_ACCOUNT_WARNING",
+                    "strategy": "Process Supervisor",
+                    # The generic Telegram format renders `direction` as the
+                    # detail line, exactly like the startup-exposure alert.
+                    "direction": safe_detail,
+                    "reason": safe_detail,
+                    "mode": "LIVE" if store.live_session_started else "PAPER",
+                }
+            )
+    return True
+
+
 def _wait_for_shutdown_account_flat(
     store: SharedMarketDataStore,
     client: ExecutionClient | None,
@@ -13045,11 +13111,14 @@ def _wait_for_shutdown_account_flat(
     sleep=time.sleep,
     max_attempts: int | None = None,
 ) -> bool:
-    """Retry the final account audit forever in production until it is flat.
+    """Retry until the RUNNER's tracked exposure is broker-confirmed flat.
 
     ``max_attempts`` exists only for deterministic tests and diagnostics.  The
-    production caller leaves it as ``None`` so a permanent broker failure keeps
+    production caller leaves it as ``None`` so unresolved runner exposure keeps
     the process alive and alerting instead of allowing logout or clean results.
+    Account-level books are deliberately not part of this gate: the operator
+    may hold manual positions in the same account, and those are reported as
+    a warning by `_finalize_flat_session` rather than blocking here forever.
     """
 
     if max_attempts is not None and max_attempts <= 0:
@@ -13058,24 +13127,25 @@ def _wait_for_shutdown_account_flat(
     while True:
         attempt += 1
         try:
-            audit = _shutdown_account_audit(store, client)
+            audit = _runner_exposure_audit(store)
         except KeyboardInterrupt:
             logger.error(
-                "Shutdown reconciliation is still proving broker exposure flat; "
+                "Shutdown reconciliation is still proving runner exposure flat; "
                 "interrupt ignored."
             )
             continue
         if audit.safe_to_enable_live:
             logger.info(
-                "SHUTDOWN ACCOUNT FLAT | final broker audit passed after %d attempt(s).",
+                "SHUTDOWN RUNNER FLAT | the execution ledger confirmed flat "
+                "after %d attempt(s).",
                 attempt,
             )
             return True
 
         safe_detail = " ".join((*audit.reasons, *audit.evidence))
         logger.error(
-            "DEGRADED PROCESS SHUTDOWN | account is not broker-confirmed flat | "
-            "attempt=%d | %s",
+            "DEGRADED PROCESS SHUTDOWN | runner exposure is not broker-confirmed "
+            "flat | attempt=%d | %s",
             attempt,
             safe_detail,
         )
@@ -13100,7 +13170,7 @@ def _wait_for_shutdown_account_flat(
             sleep(delay)
         except KeyboardInterrupt:
             logger.error(
-                "Shutdown reconciliation is still proving broker exposure flat; "
+                "Shutdown reconciliation is still proving runner exposure flat; "
                 "interrupt ignored."
             )
 
@@ -13113,22 +13183,31 @@ def _finalize_flat_session(
     trade_event_queue: queue.Queue | None,
     natural_eod: bool,
 ) -> bool:
-    """Write results, logout, and refresh only after a fresh flat audit."""
+    """Write results, logout, and refresh once the RUNNER's exposure is flat.
+
+    The hard gate is the execution ledger (this process's own tracked
+    exposure).  The account-level books are then checked once, as an advisory
+    warning: the operator's manual positions must not strand the day's
+    results, the logout, or the next-day instrument refresh forever.
+    """
 
     try:
-        audit = _shutdown_account_audit(store, client)
+        audit = _runner_exposure_audit(store)
     except KeyboardInterrupt:
         logger.error(
-            "Final broker-flat proof is still in progress; interrupt ignored and "
+            "Final runner-flat proof is still in progress; interrupt ignored and "
             "session finalization remains blocked."
         )
         return False
     if not audit.safe_to_enable_live:
         logger.error(
-            "SESSION FINALIZATION BLOCKED | broker exposure is not confirmed flat | %s",
+            "SESSION FINALIZATION BLOCKED | the runner's tracked exposure is not "
+            "confirmed flat | %s",
             " ".join((*audit.reasons, *audit.evidence)),
         )
         return False
+
+    _warn_if_account_not_flat(store, client, trade_event_queue)
 
     if natural_eod:
         _publish_eod_summary(workers, trade_event_queue)
@@ -13345,9 +13424,11 @@ def main() -> None:
         workers,
     )
 
-    # Even after every local owner reaches STOPPED, the broker books get one
-    # process-wide proof. An indeterminate/open book keeps this process alive
-    # on 1/2/5-second capped retries; no logout, result write, or refresh occurs.
+    # Even after every local owner reaches STOPPED, the execution ledger gets
+    # one process-wide proof. Unresolved RUNNER exposure keeps this process
+    # alive on 1/2/5-second capped retries; no logout, result write, or refresh
+    # occurs. Account-level books (which may hold the operator's own manual
+    # positions) are then checked once and reported as a warning, not a block.
     _wait_for_shutdown_account_flat(
         store,
         execution_client,
