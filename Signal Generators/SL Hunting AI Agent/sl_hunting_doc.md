@@ -874,3 +874,93 @@ round-number-magnet notes. The live session contained no averaging/psychology se
 **Knowledge changes (v3k, all prose):**
 - `RETAIL_POSITIONING`: FLAT-OPEN PARTICIPATION GATE.
 - Test marker: `test_system_prompt_has_v3k_flat_open_gate_knowledge`.
+
+## Video addendum - 16 Jul split-gap session + closing-point hold test (v3l)
+
+> Sources (full Hindi auto-transcripts from YouTube's transcript panel):
+> - `1uB29qR9V0A` (15 Jul 2026 evening, "Prediction For 16 JULY 2026", 2:07)
+> - `ojc_NGulszU` (16 Jul 2026, "Live Bank Nifty Option Trading", 9:51)
+>
+> Cross-checked against the agent's journal (`Backtest Outputs/sl_hunting_journal.jsonl`,
+> rows 21-22, 2026-07-16).
+>
+> EXTRACTION NOTE: both 16 Jul watch pages loaded as SKELETON placeholders — zero
+> `ytd-engagement-panel-section-list-renderer` nodes, no "Show transcript" button, no
+> recommendations sidebar — across reloads AND a fresh tab. Fix that worked:
+> `resize_window` (e.g. 1400x900) THEN `location.reload()`; the forced re-layout makes
+> the panels hydrate (9 of them), after which the normal recipe applies. Captions
+> existed the whole time (`hi/asr` in `ytInitialPlayerResponse`), so an absent button
+> is a hydration failure, NOT a missing transcript.
+
+Session summary:
+- Pre-open plan (prediction clip): the prior day rejected but **held above the closing
+  price**, so "not many are sitting short" — plan was flat/gap-down -> sell-side; a
+  direct gap-up -> buy-side (a gap-up would put any seated sellers in trouble).
+- Live open: **a SPLIT gap** — Sensex and NIFTY opened with a mild GAP-UP while
+  **BankNIFTY opened FLAT, right at its own closing price**. IH read the flat major
+  index as the honest tell: if BNF took support there and cleared 58,000, "only buyers
+  would come" and the down-move would be dead; instead he expected the small trap and a
+  fall. He bought PUTs across all three (BNF 57800+57700 PE, Sensex 900 qty — Sensex
+  expiry that day, NIFTY 1365 qty).
+- Core reasoning (the day's whole thesis): the prior rejection **never broke the
+  closing point**, so whoever sold it booked the momentum and left rather than holding
+  overnight -> **no seller inventory** -> there are no seller SLs to hunt upward ->
+  therefore FOLLOW the selling down instead of hunting sellers up. He stated the
+  converse explicitly: had the market broken down and then HELD below, sellers WOULD be
+  seated, and then the market would reject and run them UP.
+- Exit: not a stop or a target. BankNIFTY — the index he expected to LEAD — failed to
+  lead, and all three indices began drifting down together in small steps. He cut,
+  because an evenly shared, visible move "invites sellers", and a freshly recruited
+  seller crowd is exactly what gets hunted next ("then the market can suddenly turn").
+
+**Agent vs IH on 16 Jul** (IH: 1 trade, booked; agent: 2 trades, net -Rs.709):
+
+| # | Agent trade | Time | Result |
+|---|---|---|---|
+| 1 | LONG `opening_drive_gapup_continuation` | 09:17-09:22 | +2.3 pts but **-Rs.1,333** |
+| 2 | SHORT `gap_up_after_selldown_buyer_trap_short` | 09:28-09:42 | +2.45 pts, **+Rs.624** |
+
+- **Trade 1 is the divergence, and it is the loser.** The agent fired the OPENING DRIVE
+  gap-up branch on NIFTY's own mild gap (24142 vs 24073.45 prev close) — "retail is
+  largely un-positioned so there's no SL-hunt available; the with-gap continuation is
+  the trade" — while IH was reading the SAME open as a short because **BankNIFTY had no
+  gap at all**. Nothing in OPENING_DRIVE required the gap to be SHARED, and
+  `cross_index` returned "neutral"/"none", so the split gap never registered. Note the
+  basket cost: +2.3 NIFTY points still lost Rs.1,333 because the BankNIFTY mirror leg —
+  the very index that was flat — went against it.
+- **Trade 2 converged with IH's direction** (short) and made money, though via a
+  different premise (agent: untrustworthy gap-up recruiting fresh buyers; IH: no seller
+  inventory -> follow the selling). The agent then exited on a stall at 09:42 while IH
+  held the same direction longer for a better target.
+- Exit discipline was sound in both rows (row 1 cut in ~5 min on a confirmed rejection,
+  well before the stop) — the loss came from the ENTRY premise, not the management.
+
+**Net-new method distilled:**
+- CLOSING-POINT HOLD TEST: whether an overnight crowd exists at all is answered by one
+  question — did the prior rejection/selling BREAK the closing point and HOLD beyond it?
+  Broke-and-held -> the crowd is seated with live SLs -> huntable (look the other way).
+  Never broke it -> they booked and left -> no inventory -> FOLLOW the prevailing move.
+  Sharper and more mechanical than the existing TARGET-BOOKED test (which keys off
+  breakdown+retracement+continuation); this keys off a single named level.
+- OPENING DRIVE — SHARED-GAP REQUIREMENT: the gap-up branch's premise ("nobody is
+  positioned, so there is no hunt available") is FALSE when the major index (BankNIFTY)
+  opened FLAT at its own closing point while NIFTY gapped. A flat major index beside a
+  gapped NIFTY is a SHORT tell — GAP-SIZE ASYMMETRY ("the smaller-gap index is the
+  tell") at its strongest, a zero-gap index. Directly prevents the agent's -Rs.1,333.
+- Leader-fails-to-lead exit MECHANISM (folded into the existing BNF_SPECIFIC bullet,
+  which already prescribed the exit): an evenly shared, small-step move across all three
+  indices RECRUITS the crowd onto your own side, and a freshly recruited crowd is the
+  next hunt target — once your side IS the crowd, the edge is gone. Scoped explicitly to
+  the leader failing to lead, so it does not collide with the RISK rule that
+  leader-led "SLOW-but-CONTINUOUS" momentum is the sustainable kind.
+
+**Confirmed but deliberately NOT re-encoded (already present):** the one-directional-day
+read ("either profit or loss, the market will pick a side — don't dream it comes back"),
+premise-invalidation exits, average-target booking without greed, expiry-day context, and
+round-number magnets.
+
+**Knowledge changes (v3l, all prose):**
+- `RETAIL_POSITIONING`: CLOSING-POINT HOLD TEST.
+- `OPENING_DRIVE`: SHARED-GAP REQUIREMENT condition.
+- `BNF_SPECIFIC`: the "why" clause on the leader-fails-to-lead exit.
+- Test marker: `test_system_prompt_has_v3l_closing_point_and_shared_gap_knowledge`.
