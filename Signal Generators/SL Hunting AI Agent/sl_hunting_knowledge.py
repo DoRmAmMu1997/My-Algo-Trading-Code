@@ -154,6 +154,20 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   * Invalidation: if that bounce keeps going and RECLAIMS the closing point / round
     number, the crowd was not actually trapped — the premise is dead, exit per your
     limit. This is an entry-timing rule, never a licence to sit in a loser.
+- CLOSING-POINT HOLD TEST (the sharpest read on whether an overnight crowd EXISTS —
+  run it before planning any hunt of yesterday's crowd): ask whether yesterday's
+  rejection/selling actually BROKE the closing point and then HELD beyond it.
+  * BROKE it and held beyond → that crowd is SEATED overnight with live SLs. They are
+    huntable: expect a rejection and a move back THROUGH their stops (the textbook
+    hunt — after a down-break that held, look UP).
+  * Did NOT break it (price rejected but stalled at/above the closing point, often
+    hovering there a long time) → whoever traded that move BOOKED the momentum and
+    LEFT; they did not carry the position overnight. There is NO inventory to hunt,
+    so do not plan a hunt against them — FOLLOW the prevailing move instead (after a
+    rejection that failed to break the closing point, the continuation DOWN is the
+    trade, not the hunt up).
+  The level does the work here: an unbroken closing point means the crowd never got
+  the confirmation it needed to hold, so its SLs never came into being.
 - TARGET-BOOKED crowd test: before hunting yesterday's crowd, ask whether the prior
   move already paid them and let them exit. Breakdown + retracement + continuation
   often means put buyers / sellers already booked profit; they are not today's
@@ -263,6 +277,16 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
 - First ~15 minutes of the session only.
 - Gap-up branch: ONLY as ENTER_LONG on a clear GAP-UP (open above the previous
   close AND holding above/at a round number).
+- SHARED-GAP REQUIREMENT (check this BEFORE the branch fires): the gap must be broadly
+  shared across the indices. If the MAJOR index (BankNIFTY — check `bank_nifty` /
+  `cross_index`) opened FLAT at/near its OWN closing point while NIFTY gapped, there is
+  NO shared gap: BankNIFTY's crowd is untouched, its closing point sits right there as
+  support, and the "nobody is positioned → no hunt available" premise that justifies
+  this whole branch is FALSE. A flat major index beside a gapped NIFTY is a SHORT tell,
+  not a long one — the flat index is the honest read (see GAP-SIZE ASYMMETRY: the
+  smaller-gap index is the tell, and a ZERO-gap major index is that rule at its
+  strongest). HOLD, or trade the flat index's read instead; do NOT fire this branch on
+  NIFTY's gap alone.
 - GAP-DOWN CONTINUATION SHORT branch: ONLY as ENTER_SHORT on a narrow/moderate
   gap-down after prior breakdown + retracement + continuation likely let sellers
   book. The open/early recovery must fail below the closing point / round number
@@ -604,7 +628,16 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
 - BankNIFTY is treated as the MAJOR index that sets the base bias; NIFTY/Sensex
   confirm. When the leading index (BankNIFTY) WEAKENS or fails to sustain
   momentum versus the others — especially if the weakest one starts to reverse —
-  treat that as an exit / avoid signal for the shared direction.
+  treat that as an exit / avoid signal for the shared direction. WHY it is an exit
+  and not merely a delay: when the expected leader does NOT lead and instead all
+  three indices drift the same way together in small steps, that visible, evenly
+  shared move RECRUITS the crowd onto YOUR OWN side — and a freshly recruited crowd
+  is precisely what the operator hunts next. Your edge is being with the operator
+  against the crowd; once your side IS the crowd, the edge is gone and a sudden
+  reversal is the risk. Book what the move has given and leave. (Scope: this is
+  about the LEADER failing to lead, not about momentum speed in general — a genuine
+  leader-led move that grinds on in small candles is still the sustainable kind
+  described in RISK.)
 - MASKED BNF LAG: temporary BankNIFTY weakness can also be a mask that keeps
   NIFTY/Sensex breakout buyers away while the operator continues the original
   thesis. Treat BNF lag as invalidation only when it actually breaks the premise

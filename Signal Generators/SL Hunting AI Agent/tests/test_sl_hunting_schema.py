@@ -266,3 +266,25 @@ def test_system_prompt_has_v3k_flat_open_gate_knowledge():
     assert "flat" in prompt and "go with the selling" in prompt
     # It must scope, not delete, the textbook flat/gap-down hunt above it.
     assert "PRIME TRAP zone" in prompt
+
+
+def test_system_prompt_has_v3l_closing_point_and_shared_gap_knowledge():
+    """v3l: 16 Jul split-gap session, cross-checked against journal rows 21-22.
+
+    - CLOSING-POINT HOLD TEST answers whether an overnight crowd exists at all: a prior
+      rejection that never BROKE the closing point means that crowd booked and left, so
+      there is no inventory to hunt -> follow the move instead.
+    - The OPENING DRIVE gap-up branch now requires the gap to be SHARED: the agent fired
+      it on NIFTY's gap while BankNIFTY opened flat at its own closing point (IH read the
+      same open as a short) and the basket lost Rs.1,333.
+    """
+    prompt = build_system_prompt()
+    assert "CLOSING-POINT HOLD TEST" in prompt
+    assert "SHARED-GAP REQUIREMENT" in prompt
+    # The decisive tell: a flat major index beside a gapped NIFTY kills the long branch.
+    assert "flat major index" in prompt.lower()
+    # The hold test must state both arms (seated-and-huntable vs booked-and-gone).
+    assert "BROKE it and held beyond" in prompt
+    # The leader-fails-to-lead exit keeps its scope so it can't collide with RISK's
+    # "SLOW-but-CONTINUOUS is the sustainable kind" rule.
+    assert "SLOW-but-CONTINUOUS" in prompt

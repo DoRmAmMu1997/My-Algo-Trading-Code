@@ -10358,7 +10358,7 @@ def main() -> None:
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
         "ATM single-leg family (22): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
-        "ProfitShooter 1m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
+        "ProfitShooter 5m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
         "PCR/VWAP/ATR, CPR 5m, CPR Algo 3 5m (multi-instrument); + 13 TradingBot ports (%dm) - SMA Crossover, "
         "Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, "
         "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
