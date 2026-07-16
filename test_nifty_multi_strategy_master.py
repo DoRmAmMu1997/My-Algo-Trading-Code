@@ -6,7 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
@@ -307,6 +307,17 @@ class TestPureHelpers(unittest.TestCase):
             self.assertFalse(master_file.is_before_time(11, 0))
             self.assertTrue(master_file.is_after_time(11, 0))
             self.assertFalse(master_file.is_after_time(13, 0))
+
+    def test_time_gates_convert_utc_now_to_ist(self):
+        """Market cutoffs use Asia/Kolkata even when the host clock is UTC."""
+
+        # 07:30 UTC is 13:00 IST. A host-local comparison would incorrectly
+        # report that noon has not arrived yet.
+        utc_now = datetime(2026, 5, 15, 7, 30, tzinfo=UTC)
+        with patch.object(master_file, "datetime") as mock_dt:
+            mock_dt.now.return_value = utc_now
+            self.assertTrue(master_file.is_after_time(12, 0))
+            self.assertFalse(master_file.is_before_time(12, 0))
 
     def test_resample_ohlc_from_1m_passthrough(self):
         """1-minute resampling is a no-op."""
@@ -1174,6 +1185,68 @@ class TestBasePaperStrategyWorker(unittest.TestCase):
         self.assertNotEqual(oid1, oid2)
         self.assertTrue(oid2.endswith("-0002"))
 
+    def test_stop_event_flattens_before_worker_reaches_stopped(self):
+        """A pre-set terminal event is translated into flatten-then-stop."""
+
+        self.worker.pos.active = True
+        self.stop_event.set()
+
+        def close_position(_reason):
+            self.worker.pos.active = False
+
+        with patch.object(self.worker, "exit_position", side_effect=close_position) as close:
+            self.assertTrue(self.worker._run_shutdown_cycle_if_requested())
+
+        close.assert_called_once_with("STOP_EVENT")
+        self.assertEqual(
+            self.worker.lifecycle.snapshot().state,
+            master_file.LifecycleState.STOPPED,
+        )
+
+    def test_transient_close_failure_retries_on_one_second_backoff(self):
+        """A failed first close keeps ownership and a later retry reaches flat."""
+
+        clock = [100.0]
+        self.worker.lifecycle = master_file.TradingLifecycle(monotonic=lambda: clock[0])
+        self.worker.pos.active = True
+        attempts = []
+
+        def close_position(reason):
+            attempts.append(reason)
+            if len(attempts) == 2:
+                self.worker.pos.active = False
+
+        with patch.object(self.worker, "exit_position", side_effect=close_position):
+            self.worker.handle_square_off_and_stop()
+            waiting = self.worker.lifecycle.snapshot()
+            self.assertEqual(waiting.state, master_file.LifecycleState.RECONCILING)
+            self.assertEqual(waiting.next_retry_at, 101.0)
+
+            # Before the deadline, no duplicate close is submitted.
+            self.assertTrue(self.worker._run_shutdown_cycle_if_requested())
+            self.assertEqual(attempts, ["TIME_CUTOFF"])
+
+            clock[0] = 101.0
+            self.assertTrue(self.worker._run_shutdown_cycle_if_requested())
+
+        self.assertEqual(attempts, ["TIME_CUTOFF", "TIME_CUTOFF"])
+        self.assertEqual(
+            self.worker.lifecycle.snapshot().state,
+            master_file.LifecycleState.STOPPED,
+        )
+
+    def test_permanent_close_failure_never_reports_stopped(self):
+        """Unresolved exposure remains in degraded reconciliation indefinitely."""
+
+        self.worker.pos.active = True
+        with patch.object(self.worker, "exit_position") as close:
+            self.worker.handle_max_loss_and_stop(-1000.0, -1000.0)
+
+        close.assert_called_once_with("MAX_LOSS_BREACH")
+        snapshot = self.worker.lifecycle.snapshot()
+        self.assertEqual(snapshot.state, master_file.LifecycleState.RECONCILING)
+        self.assertFalse(snapshot.entry_allowed)
+
 
 # =============================================================================
 # TEST SUITE: ATM SINGLE-LEG STRATEGY WORKER
@@ -1541,30 +1614,26 @@ class TestEnvBool(unittest.TestCase):
 
 
 class TestTimezoneAssumption(unittest.TestCase):
-    """OPS-001: every trading-window gate compares against the LOCAL wall clock
-    (naive datetime.now()), assuming the box runs in IST. A wrong system
-    timezone silently shifts market-open, entry cutoffs and the 15:15
-    square-off, so startup must call it out loudly."""
+    """MAT-103: trading windows are pinned to Asia/Kolkata explicitly."""
 
     def test_ist_offset_produces_no_warning(self):
         offset = timedelta(hours=5, minutes=30)
         self.assertIsNone(master_file._timezone_assumption_warning(offset))
 
-    def test_non_ist_offset_produces_actionable_warning(self):
+    def test_non_ist_host_offset_no_longer_needs_a_warning(self):
         for offset in (timedelta(0), timedelta(hours=-5), timedelta(hours=5, minutes=45)):
-            warning = master_file._timezone_assumption_warning(offset)
-            self.assertIsNotNone(warning, offset)
-            self.assertIn("IST", warning)
-            self.assertIn("timezone", warning.lower())
+            self.assertIsNone(master_file._timezone_assumption_warning(offset), offset)
 
     def test_default_uses_system_offset(self):
-        # Whatever this machine's offset is, the helper must not crash and must
-        # answer consistently with an explicit call using the same offset.
+        # Kept as a compatibility helper for callers from older scripts.
         system_offset = datetime.now().astimezone().utcoffset()
-        self.assertEqual(
-            master_file._timezone_assumption_warning(),
-            master_file._timezone_assumption_warning(system_offset),
-        )
+        self.assertIsNone(master_file._timezone_assumption_warning())
+        self.assertIsNone(master_file._timezone_assumption_warning(system_offset))
+
+    def test_ist_clock_is_timezone_aware(self):
+        now = master_file._ist_now()
+        self.assertIsNotNone(now.tzinfo)
+        self.assertEqual(now.utcoffset(), timedelta(hours=5, minutes=30))
 
 
 class TestGoogleSheetRetry(unittest.TestCase):
@@ -2997,6 +3066,23 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertTrue(self.worker.pos.active)
         self.assertEqual(self.worker.pos.entry_trade_price, 100.0)
 
+    def test_shutdown_request_blocks_entry_before_broker_submission(self):
+        """The final execution lock rechecks lifecycle entry permission."""
+
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        self.worker.lifecycle.request_shutdown("Ctrl+C")
+
+        with patch.object(master_file, "execution_client", fake):
+            opened = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+
+        self.assertFalse(opened)
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(fake.calls, [])
+
     def test_live_exit_places_sell_and_realizes_pnl(self):
         fake = _FakeShoonya()
         self.worker.live_trading = True
@@ -3469,6 +3555,50 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         self.assertFalse(self.worker.pos.active)
         self.assertFalse(second_worker.pos.active)
+
+    def test_shutdown_after_attempt_staging_aborts_entry_before_broker_submission(self):
+        """The final broker boundary must recheck a concurrently requested stop."""
+
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        attempt_staged = threading.Event()
+        release_attempt = threading.Event()
+        original_start_attempt = self.store.execution_ledger.start_attempt
+
+        def stage_then_pause(*args, **kwargs):
+            handle = original_start_attempt(*args, **kwargs)
+            attempt_staged.set()
+            release_attempt.wait(1.0)
+            return handle
+
+        result = {}
+
+        def enter():
+            result["entered"] = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(
+                self.store.execution_ledger,
+                "start_attempt",
+                side_effect=stage_then_pause,
+            ),
+        ):
+            thread = threading.Thread(target=enter)
+            thread.start()
+            self.assertTrue(attempt_staged.wait(0.5))
+            self.worker.request_worker_shutdown("TEST_SHUTDOWN_RACE")
+            release_attempt.set()
+            thread.join(timeout=1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result, {"entered": False})
+        self.assertEqual(fake.calls, [])
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.store.execution_ledger.active_states(), ())
 
     def test_live_exit_still_reduces_after_entry_gate_is_disabled(self):
         """Turning off future entries must never suppress a known live close."""
@@ -5535,6 +5665,12 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
             # Starting true makes the test prove that the startup helper first
             # clears stale state rather than relying on constructor defaults.
             self.live_trading = True
+            self.lots = 1
+            self.max_loss = 5500.0
+            self.trading_start_hour = 9
+            self.trading_start_minute = 15
+            self.square_off_hour = 15
+            self.square_off_minute = 15
 
     class _Client:
         def __init__(
@@ -5720,6 +5856,368 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
                 if client is not None:
                     self.assertEqual(client.calls, ["login"])
                     self.assertEqual(client.mutations, [])
+
+    def test_invalid_numeric_live_config_skips_broker_login_and_stays_paper(self):
+        workers = [self._Worker("Renko")]
+        store = master_file.SharedMarketDataStore()
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success(()),
+        )
+        with (
+            patch.dict(os.environ, {"RENKO_MAX_LOSS": "not-a-number"}),
+            patch.object(master_file, "_env_bool", side_effect=self._live_env),
+        ):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(live_count, 0)
+        self.assertFalse(workers[0].live_trading)
+        self.assertEqual(client.calls, [])
+        self.assertIsNotNone(audit)
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertIn("RENKO_MAX_LOSS", " ".join(audit.evidence))
+
+    def test_one_invalid_requested_strategy_blocks_every_live_candidate(self):
+        workers = [self._Worker("Renko"), self._Worker("EMA")]
+        store = master_file.SharedMarketDataStore()
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success(()),
+        )
+        with (
+            patch.dict(os.environ, {"RENKO_MAX_LOSS": "invalid"}),
+            patch.object(
+                master_file,
+                "_env_bool",
+                side_effect=lambda name, default=False: name
+                in {"RENKO_LIVE_TRADING", "EMA_LIVE_TRADING"},
+            ),
+        ):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(live_count, 0)
+        self.assertTrue(all(not worker.live_trading for worker in workers))
+        self.assertEqual(client.calls, [])
+        self.assertIsNotNone(audit)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_nonpositive_lots_and_bad_cutoff_disable_only_live_mode(self):
+        worker = self._Worker("Renko")
+        worker.lots = 0
+        worker.square_off_hour = 25
+
+        errors = master_file._live_config_errors(worker, "RENKO")
+
+        self.assertTrue(any("lots" in error.lower() for error in errors))
+        self.assertTrue(any("cutoff" in error.lower() for error in errors))
+        # Virtual/paper worker construction is intentionally unaffected.
+        self.assertTrue(worker.live_trading)
+
+    def test_shared_hedged_clock_env_names_are_strictly_validated(self):
+        for strategy_name, prefix in (
+            ("SupertrendBullish", "BULLISH"),
+            ("DonchianBearish", "BEARISH"),
+        ):
+            with self.subTest(strategy_name=strategy_name):
+                worker = self._Worker(strategy_name)
+                with patch.dict(
+                    os.environ,
+                    {"SUPERTREND_SQUARE_OFF_HOUR": "not-an-hour"},
+                ):
+                    errors = master_file._live_config_errors(worker, prefix)
+
+                self.assertIn(
+                    "SUPERTREND_SQUARE_OFF_HOUR is not numeric",
+                    errors,
+                )
+
+    def test_malformed_raw_trading_start_cannot_hide_behind_default(self):
+        worker = self._Worker("Renko")
+        with patch.dict(os.environ, {"RENKO_TRADING_START_HOUR": "bad"}):
+            errors = master_file._live_config_errors(worker, "RENKO")
+
+        self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
+
+
+class TestCoordinatedShutdownSupervisor(unittest.TestCase):
+    """Process finalization is forbidden until local and broker books are flat."""
+
+    class _RuntimeWorker:
+        def __init__(self, *, start_error=None, interrupt_shutdown_once=False):
+            self.start_error = start_error
+            self.interrupt_shutdown_once = interrupt_shutdown_once
+            self.started = False
+            self.alive = False
+            self.shutdown_requests = []
+
+        def start(self):
+            if self.start_error is not None:
+                raise self.start_error
+            self.started = True
+            self.alive = True
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            if self.shutdown_requests:
+                self.alive = False
+
+        def request_worker_shutdown(self, reason):
+            if self.interrupt_shutdown_once:
+                self.interrupt_shutdown_once = False
+                raise KeyboardInterrupt
+            self.shutdown_requests.append(reason)
+
+    class _ShutdownClient:
+        def __init__(self, audits):
+            self.is_logged_in = True
+            self._audits = list(audits)
+            self.logout_calls = 0
+
+        def list_open_orders(self):
+            outcome = self._audits[0]
+            return outcome[0]
+
+        def list_open_positions(self):
+            outcome = self._audits.pop(0) if len(self._audits) > 1 else self._audits[0]
+            return outcome[1]
+
+        def logout(self):
+            self.logout_calls += 1
+
+    @staticmethod
+    def _flat_books():
+        return (BrokerQueryResult.success(()), BrokerQueryResult.success(()))
+
+    @staticmethod
+    def _indeterminate_books():
+        return (
+            BrokerQueryResult.indeterminate("status timeout"),
+            BrokerQueryResult.success(()),
+        )
+
+    def test_ctrl_c_requests_worker_shutdown_without_setting_terminal_event(self):
+        workers = [MagicMock(), MagicMock()]
+        terminal_event = threading.Event()
+
+        count = master_file._request_worker_shutdown(workers, "KEYBOARD_INTERRUPT")
+
+        self.assertEqual(count, 2)
+        self.assertFalse(terminal_event.is_set())
+        for worker in workers:
+            worker.request_worker_shutdown.assert_called_once_with("KEYBOARD_INTERRUPT")
+
+    def test_partial_thread_start_failure_still_coordinates_started_worker(self):
+        fetcher = MagicMock()
+        first = self._RuntimeWorker()
+        second = self._RuntimeWorker(start_error=RuntimeError("start failed"))
+
+        natural_eod = master_file._start_and_supervise_runtime_threads(
+            fetcher,
+            None,
+            [first, second],
+        )
+
+        self.assertFalse(natural_eod)
+        self.assertTrue(first.started)
+        self.assertFalse(first.alive)
+        self.assertEqual(first.shutdown_requests, ["SUPERVISOR_EXCEPTION"])
+
+    def test_interrupt_during_shutdown_request_is_ignored_until_worker_stops(self):
+        fetcher = MagicMock()
+        worker = self._RuntimeWorker(interrupt_shutdown_once=True)
+
+        def interrupt_after_start():
+            worker.started = True
+            worker.alive = True
+            raise KeyboardInterrupt
+
+        worker.start = interrupt_after_start
+
+        natural_eod = master_file._start_and_supervise_runtime_threads(
+            fetcher,
+            None,
+            [worker],
+        )
+
+        self.assertFalse(natural_eod)
+        self.assertFalse(worker.alive)
+        self.assertEqual(worker.shutdown_requests, ["KEYBOARD_INTERRUPT"])
+
+    def test_transient_account_audit_retries_then_proves_flat(self):
+        client = self._ShutdownClient(
+            [self._indeterminate_books(), self._flat_books()]
+        )
+        sleeps = []
+
+        flat = master_file._wait_for_shutdown_account_flat(
+            master_file.SharedMarketDataStore(),
+            client,
+            sleep=sleeps.append,
+            max_attempts=3,
+        )
+
+        self.assertTrue(flat)
+        self.assertEqual(sleeps, [1.0])
+
+    def test_permanent_account_failure_never_allows_clean_finalization(self):
+        client = self._ShutdownClient([self._indeterminate_books()])
+        sleeps = []
+
+        flat = master_file._wait_for_shutdown_account_flat(
+            master_file.SharedMarketDataStore(),
+            client,
+            sleep=sleeps.append,
+            max_attempts=4,
+        )
+
+        self.assertFalse(flat)
+        self.assertEqual(sleeps, [1.0, 2.0, 5.0])
+
+    def test_missing_client_after_live_session_is_not_treated_as_flat(self):
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+
+        audit = master_file._shutdown_account_audit(store, None)
+
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertIn("unavailable", " ".join(audit.reasons).lower())
+
+    def test_shutdown_audit_recovers_logged_out_live_session_before_query(self):
+        class RecoveringClient(self._ShutdownClient):
+            def __init__(self):
+                super().__init__([TestCoordinatedShutdownSupervisor._flat_books()])
+                self.is_logged_in = False
+                self.ensure_calls = 0
+
+            def ensure_logged_in(self):
+                self.ensure_calls += 1
+                self.is_logged_in = True
+                return True
+
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        client = RecoveringClient()
+
+        audit = master_file._shutdown_account_audit(store, client)
+
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertEqual(client.ensure_calls, 1)
+
+    def test_shutdown_audit_keeps_failed_session_recovery_indeterminate(self):
+        client = self._ShutdownClient([self._flat_books()])
+        client.is_logged_in = False
+        client.ensure_logged_in = MagicMock(return_value=False)
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+
+        audit = master_file._shutdown_account_audit(store, client)
+
+        self.assertFalse(audit.safe_to_enable_live)
+        client.ensure_logged_in.assert_called_once_with()
+
+    def test_additional_interrupt_cannot_bypass_final_account_reconciliation(self):
+        client = self._ShutdownClient(
+            [self._indeterminate_books(), self._flat_books()]
+        )
+        sleeps = []
+
+        def interrupted_sleep(delay):
+            sleeps.append(delay)
+            raise KeyboardInterrupt
+
+        flat = master_file._wait_for_shutdown_account_flat(
+            master_file.SharedMarketDataStore(),
+            client,
+            sleep=interrupted_sleep,
+            max_attempts=3,
+        )
+
+        self.assertTrue(flat)
+        self.assertEqual(sleeps, [1.0])
+
+    def test_logout_results_and_refresh_are_blocked_while_broker_is_indeterminate(self):
+        client = self._ShutdownClient([self._indeterminate_books()])
+        workers = [MagicMock()]
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                workers,
+                master_file.SharedMarketDataStore(),
+                client,
+                trade_event_queue=None,
+                natural_eod=True,
+            )
+
+        self.assertFalse(finalized)
+        self.assertEqual(client.logout_calls, 0)
+        summary.assert_not_called()
+        sheet.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_interrupt_during_final_flat_audit_blocks_finalization(self):
+        client = self._ShutdownClient([self._flat_books()])
+        with (
+            patch.object(
+                master_file,
+                "_shutdown_account_audit",
+                side_effect=KeyboardInterrupt,
+            ),
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                [MagicMock()],
+                master_file.SharedMarketDataStore(),
+                client,
+                trade_event_queue=None,
+                natural_eod=True,
+            )
+
+        self.assertFalse(finalized)
+        self.assertEqual(client.logout_calls, 0)
+        summary.assert_not_called()
+        sheet.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_flat_session_may_logout_and_refresh_after_final_audit(self):
+        client = self._ShutdownClient([self._flat_books()])
+        workers = [MagicMock()]
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                workers,
+                master_file.SharedMarketDataStore(),
+                client,
+                trade_event_queue=None,
+                natural_eod=False,
+            )
+
+        self.assertTrue(finalized)
+        self.assertEqual(client.logout_calls, 1)
+        summary.assert_not_called()
+        sheet.assert_not_called()
+        refresh.assert_called_once_with()
 
 
 if __name__ == "__main__":
