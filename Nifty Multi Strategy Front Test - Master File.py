@@ -4834,20 +4834,23 @@ class BasePaperStrategyWorker(threading.Thread):
         )
 
     def request_worker_shutdown(self, reason: str) -> None:
-        """Block entries immediately and start this worker's safe shutdown."""
+        """Block THIS worker's entries immediately and start its safe shutdown.
+
+        The block is deliberately scoped to this one worker: its own lifecycle
+        gate refuses new opening orders both at the top of `_place_real_leg`
+        and again at the final broker-submission boundary, so a max-loss stop
+        or an early square-off here never freezes the shared account-wide
+        entry gate that the OTHER strategies are still trading through.  The
+        shared gate stays reserved for conditions that genuinely make the
+        whole account unsafe: indeterminate broker exposure, a failed startup
+        audit, and the stale-market-data guard.
+        """
 
         before = self.lifecycle.snapshot()
         snapshot = self.lifecycle.request_shutdown(reason)
         if before.state is LifecycleState.RUNNING:
-            # An unattributed freeze is intentional: shutdown forbids even a
-            # planned basket companion from increasing account exposure.
-            self.store.execution_safety.freeze_entries(
-                f"{self.strategy_name} shutdown requested: {snapshot.shutdown_reason}"
-            )
-            self._live_execution_frozen = True
-            self._live_execution_freeze_reason = snapshot.shutdown_reason
             self.log.warning(
-                "LIFECYCLE %s -> %s | reason=%s | new entries blocked.",
+                "LIFECYCLE %s -> %s | reason=%s | new entries blocked for this worker.",
                 before.state.value,
                 snapshot.state.value,
                 snapshot.shutdown_reason,

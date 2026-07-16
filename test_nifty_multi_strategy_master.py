@@ -4008,6 +4008,34 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertFalse(self.worker.pos.active)
         self.assertEqual(self.store.execution_ledger.active_states(), ())
 
+    def test_worker_shutdown_blocks_only_its_own_entries(self):
+        """One strategy's shutdown must not freeze the shared account gate.
+
+        A paper strategy's max-loss stop (or the earliest 15:15 square-off)
+        blocks new entries for THAT worker through its own lifecycle gate; the
+        other live strategies keep trading. The shared freeze stays reserved
+        for genuinely account-wide conditions (indeterminate exposure, a
+        failed startup audit).
+        """
+
+        self.worker.live_trading = True
+        self.worker.request_worker_shutdown("MAX_LOSS_BREACH")
+
+        # The shared account-wide gate is untouched...
+        frozen, _reason = self.store.execution_safety.entry_freeze_snapshot()
+        self.assertFalse(frozen)
+
+        # ...but this worker's own entries are refused at the order boundary.
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            entered = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+        self.assertFalse(entered)
+        self.assertEqual(fake.calls, [])
+        self.assertFalse(self.worker.pos.active)
+
     def test_live_exit_still_reduces_after_entry_gate_is_disabled(self):
         """Turning off future entries must never suppress a known live close."""
 
