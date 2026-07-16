@@ -222,8 +222,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fake", action="store_true", help="Use the built-in always-HOLD runner (no SDK/cost).")
     parser.add_argument("--warmup", type=int, default=30, help="Min completed bars before the first decision.")
     parser.add_argument("--max-bars", type=int, default=0, help="Cap the number of decisions (0 = all).")
-    parser.add_argument("--lots", type=int, default=int(_env("SL_HUNTING_LOTS", "1")))
+    parser.add_argument(
+        "--lots",
+        type=int,
+        default=int(_env("SL_HUNTING_LOTS", "1")),
+        help="Legacy recovery fallback only; accepted entries use hard-budget sizing.",
+    )
     parser.add_argument("--lot-size", type=int, default=int(_env("NIFTY_LOT_SIZE", "75")))
+    parser.add_argument(
+        "--risk-budget",
+        type=float,
+        default=float(_env("SL_HUNTING_RISK_BUDGET", "2500")),
+        help="Hard NIFTY-leg risk budget used to floor affordable whole lots.",
+    )
+    parser.add_argument(
+        "--max-lots",
+        type=int,
+        default=int(_env("SL_HUNTING_MAX_LOTS", "5")),
+        help="Hard ceiling for dynamically sized NIFTY lots.",
+    )
     parser.add_argument("--journal", default=_DEFAULT_JOURNAL,
                         help="Path to the trade-journal JSONL (the coach reads this).")
     parser.add_argument("--no-journal", action="store_true", help="Disable trade journaling.")
@@ -267,7 +284,12 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Lessons ON: injected %d learned-lesson chars from %s.", len(lessons_block), args.lessons_path)
     runner = _AlwaysHoldRunner() if args.fake else None
     agent = SLHuntingAgent(model=args.model, runner=runner, fast_mode=args.fast, lessons_block=lessons_block)
-    ex = StandaloneExecutor(lots=args.lots, lot_size=args.lot_size)
+    ex = StandaloneExecutor(
+        lots=args.lots,
+        lot_size=args.lot_size,
+        risk_budget=args.risk_budget,
+        max_lots=args.max_lots,
+    )
 
     journal = None if args.no_journal else TradeJournal(args.journal)
     if journal is not None:

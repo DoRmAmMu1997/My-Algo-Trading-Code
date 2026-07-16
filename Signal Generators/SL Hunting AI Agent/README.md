@@ -28,8 +28,9 @@ and runs one agentic pass:
 
 `ENTER_LONG` buys an ATM **CALL**; `ENTER_SHORT` buys an ATM **PUT**. Stops and
 targets are levels on the NIFTY **underlying** (spot). The agent does **not** choose
-the lot count — position size is computed automatically so the worst-case risk is
-**~₹2500 per trade** (`SL_HUNTING_RISK_BUDGET`), from the agent's stop distance.
+the lot count. Position size floors the affordable whole lots from the agent's
+stop distance, never exceeds `SL_HUNTING_RISK_BUDGET`, skips the setup when even
+one NIFTY lot is unaffordable, and caps at `SL_HUNTING_MAX_LOTS` (default 5).
 
 ## Files
 | File | Purpose |
@@ -223,7 +224,7 @@ expiry** (BNF has no weekly series), rolling to the next month once fewer than
 `SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS` (default 7) days remain to it — never the illiquid
 second month out. Entry stays NIFTY-only (the mirror copies it). The mirror
 is mechanical; same paper/live gates as the NIFTY leg; fail-soft (a mirror problem only skips
-the mirror); **basket risk ≈ 2× the ~Rs.2500 budget** (operator-accepted — the daily max-loss
+the mirror); **basket risk can be roughly 2× the NIFTY-leg budget** (operator-accepted — the daily max-loss
 kill-switch still caps the day). Toggle: `SL_HUNTING_BNF_MIRROR` (default true). Journal rows'
 `option_pnl` includes both legs; MIRROR ENTRY/EXIT lines appear in the log and Telegram.
 
