@@ -64,11 +64,14 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import requests
+
+from Dependencies.secret_redaction import redact_payload, redact_text
 
 # Make the broker-neutral contract available both when the master dynamically
 # loads this file and when the sibling diagnostic runs it as a standalone script.
@@ -314,7 +317,7 @@ class ShoonyaExecutionClient:
         aborted login -> paper fallback.
         """
         try:
-            return input("Enter Shoonya TOTP (6 digits from your authenticator app): ").strip()
+            return getpass("Enter Shoonya TOTP (input hidden): ").strip()
         except (EOFError, OSError):
             return ""
 
@@ -380,7 +383,11 @@ class ShoonyaExecutionClient:
             if not isinstance(resp, dict) or str(resp.get("stat", "")).strip().lower() != "ok":
                 self.is_logged_in = False
                 self.client = None
-                log.error(f"Shoonya login failed (no valid session). Raw response: {resp}")
+                secrets = (userid, password, two_fa, vendor_code, api_secret, imei)
+                log.error(
+                    "Shoonya login failed (no valid session). Response: %s",
+                    redact_payload(resp, secrets),
+                )
                 return False
 
             self.is_logged_in = True
@@ -402,7 +409,7 @@ class ShoonyaExecutionClient:
                 hint = (" -- Shoonya returned a non-JSON response (e.g. an HTTP 502 / "
                         "maintenance page), which usually means the broker API is "
                         "temporarily down. This is server-side; retry in a few minutes.")
-            log.error(f"Shoonya execution client login failed: {exc}{hint}")
+            log.error("Shoonya execution client login failed: %s%s", redact_text(exc), hint)
             return False
 
     def ensure_logged_in(self) -> bool:

@@ -73,7 +73,15 @@ from __future__ import annotations
 import os
 import re
 import sys
+from getpass import getpass
 from pathlib import Path
+
+# Keep the repo root importable when this file is launched directly.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
 # --- Third-party imports (lazy, with friendly errors) ------------------------
 # We import dhanhq lazily so the script can give a clear error message if the
@@ -276,7 +284,7 @@ def main() -> None:
     try:
         consent = login.generate_login_session(api_key, api_secret)
     except Exception as exc:
-        print(f"ERROR: generate_login_session failed: {exc}")
+        print(f"ERROR: generate_login_session failed: {redact_text(exc, (api_key, api_secret))}")
         sys.exit(2)
 
     # The SDK returns either a raw consent id string or a dict-like response
@@ -301,7 +309,10 @@ def main() -> None:
         # Hit this if DhanHQ changes their wire format. The raw response is
         # printed so the user (or a future version of this script) can
         # adapt the parsing.
-        print(f"ERROR: could not parse consentAppId from response: {consent!r}")
+        print(
+            "ERROR: could not parse consentAppId from response shape: "
+            f"{type(consent).__name__} {redact_payload(consent, (api_key, api_secret))!r}"
+        )
         sys.exit(2)
 
     # The login URL is constructed by appending the consent ID. DhanHQ does
@@ -323,7 +334,7 @@ def main() -> None:
 
     # `input()` blocks the script until the user hits Enter. Paste-friendly
     # extraction happens in `_extract_token_id`.
-    user_input = input("\ntokenId (or full redirect URL): ").strip()
+    user_input = getpass("\ntokenId (or full redirect URL; input hidden): ").strip()
     token_id = _extract_token_id(user_input)
     if not token_id:
         print("ERROR: empty tokenId. Aborting.")
@@ -338,7 +349,10 @@ def main() -> None:
     try:
         access_response = login.consume_token_id(token_id, api_key, api_secret)
     except Exception as exc:
-        print(f"ERROR: consume_token_id failed: {exc}")
+        print(
+            "ERROR: consume_token_id failed: "
+            f"{redact_text(exc, (token_id, api_key, api_secret))}"
+        )
         sys.exit(3)
 
     # Same defensive parsing as in Step 1 -- handle multiple possible
@@ -359,7 +373,11 @@ def main() -> None:
                     break
 
     if not access_token:
-        print(f"ERROR: could not parse accessToken from response: {access_response!r}")
+        print(
+            "ERROR: could not parse accessToken from response shape: "
+            f"{type(access_response).__name__} "
+            f"{redact_payload(access_response, (token_id, api_key, api_secret))!r}"
+        )
         sys.exit(3)
 
     # --- Validation: hit /v2/profile to confirm the token actually works ------
@@ -370,7 +388,10 @@ def main() -> None:
     try:
         profile = login.user_profile(access_token)
     except Exception as exc:
-        print(f"WARNING: token was generated but validation failed: {exc}")
+        print(
+            "WARNING: token was generated but validation failed: "
+            f"{redact_text(exc, (access_token, api_key, api_secret))}"
+        )
         print("Writing it to .env anyway so you can debug from there.")
     else:
         # Surface a friendly identifier from the profile response so the
