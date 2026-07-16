@@ -82,6 +82,7 @@ if str(_DEPENDENCIES_DIR) not in sys.path:
     sys.path.insert(0, str(_DEPENDENCIES_DIR))
 
 from broker_contract import (  # noqa: E402
+    TERMINAL_BROKER_STATES,
     BrokerQueryResult,
     OpenOrder,
     OpenPosition,
@@ -908,10 +909,20 @@ class KotakExecutionClient:
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
-        """Poll briefly for a terminal result without hiding ambiguity.
+        """Poll until the order reaches a truly terminal state, or time out.
 
         Every status read still flows through the same single-worker executor, so
         it cannot overlap the placement call that preceded it.
+
+        Why the loop keeps polling on PARTIAL/UNKNOWN snapshots: a market order
+        is often observed mid-fill (state "open" with some quantity already
+        traded) or in one of Kotak's routine hand-off states ("validation
+        pending", "put order req received").  Those are TRANSIENT -- the next
+        0.5s poll usually shows COMPLETE -- so returning them as the final
+        outcome would freeze every live strategy over a perfectly healthy
+        order.  A partial/unknown snapshot becomes the real outcome only when
+        the broker label is terminal (the order can never fill further, e.g. a
+        partial fill followed by a cancel) or the timeout below expires.
         """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_result = normalize_order_result(
@@ -923,11 +934,15 @@ class KotakExecutionClient:
         )
         while time.monotonic() < deadline:
             last_result = self.get_order_status(order_id, requested_quantity=want_qty)
-            if last_result.status is not OrderStatus.UNKNOWN:
+            if last_result.status in {OrderStatus.FILLED, OrderStatus.REJECTED}:
+                return last_result
+            if last_result.broker_state in TERMINAL_BROKER_STATES:
+                # Terminal label with a partial/contradictory quantity snapshot:
+                # no further fills are possible, so this IS the final outcome.
                 return last_result
             if "error:" in last_result.reason.lower() or self.session_poisoned:
-                return last_result
-            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                # A failed status read is already indeterminate; repeating it
+                # inside the same order interaction adds no evidence.
                 return last_result
             time.sleep(_FILL_POLL_INTERVAL)
         return normalize_order_result(

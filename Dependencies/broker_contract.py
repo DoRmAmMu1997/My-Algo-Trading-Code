@@ -89,6 +89,16 @@ _PARTIAL_STATES = frozenset(
     {"PARTIAL", "PARTIALLY FILLED", "PARTIALLY_FILLED", "PARTIALLY-FILLED"}
 )
 
+# Every broker label that means "this order can never fill any further".  The
+# adapters' fill-confirmation loops poll until they see one of these (or their
+# timeout expires): anything else -- "OPEN", "PENDING", Kotak's "VALIDATION
+# PENDING" / "PUT ORDER REQ RECEIVED", or an unrecognized label -- is a
+# TRANSIENT state that a healthy order passes through on its way to COMPLETE,
+# so returning early on it would report a half-finished snapshot as the final
+# outcome.  This is deliberately the same terminality rule the execution
+# ledger applies when it decides whether a PARTIAL fill is final.
+TERMINAL_BROKER_STATES = _FILLED_STATES | _REJECTED_STATES
+
 
 def _non_negative_int(value: Any) -> int | None:
     """Return an exact non-negative integer, never a rounded quantity."""
