@@ -80,6 +80,7 @@ if str(_DEPENDENCIES_DIR) not in sys.path:
     sys.path.insert(0, str(_DEPENDENCIES_DIR))
 
 from broker_contract import (  # noqa: E402
+    TERMINAL_BROKER_STATES,
     BrokerQueryResult,
     OpenOrder,
     OpenPosition,
@@ -273,7 +274,15 @@ class ShoonyaExecutionClient:
             self._lock.release()
 
     def recover_after_reconciliation(self) -> bool:
-        """Explicitly clear deadline poison after the abandoned call has ended."""
+        """Explicitly clear deadline poison after the abandoned call has ended.
+
+        "Poisoned" means an earlier call outlived its 10-second budget and was
+        abandoned -- but Python cannot kill a running thread, so that call may
+        STILL be executing inside the SDK and may still place/affect an order.
+        Only after (a) reconciliation has proven the account state and (b) the
+        abandoned call has actually finished is it safe to accept new orders;
+        this method refuses (returns False) until both hold.
+        """
 
         with self._lock:
             if self._timed_out_future is not None and not self._timed_out_future.done():
@@ -794,10 +803,19 @@ class ShoonyaExecutionClient:
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
-        """Poll briefly for a terminal result without hiding ambiguity.
+        """Poll until the order reaches a truly terminal state, or time out.
 
         Polling happens outside the lock; each history request re-takes it only
         for the native, deadline-bound Noren call.
+
+        Why the loop keeps polling on PARTIAL/UNKNOWN snapshots: a market order
+        is often observed mid-fill (Noren state "open" with some quantity
+        already traded on `fillshares`).  That is TRANSIENT -- the next 0.5s
+        poll usually shows COMPLETE -- so returning it as the final outcome
+        would freeze every live strategy over a perfectly healthy order.  A
+        partial/unknown snapshot becomes the real outcome only when the broker
+        label is terminal (the order can never fill further, e.g. a partial
+        fill followed by a cancel) or the timeout below expires.
         """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_result = normalize_order_result(
@@ -809,11 +827,15 @@ class ShoonyaExecutionClient:
         )
         while time.monotonic() < deadline:
             last_result = self.get_order_status(order_id, requested_quantity=want_qty)
-            if last_result.status is not OrderStatus.UNKNOWN:
+            if last_result.status in {OrderStatus.FILLED, OrderStatus.REJECTED}:
+                return last_result
+            if last_result.broker_state in TERMINAL_BROKER_STATES:
+                # Terminal label with a partial/contradictory quantity snapshot:
+                # no further fills are possible, so this IS the final outcome.
                 return last_result
             if "error:" in last_result.reason.lower():
-                return last_result
-            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                # A failed status read is already indeterminate; repeating it
+                # inside the same order interaction adds no evidence.
                 return last_result
             time.sleep(_FILL_POLL_INTERVAL)
         return normalize_order_result(

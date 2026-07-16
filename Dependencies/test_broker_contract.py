@@ -306,6 +306,62 @@ def test_flattrade_place_order_normalizes_terminal_outcomes(
     assert result.remaining_quantity == remaining
 
 
+def test_flattrade_mid_fill_open_snapshot_polls_to_completion(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A market order caught mid-fill (state OPEN) is transient, not terminal.
+
+    Returning that first snapshot as PARTIAL would freeze every live entry
+    over a healthy order; the loop must poll again and report the full fill.
+    """
+
+    client = _ready_flattrade_client(flattrade_module, monkeypatch)
+    monkeypatch.setattr(flattrade_module, "_FILL_POLL_INTERVAL", 0.001)
+    replies = iter(
+        [
+            {"stat": "Ok", "norenordno": "FT-MIDFILL"},
+            [{"stat": "Ok", "status": "OPEN", "fillshares": "25", "qty": "75"}],
+            [{"stat": "Ok", "status": "COMPLETE", "fillshares": "75", "qty": "75"}],
+        ]
+    )
+    monkeypatch.setattr(client, "_post_api", lambda *args, **kwargs: next(replies))
+
+    result = client.place_market_order("NIFTY", "BUY", 75)
+
+    assert result.status.name == "FILLED"
+    assert result.order_id == "FT-MIDFILL"
+    assert result.filled_quantity == 75
+    assert result.remaining_quantity == 0
+
+
+def test_flattrade_partial_then_cancelled_is_terminal_partial(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A partial fill followed by a cancel can never fill further.
+
+    The terminal broker label makes the very first snapshot the final
+    outcome; no further polling is needed (or possible -- the reply iterator
+    holds exactly one status response).
+    """
+
+    client = _ready_flattrade_client(flattrade_module, monkeypatch)
+    replies = iter(
+        [
+            {"stat": "Ok", "norenordno": "FT-PARTCXL"},
+            [{"stat": "Ok", "status": "CANCELED", "fillshares": "25", "qty": "75"}],
+        ]
+    )
+    monkeypatch.setattr(client, "_post_api", lambda *args, **kwargs: next(replies))
+
+    result = client.place_market_order("NIFTY", "BUY", 75)
+
+    assert result.status.name == "PARTIAL"
+    assert result.filled_quantity == 25
+    assert result.remaining_quantity == 50
+
+
 def test_flattrade_transmits_execution_ledger_tag(
     flattrade_module: ModuleType,
     monkeypatch,
@@ -863,6 +919,40 @@ def test_shoonya_place_order_normalizes_terminal_outcomes(
     assert result.remaining_quantity == remaining
 
 
+def test_shoonya_mid_fill_open_snapshot_polls_to_completion(
+    shoonya_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A mid-fill OPEN snapshot keeps polling until the fill completes."""
+
+    class _SequencedNoren(_FakeNorenClient):
+        """History fake that replays a sequence, then repeats the last reply."""
+
+        def __init__(self, sequence) -> None:
+            super().__init__()
+            self._sequence = list(sequence)
+
+        def single_order_history(self, order_id):
+            if len(self._sequence) > 1:
+                return self._sequence.pop(0)
+            return self._sequence[0]
+
+    fake = _SequencedNoren(
+        [
+            [{"stat": "Ok", "status": "OPEN", "fillshares": "25", "qty": "75"}],
+            [{"stat": "Ok", "status": "COMPLETE", "fillshares": "75", "qty": "75"}],
+        ]
+    )
+    client = _ready_shoonya_client(shoonya_module, monkeypatch, fake)
+    monkeypatch.setattr(shoonya_module, "_FILL_POLL_INTERVAL", 0.001)
+
+    result = client.place_market_order("NIFTY", "BUY", 75)
+
+    assert result.status.name == "FILLED"
+    assert result.filled_quantity == 75
+    assert result.remaining_quantity == 0
+
+
 def test_shoonya_transmits_execution_ledger_tag(
     shoonya_module: ModuleType,
     monkeypatch,
@@ -1403,6 +1493,45 @@ def test_kotak_place_order_normalizes_terminal_outcomes(
     assert result.order_id == "KT-1"
     assert result.filled_quantity == filled
     assert result.remaining_quantity == remaining
+
+
+def test_kotak_transient_hand_off_states_poll_to_completion(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Kotak's routine hand-off states must not end fill confirmation early.
+
+    "put order req received" and "validation pending" are states every healthy
+    Kotak order passes through.  Treating them as terminal would report a
+    perfectly normal order as UNKNOWN and freeze all live entries.
+    """
+
+    class _SequencedKotakSdk(_FakeKotakSdk):
+        """History fake that replays a sequence, then repeats the last row."""
+
+        def __init__(self, rows) -> None:
+            super().__init__()
+            self._rows = list(rows)
+
+        def order_history(self, order_id):
+            row = self._rows.pop(0) if len(self._rows) > 1 else self._rows[0]
+            return {"data": {"stat": "Ok", "data": [row]}}
+
+    fake = _SequencedKotakSdk(
+        [
+            {"ordSt": "put order req received", "fldQty": "0", "qty": "75"},
+            {"ordSt": "validation pending", "fldQty": "0", "qty": "75"},
+            {"ordSt": "complete", "fldQty": "75", "qty": "75"},
+        ]
+    )
+    client = _ready_kotak_client(kotak_module, monkeypatch, fake)
+    monkeypatch.setattr(kotak_module, "_FILL_POLL_INTERVAL", 0.001)
+
+    result = client.place_market_order("NIFTY", "BUY", 75)
+
+    assert result.status.name == "FILLED"
+    assert result.filled_quantity == 75
+    assert client.session_poisoned is False
 
 
 def test_kotak_zero_broker_quantity_cannot_confirm_a_fill(
