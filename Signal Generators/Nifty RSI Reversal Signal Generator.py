@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, rsi
+from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, rsi, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,7 @@ class RSIReversalConfig:
     target_pct: float = 0.04      # profit target, 4% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if int(self.rsi_period) <= 0:
             raise ValueError("rsi_period must be positive.")
         if not (0.0 < float(self.oversold) < float(self.overbought) < 100.0):

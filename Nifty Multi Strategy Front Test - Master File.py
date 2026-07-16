@@ -4700,6 +4700,11 @@ class BasePaperStrategyWorker(threading.Thread):
         """
         return MIN_BARS
 
+    def minimum_source_rows(self) -> int:
+        """Minimum raw snapshot rows required before building strategy data."""
+
+        return MIN_BARS
+
     def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
         """Optional pre-signal hook for entries tied to an observed future slot.
 
@@ -5077,7 +5082,7 @@ class BasePaperStrategyWorker(threading.Thread):
                     # process start). Wait politely instead of crashing.
                     self.wait_for_next_poll()
                     continue
-                if len(snapshot.frame) < MIN_BARS:
+                if len(snapshot.frame) < self.minimum_source_rows():
                     # Have data, but not enough warm-up history yet.
                     self.wait_for_next_poll()
                     continue
@@ -5863,7 +5868,14 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
         self.exit_count += 1
 
     def minimum_strategy_rows(self) -> int:
-        return PROFIT_SHOOTER_MIN_BARS
+        # A restored/open trade needs only the latest candle for hard-stop
+        # handling.  The full warm-up remains mandatory while flat.
+        return 1 if self.pos.active else PROFIT_SHOOTER_MIN_BARS
+
+    def minimum_source_rows(self) -> int:
+        """Do not let source-history warm-up suppress an existing hard stop."""
+
+        return 1 if self.pos.active else MIN_BARS
 
     def _compute_entry_sizing(
         self,
@@ -7064,10 +7076,12 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
         if decision.action == "BUY_CALL":
             if self.enter_position("LONG", decision.entry_underlying):
                 self.entry_submit_count += 1
+                self.signal_engine.acknowledge_entry()
             return
         if decision.action == "BUY_PUT":
             if self.enter_position("SHORT", decision.entry_underlying):
                 self.entry_submit_count += 1
+                self.signal_engine.acknowledge_entry()
             return
 
 

@@ -28,25 +28,16 @@ Indicator note:
   - SMA
   - EMA
   - ATR
-- If TA-Lib is not installed, the file falls back to pandas-based
-  implementations so the strategy can still run.
+- TA-Lib 0.6.8 is mandatory so every runtime uses identical indicator
+  warm-up and smoothing semantics.
 """
 
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-
-try:
-    # TA-Lib is the preferred path because it gives us the standard,
-    # battle-tested indicator implementations traders usually expect from
-    # charting software and broker platforms.
-    import talib
-except ImportError:  # pragma: no cover - fallback only used when TA-Lib is unavailable
-    # We intentionally keep a fallback path so the strategy does not become
-    # unusable in environments where TA-Lib is not installed yet. (The ignore
-    # carries both codes because the error only exists where stubs are present.)
-    talib = None  # type: ignore[assignment, unused-ignore]
+import talib
+from subhamoy_strategy_common import validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -90,6 +81,7 @@ class ProfitShooterConfig:
     pin_bar_end_zone_ratio: float = 0.40
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         # Validate all "count/period" values up front so the rest of the code
         # can safely assume the config is mathematically valid.
         period_fields = {
@@ -107,6 +99,8 @@ class ProfitShooterConfig:
                 "All period/count values must be positive. "
                 f"Invalid: {', '.join(invalid_periods)}"
             )
+        if int(self.sma_fast_period) >= int(self.sma_slow_period):
+            raise ValueError("`sma_fast_period` must be smaller than `sma_slow_period`.")
 
         # The strategy cannot ask for "at least 5 pullback candles in the last
         # 3 candles", so this relationship must also be checked.
@@ -221,34 +215,6 @@ def _resolve_timestamp(ohlc: pd.DataFrame) -> pd.Series:
     if timestamp.isna().all():
         raise ValueError("A valid 'timestamp' column or datetime-like index is required.")
     return timestamp
-
-
-def _fallback_sma(values: pd.Series, period: int) -> pd.Series:
-    """SMA fallback used only when TA-Lib is unavailable."""
-    # A simple moving average is just the mean of the last `period` values.
-    return values.rolling(window=period, min_periods=period).mean()
-
-
-def _fallback_ema(values: pd.Series, period: int) -> pd.Series:
-    """EMA fallback used only when TA-Lib is unavailable."""
-    # `adjust=False` keeps the recursive EMA behavior most traders expect.
-    return values.ewm(span=period, adjust=False, min_periods=period).mean()
-
-
-def _fallback_atr(df: pd.DataFrame, period: int) -> pd.Series:
-    """ATR fallback matching the standard True Range definition."""
-    # ATR first needs True Range, which captures both the candle's internal
-    # range and any gap versus the previous close.
-    prev_close = df["close"].shift(1)
-    tr = pd.concat(
-        [
-            (df["high"] - df["low"]).abs(),
-            (df["high"] - prev_close).abs(),
-            (df["low"] - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
 
 
 def _strict_monotonic(series: pd.Series, lookback: int, direction: str) -> pd.Series:
@@ -400,37 +366,20 @@ def build_profit_shooter_with_indicators(
     high = frame["high"].astype(float)
     low = frame["low"].astype(float)
 
-    # Indicator stage:
-    # Prefer TA-Lib whenever available. This is exactly what the user asked
-    # for. If TA-Lib is missing, fall back to pandas implementations so the
-    # file remains portable.
-    if talib is not None:
-        # np.asarray with an explicit np.float64 dtype does the same conversion
-        # as .to_numpy(dtype="float64") but is typed as a float64 array, which
-        # is exactly what TA-Lib's type stubs require.
-        close_values = np.asarray(close, dtype=np.float64)
-        high_values = np.asarray(high, dtype=np.float64)
-        low_values = np.asarray(low, dtype=np.float64)
-
-        # TA-Lib path:
-        # - SMA20 and SMA200 for trend structure
-        # - EMA9 for trailing exit logic
-        # - ATR14 for proximity and stop buffering
-        frame["sma20"] = talib.SMA(close_values, timeperiod=config.sma_fast_period)
-        frame["sma200"] = talib.SMA(close_values, timeperiod=config.sma_slow_period)
-        frame["ema9"] = talib.EMA(close_values, timeperiod=config.trailing_ema_period)
-        frame["atr"] = talib.ATR(
-            high_values,
-            low_values,
-            close_values,
-            timeperiod=config.atr_period,
-        )
-    else:
-        # Fallback path used only when TA-Lib is unavailable.
-        frame["sma20"] = _fallback_sma(close, config.sma_fast_period)
-        frame["sma200"] = _fallback_sma(close, config.sma_slow_period)
-        frame["ema9"] = _fallback_ema(close, config.trailing_ema_period)
-        frame["atr"] = _fallback_atr(frame, config.atr_period)
+    # The exact pinned TA-Lib build is the sole indicator backend, keeping
+    # entry and trailing semantics identical across supported runtimes.
+    close_values = np.asarray(close, dtype=np.float64)
+    high_values = np.asarray(high, dtype=np.float64)
+    low_values = np.asarray(low, dtype=np.float64)
+    frame["sma20"] = talib.SMA(close_values, timeperiod=config.sma_fast_period)
+    frame["sma200"] = talib.SMA(close_values, timeperiod=config.sma_slow_period)
+    frame["ema9"] = talib.EMA(close_values, timeperiod=config.trailing_ema_period)
+    frame["atr"] = talib.ATR(
+        high_values,
+        low_values,
+        close_values,
+        timeperiod=config.atr_period,
+    )
 
     # Candle anatomy stage:
     # These are the exact measurements required by the pin-bar definition.
@@ -788,16 +737,27 @@ class ProfitShooterSignalEngine:
             )
         _require_columns(candles_with_indicators, required_columns)
 
-        # Warm-up guard:
-        # We avoid trading until all major indicators and lookback checks have
-        # enough history to be trustworthy.
-        if len(candles_with_indicators) < self._minimum_history_bars():
+        current = candles_with_indicators.iloc[-1]
+
+        # Existing exposure is managed before any entry-indicator warm-up
+        # check.  A hard stop depends only on the current candle and must remain
+        # active after restart even when the restored snapshot has fewer than
+        # SMA200's required bars.
+        if position is not None:
+            risk_values = pd.Series(
+                [current["open"], current["high"], current["low"], current["close"]]
+            )
+            if risk_values.map(np.isfinite).all():
+                return self._evaluate_exit(position, current)
             return self._hold(
-                trailing_active=bool(position.trailing_active) if position else False,
-                pending_trailing_exit=bool(position.pending_trailing_exit) if position else False,
+                trailing_active=bool(position.trailing_active),
+                pending_trailing_exit=bool(position.pending_trailing_exit),
             )
 
-        current = candles_with_indicators.iloc[-1]
+        # Warm-up guards apply only to fresh entries.  They must never disable
+        # mechanical risk management for a position that is already open.
+        if len(candles_with_indicators) < self._minimum_history_bars():
+            return self._hold()
 
         # Even if the DataFrame is long enough overall, the latest row could
         # still contain NaN values. We refuse to trade on incomplete data.
@@ -815,11 +775,6 @@ class ProfitShooterSignalEngine:
                 trailing_active=bool(position.trailing_active) if position else False,
                 pending_trailing_exit=bool(position.pending_trailing_exit) if position else False,
             )
-
-        if position is not None:
-            # If a trade is already open, entry logic is ignored completely.
-            # The only question is whether we should keep holding or exit now.
-            return self._evaluate_exit(position, current)
 
         if bool(current["long_entry_trigger"]):
             # Long entry always happens on the breakout candle, not the setup

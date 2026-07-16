@@ -50,13 +50,13 @@ both use "Wilder's smoothing" (also known as RMA). Using `talib.ATR`:
 
 IMPORTANT: TA-Lib DOES NOT provide a built-in Supertrend function. So we
 still have to compute the Supertrend bands and direction ourselves. This
-file uses `talib.ATR` when available, and falls back to a pandas-based RMA
-ATR if TA-Lib is not installed on the machine.
+this file uses the repository's mandatory, exactly pinned `talib.ATR` build.
 """
 
 from __future__ import annotations
 
 import contextlib
+import math
 from collections.abc import Iterable
 
 # --- Standard library imports ------------------------------------------------
@@ -75,18 +75,7 @@ import numpy as np
 
 # pandas is the tabular-data library we accept as input and return as output.
 import pandas as pd
-
-# --- Optional TA-Lib import --------------------------------------------------
-# We try to import TA-Lib. If the user's environment does not have it, we
-# simply set `_TALIB_AVAILABLE = False` and compute ATR manually later.
-# This "try/except ImportError" pattern keeps the module import-safe even
-# when optional native libraries are missing.
-try:
-    import talib  # type: ignore
-    _TALIB_AVAILABLE = True
-except ImportError:  # pragma: no cover - only exercised when TA-Lib missing
-    talib = None  # type: ignore
-    _TALIB_AVAILABLE = False
+import talib
 
 
 # =============================================================================
@@ -129,6 +118,13 @@ class SupertrendSettings:
 
     atr_length: int = 14
     factor: float = 3.0
+
+    def __post_init__(self) -> None:
+        values = (float(self.atr_length), float(self.factor))
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Supertrend configuration values must be finite.")
+        if int(self.atr_length) <= 0 or float(self.factor) <= 0.0:
+            raise ValueError("atr_length and factor must be positive.")
 
 
 @dataclass(slots=True)
@@ -242,92 +238,8 @@ def _prepare_ohlc_frame(data: pd.DataFrame) -> pd.DataFrame:
 
 
 # =============================================================================
-# ATR CALCULATION (TA-LIB PRIMARY, PANDAS FALLBACK)
+# ATR CALCULATION (PINNED TA-LIB)
 # =============================================================================
-def _rma(series: pd.Series, period: int) -> pd.Series:
-    """
-    Wilder's moving average, also known as RMA or SMMA.
-
-    Many indicators (ATR, RSI, ADX) historically use Wilder's smoothing
-    instead of a simple moving average. The math is a special form of
-    exponential moving average where:
-        alpha = 1 / period
-
-    Beginner intuition:
-    - RMA weights the most recent bar by 1/period (small weight).
-    - Older bars keep most of the value.
-    - This makes the output smoother and slower-reacting than a simple EMA
-      of the same period, but still responsive.
-
-    We use `Series.ewm(..., adjust=False)` to match TradingView / TA-Lib.
-    """
-    period = max(int(period), 1)
-    return series.ewm(alpha=1.0 / float(period), adjust=False).mean()
-
-
-def _true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
-    """
-    True Range (TR) per bar.
-
-    For each candle, TR = max of three things:
-    1. High - Low                    (today's full range)
-    2. |High - Previous Close|       (gap up from yesterday's close)
-    3. |Low  - Previous Close|       (gap down from yesterday's close)
-
-    By taking the max of those three, TR captures both intraday range AND
-    overnight/weekend gaps. That is why ATR is used instead of just high-low.
-    """
-    prev_close = close.shift(1)
-    # `pd.concat(..., axis=1)` places the three candidate values as columns,
-    # then `.max(axis=1)` takes the row-wise maximum.
-    tr = pd.concat(
-        [
-            (high - low).abs(),
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return tr
-
-
-def _atr_manual(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
-    """
-    Pandas-only ATR used as the fallback path when TA-Lib is not installed.
-
-    We intentionally mirror TA-Lib's warm-up behavior so both code paths
-    produce numerically identical output:
-      1. The first `period` bars return NaN (not enough data for a full TR).
-      2. The value at bar index `period` is the simple average of the first
-         `period` True Range values (this is TA-Lib's seed).
-      3. Every subsequent bar uses Wilder's recursive formula:
-             ATR[i] = (ATR[i-1] * (period - 1) + TR[i]) / period
-    """
-    period = max(int(period), 1)
-    tr = _true_range(high, low, close)
-    tr_values = tr.to_numpy(dtype=float)
-    n = len(tr_values)
-    atr_values = np.full(n, np.nan, dtype=float)
-
-    # Need at least `period` True Range values (bars 1..period, since TR at
-    # bar 0 is undefined because it needs a previous close).
-    if n <= period:
-        return pd.Series(atr_values, index=tr.index)
-
-    # Seed at bar index `period`: simple mean of TR[1..period] inclusive.
-    # Any NaN in that window invalidates the seed, matching TA-Lib's behavior.
-    seed_window = tr_values[1 : period + 1]
-    if np.isnan(seed_window).any():
-        return pd.Series(atr_values, index=tr.index)
-    atr_values[period] = float(np.mean(seed_window))
-
-    # Apply Wilder's recursive smoothing from bar `period + 1` onward.
-    for i in range(period + 1, n):
-        atr_values[i] = (atr_values[i - 1] * (period - 1) + tr_values[i]) / period
-
-    return pd.Series(atr_values, index=tr.index)
-
-
 def _atr(
     high: pd.Series,
     low: pd.Series,
@@ -335,40 +247,15 @@ def _atr(
     period: int,
 ) -> pd.Series:
     """
-    Compute ATR using TA-Lib when available, otherwise use the pandas version.
-
-    Why TA-Lib first:
-    - `talib.ATR` is implemented in C, so it is faster on large datasets.
-    - It uses Wilder smoothing by definition, which matches what charting
-      platforms like TradingView display.
-
-    Why a fallback:
-    - TA-Lib is a native library (not a pure-Python package) and can be
-      fiddly to install on some machines. We do not want that to be a hard
-      dependency of this signal generator.
-    - Both paths produce numerically equivalent results because they both
-      apply Wilder's smoothing on the same True Range series.
+    Compute ATR with the repository's exact pinned TA-Lib build.
     """
     period = max(int(period), 1)
 
-    if _TALIB_AVAILABLE:
-        # TA-Lib works on plain numpy float arrays, not pandas Series, so we
-        # convert explicitly. `dtype=float` ensures no integer rounding.
-        high_arr = high.to_numpy(dtype=float)
-        low_arr = low.to_numpy(dtype=float)
-        close_arr = close.to_numpy(dtype=float)
-        try:
-            atr_values = talib.ATR(high_arr, low_arr, close_arr, timeperiod=period)
-            # Rewrap as a pandas Series with the same index as the inputs so
-            # downstream code can keep treating it like a normal Series.
-            return pd.Series(atr_values, index=high.index)
-        except Exception:  # pragma: no cover - safety net for odd inputs
-            # If TA-Lib raises for any reason (shape mismatch, all-NaN input,
-            # etc.), we gracefully fall back to the manual path rather than
-            # breaking the signal generator.
-            pass
-
-    return _atr_manual(high, low, close, period)
+    high_arr = high.to_numpy(dtype=float)
+    low_arr = low.to_numpy(dtype=float)
+    close_arr = close.to_numpy(dtype=float)
+    atr_values = talib.ATR(high_arr, low_arr, close_arr, timeperiod=period)
+    return pd.Series(atr_values, index=high.index)
 
 
 # =============================================================================
@@ -426,7 +313,7 @@ def _compute_supertrend(
         +1 when the trend is bullish (line is green), -1 when bearish (red).
     """
     n = len(close)
-    supertrend = np.zeros(n, dtype=float)
+    supertrend = np.full(n, np.nan, dtype=float)
     direction = np.zeros(n, dtype=int)
     if n == 0:
         # Empty input -> return empty arrays so the caller can handle it.
@@ -435,7 +322,7 @@ def _compute_supertrend(
     # Step 1: midpoints.
     hl2 = (high.to_numpy(dtype=float) + low.to_numpy(dtype=float)) / 2.0
 
-    # Step 2: ATR (uses TA-Lib when available).
+    # Step 2: ATR (uses the pinned TA-Lib build).
     atr_values = _atr(high, low, close, atr_length).to_numpy(dtype=float)
     close_values = close.to_numpy(dtype=float)
 
@@ -444,22 +331,31 @@ def _compute_supertrend(
     lower_basic = hl2 - float(factor) * atr_values
 
     # Final bands. These ratchet in one direction until a trend flip.
-    final_upper = np.zeros(n, dtype=float)
-    final_lower = np.zeros(n, dtype=float)
+    final_upper = np.full(n, np.nan, dtype=float)
+    final_lower = np.full(n, np.nan, dtype=float)
 
     # We walk bar-by-bar because final bands depend on their previous value.
     # This is one of the few cases where a Python for-loop is unavoidable
     # (unless we reimplement in Cython / numba).
     for i in range(n):
-        if i == 0 or not np.isfinite(atr_values[i]):
-            # Warm-up bars: ATR has no value yet (returns NaN for the first
-            # `atr_length` bars). We seed the final bands with the raw bands
-            # and start in an arbitrary LONG state. The direction will correct
-            # itself automatically once real ATR values start coming in.
-            final_upper[i] = upper_basic[i] if np.isfinite(upper_basic[i]) else 0.0
-            final_lower[i] = lower_basic[i] if np.isfinite(lower_basic[i]) else 0.0
-            direction[i] = int(Direction.LONG)
-            supertrend[i] = final_lower[i]
+        if not np.isfinite(atr_values[i]):
+            # ATR warm-up is unresolved market state, not a bullish signal.
+            # Keep the line NaN and direction NEUTRAL until a real ATR exists.
+            continue
+
+        if i == 0 or not np.isfinite(final_upper[i - 1]):
+            final_upper[i] = upper_basic[i]
+            final_lower[i] = lower_basic[i]
+            direction[i] = (
+                int(Direction.LONG)
+                if close_values[i] >= hl2[i]
+                else int(Direction.SHORT)
+            )
+            supertrend[i] = (
+                final_lower[i]
+                if direction[i] == int(Direction.LONG)
+                else final_upper[i]
+            )
             continue
 
         prev_close = close_values[i - 1]

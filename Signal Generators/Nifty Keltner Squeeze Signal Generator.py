@@ -41,6 +41,7 @@ from misc_strategy_common import (
     macd,
     normalize_ohlc_frame,
     require_columns,
+    validate_finite_config,
 )
 
 
@@ -60,6 +61,7 @@ class KeltnerSqueezeConfig:
     target_pct: float = 0.04      # profit target, 4% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         positive_ints = {
             "bb_period": self.bb_period,
             "kc_period": self.kc_period,

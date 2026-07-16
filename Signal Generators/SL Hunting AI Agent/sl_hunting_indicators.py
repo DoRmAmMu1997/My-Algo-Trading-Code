@@ -28,6 +28,7 @@ oldest → newest. Helper `prepare_candles` normalises this.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -73,6 +74,57 @@ class SLHuntingIndicatorConfig:
     # Cross-index (NF/BNF): how close (fraction of price) the last price must be to a
     # level to count as "at" that level / pivot.
     cross_index_band_pct: float = 0.15
+
+    def __post_init__(self) -> None:
+        invalid_finite = [
+            name
+            for name, value in vars(self).items()
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and not math.isfinite(float(value))
+        ]
+        if invalid_finite:
+            raise ValueError(
+                "SL Hunting indicator configuration values must be finite. Invalid: "
+                + ", ".join(invalid_finite)
+            )
+
+        ratios = {
+            "doji_body_max_ratio": self.doji_body_max_ratio,
+            "long_wick_min_ratio": self.long_wick_min_ratio,
+            "full_body_min_ratio": self.full_body_min_ratio,
+            "engulf_tolerance": self.engulf_tolerance,
+        }
+        invalid_ratios = [
+            name for name, value in ratios.items() if not (0.0 <= float(value) <= 1.0)
+        ]
+        if invalid_ratios:
+            raise ValueError(
+                "SL Hunting candle ratios must be between 0 and 1. Invalid: "
+                + ", ".join(invalid_ratios)
+            )
+        positive_ints = {
+            "pattern_lookback": self.pattern_lookback,
+            "swing_left": self.swing_left,
+            "swing_right": self.swing_right,
+            "swing_lookback": self.swing_lookback,
+            "psych_window": self.psych_window,
+            "speed_window": self.speed_window,
+        }
+        invalid_positive = [
+            name for name, value in positive_ints.items() if int(value) <= 0
+        ]
+        if invalid_positive:
+            raise ValueError(
+                "SL Hunting lookbacks must be positive. Invalid: "
+                + ", ".join(invalid_positive)
+            )
+        if not (0.0 <= float(self.double_tolerance_pct) <= 100.0):
+            raise ValueError("double_tolerance_pct must be between 0 and 100.")
+        if not (0.0 <= float(self.cross_index_band_pct) <= 100.0):
+            raise ValueError("cross_index_band_pct must be between 0 and 100.")
+        if float(self.psych_step) <= 0.0:
+            raise ValueError("psych_step must be positive.")
 
 
 # ---------------------------------------------------------------------------

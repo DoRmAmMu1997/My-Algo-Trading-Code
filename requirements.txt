@@ -15,6 +15,7 @@ pytz==2026.2
 # 2.32.4 fixes CVE-2024-47081 (.netrc credential leak) present in 2.32.3; the
 # broker, symbol-master and Telegram HTTP paths all use requests.
 requests==2.32.4
+TA-Lib==0.6.8
 
 # ---- Live trading (optional) — install only for the broker you use ----
 # The commented pins below are the versions verified on the live runner; keep
@@ -27,8 +28,6 @@ requests==2.32.4
 #   websocket-client==1.8.0
 # ML Ensemble signal generator:
 #   scikit-learn==1.8.0
-# Optional faster indicators (the signal generators fall back to pandas if absent):
-#   TA-Lib==0.6.8
 # SL Hunting AI Agent (optional, LLM-driven strategy under "Signal Generators/
 # SL Hunting AI Agent/") — only needed when SL_HUNTING_ENABLED=true. The Claude
 # Agent SDK runs on your Claude subscription (bundled Claude CLI login; keep
