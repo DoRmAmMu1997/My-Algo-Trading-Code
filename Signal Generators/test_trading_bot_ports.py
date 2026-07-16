@@ -108,6 +108,28 @@ def _port_under_test(filename: str, prefix: str, build_name: str, needs: str | N
     return module, config, engine, frame
 
 
+def test_ml_training_discards_infinite_feature_rows():
+    """scikit-learn must never receive infinity from malformed market data."""
+    pytest.importorskip("sklearn")
+    module = _load_port("Nifty ML Ensemble Signal Generator.py")
+    config = module.MLEnsembleConfig(
+        training_window=8,
+        min_training_rows=4,
+        forward_bars=1,
+        retrain_every=1,
+    )
+    engine = module.MLEnsembleSignalEngine(config)
+    rows = 8
+    frame = pd.DataFrame({column: [float(index + 1) for index in range(rows)]
+                          for column in module.FEATURE_COLUMNS})
+    frame["ml_target"] = [0, 1, 0, 1, 0, 1, 0, 1]
+    frame.loc[2, module.FEATURE_COLUMNS[0]] = float("inf")
+
+    engine._maybe_train(frame)
+
+    assert engine.model is not None
+
+
 @pytest.mark.parametrize(("filename", "prefix", "build_name", "needs"), PORTS, ids=PORT_IDS)
 def test_port_exposes_the_factory_contract(filename, prefix, build_name, needs):
     """The master's worker factory looks these attributes up by name.

@@ -680,8 +680,20 @@ def cross_index_signal(
     Returns {"available": false, ...} when BankNIFTY data is missing.
     """
     cfg = cfg or SLHuntingIndicatorConfig()
-    n = index_position(nifty_df, cfg)
-    b = index_position(bnf_df, cfg) if bnf_df is not None else {"available": False}
+    normalized_nifty = prepare_candles(nifty_df)
+    normalized_bnf = prepare_candles(bnf_df) if bnf_df is not None else None
+    if (
+        normalized_bnf is not None
+        and not normalized_nifty.empty
+        and not normalized_bnf.empty
+        and normalized_nifty["timestamp"].iloc[-1] != normalized_bnf["timestamp"].iloc[-1]
+    ):
+        return {
+            "available": False,
+            "reason": "NIFTY and BankNIFTY timestamps are not current/aligned.",
+        }
+    n = index_position(normalized_nifty, cfg)
+    b = index_position(normalized_bnf, cfg) if normalized_bnf is not None else {"available": False}
     if not (n.get("available") and b.get("available")):
         return {
             "available": False,

@@ -49,6 +49,7 @@ needs synchronized 1-minute OHLC for the chosen ITM CE & PE (a separate follow-u
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -84,7 +85,10 @@ _REQUIRED_COLUMNS = ("close", "vwap", "cpr_upper", "cpr_lower", "rsi", "rsi_ema2
 
 def _row_ready(row: pd.Series) -> bool:
     """True only when every indicator we need on this candle is a real number."""
-    return all(pd.notna(row.get(col)) for col in _REQUIRED_COLUMNS)
+    return all(
+        pd.notna(row.get(col)) and math.isfinite(float(row.get(col)))
+        for col in _REQUIRED_COLUMNS
+    )
 
 
 def _next_level(row: pd.Series, reference: float, direction: str) -> float:
@@ -94,7 +98,11 @@ def _next_level(row: pd.Series, reference: float, direction: str) -> float:
     Returns NaN if there is no further level in that direction.
     """
     levels = [row.get(col) for col in _SPOT_LEVEL_COLUMNS]
-    levels = sorted(float(v) for v in levels if pd.notna(v))
+    levels = sorted(
+        float(value)
+        for value in levels
+        if pd.notna(value) and math.isfinite(float(value))
+    )
     if direction == "up":
         higher = [v for v in levels if v > reference]
         return higher[0] if higher else float("nan")
@@ -141,19 +149,47 @@ class NiftyCPRAlgo3SignalGenerator:
                                exit_reason="conflicting call/put alignment", debug=debug)
         spot_close = float(spot["close"])
         if call:
+            target = _next_level(spot, spot_close, "up")
+            stop = float(spot["cpr_upper"])
+            if not (
+                math.isfinite(target)
+                and target > spot_close
+                and math.isfinite(stop)
+                and 0.0 < stop < spot_close
+            ):
+                return CPRDecision(
+                    action="HOLD",
+                    strategy_name="CPR_ALGO3",
+                    exit_reason="invalid long target/stop geometry",
+                    debug=debug,
+                )
             return CPRDecision(
                 action="ENTER_LONG", strategy_name="CPR_ALGO3", signal_triggered=True,
                 entry_underlying=spot_close,
-                target_underlying=_next_level(spot, spot_close, "up"),
-                stop_underlying=float(spot["cpr_upper"]),  # invalidates if it falls back into the band
+                target_underlying=target,
+                stop_underlying=stop,  # invalidates if it falls back into the band
                 debug=debug,
             )
         if put:
+            target = _next_level(spot, spot_close, "down")
+            stop = float(spot["cpr_lower"])
+            if not (
+                math.isfinite(target)
+                and 0.0 < target < spot_close
+                and math.isfinite(stop)
+                and stop > spot_close
+            ):
+                return CPRDecision(
+                    action="HOLD",
+                    strategy_name="CPR_ALGO3",
+                    exit_reason="invalid short target/stop geometry",
+                    debug=debug,
+                )
             return CPRDecision(
                 action="ENTER_SHORT", strategy_name="CPR_ALGO3", signal_triggered=True,
                 entry_underlying=spot_close,
-                target_underlying=_next_level(spot, spot_close, "down"),
-                stop_underlying=float(spot["cpr_lower"]),
+                target_underlying=target,
+                stop_underlying=stop,
                 debug=debug,
             )
         return CPRDecision(action="HOLD", strategy_name="CPR_ALGO3", debug=debug)
@@ -194,6 +230,13 @@ class NiftyCPRAlgo3SignalGenerator:
         if len(common) == 0:
             return CPRDecision(action="HOLD", strategy_name="CPR_ALGO3",
                                exit_reason="no aligned candles across the three charts")
+        latest = (s.index[-1], c.index[-1], p.index[-1])
+        if not (latest[0] == latest[1] == latest[2]):
+            return CPRDecision(
+                action="HOLD",
+                strategy_name="CPR_ALGO3",
+                exit_reason="cross-index timestamps are not current/aligned",
+            )
         ts = common[-1]
         return self._evaluate(s.loc[ts], c.loc[ts], p.loc[ts])
 

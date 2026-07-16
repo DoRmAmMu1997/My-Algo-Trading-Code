@@ -256,6 +256,8 @@ class MLEnsembleSignalEngine:
         # eligible for training -> drop the trailing `forward_bars` rows.
         trainable = frame.iloc[: max(0, n - int(self.config.forward_bars))]
         trainable = trainable.dropna(subset=[*FEATURE_COLUMNS, "ml_target"])
+        finite_values = trainable[[*FEATURE_COLUMNS, "ml_target"]].to_numpy(dtype="float64")
+        trainable = trainable.loc[np.isfinite(finite_values).all(axis=1)]
         if len(trainable) < int(self.config.min_training_rows):
             return
         trainable = trainable.iloc[-int(self.config.training_window):]

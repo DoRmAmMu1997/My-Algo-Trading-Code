@@ -158,6 +158,27 @@ class TestSharedMarketDataStore(unittest.TestCase):
         self.store.update_ltp_map({("NSE_FNO", 1234): -50.0})
         self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
 
+        self.store.update_ltp_map({("NSE_FNO", 1234): float("inf")})
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
+
+        self.store.update_ltp_map({("NSE_FNO", 1234): "not-a-price"})
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
+
+    def test_invalid_ohlc_does_not_replace_last_good_snapshot(self):
+        """Publication is atomic: invalid replacement data leaves the prior snapshot intact."""
+        good = pd.DataFrame({
+            "timestamp": ["2026-05-15 10:00:00"],
+            "open": [100.0], "high": [105.0], "low": [95.0], "close": [102.0],
+        })
+        self.store.update("1", good)
+        invalid = good.copy()
+        invalid.loc[0, "close"] = float("inf")
+
+        with self.assertRaises(master_file.MarketDataValidationError):
+            self.store.update("1", invalid)
+
+        self.assertEqual(self.store.get("1").frame.iloc[-1]["close"], 102.0)
+
     def test_subscriptions(self):
         """Check if option subscriptions can be correctly registered and unregistered."""
         sub = master_file.OptionSubscription(
@@ -172,6 +193,71 @@ class TestSharedMarketDataStore(unittest.TestCase):
 
         self.store.unregister_option_subscription("NSE_FNO", 123)
         self.assertEqual(len(self.store.snapshot_option_subscriptions()), 0)
+
+
+class TestWorkerMarketDataSafety(unittest.TestCase):
+    """Every strategy entry shares one feed gate and one stale-feed unwind path."""
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            self.store,
+            threading.Event(),
+            MagicMock(),
+        )
+
+    def test_entry_is_blocked_until_feed_recovers(self):
+        self.store.begin_market_data_monitoring()
+        with patch.object(self.worker, "_get_underlying_spot") as get_spot:
+            self.assertFalse(self.worker.enter_position("LONG", 22500.0))
+        get_spot.assert_not_called()
+
+    def test_thirty_second_unhealthy_state_invokes_square_off(self):
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("LTP IDX_I/13 is stale (41.0s)",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock()
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertTrue(consumed)
+        self.worker.exit_position.assert_called_once_with("MARKET_DATA_UNHEALTHY")
+        self.worker._flatten_additional_positions.assert_called_once_with(
+            "MARKET_DATA_UNHEALTHY"
+        )
+        self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
+
+    def test_unhealthy_primary_close_error_cannot_skip_other_exposure(self):
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("newest completed one-minute bar is stale",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock(side_effect=RuntimeError("primary close failed"))
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertTrue(consumed)
+        self.worker._flatten_additional_positions.assert_called_once_with(
+            "MARKET_DATA_UNHEALTHY"
+        )
+        self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
 
 
 # =============================================================================
@@ -356,6 +442,22 @@ class TestPureHelpers(unittest.TestCase):
         with self.assertRaises(ValueError):
             master_file.resample_ohlc_from_1m(ohlc, 5)
 
+    def test_resample_rejects_count_complete_but_slot_incomplete_bucket(self):
+        """A duplicate minute cannot hide a missing minute in a five-row bucket."""
+        timestamps = pd.to_datetime([
+            "2026-05-15 09:15", "2026-05-15 09:15", "2026-05-15 09:17",
+            "2026-05-15 09:18", "2026-05-15 09:19",
+        ])
+        ohlc = pd.DataFrame({
+            "timestamp": timestamps,
+            "open": [100, 100, 102, 103, 104],
+            "high": [101, 101, 103, 104, 105],
+            "low": [99, 99, 101, 102, 103],
+            "close": [100.5, 100.5, 102.5, 103.5, 104.5],
+        })
+        result = master_file.resample_ohlc_from_1m(ohlc, 5)
+        self.assertTrue(result.empty)
+
     def test_color_pnl_text_static(self):
         """`_color_pnl_text` colors positive green, negative red, zero plain."""
         pos = master_file.BasePaperStrategyWorker._color_pnl_text(12.5)
@@ -437,6 +539,25 @@ class TestNormalizeDhanResponse(unittest.TestCase):
         """Below-MIN_BARS frames are rejected to avoid corrupt warm-up."""
         resp = self._make_dict_resp(master_file.MIN_BARS - 5)
         with self.assertRaises(ValueError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+    def test_normalize_rejects_non_finite_and_impossible_ohlc(self):
+        """Infinity and impossible high/low geometry fail closed at ingestion."""
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["close"][3] = float("inf")
+        with self.assertRaises(master_file.MarketDataValidationError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["high"][3] = resp["data"]["close"][3] - 1.0
+        with self.assertRaises(master_file.MarketDataValidationError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+    def test_normalize_rejects_mixed_epoch_units(self):
+        """One millisecond value among second epochs cannot corrupt the whole timeline."""
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["timestamp"][3] *= 1000
+        with self.assertRaises(master_file.MarketDataValidationError):
             master_file.normalize_dhan_intraday_response(resp)
 
 

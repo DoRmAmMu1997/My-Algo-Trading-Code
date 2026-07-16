@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 MODULE_PATH = Path(__file__).resolve().parent / "index_1m_5y_data_fetch_dhan_common.py"
 spec = importlib.util.spec_from_file_location("index_1m_5y_data_fetch_dhan_common", MODULE_PATH)
@@ -53,3 +54,70 @@ def test_fetch_builds_dhan_context_not_two_positional_args():
     dhan_ctor.assert_called_once_with(fake_context)
     chunk.assert_called_once()
     assert list(result.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+
+
+def _payload(timestamps, *, close=None):
+    count = len(timestamps)
+    return {
+        "timestamp": timestamps,
+        "open": [100.0] * count,
+        "high": [102.0] * count,
+        "low": [99.0] * count,
+        "close": close or [101.0] * count,
+        "volume": [1000.0] * count,
+    }
+
+
+def test_normalize_rejects_mixed_epoch_units_and_non_finite_candles():
+    second = int(datetime(2026, 1, 1, 9, 15).timestamp())
+    with pytest.raises(fetcher.MarketDataValidationError):
+        fetcher.normalize_response_data(_payload([second, (second + 60) * 1000]))
+
+    with pytest.raises(fetcher.MarketDataValidationError):
+        fetcher.normalize_response_data(
+            _payload([second, second + 60], close=[101.0, float("inf")])
+        )
+
+
+def test_fetch_chunk_rejects_timestamp_outside_requested_window():
+    outside = int(datetime(2026, 1, 3, 9, 15).timestamp())
+    dhan = SimpleNamespace(
+        intraday_minute_data=lambda **_kwargs: {
+            "status": "success",
+            "data": _payload([outside]),
+        }
+    )
+    with pytest.raises(fetcher.MarketDataValidationError, match="outside requested chunk"):
+        fetcher.fetch_chunk(
+            dhan=dhan,
+            security_id="13",
+            exchange_segment="IDX_I",
+            instrument_type="INDEX",
+            interval=1,
+            chunk_start=date(2026, 1, 1),
+            chunk_end=date(2026, 1, 2),
+        )
+
+
+def test_atomic_csv_replace_preserves_existing_file_on_write_failure(tmp_path):
+    target = tmp_path / "history.csv"
+    target.write_text("old-safe-data\n", encoding="utf-8")
+    frame = pd.DataFrame({"timestamp": ["2026-01-01"], "close": [100.0]})
+
+    with (
+        patch.object(pd.DataFrame, "to_csv", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        fetcher.atomic_write_csv(frame, target)
+
+    assert target.read_text(encoding="utf-8") == "old-safe-data\n"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_atomic_csv_replace_commits_complete_file(tmp_path):
+    target = tmp_path / "history.csv"
+    target.write_text("old-safe-data\n", encoding="utf-8")
+
+    fetcher.atomic_write_csv(pd.DataFrame({"close": [101.0]}), target)
+
+    assert "101.0" in target.read_text(encoding="utf-8")

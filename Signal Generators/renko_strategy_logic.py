@@ -23,6 +23,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+MAX_RENKO_BRICKS_PER_SOURCE_CANDLE = 100
+MAX_RENKO_BRICKS_PER_BUILD = 10_000
+RENKO_COLUMNS = ["timestamp", "open", "high", "low", "close", "color"]
+
 
 @dataclass
 class RenkoPositionContext:
@@ -113,11 +117,12 @@ def build_renko_from_close(
     # Think of this as the initial reference level from which first brick emerges.
     last_brick_open = closes[0]
     last_brick_close = closes[0]
-    rows = []
+    rows: list[dict[str, object]] = []
 
     for i in range(1, len(closes)):
         price = closes[i]
         ts = times[i]
+        source_bricks = 0
 
         # Keep printing bricks until the current price no longer crosses
         # the next trigger level.
@@ -129,6 +134,11 @@ def build_renko_from_close(
             down_trigger = prev_low - box_size
 
             if price >= up_trigger:
+                if (
+                    source_bricks >= MAX_RENKO_BRICKS_PER_SOURCE_CANDLE
+                    or len(rows) >= MAX_RENKO_BRICKS_PER_BUILD
+                ):
+                    return pd.DataFrame(columns=RENKO_COLUMNS)
                 # New green brick starts from previous high and closes one box above it.
                 brick_open = prev_high
                 brick_close = prev_high + box_size
@@ -144,9 +154,15 @@ def build_renko_from_close(
                 )
                 last_brick_open = brick_open
                 last_brick_close = brick_close
+                source_bricks += 1
                 continue
 
             if price <= down_trigger:
+                if (
+                    source_bricks >= MAX_RENKO_BRICKS_PER_SOURCE_CANDLE
+                    or len(rows) >= MAX_RENKO_BRICKS_PER_BUILD
+                ):
+                    return pd.DataFrame(columns=RENKO_COLUMNS)
                 # New red brick starts from previous low and closes one box below it.
                 brick_open = prev_low
                 brick_close = prev_low - box_size
@@ -162,6 +178,7 @@ def build_renko_from_close(
                 )
                 last_brick_open = brick_open
                 last_brick_close = brick_close
+                source_bricks += 1
                 continue
 
             # Stop when current price is inside trigger band.
