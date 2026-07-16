@@ -308,9 +308,12 @@ class KotakExecutionClient:
     def recover_after_reconciliation(self) -> bool:
         """Clear timeout poison only after the abandoned SDK call has returned.
 
-        MAT-102 can call this hook after it reconciles orders and positions. The
-        method refuses early recovery while the timed-out operation is still
-        running, preserving the no-overlap guarantee.
+        "Poisoned" means an earlier SDK call outlived its 10-second budget and
+        was abandoned -- but Python cannot kill a running thread, so that call
+        may STILL be executing inside the SDK and may still place/affect an
+        order.  MAT-102 can call this hook after it reconciles orders and
+        positions.  The method refuses early recovery while any timed-out
+        operation is still running, preserving the no-overlap guarantee.
         """
 
         with self._lock:

@@ -127,6 +127,29 @@ def normalize_order_result(
     A positive filled quantity always wins over a broker's rejection label because
     it proves exposure exists.  Conversely, a full requested quantity is called
     ``FILLED`` only when the broker also reports a recognized terminal fill state.
+
+    Decision table (checked top to bottom; first match wins):
+
+    ======================================  =========  ==========================
+    evidence                                status     why
+    ======================================  =========  ==========================
+    malformed/negative/fractional counts    UNKNOWN    numbers cannot be trusted,
+                                                       so neither can "zero fill"
+    0 < filled < requested                  PARTIAL    real exposure exists, and
+                                                       the count proves how much
+    partial label, no usable fill count     UNKNOWN    "partial" admits exposure
+                                                       but not its size
+    filled == requested AND terminal fill   FILLED     count and label agree the
+    label (COMPLETE/TRADED/...)                        whole order traded
+    filled == 0 AND terminal reject label   REJECTED   the only combination that
+    (REJECTED/CANCELLED/...)                           PROVES nothing traded
+    anything else                           UNKNOWN    e.g. full count while the
+                                                       order still shows OPEN
+    ======================================  =========  ==========================
+
+    The asymmetry is deliberate: a fill count beats a rejection label (a
+    cancelled order can still have partially filled first), but a fill count
+    alone never earns ``FILLED`` without a terminal label to confirm it.
     """
 
     requested = _non_negative_int(requested_quantity)

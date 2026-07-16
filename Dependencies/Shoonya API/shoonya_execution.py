@@ -274,7 +274,15 @@ class ShoonyaExecutionClient:
             self._lock.release()
 
     def recover_after_reconciliation(self) -> bool:
-        """Explicitly clear deadline poison after the abandoned call has ended."""
+        """Explicitly clear deadline poison after the abandoned call has ended.
+
+        "Poisoned" means an earlier call outlived its 10-second budget and was
+        abandoned -- but Python cannot kill a running thread, so that call may
+        STILL be executing inside the SDK and may still place/affect an order.
+        Only after (a) reconciliation has proven the account state and (b) the
+        abandoned call has actually finished is it safe to accept new orders;
+        this method refuses (returns False) until both hold.
+        """
 
         with self._lock:
             if self._timed_out_future is not None and not self._timed_out_future.done():

@@ -142,7 +142,28 @@ class OrderAttemptHandle:
 
 @dataclass(frozen=True, slots=True)
 class LiveLegState:
-    """Coherent immutable snapshot of one live strategy leg."""
+    """Coherent immutable snapshot of one live strategy leg.
+
+    Beginner's map of the quantity fields (all in units, not lots):
+
+    - ``spec.target_quantity``      : what the strategy WANTS open in total.
+    - ``requested_quantity``        : entry quantity submitted so far.
+    - ``filled_quantity``           : entry quantity the broker confirmed
+                                      filled so far (cumulative).
+    - ``remaining_quantity``        : entry quantity still to be filled
+                                      (= target - filled).
+    - ``confirmed_live_quantity``   : what is open at the broker RIGHT NOW --
+                                      entry fills minus confirmed close fills.
+    - ``exposure_indeterminate``    : True while the newest order attempt has
+                                      not reached a terminal broker state, so
+                                      MORE quantity than confirmed may exist.
+
+    Brokers report fills CUMULATIVELY per order ("35 of 75 filled", later
+    "75 of 75"), so the ledger applies each report as a DELTA against the
+    previous snapshot of the same attempt.  Applying deltas -- instead of
+    overwriting totals -- is what makes it impossible for a repeated or
+    re-ordered status report to double-count a fill or silently erase one.
+    """
 
     exposure_id: str
     spec: LegSpec
@@ -198,7 +219,13 @@ class LiveLegState:
 
     @property
     def safe_open_retry_quantity(self) -> int:
-        """Known unfinished entry quantity, or zero while the last order may fill."""
+        """Known unfinished entry quantity, or zero while the last order may fill.
+
+        Zero means "do not submit anything yet": either the previous order is
+        still non-terminal (it may fill more on its own -- adding quantity now
+        could overshoot the target) or closing has already started.  A positive
+        number is the exact remainder a retry may safely request.
+        """
 
         if self.closing_started:
             return 0
@@ -210,7 +237,12 @@ class LiveLegState:
 
     @property
     def safe_close_retry_quantity(self) -> int:
-        """Known remaining exposure safe to submit as a reducing order."""
+        """Known remaining exposure safe to submit as a reducing order.
+
+        Only broker-CONFIRMED open quantity may be closed; while the state is
+        indeterminate this is zero, because selling units that may never have
+        been bought would open a naked short instead of reducing risk.
+        """
 
         if self.exposure_indeterminate:
             return 0
@@ -218,7 +250,14 @@ class LiveLegState:
 
     @property
     def risk_quantity(self) -> int:
-        """Conservative quantity to use for risk and shutdown decisions."""
+        """Conservative quantity to use for risk and shutdown decisions.
+
+        The mirror-image of the two "safe retry" properties: where those round
+        AMBIGUITY DOWN (never submit quantity that might not be needed), risk
+        maths must round ambiguity UP -- an indeterminate open attempt is
+        counted as if its whole remainder filled, so mark-to-market and
+        max-loss checks can never treat possible exposure as flat.
+        """
 
         attempt = self.latest_attempt
         if self.exposure_indeterminate and attempt is not None and attempt.intent is OrderIntent.OPEN:

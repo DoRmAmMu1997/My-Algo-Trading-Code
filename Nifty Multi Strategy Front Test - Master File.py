@@ -3408,6 +3408,16 @@ class BasePaperStrategyWorker(threading.Thread):
         opening_side = str(opening_side).upper().strip()
         if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
             return False
+        # Each tuple is (completed anchor's role, companion's role, anchor's
+        # opening side, companion's opening side) -- the ONLY basket shapes
+        # this runner ever builds:
+        #   H -> M : protective hedge BUY confirmed, now the main short SELL
+        #            (the hedged-puts / Delta-0.2 spread order of operations);
+        #   N -> B : NIFTY leg BUY confirmed, now the equal-lot BankNIFTY
+        #            mirror BUY (SL Hunting basket);
+        #   C -> P : strangle CE BUY confirmed, now its PE BUY twin.
+        # Anything not in this table is a brand-new exposure, which a frozen
+        # account must never accept.
         allowed_transitions = {
             ("H", "M", "BUY", "SELL"),
             ("N", "B", "BUY", "BUY"),
@@ -4949,7 +4959,15 @@ class BasePaperStrategyWorker(threading.Thread):
         )
 
     def _wait_for_shutdown_retry(self) -> None:
-        """Wait without spinning even when the legacy stop event is already set."""
+        """Wait without spinning even when the legacy stop event is already set.
+
+        The run loop cannot use ``stop_event.wait`` here: during shutdown the
+        event is typically already set, so waiting on it would return
+        immediately and turn the flatten/reconcile loop into a busy spin.  A
+        plain sleep, capped at the poll cadence and floored at 50ms, keeps the
+        worker responsive to its 1/2/5-second retry schedule without burning a
+        CPU core while it waits to become broker-confirmed flat.
+        """
 
         snapshot = self.lifecycle.snapshot()
         if snapshot.state in {LifecycleState.FLAT, LifecycleState.STOPPED}:
@@ -11660,7 +11678,17 @@ if SL_HUNTING_AVAILABLE:
             self.log.debug("SL Hunting inference invalidated: %s", reason)
 
         def _consume_agent_decision(self) -> None:
-            """Collect a completed background pass without ever waiting for it."""
+            """Collect a completed background pass without ever waiting for it.
+
+            The harvest half of the inference cycle: `_start_agent_inference`
+            launches a daemon thread and returns immediately; every later poll
+            calls this first to pick up the finished decision (log + journal
+            it) -- never `join()`ing, so a hung SDK call can never delay the
+            stop/target, max-loss, or 15:15 square-off checks that run right
+            after.  Any real order the agent placed already happened DURING
+            the pass via the locked tool context; a stale generation here only
+            skips the bookkeeping, never an order.
+            """
             payload = None
             with self._agent_inference_lock:
                 thread = self._agent_inference_thread
@@ -11702,7 +11730,14 @@ if SL_HUNTING_AVAILABLE:
         def _start_agent_inference(
             self, strategy_frame: pd.DataFrame, bnf_candles: pd.DataFrame | None
         ) -> bool:
-            """Start one daemon inference pass; return immediately to the risk loop."""
+            """Start one daemon inference pass; return immediately to the risk loop.
+
+            At most one pass exists at a time (returns False while one is
+            running).  Bumping the generation counter first makes every
+            previously issued tool capability stale, and deep-copying both
+            frames gives the pass an immutable market snapshot the fetcher
+            thread cannot mutate mid-inference.
+            """
             with self._agent_inference_lock:
                 if self._agent_inference_thread is not None:
                     return False
