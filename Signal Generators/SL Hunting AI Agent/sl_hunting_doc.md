@@ -964,3 +964,65 @@ round-number magnets.
 - `OPENING_DRIVE`: SHARED-GAP REQUIREMENT condition.
 - `BNF_SPECIFIC`: the "why" clause on the leader-fails-to-lead exit.
 - Test marker: `test_system_prompt_has_v3l_closing_point_and_shared_gap_knowledge`.
+
+## Video addendum - 17 Jul flat-open loss day + gift-gap read (v3m)
+
+> Sources (full Hindi auto-transcripts from YouTube's transcript panel):
+> - `hGWenJz7Us4` (16 Jul 2026 evening, "Prediction For 17 JULY 2026", 2:43)
+> - `xTwmjkvkrQQ` (17 Jul 2026, "Live Bank Nifty Option Trading", 8:07)
+>
+> Cross-checked against the agent's journal (no 2026-07-17 rows) and the runner log
+> (`Dependencies/log_files/nifty_multi_strategy_master_front_test_dhanhq.log`).
+
+Session summary — **IH's first LOSING day in this series**:
+- Pre-open plan (prediction clip): the prior day again had small momentum with the
+  closing point uncrossed, and this time BOTH sides could be thinly present. The
+  conditional was two-sided: **gap-up -> the (thin) buyers feel "it's all mine" and
+  sit -> trap forms for THEM -> sell-side setups; gap-down -> same trap for sellers
+  -> buy-side setups; FLAT -> "whom do we target?" -> nobody -> go WITH the market
+  (sell-side)**.
+- Live session: all three indices opened FLAT. Per the plan he sold the first
+  positive push (BNF 57500 PE 1170 qty, Sensex 900, NIFTY 24100 PE 1365), naming the
+  invalidation BEFORE entry ("this resistance must not cross; BankNIFTY must not go
+  up"). The market broke out upward instead — Sensex/NIFTY first, and when BankNIFTY
+  joined, he CUT at his loss limit. The discipline segment is the day's real
+  content: "if we're wrong, the market does what we did NOT plan for"; "can we
+  control the market? Not at all — what's in our control is the limit"; "don't book
+  a small loss and hurriedly build a CALL trade — you may flip and the market turns
+  back down"; "no averaging"; "the brain only works right when the trade is going
+  right — when it's wrong, look at the limit and leave."
+
+**Agent vs IH on 17 Jul — not comparable on premise:** IH took 1 trade (a loss); the
+agent took ZERO trades because the market-data health gate blocked ALL entries (paper
+included) through the opening window. Log timeline: runner start 08:09 pre-open ->
+newest bar is yesterday's ("stale 60,032s") -> every worker logs "Blocking new
+entries" (192 lines that day) and fires the empty 30-s flatten; a worker restart
+~09:22 triggered a second flatten at 09:24 ("stale 120.4s"); entry gates reopened
+only 09:24-09:29 — after IH's ~09:16 entry. The agent's LLM ran (decision-cost lines
+from 09:16) but no order could land. The block accidentally "saved" the agent from a
+likely losing day — luck, not design. Fixed alongside this addendum: the stale-feed
+entry block and 30-s auto square-off are now scoped to LIVE workers only.
+
+**Net-new method distilled:**
+- GIFT-GAP AFTER A NOBODY'S-CROWD DAY: after a small-momentum day whose closing point
+  was never crossed, both sides are thin; a gap in EITHER direction is a gift that
+  traps its recipient (fade the gap side on confirmation), and a flat open means
+  there is nobody to hunt — go with the drift. Generalises the v3k FLAT-OPEN
+  PARTICIPATION GATE (seller-crowd case) to the two-sided thin-inventory case.
+- NO INSTANT FLIP extended to the LOSING side: booking a small loss to immediately
+  reverse into the breakout that is hurting you is the classic whipsaw; exit at the
+  limit / invalidation and let POST-LOSS SPEED LIMIT govern the next entry.
+
+**Confirmed but deliberately NOT re-encoded (already present):** limit-based loss
+exits, no averaging (structurally impossible for the agent), "control only the
+loss", the binary one-directional-day read, and the thin-crowd/closing-point entry
+premise itself (v3k/v3l — IH's entry premise WAS the encoded rule; the trade still
+lost, which is the "sound process, losing trade" case the knowledge already
+accepts). Note: IH's sell-the-first-push entry WITHOUT pattern+confirmation is what
+lost — evidence FOR keeping the agent's stricter mandatory-confirmation entry rule;
+nothing was loosened.
+
+**Knowledge changes (v3m, all prose):**
+- `RETAIL_POSITIONING`: GIFT-GAP AFTER A NOBODY'S-CROWD DAY.
+- `RISK`: NO INSTANT FLIP extended with the losing-side panic-flip ban.
+- Test marker: `test_system_prompt_has_v3m_gift_gap_and_loss_flip_knowledge`.

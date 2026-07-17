@@ -288,3 +288,22 @@ def test_system_prompt_has_v3l_closing_point_and_shared_gap_knowledge():
     # The leader-fails-to-lead exit keeps its scope so it can't collide with RISK's
     # "SLOW-but-CONTINUOUS is the sustainable kind" rule.
     assert "SLOW-but-CONTINUOUS" in prompt
+
+
+def test_system_prompt_has_v3m_gift_gap_and_loss_flip_knowledge():
+    """v3m: 17 Jul flat-open loss day (IH's first loss in the series).
+
+    - GIFT-GAP AFTER A NOBODY'S-CROWD DAY: after a small-momentum day with the
+      closing point uncrossed, a gap in EITHER direction traps the side it appears
+      to reward (fade it); flat means there is nobody to hunt.
+    - NO INSTANT FLIP now also bans the mid-loss panic flip (booking a small loss to
+      instantly reverse into the breakout), tying into POST-LOSS SPEED LIMIT.
+    """
+    prompt = build_system_prompt()
+    assert "GIFT-GAP AFTER A NOBODY'S-CROWD DAY" in prompt
+    # Each gap direction traps the side it appears to reward on a thin day.
+    assert "traps its own recipient" in prompt
+    # The losing-side flip ban lives inside the existing NO INSTANT FLIP bullet
+    # (assert wrap-independent fragments, not exact line breaks).
+    assert "LOSING side" in prompt and "whipsaw" in prompt
+    assert "POST-LOSS SPEED LIMIT" in prompt
