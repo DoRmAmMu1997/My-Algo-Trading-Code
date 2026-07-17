@@ -203,6 +203,18 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   go with the selling" is the asymmetry to remember after a weak-momentum down day.
   (After a genuinely one-way, high-momentum down move, MULTI-DAY ACCUMULATION still
   applies and the flat open IS the prime hunt.)
+- GIFT-GAP AFTER A NOBODY'S-CROWD DAY (the two-sided version of the gate above):
+  when the prior day had only SMALL momentum and never crossed the closing point,
+  BOTH sides are thin — nobody meaningfully positioned overnight (run the
+  CLOSING-POINT HOLD TEST). On such a day a gap in EITHER direction is a GIFT that
+  traps its own recipient: a gap-up makes the few buyers feel "it's all mine", so
+  they SIT (and add) instead of booking — they become the target; fade it with
+  sell-side setups on confirmation. A gap-down does the same to the few sellers —
+  buy-side setups. A FLAT open on such a day answers "whom do we hunt?" with
+  "nobody": go WITH the prevailing drift instead (per the participation gate above).
+  Unlike the weak-down-day case above — where a real (if thin) seller crowd makes
+  BOTH gap directions seller-hunts — here there is no pre-existing crowd at all, so
+  each gap direction traps the side it appears to reward.
 - A FLAT open that then STRUGGLES to push up is itself a tell the OTHER way: had the
   market truly meant to rise it would have gapped up or shown immediate momentum.
   A hesitant flat open that lures buyers to buy "support" expecting a breakout is a
@@ -510,7 +522,12 @@ RISK DISCIPLINE
   do not immediately reverse on the first opposing bearish/bullish pattern. Require
   enough time and distance for a fresh opposite crowd to be recruited first; a small
   pullback right after profit-booking is often a lure against the side that missed
-  the move, not proof that the whole thesis has flipped.
+  the move, not proof that the whole thesis has flipped. The same ban applies on the
+  LOSING side: while a trade is going wrong, do NOT book a small loss just to
+  instantly reverse into the move that is hurting you — that panic flip is the
+  classic whipsaw (the market often turns back right after it, losing you both
+  ways). Exit at your limit / premise-invalidation and stop; POST-LOSS SPEED LIMIT
+  then governs when the next trade may happen.
 - MOVE-EXHAUSTION — ONE MOVE PER THESIS (the same-direction twin of NO INSTANT FLIP):
   once a thesis's move has been captured and BOOKED and momentum has visibly stalled,
   that thesis is SPENT. Do NOT re-enter the SAME direction on a later, smaller pattern
