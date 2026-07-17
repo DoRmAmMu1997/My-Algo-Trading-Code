@@ -4745,8 +4745,19 @@ class BasePaperStrategyWorker(threading.Thread):
             self._wait_for_shutdown_retry()
 
     def _market_data_entries_allowed(self) -> bool:
-        """Fail closed for every entry path while the shared feed is unhealthy."""
+        """Fail closed for every REAL entry path while the shared feed is unhealthy.
 
+        Scope (operator decision, 2026-07-17): this gate protects MONEY, so it
+        applies only to live-trading workers. A paper worker keeps entering on
+        the last-good snapshot -- a virtual trade on slightly stale data is a
+        data-quality footnote, whereas blocking it costs the paper track record
+        its opening window (on 17 Jul the gate blocked every paper strategy
+        until ~09:24 while the feed warmed up, so no strategy could trade the
+        open at all).
+        """
+
+        if not self.live_trading:
+            return True
         health = self.store.market_data_health.snapshot(now=_ist_now())
         if not health.monitoring:
             return True
@@ -4768,16 +4779,41 @@ class BasePaperStrategyWorker(threading.Thread):
         return False
 
     def _handle_market_data_health(self) -> bool:
-        """Flatten tracked exposure after a feed has been unhealthy for 30s.
+        """Flatten tracked LIVE exposure after a feed has been unhealthy for 30s.
 
         This is deliberately separate from terminal daily shutdown. A feed can
         recover, but only three consecutive healthy producer cycles reopen the
         entry gate. Returning ``True`` tells the caller to consume this poll so
         no strategy logic runs alongside a safety-driven liquidation attempt.
+
+        Scope (operator decision, 2026-07-17): like the entry gate above, the
+        forced square-off exists to protect real money, so it applies only to
+        live-trading workers. A paper worker keeps its virtual position and its
+        strategy logic keeps running on the last-good snapshot. A LIVE worker
+        still flattens EVERYTHING it owns -- including a rare paper-fallback
+        position -- because its books mirror a real trading stream and
+        splitting real-vs-paper mid-liquidation would complicate
+        reconciliation.
         """
 
         health = self.store.market_data_health.snapshot(now=_ist_now())
         if not health.monitoring:
+            return False
+        if not self.live_trading:
+            # Paper worker: never force-close, never consume the poll. Log the
+            # 30s+ condition once per unhealthy episode so the operator can
+            # still see the feed outage in this worker's stream.
+            if health.liquidation_required and not self._market_data_liquidation_logged:
+                self._market_data_liquidation_logged = True
+                self.log.info(
+                    "Market data unhealthy for %.1fs; PAPER worker continues "
+                    "(square-off skipped -- no real exposure) | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
+            if health.entry_allowed:
+                # Reset the once-per-episode latch after recovery.
+                self._market_data_liquidation_logged = False
             return False
         if not health.entry_allowed:
             self._market_data_entries_allowed()

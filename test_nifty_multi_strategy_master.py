@@ -196,7 +196,12 @@ class TestSharedMarketDataStore(unittest.TestCase):
 
 
 class TestWorkerMarketDataSafety(unittest.TestCase):
-    """Every strategy entry shares one feed gate and one stale-feed unwind path."""
+    """The feed gate and stale-feed unwind protect REAL money: live workers only.
+
+    Operator decision (2026-07-17): a paper worker keeps entering and keeps its
+    virtual position on the last-good snapshot -- the gate had blocked every
+    paper strategy through the 17 Jul opening window while the feed warmed up.
+    """
 
     def setUp(self):
         self.store = master_file.SharedMarketDataStore()
@@ -206,13 +211,26 @@ class TestWorkerMarketDataSafety(unittest.TestCase):
             MagicMock(),
         )
 
-    def test_entry_is_blocked_until_feed_recovers(self):
+    def test_live_entry_is_blocked_until_feed_recovers(self):
+        self.worker.live_trading = True
         self.store.begin_market_data_monitoring()
         with patch.object(self.worker, "_get_underlying_spot") as get_spot:
             self.assertFalse(self.worker.enter_position("LONG", 22500.0))
         get_spot.assert_not_called()
 
-    def test_thirty_second_unhealthy_state_invokes_square_off(self):
+    def test_paper_entry_allowed_while_feed_unhealthy(self):
+        """A paper (virtual) worker sails through the feed gate: the entry
+        attempt must reach the spot lookup instead of being blocked."""
+        self.assertFalse(self.worker.live_trading)
+        self.store.begin_market_data_monitoring()
+        with patch.object(self.worker, "_get_underlying_spot", return_value=0.0) as get_spot:
+            # Returns False further down (no spot LTP in this synthetic setup),
+            # but the market-data gate itself must have been passed.
+            self.assertFalse(self.worker.enter_position("LONG", 22500.0))
+        get_spot.assert_called_once()
+
+    def test_thirty_second_unhealthy_state_invokes_square_off_for_live(self):
+        self.worker.live_trading = True
         health = MagicMock(
             monitoring=True,
             entry_allowed=False,
@@ -236,7 +254,36 @@ class TestWorkerMarketDataSafety(unittest.TestCase):
         )
         self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
 
+    def test_paper_worker_skips_market_data_square_off(self):
+        """A paper worker's virtual position must survive a 30s+ feed outage:
+        no forced close, no orphan sweep, and the poll is NOT consumed (the
+        strategy keeps running on the last-good snapshot)."""
+        self.assertFalse(self.worker.live_trading)
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("LTP IDX_I/13 is stale (41.0s)",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock()
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertFalse(consumed)
+        self.worker.exit_position.assert_not_called()
+        self.worker._flatten_additional_positions.assert_not_called()
+        self.worker._sweep_orphan_live_legs.assert_not_called()
+        # The 30s+ outage is still logged once for the operator's audit trail.
+        self.assertTrue(self.worker._market_data_liquidation_logged)
+
     def test_unhealthy_primary_close_error_cannot_skip_other_exposure(self):
+        self.worker.live_trading = True
         health = MagicMock(
             monitoring=True,
             entry_allowed=False,
