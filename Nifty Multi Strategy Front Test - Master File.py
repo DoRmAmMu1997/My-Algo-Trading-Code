@@ -250,6 +250,7 @@ from Dependencies.market_data_health import (
 )
 from Dependencies.next_open_entry import PendingNextOpenEntry
 from Dependencies.risk_sizing import SizingDecision
+from Dependencies.secret_redaction import redact_text
 from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
@@ -12163,10 +12164,14 @@ class TelegramMessageWorker(threading.Thread):
                     "Telegram API returned HTTP %s on attempt %d: %s",
                     response.status_code,
                     attempt,
-                    response.text[:300],
+                    redact_text(response.text[:300], (self.bot_token,)),
                 )
             except Exception as exc:
-                self.log.warning("Telegram send error on attempt %d: %s", attempt, exc)
+                self.log.warning(
+                    "Telegram send error on attempt %d: %s",
+                    attempt,
+                    redact_text(exc, (self.bot_token,)),
+                )
             if attempt < 3:
                 self.stop_event.wait(1.5 * attempt)
         self.failed_count += 1

@@ -66,11 +66,14 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import requests
+
+from Dependencies.secret_redaction import redact_payload, redact_text
 
 # Make the broker-neutral contract importable when this helper is loaded by the
 # master and when the sibling diagnostic executes it as a standalone script.
@@ -355,7 +358,7 @@ class KotakExecutionClient:
         from a worker thread mid-session, so it cannot stall trading.
         """
         try:
-            return input("Enter Kotak Neo TOTP (6 digits from your authenticator app): ").strip()
+            return getpass("Enter Kotak Neo TOTP (input hidden): ").strip()
         except (EOFError, OSError):
             return ""
 
@@ -433,10 +436,10 @@ class KotakExecutionClient:
             if not two_fa_complete:
                 self.is_logged_in = False
                 self.client = None
-                log.error("Kotak login did NOT complete 2FA - orders & scrip lookups "
-                      "will be rejected. Raw responses:")
-                log.error(f"  totp_login    -> {login_resp}")
-                log.error(f"  totp_validate -> {validate_resp}")
+                secrets = (mobile, ucc, mpin, totp, consumer_key)
+                log.error("Kotak login did NOT complete 2FA - orders & scrip lookups will be rejected.")
+                log.error("  totp_login    -> %s", redact_payload(login_resp, secrets))
+                log.error("  totp_validate -> %s", redact_payload(validate_resp, secrets))
                 return False
 
             # Surface the ORDER-critical fields too, not just edit_token/edit_sid.
@@ -465,7 +468,7 @@ class KotakExecutionClient:
             # Reset state on any failure so a stale half-session never leaks.
             self.is_logged_in = False
             self.client = None
-            log.error(f"Kotak execution client login failed: {exc}")
+            log.error("Kotak execution client login failed: %s", redact_text(exc))
             return False
 
     def ensure_logged_in(self) -> bool:
