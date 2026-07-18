@@ -1335,6 +1335,33 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
         )
         self.assertFalse(result)
 
+    def test_rejected_sizing_decision_skips_entry_before_order_routing(self):
+        decision = master_file.SizingDecision.from_risk_budget(
+            entry=22500.0,
+            stop=22400.0,
+            lot_size=50,
+            budget=1000.0,
+            max_lots=5,
+        )
+        self.assertFalse(decision.accepted)
+        with (
+            patch.object(
+                self.worker,
+                "_compute_entry_sizing",
+                return_value=decision,
+            ),
+            patch.object(self.worker, "_place_real_leg") as route_order,
+        ):
+            result = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+            )
+
+        self.assertFalse(result)
+        self.assertFalse(self.worker.pos.active)
+        route_order.assert_not_called()
+
     def test_get_open_position_pnl_marks_to_market(self):
         """Open MTM = (live - entry) * qty for the BUY leg."""
         self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
@@ -1396,14 +1423,32 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance fails closed instead of inventing fallback risk."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0,
             stop_underlying=22500.0,
             lot_size=50,
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_one_lot_over_budget_is_skipped(self):
+        lots = self.worker._compute_entry_lots(
+            entry_underlying=22500.0,
+            stop_underlying=22449.0,
+            lot_size=50,
+        )
+
+        self.assertEqual(lots, 0)
+
+    def test_tiny_stop_never_exceeds_namespaced_five_lot_cap(self):
+        lots = self.worker._compute_entry_lots(
+            entry_underlying=22500.0,
+            stop_underlying=22499.9,
+            lot_size=50,
+        )
+
+        self.assertEqual(lots, master_file.PROFIT_SHOOTER_MAX_LOTS)
 
     def test_build_strategy_frame_resamples_to_five_minutes(self):
         """Profit Shooter is a 5-minute method: the strategy frame must be built
@@ -1429,7 +1474,134 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
 # =============================================================================
 # TEST SUITE: GOLDMINE DYNAMIC LOT SIZING
 # =============================================================================
-class TestGoldmineStrategyWorker(unittest.TestCase):
+class _NextOpenWorkerTestMixin:
+    """Shared acceptance tests for one-bar ``NEXT_OPEN`` worker intents."""
+
+    worker = None
+    decision_type = None
+
+    def _next_open_decision(
+        self,
+        *,
+        action="ENTER_LONG",
+        entry=100.0,
+        stop=95.0,
+        target=110.0,
+        signal_at=datetime(2026, 7, 16, 10, 0),
+    ):
+        return self.decision_type(
+            action=action,
+            entry_underlying=entry,
+            stop_underlying=stop,
+            target_underlying=target,
+            signal_triggered=True,
+            debug={"entry_timing": "NEXT_OPEN", "timestamp": signal_at},
+        )
+
+    def test_next_open_signal_is_queued_instead_of_entered_immediately(self):
+        decision = self._next_open_decision()
+        self.worker.signal_engine.evaluate_candle = MagicMock(return_value=decision)
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        self.worker.process_strategy_frame(pd.DataFrame({"close": [100.0]}))
+
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNotNone(self.worker._pending_next_open)
+        self.assertEqual(
+            self.worker._pending_next_open.expected_open_at,
+            datetime(2026, 7, 16, 10, 5),
+        )
+
+    def test_long_gap_rebases_stop_and_target_from_observed_next_open(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 5)],
+                    "open": [120.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_called_once_with(
+            "LONG",
+            120.0,
+            115.0,
+            target_underlying=130.0,
+        )
+        self.assertEqual(self.worker.entry_submit_count, 1)
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_short_gap_rebases_stop_and_target_from_observed_next_open(self):
+        decision = self._next_open_decision(
+            action="ENTER_SHORT",
+            entry=100.0,
+            stop=105.0,
+            target=90.0,
+        )
+        self.assertTrue(self.worker._queue_next_open_decision("SHORT", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 5)],
+                    "open": [80.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_called_once_with(
+            "SHORT",
+            80.0,
+            85.0,
+            target_underlying=70.0,
+        )
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_missing_expected_open_expires_after_one_bar(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 10)],
+                    "open": [120.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_pending_intent_waits_until_expected_open_slot(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 4)],
+                    "open": [101.0],
+                }
+            )
+        )
+
+        self.assertFalse(consumed)
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNotNone(self.worker._pending_next_open)
+
+
+class TestGoldmineStrategyWorker(_NextOpenWorkerTestMixin, unittest.TestCase):
     """Goldmine reuses Profit Shooter's risk-based `_compute_entry_lots`."""
 
     def setUp(self):
@@ -1439,6 +1611,7 @@ class TestGoldmineStrategyWorker(unittest.TestCase):
         self.worker = master_file.GoldmineStrategyWorker(
             store=self.store, stop_event=self.stop_event, broker=self.broker
         )
+        self.decision_type = master_file.GOLDMINE_LOGIC.GoldmineDecision
 
     def test_compute_entry_lots_returns_positive_integer(self):
         """For a reasonable SL distance, the sizer returns >= 1 lot."""
@@ -1449,18 +1622,28 @@ class TestGoldmineStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance is an explicit no-trade decision."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0, stop_underlying=22500.0, lot_size=50
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_namespaced_max_lots_caps_tiny_stop(self):
+        with patch.object(master_file, "GOLDMINE_MAX_LOTS", 2):
+            lots = self.worker._compute_entry_lots(
+                entry_underlying=22500.0,
+                stop_underlying=22499.9,
+                lot_size=50,
+            )
+
+        self.assertEqual(lots, 2)
 
 
 # =============================================================================
 # TEST SUITE: MONEY MACHINE DYNAMIC LOT SIZING
 # =============================================================================
-class TestMoneyMachineStrategyWorker(unittest.TestCase):
+class TestMoneyMachineStrategyWorker(_NextOpenWorkerTestMixin, unittest.TestCase):
     """Money Machine reuses the same risk-based `_compute_entry_lots`."""
 
     def setUp(self):
@@ -1470,6 +1653,7 @@ class TestMoneyMachineStrategyWorker(unittest.TestCase):
         self.worker = master_file.MoneyMachineStrategyWorker(
             store=self.store, stop_event=self.stop_event, broker=self.broker
         )
+        self.decision_type = master_file.MONEY_MACHINE_LOGIC.MoneyMachineDecision
 
     def test_compute_entry_lots_returns_positive_integer(self):
         """For a reasonable SL distance, the sizer returns >= 1 lot."""
@@ -1480,12 +1664,22 @@ class TestMoneyMachineStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance is an explicit no-trade decision."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0, stop_underlying=22500.0, lot_size=50
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_namespaced_max_lots_caps_tiny_stop(self):
+        with patch.object(master_file, "MONEY_MACHINE_MAX_LOTS", 3):
+            lots = self.worker._compute_entry_lots(
+                entry_underlying=22500.0,
+                stop_underlying=22499.9,
+                lot_size=50,
+            )
+
+        self.assertEqual(lots, 3)
 
 
 # =============================================================================
@@ -2436,9 +2630,10 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
     def test_mirror_opens_with_same_lot_count(self):
         worker, _ = self._make_worker()
-        # 10-pt stop -> risk_based_lots => ceil(2500 / (10*75)) = 4 NIFTY lots.
+        # 10-pt stop -> floor(2500 / (10*75)) = 3 NIFTY lots.
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         nifty_lots = worker.pos.quantity // 75
+        self.assertEqual(nifty_lots, 3)
         self.assertTrue(worker._mirror_pos.active)
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
@@ -5969,6 +6164,26 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
             errors = master_file._live_config_errors(worker, "RENKO")
 
         self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
+
+    def test_risk_budget_max_lots_must_be_a_positive_integer_for_live(self):
+        worker = self._Worker("ProfitShooter")
+        with patch.dict(os.environ, {"PROFIT_SHOOTER_MAX_LOTS": "2.5"}):
+            errors = master_file._live_config_errors(worker, "PROFIT_SHOOTER")
+
+        self.assertIn(
+            "PROFIT_SHOOTER_MAX_LOTS must be a positive integer",
+            errors,
+        )
+
+    def test_resolved_risk_budget_max_lots_fails_closed_for_live(self):
+        worker = self._Worker("MoneyMachine")
+        with patch.object(master_file, "MONEY_MACHINE_MAX_LOTS", 0):
+            errors = master_file._live_config_errors(worker, "MONEY_MACHINE")
+
+        self.assertIn(
+            "resolved MONEY_MACHINE_MAX_LOTS must be a positive integer",
+            errors,
+        )
 
 
 class TestCoordinatedShutdownSupervisor(unittest.TestCase):

@@ -74,7 +74,8 @@ def test_standalone_executor_enter_exit_and_guards():
     ex = StandaloneExecutor(lots=1, lot_size=75)
     assert ex.exit("flat", price=25000)["accepted"] is False  # cannot exit when flat
 
-    r = ex.enter("LONG", stop=24950, target=25100, reason="test", price=25000)
+    # A 30-point stop risks Rs.2,250 for one 75-unit lot, within the budget.
+    r = ex.enter("LONG", stop=24970, target=25100, reason="test", price=25000)
     assert r["accepted"] is True
     assert ex.snapshot()["in_position"] is True
 
@@ -103,7 +104,8 @@ def test_tool_context_do_order_routes_to_executor():
     ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
     assert ctx.action_tool_name() == "place_paper_order"
 
-    res = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="pivot bounce")
+    # The latest synthetic close is 25029, so this 29-point stop fits one lot.
+    res = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="pivot bounce")
     assert res["accepted"] is True
     assert ex.snapshot()["in_position"] is True
     assert ex.pos.direction == "LONG"

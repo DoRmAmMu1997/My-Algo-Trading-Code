@@ -28,17 +28,36 @@ already in a position, and cannot EXIT while flat.
 from __future__ import annotations
 
 import contextlib
-import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    # ``Dependencies`` is already a configured mypy import root, so use the
+    # canonical module name seen by the repository-wide type checker.
+    from risk_sizing import SizingDecision
+else:
+    try:
+        from Dependencies.risk_sizing import SizingDecision
+    except ModuleNotFoundError as exc:
+        if exc.name != "Dependencies":
+            raise
+        # Direct ``python sl_hunting_runner.py`` starts with only this spaced-name
+        # folder on sys.path. Add the known repository root so the standalone paper
+        # runner uses the same sizing authority as the live-capable master worker.
+        repo_root = str(Path(__file__).resolve().parents[2])
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from Dependencies.risk_sizing import SizingDecision
 
 # Valid directions the agent may request. LONG → buy CE (expect up); SHORT → buy PE.
 VALID_DIRECTIONS = ("LONG", "SHORT")
 
 # Default rupee risk budget per trade (used by dynamic position sizing). The agent
 # does NOT choose the lot count — it is computed so the worst-case underlying-points
-# loss is ~= this budget, exactly like the repo's Profit Shooter sizer.
+# loss never exceeds this budget, exactly like the repo's Profit Shooter sizer.
 DEFAULT_RISK_BUDGET = 2500.0
 
 
@@ -48,19 +67,22 @@ def risk_based_lots(
     lot_size: int,
     risk_budget: float = DEFAULT_RISK_BUDGET,
     fallback_lots: int = 1,
+    max_lots: int = 5,
 ) -> int:
-    """Lots sized so the worst-case underlying-points loss ~= ``risk_budget``.
+    """Compatibility wrapper around the shared hard-budget decision.
 
-    ``risk_points`` is the agent's UNDERLYING (spot) stop distance; the rupee risk
-    proxy is ``risk_points * lot_size`` per lot (a conservative delta~=1 proxy, the
-    same one Profit Shooter / Goldmine / Money Machine use). ``math.ceil`` over a
-    positive ratio guarantees a minimum of 1 lot, so a trade is never sized to zero.
-    Falls back to ``fallback_lots`` when the stop distance is unusable.
+    ``fallback_lots`` remains in the public signature for older callers but is
+    intentionally ignored: invalid risk and one-lot-over-budget setups now return
+    zero so the executor can reject the trade instead of exceeding the budget.
     """
-    risk_points = abs(float(entry) - float(stop))
-    if risk_points <= 0 or int(lot_size) <= 0:
-        return max(1, int(fallback_lots))
-    return max(1, math.ceil(float(risk_budget) / (risk_points * int(lot_size))))
+    del fallback_lots
+    return SizingDecision.from_risk_budget(
+        entry=entry,
+        stop=stop,
+        lot_size=lot_size,
+        budget=risk_budget,
+        max_lots=max_lots,
+    ).lots
 
 
 def stop_or_target_hit(direction: str, stop: float, target: float, price: float) -> str | None:
@@ -70,7 +92,7 @@ def stop_or_target_hit(direction: str, stop: float, target: float, price: float)
     Used by the master worker to ENFORCE the agent's stop/target on every poll — the
     agent only re-decides once per completed bar, so without this an option position
     would stay open (only max-loss / square-off / a later AI EXIT would close it) and
-    the ~Rs.2500 risk budget would not be bounded. Zero levels mean "not set" (skip).
+    the configured risk guard would not be bounded. Zero levels mean "not set" (skip).
     """
     direction = (direction or "").strip().upper()
     price = float(price)
@@ -153,10 +175,18 @@ class StandaloneExecutor:
     The closed-trade log is kept so the runner can print a session summary.
     """
 
-    def __init__(self, *, lots: int = 1, lot_size: int = 75, risk_budget: float = DEFAULT_RISK_BUDGET) -> None:
-        self.lots = int(lots)  # fallback when the stop distance is unusable
+    def __init__(
+        self,
+        *,
+        lots: int = 1,
+        lot_size: int = 75,
+        risk_budget: float = DEFAULT_RISK_BUDGET,
+        max_lots: int = 5,
+    ) -> None:
+        self.lots = int(lots)  # retained for CLI/backward-compatible snapshots
         self.lot_size = int(lot_size)
         self.risk_budget = float(risk_budget)
+        self.max_lots = int(max_lots)
         self.pos = _PaperPosition()
         self.closed_trades: list[dict[str, Any]] = []
 
@@ -171,8 +201,16 @@ class StandaloneExecutor:
             return {"accepted": False, "reason": f"invalid direction {direction!r}; expected LONG or SHORT"}
         if self.pos.active:
             return {"accepted": False, "reason": "already in a position; EXIT first before entering again"}
-        # Dynamic sizing: lots chosen so worst-case risk ~= self.risk_budget (Rs.2500).
-        lots = risk_based_lots(float(price), float(stop), self.lot_size, self.risk_budget, self.lots)
+        sizing = SizingDecision.from_risk_budget(
+            entry=price,
+            stop=stop,
+            lot_size=self.lot_size,
+            budget=self.risk_budget,
+            max_lots=self.max_lots,
+        )
+        if not sizing.accepted:
+            return {"accepted": False, "reason": sizing.reason}
+        lots = sizing.lots
         self.pos = _PaperPosition(
             active=True,
             direction=direction,

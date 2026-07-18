@@ -66,7 +66,7 @@ One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
 tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
-and dynamic ~Rs.2500 risk-based sizing -- then acts through this runner's own
+and fail-closed hard-budget sizing -- then acts through this runner's own
 enter_position/exit_position (so it is just another ATM single-leg member of the
 family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
 default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
@@ -241,6 +241,8 @@ from Dependencies.execution_ledger import (
     OrderAttemptHandle,
     OrderIntent,
 )
+from Dependencies.next_open_entry import PendingNextOpenEntry
+from Dependencies.risk_sizing import SizingDecision
 from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
@@ -1350,9 +1352,10 @@ PROFIT_SHOOTER_STRATEGY_CONFIG = PROFIT_SHOOTER_LOGIC.ProfitShooterConfig(
 # Operational sizing/risk for Profit Shooter (separate from signal config).
 PROFIT_SHOOTER_LOTS = _env_int("PROFIT_SHOOTER_LOTS", 1)
 # Per-trade rupee risk budget used by Profit Shooter's dynamic position sizer.
-# The worker overrides the static lot count and instead picks the smallest
-# whole-lot quantity whose underlying-points risk fits within this budget.
+# The worker floors affordable whole lots, rejects a setup when even one lot
+# exceeds the budget, and never exceeds the namespaced maximum.
 PROFIT_SHOOTER_RISK_BUDGET = _env_float("PROFIT_SHOOTER_RISK_BUDGET", 2500.0)
+PROFIT_SHOOTER_MAX_LOTS = _env_int("PROFIT_SHOOTER_MAX_LOTS", 5)
 PROFIT_SHOOTER_STARTING_CAPITAL = _env_float("PROFIT_SHOOTER_STARTING_CAPITAL", 600000.0)
 PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT = _env_float("PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT", 0.03)
 PROFIT_SHOOTER_MAX_LOSS = PROFIT_SHOOTER_STARTING_CAPITAL * PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT
@@ -1385,10 +1388,11 @@ GOLDMINE_STRATEGY_CONFIG = GOLDMINE_LOGIC.GoldmineStrategyConfig(
     max_bars_in_trade=_env_int("GOLDMINE_MAX_BARS_IN_TRADE", 6),
 )
 # Operational sizing/risk for Goldmine (Profit-Shooter-style dynamic sizing).
-# GOLDMINE_LOTS is only the fallback used when risk-based sizing cannot be
-# computed; normal entries size off GOLDMINE_RISK_BUDGET.
+# GOLDMINE_LOTS is retained for compatibility and paper snapshots; normal
+# entries use the fail-closed per-trade budget and maximum below.
 GOLDMINE_LOTS = _env_int("GOLDMINE_LOTS", 1)
 GOLDMINE_RISK_BUDGET = _env_float("GOLDMINE_RISK_BUDGET", 2500.0)
+GOLDMINE_MAX_LOTS = _env_int("GOLDMINE_MAX_LOTS", 5)
 GOLDMINE_STARTING_CAPITAL = _env_float("GOLDMINE_STARTING_CAPITAL", 600000.0)
 GOLDMINE_DAILY_MAX_LOSS_PCT = _env_float("GOLDMINE_DAILY_MAX_LOSS_PCT", 0.03)
 GOLDMINE_MAX_LOSS = GOLDMINE_STARTING_CAPITAL * GOLDMINE_DAILY_MAX_LOSS_PCT
@@ -1410,6 +1414,7 @@ MONEY_MACHINE_STRATEGY_CONFIG = MONEY_MACHINE_LOGIC.MoneyMachineStrategyConfig(
 # Operational sizing/risk for Money Machine (same dynamic sizing as Goldmine).
 MONEY_MACHINE_LOTS = _env_int("MONEY_MACHINE_LOTS", 1)
 MONEY_MACHINE_RISK_BUDGET = _env_float("MONEY_MACHINE_RISK_BUDGET", 2500.0)
+MONEY_MACHINE_MAX_LOTS = _env_int("MONEY_MACHINE_MAX_LOTS", 5)
 MONEY_MACHINE_STARTING_CAPITAL = _env_float("MONEY_MACHINE_STARTING_CAPITAL", 600000.0)
 MONEY_MACHINE_DAILY_MAX_LOSS_PCT = _env_float("MONEY_MACHINE_DAILY_MAX_LOSS_PCT", 0.03)
 MONEY_MACHINE_MAX_LOSS = MONEY_MACHINE_STARTING_CAPITAL * MONEY_MACHINE_DAILY_MAX_LOSS_PCT
@@ -4603,6 +4608,16 @@ class BasePaperStrategyWorker(threading.Thread):
         """
         return MIN_BARS
 
+    def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
+        """Optional pre-signal hook for entries tied to an observed future slot.
+
+        Returning ``True`` means the hook consumed this poll, so the worker
+        skips evaluating the older completed signal candle again.
+        """
+
+        del ohlc
+        return False
+
     def wait_for_next_poll(self) -> None:
         """
         Sleep until the next strategy tick, returning early on shutdown.
@@ -4900,6 +4915,10 @@ class BasePaperStrategyWorker(threading.Thread):
                     self.wait_for_next_poll()
                     continue
 
+                if self.process_pending_entry(snapshot.frame):
+                    self.wait_for_next_poll()
+                    continue
+
                 strategy_frame = self.build_strategy_frame(snapshot.frame)
                 if strategy_frame is None or strategy_frame.empty:
                     self.wait_for_next_poll()
@@ -4966,19 +4985,34 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         )
         return (live_price - self.pos.entry_trade_price) * self.pos.quantity
 
+    def _compute_entry_sizing(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> SizingDecision:
+        """
+        Return the complete, auditable sizing decision for this entry.
+
+        Default strategies use their static class-level ``self.lots``. The
+        four risk-budget strategies override this and may reject the setup.
+        """
+        del entry_underlying, stop_underlying
+        return SizingDecision.fixed(lots=self.lots, lot_size=lot_size)
+
     def _compute_entry_lots(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
     ) -> int:
-        """
-        Number of lots to use for this entry.
+        """Compatibility read for callers that only need the accepted lot count."""
 
-        Default: the static class-level `self.lots`. Subclasses (e.g. Profit
-        Shooter) override this to size dynamically off the underlying SL.
-        """
-        return self.lots
+        return self._compute_entry_sizing(
+            entry_underlying,
+            stop_underlying,
+            lot_size,
+        ).lots
 
     def enter_position(
         self,
@@ -5042,10 +5076,25 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
             return False
 
-        lots_for_entry = self._compute_entry_lots(
+        sizing = self._compute_entry_sizing(
             float(entry_underlying), float(stop_underlying), lot_size
         )
-        quantity = lot_size * lots_for_entry
+        if not sizing.accepted:
+            self.log.warning(
+                "ENTRY SKIPPED BY SIZING | %s %s | entry=%.2f stop=%.2f "
+                "lot_size=%s budget=%.2f one_lot_risk=%.2f | %s",
+                self.strategy_name,
+                direction,
+                entry_underlying,
+                stop_underlying,
+                lot_size,
+                sizing.budget,
+                sizing.one_lot_risk,
+                sizing.reason,
+            )
+            return False
+        lots_for_entry = sizing.lots
+        quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
         order_id = self._next_paper_order_id(entry_side)
 
@@ -5650,40 +5699,33 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
     def minimum_strategy_rows(self) -> int:
         return PROFIT_SHOOTER_MIN_BARS
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """
-        Profit-Shooter-only risk-based sizing.
+    ) -> SizingDecision:
+        """Return Profit Shooter's hard-budget sizing decision."""
 
-        Pick the smallest whole-lot quantity whose worst-case underlying-points
-        loss (`risk_points * lot_size`) is within `PROFIT_SHOOTER_RISK_BUDGET`.
-        `math.ceil` over a positive ratio guarantees a minimum of 1 lot, so a
-        trade is never sized to zero -- a setup either trades at >=1 lot or
-        not at all.
-        """
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Profit Shooter dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(PROFIT_SHOOTER_RISK_BUDGET / (risk_points * lot_size))
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=PROFIT_SHOOTER_RISK_BUDGET,
+            max_lots=PROFIT_SHOOTER_MAX_LOTS,
+        )
         self.log.info(
             "Profit Shooter dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
             lot_size,
             PROFIT_SHOOTER_RISK_BUDGET,
-            lots,
-            lots * lot_size,
+            PROFIT_SHOOTER_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """
@@ -5759,9 +5801,138 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# NEXT-OPEN ATM STRATEGY BASE
+# =============================================================================
+class NextOpenAtmStrategyWorker(AtmSingleLegStrategyWorker):
+    """Queue completed-bar setups for the immediately following bar open."""
+
+    derived_timeframe_minutes = 5
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ) -> None:
+        super().__init__(store, stop_event, broker)
+        self._pending_next_open: PendingNextOpenEntry | None = None
+
+    @staticmethod
+    def _market_datetime(value) -> datetime | None:
+        """Normalize a pandas/native timestamp without inventing a timezone."""
+
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        if isinstance(parsed, pd.Timestamp):
+            return parsed.to_pydatetime()
+        return parsed if isinstance(parsed, datetime) else None
+
+    def _queue_next_open_decision(self, direction: str, decision) -> bool:
+        """Store a validated one-bar intent when the engine says NEXT_OPEN."""
+
+        debug = decision.debug if isinstance(decision.debug, dict) else {}
+        if str(debug.get("entry_timing", "")).upper().strip() != "NEXT_OPEN":
+            return False
+        signal_at = self._market_datetime(debug.get("timestamp"))
+        if signal_at is None:
+            self.log.error(
+                "%s NEXT_OPEN setup rejected: signal timestamp was invalid.",
+                self.strategy_name,
+            )
+            return True
+        try:
+            pending = PendingNextOpenEntry.from_setup(
+                direction=direction,
+                signal_at=signal_at,
+                entry=decision.entry_underlying,
+                stop=decision.stop_underlying,
+                target=decision.target_underlying,
+                timeframe_minutes=self.derived_timeframe_minutes,
+            )
+        except ValueError as exc:
+            self.log.error(
+                "%s NEXT_OPEN setup rejected before queueing: %s",
+                self.strategy_name,
+                exc,
+            )
+            return True
+        self._pending_next_open = pending
+        self.log.info(
+            "%s NEXT_OPEN queued | direction=%s signal=%s expected=%s expires=%s.",
+            self.strategy_name,
+            pending.direction,
+            pending.signal_at,
+            pending.expected_open_at,
+            pending.expires_at,
+        )
+        return True
+
+    def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
+        """Execute a queued setup from the exact observed next-bar open."""
+
+        pending = self._pending_next_open
+        if pending is None:
+            return False
+        if self.pos.active:
+            self._pending_next_open = None
+            return False
+        if ohlc is None or ohlc.empty or not {"timestamp", "open"}.issubset(ohlc.columns):
+            return False
+
+        frame = ohlc[["timestamp", "open"]].copy()
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+        frame = frame.dropna(subset=["timestamp"])
+        if frame.empty:
+            return False
+        latest_at = self._market_datetime(frame["timestamp"].max())
+        if latest_at is None:
+            return False
+        if pending.expired_as_of(latest_at):
+            self.log.warning(
+                "%s NEXT_OPEN expired without entry | expected=%s latest=%s.",
+                self.strategy_name,
+                pending.expected_open_at,
+                latest_at,
+            )
+            self._pending_next_open = None
+            return True
+
+        expected = pd.Timestamp(pending.expected_open_at)
+        observed_rows = frame[frame["timestamp"] == expected]
+        if observed_rows.empty:
+            return False
+        observed_at = self._market_datetime(observed_rows.iloc[-1]["timestamp"])
+        if observed_at is None:
+            return True
+        rebased = pending.rebase_at_open(
+            observed_at=observed_at,
+            observed_entry=observed_rows.iloc[-1]["open"],
+        )
+        if rebased is None:
+            self.log.error(
+                "%s NEXT_OPEN observed row was invalid; intent remains queued until %s.",
+                self.strategy_name,
+                pending.expires_at,
+            )
+            return True
+
+        entered = self.enter_position(
+            rebased.direction,
+            rebased.entry,
+            rebased.stop,
+            target_underlying=rebased.target,
+        )
+        if entered:
+            self.entry_submit_count += 1
+            self._pending_next_open = None
+        return True
+
+
+# =============================================================================
 # GOLDMINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
 # =============================================================================
-class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
+class GoldmineStrategyWorker(NextOpenAtmStrategyWorker):
     """
     Goldmine strategy. Reads 1-minute data from the shared store, locally
     resamples it into complete 5-minute candles, then runs the SMA20/SMA200
@@ -5812,35 +5983,33 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
         # Goldmine needs SMA200 warm-up; the engine reports its own minimum.
         return self.signal_engine.minimum_history_bars()
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """
-        Risk-based sizing (same model as Profit Shooter).
+    ) -> SizingDecision:
+        """Return Goldmine's hard-budget sizing decision."""
 
-        Pick the smallest whole-lot quantity whose worst-case underlying-points
-        loss (`risk_points * lot_size`) is within `GOLDMINE_RISK_BUDGET`.
-        `math.ceil` over a positive ratio guarantees at least 1 lot, so a setup
-        either trades at >=1 lot or not at all.
-        """
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Goldmine dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(GOLDMINE_RISK_BUDGET / (risk_points * lot_size))
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=GOLDMINE_RISK_BUDGET,
+            max_lots=GOLDMINE_MAX_LOTS,
+        )
         self.log.info(
             "Goldmine dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points, lot_size, GOLDMINE_RISK_BUDGET, lots, lots * lot_size,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
+            lot_size,
+            GOLDMINE_RISK_BUDGET,
+            GOLDMINE_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """Resample 1-min OHLC into complete 5-min candles, then attach Goldmine indicators."""
@@ -5881,6 +6050,8 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
             self.signal_count += 1
 
         if decision.action == "ENTER_LONG":
+            if self._queue_next_open_decision("LONG", decision):
+                return
             if self.enter_position(
                 "LONG",
                 decision.entry_underlying,
@@ -5890,6 +6061,8 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
                 self.entry_submit_count += 1
             return
         if decision.action == "ENTER_SHORT":
+            if self._queue_next_open_decision("SHORT", decision):
+                return
             if self.enter_position(
                 "SHORT",
                 decision.entry_underlying,
@@ -5903,7 +6076,7 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
 # =============================================================================
 # MONEY MACHINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
 # =============================================================================
-class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
+class MoneyMachineStrategyWorker(NextOpenAtmStrategyWorker):
     """
     Money Machine strategy. Reads 1-minute data from the shared store, locally
     resamples it into complete 5-minute candles, then runs the SMA20/SMA200
@@ -5951,28 +6124,33 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
         # Money Machine needs SMA200 warm-up; the engine reports its own minimum.
         return self.signal_engine.minimum_history_bars()
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """Risk-based sizing (same model as Profit Shooter / Goldmine)."""
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Money Machine dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(MONEY_MACHINE_RISK_BUDGET / (risk_points * lot_size))
+    ) -> SizingDecision:
+        """Return Money Machine's hard-budget sizing decision."""
+
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=MONEY_MACHINE_RISK_BUDGET,
+            max_lots=MONEY_MACHINE_MAX_LOTS,
+        )
         self.log.info(
             "Money Machine dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points, lot_size, MONEY_MACHINE_RISK_BUDGET, lots, lots * lot_size,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
+            lot_size,
+            MONEY_MACHINE_RISK_BUDGET,
+            MONEY_MACHINE_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """Resample 1-min OHLC into complete 5-min candles, then attach Money Machine indicators."""
@@ -6007,6 +6185,8 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
             self.signal_count += 1
 
         if decision.action == "ENTER_LONG":
+            if self._queue_next_open_decision("LONG", decision):
+                return
             if self.enter_position(
                 "LONG",
                 decision.entry_underlying,
@@ -6016,6 +6196,8 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
                 self.entry_submit_count += 1
             return
         if decision.action == "ENTER_SHORT":
+            if self._queue_next_open_decision("SHORT", decision):
+                return
             if self.enter_position(
                 "SHORT",
                 decision.entry_underlying,
@@ -10619,10 +10801,11 @@ STRATEGY_ENV_PREFIX = {
 SLHuntingAIWorker = None
 if SL_HUNTING_AVAILABLE:
     _sl_hunting_ops = _signal_gen_ops("SL_HUNTING")
-    # Dynamic position sizing: ~Rs.2500 worst-case risk per trade (the same house
-    # convention/default as Profit Shooter). The agent does NOT choose lots; this is
-    # computed from the agent's underlying stop distance.
+    # Dynamic position sizing: the NIFTY leg never exceeds the configured risk
+    # budget. The agent does NOT choose lots; the runner floors affordable lots
+    # from the agent's underlying stop distance and caps them at MAX_LOTS.
     SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
+    SL_HUNTING_MAX_LOTS = _env_int("SL_HUNTING_MAX_LOTS", 5)
     # BankNIFTY mirror (Intraday Hunter style): every NIFTY entry is mirrored
     # with the SAME lot count on the BankNIFTY ATM option of the CURRENT
     # BankNIFTY monthly expiry (rolling forward inside its final week -- see
@@ -11227,20 +11410,37 @@ if SL_HUNTING_AVAILABLE:
             # Enough derived bars for swings / fibo / structure, with a margin.
             return max(40, int(getattr(SL_HUNTING_INDICATOR_CONFIG, "swing_lookback", 120)) // 2)
 
-        def _compute_entry_lots(self, entry_underlying: float, stop_underlying: float, lot_size: int) -> int:
-            """Dynamic risk-based sizing (~SL_HUNTING_RISK_BUDGET, default Rs.2500),
-            from the agent's UNDERLYING stop distance. Shares ONE implementation with
-            the standalone executor via `risk_based_lots`, and matches the Profit
-            Shooter sizer (ceil, minimum 1 lot — a setup trades at >=1 lot or not at all).
+        def _compute_entry_sizing(
+            self,
+            entry_underlying: float,
+            stop_underlying: float,
+            lot_size: int,
+        ) -> SizingDecision:
+            """Return the shared hard-budget decision for the NIFTY leg.
+
+            The equal-lot BankNIFTY mirror remains operator-accepted and can
+            roughly double total basket risk; this budget applies to NIFTY.
             """
-            lots = SL_HUNTING_EXECUTOR_MODULE.risk_based_lots(
-                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, self.lots
+            decision = SizingDecision.from_risk_budget(
+                entry=entry_underlying,
+                stop=stop_underlying,
+                lot_size=lot_size,
+                budget=SL_HUNTING_RISK_BUDGET,
+                max_lots=SL_HUNTING_MAX_LOTS,
             )
             self.log.info(
-                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s risk_budget=%.0f -> lots=%s qty=%s.",
-                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, lots, lots * lot_size,
+                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s "
+                "risk_budget=%.0f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+                entry_underlying,
+                stop_underlying,
+                lot_size,
+                SL_HUNTING_RISK_BUDGET,
+                SL_HUNTING_MAX_LOTS,
+                decision.accepted,
+                decision.lots,
+                decision.quantity,
             )
-            return lots
+            return decision
 
         def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
             return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
@@ -11250,7 +11450,7 @@ if SL_HUNTING_AVAILABLE:
                 return
 
             # Enforce the agent's UNDERLYING stop/target on EVERY poll (not just once
-            # per bar), so the ~Rs.2500 risk is actually bounded between the agent's
+            # per bar), so the configured risk guard stays active between the agent's
             # bar-cadence decisions -- the agent only re-decides per completed bar, so
             # we cannot wait for it to call EXIT. Mirrors CPR Algo 3's spot stop/target
             # check; _get_underlying_spot reads the live LTP cache.
@@ -12108,6 +12308,10 @@ def _live_config_errors(
     }
     if normalized_prefix in _RISK_BUDGET_PREFIXES:
         raw_rules[f"{normalized_prefix}_RISK_BUDGET"] = ("positive", None)
+        raw_rules[f"{normalized_prefix}_MAX_LOTS"] = (
+            "positive_integer",
+            None,
+        )
 
     for name, (rule, bounds) in raw_rules.items():
         raw = os.getenv(name)
@@ -12174,6 +12378,14 @@ def _live_config_errors(
             or float(budget) <= 0
         ):
             errors.append(f"resolved {budget_name} must be finite and positive")
+        max_lots_name = f"{normalized_prefix}_MAX_LOTS"
+        max_lots = globals().get(max_lots_name)
+        if (
+            isinstance(max_lots, bool)
+            or not isinstance(max_lots, int)
+            or max_lots <= 0
+        ):
+            errors.append(f"resolved {max_lots_name} must be a positive integer")
 
     return tuple(dict.fromkeys(errors))
 

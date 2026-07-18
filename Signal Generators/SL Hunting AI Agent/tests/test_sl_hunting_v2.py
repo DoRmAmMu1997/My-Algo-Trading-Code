@@ -108,16 +108,20 @@ def test_decide_accepts_bnf_candles():
 # --------------------------------------------------------------------------
 
 def test_risk_based_lots_targets_budget():
-    # 15-pt stop, lot 75 -> risk/lot 1125; ceil(2500/1125)=3.
-    assert risk_based_lots(25000, 24985, 75, 2500) == 3
-    # 40-pt stop -> risk/lot 3000; ceil(2500/3000)=1 (never zero).
-    assert risk_based_lots(25000, 24960, 75, 2500) == 1
-    # 10-pt stop -> risk/lot 750; ceil(2500/750)=4.
-    assert risk_based_lots(25000, 24990, 75, 2500) == 4
+    # 15-pt stop, lot 75 -> risk/lot 1125; floor(2500/1125)=2.
+    assert risk_based_lots(25000, 24985, 75, 2500) == 2
+    # 40-pt stop -> risk/lot 3000, so even one lot is rejected.
+    assert risk_based_lots(25000, 24960, 75, 2500) == 0
+    # 10-pt stop -> risk/lot 750; floor(2500/750)=3.
+    assert risk_based_lots(25000, 24990, 75, 2500) == 3
 
 
-def test_risk_based_lots_falls_back_on_zero_distance():
-    assert risk_based_lots(25000, 25000, 75, 2500, fallback_lots=2) == 2
+def test_risk_based_lots_rejects_zero_distance_without_fallback():
+    assert risk_based_lots(25000, 25000, 75, 2500, fallback_lots=2) == 0
+
+
+def test_risk_based_lots_caps_tiny_stops_at_five():
+    assert risk_based_lots(25000, 24999.9, 75, 2500) == 5
 
 
 def test_stop_or_target_hit():
@@ -137,7 +141,26 @@ def test_standalone_executor_sizes_dynamically():
     ex = StandaloneExecutor(lot_size=75, risk_budget=2500)
     r = ex.enter("LONG", stop=24985, target=25060, reason="t", price=25000)
     assert r["accepted"] is True
-    assert r["lots"] == 3 and r["quantity"] == 3 * 75
+    assert r["lots"] == 2 and r["quantity"] == 2 * 75
     out = ex.exit("target", price=25020)  # +20 pts
-    assert out["lots"] == 3
-    assert out["pnl_proxy"] == 20 * 3 * 75
+    assert out["lots"] == 2
+    assert out["pnl_proxy"] == 20 * 2 * 75
+
+
+def test_standalone_executor_rejects_one_lot_over_budget():
+    ex = StandaloneExecutor(lot_size=75, risk_budget=2500)
+
+    result = ex.enter("LONG", stop=24960, target=25060, reason="t", price=25000)
+
+    assert result["accepted"] is False
+    assert ex.snapshot() == {"in_position": False}
+
+
+def test_standalone_executor_honours_custom_max_lots():
+    ex = StandaloneExecutor(lot_size=75, risk_budget=2500, max_lots=2)
+
+    result = ex.enter("LONG", stop=24999, target=25060, reason="t", price=25000)
+
+    assert result["accepted"] is True
+    assert result["lots"] == 2
+    assert result["quantity"] == 150
