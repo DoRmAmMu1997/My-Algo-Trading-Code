@@ -199,6 +199,7 @@ ignores OHLC entirely (its triggers are option-leg LTPs against a
 from __future__ import annotations
 
 # --- Standard library imports ------------------------------------------------
+import contextlib
 import glob
 import html
 import importlib.util
@@ -210,6 +211,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -230,7 +232,18 @@ import requests
 # itself happens in `Dependencies/dhan_token_setup.py`, not here.
 from dhanhq import DhanContext, DhanLogin, dhanhq
 
-from Dependencies.broker_contract import OrderResult, OrderStatus
+from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
+from Dependencies.execution_ledger import (
+    ExecutionLedger,
+    LegSpec,
+    LiveLegState,
+    OrderAttemptHandle,
+    OrderIntent,
+)
+from Dependencies.startup_exposure import (
+    StartupExposureAudit,
+    audit_startup_exposure,
+)
 
 try:
     # `python-dotenv` is optional. If installed, values such as the DhanHQ
@@ -1513,12 +1526,17 @@ class PaperPosition:
     option_strike: float = 0.0
     option_expiry: date | None = None
     option_lot_size: int = 0
-    # True only when a REAL broker leg was actually opened for this position (a
-    # live entry that confirmed). An explicit zero-fill rejection or a locally
-    # skipped order may still be tracked as a paper fallback with this flag False,
-    # so its later exit must NOT send a real closing order. PARTIAL/UNKNOWN entries
-    # never create a paper position. Mirrors HedgedPaperPosition.live_legs_open.
-    live_legs_open: bool = False
+    # Immutable quantity snapshot for the real broker leg. ``None`` means this
+    # is paper (including an explicit zero-fill fallback). Exit attempts replace
+    # this snapshot with the ledger's newest value; the ledger itself remains the
+    # only mutable authority.
+    live_leg: LiveLegState | None = None
+
+    @property
+    def live_legs_open(self) -> bool:
+        """Compatibility read: whether broker exposure is known or possible."""
+
+        return self.live_leg is not None and self.live_leg.exposure_possible
 
 
 @dataclass
@@ -1572,12 +1590,19 @@ class HedgedPaperPosition:
     hedge_entry_price: float = 0.0
     hedge_entry_order_id: str = ""
 
-    # True only when BOTH real legs were actually opened at the broker (a live
-    # entry that fully confirmed). An explicit zero-fill rejection or locally
-    # skipped entry can fall back to paper with this False, so a later exit must
-    # not send phantom broker orders. PARTIAL/UNKNOWN entries do not create this
-    # paper position; MAT-102 owns their per-leg exposure state.
-    live_legs_open: bool = False
+    # Per-leg immutable snapshots.  One leg may be flat while the other still
+    # carries quantity; no basket-wide boolean is allowed to erase that asymmetry.
+    main_live_leg: LiveLegState | None = None
+    hedge_live_leg: LiveLegState | None = None
+
+    @property
+    def live_legs_open(self) -> bool:
+        """Compatibility read: whether either broker leg may still be exposed."""
+
+        return any(
+            state is not None and state.exposure_possible
+            for state in (self.main_live_leg, self.hedge_live_leg)
+        )
 
 
 @dataclass
@@ -1637,9 +1662,11 @@ class ExecutionSafetyCoordinator:
         self._entry_submission_lock = threading.RLock()
         self._entries_frozen = False
         self._freeze_reason = ""
+        self._freeze_exposure_ids: set[str] = set()
+        self._freeze_unattributed = False
         self._reconciliation_running = False
 
-    def freeze_entries(self, reason: str) -> bool:
+    def freeze_entries(self, reason: str, exposure_id: str = "") -> bool:
         """Freeze new live entries, preserving the first broker evidence."""
 
         with self._lock:
@@ -1647,6 +1674,11 @@ class ExecutionSafetyCoordinator:
             if newly_frozen:
                 self._entries_frozen = True
                 self._freeze_reason = str(reason).strip()
+            normalized_id = str(exposure_id).strip()
+            if normalized_id:
+                self._freeze_exposure_ids.add(normalized_id)
+            else:
+                self._freeze_unattributed = True
             return newly_frozen
 
     def entry_freeze_snapshot(self) -> tuple[bool, str]:
@@ -1654,6 +1686,12 @@ class ExecutionSafetyCoordinator:
 
         with self._lock:
             return self._entries_frozen, self._freeze_reason
+
+    def freeze_attribution_snapshot(self) -> tuple[frozenset[str], bool]:
+        """Return exposure IDs that contributed to the current entry freeze."""
+
+        with self._lock:
+            return frozenset(self._freeze_exposure_ids), self._freeze_unattributed
 
     def acquire_entry_submission_lease(self, timeout: float = 10.0) -> bool:
         """Serialize a live entry through final broker classification."""
@@ -1680,6 +1718,15 @@ class ExecutionSafetyCoordinator:
         with self._lock:
             self._reconciliation_running = False
 
+    def unfreeze_entries_after_reconciliation(self) -> None:
+        """Reopen the shared gate after a read-only audit proves the account flat."""
+
+        with self._lock:
+            self._entries_frozen = False
+            self._freeze_reason = ""
+            self._freeze_exposure_ids.clear()
+            self._freeze_unattributed = False
+
 
 class SharedMarketDataStore:
     """
@@ -1701,6 +1748,11 @@ class SharedMarketDataStore:
         self._ltp_snapshots: dict[tuple[str, int], LTPSnapshot] = {}
         self._option_subscriptions: dict[tuple[str, int], OptionSubscription] = {}
         self.execution_safety = ExecutionSafetyCoordinator()
+        # The execution ledger is separate from market-data snapshots because it
+        # has its own lock and must survive strategy-frame refreshes.  Every live
+        # order leg is registered here before the broker submission starts.
+        self.execution_ledger = ExecutionLedger()
+        self.startup_exposure_audit: StartupExposureAudit | None = None
 
     # ------------------------------------------------------------------
     # OHLC pool
@@ -3057,9 +3109,9 @@ class BasePaperStrategyWorker(threading.Thread):
     trading_start_minute = 15
     square_off_hour = 15
     square_off_minute = 15
-    # HEDGE-001: how often to retry selling-to-close a live leg orphaned by a
-    # hedged-entry double failure. Slow on purpose -- the broker just rejected
-    # the same order, so hammering it seconds later only burns rate limit.
+    # How often to retry closing a live leg whose entry never acquired a normal
+    # strategy-position owner. Slow on purpose -- the broker just returned an
+    # incomplete outcome, so hammering it seconds later only burns rate limit.
     ORPHAN_UNWIND_RETRY_SECONDS = 60.0
 
     def __init__(
@@ -3113,6 +3165,11 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+        # Distinguish otherwise-identical legs owned by different worker
+        # instances.  A frozen worker may finish its own partial order, but a
+        # second worker must never adopt that continuation merely because its
+        # strategy name and contract happen to match.
+        self._execution_owner_id = uuid.uuid4().hex[:8].upper()
 
         # MAT-101: an ambiguous broker reply can mean real exposure exists even
         # though the process did not receive a final fill state.  Freeze NEW live
@@ -3127,12 +3184,11 @@ class BasePaperStrategyWorker(threading.Thread):
         # per-leg remaining quantities.
         self._indeterminate_exit_paths: set[tuple[str, str, str]] = set()
 
-        # HEDGE-001: live legs orphaned by a hedged-entry DOUBLE failure (the
-        # protective hedge BUY filled, then the main SELL and the unwind SELL
-        # both failed). Each entry is the original leg dict. The worker keeps
-        # retrying to sell these to close (`_sweep_orphan_live_legs`, driven
-        # from wait_for_next_poll + a final forced attempt at shutdown) so
-        # recovery does not depend on a human spotting the Telegram alert.
+        # Quantity-bearing live legs whose entry never acquired a normal
+        # PaperPosition/HedgedPaperPosition owner. Each entry retains the
+        # original leg dict and immutable ledger state. The worker closes these
+        # with the opposite side on a slow cadence and at shutdown, so recovery
+        # does not depend on a repeated signal or a human spotting an alert.
         self._orphan_live_legs: list[dict] = []
         self._next_orphan_retry_ts = 0.0
 
@@ -3206,12 +3262,228 @@ class BasePaperStrategyWorker(threading.Thread):
 
         self._indeterminate_exit_paths.add(self._live_order_path_key(side, leg))
 
-    def _entry_outcome_allows_position(self, result: OrderResult) -> bool:
+    def _entry_outcome_allows_position(
+        self,
+        result: OrderResult,
+        live_leg: LiveLegState | None = None,
+    ) -> bool:
         """Say whether strategy bookkeeping may create a position after an entry."""
 
+        if live_leg is not None:
+            return live_leg.entry_complete or (
+                live_leg.broker_confirmed_flat
+                and self._is_explicit_zero_fill_rejection(result)
+            )
         return self._is_confirmed_fill(result) or self._is_explicit_zero_fill_rejection(result)
 
-    def _start_execution_reconciliation(self, result: OrderResult) -> None:
+    def _frozen_companion_entry_is_authorized(
+        self,
+        leg: dict,
+        *,
+        broker_symbol: str,
+        opening_side: str,
+    ) -> bool:
+        """Allow only a broker-confirmed anchor's planned basket companion.
+
+        A partial first leg freezes all unrelated entries.  Once that exact leg
+        finishes, however, the correlated hedge/main, NIFTY/BNF mirror, or
+        CE/PE strangle companion still has to be submitted for the basket to
+        reach its intended state.  This narrow exception requires the same
+        worker owner, strategy and correlation, a known role transition, and no
+        unresolved order from a different basket.
+        """
+
+        correlation_id = str(leg.get("correlation_id") or "").upper().strip()
+        role = str(leg.get("role") or "").upper().strip()[:1]
+        opening_side = str(opening_side).upper().strip()
+        if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
+            return False
+        allowed_transitions = {
+            ("H", "M", "BUY", "SELL"),
+            ("N", "B", "BUY", "BUY"),
+            ("C", "P", "BUY", "BUY"),
+        }
+        active_states = self.store.execution_ledger.active_states()
+        freeze_ids, freeze_unattributed = (
+            self.store.execution_safety.freeze_attribution_snapshot()
+        )
+        if freeze_unattributed or not freeze_ids:
+            return False
+        for exposure_id in freeze_ids:
+            try:
+                freeze_state = self.store.execution_ledger.get(exposure_id)
+            except KeyError:
+                return False
+            if not (
+                freeze_state.spec.strategy == self.strategy_name
+                and freeze_state.spec.owner_id == self._execution_owner_id
+                and freeze_state.spec.correlation_id == correlation_id
+            ):
+                return False
+        return any(
+            state.entry_complete
+            and state.spec.symbol != broker_symbol
+            and (
+                state.spec.role,
+                role,
+                state.spec.opening_side,
+                opening_side,
+            )
+            in allowed_transitions
+            and state.spec.strategy == self.strategy_name
+            and state.spec.owner_id == self._execution_owner_id
+            and state.spec.correlation_id == correlation_id
+            for state in active_states
+        )
+
+    def _register_live_leg(
+        self,
+        leg: dict,
+        *,
+        broker_symbol: str,
+        opening_side: str,
+        allow_new: bool = True,
+    ) -> LiveLegState | None:
+        """Register one quantity-bearing live leg before its first submission.
+
+        The same unfinished state is reused when a strategy emits the same signal
+        again after a terminal partial fill.  A new eight-character correlation
+        id is generated only for a genuinely new basket.
+        """
+
+        existing = leg.get("live_leg")
+        if isinstance(existing, LiveLegState):
+            refreshed = self.store.execution_ledger.get(existing.exposure_id)
+            leg["live_leg"] = refreshed
+            leg["quantity"] = refreshed.spec.target_quantity
+            return refreshed
+        correlation_id = str(leg.get("correlation_id") or "").upper().strip()
+        if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
+            correlation_id = uuid.uuid4().hex[:8].upper()
+            leg["correlation_id"] = correlation_id
+        role = str(leg.get("role") or "N").upper().strip()[:1] or "N"
+        expiry = leg.get("expiry")
+        if expiry is not None and not isinstance(expiry, date):
+            raise ValueError("live leg expiry must be a date or None")
+        spec = LegSpec(
+            strategy=self.strategy_name,
+            correlation_id=correlation_id,
+            role=role,
+            underlying=str(leg.get("underlying") or UNDERLYING),
+            symbol=broker_symbol,
+            option_type=str(leg.get("option_type") or ""),
+            strike=float(leg.get("strike", 0.0)),
+            expiry=expiry,
+            opening_side=opening_side,
+            target_quantity=int(leg["quantity"]),
+            owner_id=self._execution_owner_id,
+        )
+        state = self.store.execution_ledger.find_unfinished(spec)
+        if state is None:
+            if not allow_new:
+                return None
+            state = self.store.execution_ledger.register(spec)
+        leg["live_leg"] = state
+        # A rebuilt strategy dictionary may carry a newly calculated lot count,
+        # but an unfinished broker exposure keeps its original target.  Make the
+        # ledger target authoritative for all later position/PnL bookkeeping.
+        leg["quantity"] = state.spec.target_quantity
+        # Preserve the authoritative correlation when register() found an older
+        # unfinished state created by a previous signal invocation.
+        leg["correlation_id"] = state.spec.correlation_id
+        return state
+
+    def _current_attempt_result(self, state: LiveLegState, reason: str) -> OrderResult:
+        """Return the latest cumulative evidence without inventing a new order."""
+
+        attempt = state.latest_attempt
+        if attempt is None:
+            return self._synthetic_order_result(
+                state.spec.target_quantity,
+                OrderStatus.UNKNOWN,
+                reason,
+                broker_state="NO_ORDER_ATTEMPT",
+            )
+        return OrderResult(
+            order_id=attempt.order_id,
+            requested_quantity=attempt.requested_quantity,
+            filled_quantity=attempt.filled_quantity,
+            remaining_quantity=attempt.remaining_quantity,
+            status=attempt.status,
+            broker_state=attempt.broker_state,
+            reason=reason,
+        )
+
+    def _refresh_live_leg_attempt(self, leg: dict) -> OrderResult | None:
+        """Poll a non-terminal broker order once and apply cumulative fill deltas."""
+
+        state = leg.get("live_leg")
+        if not isinstance(state, LiveLegState):
+            raise ValueError("live leg state is required for broker reconciliation")
+        state = self.store.execution_ledger.get(state.exposure_id)
+        leg["live_leg"] = state
+        attempt = state.latest_attempt
+        if attempt is None or attempt.terminal:
+            return None
+        if execution_client is None or not attempt.order_id:
+            return self._current_attempt_result(
+                state,
+                "The previous broker order remains indeterminate and cannot be retried safely.",
+            )
+        try:
+            result = execution_client.get_order_status(
+                attempt.order_id,
+                requested_quantity=attempt.requested_quantity,
+            )
+            if not isinstance(result, OrderResult):
+                return self._current_attempt_result(
+                    state,
+                    "Broker status query returned an untyped result; quantity remains indeterminate.",
+                )
+            handle = state.latest_attempt_handle
+            if handle is None:  # pragma: no cover - guarded by ``attempt`` above.
+                raise RuntimeError("live leg lost its current attempt identity")
+            refreshed = self.store.execution_ledger.apply_result(handle, result)
+            leg["live_leg"] = refreshed
+            return result
+        except Exception as exc:  # noqa: BLE001 - fail closed around broker state
+            return self._current_attempt_result(
+                state,
+                f"Broker status refresh failed; quantity remains indeterminate: {exc}",
+            )
+
+    def _try_unfreeze_after_flat_reconciliation(self) -> bool:
+        """Resume entries only when every tracked leg and both broker books are flat."""
+
+        if self.store.execution_ledger.active_states():
+            return False
+        client = execution_client
+        if client is None:
+            return False
+        audit = audit_startup_exposure(client)
+        if not audit.safe_to_enable_live:
+            return False
+        recover = getattr(client, "recover_after_reconciliation", None)
+        if callable(recover):
+            try:
+                if recover() is not True:
+                    return False
+            except Exception:  # noqa: BLE001 - broker recovery must fail closed.
+                return False
+        self.store.execution_safety.unfreeze_entries_after_reconciliation()
+        self._live_execution_frozen = False
+        self._live_execution_freeze_reason = ""
+        self.log.warning(
+            "BROKER RECONCILIATION COMPLETE | all tracked legs and broker books "
+            "are flat; new live entries may resume."
+        )
+        return True
+
+    def _start_execution_reconciliation(
+        self,
+        result: OrderResult,
+        attempt_handle: OrderAttemptHandle | None = None,
+    ) -> None:
         """Probe broker order/position books once after ambiguous exposure.
 
         This pass records evidence but intentionally cannot unfreeze entries or
@@ -3246,6 +3518,15 @@ class BasePaperStrategyWorker(threading.Thread):
                             result.order_id,
                             requested_quantity=result.requested_quantity,
                         )
+                        if attempt_handle is not None and isinstance(status, OrderResult):
+                            # A synchronous retry may already own a newer
+                            # attempt. The ledger rejects this late result; the
+                            # probe still reports its evidence below.
+                            with contextlib.suppress(KeyError, RuntimeError, ValueError):
+                                self.store.execution_ledger.apply_result(
+                                    attempt_handle,
+                                    status,
+                                )
                         status_summary = (
                             f"{status.status.value} filled={status.filled_quantity} "
                             f"remaining={status.remaining_quantity} state={status.broker_state}"
@@ -3297,7 +3578,11 @@ class BasePaperStrategyWorker(threading.Thread):
         self._live_execution_frozen = True
         if not self._live_execution_freeze_reason:
             self._live_execution_freeze_reason = result.reason
-        self.store.execution_safety.freeze_entries(result.reason)
+        live_state = leg.get("live_leg")
+        exposure_id = (
+            live_state.exposure_id if isinstance(live_state, LiveLegState) else ""
+        )
+        self.store.execution_safety.freeze_entries(result.reason, exposure_id)
         self.log.error(
             "INDETERMINATE LIVE EXPOSURE | %s %s | status=%s order_id=%s "
             "requested=%s filled=%s remaining=%s | %s | NEW live entries FROZEN.",
@@ -3327,7 +3612,12 @@ class BasePaperStrategyWorker(threading.Thread):
                 "reason": result.reason,
             }
         )
-        self._start_execution_reconciliation(result)
+        attempt_handle = (
+            live_state.latest_attempt_handle
+            if isinstance(live_state, LiveLegState)
+            else None
+        )
+        self._start_execution_reconciliation(result, attempt_handle)
 
     def _place_real_leg(self, side: str, leg: dict, *, opens_exposure: bool) -> OrderResult:
         """Route one leg, serializing only orders that can increase exposure.
@@ -3413,28 +3703,6 @@ class BasePaperStrategyWorker(threading.Thread):
             )
 
         dhan_symbol = leg.get("dhan_symbol", "")
-        path_key = self._live_order_path_key(side, leg)
-        shared_frozen, shared_reason = self.store.execution_safety.entry_freeze_snapshot()
-        if opens_exposure and (self._live_execution_frozen or shared_frozen):
-            self._live_execution_frozen = True
-            if not self._live_execution_freeze_reason:
-                self._live_execution_freeze_reason = shared_reason
-            return self._synthetic_order_result(
-                quantity,
-                OrderStatus.UNKNOWN,
-                "New live entry blocked: the shared broker session has unresolved "
-                f"exposure. Original reason: {shared_reason or self._live_execution_freeze_reason}",
-                broker_state="ENTRY_FROZEN",
-            )
-        if not opens_exposure and path_key in self._indeterminate_exit_paths:
-            return self._synthetic_order_result(
-                quantity,
-                OrderStatus.UNKNOWN,
-                "Duplicate full-quantity exit blocked until broker reconciliation "
-                "confirms the remaining leg quantity.",
-                broker_state="EXIT_RECONCILIATION_REQUIRED",
-            )
-
         if execution_client is None:
             self.log.warning(
                 "REAL ORDER SKIPPED (no %s client) | %s %s qty=%s dhan=%s | falling back to paper.",
@@ -3484,13 +3752,117 @@ class BasePaperStrategyWorker(threading.Thread):
                 f"Order was not submitted because {LIVE_BROKER} symbol resolution failed.",
                 broker_state="LOCAL_NOT_SUBMITTED",
             )
+
+        shared_frozen, shared_reason = self.store.execution_safety.entry_freeze_snapshot()
+        if opens_exposure:
+            # A frozen account may reconcile/finish an already-registered leg,
+            # but it must never register a different exposure.  find_unfinished
+            # uses the resolved broker symbol, role and opening side, so another
+            # worker cannot masquerade as the continuation.
+            companion_authorized = shared_frozen and self._frozen_companion_entry_is_authorized(
+                leg,
+                broker_symbol=broker_symbol,
+                opening_side=str(side).upper().strip(),
+            )
+            state = self._register_live_leg(
+                leg,
+                broker_symbol=broker_symbol,
+                opening_side=str(side).upper().strip(),
+                allow_new=not shared_frozen or companion_authorized,
+            )
+            if state is None:
+                self._live_execution_frozen = True
+                if not self._live_execution_freeze_reason:
+                    self._live_execution_freeze_reason = shared_reason
+                return self._synthetic_order_result(
+                    quantity,
+                    OrderStatus.UNKNOWN,
+                    "New live entry blocked: the shared broker session has unresolved "
+                    "exposure. Original reason: "
+                    f"{shared_reason or self._live_execution_freeze_reason}",
+                    broker_state="ENTRY_FROZEN",
+                )
+        else:
+            state = leg.get("live_leg")
+            if not isinstance(state, LiveLegState):
+                return self._synthetic_order_result(
+                    quantity,
+                    OrderStatus.REJECTED,
+                    "Reducing order was not submitted because the position has no "
+                    "quantity-bearing live leg state.",
+                    broker_state="LOCAL_LIVE_STATE_MISSING",
+                )
+            state = self.store.execution_ledger.get(state.exposure_id)
+            leg["live_leg"] = state
+
+        refreshed_result = self._refresh_live_leg_attempt(leg)
+        state = leg["live_leg"]
+        if state.latest_attempt is not None and not state.latest_attempt.terminal:
+            result = refreshed_result or self._current_attempt_result(
+                state,
+                "The previous broker order remains non-terminal; duplicate submission blocked.",
+            )
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
+        # Idempotent callers may revisit a leg after a status refresh completed
+        # it. Return a local success and do not submit duplicate quantity.
+        if opens_exposure and state.entry_complete:
+            return self._synthetic_order_result(
+                state.spec.target_quantity,
+                OrderStatus.FILLED,
+                "Tracked live entry is already broker-confirmed complete.",
+                order_id=(state.latest_attempt.order_id if state.latest_attempt else ""),
+                broker_state="ALREADY_OPEN",
+            )
+        if not opens_exposure and state.broker_confirmed_flat:
+            self._try_unfreeze_after_flat_reconciliation()
+            return self._synthetic_order_result(
+                state.spec.target_quantity,
+                OrderStatus.FILLED,
+                "Tracked live leg is already broker-confirmed flat.",
+                order_id=(state.latest_attempt.order_id if state.latest_attempt else ""),
+                broker_state="ALREADY_FLAT",
+            )
+
+        submit_quantity = (
+            state.safe_open_retry_quantity
+            if opens_exposure
+            else state.safe_close_retry_quantity
+        )
+        if submit_quantity <= 0:
+            result = self._current_attempt_result(
+                state,
+                "No broker-safe retry quantity is currently available.",
+            )
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
+        intent = OrderIntent.OPEN if opens_exposure else OrderIntent.CLOSE
+        try:
+            attempt_handle = self.store.execution_ledger.start_attempt(
+                state.exposure_id,
+                intent,
+                submit_quantity,
+            )
+            state = self.store.execution_ledger.get(state.exposure_id)
+            leg["live_leg"] = state
+        except (KeyError, RuntimeError, ValueError) as exc:
+            result = self._current_attempt_result(
+                state,
+                f"Execution ledger refused an unsafe broker submission: {exc}",
+            )
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
         try:
             raw_result = execution_client.place_market_order(
                 symbol=broker_symbol,
                 side=side,
-                quantity=quantity,
+                quantity=submit_quantity,
                 exchange_segment=LIVE_EXCHANGE_SEGMENT,
                 product_type=LIVE_PRODUCT_TYPE,
+                order_tag=attempt_handle.order_tag,
             )
             if isinstance(raw_result, OrderResult):
                 result = raw_result
@@ -3503,7 +3875,7 @@ class BasePaperStrategyWorker(threading.Thread):
                 except Exception:  # noqa: BLE001 - compatibility evidence is best-effort
                     legacy_order_id = ""
                 result = self._synthetic_order_result(
-                    quantity,
+                    submit_quantity,
                     OrderStatus.UNKNOWN,
                     "Execution client returned a legacy/untyped result; fill state is unknown.",
                     order_id=legacy_order_id,
@@ -3512,14 +3884,14 @@ class BasePaperStrategyWorker(threading.Thread):
 
             # An adapter returning a different requested quantity is not safe to
             # reinterpret.  Preserve usable fill evidence and fail closed.
-            if result.requested_quantity != quantity:
+            if result.requested_quantity != submit_quantity:
                 usable_filled = (
                     result.filled_quantity
-                    if 0 <= result.filled_quantity <= quantity
+                    if 0 <= result.filled_quantity <= submit_quantity
                     else 0
                 )
                 result = self._synthetic_order_result(
-                    quantity,
+                    submit_quantity,
                     OrderStatus.UNKNOWN,
                     "Broker result quantity did not match the submitted quantity. "
                     f"Adapter reported requested={result.requested_quantity}. {result.reason}",
@@ -3528,53 +3900,66 @@ class BasePaperStrategyWorker(threading.Thread):
                     filled_quantity=usable_filled,
                 )
 
-            if self._is_confirmed_fill(result):
+            # The ledger validates the attempt identity and applies only the
+            # cumulative fill delta.  Its returned immutable snapshot is the
+            # sole authority for all subsequent strategy decisions.
+            state = self.store.execution_ledger.apply_result(
+                attempt_handle,
+                result,
+            )
+            leg["live_leg"] = state
+
+            completed = state.entry_complete if opens_exposure else state.broker_confirmed_flat
+            if completed:
                 self.log.info(
                     "REAL ORDER FILLED | %s %s %s qty=%s sym=%s (dhan=%s) | OrderId=%s",
                     LIVE_BROKER,
                     self.strategy_name,
                     side,
-                    quantity,
+                    submit_quantity,
                     broker_symbol,
                     dhan_symbol,
                     result.order_id or "UNKNOWN",
                 )
-            elif self._is_explicit_zero_fill_rejection(result):
+                if not opens_exposure:
+                    self._try_unfreeze_after_flat_reconciliation()
+            elif (
+                opens_exposure
+                and state.broker_confirmed_flat
+                and self._is_explicit_zero_fill_rejection(result)
+            ):
                 self.log.warning(
                     "REAL ORDER REJECTED WITH ZERO FILL | %s %s %s qty=%s sym=%s | %s",
                     LIVE_BROKER,
                     self.strategy_name,
                     side,
-                    quantity,
+                    submit_quantity,
                     broker_symbol,
                     result.reason,
                 )
             else:
                 # Invalid status/quantity combinations are just as unsafe as an
                 # explicit UNKNOWN response.  Convert them before alerting.
-                if result.status not in {OrderStatus.PARTIAL, OrderStatus.UNKNOWN}:
-                    result = self._synthetic_order_result(
-                        quantity,
-                        OrderStatus.UNKNOWN,
-                        "Broker result status and quantities were inconsistent. "
-                        f"Original status={result.status.value}. {result.reason}",
-                        order_id=result.order_id,
-                        broker_state=result.broker_state,
-                        filled_quantity=result.filled_quantity,
-                    )
-                if not opens_exposure:
-                    self._mark_indeterminate_exit_path(side, leg)
                 self._freeze_live_entries(result, side=side, leg=leg)
             return result
         except Exception as exc:
             result = self._synthetic_order_result(
-                quantity,
+                submit_quantity,
                 OrderStatus.UNKNOWN,
                 f"Execution client raised after order submission may have started: {exc}",
                 broker_state="CLIENT_EXCEPTION",
             )
-            if not opens_exposure:
-                self._mark_indeterminate_exit_path(side, leg)
+            try:
+                state = self.store.execution_ledger.apply_result(
+                    attempt_handle,
+                    result,
+                )
+                leg["live_leg"] = state
+            except (KeyError, RuntimeError, ValueError):
+                # The attempt was already registered before the adapter call, so
+                # exposure remains indeterminate even if malformed evidence could
+                # not be attached. Never attempt an automatic duplicate here.
+                pass
             self._freeze_live_entries(result, side=side, leg=leg)
             return result
 
@@ -3613,6 +3998,63 @@ class BasePaperStrategyWorker(threading.Thread):
             return "LIVE_REJECTED" if is_exit else "PAPER_FALLBACK"
         return "LIVE_INDETERMINATE"
 
+    def _prepare_hedged_live_legs(self, main_leg: dict, hedge_leg: dict) -> None:
+        """Give both spread legs one correlation id and distinct broker roles."""
+
+        correlation_id = ""
+        for leg in (main_leg, hedge_leg):
+            state = leg.get("live_leg")
+            candidate = (
+                state.spec.correlation_id
+                if isinstance(state, LiveLegState)
+                else str(leg.get("correlation_id") or "").upper().strip()
+            )
+            if re.fullmatch(r"[A-Z0-9]{8}", candidate):
+                correlation_id = candidate
+                break
+        if not correlation_id:
+            correlation_id = uuid.uuid4().hex[:8].upper()
+        main_leg["correlation_id"] = correlation_id
+        main_leg["role"] = "M"
+        hedge_leg["correlation_id"] = correlation_id
+        hedge_leg["role"] = "H"
+
+    def _track_orphan_live_leg(self, leg: dict) -> None:
+        """Retain one quantity-bearing leg that has no strategy-position owner."""
+
+        state = leg.get("live_leg")
+        if not isinstance(state, LiveLegState) or state.broker_confirmed_flat:
+            return
+        record = dict(leg)
+        for index, existing in enumerate(self._orphan_live_legs):
+            existing_state = existing.get("live_leg")
+            if (
+                isinstance(existing_state, LiveLegState)
+                and existing_state.exposure_id == state.exposure_id
+            ):
+                self._orphan_live_legs[index] = record
+                break
+        else:
+            self._orphan_live_legs.append(record)
+        self._next_orphan_retry_ts = (
+            time.monotonic() + self.ORPHAN_UNWIND_RETRY_SECONDS
+        )
+
+    def _untrack_orphan_live_leg(self, leg: dict) -> None:
+        """Remove a leg once a normal strategy position has adopted its state."""
+
+        state = leg.get("live_leg")
+        if not isinstance(state, LiveLegState):
+            return
+        self._orphan_live_legs = [
+            existing
+            for existing in self._orphan_live_legs
+            if not (
+                isinstance(existing.get("live_leg"), LiveLegState)
+                and existing["live_leg"].exposure_id == state.exposure_id
+            )
+        ]
+
     def _place_real_hedged_entry(self, main_leg: dict, hedge_leg: dict) -> OrderResult:
         """
         Open a real two-leg "hedged" position (sell one option, buy a cheaper one
@@ -3631,23 +4073,89 @@ class BasePaperStrategyWorker(threading.Thread):
                 "Paper mode: no hedged broker entry was submitted.",
                 broker_state="PAPER",
             )
+        self._prepare_hedged_live_legs(main_leg, hedge_leg)
         hedge_result = self._place_real_leg("BUY", hedge_leg, opens_exposure=True)
-        if not self._is_confirmed_fill(hedge_result):
+        hedge_state = hedge_leg.get("live_leg")
+        if not (
+            isinstance(hedge_state, LiveLegState)
+            and hedge_state.entry_complete
+        ):
+            if isinstance(hedge_state, LiveLegState) and hedge_state.exposure_possible:
+                self._track_orphan_live_leg(hedge_leg)
+            if (
+                isinstance(hedge_state, LiveLegState)
+                and hedge_state.confirmed_live_quantity > 0
+                and self._is_explicit_zero_fill_rejection(hedge_result)
+            ):
+                return self._synthetic_order_result(
+                    hedge_state.spec.target_quantity,
+                    OrderStatus.PARTIAL,
+                    "The unfinished hedge retry was rejected, but confirmed long "
+                    "exposure from an earlier partial fill remains open.",
+                    order_id=hedge_result.order_id,
+                    broker_state="HEDGED_ENTRY_PARTIAL",
+                    filled_quantity=hedge_state.confirmed_live_quantity,
+                )
             return hedge_result
 
+        # A retry may have found an older unfinished hedge.  Its ledger
+        # correlation is authoritative for the short leg in the same basket.
+        main_leg["correlation_id"] = hedge_state.spec.correlation_id
+
         main_result = self._place_real_leg("SELL", main_leg, opens_exposure=True)
-        if not self._is_confirmed_fill(main_result):
-            if not self._is_explicit_zero_fill_rejection(main_result):
+        main_state = main_leg.get("live_leg")
+        if not (
+            isinstance(main_state, LiveLegState)
+            and main_state.entry_complete
+        ):
+            main_known_flat = main_state is None or (
+                isinstance(main_state, LiveLegState)
+                and main_state.broker_confirmed_flat
+            )
+            if not (
+                main_known_flat
+                and self._is_explicit_zero_fill_rejection(main_result)
+            ):
                 # A partial/unknown short may exist.  Keep the confirmed hedge in
                 # place rather than risking a naked short by unwinding it.
+                if isinstance(main_state, LiveLegState) and main_state.exposure_possible:
+                    # Track the short first so a forced sweep buys it back before
+                    # selling the protective long hedge.
+                    self._untrack_orphan_live_leg(hedge_leg)
+                    self._track_orphan_live_leg(main_leg)
+                self._track_orphan_live_leg(hedge_leg)
+                if (
+                    isinstance(main_state, LiveLegState)
+                    and main_state.confirmed_live_quantity > 0
+                    and self._is_explicit_zero_fill_rejection(main_result)
+                ):
+                    # The *retry* was rejected, not the quantity filled by an
+                    # earlier attempt.  Returning REJECTED here would let generic
+                    # entry code misclassify the basket as a paper fallback.
+                    return self._synthetic_order_result(
+                        main_state.spec.target_quantity,
+                        OrderStatus.PARTIAL,
+                        "The unfinished main-leg retry was rejected, but confirmed "
+                        "short exposure from an earlier partial fill remains open.",
+                        order_id=main_result.order_id,
+                        broker_state="HEDGED_ENTRY_PARTIAL",
+                        filled_quantity=main_state.confirmed_live_quantity,
+                    )
                 return main_result
 
             # Main leg failed after the hedge filled -> unwind the hedge so we
             # are not left holding a stray live leg.  This SELL reduces exposure,
             # so it remains allowed even though an earlier ambiguity may freeze
             # new entries.
-            unwind_result = self._place_real_leg("SELL", hedge_leg, opens_exposure=False)
-            if self._is_confirmed_fill(unwind_result):
+            hedge_leg["live_leg"] = hedge_state
+            unwind_result = self._place_real_leg(
+                "SELL", hedge_leg, opens_exposure=False
+            )
+            hedge_state = hedge_leg.get("live_leg")
+            if (
+                isinstance(hedge_state, LiveLegState)
+                and hedge_state.broker_confirmed_flat
+            ):
                 self.log.warning(
                     "Hedged entry aborted (hedge filled, main rejected) for %s; "
                     "hedge unwind filled, so paper fallback is safe.",
@@ -3655,56 +4163,62 @@ class BasePaperStrategyWorker(threading.Thread):
                 )
                 return main_result
 
+            # Double failure: the hedge BUY filled but neither the main SELL nor
+            # the unwind completed.  Keep its exact ledger state; a PARTIAL
+            # unwind may have already reduced the quantity.
+            self.log.error(
+                "MANUAL ACTION NEEDED | %s hedged entry: hedge filled but main "
+                "and unwind did not flatten -> a LIVE BUY %s strike=%s risk_qty=%s "
+                "may remain. The worker will keep retrying the broker-safe "
+                "remainder (every ~%.0fs and at shutdown).",
+                self.strategy_name,
+                hedge_leg.get("option_type"),
+                hedge_leg.get("strike"),
+                hedge_state.risk_quantity if isinstance(hedge_state, LiveLegState) else "UNKNOWN",
+                self.ORPHAN_UNWIND_RETRY_SECONDS,
+            )
+            self.publish_trade_event({
+                "action": "UNHEDGED_LEG_OPEN",
+                "mode": "LIVE_INDETERMINATE",
+                "leg": "hedge",
+                "option_type": hedge_leg.get("option_type"),
+                "strike": hedge_leg.get("strike"),
+                "quantity": (
+                    hedge_state.risk_quantity
+                    if isinstance(hedge_state, LiveLegState)
+                    else int(hedge_leg.get("quantity", 0))
+                ),
+            })
+            self._track_orphan_live_leg(hedge_leg)
             if self._is_explicit_zero_fill_rejection(unwind_result):
-                # Double failure: the hedge BUY filled but neither the main SELL
-                # nor the unwind SELL did. Track the live long leg for retry.
-                self.log.error(
-                    "MANUAL ACTION NEEDED | %s hedged entry: hedge filled but main "
-                    "AND unwind failed -> a LIVE BUY %s strike=%s qty=%s is OPEN. "
-                    "The worker will keep retrying the unwind (every ~%.0fs "
-                    "and at shutdown); square it off manually if it persists.",
-                    self.strategy_name, hedge_leg.get("option_type"),
-                    hedge_leg.get("strike"), hedge_leg.get("quantity"),
-                    self.ORPHAN_UNWIND_RETRY_SECONDS,
-                )
-                self.publish_trade_event({
-                    "action": "UNHEDGED_LEG_OPEN",
-                    "mode": "LIVE",
-                    "leg": "hedge",
-                    "option_type": hedge_leg.get("option_type"),
-                    "strike": hedge_leg.get("strike"),
-                    "quantity": hedge_leg.get("quantity"),
-                })
-                # HEDGE-001: remember the orphan so the worker ITSELF keeps
-                # retrying the unwind (poll cadence + a final forced attempt at
-                # shutdown) instead of relying on the alert being seen. First
-                # retry waits one full cadence -- the broker rejected this very
-                # order milliseconds ago, so an instant retry would just fail.
-                self._orphan_live_legs.append(dict(hedge_leg))
-                self._next_orphan_retry_ts = time.monotonic() + self.ORPHAN_UNWIND_RETRY_SECONDS
                 unresolved = self._synthetic_order_result(
-                    int(hedge_leg.get("quantity", 0)),
+                    (
+                        hedge_state.risk_quantity
+                        if isinstance(hedge_state, LiveLegState)
+                        else int(hedge_leg.get("quantity", 0))
+                    ),
                     OrderStatus.UNKNOWN,
                     "Protective hedge filled, main entry was rejected, and hedge unwind was rejected; "
                     "a known live long hedge remains open.",
-                    order_id=hedge_result.order_id,
+                    # This synthetic result describes the rejected SELL attempt,
+                    # never the earlier filled BUY.  Reusing the entry ID here
+                    # would let reconciliation apply a BUY fill to the CLOSE
+                    # attempt and falsely erase the orphaned live quantity.
+                    order_id=unwind_result.order_id,
                     broker_state="ORPHAN_HEDGE_OPEN",
                     filled_quantity=int(hedge_leg.get("quantity", 0)),
                 )
                 self._freeze_live_entries(unresolved, side="HEDGE_ORPHAN", leg=hedge_leg)
                 return unresolved
-            # PARTIAL/UNKNOWN unwinds are deliberately not queued for a full-size
-            # retry: MAT-102 will add per-leg quantities, and retrying now could
-            # oversell the hedge.  The typed result already froze new live entry.
             return unwind_result
+        self._untrack_orphan_live_leg(main_leg)
+        self._untrack_orphan_live_leg(hedge_leg)
         return main_result
 
     def _place_real_hedged_exit(
         self,
         main_leg: dict,
         hedge_leg: dict,
-        *,
-        live_legs_open: bool,
     ) -> OrderResult:
         """
         Close a real two-leg hedged position: BUY back the main leg we sold, and
@@ -3714,50 +4228,62 @@ class BasePaperStrategyWorker(threading.Thread):
         selling the protective long hedge; otherwise protection stays in place.
         The caller flattens its books only after both typed fills are confirmed.
 
-        `live_legs_open` is the closing position's flag: when False the entry
-        never opened real legs (paper mode, or a live entry that fell back to
-        paper / orphaned), so there is nothing to close at the broker and we must
-        NOT send orders -- doing so would open phantom exposure. A synthetic
-        full-fill result lets the caller flatten its paper books normally.
+        The per-leg ledger snapshots decide which orders exist.  A main leg that
+        is already flat is never bought again while the hedge finishes closing.
         """
-        if not live_legs_open:
+        main_state = main_leg.get("live_leg")
+        hedge_state = hedge_leg.get("live_leg")
+        if not isinstance(main_state, LiveLegState) and not isinstance(
+            hedge_state, LiveLegState
+        ):
             return self._synthetic_order_result(
                 int(main_leg.get("quantity", 0)),
                 OrderStatus.FILLED,
                 "No live hedged legs were open, so no broker exit was submitted.",
                 broker_state="PAPER",
             )
-        main_result = self._place_real_leg("BUY", main_leg, opens_exposure=False)
-        if not self._is_confirmed_fill(main_result):
-            # Keep the bought hedge in place while the short-main close remains
-            # rejected or ambiguous.  Selling it now could leave a naked short.
-            return main_result
 
-        hedge_result = self._place_real_leg("SELL", hedge_leg, opens_exposure=False)
-        if self._is_confirmed_fill(hedge_result):
-            return main_result
-        # The main BUY is already confirmed.  Any non-filled hedge result must
-        # block another full-size main BUY until MAT-102 reconciles the remaining
-        # long-hedge quantity; otherwise the next exit attempt opens a new long.
-        self._mark_indeterminate_exit_path("BUY", main_leg)
-        if self._is_explicit_zero_fill_rejection(hedge_result):
-            # The short is closed and a known full long hedge remains.  The
-            # existing orphan sweeper can safely retry that exact full quantity.
-            self._orphan_live_legs.append(dict(hedge_leg))
-            self._next_orphan_retry_ts = time.monotonic() + self.ORPHAN_UNWIND_RETRY_SECONDS
-            result = self._synthetic_order_result(
-                int(hedge_leg.get("quantity", 0)),
-                OrderStatus.UNKNOWN,
-                "Main exit filled but hedge exit was rejected; a live long hedge remains open.",
-                order_id=hedge_result.order_id,
-                broker_state="HEDGED_EXIT_INCOMPLETE",
-            )
-            self._freeze_live_entries(result, side="EXIT", leg=hedge_leg)
-            return result
-        return hedge_result
+        main_result: OrderResult | None = None
+        if isinstance(main_state, LiveLegState):
+            main_state = self.store.execution_ledger.get(main_state.exposure_id)
+            main_leg["live_leg"] = main_state
+            if not main_state.broker_confirmed_flat:
+                main_result = self._place_real_leg(
+                    "BUY", main_leg, opens_exposure=False
+                )
+                main_state = main_leg.get("live_leg")
+                if not (
+                    isinstance(main_state, LiveLegState)
+                    and main_state.broker_confirmed_flat
+                ):
+                    # Keep the protective long hedge while any short quantity is
+                    # known or possible.
+                    return main_result
+
+        if isinstance(hedge_state, LiveLegState):
+            hedge_state = self.store.execution_ledger.get(hedge_state.exposure_id)
+            hedge_leg["live_leg"] = hedge_state
+            if not hedge_state.broker_confirmed_flat:
+                hedge_result = self._place_real_leg(
+                    "SELL", hedge_leg, opens_exposure=False
+                )
+                hedge_state = hedge_leg.get("live_leg")
+                if not (
+                    isinstance(hedge_state, LiveLegState)
+                    and hedge_state.broker_confirmed_flat
+                ):
+                    self._track_orphan_live_leg(hedge_leg)
+                return hedge_result
+
+        return main_result or self._synthetic_order_result(
+            int(main_leg.get("quantity", 0)),
+            OrderStatus.FILLED,
+            "All tracked live hedged legs were already broker-confirmed flat.",
+            broker_state="ALREADY_FLAT",
+        )
 
     def _sweep_orphan_live_legs(self, *, force: bool = False) -> None:
-        """Retry selling-to-close any live leg orphaned by a hedged double failure.
+        """Retry the opposite-side close for every unowned live entry leg.
 
         HEDGE-001. Rate-limited to one attempt per ORPHAN_UNWIND_RETRY_SECONDS
         (a rejected order rarely succeeds seconds later, and retries must never
@@ -3775,30 +4301,55 @@ class BasePaperStrategyWorker(threading.Thread):
         self._next_orphan_retry_ts = now + self.ORPHAN_UNWIND_RETRY_SECONDS
         still_open: list[dict] = []
         for leg in self._orphan_live_legs:
-            path_key = self._live_order_path_key("SELL", leg)
-            if path_key in self._indeterminate_exit_paths:
+            state = leg.get("live_leg")
+            if not isinstance(state, LiveLegState):
                 still_open.append(leg)
                 self.log.error(
-                    "Orphaned live leg requires RECONCILIATION | %s strike=%s qty=%s | "
-                    "automatic full-quantity retry blocked to prevent an oversell.",
+                    "Orphaned live leg requires RECONCILIATION | %s strike=%s | "
+                    "quantity-bearing ledger state is missing.",
                     leg.get("option_type"),
                     leg.get("strike"),
-                    leg.get("quantity"),
                 )
                 continue
-            try:
-                result = self._place_real_leg("SELL", leg, opens_exposure=False)
-            except Exception:  # noqa: BLE001 - the sweep must never kill the worker loop
-                result = self._synthetic_order_result(
-                    int(leg.get("quantity", 0)),
-                    OrderStatus.UNKNOWN,
-                    "Orphan unwind retry raised unexpectedly.",
-                    broker_state="CLIENT_EXCEPTION",
+            state = self.store.execution_ledger.get(state.exposure_id)
+            leg["live_leg"] = state
+            if state.broker_confirmed_flat:
+                continue
+            if state.spec.role == "H":
+                # A protective long hedge is the last leg of a short-option
+                # basket that may be sold.  Refresh the ledger after any earlier
+                # main-leg attempt in this same sweep and retain protection while
+                # correlated role M exposure is still known or possible.
+                correlated_main_open = any(
+                    candidate.spec.role == "M"
+                    and candidate.spec.strategy == state.spec.strategy
+                    and candidate.spec.owner_id == state.spec.owner_id
+                    and candidate.spec.correlation_id == state.spec.correlation_id
+                    for candidate in self.store.execution_ledger.active_states()
                 )
-            if self._is_confirmed_fill(result):
+                if correlated_main_open:
+                    still_open.append(leg)
+                    self.log.error(
+                        "Protective hedge retained | %s strike=%s risk_qty=%s | "
+                        "correlated short main leg is not broker-confirmed flat.",
+                        leg.get("option_type"),
+                        leg.get("strike"),
+                        state.risk_quantity,
+                    )
+                    continue
+            try:
+                close_side = "BUY" if state.spec.opening_side == "SELL" else "SELL"
+                self._place_real_leg(close_side, leg, opens_exposure=False)
+            except Exception as exc:  # noqa: BLE001 - never kill the worker loop
+                self.log.error("Orphan unwind retry raised unexpectedly: %s", exc)
+            state = leg.get("live_leg")
+            if isinstance(state, LiveLegState) and state.broker_confirmed_flat:
                 self.log.warning(
-                    "Orphaned live leg RECOVERED (sold to close) | %s strike=%s qty=%s",
-                    leg.get("option_type"), leg.get("strike"), leg.get("quantity"),
+                    "Orphaned live leg RECOVERED (%s to close) | %s strike=%s qty=%s",
+                    close_side,
+                    leg.get("option_type"),
+                    leg.get("strike"),
+                    state.spec.target_quantity,
                 )
                 self.publish_trade_event({
                     "action": "UNHEDGED_LEG_CLOSED",
@@ -3806,26 +4357,22 @@ class BasePaperStrategyWorker(threading.Thread):
                     "leg": "hedge",
                     "option_type": leg.get("option_type"),
                     "strike": leg.get("strike"),
-                    "quantity": leg.get("quantity"),
+                    "quantity": state.spec.target_quantity,
                 })
             else:
                 still_open.append(leg)
-                if path_key in self._indeterminate_exit_paths:
-                    self.log.error(
-                        "Orphan unwind exposure INDETERMINATE | %s strike=%s qty=%s | "
-                        "automatic full-quantity retry blocked pending reconciliation.",
-                        leg.get("option_type"),
-                        leg.get("strike"),
-                        leg.get("quantity"),
-                    )
-                else:
-                    self.log.error(
-                        "Orphaned live leg STILL OPEN (zero-fill unwind rejection) | "
-                        "%s strike=%s qty=%s | will retry on the safe cadence.",
-                        leg.get("option_type"),
-                        leg.get("strike"),
-                        leg.get("quantity"),
-                    )
+                risk_quantity = (
+                    state.risk_quantity
+                    if isinstance(state, LiveLegState)
+                    else "UNKNOWN"
+                )
+                self.log.error(
+                    "Orphaned live leg STILL OPEN | %s strike=%s risk_qty=%s | "
+                    "will reconcile and retry only the broker-safe remainder.",
+                    leg.get("option_type"),
+                    leg.get("strike"),
+                    risk_quantity,
+                )
         self._orphan_live_legs = still_open
 
     def publish_trade_event(self, event: dict) -> None:
@@ -4268,12 +4815,26 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         # Only an explicit zero-fill rejection is safe to mirror in paper.  A
         # partial or unknown broker outcome may already be live exposure, so it
         # freezes new entries and returns before any paper position is created.
-        order_result = self._place_real_leg(entry_side, {
+        entry_leg = {
             "option_type": option_right, "strike": option_strike,
             "expiry": expiry_date, "quantity": quantity, "dhan_symbol": trading_symbol,
-        }, opens_exposure=True)
-        if not self._entry_outcome_allows_position(order_result):
+            "role": "N",
+        }
+        order_result = self._place_real_leg(
+            entry_side,
+            entry_leg,
+            opens_exposure=True,
+        )
+        live_leg = entry_leg.get("live_leg")
+        if not self._entry_outcome_allows_position(order_result, live_leg):
+            if isinstance(live_leg, LiveLegState) and live_leg.exposure_possible:
+                # No PaperPosition will be created for an incomplete live entry,
+                # so the generic recovery sweep owns it until a later signal
+                # completes and adopts the same ledger state.
+                self._track_orphan_live_leg(entry_leg)
             return False
+        self._untrack_orphan_live_leg(entry_leg)
+        quantity = int(entry_leg["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
 
         # Keep the fetcher refreshing this option's LTP for the trade lifetime.
@@ -4291,9 +4852,11 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         self.pos = PaperPosition(
             active=True,
             direction=direction,
-            # True only if a real broker leg actually opened; a live entry that fell
-            # back to paper leaves this False so the exit sends no real SELL.
-            live_legs_open=(self.live_trading and self._is_confirmed_fill(order_result)),
+            live_leg=(
+                live_leg
+                if isinstance(live_leg, LiveLegState) and live_leg.entry_complete
+                else None
+            ),
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -4386,12 +4949,23 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         # at the broker: skip the order and treat the exit as paper so we flatten
         # the books normally, exactly like paper mode. Mirrors
         # the HedgedPaperPosition.live_legs_open guard (PR #42 / HEDGE-001).
-        if closed_position.live_legs_open:
-            order_result = self._place_real_leg(exit_side, {
+        had_live_leg = closed_position.live_leg is not None
+        exit_leg = {
                 "option_type": closed_position.option_right, "strike": closed_position.option_strike,
                 "expiry": closed_position.option_expiry, "quantity": closed_position.quantity,
                 "dhan_symbol": closed_position.symbol,
-            }, opens_exposure=False)
+                "role": "N",
+                "live_leg": closed_position.live_leg,
+            }
+        if had_live_leg:
+            order_result = self._place_real_leg(
+                exit_side,
+                exit_leg,
+                opens_exposure=False,
+            )
+            refreshed_live_leg = exit_leg.get("live_leg")
+            if isinstance(refreshed_live_leg, LiveLegState):
+                closed_position.live_leg = refreshed_live_leg
         else:
             order_result = self._synthetic_order_result(
                 closed_position.quantity,
@@ -4401,7 +4975,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
         exec_mode = self._exec_mode_tag(
             order_result,
-            live_legs_open=closed_position.live_legs_open,
+            live_legs_open=had_live_leg,
             is_exit=True,
         )
 
@@ -4409,8 +4983,9 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         # open. Do NOT flatten the books; keep the position active for broker
         # reconciliation or manual square-off.
         if (
-            closed_position.live_legs_open
-            and not self._is_confirmed_fill(order_result)
+            had_live_leg
+            and closed_position.live_leg is not None
+            and not closed_position.live_leg.broker_confirmed_flat
         ):
             self.log.error(
                 "LIVE EXIT NOT CONFIRMED | %s %s | OptionSymbol=%s | Qty=%s | Reason=%s "
@@ -4477,8 +5052,9 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 "mode": exec_mode,
                 "exit_order_failed": bool(
                     self.live_trading
-                    and closed_position.live_legs_open
-                    and not self._is_confirmed_fill(order_result)
+                    and had_live_leg
+                    and closed_position.live_leg is not None
+                    and not closed_position.live_leg.broker_confirmed_flat
                 ),
                 "direction": closed_position.direction,
                 "reason": reason,
@@ -6460,16 +7036,28 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             )
             return False
 
+        main_live_order = {
+            "option_type": str(main["option_type"]),
+            "strike": float(main["strike"]),
+            "expiry": main["expiry_date"],
+            "quantity": main_qty,
+            "dhan_symbol": str(main["trading_symbol"]),
+        }
+        hedge_live_order = {
+            "option_type": str(hedge["option_type"]),
+            "strike": float(hedge["strike"]),
+            "expiry": hedge["expiry_date"],
+            "quantity": hedge_qty,
+            "dhan_symbol": str(hedge["trading_symbol"]),
+        }
         order_result = self._place_real_hedged_entry(
-            main_leg={"option_type": str(main["option_type"]), "strike": float(main["strike"]),
-                      "expiry": main["expiry_date"], "quantity": main_qty,
-                      "dhan_symbol": str(main["trading_symbol"])},
-            hedge_leg={"option_type": str(hedge["option_type"]), "strike": float(hedge["strike"]),
-                       "expiry": hedge["expiry_date"], "quantity": hedge_qty,
-                       "dhan_symbol": str(hedge["trading_symbol"])},
+            main_live_order,
+            hedge_live_order,
         )
         if not self._entry_outcome_allows_position(order_result):
             return False
+        main_qty = int(main_live_order["quantity"])
+        hedge_qty = int(hedge_live_order["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
 
         # Subscribe both legs so the fetcher keeps refreshing their LTPs.
@@ -6500,7 +7088,18 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="LONG",
-            live_legs_open=(self.live_trading and self._is_confirmed_fill(order_result)),
+            main_live_leg=(
+                main_live_order.get("live_leg")
+                if isinstance(main_live_order.get("live_leg"), LiveLegState)
+                and main_live_order["live_leg"].entry_complete
+                else None
+            ),
+            hedge_live_leg=(
+                hedge_live_order.get("live_leg")
+                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+                and hedge_live_order["live_leg"].entry_complete
+                else None
+            ),
             entry_underlying=float(entry_underlying),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -6626,18 +7225,32 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
+        had_live_exposure = closed.live_legs_open
+        main_live_order = {
+            "option_type": closed.main_right,
+            "strike": closed.main_strike,
+            "expiry": closed.main_expiry,
+            "quantity": closed.main_quantity,
+            "dhan_symbol": closed.main_symbol,
+            "live_leg": closed.main_live_leg,
+        }
+        hedge_live_order = {
+            "option_type": closed.hedge_right,
+            "strike": closed.hedge_strike,
+            "expiry": closed.hedge_expiry,
+            "quantity": closed.hedge_quantity,
+            "dhan_symbol": closed.hedge_symbol,
+            "live_leg": closed.hedge_live_leg,
+        }
         order_result = self._place_real_hedged_exit(
-            main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
-                      "expiry": closed.main_expiry, "quantity": closed.main_quantity,
-                      "dhan_symbol": closed.main_symbol},
-            hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
-                       "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
-                       "dhan_symbol": closed.hedge_symbol},
-            live_legs_open=closed.live_legs_open,
+            main_live_order,
+            hedge_live_order,
         )
+        closed.main_live_leg = main_live_order.get("live_leg")
+        closed.hedge_live_leg = hedge_live_order.get("live_leg")
         exec_mode = self._exec_mode_tag(
             order_result,
-            live_legs_open=closed.live_legs_open,
+            live_legs_open=had_live_exposure,
             is_exit=True,
         )
 
@@ -6645,8 +7258,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         # is still open. Do NOT flatten the books; keep the position for broker
         # reconciliation or manual square-off.
         if (
-            closed.live_legs_open
-            and not self._is_confirmed_fill(order_result)
+            had_live_exposure
+            and closed.live_legs_open
         ):
             self.log.error(
                 "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
@@ -6728,9 +7341,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                 "action": "EXIT",
                 "mode": exec_mode,
                 "exit_order_failed": bool(
-                    self.live_trading
-                    and closed.live_legs_open
-                    and not self._is_confirmed_fill(order_result)
+                    had_live_exposure and closed.live_legs_open
                 ),
                 "direction": closed.direction,
                 "reason": reason,
@@ -7016,16 +7627,28 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             )
             return False
 
+        main_live_order = {
+            "option_type": str(main["option_type"]),
+            "strike": float(main["strike"]),
+            "expiry": main["expiry_date"],
+            "quantity": main_qty,
+            "dhan_symbol": str(main["trading_symbol"]),
+        }
+        hedge_live_order = {
+            "option_type": str(hedge["option_type"]),
+            "strike": float(hedge["strike"]),
+            "expiry": hedge["expiry_date"],
+            "quantity": hedge_qty,
+            "dhan_symbol": str(hedge["trading_symbol"]),
+        }
         order_result = self._place_real_hedged_entry(
-            main_leg={"option_type": str(main["option_type"]), "strike": float(main["strike"]),
-                      "expiry": main["expiry_date"], "quantity": main_qty,
-                      "dhan_symbol": str(main["trading_symbol"])},
-            hedge_leg={"option_type": str(hedge["option_type"]), "strike": float(hedge["strike"]),
-                       "expiry": hedge["expiry_date"], "quantity": hedge_qty,
-                       "dhan_symbol": str(hedge["trading_symbol"])},
+            main_live_order,
+            hedge_live_order,
         )
         if not self._entry_outcome_allows_position(order_result):
             return False
+        main_qty = int(main_live_order["quantity"])
+        hedge_qty = int(hedge_live_order["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
 
         self.store.register_option_subscription(
@@ -7056,7 +7679,18 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="SHORT",
-            live_legs_open=(self.live_trading and self._is_confirmed_fill(order_result)),
+            main_live_leg=(
+                main_live_order.get("live_leg")
+                if isinstance(main_live_order.get("live_leg"), LiveLegState)
+                and main_live_order["live_leg"].entry_complete
+                else None
+            ),
+            hedge_live_leg=(
+                hedge_live_order.get("live_leg")
+                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+                and hedge_live_order["live_leg"].entry_complete
+                else None
+            ),
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -7301,18 +7935,32 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
+        had_live_exposure = closed.live_legs_open
+        main_live_order = {
+            "option_type": closed.main_right,
+            "strike": closed.main_strike,
+            "expiry": closed.main_expiry,
+            "quantity": closed.main_quantity,
+            "dhan_symbol": closed.main_symbol,
+            "live_leg": closed.main_live_leg,
+        }
+        hedge_live_order = {
+            "option_type": closed.hedge_right,
+            "strike": closed.hedge_strike,
+            "expiry": closed.hedge_expiry,
+            "quantity": closed.hedge_quantity,
+            "dhan_symbol": closed.hedge_symbol,
+            "live_leg": closed.hedge_live_leg,
+        }
         order_result = self._place_real_hedged_exit(
-            main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
-                      "expiry": closed.main_expiry, "quantity": closed.main_quantity,
-                      "dhan_symbol": closed.main_symbol},
-            hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
-                       "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
-                       "dhan_symbol": closed.hedge_symbol},
-            live_legs_open=closed.live_legs_open,
+            main_live_order,
+            hedge_live_order,
         )
+        closed.main_live_leg = main_live_order.get("live_leg")
+        closed.hedge_live_leg = hedge_live_order.get("live_leg")
         exec_mode = self._exec_mode_tag(
             order_result,
-            live_legs_open=closed.live_legs_open,
+            live_legs_open=had_live_exposure,
             is_exit=True,
         )
 
@@ -7320,8 +7968,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         # is still open. Do NOT flatten the books; keep the position for broker
         # reconciliation or manual square-off.
         if (
-            closed.live_legs_open
-            and not self._is_confirmed_fill(order_result)
+            had_live_exposure
+            and closed.live_legs_open
         ):
             self.log.error(
                 "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
@@ -7401,9 +8049,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                 "action": "EXIT",
                 "mode": exec_mode,
                 "exit_order_failed": bool(
-                    self.live_trading
-                    and closed.live_legs_open
-                    and not self._is_confirmed_fill(order_result)
+                    had_live_exposure and closed.live_legs_open
                 ),
                 "direction": closed.direction,
                 "reason": reason,
@@ -8328,16 +8974,28 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         monitor_qty = monitor_lot_size * self.lots
         hedge_qty = hedge_lot_size * self.lots
 
+        main_live_order = {
+            "option_type": str(monitor_meta["option_type"]),
+            "strike": float(monitor_meta["strike"]),
+            "expiry": monitor_meta["expiry_date"],
+            "quantity": monitor_qty,
+            "dhan_symbol": str(monitor_meta["trading_symbol"]),
+        }
+        hedge_live_order = {
+            "option_type": str(hedge_meta["option_type"]),
+            "strike": float(hedge_meta["strike"]),
+            "expiry": hedge_meta["expiry_date"],
+            "quantity": hedge_qty,
+            "dhan_symbol": str(hedge_meta["trading_symbol"]),
+        }
         order_result = self._place_real_hedged_entry(
-            main_leg={"option_type": str(monitor_meta["option_type"]), "strike": float(monitor_meta["strike"]),
-                      "expiry": monitor_meta["expiry_date"], "quantity": monitor_qty,
-                      "dhan_symbol": str(monitor_meta["trading_symbol"])},
-            hedge_leg={"option_type": str(hedge_meta["option_type"]), "strike": float(hedge_meta["strike"]),
-                       "expiry": hedge_meta["expiry_date"], "quantity": hedge_qty,
-                       "dhan_symbol": str(hedge_meta["trading_symbol"])},
+            main_live_order,
+            hedge_live_order,
         )
         if not self._entry_outcome_allows_position(order_result):
             return False
+        monitor_qty = int(main_live_order["quantity"])
+        hedge_qty = int(hedge_live_order["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
         # Synthetic order ids for paper-trade audit trail. These are
         # unique within the worker and timestamp-encoded so a human
@@ -8352,7 +9010,18 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         new_pos = HedgedPaperPosition(
             active=True,
             direction=side,  # "CE" or "PE" (used purely for log labelling)
-            live_legs_open=(self.live_trading and self._is_confirmed_fill(order_result)),
+            main_live_leg=(
+                main_live_order.get("live_leg")
+                if isinstance(main_live_order.get("live_leg"), LiveLegState)
+                and main_live_order["live_leg"].entry_complete
+                else None
+            ),
+            hedge_live_leg=(
+                hedge_live_order.get("live_leg")
+                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+                and hedge_live_order["live_leg"].entry_complete
+                else None
+            ),
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(monitor_meta["trading_symbol"]),
@@ -8488,18 +9157,32 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
+        had_live_exposure = closed.live_legs_open
+        main_live_order = {
+            "option_type": closed.main_right,
+            "strike": closed.main_strike,
+            "expiry": closed.main_expiry,
+            "quantity": closed.main_quantity,
+            "dhan_symbol": closed.main_symbol,
+            "live_leg": closed.main_live_leg,
+        }
+        hedge_live_order = {
+            "option_type": closed.hedge_right,
+            "strike": closed.hedge_strike,
+            "expiry": closed.hedge_expiry,
+            "quantity": closed.hedge_quantity,
+            "dhan_symbol": closed.hedge_symbol,
+            "live_leg": closed.hedge_live_leg,
+        }
         order_result = self._place_real_hedged_exit(
-            main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
-                      "expiry": closed.main_expiry, "quantity": closed.main_quantity,
-                      "dhan_symbol": closed.main_symbol},
-            hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
-                       "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
-                       "dhan_symbol": closed.hedge_symbol},
-            live_legs_open=closed.live_legs_open,
+            main_live_order,
+            hedge_live_order,
         )
+        closed.main_live_leg = main_live_order.get("live_leg")
+        closed.hedge_live_leg = hedge_live_order.get("live_leg")
         exec_mode = self._exec_mode_tag(
             order_result,
-            live_legs_open=closed.live_legs_open,
+            live_legs_open=had_live_exposure,
             is_exit=True,
         )
 
@@ -8507,8 +9190,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         # is still open. Do NOT flatten the books; keep the position for broker
         # reconciliation or manual square-off.
         if (
-            closed.live_legs_open
-            and not self._is_confirmed_fill(order_result)
+            had_live_exposure
+            and closed.live_legs_open
         ):
             self.log.error(
                 "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
@@ -8589,9 +9272,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                 "action": "EXIT",
                 "mode": exec_mode,
                 "exit_order_failed": bool(
-                    self.live_trading
-                    and closed.live_legs_open
-                    and not self._is_confirmed_fill(order_result)
+                    had_live_exposure and closed.live_legs_open
                 ),
                 "direction": side,
                 "reason": reason,
@@ -8812,6 +9493,11 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         self.ce_initial_done = False
         self.pe_initial_done = False
         self.entered_today = False
+        # The opening CE and PE belong to one auditable basket.  Their distinct
+        # C/P roles keep the quantity ledgers independent even though the
+        # correlation id is shared.  Re-entry correlations are created only
+        # after the prior leg has been broker-confirmed flat.
+        self._initial_correlation_id = uuid.uuid4().hex[:8].upper()
 
         # ----- Momentum re-entry state (per leg) ------------------------
         # When a leg is stopped out we (optionally) arm it: keep its LTP
@@ -8911,6 +9597,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             self.exit_position("MAX_LOSS_BREACH")
         except Exception as exc:
             self.log.exception("Error while exiting on max-loss breach: %s", exc)
+        self._sweep_orphan_live_legs(force=True)
         self._unsubscribe_armed_legs()
         self.log.info("Paper summary | %s", self.summary_text())
         self.log.info("Strategy stopped for the day due to max-loss shutdown.")
@@ -8928,6 +9615,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             self.exit_position("TIME_CUTOFF")
         except Exception as exc:
             self.log.exception("Error while exiting at cutoff: %s", exc)
+        self._sweep_orphan_live_legs(force=True)
         self._unsubscribe_armed_legs()
         self.log.info("Paper summary | %s", self.summary_text())
         self.log.info("Strategy stopped for the day.")
@@ -9090,13 +9778,37 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         quantity = lot_size * self.lots
         order_id = self._next_paper_order_id("BUY")
 
-        order_result = self._place_real_leg("BUY", {
+        correlation_id = (
+            uuid.uuid4().hex[:8].upper()
+            if is_reentry
+            else self._initial_correlation_id
+        )
+        entry_leg = {
             "option_type": option_right, "strike": option_strike,
             "expiry": expiry_date, "quantity": quantity, "dhan_symbol": trading_symbol,
-        }, opens_exposure=True)
-        if not self._entry_outcome_allows_position(order_result):
+            "role": "C" if side == "CE" else "P",
+            "correlation_id": correlation_id,
+        }
+        order_result = self._place_real_leg("BUY", entry_leg, opens_exposure=True)
+        live_leg = entry_leg.get("live_leg")
+        if not isinstance(live_leg, LiveLegState):
+            live_leg = None
+        if not self._entry_outcome_allows_position(order_result, live_leg):
+            if live_leg is not None and live_leg.exposure_possible:
+                self._track_orphan_live_leg(entry_leg)
             return False
+        self._untrack_orphan_live_leg(entry_leg)
+        quantity = int(entry_leg["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
+
+        # A confirmed zero-fill rejection is the one outcome allowed to become
+        # a paper fallback.  Its ledger snapshot is broker-confirmed flat, so it
+        # must not make a later paper exit submit a naked SELL.
+        position_live_leg = (
+            live_leg
+            if live_leg is not None and not live_leg.broker_confirmed_flat
+            else None
+        )
 
         # Keep the fetcher refreshing this leg's LTP for its whole lifetime. On a
         # re-entry the subscription is already live (kept since the stop-out);
@@ -9115,10 +9827,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         new_pos = PaperPosition(
             active=True,
             direction=side,
-            # True only if a real broker leg actually opened; a live entry that fell
-            # back to paper leaves this False so `_exit_leg` sends no real SELL. This
-            # runs for the initial entry AND momentum re-entries (both share _buy_leg).
-            live_legs_open=(self.live_trading and self._is_confirmed_fill(order_result)),
+            live_leg=position_live_leg,
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -9352,14 +10061,27 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         # miss) recorded no live leg, so a SELL now would be a naked short of an OTM
         # option we never bought. In that case there is nothing to close at the broker:
         # skip the order and treat the exit as paper so the books flatten normally,
-        # exactly like paper mode. Mirrors the single-leg ATM worker
-        # / HEDGE-001 live_legs_open guard.
-        if closed.live_legs_open:
-            order_result = self._place_real_leg("SELL", {
+        # exactly like paper mode. Mirrors the single-leg ATM worker's
+        # quantity-bearing ``live_leg`` guard.
+        had_live_leg = closed.live_leg is not None
+        if had_live_leg:
+            exit_leg = {
                 "option_type": closed.option_right, "strike": closed.option_strike,
                 "expiry": closed.option_expiry, "quantity": closed.quantity,
                 "dhan_symbol": closed.symbol,
-            }, opens_exposure=False)
+                "live_leg": closed.live_leg,
+            }
+            order_result = self._place_real_leg(
+                "SELL",
+                exit_leg,
+                opens_exposure=False,
+            )
+            refreshed_live_leg = exit_leg.get("live_leg")
+            if isinstance(refreshed_live_leg, LiveLegState):
+                # Keep the newest immutable snapshot on the active position.
+                # A later retry therefore uses the ledger's exact remaining
+                # quantity rather than the original full contract quantity.
+                closed.live_leg = refreshed_live_leg
         else:
             order_result = self._synthetic_order_result(
                 closed.quantity,
@@ -9369,25 +10091,37 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             )
         exec_mode = self._exec_mode_tag(
             order_result,
-            live_legs_open=closed.live_legs_open,
+            live_legs_open=had_live_leg,
             is_exit=True,
         )
 
-        # If a LIVE exit did not confirm a fill, keep the leg OPEN for broker
-        # reconciliation/manual square-off rather than flattening the books (same safety rule
-        # as the single-leg ATM worker).
-        if (
-            closed.live_legs_open
-            and not self._is_confirmed_fill(order_result)
-        ):
+        # A live leg is flat only when the quantity ledger says so.  This covers
+        # terminal partials, rejects, response loss, and a later remaining-qty
+        # retry; a successful retry may legitimately request less than the
+        # position's original quantity.
+        broker_confirmed_flat = (
+            closed.live_leg is not None
+            and closed.live_leg.broker_confirmed_flat
+        )
+        if had_live_leg and not broker_confirmed_flat:
             self.log.error(
-                "LIVE EXIT NOT CONFIRMED | %s %s | OptionSymbol=%s | Qty=%s | Reason=%s "
-                "| leg kept OPEN for reconciliation/manual square-off.",
-                self.strategy_name, side, closed.symbol, closed.quantity, reason,
+                "LIVE EXIT NOT FLAT | %s %s | OptionSymbol=%s | RequestedQty=%s | "
+                "ConfirmedLiveQty=%s | Indeterminate=%s | Reason=%s | leg kept OPEN "
+                "for quantity-safe retry/reconciliation.",
+                self.strategy_name,
+                side,
+                closed.symbol,
+                closed.quantity,
+                closed.live_leg.confirmed_live_quantity if closed.live_leg else "UNKNOWN",
+                closed.live_leg.exposure_indeterminate if closed.live_leg else True,
+                reason,
             )
             self.publish_trade_event({
                 "action": "EXIT_FAILED", "mode": exec_mode, "direction": side, "reason": reason,
                 "quantity": closed.quantity,
+                "confirmed_live_quantity": (
+                    closed.live_leg.confirmed_live_quantity if closed.live_leg else None
+                ),
                 "legs": [{"symbol": closed.symbol, "side": "SELL",
                           "right": closed.option_right, "strike": closed.option_strike}],
             })
@@ -9415,11 +10149,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
         self.publish_trade_event({
             "action": "EXIT", "mode": exec_mode,
-            "exit_order_failed": bool(
-                self.live_trading
-                and closed.live_legs_open
-                and not self._is_confirmed_fill(order_result)
-            ),
+            "exit_order_failed": False,
             "direction": side, "reason": reason,
             "lot_size": closed.option_lot_size, "quantity": closed.quantity,
             "pnl": pnl, "expiry": expiry_txt,
@@ -9914,29 +10644,84 @@ if SL_HUNTING_AVAILABLE:
 
             quantity = lot_size * lots
             order_id = self._next_paper_order_id("BUY")
-            order_result = self._place_real_leg("BUY", {
+            mirror_leg = {
                 "option_type": contract["option_type"], "strike": contract["strike"],
                 "expiry": contract["expiry_date"], "quantity": quantity,
                 "dhan_symbol": symbol, "underlying": "BANKNIFTY",
-            }, opens_exposure=True)
-            if not self._entry_outcome_allows_position(order_result):
+                "role": "B",
+            }
+            main_live_leg = self.pos.live_leg
+            if main_live_leg is not None:
+                # Both orders belong to one auditable basket while retaining a
+                # distinct role in the execution ledger and broker order tag.
+                mirror_leg["correlation_id"] = main_live_leg.spec.correlation_id
+            order_result = self._place_real_leg(
+                "BUY",
+                mirror_leg,
+                opens_exposure=True,
+            )
+            live_leg = mirror_leg.get("live_leg")
+            entry_bookkeeping_allowed = self._entry_outcome_allows_position(
+                order_result,
+                live_leg,
+            )
+            recovery_live_leg = (
+                live_leg
+                if isinstance(live_leg, LiveLegState) and live_leg.exposure_possible
+                else None
+            )
+            if not entry_bookkeeping_allowed and recovery_live_leg is None:
                 return
+            tracked_quantity = quantity
+            if not entry_bookkeeping_allowed:
+                # The guard above proves this is a quantity-bearing recovery
+                # record, not a paper fallback.
+                assert recovery_live_leg is not None
+                # UNKNOWN can mean zero *confirmed* units while the whole order
+                # may still fill.  MTM/max-loss must use the conservative risk
+                # quantity so indeterminate BankNIFTY exposure never looks flat.
+                tracked_quantity = recovery_live_leg.risk_quantity
             self.store.register_option_subscription(OptionSubscription(
                 security_id=sec_id, exchange_segment=segment, trading_symbol=symbol,
                 right=str(contract["option_type"]), strike=float(contract["strike"]),
                 expiry=contract["expiry_date"],
             ))
             self._mirror_pos = PaperPosition(
-                active=True, direction=direction, symbol=symbol, quantity=quantity,
-                # True only if the mirror BUY actually opened live; a paper fallback
-                # leaves it False so _close_bnf_mirror sends no real SELL.
-                live_legs_open=(self.live_trading and self._is_confirmed_fill(order_result)),
+                active=True,
+                direction=direction,
+                symbol=symbol,
+                quantity=tracked_quantity,
+                # A terminal zero-fill rejection remains a paper fallback. A
+                # confirmed or unresolved live entry keeps the ledger snapshot
+                # that every later close attempt must refresh and reassign.
+                live_leg=(
+                    live_leg
+                    if isinstance(live_leg, LiveLegState)
+                    and (live_leg.entry_complete or live_leg.exposure_possible)
+                    else None
+                ),
                 entry_order_id=str(order_id), entry_underlying=bnf_spot,
                 entry_trade_price=float(option_ltp), option_security_id=sec_id,
                 option_exchange_segment=segment, option_right=str(contract["option_type"]),
                 option_strike=float(contract["strike"]), option_expiry=contract["expiry_date"],
                 option_lot_size=lot_size,
             )
+            if not entry_bookkeeping_allowed:
+                # A partial/unknown mirror BUY is not a paper position, but its
+                # confirmed quantity must remain reachable by square-off and
+                # reconciliation paths. The ledger separately preserves any
+                # still-indeterminate remainder.
+                assert recovery_live_leg is not None
+                self.log.error(
+                    "MANUAL ACTION NEEDED | BNF mirror BUY not fully confirmed | "
+                    "%s target=%s confirmed=%s risk=%s | mirror state retained for "
+                    "broker reconciliation and risk-reducing exit.",
+                    symbol,
+                    quantity,
+                    recovery_live_leg.confirmed_live_quantity,
+                    recovery_live_leg.risk_quantity,
+                )
+                return
             self.log.info(
                 "MIRROR ENTRY %s | OptionSymbol=%s | Strike=%.2f | Qty=%s (lots=%s x %s) | "
                 "BNFSpot=%.2f | EntryOptPx=%.2f | PaperRef=%s",
@@ -9958,9 +10743,9 @@ if SL_HUNTING_AVAILABLE:
             """Sell the mirror leg and fold its P&L into this worker's books.
 
             Called from `after_exit`, so EVERY main-leg exit path (AI exit,
-            stop/target, max-loss, square-off) also closes the basket. If a LIVE
-            an unconfirmed sell keeps the mirror record open so neither logs nor
-            paper bookkeeping can claim the BankNIFTY exposure is flat."""
+            stop/target, max-loss, square-off) also closes the basket. For a LIVE
+            leg, an unconfirmed sell keeps the mirror record open so neither logs
+            nor paper bookkeeping can claim the BankNIFTY exposure is flat."""
             if not self._mirror_pos.active:
                 return
             mirror = self._mirror_pos
@@ -9969,15 +10754,62 @@ if SL_HUNTING_AVAILABLE:
                 fallback=mirror.entry_trade_price,
             )
             # Only close a REAL mirror leg. A live mirror BUY that fell back to
-            # paper (rejected / symbol-master miss) opened nothing at the broker, so
-            # a SELL now would be a phantom BankNIFTY short. Skip it and treat the
-            # close as paper and flatten the books below. Mirrors PR #42 / HEDGE-001.
-            if mirror.live_legs_open:
-                order_result = self._place_real_leg("SELL", {
+            # paper (rejected / symbol-master miss) opened nothing at the broker,
+            # so a SELL now would be a phantom BankNIFTY short. A live position,
+            # however, must carry its exact immutable ledger snapshot across every
+            # partial/unknown close attempt.
+            live_state = mirror.live_leg
+            had_live_leg = live_state is not None
+            confirmed_before = (
+                live_state.confirmed_live_quantity
+                if live_state is not None
+                else 0
+            )
+            closing_started_before = bool(live_state is not None and live_state.closing_started)
+            if live_state is not None:
+                exit_leg = {
                     "option_type": mirror.option_right, "strike": mirror.option_strike,
-                    "expiry": mirror.option_expiry, "quantity": mirror.quantity,
+                    "expiry": mirror.option_expiry,
+                    "quantity": live_state.spec.target_quantity,
                     "dhan_symbol": mirror.symbol, "underlying": "BANKNIFTY",
-                }, opens_exposure=False)
+                    "role": "B",
+                    "live_leg": live_state,
+                }
+                order_result = self._place_real_leg(
+                    "SELL",
+                    exit_leg,
+                    opens_exposure=False,
+                )
+                refreshed_live_leg = exit_leg.get("live_leg")
+                if isinstance(refreshed_live_leg, LiveLegState):
+                    mirror.live_leg = refreshed_live_leg
+                confirmed_after = (
+                    mirror.live_leg.confirmed_live_quantity
+                    if mirror.live_leg is not None
+                    else confirmed_before
+                )
+                if closing_started_before:
+                    closed_quantity = max(0, confirmed_before - confirmed_after)
+                else:
+                    # Reconciliation can discover additional entry fills just
+                    # before the first reducing order is submitted. Compare the
+                    # total confirmed entry quantity with what remains live so
+                    # those same-call close fills are still booked exactly once.
+                    confirmed_entry_quantity = (
+                        mirror.live_leg.filled_quantity
+                        if mirror.live_leg is not None
+                        else confirmed_before
+                    )
+                    closed_quantity = max(
+                        0,
+                        confirmed_entry_quantity - confirmed_after,
+                    )
+                mirror.quantity = (
+                    mirror.live_leg.risk_quantity
+                    if mirror.live_leg is not None
+                    and mirror.live_leg.exposure_possible
+                    else confirmed_after
+                )
             else:
                 order_result = self._synthetic_order_result(
                     mirror.quantity,
@@ -9985,9 +10817,14 @@ if SL_HUNTING_AVAILABLE:
                     "No live mirror leg was open, so no broker exit was submitted.",
                     broker_state="PAPER",
                 )
-            if (
-                mirror.live_legs_open
-                and not self._is_confirmed_fill(order_result)
+                closed_quantity = mirror.quantity
+
+            # Book only the quantity the ledger proves was reduced. This avoids
+            # both losing a partial fill and double-counting it on the retry.
+            pnl = (exit_ltp - mirror.entry_trade_price) * closed_quantity
+            self.realized_pnl += pnl
+            if had_live_leg and (
+                mirror.live_leg is None or not mirror.live_leg.broker_confirmed_flat
             ):
                 self.log.error(
                     "MANUAL ACTION NEEDED | BNF mirror SELL not confirmed | %s qty=%s -> a LIVE "
@@ -10001,29 +10838,29 @@ if SL_HUNTING_AVAILABLE:
                     "direction": mirror.direction,
                     "reason": reason,
                     "quantity": mirror.quantity,
+                    "filled_quantity": closed_quantity,
+                    "remaining_quantity": mirror.quantity,
                     "legs": [{"symbol": mirror.symbol, "side": "SELL"}],
                 })
                 return
-            pnl = (exit_ltp - mirror.entry_trade_price) * mirror.quantity
-            self.realized_pnl += pnl
             self.store.unregister_option_subscription(
                 mirror.option_exchange_segment, mirror.option_security_id,
             )
             self.log.info(
                 "MIRROR EXIT %s | OptionSymbol=%s | Qty=%s | Reason=%s | EntryOptPx=%.2f | "
                 "ExitOptPx=%.2f | P&L=%.2f | CumPnL=%.2f",
-                mirror.direction, mirror.symbol, mirror.quantity, reason,
+                mirror.direction, mirror.symbol, closed_quantity, reason,
                 mirror.entry_trade_price, exit_ltp, pnl, self.realized_pnl,
             )
             self.publish_trade_event({
                 "action": "EXIT",
                 "mode": self._exec_mode_tag(
                     order_result,
-                    live_legs_open=mirror.live_legs_open,
+                    live_legs_open=had_live_leg,
                     is_exit=True,
                 ),
                 "direction": mirror.direction, "reason": reason, "pnl": pnl,
-                "quantity": mirror.quantity,
+                "quantity": closed_quantity,
                 "legs": [{
                     "symbol": mirror.symbol, "side": "SELL", "right": mirror.option_right,
                     "strike": mirror.option_strike, "exit_price": exit_ltp,
@@ -10054,7 +10891,14 @@ if SL_HUNTING_AVAILABLE:
                 self._mirror_pos.option_security_id,
                 fallback=self._mirror_pos.entry_trade_price,
             )
-            return (live - self._mirror_pos.entry_trade_price) * self._mirror_pos.quantity
+            unit_pnl = live - self._mirror_pos.entry_trade_price
+            quantity = self._mirror_pos.quantity
+            state = self._mirror_pos.live_leg
+            if state is not None and state.exposure_indeterminate and unit_pnl > 0:
+                # Possible unconfirmed fills count against us when adverse, but
+                # never as phantom profit that could hide a basket max-loss.
+                quantity = state.confirmed_live_quantity
+            return unit_pnl * quantity
 
         def nifty_leg_pnl(self) -> float:
             """MTM of the NIFTY leg ALONE (excludes the mirror) for the agent's per-leg read."""
@@ -10164,8 +11008,10 @@ if SL_HUNTING_AVAILABLE:
                 self.log.warning("SL Hunting journal close failed: %s", exc)
                 self._open_trade_id = None
                 return
-            if self._suppress_mirror_close and self._mirror_pos.active:
-                # NIFTY cut alone, mirror still open -> defer until the mirror closes.
+            if self._mirror_pos.active:
+                # Any surviving mirror exposure defers the basket journal. This
+                # includes a normal BOTH exit whose broker SELL only partly filled,
+                # not just an intentional NIFTY-only cut.
                 self._pending_journal_exit = static
                 return
             self._finalize_journal(static)
@@ -10999,6 +11845,156 @@ def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
     return _env_bool(f"{prefix}_VIRTUAL_TRADING", True)
 
 
+def _configure_startup_live_trading(
+    workers: list[BasePaperStrategyWorker],
+    store: SharedMarketDataStore,
+    *,
+    master_live: bool,
+    client: ExecutionClient | None,
+) -> tuple[int, StartupExposureAudit | None]:
+    """Enable selected live workers only after a read-only flat-account audit.
+
+    Worker constructors default to paper, but this helper deliberately clears
+    every flag again before it even reads the per-strategy switches.  Login,
+    symbol-master preload and both broker-book queries therefore happen while
+    no worker is capable of submitting a real entry.  The final assignments to
+    ``live_trading=True`` occur only after the audit proves both books safe.
+    """
+
+    for worker in workers:
+        worker.live_trading = False
+    store.startup_exposure_audit = None
+
+    candidate_live_workers: list[BasePaperStrategyWorker] = []
+    for worker in workers:
+        prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
+        if prefix is None:
+            logger.error(
+                "No env prefix mapped for strategy %s; forcing PAPER.",
+                worker.strategy_name,
+            )
+            continue
+        if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
+            candidate_live_workers.append(worker)
+
+    if not candidate_live_workers:
+        return 0, None
+
+    if client is None:
+        logger.error(
+            "%d strateg(ies) requested LIVE trading but the %s execution "
+            "layer is unavailable; forcing all strategies to PAPER.",
+            len(candidate_live_workers),
+            LIVE_BROKER,
+        )
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Execution client was unavailable for the startup exposure audit.",),
+            evidence=("execution_client=unavailable",),
+        )
+        store.startup_exposure_audit = audit
+        store.execution_safety.freeze_entries(
+            "Startup exposure audit could not query the broker account."
+        )
+        return 0, audit
+
+    logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
+    try:
+        login_ok = client.ensure_logged_in() is True
+    except Exception:  # noqa: BLE001 - a broker SDK failure must fail closed.
+        login_ok = False
+    if not login_ok:
+        logger.error(
+            "%s login failed at startup; forcing all strategies to PAPER.",
+            LIVE_BROKER,
+        )
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Broker login failed before the startup exposure audit.",),
+            evidence=("broker_login=failed",),
+        )
+        store.startup_exposure_audit = audit
+        store.execution_safety.freeze_entries(
+            "Startup exposure audit could not query the broker account."
+        )
+        return 0, audit
+
+    # Preload remains best effort, but the attempt must finish before the audit
+    # so account reconciliation is always the final broker gate.
+    logger.info(
+        "%s login OK; downloading NSE F&O scrip master (one-time)...",
+        LIVE_BROKER,
+    )
+    try:
+        preload_ok = client.preload_scrip_master() is True
+    except Exception:  # noqa: BLE001 - lazy symbol lookup remains available.
+        preload_ok = False
+    if not preload_ok:
+        logger.warning(
+            "Scrip master preload failed; symbols will be resolved lazily on first order."
+        )
+
+    try:
+        audit = audit_startup_exposure(client)
+    except Exception:  # pragma: no cover - pure audit already catches broker failures.
+        # This defensive boundary also uses fixed vocabulary: an SDK exception
+        # can contain request headers or tokens and must never reach logs.
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Startup exposure audit failed internally.",),
+            evidence=("startup_audit=indeterminate",),
+        )
+    store.startup_exposure_audit = audit
+
+    if not audit.safe_to_enable_live:
+        store.execution_safety.freeze_entries(
+            "Startup exposure audit did not prove the broker account flat."
+        )
+        safe_reasons = " ".join(audit.reasons) or "Account state was not proven flat."
+        safe_evidence = " ".join(audit.evidence) or "startup_audit=indeterminate"
+        logger.error(
+            "STARTUP LIVE BLOCKED by broker exposure audit | %s | %s",
+            safe_reasons,
+            safe_evidence,
+        )
+        return 0, audit
+
+    for worker in candidate_live_workers:
+        worker.live_trading = True
+        logger.warning(
+            "LIVE TRADING ENABLED for %s -> real %s orders (product=%s).",
+            worker.strategy_name,
+            LIVE_BROKER,
+            LIVE_PRODUCT_TYPE,
+        )
+    return len(candidate_live_workers), audit
+
+
+def _enqueue_startup_exposure_alert(
+    audit: StartupExposureAudit | None,
+    event_queue: queue.Queue | None,
+) -> bool:
+    """Best-effort enqueue of the fixed-vocabulary startup-block alert."""
+
+    if audit is None or audit.safe_to_enable_live or event_queue is None:
+        return False
+    safe_details = " ".join((*audit.reasons, *audit.evidence))
+    event = {
+        "action": "STARTUP_LIVE_BLOCKED",
+        "strategy": "Startup Exposure Gate",
+        "direction": safe_details,
+        "reason": safe_details,
+        "mode": "PAPER",
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    try:
+        event_queue.put_nowait(event)
+        return True
+    except Exception:  # noqa: BLE001 - alerts must never block the runner.
+        logger.warning("Could not enqueue the startup exposure alert.")
+        return False
+
+
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
@@ -11144,58 +12140,20 @@ def main() -> None:
     #   1) the global master switch LIVE_TRADING_ENABLED, and
     #   2) that strategy's own <PREFIX>_LIVE_TRADING flag.
     # This double-gate is a safety net: one switch can't accidentally send
-    # everything live. We work it out ONCE here (not inside the threads) and set
-    # each worker's `live_trading` flag. Default stays paper; if a strategy has no
-    # known prefix it is left on paper and an error is logged so it's noticed.
+    # everything live. We work out the candidates ONCE here (not inside the
+    # threads), then enable them only after the broker books prove startup flat.
+    # Default stays paper; an unmapped strategy is always left on paper.
     # Real orders go to whichever broker LIVE_BROKER selected (see execution_client).
     master_live = _env_bool("LIVE_TRADING_ENABLED", False)
-    live_count = 0  # how many strategies ended up live (for the summary log)
-    for worker in workers:
-        prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
-        per_strategy = _env_bool(f"{prefix}_LIVE_TRADING", False) if prefix else False
-        worker.live_trading = bool(master_live and per_strategy)
-        if worker.live_trading:
-            live_count += 1
-            logger.warning(
-                "LIVE TRADING ENABLED for %s -> real %s orders (product=%s).",
-                worker.strategy_name, LIVE_BROKER, LIVE_PRODUCT_TYPE,
-            )
-        elif prefix is None:
-            logger.error(
-                "No env prefix mapped for strategy %s; forcing PAPER.", worker.strategy_name
-            )
-
-    # Startup guard: never attempt live trading without a working broker client.
-    if live_count > 0 and execution_client is None:
-        logger.error(
-            '%d strateg(ies) flagged for LIVE trading but the %s execution layer is '
-            "unavailable (SDK/deps missing or failed to import). "
-            "Forcing ALL strategies back to PAPER.",
-            live_count, LIVE_BROKER,
-        )
-        for worker in workers:
-            worker.live_trading = False
-        live_count = 0
-
-    # Eagerly establish the broker session NOW (at startup) so worker threads never
-    # block on login mid-session (Kotak uses TOTP, Shoonya may auto-generate it,
-    # and Flattrade uses browser authorization). If login fails here, force every
-    # strategy to PAPER rather than failing one order at a time later.
-    if live_count > 0 and execution_client is not None:
-        logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
-        if not execution_client.ensure_logged_in():
-            logger.error("%s login failed at startup; forcing ALL strategies back to PAPER.", LIVE_BROKER)
-            for worker in workers:
-                worker.live_trading = False
-            live_count = 0
-        else:
-            # One-time scrip/symbol-master download so live orders can be resolved
-            # without paying the download cost mid-session.
-            logger.info("%s login OK; downloading NSE F&O scrip master (one-time)...", LIVE_BROKER)
-            if not execution_client.preload_scrip_master():
-                logger.warning(
-                    "Scrip master preload failed; symbols will be resolved lazily on first order."
-                )
+    # Candidate selection, broker login, symbol preload and both account-book
+    # reads all happen while every worker remains paper-only.  Only the final,
+    # safe audit result enables the intended candidate workers.
+    live_count, _startup_audit = _configure_startup_live_trading(
+        workers,
+        store,
+        master_live=master_live,
+        client=execution_client,
+    )
 
     if master_live:
         logger.warning(
@@ -11228,6 +12186,11 @@ def main() -> None:
         )
     else:
         logger.info("Telegram notifications disabled (TELEGRAM_ENABLED=false).")
+
+    # The startup audit necessarily runs before notification wiring. Its
+    # immutable result remains on the store and is emitted now, if a Telegram
+    # queue exists, without exposing raw broker payloads or identifiers.
+    _enqueue_startup_exposure_alert(_startup_audit, trade_event_queue)
 
     fetcher.start()
     if telegram_worker is not None:

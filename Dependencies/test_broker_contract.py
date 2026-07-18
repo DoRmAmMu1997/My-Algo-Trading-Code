@@ -203,7 +203,16 @@ def test_execution_client_protocol_covers_reconciliation_surface() -> None:
         def resolve_option_symbol(self, underlying, expiry, option_type, strike):
             return "NIFTY-OPTION"
 
-        def place_market_order(self, symbol, side, quantity, exchange_segment, product_type):
+        def place_market_order(
+            self,
+            symbol,
+            side,
+            quantity,
+            exchange_segment,
+            product_type,
+            *,
+            order_tag="",
+        ):
             return None
 
         def get_order_status(self, order_id, requested_quantity=0):
@@ -295,6 +304,35 @@ def test_flattrade_place_order_normalizes_terminal_outcomes(
     assert result.order_id == "FT-1"
     assert result.filled_quantity == filled
     assert result.remaining_quantity == remaining
+
+
+def test_flattrade_transmits_execution_ledger_tag(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    client = _ready_flattrade_client(flattrade_module, monkeypatch)
+    captured_payloads = []
+    replies = iter(
+        [
+            {"stat": "Ok", "norenordno": "FT-TAG"},
+            [{"stat": "Ok", "status": "COMPLETE", "fillshares": "75", "qty": "75"}],
+        ]
+    )
+
+    def post(_endpoint, payload, **_kwargs):
+        captured_payloads.append(dict(payload))
+        return next(replies)
+
+    monkeypatch.setattr(client, "_post_api", post)
+    result = client.place_market_order(
+        "NIFTY",
+        "BUY",
+        75,
+        order_tag="M2-A1B2-4F8D2Q7J-NE1",
+    )
+
+    assert result.status.name == "FILLED"
+    assert captured_payloads[0]["remarks"] == "M2-A1B2-4F8D2Q7J-NE1"
 
 
 def test_flattrade_zero_broker_quantity_cannot_confirm_a_fill(
@@ -747,9 +785,11 @@ class _FakeNorenClient:
         self.position_rows = positions
         self.cancel_response = {"stat": "Ok", "result": "SH-1"}
         self.place_calls = 0
+        self.last_place_kwargs = None
 
     def place_order(self, **kwargs):
         self.place_calls += 1
+        self.last_place_kwargs = dict(kwargs)
         return self.place_response
 
     def single_order_history(self, order_id):
@@ -821,6 +861,28 @@ def test_shoonya_place_order_normalizes_terminal_outcomes(
     assert result.order_id == "SH-1"
     assert result.filled_quantity == filled
     assert result.remaining_quantity == remaining
+
+
+def test_shoonya_transmits_execution_ledger_tag(
+    shoonya_module: ModuleType,
+    monkeypatch,
+) -> None:
+    fake = _FakeNorenClient(
+        order_rows=[
+            {"stat": "Ok", "status": "COMPLETE", "fillshares": "75", "qty": "75"}
+        ]
+    )
+    client = _ready_shoonya_client(shoonya_module, monkeypatch, fake)
+
+    result = client.place_market_order(
+        "NIFTY",
+        "BUY",
+        75,
+        order_tag="M2-A1B2-4F8D2Q7J-NE1",
+    )
+
+    assert result.status.name == "FILLED"
+    assert fake.last_place_kwargs["remarks"] == "M2-A1B2-4F8D2Q7J-NE1"
 
 
 def test_shoonya_zero_broker_quantity_cannot_confirm_a_fill(
@@ -1246,8 +1308,10 @@ class _FakeKotakSdk:
         self.history_row = history_row
         self.orders = orders
         self.position_rows = positions
+        self.last_place_kwargs = None
 
     def place_order(self, **kwargs):
+        self.last_place_kwargs = dict(kwargs)
         return {"stat": "Ok", "nOrdNo": "KT-1"}
 
     def order_history(self, order_id):
@@ -1275,6 +1339,26 @@ def _ready_kotak_client(kotak_module: ModuleType, monkeypatch, fake):
     client.is_logged_in = True
     monkeypatch.setattr(client, "ensure_logged_in", lambda: True)
     return client
+
+
+def test_kotak_transmits_execution_ledger_tag(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    fake = _FakeKotakSdk(
+        history_row={"ordSt": "COMPLETE", "fldQty": "75", "qty": "75"}
+    )
+    client = _ready_kotak_client(kotak_module, monkeypatch, fake)
+
+    result = client.place_market_order(
+        "NIFTY",
+        "BUY",
+        75,
+        order_tag="M2-A1B2-4F8D2Q7J-NE1",
+    )
+
+    assert result.status.name == "FILLED"
+    assert fake.last_place_kwargs["tag"] == "M2-A1B2-4F8D2Q7J-NE1"
 
 
 @pytest.mark.parametrize(

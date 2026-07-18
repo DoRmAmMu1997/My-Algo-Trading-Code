@@ -264,6 +264,8 @@ class ExecutionClient(Protocol):
         quantity: int,
         exchange_segment: str,
         product_type: str,
+        *,
+        order_tag: str = "",
     ) -> OrderResult: ...
 
     def get_order_status(

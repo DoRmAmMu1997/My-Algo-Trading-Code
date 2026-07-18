@@ -795,6 +795,8 @@ class FlattradeExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """Serialize one order from submission through typed fill confirmation."""
 
@@ -832,6 +834,7 @@ class FlattradeExecutionClient:
                 quantity_i,
                 exchange_segment,
                 product_type,
+                order_tag=order_tag,
             )
         finally:
             self._order_submission_lock.release()
@@ -843,6 +846,8 @@ class FlattradeExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """Place one MKT order and return an explicit normalized outcome.
 
@@ -905,6 +910,8 @@ class FlattradeExecutionClient:
             "ordersource": "API",
             "mkt_protection": str(protection),
         }
+        if order_tag:
+            payload["remarks"] = str(order_tag)
         try:
             response = self._post_api("PlaceOrder", payload, is_order=True)
         except Exception as exc:

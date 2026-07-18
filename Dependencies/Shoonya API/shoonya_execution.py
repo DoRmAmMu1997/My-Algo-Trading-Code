@@ -556,6 +556,8 @@ class ShoonyaExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """Serialize one submission through its typed fill confirmation."""
 
@@ -593,6 +595,7 @@ class ShoonyaExecutionClient:
                 quantity_i,
                 exchange_segment,
                 product_type,
+                order_tag=order_tag,
             )
         finally:
             self._order_submission_lock.release()
@@ -604,6 +607,8 @@ class ShoonyaExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """
         Place ONE market order (buy or sell at the current price) on Shoonya.
@@ -656,7 +661,7 @@ class ShoonyaExecutionClient:
                     price=0,
                     trigger_price=0,
                     retention="DAY",
-                    remarks="multistrategy_master",
+                    remarks=order_tag or "multistrategy_master",
                 )
 
         try:
