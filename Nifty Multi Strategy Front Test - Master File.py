@@ -11076,6 +11076,10 @@ if SL_HUNTING_AVAILABLE:
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
+            # Agent actions and mechanical liquidation share this lock. The
+            # tool context rechecks its generation/deadline while holding it,
+            # so square-off cannot race a late agent entry.
+            self._agent_action_lock = threading.RLock()
             # Optional learned-lessons block (loaded ONCE at construction so the prompt
             # prefix stays stable per session — preserves prompt caching). Gated + off
             # by default; only APPROVED lessons are in the live store.
@@ -11094,14 +11098,17 @@ if SL_HUNTING_AVAILABLE:
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
                 lessons_block=lessons_block,
-                # SLH-001: bound each SDK call. decide() blocks THIS worker's
-                # thread -- the same thread that enforces the per-poll
-                # stop/target check, max-loss and the 15:15 square-off -- so a
-                # hung CLI call must cost one bar's decision, not the safety net.
+                # Bound the off-loop SDK call to 5-120 seconds (default 90).
+                # Mechanical stop/target, max-loss and square-off keep polling
+                # independently while this inference is running.
                 sdk_timeout_seconds=_env_float("SL_HUNTING_SDK_TIMEOUT_SECONDS", 90.0),
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
+            self._agent_inference_lock = threading.Lock()
+            self._agent_inference_thread = None
+            self._agent_inference_result = None
+            self._agent_generation = 0
             # Throttle: consult the LLM only once per NEW completed bar (not per poll).
             self._last_decision_bar = None
             # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
@@ -11540,19 +11547,27 @@ if SL_HUNTING_AVAILABLE:
 
         def _flatten_additional_positions(self, reason: str) -> None:
             """Retry a lone BankNIFTY mirror on every due flatten pass."""
+            self._invalidate_agent_inference(reason)
+            with self._agent_action_lock:
+                if self._mirror_pos.active:
+                    self._close_bnf_mirror(reason)
 
-            if self._mirror_pos.active:
-                self._close_bnf_mirror(reason)
+        def request_worker_shutdown(self, reason: str) -> None:
+            """Disarm any in-flight inference before the shared flatten lifecycle."""
+            self._invalidate_agent_inference(reason)
+            super().request_worker_shutdown(reason)
 
         def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
             """Basket-level max-loss uses the shared retrying lifecycle."""
-
-            super().handle_max_loss_and_stop(total_pnl, open_pnl)
+            self._invalidate_agent_inference("MAX_LOSS")
+            with self._agent_action_lock:
+                super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
         def handle_square_off_and_stop(self) -> None:
             """15:15 square-off uses the shared retrying lifecycle."""
-
-            super().handle_square_off_and_stop()
+            self._invalidate_agent_inference("TIME_CUTOFF")
+            with self._agent_action_lock:
+                super().handle_square_off_and_stop()
 
         def _journal_exit_static(self, closed_position, reason: str) -> dict:
             """The NIFTY-leg exit context for the journal row (everything EXCEPT the
@@ -11655,9 +11670,105 @@ if SL_HUNTING_AVAILABLE:
         def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
             return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
 
+        def _agent_generation_is_current(self, generation: int) -> bool:
+            """Called inside the tool's final execution lock."""
+            return generation == self._agent_generation and not self.stop_event.is_set()
+
+        def _invalidate_agent_inference(self, reason: str) -> None:
+            """Make every previously issued tool capability stale immediately."""
+            with self._agent_action_lock:
+                self._agent_generation += 1
+            self.log.debug("SL Hunting inference invalidated: %s", reason)
+
+        def _consume_agent_decision(self) -> None:
+            """Collect a completed background pass without ever waiting for it."""
+            payload = None
+            with self._agent_inference_lock:
+                thread = self._agent_inference_thread
+                if thread is None or thread.is_alive():
+                    return
+                payload = self._agent_inference_result
+                self._agent_inference_thread = None
+                self._agent_inference_result = None
+            if payload is None:
+                return
+            generation, decision, was_active, strategy_frame, bnf_candles = payload
+            if generation != self._agent_generation:
+                self.log.info("Discarding late SL Hunting result for stale generation %s.", generation)
+                return
+            if decision.action != "HOLD":
+                self.log.info(
+                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
+                    decision.action, decision.confidence, decision.setup,
+                    decision.stop, decision.target, decision.reasoning,
+                )
+            if self._decisions_path is not None:
+                try:
+                    SL_HUNTING_JOURNAL_MODULE.append_decision(
+                        self._decisions_path,
+                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
+                            decision, strategy_frame, bnf_candles
+                        ),
+                    )
+                except Exception as exc:
+                    self.log.warning("SL Hunting decision-log failed: %s", exc)
+            if (
+                self._journal is not None
+                and self._open_trade_id is None
+                and not was_active
+                and self.pos.active
+            ):
+                self._journal_open_row(decision, strategy_frame, bnf_candles)
+
+        def _start_agent_inference(
+            self, strategy_frame: pd.DataFrame, bnf_candles: pd.DataFrame | None
+        ) -> bool:
+            """Start one daemon inference pass; return immediately to the risk loop."""
+            with self._agent_inference_lock:
+                if self._agent_inference_thread is not None:
+                    return False
+                with self._agent_action_lock:
+                    self._agent_generation += 1
+                    generation = self._agent_generation
+                    was_active = self.pos.active
+                nifty_snapshot = strategy_frame.copy(deep=True)
+                bnf_snapshot = bnf_candles.copy(deep=True) if bnf_candles is not None else None
+
+                def _run_agent() -> None:
+                    decision = self.agent.decide(
+                        nifty_snapshot,
+                        self._executor,
+                        bnf_candles=bnf_snapshot,
+                        live_active=bool(self.live_trading),
+                        broker=LIVE_BROKER,
+                        generation=generation,
+                        generation_is_current=self._agent_generation_is_current,
+                        execution_lock=self._agent_action_lock,
+                    )
+                    with self._agent_inference_lock:
+                        self._agent_inference_result = (
+                            generation,
+                            decision,
+                            was_active,
+                            nifty_snapshot,
+                            bnf_snapshot,
+                        )
+
+                self._agent_inference_thread = threading.Thread(
+                    target=_run_agent,
+                    name="sl-hunting-inference",
+                    daemon=True,
+                )
+                self._agent_inference_thread.start()
+                return True
+
         def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
             if strategy_frame is None or strategy_frame.empty:
                 return
+
+            # Harvest only completed work. This never joins or waits, so the
+            # mechanical stop/max-loss/square-off path remains responsive.
+            self._consume_agent_decision()
 
             # Enforce the agent's UNDERLYING stop/target on EVERY poll (not just once
             # per bar), so the configured risk guard stays active between the agent's
@@ -11672,7 +11783,9 @@ if SL_HUNTING_AVAILABLE:
                     )
                     if hit:
                         self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
-                        self.exit_position(hit)
+                        self._invalidate_agent_inference(hit)
+                        with self._agent_action_lock:
+                            self.exit_position(hit)
                         return
 
             # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
@@ -11736,40 +11849,9 @@ if SL_HUNTING_AVAILABLE:
                 )
                 return
 
-            # The agent acts via the order tool DURING decide() (it calls our
-            # enter_position / exit_position through the executor); the returned
-            # decision is the agent's own record of what it did, for the log.
-            was_active = self.pos.active
-            decision = self.agent.decide(
-                strategy_frame,
-                self._executor,
-                bnf_candles=bnf_candles,
-                live_active=bool(self.live_trading),
-                broker=LIVE_BROKER,
-            )
-            if decision.action != "HOLD":
-                self.log.info(
-                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
-                    decision.action, decision.confidence, decision.setup,
-                    decision.stop, decision.target, decision.reasoning,
-                )
-            # Decision log: persist EVERY decision (HOLD included) to its own JSONL so the
-            # operator can review what the agent decided each bar. Best-effort.
-            if self._decisions_path is not None:
-                try:
-                    SL_HUNTING_JOURNAL_MODULE.append_decision(
-                        self._decisions_path,
-                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
-                            decision, strategy_frame, bnf_candles
-                        ),
-                    )
-                except Exception as exc:  # never let logging disturb trading
-                    self.log.warning("SL Hunting decision-log failed: %s", exc)
-            # Journal a fresh entry (flat -> active during decide). Exits are journaled
-            # in after_exit, so EVERY close path is captured there.
-            if (self._journal is not None and self._open_trade_id is None
-                    and not was_active and self.pos.active):
-                self._journal_open_row(decision, strategy_frame, bnf_candles)
+            # Inference runs on its own daemon thread. At most one pass exists;
+            # later polls keep enforcing hard risk and only harvest when complete.
+            self._start_agent_inference(strategy_frame, bnf_candles)
 
     SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
     SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"

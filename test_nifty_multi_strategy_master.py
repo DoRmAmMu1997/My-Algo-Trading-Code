@@ -2817,6 +2817,46 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             expiry_date=worker._bnf_resolver.get_monthly_rollover_expiry.return_value,
         )
 
+    def test_hung_inference_cannot_delay_square_off_and_does_not_stack(self):
+        """The LLM runs off-loop: cutoff closes exposure while one pass is hung."""
+        worker, _ = self._make_worker()
+        worker._mirror_enabled = False
+        worker._use_bnf = False
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        release = threading.Event()
+        calls = {"count": 0}
+
+        def _hung_decide(*args, **kwargs):
+            calls["count"] += 1
+            release.wait(5)
+            return MagicMock(action="HOLD", confidence=0, setup="none", stop=0, target=0)
+
+        worker.agent.decide = _hung_decide
+        frame = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-07-16 10:00:00")],
+                "open": [24300.0], "high": [24305.0], "low": [24295.0], "close": [24300.0],
+            }
+        )
+
+        poll = threading.Thread(target=worker.process_strategy_frame, args=(frame,))
+        poll.start()
+        poll.join(timeout=0.5)
+        self.assertFalse(poll.is_alive())
+
+        later = frame.copy()
+        later["timestamp"] = pd.Timestamp("2026-07-16 10:01:00")
+        worker.process_strategy_frame(later)
+        self.assertEqual(calls["count"], 1)
+
+        square_off = threading.Thread(target=worker.handle_square_off_and_stop)
+        square_off.start()
+        square_off.join(timeout=0.5)
+        self.assertFalse(square_off.is_alive())
+        self.assertFalse(worker.pos.active)
+        release.set()
+
     def test_basket_exits_together_and_pnl_includes_both_legs(self):
         worker, store = self._make_worker()
         worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
