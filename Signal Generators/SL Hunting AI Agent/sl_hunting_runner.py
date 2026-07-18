@@ -148,7 +148,20 @@ def resample_1m_to_n(candles: pd.DataFrame, minutes: int) -> pd.DataFrame:
     """
     if minutes <= 1:
         return prepare_candles(candles)
-    df = prepare_candles(candles).set_index("timestamp")
+    prepared = prepare_candles(candles)
+    timestamps = pd.DatetimeIndex(prepared["timestamp"])
+    bucket_keys = timestamps.floor(f"{minutes}min")
+    complete = np.zeros(len(prepared), dtype=bool)
+    for bucket in bucket_keys.unique():
+        positions = np.flatnonzero(bucket_keys == bucket)
+        actual = list(timestamps[positions])
+        expected = list(pd.date_range(bucket, periods=minutes, freq="1min"))
+        if len(actual) == minutes and actual == expected:
+            complete[positions] = True
+    prepared = prepared.loc[complete].reset_index(drop=True)
+    if prepared.empty:
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df = prepared.set_index("timestamp")
     rule = f"{minutes}min"
     # The Hashable key annotation matches the Mapping type that pandas-stubs
     # expects for .agg(); a plain dict[str, str] is rejected (invariant keys).

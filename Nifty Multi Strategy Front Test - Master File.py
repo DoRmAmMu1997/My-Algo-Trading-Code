@@ -241,6 +241,13 @@ from Dependencies.execution_ledger import (
     OrderAttemptHandle,
     OrderIntent,
 )
+from Dependencies.market_data_health import (
+    MarketDataHealth,
+    MarketDataValidationError,
+    complete_minute_bucket_mask,
+    newest_completed_minute_timestamp,
+    validate_ohlc_frame,
+)
 from Dependencies.next_open_entry import PendingNextOpenEntry
 from Dependencies.risk_sizing import SizingDecision
 from Dependencies.startup_exposure import (
@@ -1754,6 +1761,7 @@ class SharedMarketDataStore:
         self._snapshots: dict[str, MarketSnapshot] = {}
         self._ltp_snapshots: dict[tuple[str, int], LTPSnapshot] = {}
         self._option_subscriptions: dict[tuple[str, int], OptionSubscription] = {}
+        self.market_data_health = MarketDataHealth()
         self.execution_safety = ExecutionSafetyCoordinator()
         # The execution ledger is separate from market-data snapshots because it
         # has its own lock and must survive strategy-frame refreshes.  Every live
@@ -1775,17 +1783,16 @@ class SharedMarketDataStore:
         The new snapshot is built BEFORE the lock is taken; only the swap
         happens under lock so the critical section stays small.
         """
-        source_candle_ts = None
-        if frame is not None and not frame.empty and "timestamp" in frame.columns:
-            source_candle_ts = pd.to_datetime(frame.iloc[-1]["timestamp"])
-        candle_signature = build_last_row_signature(frame)
+        validated = validate_ohlc_frame(frame)
+        source_candle_ts = pd.to_datetime(validated.iloc[-1]["timestamp"])
+        candle_signature = build_last_row_signature(validated)
 
         snapshot = MarketSnapshot(
             timeframe=str(timeframe),
-            frame=frame.copy(),
+            frame=validated,
             source_candle_ts=source_candle_ts,
             candle_signature=candle_signature,
-            fetched_at=datetime.now(),
+            fetched_at=datetime.now(ZoneInfo("Asia/Kolkata")),
         )
         with self._lock:
             self._snapshots[str(timeframe)] = snapshot
@@ -1823,16 +1830,20 @@ class SharedMarketDataStore:
         """
         if not ltp_map:
             return
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         with self._lock:
             for (segment, sec_id), price in ltp_map.items():
-                if float(price) <= 0:
+                try:
+                    numeric_price = float(price)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric_price) or numeric_price <= 0:
                     continue
                 key = (str(segment), int(sec_id))
                 self._ltp_snapshots[key] = LTPSnapshot(
                     segment=str(segment),
                     security_id=int(sec_id),
-                    ltp=float(price),
+                    ltp=numeric_price,
                     fetched_at=now,
                 )
 
@@ -1875,6 +1886,39 @@ class SharedMarketDataStore:
         """Return a list copy of all currently subscribed option legs."""
         with self._lock:
             return list(self._option_subscriptions.values())
+
+    # ------------------------------------------------------------------
+    # Whole-feed health
+    # ------------------------------------------------------------------
+    def begin_market_data_monitoring(self) -> None:
+        """Enable live freshness enforcement when the producer thread starts."""
+
+        self.market_data_health.begin_monitoring(now=datetime.now(ZoneInfo("Asia/Kolkata")))
+
+    def record_market_data_refresh(
+        self,
+        *,
+        ohlc_ok: bool,
+        required_ltp_keys: set[tuple[str, int]],
+    ):
+        """Publish one combined OHLC/LTP refresh result to the health gate."""
+
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        with self._lock:
+            source = self._snapshots.get("1")
+            frame = source.frame.copy() if source is not None else pd.DataFrame()
+            ltp_times = {
+                key: snapshot.fetched_at
+                for key, snapshot in self._ltp_snapshots.items()
+                if key in required_ltp_keys
+            }
+        return self.market_data_health.record_refresh(
+            ohlc_ok=ohlc_ok,
+            newest_completed_bar=newest_completed_minute_timestamp(frame, now=now),
+            ltp_fetched_at=ltp_times,
+            required_ltp_keys=required_ltp_keys,
+            now=now,
+        )
 
 
 # =============================================================================
@@ -1930,6 +1974,22 @@ def _infer_epoch_unit(values: pd.Series) -> str:
     return "s"
 
 
+def _validate_single_epoch_unit(values: pd.Series) -> None:
+    """Reject a payload that mixes seconds, milliseconds, or microseconds."""
+
+    nums = pd.to_numeric(values, errors="coerce").dropna().abs()
+    if nums.empty:
+        return
+    units = {
+        "us" if value > 1e14 else "ms" if value > 1e11 else "s"
+        for value in nums
+    }
+    if len(units) != 1:
+        raise MarketDataValidationError(
+            f"Dhan timestamp payload mixes epoch units: {', '.join(sorted(units))}"
+        )
+
+
 def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
     """
     Normalize a `dhanhq.intraday_minute_data` response into a standard
@@ -1981,6 +2041,7 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
 
     ts_numeric = pd.to_numeric(df[ts_col], errors="coerce")
     if ts_numeric.notna().sum() >= max(1, len(df) // 2):
+        _validate_single_epoch_unit(ts_numeric)
         unit = _infer_epoch_unit(ts_numeric)
         ts = pd.to_datetime(ts_numeric, unit=unit, errors="coerce", utc=True)
     else:
@@ -1998,9 +2059,9 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
             "low": pd.to_numeric(df[l_col], errors="coerce"),
             "close": pd.to_numeric(df[c_col], errors="coerce"),
         }
-    ).dropna()
+    )
 
-    out = out.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+    out = validate_ohlc_frame(out)
     if len(out) < MIN_BARS:
         raise ValueError(f"Need >= {MIN_BARS} bars, got {len(out)}")
     return out
@@ -2067,6 +2128,17 @@ def resample_ohlc_from_1m(ohlc: pd.DataFrame, timeframe_minutes: int) -> pd.Data
     frame = frame.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     if frame.empty:
         return frame
+
+    # Count-only completeness can accept a duplicate minute while another
+    # minute is missing. Keep a bucket only when every exact minute slot occurs
+    # once and in order.
+    complete_mask = complete_minute_bucket_mask(
+        pd.DatetimeIndex(frame["timestamp"]),
+        int(timeframe_minutes),
+    )
+    frame = frame.loc[complete_mask.to_numpy()].reset_index(drop=True)
+    if frame.empty:
+        return pd.DataFrame(columns=required_columns)
 
     rule = f"{int(timeframe_minutes)}min"
     indexed = frame.set_index("timestamp")
@@ -3014,7 +3086,7 @@ class CentralMarketDataFetcher(threading.Thread):
             instrument_type=NIFTY_INDEX_INSTRUMENT_TYPE,
         )
 
-    def refresh_index_and_option_ltps(self) -> None:
+    def refresh_index_and_option_ltps(self) -> set[tuple[str, int]]:
         """
         Refresh the NIFTY spot LTP plus every subscribed option LTP in a
         single batched ticker_data call.
@@ -3029,11 +3101,17 @@ class CentralMarketDataFetcher(threading.Thread):
             if int(sub.security_id) not in securities[segment]:
                 securities[segment].append(int(sub.security_id))
 
+        required_keys = {
+            (segment, int(security_id))
+            for segment, security_ids in securities.items()
+            for security_id in security_ids
+        }
+
         try:
             ltp_map = self.broker.fetch_ltp_map(securities)
         except Exception as exc:
             self.log.exception("Error while refreshing LTP batch: %s", exc)
-            return
+            return required_keys
 
         if ltp_map:
             self.store.update_ltp_map(ltp_map)
@@ -3047,10 +3125,13 @@ class CentralMarketDataFetcher(threading.Thread):
                 index_ltp,
                 len(subscriptions),
             )
+        return required_keys
 
     def run(self) -> None:
         self.log.info("Starting central market data fetcher (dhanhq backend).")
+        self.store.begin_market_data_monitoring()
         while not self.stop_event.is_set():
+            ohlc_ok = True
             for timeframe in REQUIRED_TIMEFRAMES:
                 if self.stop_event.is_set():
                     break
@@ -3066,11 +3147,25 @@ class CentralMarketDataFetcher(threading.Thread):
                             snapshot.source_candle_ts,
                         )
                 except Exception as exc:
+                    ohlc_ok = False
                     self.log.exception("Fetch error for timeframe=%s: %s", timeframe, exc)
             try:
-                self.refresh_index_and_option_ltps()
+                required_ltp_keys = self.refresh_index_and_option_ltps()
             except Exception as exc:
                 self.log.exception("Fetch error while refreshing LTPs: %s", exc)
+                required_ltp_keys = {
+                    (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
+                }
+            health = self.store.record_market_data_refresh(
+                ohlc_ok=ohlc_ok,
+                required_ltp_keys=required_ltp_keys,
+            )
+            if health.reasons:
+                self.log.warning(
+                    "Market data unhealthy | unhealthy_for=%.1fs | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
             self.stop_event.wait(FETCH_POLL_SECONDS)
         self.log.info("Central market data fetcher stopped.")
 
@@ -3162,6 +3257,8 @@ class BasePaperStrategyWorker(threading.Thread):
         # Guards so we never run the same shutdown / pre-open log twice.
         self.cutoff_handled = False
         self.preopen_wait_logged = False
+        self._market_data_unhealthy_logged = False
+        self._market_data_liquidation_logged = False
 
         # Optional trade-event sink (a queue.Queue) consumed by the Telegram
         # notifier. main() injects it after construction; it stays None when
@@ -4636,6 +4733,77 @@ class BasePaperStrategyWorker(threading.Thread):
         else:
             self._wait_for_shutdown_retry()
 
+    def _market_data_entries_allowed(self) -> bool:
+        """Fail closed for every entry path while the shared feed is unhealthy."""
+
+        health = self.store.market_data_health.snapshot(now=_ist_now())
+        if not health.monitoring:
+            return True
+        if health.entry_allowed:
+            if self._market_data_unhealthy_logged:
+                self.log.info(
+                    "Market data recovered after %d consecutive healthy refreshes; entries resumed.",
+                    health.healthy_streak,
+                )
+            self._market_data_unhealthy_logged = False
+            self._market_data_liquidation_logged = False
+            return True
+        if not self._market_data_unhealthy_logged:
+            self._market_data_unhealthy_logged = True
+            self.log.warning(
+                "Blocking new entries because market data is unhealthy | %s",
+                "; ".join(health.reasons) or "awaiting three healthy refreshes",
+            )
+        return False
+
+    def _handle_market_data_health(self) -> bool:
+        """Flatten tracked exposure after a feed has been unhealthy for 30s.
+
+        This is deliberately separate from terminal daily shutdown. A feed can
+        recover, but only three consecutive healthy producer cycles reopen the
+        entry gate. Returning ``True`` tells the caller to consume this poll so
+        no strategy logic runs alongside a safety-driven liquidation attempt.
+        """
+
+        health = self.store.market_data_health.snapshot(now=_ist_now())
+        if not health.monitoring:
+            return False
+        if not health.entry_allowed:
+            self._market_data_entries_allowed()
+        if not health.liquidation_required:
+            return False
+
+        reason = "MARKET_DATA_UNHEALTHY"
+        if not self._market_data_liquidation_logged:
+            self._market_data_liquidation_logged = True
+            self.log.error(
+                "Market data remained unhealthy for %.1fs; flattening every tracked leg | %s",
+                health.unhealthy_seconds,
+                "; ".join(health.reasons),
+            )
+            self.publish_trade_event(
+                {
+                    "action": "MARKET_DATA_AUTO_SQUARE_OFF",
+                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "reason": "; ".join(health.reasons),
+                    "unhealthy_seconds": health.unhealthy_seconds,
+                }
+            )
+        try:
+            if self._paper_positions_active():
+                self.exit_position(reason)
+        except Exception as exc:  # noqa: BLE001 - keep flattening every other leg
+            self.log.exception("Market-data primary close failed; retrying next poll: %s", exc)
+        try:
+            self._flatten_additional_positions(reason)
+        except Exception as exc:  # noqa: BLE001 - orphan sweep must still run
+            self.log.exception("Market-data additional close failed; retrying next poll: %s", exc)
+        try:
+            self._sweep_orphan_live_legs(force=True)
+        except Exception as exc:  # noqa: BLE001 - health loop must stay alive
+            self.log.exception("Market-data orphan close failed; retrying next poll: %s", exc)
+        return True
+
     def _paper_positions_active(self) -> bool:
         """Return whether this worker still owns local position bookkeeping."""
 
@@ -4892,6 +5060,10 @@ class BasePaperStrategyWorker(threading.Thread):
                     self.handle_square_off_and_stop()
                     continue
 
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
+
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
                         self.log.info(
@@ -5034,6 +5206,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         5. Persist all entry fields (including any strategy-specific flags
            like target/trailing for Profit Shooter) in `self.pos`.
         """
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=_safe_float(entry_underlying, 0.0))
         if spot <= 0:
             self.log.warning("Skipping %s entry because NIFTY spot LTP was unavailable.", direction)
@@ -7421,6 +7595,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
 
     def _enter_hedged_bullish_position(self, entry_underlying: float, latest_candle_ts) -> bool:
         """Open a new hedged bullish paper position (SELL Rs.160 PE + BUY Rs.10 PE)."""
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=entry_underlying)
         if spot <= 0:
             self.log.warning("Skipping bullish entry because NIFTY spot LTP was unavailable.")
@@ -8012,6 +8188,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
 
     def _enter_hedged_bearish_position(self, entry_underlying: float, latest_candle_ts) -> bool:
         """Open a new hedged bearish paper position (SELL Rs.160 CE + BUY Rs.10 CE)."""
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=entry_underlying)
         if spot <= 0:
             self.log.warning("Skipping bearish entry because NIFTY spot LTP was unavailable.")
@@ -8259,6 +8437,10 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
                     continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
@@ -8811,6 +8993,10 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                     self.handle_square_off_and_stop()
                     continue
 
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
+
                 # 3. Pre-open wait. We do nothing before 09:20 - that's
                 #    when the reference snapshot is taken. The
                 #    `preopen_wait_logged` flag prevents the "waiting"
@@ -9335,6 +9521,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             True on a successful entry, False on any guard failure
             (missing hedge LTP, invalid lot size, etc.).
         """
+        if not self._market_data_entries_allowed():
+            return False
         # Pull this side's metadata. We deliberately ignore the position
         # / done flags here - they were already checked by `_check_entry`.
         _, _, monitor_meta, hedge_meta, _, _ = self._side_state(side)
@@ -10046,6 +10234,10 @@ class LongStrangleWorker(BasePaperStrategyWorker):
                     self.handle_square_off_and_stop()
                     continue
 
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
+
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
                         self.log.info(
@@ -10108,6 +10300,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         order placement / bookkeeping is shared with the re-entry path through
         `_buy_leg`.
         """
+        if not self._market_data_entries_allowed():
+            return False
         leg_pos = self._leg_pos(side)
         if leg_pos.active:
             return True
@@ -10137,6 +10331,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         stashed `_last_contract` provide these). `is_reentry` only changes the
         log/telemetry wording and bumps the per-leg re-entry counter.
         """
+        if not self._market_data_entries_allowed():
+            return False
         option_sec_id = int(contract["security_id"])
         option_segment = str(contract["exchange_segment"])
         trading_symbol = str(contract["trading_symbol"])
@@ -11482,9 +11678,13 @@ if SL_HUNTING_AVAILABLE:
 
             # Optional BankNIFTY for the agent's NF/BNF cross-confirmation. Fetched
             # on-demand via the shared broker (same fetch_index_1m_ohlc path as the
-            # central fetcher / CPR Algo 3). Any failure -> NIFTY-only this bar.
+            # central fetcher / CPR Algo 3). A flat worker skips the decision when
+            # this stream is unavailable or timestamp-skewed; an open worker may
+            # still use the NIFTY-only pass for a discretionary EXIT.
             bnf_candles = None
+            bnf_ready = not self._use_bnf
             if self._use_bnf:
+                self._last_bnf_close = 0.0
                 try:
                     bnf_1m = self.broker.fetch_index_1m_ohlc(
                         BANKNIFTY_INDEX_SECURITY_ID,
@@ -11493,13 +11693,34 @@ if SL_HUNTING_AVAILABLE:
                     )
                     bnf_candles = resample_ohlc_from_1m(bnf_1m, self.derived_timeframe_minutes)
                     if bnf_candles is not None and not bnf_candles.empty:
-                        # Remember BankNIFTY's latest close for the mirror leg's
-                        # ATM pick (no extra API call at entry time).
-                        self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
+                        bnf_latest_bar = bnf_candles["timestamp"].iloc[-1]
+                        if bnf_latest_bar == latest_bar:
+                            bnf_ready = True
+                            # Remember only an aligned BankNIFTY close for the
+                            # mirror's ATM pick (no stale cross-index mirror).
+                            self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
+                        else:
+                            self.log.warning(
+                                "BankNIFTY latest bar %s is not aligned with NIFTY %s; "
+                                "cross-index input is discarded.",
+                                bnf_latest_bar,
+                                latest_bar,
+                            )
+                            bnf_candles = None
                 except Exception as exc:
                     self.log.warning(
-                        "BankNIFTY fetch failed (%s); SL Hunting goes NIFTY-only this bar.", exc
+                        "BankNIFTY fetch failed (%s); cross-index input is unavailable this bar.", exc
                     )
+
+            # A flat worker must not create an unmirrored NIFTY position from a
+            # stale/missing BankNIFTY confirmation. Open positions may still ask
+            # the agent for a discretionary EXIT; their mechanical risk checks
+            # already ran above and never depend on BankNIFTY availability.
+            if self._use_bnf and not bnf_ready and not self.pos.active:
+                self.log.warning(
+                    "SL Hunting entry evaluation skipped: current/aligned BankNIFTY data is required."
+                )
+                return
 
             # The agent acts via the order tool DURING decide() (it calls our
             # enter_position / exit_position through the executor); the returned

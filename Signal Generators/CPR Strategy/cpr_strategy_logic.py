@@ -16,10 +16,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from market_data_health import complete_minute_bucket_mask
+else:
+    from Dependencies.market_data_health import complete_minute_bucket_mask
 
 try:
     import talib
@@ -205,6 +210,13 @@ def prepare_cpr_ohlc_input(data: pd.DataFrame) -> pd.DataFrame:
             f"detected median spacing of {median_minutes:.2f} minutes."
         )
 
+    complete_mask = complete_minute_bucket_mask(
+        pd.DatetimeIndex(frame["timestamp"]),
+        5,
+    )
+    frame = frame.loc[complete_mask.to_numpy()].reset_index(drop=True)
+    if frame.empty:
+        return pd.DataFrame(columns=["timestamp", *OHLC_COLUMNS, "volume"])
     source = frame.set_index("timestamp")
     resampled = source.resample("5min", label="left", closed="left").agg(
         {
