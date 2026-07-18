@@ -663,6 +663,50 @@ class TestOptionChainParsers(unittest.TestCase):
         )
 
 
+class TestOpeningStrikeEntryAcknowledgement(unittest.TestCase):
+    """The one-shot setup belongs to a successful entry, not an emitted signal."""
+
+    def setUp(self):
+        self.worker = master_file.OpeningStrikePCRVWAPATRWorker(
+            master_file.SharedMarketDataStore(),
+            threading.Event(),
+            MagicMock(),
+        )
+        self.worker.signal_engine = MagicMock()
+        self.worker.signal_engine._entry_signal_sent = False
+        self.worker.signal_engine.evaluate.return_value = (
+            master_file.OPENING_STRIKE_LOGIC.NiftyOpeningStrikePCRVWAPATRDecision(
+                action="BUY_CALL",
+                signal_triggered=True,
+                entry_underlying=25000.0,
+            )
+        )
+        self.worker._build_option_chain_oi_change = MagicMock(
+            return_value=pd.DataFrame({"strike": [25000.0]})
+        )
+        self.frame = pd.DataFrame(
+            {
+                "timestamp": [datetime(2026, 7, 16, 10, 0)],
+                "open": [24990.0],
+                "close": [25000.0],
+            }
+        )
+
+    def test_failed_entry_does_not_consume_one_shot_signal(self):
+        self.worker.enter_position = MagicMock(return_value=False)
+
+        self.worker.process_strategy_frame(self.frame)
+
+        self.worker.signal_engine.acknowledge_entry.assert_not_called()
+
+    def test_successful_entry_consumes_one_shot_signal(self):
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        self.worker.process_strategy_frame(self.frame)
+
+        self.worker.signal_engine.acknowledge_entry.assert_called_once_with()
+
+
 # =============================================================================
 # TEST SUITE: OPTIONS CONTRACT RESOLVER
 # =============================================================================
@@ -1590,6 +1634,14 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         spacing = pd.to_datetime(frame["timestamp"]).diff().dropna().unique()
         self.assertEqual(len(spacing), 1)
         self.assertEqual(pd.Timedelta(spacing[0]), pd.Timedelta(minutes=5))
+
+    def test_open_position_bypasses_entry_indicator_warmup(self):
+        """An existing trade's hard stop cannot wait for 200 entry bars."""
+
+        self.worker.pos.active = True
+
+        self.assertEqual(self.worker.minimum_strategy_rows(), 1)
+        self.assertEqual(self.worker.minimum_source_rows(), 1)
 
 
 # =============================================================================

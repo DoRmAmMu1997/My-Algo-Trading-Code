@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, supertrend
+from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, supertrend, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ class SupertrendConfig:
     target_pct: float = 0.0    # 0 disables the fixed target (ride the trend to the flip)
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if int(self.atr_period) <= 0:
             raise ValueError("atr_period must be positive.")
         if float(self.multiplier) <= 0.0:

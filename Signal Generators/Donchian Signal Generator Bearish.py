@@ -148,17 +148,9 @@ import numpy as np
 
 # pandas is the tabular-data library we accept as input and return as output.
 import pandas as pd
+import talib
 
-# --- Optional TA-Lib import --------------------------------------------------
-# Same try/except pattern used in the bullish file. TA-Lib is a native (C)
-# library and may not be installed everywhere. For Donchian we only need
-# `talib.MAX` and `talib.MIN`. TA-Lib's import is fast so we do it eagerly.
-try:
-    import talib  # type: ignore
-    _TALIB_AVAILABLE = True
-except ImportError:  # pragma: no cover - only exercised when TA-Lib missing
-    talib = None  # type: ignore
-    _TALIB_AVAILABLE = False
+_TALIB_AVAILABLE = True
 
 # --- Optional pandas_ta import (LAZY) ----------------------------------------
 # `pandas_ta` ships a direct `donchian` function with TradingView-compatible
@@ -240,6 +232,10 @@ class DonchianSettings:
     """
 
     length: int = 20
+
+    def __post_init__(self) -> None:
+        if int(self.length) <= 0:
+            raise ValueError("Donchian length must be positive.")
 
 
 @dataclass(slots=True)
@@ -366,7 +362,7 @@ def _prepare_ohlc_frame(data: pd.DataFrame) -> pd.DataFrame:
 
 # =============================================================================
 # DONCHIAN CHANNEL CALCULATION
-# (PANDAS_TA PRIMARY  ->  TA-LIB SECONDARY  ->  PURE-PANDAS FALLBACK)
+# (TA-LIB PRIMARY  ->  PANDAS_TA SECONDARY  ->  PURE-PANDAS FALLBACK)
 # =============================================================================
 def _donchian_pure_pandas(
     high: pd.Series,

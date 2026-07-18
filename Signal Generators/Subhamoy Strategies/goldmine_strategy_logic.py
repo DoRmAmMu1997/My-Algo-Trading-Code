@@ -2,7 +2,7 @@
 Shared Goldmine strategy logic for already-prepared 5-minute OHLC candles.
 
 What this module does:
-1. Calculates SMA20, SMA200, and ATR with TA-Lib first.
+1. Calculates SMA20, SMA200, and ATR with the pinned TA-Lib build.
 2. Finds the Goldmine pullback + engulfing setup on completed candles.
 3. Returns a simple decision object that front-tests and backtests can share.
 
@@ -29,6 +29,7 @@ from subhamoy_strategy_common import (
     require_columns,
     rising_over_lookback,
     sma,
+    validate_finite_config,
 )
 
 
@@ -64,6 +65,7 @@ class GoldmineStrategyConfig:
         - Catching mistakes here gives the caller a clear error before any
           candle calculations start.
         """
+        validate_finite_config(self)
         positive_ints = {
             "sma_fast_period": self.sma_fast_period,
             "sma_slow_period": self.sma_slow_period,
@@ -78,10 +80,14 @@ class GoldmineStrategyConfig:
             raise ValueError(f"Config values must be positive: {', '.join(invalid)}")
         if int(self.pullback_min_count) > int(self.pullback_lookback):
             raise ValueError("pullback_min_count cannot be larger than pullback_lookback.")
+        if int(self.sma_fast_period) >= int(self.sma_slow_period):
+            raise ValueError("sma_fast_period must be smaller than sma_slow_period.")
         if float(self.near_sma_atr_multiple) < 0.0:
             raise ValueError("near_sma_atr_multiple must be non-negative.")
         if float(self.engulf_tolerance) < 0.0:
             raise ValueError("engulf_tolerance must be non-negative.")
+        if float(self.engulf_tolerance) > 1.0:
+            raise ValueError("engulf_tolerance must not exceed 1.0.")
         if float(self.target_atr_multiple) <= 0.0:
             raise ValueError("target_atr_multiple must be greater than zero.")
 
