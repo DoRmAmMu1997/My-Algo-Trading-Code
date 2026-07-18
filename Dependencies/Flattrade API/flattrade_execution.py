@@ -12,10 +12,11 @@ Safety rules followed here:
 * A supplied daily access token is verified through ``UserDetails`` before use.
 * Without a token, the operator completes Flattrade's browser authorization and
   pastes the short-lived request code; the API secret never leaves this process.
-* Every HTTP call has an explicit timeout and every API/order call is rate-limited.
-* ``place_market_order`` returns only after ``SingleOrdHist`` confirms the whole
-  quantity filled.  Any ambiguity raises so the runner's existing fail-safe path
-  can take over rather than pretending a real order succeeded.
+* Every HTTP call retains a native timeout; one total ten-second deadline also
+  covers rate-limit wait, session-lock wait, and slow-dribble response bodies.
+* ``place_market_order`` returns a typed result after ``SingleOrdHist`` checks
+  the fill. Rejection, partial fill, and response loss remain distinct; ambiguity
+  is ``UNKNOWN`` and poisons new submissions until explicit reconciliation.
 
 Flattrade Pi v2 currently documents no logout endpoint.  ``logout()`` therefore
 closes the local HTTP session and erases the in-memory token.
@@ -48,18 +49,38 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
+import sys
 import threading
 import time
 import webbrowser
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 import pandas as pd
 import requests
+
+# The broker helpers live in folders with spaces and are also executable as
+# standalone diagnostics.  Add their shared ``Dependencies`` parent explicitly
+# so the broker-neutral contract imports the same way in both entry points.
+_DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
+if str(_DEPENDENCIES_DIR) not in sys.path:
+    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+
+from broker_contract import (  # noqa: E402
+    BrokerQueryResult,
+    OpenOrder,
+    OpenPosition,
+    OrderResult,
+    OrderStatus,
+    normalize_order_result,
+)
 
 try:
     from dotenv import load_dotenv
@@ -84,8 +105,9 @@ _NFO_INDEX_MASTER_URL = (
     "scripmaster/Nfo_Index_Derivatives.csv"
 )
 
-_API_TIMEOUT_SECONDS = 30
-_SCRIP_MASTER_TIMEOUT_SECONDS = 120
+_API_TIMEOUT_SECONDS = 10.0
+_SCRIP_MASTER_TIMEOUT_SECONDS = 10.0
+_BROKER_CALL_DEADLINE_SECONDS = 10.0
 _FILL_TIMEOUT_SECONDS = 8.0
 _FILL_POLL_INTERVAL = 0.5
 _MAX_RATE_LIMIT_WAIT_SECONDS = 2.0
@@ -93,6 +115,32 @@ _MAX_RATE_LIMIT_WAIT_SECONDS = 2.0
 _PRODUCT_MAP = {"INTRADAY": "I", "NORMAL": "M"}
 _SIDE_MAP = {"BUY": "B", "SELL": "S"}
 _TERMINAL_FAILURE_STATES = {"rejected", "cancelled", "canceled"}
+
+
+def _exact_int(value: Any) -> int | None:
+    """Parse a broker quantity only when it is a finite whole number."""
+
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _is_no_data_envelope(value: Any) -> bool:
+    """Recognize only Flattrade's exact, determinate empty-book response."""
+
+    if not isinstance(value, dict):
+        return False
+    state = str(value.get("stat") or "").strip().lower().replace("_", "")
+    message = " ".join(
+        str(value.get("emsg") or value.get("msg") or "").strip().lower().split()
+    )
+    return state in {"notok", "rejected"} and message == "no data"
 
 
 def _env_str(name: str, default: str = "") -> str:
@@ -125,7 +173,7 @@ class _RollingWindowRateLimiter:
 
     Short bursts wait for a slot.  A wait longer than ``max_wait_seconds`` raises
     before the HTTP request is sent; a stale live order is more dangerous than a
-    clear failure that activates the runner's paper fallback.
+    clear indeterminate result that freezes new live entry.
     """
 
     def __init__(
@@ -146,7 +194,7 @@ class _RollingWindowRateLimiter:
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
 
-    def acquire(self) -> None:
+    def acquire(self, deadline: float | None = None) -> None:
         """Reserve one request slot or raise before a long/stale wait.
 
         The deque stores only timestamps from the last minute. We separately
@@ -155,7 +203,16 @@ class _RollingWindowRateLimiter:
         stale, so it raises *before* any broker request is sent.
         """
         started = self._clock()
-        with self._lock:
+        if deadline is None:
+            acquired = self._lock.acquire()
+        else:
+            remaining = deadline - started
+            acquired = remaining > 0 and self._lock.acquire(timeout=remaining)
+        if not acquired:
+            raise TimeoutError(
+                f"Flattrade {self.label} deadline expired waiting for the limiter lock"
+            )
+        try:
             while True:
                 now = self._clock()
                 # Discard calls that are older than the longest (60-second)
@@ -185,12 +242,17 @@ class _RollingWindowRateLimiter:
                     waits.append(60.0 - (now - self._timestamps[0]))
                 wait_seconds = max(0.0, max(waits))
                 elapsed = now - started
-                if elapsed + wait_seconds > self.max_wait_seconds:
+                exceeds_call_deadline = (
+                    deadline is not None and now + wait_seconds > deadline
+                )
+                if elapsed + wait_seconds > self.max_wait_seconds or exceeds_call_deadline:
                     raise RuntimeError(
                         f"Flattrade {self.label} rate limit exhausted; "
                         f"safe slot needs {wait_seconds:.2f}s"
                     )
                 self._sleep(wait_seconds)
+        finally:
+            self._lock.release()
 
     def reset(self) -> None:
         """Forget local request history after a session is explicitly closed."""
@@ -216,6 +278,20 @@ class FlattradeExecutionClient:
         self._account_id = ""
         self._scrip_df: pd.DataFrame | None = None
         self._symbol_cache: dict[tuple, str] = {}
+        # ``requests`` timeouts are inactivity limits, not a total wall-clock
+        # budget: a slow-dribble response can otherwise run forever. Execute one
+        # native HTTP call at a time and impose a caller-visible deadline around
+        # rate-limit wait, session-lock wait, and the complete response body.
+        self._http_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="flattrade-http",
+        )
+        self._http_poisoned = False
+        self._timed_out_future: Future[Any] | None = None
+        # Serialize acknowledgement plus SingleOrdHist confirmation. Without
+        # this gate another strategy can submit before a status timeout poisons
+        # the session, leaving two simultaneously indeterminate live orders.
+        self._order_submission_lock = threading.Lock()
         # Flattrade documents 40/s + 200/min for general API calls and the
         # stricter 10/s + 40/min budget for order APIs.
         self._api_limiter = _RollingWindowRateLimiter(
@@ -236,6 +312,68 @@ class FlattradeExecutionClient:
         if self.client is None:
             self.client = requests.Session()
         return self.client
+
+    @staticmethod
+    def _remaining_broker_budget(started: float) -> float:
+        """Return seconds left in one complete broker-call wall-clock budget."""
+
+        return _BROKER_CALL_DEADLINE_SECONDS - (time.monotonic() - started)
+
+    def _run_http_with_deadline(
+        self,
+        operation: str,
+        call: Callable[[], Any],
+        *,
+        started: float,
+        allow_after_poison: bool = False,
+    ) -> Any:
+        """Run one native HTTP call without letting a slow response outlive 10s.
+
+        The caller holds ``_lock``.  If the future times out, its socket may
+        still be active inside ``requests``; poison the shared session so no
+        second request can overlap that indeterminate in-flight operation.
+        """
+
+        if self._http_poisoned:
+            abandoned_finished = (
+                self._timed_out_future is not None
+                and self._timed_out_future.done()
+            )
+            if not allow_after_poison or not abandoned_finished:
+                raise RuntimeError(
+                    "Flattrade session is indeterminate after a broker deadline; "
+                    "new orders are blocked pending reconciliation."
+                )
+        remaining = self._remaining_broker_budget(started)
+        if remaining <= 0:
+            raise TimeoutError(f"Flattrade {operation} deadline expired before HTTP submission.")
+        future = self._http_executor.submit(call)
+        try:
+            return future.result(timeout=remaining)
+        except FuturesTimeoutError as exc:
+            # Python aliases concurrent.futures.TimeoutError to built-in
+            # TimeoutError. If the native function itself raised it, preserve
+            # that evidence rather than falsely poisoning a completed future.
+            if future.done():
+                return future.result()
+            self._http_poisoned = True
+            self._timed_out_future = future
+            future.cancel()
+            raise TimeoutError(
+                f"Flattrade {operation} exceeded the total "
+                f"{_BROKER_CALL_DEADLINE_SECONDS:.0f}s broker deadline; "
+                "session state is indeterminate."
+            ) from exc
+
+    def recover_after_reconciliation(self) -> bool:
+        """Explicitly clear deadline poison after the abandoned call has ended."""
+
+        with self._lock:
+            if self._timed_out_future is not None and not self._timed_out_future.done():
+                return False
+            self._http_poisoned = False
+            self._timed_out_future = None
+            return True
 
     def ensure_logged_in(self) -> bool:
         """Return True only when a validated Flattrade daily token is available.
@@ -320,17 +458,27 @@ class FlattradeExecutionClient:
             f"{api_key}{request_code}{raw_secret}".encode()
         ).hexdigest()
         try:
-            response = self._ensure_session_locked().post(
-                _TOKEN_URL,
-                json={
-                    "api_key": api_key,
-                    "request_code": request_code,
-                    "api_secret": digest,
-                },
-                timeout=_API_TIMEOUT_SECONDS,
+            session = self._ensure_session_locked()
+            started = time.monotonic()
+
+            def exchange_token():
+                response = session.post(
+                    _TOKEN_URL,
+                    json={
+                        "api_key": api_key,
+                        "request_code": request_code,
+                        "api_secret": digest,
+                    },
+                    timeout=_API_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                return response.json()
+
+            payload = self._run_http_with_deadline(
+                "token exchange",
+                exchange_token,
+                started=started,
             )
-            response.raise_for_status()
-            payload = response.json()
         except Exception as exc:
             log.error("Flattrade token exchange failed: %s", exc)
             return False
@@ -401,6 +549,7 @@ class FlattradeExecutionClient:
         payload: dict[str, Any],
         *,
         is_order: bool = False,
+        allow_after_poison: bool = False,
     ) -> Any:
         """POST one documented ``jData``/``jKey`` request with limits and timeout.
 
@@ -408,6 +557,8 @@ class FlattradeExecutionClient:
             endpoint: Final Pi endpoint name, such as ``UserDetails``.
             payload: Plain Python dictionary that becomes compact JSON in jData.
             is_order: Also consume the stricter order budget for write endpoints.
+            allow_after_poison: Permit reconciliation/risk-reducing calls only
+                after the abandoned timed-out HTTP future has actually ended.
 
         Returns:
             The decoded JSON object/list supplied by Flattrade.
@@ -419,12 +570,20 @@ class FlattradeExecutionClient:
         ``urlencode`` matters even though jData itself is JSON: it protects symbols
         containing characters such as ``&`` from corrupting the outer POST body.
         """
+        started = time.monotonic()
         if not self._access_token:
             raise RuntimeError("Flattrade has no validated access token.")
-        self._api_limiter.acquire()
+        deadline = started + _BROKER_CALL_DEADLINE_SECONDS
+        self._api_limiter.acquire(deadline)
         if is_order:
-            self._order_limiter.acquire()
-        with self._lock:
+            self._order_limiter.acquire(deadline)
+
+        remaining = self._remaining_broker_budget(started)
+        if remaining <= 0 or not self._lock.acquire(timeout=max(0.0, remaining)):
+            raise TimeoutError(
+                "Flattrade broker deadline expired while waiting for the shared session lock."
+            )
+        try:
             session = self._ensure_session_locked()
             body = urlencode(
                 {
@@ -432,19 +591,33 @@ class FlattradeExecutionClient:
                     "jKey": self._access_token,
                 }
             )
-            response = session.post(
-                f"{_BASE_URL}/{endpoint}",
-                data=body,
-                headers={"Content-Type": "application/json"},
-                timeout=_API_TIMEOUT_SECONDS,
+
+            def send_and_decode() -> Any:
+                response = session.post(
+                    f"{_BASE_URL}/{endpoint}",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    # Retain the broker-native inactivity timeout unchanged;
+                    # the surrounding future enforces the smaller remaining
+                    # total wall-clock budget when lock/rate waits consumed time.
+                    timeout=_API_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                try:
+                    return response.json()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Flattrade {endpoint} returned malformed JSON"
+                    ) from exc
+
+            return self._run_http_with_deadline(
+                endpoint,
+                send_and_decode,
+                started=started,
+                allow_after_poison=allow_after_poison,
             )
-            response.raise_for_status()
-            try:
-                return response.json()
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Flattrade {endpoint} returned malformed JSON"
-                ) from exc
+        finally:
+            self._lock.release()
 
     def preload_scrip_master(self) -> bool:
         """Log in and cache Flattrade's official NSE index-derivative CSV.
@@ -464,12 +637,22 @@ class FlattradeExecutionClient:
             return not self._scrip_df.empty
         try:
             session = self._ensure_session_locked()
-            response = session.get(
-                _NFO_INDEX_MASTER_URL,
-                timeout=_SCRIP_MASTER_TIMEOUT_SECONDS,
+            started = time.monotonic()
+
+            def download_scrip_master():
+                response = session.get(
+                    _NFO_INDEX_MASTER_URL,
+                    timeout=_SCRIP_MASTER_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                return response.text
+
+            csv_text = self._run_http_with_deadline(
+                "scrip-master download",
+                download_scrip_master,
+                started=started,
             )
-            response.raise_for_status()
-            raw = pd.read_csv(io.StringIO(response.text))
+            raw = pd.read_csv(io.StringIO(csv_text))
             self._scrip_df = self._prepare_scrip_master(raw)
             log.info(
                 "Flattrade NFO index scrip master loaded (%d rows).",
@@ -612,8 +795,56 @@ class FlattradeExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
-    ) -> dict[str, Any]:
-        """Place one MKT order and return only after the full fill is confirmed.
+    ) -> OrderResult:
+        """Serialize one order from submission through typed fill confirmation."""
+
+        quantity_i = _exact_int(quantity)
+        if quantity_i is None or quantity_i <= 0:
+            raise ValueError(f"Invalid quantity: {quantity!r}")
+        if not self._order_submission_lock.acquire(
+            timeout=_BROKER_CALL_DEADLINE_SECONDS
+        ):
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="ORDER_GATE_TIMEOUT",
+                reason=(
+                    "Flattrade order was not submitted because another order's "
+                    "outcome remained unresolved past the broker deadline."
+                ),
+            )
+        try:
+            if self._http_poisoned:
+                return normalize_order_result(
+                    order_id="",
+                    requested_quantity=quantity_i,
+                    filled_quantity=0,
+                    broker_state="SESSION_POISONED",
+                    reason=(
+                        "Flattrade session is indeterminate after an earlier "
+                        "deadline; reconcile before submitting another order."
+                    ),
+                )
+            return self._place_market_order_serialized(
+                symbol,
+                side,
+                quantity_i,
+                exchange_segment,
+                product_type,
+            )
+        finally:
+            self._order_submission_lock.release()
+
+    def _place_market_order_serialized(
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        exchange_segment: str = "NFO",
+        product_type: str = "INTRADAY",
+    ) -> OrderResult:
+        """Place one MKT order and return an explicit normalized outcome.
 
         Args:
             symbol: Exact Flattrade trading symbol returned by the resolver.
@@ -623,12 +854,13 @@ class FlattradeExecutionClient:
             product_type: ``INTRADAY`` (Flattrade ``I``) or ``NORMAL`` (``M``).
 
         Returns:
-            Flattrade's successful PlaceOrder acknowledgement dictionary.
+            An :class:`OrderResult`. An acknowledgement followed by response
+            loss keeps its order id and becomes ``UNKNOWN`` rather than raising
+            into the runner's former paper-fallback path.
 
         Raises:
             ValueError: A caller supplied an unsupported order value.
-            RuntimeError: Login, acknowledgement, rejection, or fill failed.
-            TimeoutError: The broker did not confirm the complete fill in time.
+            RuntimeError: Local session setup cannot be attempted safely.
 
         Important: ``stat=Ok`` only means the broker accepted the request. The
         method still polls SingleOrdHist before reporting success to the strategy.
@@ -637,22 +869,25 @@ class FlattradeExecutionClient:
         product_u = str(product_type).upper().strip()
         exchange_u = str(exchange_segment).upper().strip() or "NFO"
         symbol_s = str(symbol).strip()
-        try:
-            quantity_i = int(quantity)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid quantity: {quantity!r}") from exc
+        quantity_i = _exact_int(quantity)
         if side_u not in _SIDE_MAP:
             raise ValueError(f"Invalid side: {side!r}")
         if product_u not in _PRODUCT_MAP:
             raise ValueError(f"Invalid product_type: {product_type!r}")
         if exchange_u != "NFO":
             raise ValueError(f"Invalid exchange_segment: {exchange_segment!r}")
-        if quantity_i <= 0:
+        if quantity_i is None or quantity_i <= 0:
             raise ValueError(f"Invalid quantity: {quantity!r}")
         if not symbol_s:
             raise ValueError("Missing trading symbol for order.")
         if not self.ensure_logged_in():
-            raise RuntimeError("Flattrade login failed; cannot place real order.")
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="REJECTED",
+                reason="Order was not submitted because Flattrade login failed.",
+            )
 
         protection = _env_non_negative_int("FLATTRADE_MARKET_PROTECTION", 5)
         payload = {
@@ -670,12 +905,37 @@ class FlattradeExecutionClient:
             "ordersource": "API",
             "mkt_protection": str(protection),
         }
-        response = self._post_api("PlaceOrder", payload, is_order=True)
+        try:
+            response = self._post_api("PlaceOrder", payload, is_order=True)
+        except Exception as exc:
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Flattrade PlaceOrder response is indeterminate: {exc}",
+            )
         if not self._is_order_ack(response):
-            raise RuntimeError(f"Flattrade did not acknowledge the order: {response}")
+            order_id = self.extract_order_id(response)
+            explicit_rejection = (
+                isinstance(response, dict)
+                and str(response.get("stat", "")).strip().lower()
+                in {"not_ok", "notok", "rejected"}
+            )
+            reason = (
+                str(response.get("emsg") or response.get("rejreason") or response)
+                if isinstance(response, dict)
+                else f"Malformed acknowledgement: {response!r}"
+            )
+            return normalize_order_result(
+                order_id=order_id,
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="REJECTED" if explicit_rejection else "",
+                reason=reason,
+            )
         order_id = self.extract_order_id(response)
-        self._confirm_fill(order_id, quantity_i)
-        return response
+        return self._confirm_fill(order_id, quantity_i)
 
     def _is_order_ack(self, response: Any) -> bool:
         """True only for ``stat=Ok`` payloads carrying a Noren order number."""
@@ -685,11 +945,15 @@ class FlattradeExecutionClient:
             and bool(str(response.get("norenordno") or "").strip())
         )
 
-    def _order_status(self, order_id: str) -> tuple[str | None, int, int, str]:
+    def _order_status(
+        self,
+        order_id: str,
+    ) -> tuple[str | None, int | None, int | None, str]:
         """Return normalized state, filled qty, order qty, and rejection reason."""
         response = self._post_api(
             "SingleOrdHist",
             {"uid": self._client_id, "norenordno": str(order_id)},
+            allow_after_poison=True,
         )
         rows = response if isinstance(response, list) else [response]
         for row in rows:
@@ -699,54 +963,257 @@ class FlattradeExecutionClient:
                 continue
             state = str(row.get("status") or "").strip().lower() or None
 
-            def _as_int(value: Any) -> int:
-                try:
-                    return int(float(value or 0))
-                except (TypeError, ValueError):
-                    return 0
-
             return (
                 state,
-                _as_int(row.get("fillshares")),
-                _as_int(row.get("qty")),
+                _exact_int(row.get("fillshares")),
+                _exact_int(row.get("qty")),
                 str(row.get("rejreason") or row.get("emsg") or "").strip(),
             )
         reason = (
             response.get("emsg", "unrecognised response")
             if isinstance(response, dict) else "unrecognised response"
         )
-        return (None, 0, 0, str(reason))
+        return (None, None, None, str(reason))
 
-    def _confirm_fill(self, order_id: str, want_qty: int) -> None:
-        """Poll SingleOrdHist until fully filled, rejected, or timed out.
+    def get_order_status(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult:
+        """Return one normalized ``SingleOrdHist`` snapshot.
 
-        ``COMPLETE`` must include at least the requested filled quantity. A partial
-        completion, rejection, cancellation, or timeout raises with the order id
-        so operators can locate the possibly open order in Flattrade immediately.
+        Exceptions and malformed quantities are represented as ``UNKNOWN`` while
+        retaining the caller's order id.  They never become zero-fill rejection.
         """
-        deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
-        last_state = None
-        while time.monotonic() < deadline:
-            state, filled, _order_qty, reason = self._order_status(order_id)
-            last_state = state
-            if state == "complete":
-                if filled >= want_qty:
-                    return
-                raise RuntimeError(
-                    f"Flattrade order {order_id} completed only {filled}/{want_qty}"
-                )
-            if state in _TERMINAL_FAILURE_STATES:
-                raise RuntimeError(
-                    f"Flattrade order {order_id} {state}: {reason or 'no reason given'}"
-                )
-            time.sleep(_FILL_POLL_INTERVAL)
-        raise TimeoutError(
-            f"Flattrade order {order_id} not confirmed filled within "
-            f"{_FILL_TIMEOUT_SECONDS:.0f}s (last status: {last_state})"
+        requested = _exact_int(requested_quantity)
+        if requested is None or requested < 0:
+            requested = 0
+        try:
+            state, filled, broker_qty, reason = self._order_status(str(order_id))
+        except Exception as exc:
+            return normalize_order_result(
+                order_id=order_id,
+                requested_quantity=requested,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Flattrade order-status query failed: {exc}",
+            )
+
+        effective_requested = requested or broker_qty or 0
+        if requested and broker_qty not in {None, requested}:
+            return normalize_order_result(
+                order_id=order_id,
+                requested_quantity=requested,
+                filled_quantity=None,
+                broker_state=state or "",
+                reason=(
+                    f"Malformed Flattrade status: broker quantity {broker_qty} "
+                    f"does not match requested quantity {requested}. {reason}"
+                ),
+            )
+        return normalize_order_result(
+            order_id=order_id,
+            requested_quantity=effective_requested,
+            filled_quantity=filled,
+            broker_state=state or "",
+            reason=reason,
         )
+
+    def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
+        """Poll briefly for a terminal result without hiding ambiguity."""
+        deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
+        last_result = normalize_order_result(
+            order_id=order_id,
+            requested_quantity=want_qty,
+            filled_quantity=0,
+            broker_state="",
+            reason="Flattrade acknowledgement received; fill status not read yet.",
+        )
+        while time.monotonic() < deadline:
+            last_result = self.get_order_status(order_id, requested_quantity=want_qty)
+            if last_result.status is not OrderStatus.UNKNOWN:
+                return last_result
+            # A failed/malformed status call is already indeterminate. Repeating
+            # it inside the same order interaction risks exceeding the deadline
+            # without adding evidence, so return immediately with the known id.
+            if "query failed" in last_result.reason.lower():
+                return last_result
+            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                return last_result
+            time.sleep(_FILL_POLL_INTERVAL)
+        return normalize_order_result(
+            order_id=order_id,
+            requested_quantity=want_qty,
+            filled_quantity=last_result.filled_quantity,
+            broker_state=last_result.broker_state,
+            reason=(
+                f"Flattrade order {order_id} was not terminal within "
+                f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
+            ),
+        )
+
+    def cancel_order(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult:
+        """Request cancellation, then normalize the order's resulting status."""
+
+        order_id_s = str(order_id).strip()
+        requested = _exact_int(requested_quantity)
+        if not order_id_s:
+            raise ValueError("Missing order id for cancellation.")
+        if requested is None or requested < 0:
+            raise ValueError(f"Invalid requested_quantity: {requested_quantity!r}")
+        if not self.ensure_logged_in():
+            return normalize_order_result(
+                order_id=order_id_s,
+                requested_quantity=requested,
+                filled_quantity=0,
+                broker_state="",
+                reason="Flattrade cancellation was not submitted because login failed.",
+            )
+        try:
+            self._post_api(
+                "CancelOrder",
+                {"uid": self._client_id, "norenordno": order_id_s},
+                is_order=True,
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return normalize_order_result(
+                order_id=order_id_s,
+                requested_quantity=requested,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Flattrade cancellation response is indeterminate: {exc}",
+            )
+        return self.get_order_status(order_id_s, requested_quantity=requested)
+
+    def list_open_orders(self) -> BrokerQueryResult[OpenOrder]:
+        """Return pending orders, or an explicit indeterminate query result."""
+
+        try:
+            response = self._post_api(
+                "GetPendingOrders",
+                {"uid": self._client_id},
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return BrokerQueryResult.indeterminate(
+                f"Flattrade open-order query failed: {exc}"
+            )
+        if isinstance(response, dict):
+            if _is_no_data_envelope(response):
+                return BrokerQueryResult.success([])
+            return BrokerQueryResult.indeterminate(
+                f"Flattrade open-order query returned {response!r}"
+            )
+        if not isinstance(response, list):
+            return BrokerQueryResult.indeterminate(
+                f"Flattrade open-order query returned malformed data: {response!r}"
+            )
+
+        orders: list[OpenOrder] = []
+        for row in response:
+            if not isinstance(row, dict):
+                return BrokerQueryResult.indeterminate(
+                    "Flattrade open-order query contained a malformed row."
+                )
+            raw_state = str(row.get("status") or "").strip().upper()
+            snapshot = normalize_order_result(
+                order_id=row.get("norenordno"),
+                requested_quantity=row.get("qty"),
+                filled_quantity=row.get("fillshares"),
+                broker_state=row.get("status"),
+                reason="Open-order snapshot",
+            )
+            symbol = str(row.get("tsym") or "").strip()
+            if (
+                not snapshot.order_id
+                or not symbol
+                or "malformed" in snapshot.reason.lower()
+                or snapshot.requested_quantity <= 0
+            ):
+                return BrokerQueryResult.indeterminate(
+                    "Flattrade open-order query contained incomplete order data."
+                )
+            if raw_state in {
+                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
+                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
+            }:
+                continue
+            if snapshot.remaining_quantity <= 0:
+                continue
+            side = {"B": "BUY", "S": "SELL"}.get(
+                str(row.get("trantype") or "").strip().upper(),
+                str(row.get("trantype") or "").strip().upper(),
+            )
+            orders.append(
+                OpenOrder(
+                    order_id=snapshot.order_id,
+                    symbol=symbol,
+                    side=side,
+                    requested_quantity=snapshot.requested_quantity,
+                    filled_quantity=snapshot.filled_quantity,
+                    remaining_quantity=snapshot.remaining_quantity,
+                    broker_state=snapshot.broker_state,
+                )
+            )
+        return BrokerQueryResult.success(orders)
+
+    def list_open_positions(self) -> BrokerQueryResult[OpenPosition]:
+        """Return non-flat positions, or an explicit indeterminate result."""
+
+        try:
+            response = self._post_api(
+                "PositionBook",
+                {"uid": self._client_id},
+                allow_after_poison=True,
+            )
+        except Exception as exc:
+            return BrokerQueryResult.indeterminate(
+                f"Flattrade open-position query failed: {exc}"
+            )
+        if isinstance(response, dict):
+            if _is_no_data_envelope(response):
+                return BrokerQueryResult.success([])
+            return BrokerQueryResult.indeterminate(
+                f"Flattrade open-position query returned {response!r}"
+            )
+        if not isinstance(response, list):
+            return BrokerQueryResult.indeterminate(
+                f"Flattrade open-position query returned malformed data: {response!r}"
+            )
+
+        positions: list[OpenPosition] = []
+        for row in response:
+            if not isinstance(row, dict):
+                return BrokerQueryResult.indeterminate(
+                    "Flattrade open-position query contained a malformed row."
+                )
+            quantity = _exact_int(row.get("netqty"))
+            symbol = str(row.get("tsym") or "").strip()
+            if quantity is None or not symbol:
+                return BrokerQueryResult.indeterminate(
+                    "Flattrade open-position query contained incomplete position data."
+                )
+            if quantity == 0:
+                continue
+            positions.append(
+                OpenPosition(
+                    symbol=symbol,
+                    quantity=quantity,
+                    product_type=str(row.get("prd") or "").strip(),
+                    broker_state="OPEN",
+                )
+            )
+        return BrokerQueryResult.success(positions)
 
     def extract_order_id(self, order_response: Any) -> str:
         """Recursively find Flattrade's ``norenordno`` in a response payload."""
+        if isinstance(order_response, OrderResult):
+            return order_response.order_id
         if order_response is None:
             return ""
         if isinstance(order_response, dict):

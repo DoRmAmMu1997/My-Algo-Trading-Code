@@ -8,8 +8,9 @@ Examples from the repository root::
 The script logs in, downloads the same official index-derivative scrip master
 used by live execution, prints the exact contract row, and checks the shared
 resolver.  It does not place an order unless ``--place-order`` is supplied and
-the operator then types exactly ``YES``.  The real-money path buys one lot and
-immediately sells it to flatten.
+    the operator supplies an explicit ``--qty`` and then types exactly ``YES``.
+    The real-money path attempts the matching SELL only after the BUY has a
+    confirmed full fill; a partial or unknown entry stops for reconciliation.
 
 The normal read-only flow has four visible checkpoints: authenticate, download
 the official contract list, select one exact row, and ask the production resolver
@@ -28,6 +29,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flattrade_execution as fe
+from broker_contract import OrderResult, OrderStatus
 
 UNDERLYING = "NIFTY"
 
@@ -73,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--qty",
         type=int,
-        help="Override the official contract Lotsize used for the REAL test.",
+        help="Required explicit unit quantity for the REAL test order.",
     )
     return parser
 
@@ -167,8 +169,8 @@ def place_round_trip_test_order(client: Any, symbol: str, quantity: int) -> bool
     print("\n" + "=" * 72)
     print("REAL ROUND-TRIP TEST ORDER on Flattrade")
     print(
-        f"  BUY {quantity} {symbol} (product=INTRADAY), then auto SELL "
-        f"{quantity} to flatten."
+        f"  BUY {quantity} {symbol} (product=INTRADAY); after a confirmed "
+        f"full fill, attempt SELL {quantity} to flatten."
     )
     print("  THIS PLACES REAL ORDERS WITH REAL MONEY.")
     try:
@@ -190,13 +192,19 @@ def place_round_trip_test_order(client: Any, symbol: str, quantity: int) -> bool
             product_type="INTRADAY",
         )
     except Exception as exc:
-        print(f"  ENTRY NOT CONFIRMED: {exc}")
+        print(f"  ENTRY EXPOSURE IS INDETERMINATE: client raised {exc}")
         print(
             f"  !! A LIVE long position in {symbol} (qty={quantity}) MAY BE OPEN. "
             "CHECK FLATTRADE BEFORE RETRYING OR PLACING ANOTHER ORDER."
         )
         return False
-    print(f"  ENTRY filled. OrderId={client.extract_order_id(entry)}")
+    if _is_zero_fill_rejection(entry, quantity):
+        print(f"  ENTRY rejected with zero fill: {entry.reason}\n  No position opened.")
+        return False
+    if not _is_full_fill(entry, quantity):
+        _print_indeterminate("ENTRY", entry, symbol, quantity)
+        return False
+    print(f"  ENTRY filled. OrderId={entry.order_id}")
 
     print(f"  Squaring off: SELL {quantity} {symbol} ...")
     try:
@@ -207,17 +215,71 @@ def place_round_trip_test_order(client: Any, symbol: str, quantity: int) -> bool
             product_type="INTRADAY",
         )
     except Exception as exc:
-        print(f"  !! EXIT FAILED: {exc}")
+        print(f"  !! EXIT EXPOSURE IS INDETERMINATE: client raised {exc}")
         print(
             f"  !! A LIVE long position in {symbol} (qty={quantity}) MAY BE OPEN. "
             "CHECK FLATTRADE AND SQUARE IT OFF MANUALLY NOW."
         )
         return False
+    if _is_zero_fill_rejection(exit_order, quantity):
+        print(f"  !! EXIT rejected with zero fill: {exit_order.reason}")
+        print(
+            f"  !! The LIVE long {symbol} qty={quantity} remains OPEN. "
+            "Square it off manually now."
+        )
+        return False
+    if not _is_full_fill(exit_order, quantity):
+        _print_indeterminate("EXIT", exit_order, symbol, quantity)
+        return False
     print(
-        f"  EXIT filled. OrderId={client.extract_order_id(exit_order)} "
+        f"  EXIT filled. OrderId={exit_order.order_id} "
         "-> flat. Round-trip OK."
     )
     return True
+
+
+def _is_full_fill(result: Any, quantity: int) -> bool:
+    """Return True only for an exact, typed full-quantity fill."""
+    return (
+        isinstance(result, OrderResult)
+        and result.status is OrderStatus.FILLED
+        and result.requested_quantity == quantity
+        and result.filled_quantity == quantity
+        and result.remaining_quantity == 0
+    )
+
+
+def _is_zero_fill_rejection(result: Any, quantity: int) -> bool:
+    """Return True only when the broker explicitly proves no units traded."""
+    return (
+        isinstance(result, OrderResult)
+        and result.status is OrderStatus.REJECTED
+        and result.requested_quantity == quantity
+        and result.filled_quantity == 0
+        and result.remaining_quantity == quantity
+    )
+
+
+def _print_indeterminate(
+    stage: str,
+    result: Any,
+    symbol: str,
+    quantity: int,
+) -> None:
+    """Print typed broker evidence without claiming that exposure is flat."""
+    if isinstance(result, OrderResult):
+        evidence = (
+            f"status={result.status.value} order_id={result.order_id or 'UNKNOWN'} "
+            f"filled={result.filled_quantity}/{result.requested_quantity} "
+            f"remaining={result.remaining_quantity} reason={result.reason}"
+        )
+    else:
+        evidence = f"untyped_result={result!r}"
+    print(f"  !! {stage} EXPOSURE IS INDETERMINATE: {evidence}")
+    print(
+        f"  !! Check {symbol} qty={quantity} in Flattrade before retrying or "
+        "placing another order."
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -231,6 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.qty is not None and args.qty <= 0:
         print("--qty must be a positive integer.", file=sys.stderr)
+        return 2
+    if args.place_order and args.qty is None:
+        print(
+            "--place-order requires an explicit positive --qty; the diagnostic "
+            "will not guess a live quantity from a changing exchange lot size.",
+            file=sys.stderr,
+        )
         return 2
     try:
         requested_expiry = _parse_expiry(args.expiry)
@@ -283,8 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.place_order:
             print("\nRead-only diagnostic complete. No order was placed.")
             return 0
-        quantity = args.qty if args.qty is not None else lot_size
-        return 0 if place_round_trip_test_order(client, resolved, quantity) else 1
+        return 0 if place_round_trip_test_order(client, resolved, args.qty) else 1
     except Exception as exc:
         print(f"Flattrade diagnostic failed: {exc}", file=sys.stderr)
         return 1

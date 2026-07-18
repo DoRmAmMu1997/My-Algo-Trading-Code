@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # (connect, read) timeout for every broker HTTP call. Upstream NorenApi issues
 # requests with NO timeout, so a hung connection would block the calling thread
 # (and, in the multi-strategy runner, the shared broker lock) indefinitely.
-_HTTP_TIMEOUT = (10, 30)
+_HTTP_TIMEOUT = (10, 10)
 
 class ProductType:
     Delivery = 'C'
@@ -398,7 +398,7 @@ class NorenApi:
         reportmsg(res.text)
 
         resDict = json.loads(res.text)
-        if resDict['stat'] != 'Ok':            
+        if resDict['stat'] != 'Ok':
             return None
 
         return resDict
@@ -533,11 +533,11 @@ class NorenApi:
         res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
-        resDict = json.loads(res.text)
-        if resDict['stat'] != 'Ok':            
-            return None
-
-        return resDict
+        # Preserve the broker's complete payload even when ``stat`` is Not_Ok.
+        # The execution adapter needs its rejection reason and any order id to
+        # distinguish a known zero-fill rejection from an indeterminate loss of
+        # acknowledgement.
+        return json.loads(res.text)
 
     def modify_order(self, orderno, exchange, tradingsymbol, newquantity,
                     newprice_type, newprice=0.0, newtrigger_price=None, bookloss_price = 0.0, bookprofit_price = 0.0, trail_price = 0.0):
@@ -721,13 +721,10 @@ class NorenApi:
         res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
-        resDict = json.loads(res.text)
-        
-        #error is a json with stat and msg wchih we printed earlier.
-        if type(resDict) != list:                            
-                return None
-
-        return resDict
+        # A dict is meaningful broker evidence (for example ``No Data`` or an
+        # authentication error).  Do not erase it into ``None``; the typed
+        # adapter decides whether it proves an empty book or an unknown state.
+        return json.loads(res.text)
 
     def get_trade_book(self):
         config = NorenApi.__service_config
@@ -1033,10 +1030,6 @@ class NorenApi:
         res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
         reportmsg(res.text)
 
-        resDict = json.loads(res.text)
-
-        if type(resDict) != list:                            
-            return None
-
-        return resDict
+        # Preserve explicit ``No Data`` and error envelopes for reconciliation.
+        return json.loads(res.text)
 

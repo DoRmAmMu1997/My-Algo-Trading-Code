@@ -13,6 +13,8 @@ from urllib.parse import parse_qs
 
 import pandas as pd
 
+from Dependencies.broker_contract import BrokerQueryResult, OrderResult, OrderStatus
+
 # =============================================================================
 # DYNAMIC MODULE IMPORT
 # =============================================================================
@@ -210,6 +212,55 @@ class TestPureHelpers(unittest.TestCase):
     any broker, store, or worker setup: time gates, env loaders, OHLC
     resampling, and column-name resolution.
     """
+
+    def test_live_mirror_requires_confirmed_live_nifty_fill(self):
+        """A paper fallback must never trigger a real BankNIFTY mirror order."""
+
+        self.assertTrue(master_file._should_open_bnf_mirror(False, False))
+        self.assertTrue(master_file._should_open_bnf_mirror(True, True))
+        self.assertFalse(master_file._should_open_bnf_mirror(True, False))
+
+    def test_indeterminate_alert_includes_escaped_broker_evidence(self):
+        """Operators must see the exact exposure evidence in the Telegram alert."""
+
+        message = master_file.format_trade_message(
+            {
+                "action": "INDETERMINATE_EXPOSURE",
+                "strategy": "Unsafe & Test",
+                "mode": "LIVE_INDETERMINATE",
+                "side": "BUY",
+                "symbol": "NIFTY<CE>",
+                "order_id": "ORD<1>",
+                "requested_quantity": 50,
+                "filled_quantity": 20,
+                "remaining_quantity": 30,
+                "status": "PARTIAL",
+                "broker_state": "OPEN&PENDING",
+                "reason": "response <lost>",
+            }
+        )
+
+        self.assertIn("NIFTY&lt;CE&gt;", message)
+        self.assertIn("ORD&lt;1&gt;", message)
+        self.assertIn("20 / 50", message)
+        self.assertIn("remaining 30", message)
+        self.assertIn("OPEN&amp;PENDING", message)
+        self.assertIn("response &lt;lost&gt;", message)
+
+    def test_exit_failed_alert_includes_escaped_reason(self):
+        """A failed close alert is actionable only when its reason is visible."""
+
+        message = master_file.format_trade_message(
+            {
+                "action": "EXIT_FAILED",
+                "strategy": "Risk & Test",
+                "mode": "LIVE_REJECTED",
+                "direction": "LONG",
+                "reason": "broker <rejected> & position remains open",
+            }
+        )
+
+        self.assertIn("broker &lt;rejected&gt; &amp; position remains open", message)
 
     def test_env_str_strips_quotes_and_uses_default(self):
         """`_env_str` strips surrounding quotes and falls back when unset."""
@@ -1443,11 +1494,12 @@ class _FakeShoonya:
     - `resolve_returns` overrides the resolved Shoonya symbol; pass "" to simulate
       a symbol-master resolution miss."""
 
-    def __init__(self, fail_on=None, resolve_returns=None):
+    def __init__(self, fail_on=None, resolve_returns=None, result_status=OrderStatus.FILLED):
         self.calls = []      # (shoonya_symbol, side, quantity)
         self.resolved = []   # (underlying, option_type, strike)
         self._fail_on = fail_on or (lambda symbol, side: False)
         self._resolve_returns = resolve_returns
+        self._result_status = result_status
 
     def resolve_option_symbol(self, underlying, expiry, option_type, strike,
                               exchange_segment="NFO"):
@@ -1459,12 +1511,31 @@ class _FakeShoonya:
     def place_market_order(self, symbol, side, quantity,
                            exchange_segment="NFO", product_type="INTRADAY"):
         self.calls.append((symbol, side, quantity))
-        if self._fail_on(symbol, side):
-            raise RuntimeError("simulated broker reject")
-        return {"stat": "Ok", "norenordno": f"ORD-{len(self.calls)}"}
+        status = (
+            OrderStatus.REJECTED
+            if self._fail_on(symbol, side)
+            else self._result_status
+        )
+        if callable(status):
+            status = status(symbol, side)
+        filled = {
+            OrderStatus.FILLED: int(quantity),
+            OrderStatus.PARTIAL: max(1, int(quantity) // 2),
+            OrderStatus.REJECTED: 0,
+            OrderStatus.UNKNOWN: 0,
+        }[status]
+        return OrderResult(
+            order_id=f"ORD-{len(self.calls)}",
+            requested_quantity=int(quantity),
+            filled_quantity=filled,
+            remaining_quantity=int(quantity) - filled,
+            status=status,
+            broker_state=status.value,
+            reason=f"simulated {status.value.lower()} outcome",
+        )
 
     def extract_order_id(self, resp):
-        return resp.get("norenordno", "") if isinstance(resp, dict) else ""
+        return resp.order_id if isinstance(resp, OrderResult) else ""
 
 
 class TestEnvBool(unittest.TestCase):
@@ -2136,9 +2207,18 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         worker, _ = self._make_worker()
         captured = []
 
-        def fake_real_leg(side, leg):
+        def fake_real_leg(side, leg, *, opens_exposure):
             captured.append((side, dict(leg)))
-            return True
+            quantity = int(leg["quantity"])
+            return OrderResult(
+                order_id="MIRROR-TEST",
+                requested_quantity=quantity,
+                filled_quantity=quantity,
+                remaining_quantity=0,
+                status=OrderStatus.FILLED,
+                broker_state="FILLED",
+                reason="simulated full fill",
+            )
 
         worker._place_real_leg = fake_real_leg
         # Exit orders are now gated on live_legs_open, which is only set True when the
@@ -2391,7 +2471,8 @@ class TestLiveOrderRouting(unittest.TestCase):
     """
     Drives the single-leg take-trade methods with `live_trading=True` and a fake
     Shoonya client, asserting real orders are routed correctly AND that the paper
-    bookkeeping is preserved (and that failures fall back to paper).
+    bookkeeping is preserved. Only explicit zero-fill rejection falls back to
+    paper; partial or unknown exposure freezes live entry.
     """
 
     def setUp(self):
@@ -2467,13 +2548,231 @@ class TestLiveOrderRouting(unittest.TestCase):
         )
 
     def test_entry_falls_back_to_paper_on_order_failure(self):
-        """A rejected real entry still records the position (paper fallback)."""
+        """An explicit zero-fill rejection still records a paper fallback."""
         fake = _FakeShoonya(fail_on=lambda symbol, side: True)
         self.worker.live_trading = True
         with patch.object(master_file, "execution_client", fake):
             ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
         self.assertTrue(ok)             # not skipped
         self.assertTrue(self.worker.pos.active)   # recorded as paper
+
+    def test_partial_live_entry_freezes_and_never_becomes_paper(self):
+        """A partial fill freezes every worker and starts broker reconciliation."""
+
+        class ReconciliationFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__(result_status=OrderStatus.PARTIAL)
+                self.status_queries = []
+                self.reconciliation_complete = threading.Event()
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=max(1, requested_quantity // 2),
+                    remaining_quantity=requested_quantity - max(1, requested_quantity // 2),
+                    status=OrderStatus.PARTIAL,
+                    broker_state="PARTIAL",
+                    reason="still partially filled",
+                )
+
+            def list_open_orders(self):
+                return BrokerQueryResult.success(())
+
+            def list_open_positions(self):
+                self.reconciliation_complete.set()
+                return BrokerQueryResult.success(())
+
+        fake = ReconciliationFake()
+        events = MagicMock()
+        self.worker.live_trading = True
+        self.worker.trade_event_queue = events
+        second_worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store,
+            stop_event=self.stop_event,
+            broker=self.broker,
+        )
+        second_worker.contract_resolver = self.worker.contract_resolver
+        second_worker.live_trading = True
+
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            second_ok = second_worker.enter_position(
+                direction="LONG", entry_underlying=22500.0
+            )
+            self.assertTrue(fake.reconciliation_complete.wait(1.0))
+
+        self.assertFalse(ok)
+        self.assertFalse(second_ok)
+        self.assertFalse(self.worker.pos.active)
+        self.assertTrue(self.worker._live_execution_frozen)
+        self.assertEqual(len(fake.calls), 1)
+        indeterminate = [
+            call.args[0]
+            for call in events.put_nowait.call_args_list
+            if call.args[0].get("action") == "INDETERMINATE_EXPOSURE"
+        ]
+        self.assertEqual(len(indeterminate), 1)
+        self.assertEqual(indeterminate[0]["status"], "PARTIAL")
+        self.assertEqual(fake.status_queries, [("ORD-1", 50 * self.worker.lots)])
+        frozen, reason = self.store.execution_safety.entry_freeze_snapshot()
+        self.assertTrue(frozen)
+        self.assertEqual(reason, "simulated partial outcome")
+
+    def test_concurrent_worker_cannot_queue_past_shared_entry_freeze(self):
+        """A queued entry must recheck the shared gate after ambiguity is known."""
+
+        class RaceFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.first_started = threading.Event()
+                self.release_first = threading.Event()
+                self.second_submitted = threading.Event()
+                self._calls_lock = threading.Lock()
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                with self._calls_lock:
+                    call_number = len(self.calls) + 1
+                    self.calls.append((symbol, side, quantity))
+                if call_number == 1:
+                    self.first_started.set()
+                    self.release_first.wait(1.0)
+                    status = OrderStatus.PARTIAL
+                    filled = max(1, int(quantity) // 2)
+                else:
+                    self.second_submitted.set()
+                    status = OrderStatus.FILLED
+                    filled = int(quantity)
+                return OrderResult(
+                    order_id=f"RACE-{call_number}",
+                    requested_quantity=int(quantity),
+                    filled_quantity=filled,
+                    remaining_quantity=int(quantity) - filled,
+                    status=status,
+                    broker_state=status.value,
+                    reason=f"race {status.value.lower()}",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                filled = max(1, requested_quantity // 2)
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=requested_quantity - filled,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="PARTIAL",
+                    reason="still partial",
+                )
+
+            def list_open_orders(self):
+                return BrokerQueryResult.success(())
+
+            def list_open_positions(self):
+                return BrokerQueryResult.success(())
+
+        second_worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store,
+            stop_event=self.stop_event,
+            broker=self.broker,
+        )
+        second_worker.contract_resolver = self.worker.contract_resolver
+        self.worker.live_trading = True
+        second_worker.live_trading = True
+        fake = RaceFake()
+        results = {}
+
+        def enter(name, worker):
+            results[name] = worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+
+        with patch.object(master_file, "execution_client", fake):
+            first = threading.Thread(target=enter, args=("first", self.worker))
+            second = threading.Thread(target=enter, args=("second", second_worker))
+            first.start()
+            self.assertTrue(fake.first_started.wait(0.5))
+            second.start()
+            try:
+                self.assertFalse(fake.second_submitted.wait(0.1))
+            finally:
+                fake.release_first.set()
+                first.join(timeout=1)
+                second.join(timeout=1)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(results, {"first": False, "second": False})
+        self.assertEqual(len(fake.calls), 1)
+        self.assertFalse(self.worker.pos.active)
+        self.assertFalse(second_worker.pos.active)
+
+    def test_live_exit_still_reduces_after_entry_gate_is_disabled(self):
+        """Turning off future entries must never suppress a known live close."""
+
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", fake):
+            self.assertTrue(
+                self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            )
+            self.worker.live_trading = False
+            self.worker.exit_position("LIVE_GATE_DISABLED")
+
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 50 * self.worker.lots), ("SELL", 50 * self.worker.lots)],
+        )
+        self.assertFalse(self.worker.pos.active)
+
+    def test_failed_live_exit_after_gate_disable_keeps_position_open(self):
+        """A disabled entry gate must not let a rejected close erase exposure."""
+
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            self.assertTrue(
+                self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            )
+        self.worker.live_trading = False
+        reject_exit = _FakeShoonya(fail_on=lambda _symbol, side: side == "SELL")
+
+        with patch.object(master_file, "execution_client", reject_exit):
+            self.worker.exit_position("LIVE_GATE_DISABLED")
+
+        self.assertEqual(self._sides(reject_exit), [("SELL", 50 * self.worker.lots)])
+        self.assertTrue(self.worker.pos.active)
+        self.assertEqual(self.worker.completed_trades, 0)
+
+    def test_unknown_or_legacy_truthy_result_freezes_without_paper_fallback(self):
+        """Response loss and old truthy payloads both fail closed as UNKNOWN."""
+
+        class LegacyTruthyClient(_FakeShoonya):
+            def place_market_order(self, *args, **kwargs):
+                self.calls.append((kwargs["symbol"], kwargs["side"], kwargs["quantity"]))
+                return {"stat": "Ok", "norenordno": "LEGACY"}
+
+        for fake in (
+            _FakeShoonya(result_status=OrderStatus.UNKNOWN),
+            LegacyTruthyClient(),
+        ):
+            with self.subTest(fake=type(fake).__name__):
+                worker = master_file.AtmSingleLegStrategyWorker(
+                    store=self.store,
+                    stop_event=self.stop_event,
+                    broker=self.broker,
+                )
+                worker.contract_resolver = self.worker.contract_resolver
+                worker.live_trading = True
+                with patch.object(master_file, "execution_client", fake):
+                    ok = worker.enter_position(
+                        direction="LONG",
+                        entry_underlying=22500.0,
+                    )
+                self.assertFalse(ok)
+                self.assertFalse(worker.pos.active)
+                self.assertTrue(worker._live_execution_frozen)
 
     def test_entry_falls_back_to_paper_on_symbol_resolution_miss(self):
         """If the Shoonya symbol can't be resolved, no order is sent; paper fallback."""
@@ -2498,6 +2797,51 @@ class TestLiveOrderRouting(unittest.TestCase):
             self.worker.exit_position("TEST_EXIT")
         self.assertTrue(self.worker.pos.active)            # kept OPEN for retry
         self.assertEqual(self.worker.completed_trades, 0)  # not booked as completed
+
+    def test_unknown_live_exit_is_not_resubmitted_before_reconciliation(self):
+        """Response loss on an exit must not trigger a duplicate full-size SELL."""
+
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        unknown = _FakeShoonya(result_status=OrderStatus.UNKNOWN)
+
+        with patch.object(master_file, "execution_client", unknown):
+            self.worker.exit_position("TEST_EXIT")
+            self.worker.exit_position("TEST_EXIT_RETRY")
+
+        self.assertTrue(self.worker.pos.active)
+        self.assertEqual(self._sides(unknown), [("SELL", 50 * self.worker.lots)])
+
+    def test_heikin_reversal_waits_for_confirmed_flat_exit(self):
+        """A rejected reversal SELL must not be followed by an opposite BUY."""
+
+        worker = master_file.HeikinAshiStrategyWorker(
+            store=self.store,
+            stop_event=self.stop_event,
+            broker=self.broker,
+        )
+        worker.contract_resolver = self.worker.contract_resolver
+        worker.live_trading = True
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            self.assertTrue(
+                worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            )
+
+        worker.signal_engine = MagicMock()
+        worker.signal_engine.evaluate_candle.return_value = MagicMock(
+            action="REVERSE_TO_SHORT",
+            exit_reason="REVERSAL_TO_SHORT",
+            entry_underlying=22500.0,
+        )
+        reject_exit = _FakeShoonya(
+            fail_on=lambda _symbol, side: side == "SELL"
+        )
+        with patch.object(master_file, "execution_client", reject_exit):
+            worker.process_strategy_frame(pd.DataFrame({"close": [22500.0]}))
+
+        self.assertTrue(worker.pos.active)
+        self.assertEqual(self._sides(reject_exit), [("SELL", 50 * worker.lots)])
 
     def test_paper_exit_always_flattens(self):
         """Paper mode (or live success) still flattens normally."""
@@ -2579,20 +2923,43 @@ class TestLiveOrderRouting(unittest.TestCase):
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
-        self.assertTrue(ok)
+            result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+        self.assertEqual(result.status, OrderStatus.FILLED)
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50)])
 
-    def test_hedged_entry_partial_fill_unwinds_hedge(self):
-        """If the main (SELL) leg fails after the hedge filled, unwind the hedge."""
-        fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL")
+    def test_hedged_entry_partial_main_keeps_protective_hedge(self):
+        """A partially opened short keeps its confirmed protective long hedge."""
+
+        fake = _FakeShoonya(
+            result_status=lambda symbol, side: (
+                OrderStatus.PARTIAL
+                if side == "SELL" and "22000" in symbol
+                else OrderStatus.FILLED
+            )
+        )
         self.worker.live_trading = True
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
-        self.assertFalse(ok)
-        # BUY hedge (filled) -> SELL main (rejected) -> SELL hedge (unwind).
+            result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+        self.assertEqual(result.status, OrderStatus.PARTIAL)
+        self.assertTrue(self.worker._live_execution_frozen)
+        # Do not unwind protection while an unknown amount of the short is live.
+        self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50)])
+
+    def test_hedged_entry_rejected_main_unwinds_hedge(self):
+        """A known zero-fill main rejection safely unwinds the filled hedge."""
+
+        fake = _FakeShoonya(
+            fail_on=lambda symbol, side: side == "SELL" and "22000" in symbol
+        )
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+        with patch.object(master_file, "execution_client", fake):
+            result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+        self.assertEqual(result.status, OrderStatus.REJECTED)
+        # BUY hedge (filled) -> SELL main (rejected) -> SELL hedge (filled unwind).
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50), ("SELL", 25)])
 
     def test_hedged_exit_buys_main_sells_hedge(self):
@@ -2602,8 +2969,32 @@ class TestLiveOrderRouting(unittest.TestCase):
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=True)
-        self.assertTrue(ok)
+            result = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=True)
+        self.assertEqual(result.status, OrderStatus.FILLED)
+        self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
+
+    def test_hedged_exit_partial_hedge_does_not_rebuy_closed_main(self):
+        """A filled main close must never be repeated after an ambiguous hedge close."""
+
+        fake = _FakeShoonya(
+            result_status=lambda _symbol, side: (
+                OrderStatus.PARTIAL if side == "SELL" else OrderStatus.FILLED
+            )
+        )
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+
+        with patch.object(master_file, "execution_client", fake):
+            first = self.worker._place_real_hedged_exit(
+                main_leg, hedge_leg, live_legs_open=True
+            )
+            second = self.worker._place_real_hedged_exit(
+                main_leg, hedge_leg, live_legs_open=True
+            )
+
+        self.assertEqual(first.status, OrderStatus.PARTIAL)
+        self.assertEqual(second.status, OrderStatus.UNKNOWN)
         self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
 
     def test_hedged_exit_sends_no_orders_for_paper_fallback_position(self):
@@ -2615,8 +3006,8 @@ class TestLiveOrderRouting(unittest.TestCase):
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=False)
-        self.assertTrue(ok)             # caller flattens its paper books normally
+            result = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=False)
+        self.assertEqual(result.status, OrderStatus.FILLED)
         self.assertEqual(fake.calls, [])  # but nothing was sent to the broker
 
 
@@ -2651,8 +3042,8 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
         """Drive the double failure: hedge BUY fills, every SELL is rejected."""
         fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL")
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
-        self.assertFalse(ok)
+            result = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+        self.assertEqual(result.status, OrderStatus.UNKNOWN)
         return fake
 
     def test_double_failure_records_the_orphaned_hedge_leg(self):
@@ -2666,8 +3057,8 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
         # Only the MAIN SELL fails (strike 22000); the unwind SELL succeeds.
         fake = _FakeShoonya(fail_on=lambda symbol, side: side == "SELL" and "22000" in symbol)
         with patch.object(master_file, "execution_client", fake):
-            ok = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
-        self.assertFalse(ok)
+            result = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+        self.assertEqual(result.status, OrderStatus.REJECTED)
         self.assertEqual(self.worker._orphan_live_legs, [])
 
     def test_sweep_retries_and_closes_orphan_when_broker_recovers(self):
@@ -2692,6 +3083,20 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
         self.assertEqual(len(fail_fake.calls), attempts_after_first)
         self.assertEqual(len(self.worker._orphan_live_legs), 1)   # still tracked
 
+    def test_partial_orphan_unwind_is_not_retried_at_full_quantity(self):
+        """A partial SELL changes the remaining quantity, so MAT-102 must reconcile it."""
+
+        self._double_fail_entry()
+        partial_fake = _FakeShoonya(result_status=OrderStatus.PARTIAL)
+        self.worker._next_orphan_retry_ts = 0.0
+
+        with patch.object(master_file, "execution_client", partial_fake):
+            self.worker._sweep_orphan_live_legs(force=True)
+            self.worker._sweep_orphan_live_legs(force=True)
+
+        self.assertEqual(self._sides(partial_fake), [("SELL", 25)])
+        self.assertEqual(len(self.worker._orphan_live_legs), 1)
+
     def test_wait_for_next_poll_sweeps_orphans_each_cadence(self):
         self._double_fail_entry()
         self.worker.poll_seconds = 0
@@ -2711,8 +3116,8 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
 
 class TestHedgedPaperFallbackExit(unittest.TestCase):
     """P1 (Codex on PR #42): a live hedged worker whose entry fell back to paper
-    (live_legs_open False -- rejected/partial fill, or the double-failure orphan
-    path) must NOT send real closing orders at exit. A BUY for the never-opened
+    (live_legs_open False -- explicit zero-fill rejection or a locally skipped
+    order) must NOT send real closing orders at exit. A BUY for the never-opened
     main leg plus a SELL for the already-closed hedge would open phantom live
     exposure. The exit still flattens the paper books."""
 
@@ -2790,24 +3195,59 @@ class TestExecModeTag(unittest.TestCase):
         w.live_trading = live
         return w
 
+    @staticmethod
+    def _result(status: OrderStatus) -> OrderResult:
+        filled = 50 if status is OrderStatus.FILLED else 0
+        return OrderResult(
+            order_id="TEST",
+            requested_quantity=50,
+            filled_quantity=filled,
+            remaining_quantity=50 - filled,
+            status=status,
+            broker_state=status.value,
+            reason="test result",
+        )
+
     def test_paper_worker_is_always_paper(self):
         w = self._worker(live=False)
-        self.assertEqual(w._exec_mode_tag(True), "PAPER")
-        self.assertEqual(w._exec_mode_tag(True, live_legs_open=False), "PAPER")
+        filled = self._result(OrderStatus.FILLED)
+        self.assertEqual(w._exec_mode_tag(filled), "PAPER")
+        self.assertEqual(w._exec_mode_tag(filled, live_legs_open=False), "PAPER")
 
     def test_live_worker_labels(self):
         w = self._worker(live=True)
-        self.assertEqual(w._exec_mode_tag(True), "LIVE")                       # confirmed real order
-        self.assertEqual(w._exec_mode_tag(False), "PAPER_FALLBACK")            # real order failed
-        # No real legs open -> no broker order sent -> PAPER_FALLBACK even though real_ok is a vacuous True.
-        self.assertEqual(w._exec_mode_tag(True, live_legs_open=False), "PAPER_FALLBACK")
+        filled = self._result(OrderStatus.FILLED)
+        rejected = self._result(OrderStatus.REJECTED)
+        unknown = self._result(OrderStatus.UNKNOWN)
+        self.assertEqual(w._exec_mode_tag(filled), "LIVE")
+        self.assertEqual(w._exec_mode_tag(rejected), "PAPER_FALLBACK")
+        self.assertEqual(w._exec_mode_tag(unknown), "LIVE_INDETERMINATE")
+        self.assertEqual(w._exec_mode_tag(rejected, is_exit=True), "LIVE_REJECTED")
+        # No live legs open means no broker close was needed.
+        self.assertEqual(
+            w._exec_mode_tag(filled, live_legs_open=False, is_exit=True),
+            "PAPER_FALLBACK",
+        )
+
+    def test_disabled_entry_gate_still_labels_known_live_exit_as_live(self):
+        """Execution telemetry follows actual exposure, not a mutable entry flag."""
+
+        worker = self._worker(live=False)
+        self.assertEqual(
+            worker._exec_mode_tag(
+                self._result(OrderStatus.FILLED),
+                live_legs_open=True,
+                is_exit=True,
+            ),
+            "LIVE",
+        )
 
 
 class TestShoonyaOrderAck(unittest.TestCase):
     """
-    NorenApi.place_order returns None on failure and a dict with stat == "Ok" and
-    a norenordno on success. The wrapper's `_is_order_ack` must tell a real
-    acknowledgement apart from a failure so failures fall back to paper.
+    NorenApi.place_order preserves both success and error dictionaries. The
+    wrapper's `_is_order_ack` must tell a real acknowledgement apart from a
+    rejection or indeterminate response.
     """
 
     def setUp(self):
@@ -2879,20 +3319,26 @@ class TestShoonyaFillConfirmation(unittest.TestCase):
 
     def test_confirm_fill_returns_on_complete(self):
         c = self._client(self._hist("COMPLETE", fld=75, qty=75))
-        c._confirm_fill("ORD1", 75)  # must not raise
+        result = c._confirm_fill("ORD1", 75)
+        self.assertEqual(result.status, OrderStatus.FILLED)
+        self.assertEqual(result.filled_quantity, 75)
 
-    def test_confirm_fill_raises_on_rejected(self):
+    def test_confirm_fill_returns_explicit_rejection(self):
         c = self._client(self._hist("REJECTED", fld=0, qty=75, rej="RMS: margin"))
-        with self.assertRaises(Exception):
-            c._confirm_fill("ORD1", 75)
+        result = c._confirm_fill("ORD1", 75)
+        self.assertEqual(result.status, OrderStatus.REJECTED)
+        self.assertEqual(result.filled_quantity, 0)
+        self.assertIn("margin", result.reason)
 
-    def test_confirm_fill_times_out_when_never_filled(self):
+    def test_confirm_fill_timeout_is_unknown(self):
         c = self._client(self._hist("OPEN", fld=0, qty=75))
         mod = type(c).__module__
         smod = sys.modules[mod]
         with patch.object(smod, "_FILL_TIMEOUT_SECONDS", 0.05), \
-             patch.object(smod, "_FILL_POLL_INTERVAL", 0.01), self.assertRaises(Exception):
-            c._confirm_fill("ORD1", 75)
+             patch.object(smod, "_FILL_POLL_INTERVAL", 0.01):
+            result = c._confirm_fill("ORD1", 75)
+        self.assertEqual(result.status, OrderStatus.UNKNOWN)
+        self.assertIn("indeterminate", result.reason.lower())
 
 
 class TestShoonyaSymbolResolution(unittest.TestCase):
@@ -3170,10 +3616,19 @@ class TestFlattradeOrders(unittest.TestCase):
 
     def test_market_order_payload_uses_documented_codes(self):
         ack = {"stat": "Ok", "norenordno": "260703000001"}
+        filled = OrderResult(
+            order_id="260703000001",
+            requested_quantity=65,
+            filled_quantity=65,
+            remaining_quantity=0,
+            status=OrderStatus.FILLED,
+            broker_state="COMPLETE",
+            reason="simulated fill",
+        )
         with patch.dict(os.environ, {"FLATTRADE_MARKET_PROTECTION": "5"}), \
              patch.object(self.client, "ensure_logged_in", return_value=True), \
              patch.object(self.client, "_post_api", return_value=ack) as post_api, \
-             patch.object(self.client, "_confirm_fill") as confirm:
+             patch.object(self.client, "_confirm_fill", return_value=filled) as confirm:
             result = self.client.place_market_order(
                 symbol="NIFTY14JUL26C24150",
                 side="BUY",
@@ -3182,7 +3637,7 @@ class TestFlattradeOrders(unittest.TestCase):
                 product_type="INTRADAY",
             )
 
-        self.assertEqual(result, ack)
+        self.assertEqual(result, filled)
         endpoint, payload = post_api.call_args.args
         self.assertEqual(endpoint, "PlaceOrder")
         self.assertEqual(
@@ -3260,21 +3715,24 @@ class TestFlattradeOrders(unittest.TestCase):
         with patch.object(
             self.client, "_order_status", return_value=("complete", 65, 65, "")
         ):
-            self.client._confirm_fill("ORD1", 65)
+            complete = self.client._confirm_fill("ORD1", 65)
+        self.assertEqual(complete.status, OrderStatus.FILLED)
 
         with patch.object(
             self.client,
             "_order_status",
             return_value=("rejected", 0, 65, "RMS: margin"),
-        ), self.assertRaises(RuntimeError):
-            self.client._confirm_fill("ORD2", 65)
+        ):
+            rejected = self.client._confirm_fill("ORD2", 65)
+        self.assertEqual(rejected.status, OrderStatus.REJECTED)
 
         with patch.object(
             self.client, "_order_status", return_value=("open", 0, 65, "")
         ), patch.object(flattrade_module, "_FILL_TIMEOUT_SECONDS", 0.02), \
-             patch.object(flattrade_module, "_FILL_POLL_INTERVAL", 0.005), \
-             self.assertRaises(TimeoutError):
-            self.client._confirm_fill("ORD3", 65)
+             patch.object(flattrade_module, "_FILL_POLL_INTERVAL", 0.005):
+            unknown = self.client._confirm_fill("ORD3", 65)
+        self.assertEqual(unknown.status, OrderStatus.UNKNOWN)
+        self.assertIn("indeterminate", unknown.reason.lower())
 
     def test_recursive_order_id_extraction_and_local_logout(self):
         self.assertEqual(
@@ -3361,13 +3819,34 @@ class TestFlattradeDiagnostic(unittest.TestCase):
         self.assertFalse(placed)
         fake_client.place_market_order.assert_not_called()
 
+    def test_real_order_requires_explicit_quantity_before_login(self):
+        """The diagnostic never guesses a live quantity from a changing lot size."""
+
+        with patch.object(
+            flattrade_diagnostic_module.fe,
+            "flattrade_execution_client",
+        ) as client:
+            result = flattrade_diagnostic_module.main(
+                ["CE", "24150", "--place-order"]
+            )
+
+        self.assertEqual(result, 2)
+        client.preload_scrip_master.assert_not_called()
+
     def test_round_trip_buys_then_sells_after_confirmation(self):
         fake_client = MagicMock()
         fake_client.place_market_order.side_effect = [
-            {"stat": "Ok", "norenordno": "BUY1"},
-            {"stat": "Ok", "norenordno": "SELL1"},
+            OrderResult(
+                order_id="BUY1", requested_quantity=65, filled_quantity=65,
+                remaining_quantity=0, status=OrderStatus.FILLED,
+                broker_state="COMPLETE", reason="simulated entry fill",
+            ),
+            OrderResult(
+                order_id="SELL1", requested_quantity=65, filled_quantity=65,
+                remaining_quantity=0, status=OrderStatus.FILLED,
+                broker_state="COMPLETE", reason="simulated exit fill",
+            ),
         ]
-        fake_client.extract_order_id.side_effect = ["BUY1", "SELL1"]
         with patch("builtins.input", return_value="YES"):
             placed = flattrade_diagnostic_module.place_round_trip_test_order(
                 fake_client, "NIFTY14JUL26C24150", 65

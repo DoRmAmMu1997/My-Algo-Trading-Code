@@ -59,15 +59,33 @@ existing proven wrapper.
 
 import io
 import logging
+import math
 import os
 import sys
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import requests
+
+# Make the broker-neutral contract importable when this helper is loaded by the
+# master and when the sibling diagnostic executes it as a standalone script.
+_DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
+if str(_DEPENDENCIES_DIR) not in sys.path:
+    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+
+from broker_contract import (  # noqa: E402
+    BrokerQueryResult,
+    OpenOrder,
+    OpenPosition,
+    OrderResult,
+    OrderStatus,
+    normalize_order_result,
+)
 
 # --- Make the downloaded "Kotak Neo API" SDK importable (if vendored) ---------
 # The SDK may live in a "Kotak Neo API" folder somewhere above this file, but the
@@ -118,6 +136,57 @@ _FILL_POLL_INTERVAL = 0.5
 # Kotak order-status (`ordSt`) values, lower-cased.
 _FILLED_ORDER_STATES = {"complete", "traded", "executed", "filled"}
 _FAILED_ORDER_STATES = {"rejected", "cancelled", "canceled", "cancel", "lapsed"}
+_BROKER_DEADLINE_SECONDS = 10.0
+
+
+class _SdkDeadlineExceeded(TimeoutError):
+    """Raised when a Kotak SDK call outlives the fixed broker deadline."""
+
+
+def _exact_int(value: Any) -> int | None:
+    """Parse a broker quantity only when it is a finite whole number."""
+
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _response_rows(response: Any) -> list[Any] | None:
+    """Extract the common Kotak list shapes without treating errors as empty."""
+
+    if not isinstance(response, dict):
+        return response if isinstance(response, list) else None
+
+    def _is_error_envelope(value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+        state = str(
+            value.get("stat")
+            or value.get("State")
+            or value.get("state")
+            or value.get("status")
+            or ""
+        ).strip().lower()
+        if state in {"not_ok", "notok", "rejected", "failed", "failure", "error"}:
+            return True
+        return bool(value.get("Error") or value.get("Error Message") or value.get("error"))
+
+    if _is_error_envelope(response):
+        return None
+    data = response.get("data")
+    if isinstance(data, list):
+        return data
+    if _is_error_envelope(data):
+        return None
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        return data["data"]
+    return None
 
 
 class KotakExecutionClient:
@@ -142,7 +211,26 @@ class KotakExecutionClient:
         # Simple flag so we don't re-login every call once we're authenticated.
         self.is_logged_in = False
         # The "one thread at a time" gate for login + orders + scrip lookups.
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        # Kotak's SDK exposes no native timeout argument. Every SDK interaction
+        # therefore runs through ONE single-worker executor. If a call times out,
+        # its thread may still be inside the SDK, but the one-worker queue ensures
+        # no later SDK call can overlap it.
+        self._sdk_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="KotakBroker",
+        )
+        # Serialize callers before they reach the executor.  This prevents an
+        # entry from sitting in the executor queue behind a call that later
+        # times out: poison is recorded before the waiting entry can submit.
+        self._sdk_call_lock = threading.Lock()
+        self._session_poisoned = False
+        self._timed_out_future: Future[Any] | None = None
+        self._timed_out_futures: set[Future[Any]] = set()
+        # Make the poison check and executor submission one atomic operation.
+        # Without this gate, two strategy threads can both see a healthy session,
+        # queue two orders, and let the second execute after the first times out.
+        self._order_submission_lock = threading.Lock()
         # Cache of resolved Kotak symbols, keyed by
         # (underlying, expiry "DDMMMYYYY", option_type, int_strike). search_scrip
         # downloads the whole NFO scrip-master CSV per call, so caching per
@@ -152,6 +240,84 @@ class KotakExecutionClient:
         # for every symbol lookup (the SDK's search_scrip re-downloads it on
         # EVERY call, which is far too slow for a live multi-strategy runner).
         self._scrip_df: pd.DataFrame | None = None
+
+    @property
+    def session_poisoned(self) -> bool:
+        """Whether an SDK timeout requires explicit reconciliation/recovery."""
+
+        with self._lock:
+            return self._session_poisoned
+
+    def _sdk_call(
+        self,
+        label: str,
+        operation,
+        *,
+        block_when_poisoned: bool = False,
+    ) -> Any:
+        """Run one SDK operation serially with the fixed ten-second deadline."""
+
+        started = time.monotonic()
+        if not self._sdk_call_lock.acquire(timeout=_BROKER_DEADLINE_SECONDS):
+            raise _SdkDeadlineExceeded(
+                f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s "
+                "waiting for the SDK interaction gate"
+            )
+        try:
+            with self._lock:
+                if block_when_poisoned and self._session_poisoned:
+                    raise RuntimeError(
+                        "Kotak session is poisoned; a new order cannot be submitted "
+                        "before explicit reconciliation and recovery."
+                    )
+            remaining = _BROKER_DEADLINE_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                raise _SdkDeadlineExceeded(
+                    f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s "
+                    "before SDK submission"
+                )
+            future = self._sdk_executor.submit(operation)
+            try:
+                return future.result(timeout=remaining)
+            except FutureTimeoutError as exc:
+                # ``concurrent.futures.TimeoutError`` aliases built-in TimeoutError.
+                # If the SDK callable itself raised one, the future is already done;
+                # propagate that broker error without falsely poisoning the executor.
+                if future.done():
+                    raise
+                # A future queued behind another stuck SDK call may still be
+                # cancellable. Cancel it so an entry whose caller already received
+                # UNKNOWN can never execute later. Running futures cannot be killed;
+                # track every one until reconciliation proves all have ended.
+                cancelled_before_start = future.cancel()
+                with self._lock:
+                    self._session_poisoned = True
+                    self._timed_out_future = future
+                    if not cancelled_before_start:
+                        self._timed_out_futures.add(future)
+                raise _SdkDeadlineExceeded(
+                    f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s"
+                ) from exc
+        finally:
+            self._sdk_call_lock.release()
+
+    def recover_after_reconciliation(self) -> bool:
+        """Clear timeout poison only after the abandoned SDK call has returned.
+
+        MAT-102 can call this hook after it reconciles orders and positions. The
+        method refuses early recovery while the timed-out operation is still
+        running, preserving the no-overlap guarantee.
+        """
+
+        with self._lock:
+            self._timed_out_futures = {
+                future for future in self._timed_out_futures if not future.done()
+            }
+            if self._timed_out_futures:
+                return False
+            self._session_poisoned = False
+            self._timed_out_future = None
+            return True
 
     # ------------------------------------------------------------------
     # Authentication
@@ -242,13 +408,19 @@ class KotakExecutionClient:
                 consumer_key=consumer_key,
             )
             # Step 2: TOTP login handshake (generates the view token + session id).
-            login_resp = self.client.totp_login(
-                mobile_number=mobile,
-                ucc=ucc,
-                totp=totp,
+            login_resp = self._sdk_call(
+                "totp_login",
+                lambda: self.client.totp_login(
+                    mobile_number=mobile,
+                    ucc=ucc,
+                    totp=totp,
+                ),
             )
             # Step 3: validate MPIN to generate the trade token (edit_token/edit_sid).
-            validate_resp = self.client.totp_validate(mpin=mpin)
+            validate_resp = self._sdk_call(
+                "totp_validate",
+                lambda: self.client.totp_validate(mpin=mpin),
+            )
 
             # CRITICAL: totp_login / totp_validate RETURN error dicts instead of
             # raising, so a failed 2FA otherwise looks successful. Every order and
@@ -338,7 +510,10 @@ class KotakExecutionClient:
             return False
         # Step 1: ask Kotak for the download URL of the F&O contract CSV.
         try:
-            url = self.client.scrip_master(exchange_segment="nse_fo")
+            url = self._sdk_call(
+                "scrip_master",
+                lambda: self.client.scrip_master(exchange_segment="nse_fo"),
+            )
         except Exception as exc:
             log.warning(f"Kotak scrip_master() call failed: {exc}")
             return False
@@ -348,9 +523,22 @@ class KotakExecutionClient:
             return False
         # Step 2: download the CSV and load it into a pandas table (DataFrame).
         try:
-            resp = requests.get(url, timeout=120)  # the SDK's own get has NO timeout
-            resp.raise_for_status()               # raise if the download failed
-            df = pd.read_csv(io.StringIO(resp.text))
+            def download_scrip_master() -> str:
+                response = requests.get(
+                    url,
+                    timeout=_BROKER_DEADLINE_SECONDS,
+                )  # requests' timeout is retained as the native inactivity cap
+                response.raise_for_status()
+                return response.text
+
+            # ``requests`` alone has no total wall-clock deadline for a body
+            # that keeps dribbling bytes. Reuse the isolated serial executor so
+            # the complete download is capped and poisons the session on timeout.
+            csv_text = self._sdk_call(
+                "scrip_master_download",
+                download_scrip_master,
+            )
+            df = pd.read_csv(io.StringIO(csv_text))
             df = df.rename(columns=lambda c: c.strip())  # trim stray spaces in headers
             # Kotak stores the expiry as a quirky epoch number. Decode it exactly
             # like the SDK does (seconds since epoch + a ~10-year offset) and turn
@@ -489,7 +677,7 @@ class KotakExecutionClient:
         quantity: int,
         exchange_segment: str = "nse_fo",
         product_type: str = "INTRADAY",
-    ) -> dict[str, Any]:
+    ) -> OrderResult:
         """
         Place ONE market order (buy or sell at the current price) on Kotak.
 
@@ -499,49 +687,109 @@ class KotakExecutionClient:
           quantity : total units (lot_size * lots), NOT number of lots.
           product_type : "INTRADAY" (MIS, same-day) or "NORMAL" (NRML, overnight).
 
-        This RAISES an exception on ANY problem (bad input, not logged in, or the
-        broker rejecting the order). The caller catches that and falls back to
-        paper, so we never silently record an order that didn't actually happen.
+        Local input errors still raise before submission. Broker acknowledgements,
+        fills, rejections, partials, and deadline failures return ``OrderResult``.
+        Once any SDK call times out, new orders are blocked until explicit
+        reconciliation calls :meth:`recover_after_reconciliation`.
         """
-        # Make sure we're logged in first. (This briefly takes the lock, releases
-        # it, then we take it again below for the order - sequential, so a plain
-        # Lock can't deadlock.)
-        if not self.ensure_logged_in():
-            raise RuntimeError("Kotak login failed; cannot place real order.")
-
-        # Normalise + validate inputs before sending anything to the broker.
         side_norm = str(side).upper().strip()
         product_norm = str(product_type).upper().strip()
+        quantity_i = _exact_int(quantity)
         if side_norm not in _SIDE_MAP:
             raise ValueError(f"Invalid side: {side!r}")
         if product_norm not in _PRODUCT_MAP:
             raise ValueError(f"Invalid product_type: {product_type!r}")
         if not symbol:
             raise ValueError("Missing trading symbol for order.")
-        if int(quantity) <= 0:
+        if quantity_i is None or quantity_i <= 0:
             raise ValueError(f"Invalid quantity: {quantity!r}")
+        if not self._order_submission_lock.acquire(
+            timeout=_BROKER_DEADLINE_SECONDS
+        ):
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="ORDER_GATE_TIMEOUT",
+                reason=(
+                    "Kotak order outcome is indeterminate because the submission "
+                    f"gate did not become available within {_BROKER_DEADLINE_SECONDS:g}s."
+                ),
+            )
+        try:
+            if self.session_poisoned:
+                return normalize_order_result(
+                    order_id="",
+                    requested_quantity=quantity_i,
+                    filled_quantity=0,
+                    broker_state="SESSION_POISONED",
+                    reason=(
+                        "Kotak session is poisoned by an earlier timeout; reconcile "
+                        "orders/positions and recover explicitly before another order."
+                    ),
+                )
 
-        with self._lock:  # only one order goes over the shared session at a time
-            if self.client is None:
-                raise RuntimeError("Kotak client is not initialised.")
+            if not self.ensure_logged_in():
+                return normalize_order_result(
+                    order_id="",
+                    requested_quantity=quantity_i,
+                    filled_quantity=0,
+                    broker_state="REJECTED",
+                    reason="Order was not submitted because Kotak login failed.",
+                )
+
+            with self._lock:
+                client = self.client
+            if client is None:
+                return normalize_order_result(
+                    order_id="",
+                    requested_quantity=quantity_i,
+                    filled_quantity=0,
+                    broker_state="REJECTED",
+                    reason="Order was not submitted because Kotak client is not initialised.",
+                )
             try:
-                resp = self.client.place_order(
-                    exchange_segment=str(exchange_segment).strip(),
-                    product=_PRODUCT_MAP[product_norm],
-                    price="0",
-                    order_type=_ORDER_TYPE_MAP["MARKET"],
-                    quantity=str(int(quantity)),
-                    validity="DAY",
-                    trading_symbol=str(symbol),
-                    transaction_type=_SIDE_MAP[side_norm],
-                    amo="NO",
-                    disclosed_quantity="0",
-                    market_protection="0",
-                    pf="N",
-                    trigger_price="0",
+                resp = self._sdk_call(
+                    "place_order",
+                    lambda: client.place_order(
+                        exchange_segment=str(exchange_segment).strip(),
+                        product=_PRODUCT_MAP[product_norm],
+                        price="0",
+                        order_type=_ORDER_TYPE_MAP["MARKET"],
+                        quantity=str(quantity_i),
+                        validity="DAY",
+                        trading_symbol=str(symbol),
+                        transaction_type=_SIDE_MAP[side_norm],
+                        amo="NO",
+                        disclosed_quantity="0",
+                        market_protection="0",
+                        pf="N",
+                        trigger_price="0",
+                    ),
+                    block_when_poisoned=True,
                 )
             except Exception as exc:
-                raise Exception(f"Order placement failed: {exc}") from exc
+                return normalize_order_result(
+                    order_id="",
+                    requested_quantity=quantity_i,
+                    filled_quantity=0,
+                    broker_state="SESSION_POISONED" if self.session_poisoned else "",
+                    reason=f"Kotak PlaceOrder response is indeterminate: {exc}",
+                )
+
+            # Keep the atomic entry gate until the acknowledged order reaches a
+            # typed outcome. If status polling times out, poison is visible
+            # before another strategy can even consider submitting an order.
+            return self._normalize_place_ack_and_confirm(resp, quantity_i)
+        finally:
+            self._order_submission_lock.release()
+
+    def _normalize_place_ack_and_confirm(
+        self,
+        resp: Any,
+        quantity_i: int,
+    ) -> OrderResult:
+        """Normalize one placement acknowledgement and confirm its final fill."""
 
         # The v2 SDK's place_order does NOT raise on failure -- it RETURNS an
         # error dict instead (e.g. {"Error": ...}, {"Error Message": "Complete
@@ -550,7 +798,28 @@ class KotakExecutionClient:
         # acknowledgement as a failure so the caller falls back to paper rather
         # than recording an unconfirmed fill.
         if not self._is_order_ack(resp):
-            raise Exception(f"Kotak did not acknowledge the order: {resp}")
+            explicit_rejection = (
+                isinstance(resp, dict)
+                and str(resp.get("stat", "")).strip().lower()
+                in {"not_ok", "notok", "rejected"}
+            )
+            reason = (
+                str(
+                    resp.get("Error")
+                    or resp.get("Error Message")
+                    or resp.get("message")
+                    or resp
+                )
+                if isinstance(resp, dict)
+                else f"Malformed acknowledgement: {resp!r}"
+            )
+            return normalize_order_result(
+                order_id=self.extract_order_id(resp),
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="REJECTED" if explicit_rejection else "",
+                reason=reason,
+            )
 
         # Acceptance != fill: Kotak can still reject the order or leave it
         # unfilled after the ack. Confirm a REAL fill before returning success,
@@ -558,9 +827,14 @@ class KotakExecutionClient:
         # position) on an order that did not actually execute.
         order_id = self.extract_order_id(resp)
         if not order_id:
-            raise Exception(f"Kotak acknowledged the order but returned no order id: {resp}")
-        self._confirm_fill(order_id, int(quantity))
-        return resp
+            return normalize_order_result(
+                order_id="",
+                requested_quantity=quantity_i,
+                filled_quantity=0,
+                broker_state="",
+                reason=f"Kotak acknowledged the order without an order id: {resp}",
+            )
+        return self._confirm_fill(order_id, quantity_i)
 
     def _order_status(self, order_id: str):
         """
@@ -570,57 +844,249 @@ class KotakExecutionClient:
         status cannot be read yet (a transient error, or the order not visible
         yet), in which case the caller should simply keep polling.
         """
-        with self._lock:  # order_history is a broker call -> needs the session
-            if self.client is None:
-                return (None, 0, 0, "client not initialised")
-            try:
-                resp = self.client.order_history(order_id=order_id)
-            except Exception as exc:
-                return (None, 0, 0, f"order_history error: {exc}")
+        with self._lock:
+            client = self.client
+        if client is None:
+            return (None, None, None, "client not initialised")
+        try:
+            resp = self._sdk_call(
+                "order_history",
+                lambda: client.order_history(order_id=order_id),
+            )
+        except Exception as exc:
+            return (None, None, None, f"order_history error: {exc}")
         # Kotak shape: {"data": {"stat": "Ok", "data": [ {rows, newest first} ]}}.
-        rows = None
-        if isinstance(resp, dict) and isinstance(resp.get("data"), dict):
-            rows = resp["data"].get("data")
+        rows = _response_rows(resp)
         if not isinstance(rows, list) or not rows:
-            return (None, 0, 0, f"unrecognised order_history: {resp}")
+            return (None, None, None, f"unrecognised order_history: {resp}")
         latest = rows[0]  # history is newest-first; row 0 is the current state
-
-        def _as_int(value) -> int:
-            try:
-                return int(float(value))
-            except (TypeError, ValueError):
-                return 0
+        if not isinstance(latest, dict):
+            return (None, None, None, "malformed order_history row")
 
         return (
             str(latest.get("ordSt", "")).strip().lower(),
-            _as_int(latest.get("fldQty", 0)),
-            _as_int(latest.get("qty", 0)),
+            _exact_int(latest.get("fldQty")),
+            _exact_int(latest.get("qty")),
             str(latest.get("rejRsn", "")).strip(),
         )
 
-    def _confirm_fill(self, order_id: str, want_qty: int) -> None:
-        """
-        Poll order_history until the order is fully filled, then return.
+    def get_order_status(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult:
+        """Return a normalized order-history snapshot without hiding timeouts."""
 
-        Raises if the order is rejected/cancelled, or if it has not filled within
-        `_FILL_TIMEOUT_SECONDS`. Polling happens OUTSIDE the lock (each status read
-        re-takes it briefly), so a slow fill never blocks other workers' orders.
+        requested = _exact_int(requested_quantity)
+        if requested is None or requested < 0:
+            requested = 0
+        state, filled, broker_qty, reason = self._order_status(str(order_id))
+        effective_requested = requested or broker_qty or 0
+        if requested and broker_qty not in {None, requested}:
+            return normalize_order_result(
+                order_id=order_id,
+                requested_quantity=requested,
+                filled_quantity=None,
+                broker_state=state or "",
+                reason=(
+                    f"Malformed Kotak status: broker quantity {broker_qty} "
+                    f"does not match requested quantity {requested}. {reason}"
+                ),
+            )
+        return normalize_order_result(
+            order_id=order_id,
+            requested_quantity=effective_requested,
+            filled_quantity=filled,
+            broker_state=state or ("SESSION_POISONED" if self.session_poisoned else ""),
+            reason=reason,
+        )
+
+    def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
+        """Poll briefly for a terminal result without hiding ambiguity.
+
+        Every status read still flows through the same single-worker executor, so
+        it cannot overlap the placement call that preceded it.
         """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
-        last_state = "unknown"
-        while time.monotonic() < deadline:
-            state, filled, _order_qty, reason = self._order_status(order_id)
-            if state is not None:
-                last_state = state
-                if state in _FAILED_ORDER_STATES:
-                    raise RuntimeError(f"order {order_id} {state} ({reason or 'no reason given'})")
-                if state in _FILLED_ORDER_STATES and (want_qty <= 0 or filled >= want_qty):
-                    return  # fully filled - confirmed
-            time.sleep(_FILL_POLL_INTERVAL)
-        raise RuntimeError(
-            f"order {order_id} not confirmed filled within "
-            f"{_FILL_TIMEOUT_SECONDS:.0f}s (last status: {last_state})"
+        last_result = normalize_order_result(
+            order_id=order_id,
+            requested_quantity=want_qty,
+            filled_quantity=0,
+            broker_state="",
+            reason="Kotak acknowledgement received; fill status not read yet.",
         )
+        while time.monotonic() < deadline:
+            last_result = self.get_order_status(order_id, requested_quantity=want_qty)
+            if last_result.status is not OrderStatus.UNKNOWN:
+                return last_result
+            if "error:" in last_result.reason.lower() or self.session_poisoned:
+                return last_result
+            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                return last_result
+            time.sleep(_FILL_POLL_INTERVAL)
+        return normalize_order_result(
+            order_id=order_id,
+            requested_quantity=want_qty,
+            filled_quantity=last_result.filled_quantity,
+            broker_state=last_result.broker_state,
+            reason=(
+                f"Kotak order {order_id} was not terminal within "
+                f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
+            ),
+        )
+
+    def cancel_order(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult:
+        """Request cancellation, then normalize the resulting order state."""
+
+        order_id_s = str(order_id).strip()
+        requested = _exact_int(requested_quantity)
+        if not order_id_s:
+            raise ValueError("Missing order id for cancellation.")
+        if requested is None or requested < 0:
+            raise ValueError(f"Invalid requested_quantity: {requested_quantity!r}")
+        with self._lock:
+            client = self.client
+        if client is None:
+            return normalize_order_result(
+                order_id=order_id_s,
+                requested_quantity=requested,
+                filled_quantity=0,
+                broker_state="",
+                reason="Kotak cancellation was not submitted: client not initialised.",
+            )
+        try:
+            self._sdk_call(
+                "cancel_order",
+                lambda: client.cancel_order(order_id=order_id_s),
+            )
+        except Exception as exc:
+            return normalize_order_result(
+                order_id=order_id_s,
+                requested_quantity=requested,
+                filled_quantity=0,
+                broker_state="SESSION_POISONED" if self.session_poisoned else "",
+                reason=f"Kotak cancellation response is indeterminate: {exc}",
+            )
+        return self.get_order_status(order_id_s, requested_quantity=requested)
+
+    def list_open_orders(self) -> BrokerQueryResult[OpenOrder]:
+        """Return non-terminal Kotak orders or an indeterminate query result."""
+
+        with self._lock:
+            client = self.client
+        if client is None:
+            return BrokerQueryResult.indeterminate("Kotak client not initialised.")
+        try:
+            response = self._sdk_call("order_report", client.order_report)
+        except Exception as exc:
+            return BrokerQueryResult.indeterminate(
+                f"Kotak open-order query failed: {exc}",
+                broker_state="SESSION_POISONED" if self.session_poisoned else "UNKNOWN",
+            )
+        rows = _response_rows(response)
+        if rows is None:
+            return BrokerQueryResult.indeterminate(
+                f"Kotak open-order query returned malformed data: {response!r}"
+            )
+        orders: list[OpenOrder] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return BrokerQueryResult.indeterminate(
+                    "Kotak open-order query contained a malformed row."
+                )
+            raw_state = str(row.get("ordSt") or "").strip().upper()
+            snapshot = normalize_order_result(
+                order_id=row.get("nOrdNo") or row.get("orderId"),
+                requested_quantity=row.get("qty"),
+                filled_quantity=row.get("fldQty"),
+                broker_state=row.get("ordSt"),
+                reason="Open-order snapshot",
+            )
+            symbol = str(
+                row.get("trdSym") or row.get("tradingSymbol") or row.get("pTrdSymbol") or ""
+            ).strip()
+            if (
+                not snapshot.order_id
+                or not symbol
+                or "malformed" in snapshot.reason.lower()
+                or snapshot.requested_quantity <= 0
+            ):
+                return BrokerQueryResult.indeterminate(
+                    "Kotak open-order query contained incomplete order data."
+                )
+            if raw_state in {
+                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
+                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
+            }:
+                continue
+            if snapshot.remaining_quantity <= 0:
+                continue
+            side = {"B": "BUY", "S": "SELL"}.get(
+                str(row.get("trnsTp") or row.get("transactionType") or "").strip().upper(),
+                str(row.get("trnsTp") or row.get("transactionType") or "").strip().upper(),
+            )
+            orders.append(
+                OpenOrder(
+                    order_id=snapshot.order_id,
+                    symbol=symbol,
+                    side=side,
+                    requested_quantity=snapshot.requested_quantity,
+                    filled_quantity=snapshot.filled_quantity,
+                    remaining_quantity=snapshot.remaining_quantity,
+                    broker_state=snapshot.broker_state,
+                )
+            )
+        return BrokerQueryResult.success(orders)
+
+    def list_open_positions(self) -> BrokerQueryResult[OpenPosition]:
+        """Return non-flat Kotak positions or an indeterminate query result."""
+
+        with self._lock:
+            client = self.client
+        if client is None:
+            return BrokerQueryResult.indeterminate("Kotak client not initialised.")
+        try:
+            response = self._sdk_call("positions", client.positions)
+        except Exception as exc:
+            return BrokerQueryResult.indeterminate(
+                f"Kotak open-position query failed: {exc}",
+                broker_state="SESSION_POISONED" if self.session_poisoned else "UNKNOWN",
+            )
+        rows = _response_rows(response)
+        if rows is None:
+            return BrokerQueryResult.indeterminate(
+                f"Kotak open-position query returned malformed data: {response!r}"
+            )
+        positions: list[OpenPosition] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return BrokerQueryResult.indeterminate(
+                    "Kotak open-position query contained a malformed row."
+                )
+            raw_quantity = row.get("netQty") if "netQty" in row else row.get("netqty")
+            quantity = _exact_int(raw_quantity)
+            symbol = str(
+                row.get("trdSym") or row.get("tradingSymbol") or row.get("pTrdSymbol") or ""
+            ).strip()
+            if quantity is None or not symbol:
+                return BrokerQueryResult.indeterminate(
+                    "Kotak open-position query contained incomplete position data."
+                )
+            if quantity == 0:
+                continue
+            positions.append(
+                OpenPosition(
+                    symbol=symbol,
+                    quantity=quantity,
+                    product_type=str(row.get("prod") or row.get("product") or "").strip(),
+                    broker_state="OPEN",
+                )
+            )
+        return BrokerQueryResult.success(positions)
 
     def _is_order_ack(self, resp: Any) -> bool:
         """
@@ -651,6 +1117,8 @@ class KotakExecutionClient:
         first order-id-looking value it finds (or "" if none). Used only for
         logging, so we know which order we placed.
         """
+        if isinstance(order_response, OrderResult):
+            return order_response.order_id
         if order_response is None:
             return ""
         if isinstance(order_response, dict):
@@ -678,17 +1146,20 @@ class KotakExecutionClient:
     def logout(self) -> dict[str, Any]:
         """Close the Kotak session cleanly at shutdown (safe to call if never logged in)."""
         with self._lock:
-            if self.client is None:
-                return {"State": "NOT_OK", "message": "Client not initialised"}
-            try:
-                out = self.client.logout()
+            client = self.client
+        if client is None:
+            return {"State": "NOT_OK", "message": "Client not initialised"}
+        try:
+            out = self._sdk_call("logout", client.logout)
+            with self._lock:
                 self.is_logged_in = False
                 self.client = None
-                return out if isinstance(out, dict) else {"State": "OK", "message": str(out)}
-            except Exception as exc:
+            return out if isinstance(out, dict) else {"State": "OK", "message": str(out)}
+        except Exception as exc:
+            with self._lock:
                 self.is_logged_in = False
                 self.client = None
-                return {"State": "NOT_OK", "message": str(exc)}
+            return {"State": "NOT_OK", "message": str(exc)}
 
 
 # The ONE shared instance the whole program uses. Every file that needs to place

@@ -3,17 +3,18 @@ Diagnostic for Kotak option symbol resolution (and an optional REAL test order).
 
 Run during a LIVE Kotak session (it prompts for a TOTP at login):
 
-    python "Multithreading/Dependencies/diagnose_kotak_symbol.py" [OPT] [STRIKE]
-    # e.g. python ".../diagnose_kotak_symbol.py" CE 23950
+    python "Dependencies/Kotak API/diagnose_kotak_symbol.py" [OPT] [STRIKE]
+    # e.g. python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950
 
 It downloads the NSE F&O scrip master ONCE (the same cache the live runner uses),
 then shows how Kotak stores NIFTY option rows near your strike, the available
 expiries, and whether our resolver finds the exact pTrdSymbol. Read-only by default.
 
 Optional REAL round-trip test order (BUY then auto square-off) - REAL MONEY:
-    python ".../diagnose_kotak_symbol.py" CE 23950 --place-order [--qty 75]
-It places a 1-lot market BUY on the resolved nearest-expiry contract, confirms the
-fill, then immediately SELLs to flatten. Requires typing YES to confirm.
+    python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order --qty <current-lot-size>
+It places the explicitly requested quantity on the resolved nearest-expiry
+contract. Only a confirmed full BUY fill permits the automatic SELL-to-flatten.
+Requires typing YES to confirm.
 """
 import datetime as dt
 import sys
@@ -21,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kotak_execution as ke  # handles sys.path to the SDK + loads .env
+from broker_contract import OrderResult, OrderStatus
 
 
 def _arg_val(name, default):
@@ -39,16 +41,64 @@ UNDERLYING = "NIFTY"
 OPT = _POS[0].upper() if len(_POS) > 0 else "CE"
 STRIKE = int(_POS[1]) if len(_POS) > 1 else 23950
 PLACE_ORDER = "--place-order" in sys.argv
-QTY = int(_arg_val("--qty", "75"))  # NIFTY lot = 75
+_QTY_RAW = _arg_val("--qty", None)
+try:
+    QTY = int(_QTY_RAW) if _QTY_RAW is not None else None
+except (TypeError, ValueError):
+    QTY = None
 FIELDS = ["pSymbolName", "pOptionType", "_expiry_str", "dStrikePrice;", "pTrdSymbol"]
 
 
+def _is_full_fill(result, quantity):
+    """Return True only for an exact, typed full-quantity fill."""
+    return (
+        isinstance(result, OrderResult)
+        and result.status is OrderStatus.FILLED
+        and result.requested_quantity == quantity
+        and result.filled_quantity == quantity
+        and result.remaining_quantity == 0
+    )
+
+
+def _is_zero_fill_rejection(result, quantity):
+    """Return True only when the broker explicitly proves no units traded."""
+    return (
+        isinstance(result, OrderResult)
+        and result.status is OrderStatus.REJECTED
+        and result.requested_quantity == quantity
+        and result.filled_quantity == 0
+        and result.remaining_quantity == quantity
+    )
+
+
+def _print_indeterminate(stage, result, symbol, quantity, detail=""):
+    """Print enough evidence for an operator to reconcile an ambiguous order."""
+    if isinstance(result, OrderResult):
+        evidence = (
+            f"status={result.status.value} order_id={result.order_id or 'UNKNOWN'} "
+            f"filled={result.filled_quantity}/{result.requested_quantity} "
+            f"remaining={result.remaining_quantity} reason={result.reason}"
+        )
+    else:
+        evidence = f"untyped_result={result!r}"
+    if detail:
+        evidence = f"{detail}; {evidence}"
+    print(f"  !! {stage} EXPOSURE IS INDETERMINATE: {evidence}")
+    print(
+        f"  !! Check {symbol} qty={quantity} in Kotak before retrying or "
+        "placing another order."
+    )
+
+
 def place_round_trip_test_order(client, symbol, qty, broker="Kotak"):
-    """Place a REAL 1-lot market BUY, confirm the fill, then auto SELL to flatten.
+    """Place a REAL market BUY, then attempt SELL only after a confirmed fill.
     Guarded by a typed YES confirmation. REAL MONEY."""
     print("\n" + "=" * 72)
     print(f"REAL ROUND-TRIP TEST ORDER on {broker}")
-    print(f"  BUY {qty} {symbol} (product=INTRADAY), then auto SELL {qty} to flatten.")
+    print(
+        f"  BUY {qty} {symbol} (product=INTRADAY); after a confirmed full fill, "
+        f"attempt SELL {qty} to flatten."
+    )
     print("  THIS PLACES REAL ORDERS WITH REAL MONEY.")
     try:
         confirm = input("  Type exactly YES to proceed (anything else aborts): ").strip()
@@ -56,21 +106,35 @@ def place_round_trip_test_order(client, symbol, qty, broker="Kotak"):
         confirm = ""
     if confirm != "YES":
         print("  Aborted (no confirmation).")
-        return
+        return False
     print(f"  Placing BUY {qty} {symbol} ...")
     try:
         entry = client.place_market_order(symbol=symbol, side="BUY", quantity=qty, product_type="INTRADAY")
     except Exception as exc:
-        print(f"  ENTRY FAILED: {exc}\n  No position opened.")
-        return
-    print(f"  ENTRY filled. OrderId={client.extract_order_id(entry)}")
+        _print_indeterminate("ENTRY", None, symbol, qty, detail=f"client raised {exc}")
+        return False
+    if _is_zero_fill_rejection(entry, qty):
+        print(f"  ENTRY rejected with zero fill: {entry.reason}\n  No position opened.")
+        return False
+    if not _is_full_fill(entry, qty):
+        _print_indeterminate("ENTRY", entry, symbol, qty)
+        return False
+    print(f"  ENTRY filled. OrderId={entry.order_id}")
     print(f"  Squaring off: SELL {qty} {symbol} ...")
     try:
         ex = client.place_market_order(symbol=symbol, side="SELL", quantity=qty, product_type="INTRADAY")
-        print(f"  EXIT filled. OrderId={client.extract_order_id(ex)} -> flat. Round-trip OK.")
     except Exception as exc:
-        print(f"  !! EXIT FAILED: {exc}")
-        print(f"  !! A LIVE long position in {symbol} (qty={qty}) IS OPEN. SQUARE IT OFF MANUALLY NOW.")
+        _print_indeterminate("EXIT", None, symbol, qty, detail=f"client raised {exc}")
+        return False
+    if _is_zero_fill_rejection(ex, qty):
+        print(f"  !! EXIT rejected with zero fill: {ex.reason}")
+        print(f"  !! The LIVE long {symbol} qty={qty} remains OPEN. Square it off manually now.")
+        return False
+    if not _is_full_fill(ex, qty):
+        _print_indeterminate("EXIT", ex, symbol, qty)
+        return False
+    print(f"  EXIT filled. OrderId={ex.order_id} -> flat. Round-trip OK.")
+    return True
 
 
 def main():
@@ -115,7 +179,12 @@ def main():
 
     # Optional REAL round-trip test order (only when --place-order is passed).
     if PLACE_ORDER:
-        if sym:
+        if QTY is None or QTY <= 0:
+            print(
+                "\n--place-order requires an explicit positive --qty using the "
+                "current contract lot size; no order placed."
+            )
+        elif sym:
             place_round_trip_test_order(client, sym, QTY, broker="Kotak")
         else:
             print("\n--place-order requested but the symbol did not resolve; no order placed.")
