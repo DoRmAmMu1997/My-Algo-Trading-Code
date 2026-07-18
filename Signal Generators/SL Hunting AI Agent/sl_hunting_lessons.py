@@ -6,25 +6,50 @@ A small, HUMAN-GATED knowledge base the agent grows from its own trades. The coa
 lessons into its prompt (gated by `SL_HUNTING_LESSONS_ENABLED`). The store is bounded
 and de-duplicated so the prompt never bloats and stale/contradictory lessons are pruned.
 
-`ProposedLesson` is the coach's strict output schema; stored lessons are plain dicts
-with an id/status/timestamps + the evidence behind them.
+`ProposedLesson` is the coach's strict output schema. ``StoredLesson`` is the equally
+strict on-disk schema: malformed records are ignored and every approved record carries
+a SHA-256 digest of its reviewed content. That binding prevents an approved id from
+silently pointing at changed text later.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
+import tempfile
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from sl_hunting_ai_validation import StrictAIModel
 
 logger = logging.getLogger(__name__)
 
 # Cap how many APPROVED lessons are injected into the prompt (keep it bounded).
 MAX_LIVE_LESSONS = 12
+MAX_SCOPE_CHARS = 80
+MAX_LESSON_CHARS = 280
+MAX_RATIONALE_CHARS = 1_000
+
+
+def _bounded_single_line(value: str, *, field: str, maximum: int) -> str:
+    """Validate human/model text before it can enter either lessons store.
+
+    Newlines and control characters are intentionally rejected. Lessons are rendered
+    into a system prompt later, so keeping each field short and single-line makes the
+    boundary unambiguous and prevents one record from reshaping the prompt block.
+    """
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field} must not be blank")
+    if len(cleaned) > maximum:
+        raise ValueError(f"{field} must be at most {maximum} characters")
+    if any(ord(char) < 32 or ord(char) == 127 for char in cleaned):
+        raise ValueError(f"{field} must be a single printable line")
+    return cleaned
 
 
 class ProposedLesson(StrictAIModel):
@@ -42,6 +67,21 @@ class ProposedLesson(StrictAIModel):
     sample_size: int = Field(description="Total trades this lesson is drawn from.")
     confidence: int = Field(description="0-10 confidence given the evidence.")
 
+    @field_validator("scope")
+    @classmethod
+    def _validate_scope(cls, value: str) -> str:
+        return _bounded_single_line(value, field="scope", maximum=MAX_SCOPE_CHARS)
+
+    @field_validator("lesson")
+    @classmethod
+    def _validate_lesson(cls, value: str) -> str:
+        return _bounded_single_line(value, field="lesson", maximum=MAX_LESSON_CHARS)
+
+    @field_validator("rationale")
+    @classmethod
+    def _validate_rationale(cls, value: str) -> str:
+        return _bounded_single_line(value, field="rationale", maximum=MAX_RATIONALE_CHARS)
+
     @field_validator("confidence")
     @classmethod
     def _validate_confidence(cls, value: int) -> int:
@@ -56,11 +96,105 @@ class ProposedLesson(StrictAIModel):
             raise ValueError("trade counts must be >= 0")
         return value
 
+    @model_validator(mode="after")
+    def _validate_sample_counts(self) -> ProposedLesson:
+        if self.wins + self.losses > self.sample_size:
+            raise ValueError("wins + losses cannot exceed sample_size")
+        return self
+
 
 class CoachOutput(StrictAIModel):
     """The coach's final message: a list of proposed lessons (possibly empty)."""
 
     lessons: list[ProposedLesson] = Field(default_factory=list)
+
+
+class LessonEvidence(StrictAIModel):
+    """Typed evidence stored alongside a proposed or approved lesson."""
+
+    wins: int
+    losses: int
+    sample_size: int
+
+    @field_validator("wins", "losses", "sample_size")
+    @classmethod
+    def _validate_count(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("lesson evidence counts must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_total(self) -> LessonEvidence:
+        if self.wins + self.losses > self.sample_size:
+            raise ValueError("evidence wins + losses cannot exceed sample_size")
+        return self
+
+
+class StoredLesson(StrictAIModel):
+    """Strict, tamper-evident schema for one lessons JSON record."""
+
+    id: str
+    scope: str
+    lesson: str
+    rationale: str
+    evidence: LessonEvidence
+    confidence: int
+    status: Literal["proposed", "approved"]
+    created_at: str
+    updated_at: str
+    approval_digest: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: str) -> str:
+        cleaned = _bounded_single_line(value, field="id", maximum=48)
+        if any(not (char.isalnum() or char == "-") for char in cleaned):
+            raise ValueError("id may contain only letters, numbers, and hyphens")
+        return cleaned
+
+    @field_validator("scope")
+    @classmethod
+    def _validate_scope(cls, value: str) -> str:
+        return _bounded_single_line(value, field="scope", maximum=MAX_SCOPE_CHARS)
+
+    @field_validator("lesson")
+    @classmethod
+    def _validate_lesson(cls, value: str) -> str:
+        return _bounded_single_line(value, field="lesson", maximum=MAX_LESSON_CHARS)
+
+    @field_validator("rationale")
+    @classmethod
+    def _validate_rationale(cls, value: str) -> str:
+        return _bounded_single_line(value, field="rationale", maximum=MAX_RATIONALE_CHARS)
+
+    @field_validator("confidence")
+    @classmethod
+    def _validate_confidence(cls, value: int) -> int:
+        if not 0 <= value <= 10:
+            raise ValueError("confidence must be 0-10")
+        return value
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def _validate_timestamp(cls, value: str) -> str:
+        cleaned = _bounded_single_line(value, field="timestamp", maximum=40)
+        try:
+            datetime.fromisoformat(cleaned)
+        except ValueError as exc:
+            raise ValueError("lesson timestamp must be ISO-8601") from exc
+        return cleaned
+
+    @model_validator(mode="after")
+    def _validate_identity_and_approval(self) -> StoredLesson:
+        if self.id != _slug(self.scope, self.lesson):
+            raise ValueError("lesson id does not match its scope and content")
+        if self.status == "approved":
+            expected = lesson_content_digest(self)
+            if not self.approval_digest or not hmac.compare_digest(self.approval_digest, expected):
+                raise ValueError("approved lesson content digest is missing or invalid")
+        elif self.approval_digest is not None:
+            raise ValueError("proposed lessons must not carry an approval digest")
+        return self
 
 
 def _slug(scope: str, lesson: str) -> str:
@@ -80,10 +214,32 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def proposed_to_record(p: ProposedLesson, *, status: str = "proposed") -> dict[str, Any]:
+def lesson_content_digest(record: StoredLesson | dict[str, Any]) -> str:
+    """Return the canonical digest that binds operator approval to lesson content."""
+    source = record.model_dump(mode="json") if isinstance(record, StoredLesson) else record
+    evidence = source.get("evidence") or {}
+    content = {
+        "id": source.get("id"),
+        "scope": source.get("scope"),
+        "lesson": source.get("lesson"),
+        "rationale": source.get("rationale"),
+        "evidence": {
+            "wins": evidence.get("wins"),
+            "losses": evidence.get("losses"),
+            "sample_size": evidence.get("sample_size"),
+        },
+        "confidence": source.get("confidence"),
+    }
+    canonical = json.dumps(content, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def proposed_to_record(
+    p: ProposedLesson, *, status: Literal["proposed", "approved"] = "proposed"
+) -> dict[str, Any]:
     """Wrap a coach `ProposedLesson` into a stored record (id/status/timestamps)."""
     now = _now()
-    return {
+    record: dict[str, Any] = {
         "id": _slug(p.scope, p.lesson),
         "scope": p.scope,
         "lesson": p.lesson,
@@ -94,28 +250,73 @@ def proposed_to_record(p: ProposedLesson, *, status: str = "proposed") -> dict[s
         "created_at": now,
         "updated_at": now,
     }
+    if status == "approved":
+        record["approval_digest"] = lesson_content_digest(record)
+    return StoredLesson.model_validate(record).model_dump(mode="json", exclude_none=True)
+
+
+def _validated_records(lessons: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Validate external records and return safe JSON dictionaries plus reject count."""
+    valid: list[dict[str, Any]] = []
+    rejected = 0
+    for record in lessons:
+        try:
+            parsed = StoredLesson.model_validate(record)
+        except (TypeError, ValidationError, ValueError):
+            rejected += 1
+            continue
+        valid.append(parsed.model_dump(mode="json", exclude_none=True))
+    return valid, rejected
 
 
 def load_lessons(path: str) -> list[dict[str, Any]]:
-    """Load a lessons JSON list (returns [] when missing/unreadable)."""
+    """Load only schema-valid, digest-valid lesson records from a JSON list."""
     if not os.path.exists(path):
         return []
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
-    except (OSError, json.JSONDecodeError):
+        if not isinstance(data, list):
+            logger.warning("Lessons file %s must contain a JSON list; ignoring it.", path)
+            return []
+        records, rejected = _validated_records([item for item in data if isinstance(item, dict)])
+        rejected += sum(1 for item in data if not isinstance(item, dict))
+        if rejected:
+            logger.warning("Ignored %d malformed or tampered lesson record(s) in %s.", rejected, path)
+        return records
+    except (OSError, UnicodeError, json.JSONDecodeError):
         logger.warning("Could not read lessons file %s", path, exc_info=True)
         return []
 
 
 def save_lessons(path: str, lessons: list[dict[str, Any]]) -> None:
-    """Write the lessons list to ``path`` as pretty JSON (creating the folder if needed)."""
+    """Validate then atomically replace ``path`` with the lessons JSON list.
+
+    The temporary file is flushed and closed before ``os.replace``. Readers therefore
+    see either the previous complete store or the new complete store, never a partially
+    written JSON document after a crash.
+    """
+    validated = [
+        StoredLesson.model_validate(record).model_dump(mode="json", exclude_none=True)
+        for record in lessons
+    ]
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(lessons, f, indent=2)
+    directory = parent or "."
+    descriptor, temporary_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory, text=True
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file_handle:
+            json.dump(validated, file_handle, indent=2, ensure_ascii=False)
+            file_handle.write("\n")
+            file_handle.flush()
+            os.fsync(file_handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
 
 
 def _sample(lesson: dict[str, Any]) -> int:
@@ -127,7 +328,8 @@ def consolidate(lessons: list[dict[str, Any]], max_lessons: int = MAX_LIVE_LESSO
     """De-duplicate by id (keep the better-evidenced copy), rank by sample size then
     recency, and cap at `max_lessons` — so the store stays bounded and non-contradictory."""
     by_id: dict[str, dict[str, Any]] = {}
-    for lesson in lessons:
+    validated, _rejected = _validated_records(lessons)
+    for lesson in validated:
         lid = lesson.get("id")
         if not lid:
             continue
@@ -144,7 +346,7 @@ def consolidate(lessons: list[dict[str, Any]], max_lessons: int = MAX_LIVE_LESSO
 
 def format_lessons(lessons: list[dict[str, Any]]) -> str:
     """Render APPROVED lessons as a `LEARNED LESSONS` prompt block ('' if none)."""
-    approved = [rec for rec in lessons if rec.get("status") == "approved"]
+    approved = consolidate([rec for rec in lessons if rec.get("status") == "approved"])
     if not approved:
         return ""
     out = [
@@ -154,7 +356,7 @@ def format_lessons(lessons: list[dict[str, Any]]) -> str:
         "soft priors that refine the method; they never override a clear live read.",
         "",
     ]
-    for rec in consolidate(approved):
+    for rec in approved:
         ev = rec.get("evidence") or {}
         out.append(
             f"- [{rec.get('scope', '?')}] {str(rec.get('lesson', '')).strip()} "
@@ -184,6 +386,8 @@ def promote(proposed_path: str, live_path: str, ids: list[str]) -> list[str]:
         rec = dict(src)
         rec["status"] = "approved"
         rec["updated_at"] = _now()
+        rec["approval_digest"] = lesson_content_digest(rec)
+        rec = StoredLesson.model_validate(rec).model_dump(mode="json", exclude_none=True)
         live.append(rec)
         promoted.append(lid)
     save_lessons(live_path, consolidate(live))
