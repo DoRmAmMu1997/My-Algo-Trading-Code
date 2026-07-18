@@ -57,6 +57,7 @@ files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
     "Dependencies/broker_contract.py",
+    "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
     "Dependencies/Kotak API/kotak_execution.py",
     "Dependencies/Kotak API/diagnose_kotak_symbol.py",
