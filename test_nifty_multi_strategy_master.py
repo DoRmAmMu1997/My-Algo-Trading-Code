@@ -1397,6 +1397,17 @@ class TestBasePaperStrategyWorker(unittest.TestCase):
         self.assertNotEqual(oid1, oid2)
         self.assertTrue(oid2.endswith("-0002"))
 
+    def test_session_execution_mode_tracks_live_and_paper_fallbacks_without_telegram(self):
+        """Mode telemetry is trading state, not a side effect of enabling Telegram."""
+        self.assertEqual(self.worker.session_execution_mode(), "PAPER")
+
+        self.worker.live_trading = True
+        self.worker.publish_trade_event({"action": "ENTRY", "mode": "LIVE"})
+        self.assertEqual(self.worker.session_execution_mode(), "LIVE")
+
+        self.worker.publish_trade_event({"action": "ENTRY", "mode": "PAPER_FALLBACK"})
+        self.assertEqual(self.worker.session_execution_mode(), "MIXED")
+
     def test_stop_event_flattens_before_worker_reaches_stopped(self):
         """A pre-set terminal event is translated into flatten-then-stop."""
 
@@ -2133,6 +2144,73 @@ class TestGoogleSheetRetry(unittest.TestCase):
         self._run_writer(fake)                          # must not raise
         self.assertEqual(calls["oauth"], 3)             # bounded attempts
         self.assertEqual(calls["updates"], [])
+
+
+class TestExecutionModeResults(unittest.TestCase):
+    """End-of-day logs, Telegram, and Sheet rows must retain execution provenance."""
+
+    @staticmethod
+    def _worker(name: str, mode: str, pnl: float, trades: int):
+        worker = MagicMock()
+        worker.strategy_name = name
+        worker.realized_pnl = pnl
+        worker.completed_trades = trades
+        worker.session_execution_mode.return_value = mode
+        return worker
+
+    def test_eod_summary_reports_mixed_mode_and_per_strategy_modes(self):
+        event_queue = master_file.queue.Queue()
+        workers = [
+            self._worker("Renko", "LIVE", 100.0, 1),
+            self._worker("EMA", "PAPER", -25.0, 2),
+        ]
+
+        master_file._publish_eod_summary(workers, event_queue)
+
+        event = event_queue.get_nowait()
+        self.assertEqual(event["mode"], "MIXED")
+        self.assertEqual([row["mode"] for row in event["rows"]], ["LIVE", "PAPER"])
+        self.assertIn("[MIXED]", master_file.format_trade_message(event))
+
+    def test_log_parser_keeps_new_modes_and_legacy_paper_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-07-16 15:15:00,000 | INFO | RenkoThread | "
+                "Result summary | Mode=LIVE | Trades=1 | RealizedPnL=100.00\n"
+                "2026-07-16 15:16:00,000 | INFO | EMAThread | "
+                "Result summary | Mode=MIXED | Trades=2 | RealizedPnL=-25.00\n"
+                "2026-07-15 15:15:00,000 | INFO | RenkoThread | "
+                "Paper summary | Trades=1 | RealizedPnL=50.00\n",
+                encoding="utf-8",
+            )
+
+            parsed = master_file._parse_eod_pnl_by_day(path)
+
+        self.assertEqual(parsed["2026-07-16"]["Renko"], {"pnl": 100.0, "mode": "LIVE"})
+        self.assertEqual(parsed["2026-07-16"]["EMA"], {"pnl": -25.0, "mode": "MIXED"})
+        self.assertEqual(parsed["2026-07-15"]["Renko"], {"pnl": 50.0, "mode": "PAPER"})
+
+    def test_sheet_uses_mode_specific_labels_without_turning_pnl_into_text(self):
+        values = [
+            ["Strategy", "2026-07-16"],
+            ["Renko Strategy [LIVE]", ""],
+            ["EMA Strategy [MIXED]", ""],
+            ["Renko Strategy", ""],
+        ]
+        pnl_by_day = {
+            "2026-07-16": {
+                "Renko": {"pnl": 100.0, "mode": "LIVE"},
+                "EMA": {"pnl": -25.0, "mode": "MIXED"},
+            }
+        }
+
+        updates, unmatched = master_file._compute_pnl_sheet_updates(
+            values, pnl_by_day, "2026-07-16"
+        )
+
+        self.assertEqual(updates, [(1, 1, 100.0), (2, 1, -25.0)])
+        self.assertEqual(unmatched, [])
 
 
 class TestStrategyEnvPrefixMap(unittest.TestCase):

@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import io
 import json
 import sys
 import threading
 import time
+import zipfile
 from dataclasses import FrozenInstanceError
+from datetime import date
 from pathlib import Path
 from types import ModuleType
 
+import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,6 +127,50 @@ def test_order_result_rejects_semantically_contradictory_statuses(
 
 
 @pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("requested_quantity", True, "requested_quantity"),
+        ("requested_quantity", 75.5, "requested_quantity"),
+        ("filled_quantity", -1, "filled_quantity"),
+        ("remaining_quantity", "50", "remaining_quantity"),
+        ("status", "FILLED", "OrderStatus"),
+    ],
+)
+def test_order_result_rejects_malformed_direct_fields(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    contract = _contract_module()
+    kwargs: dict[str, object] = {
+        "order_id": "BROKEN",
+        "requested_quantity": 75,
+        "filled_quantity": 25,
+        "remaining_quantity": 50,
+        "status": contract.OrderStatus.PARTIAL,
+        "broker_state": "OPEN",
+        "reason": "malformed direct construction",
+    }
+    kwargs[field] = value
+    with pytest.raises(ValueError, match=message):
+        contract.OrderResult(**kwargs)
+
+
+def test_order_result_rejects_fill_larger_than_request() -> None:
+    contract = _contract_module()
+    with pytest.raises(ValueError, match="cannot exceed"):
+        contract.OrderResult(
+            order_id="BROKEN",
+            requested_quantity=75,
+            filled_quantity=100,
+            remaining_quantity=0,
+            status=contract.OrderStatus.UNKNOWN,
+            broker_state="OPEN",
+            reason="impossible fill",
+        )
+
+
+@pytest.mark.parametrize(
     ("broker_state", "filled", "expected"),
     [
         ("REJECTED", 0, "REJECTED"),
@@ -170,6 +218,88 @@ def test_malformed_quantity_normalizes_to_unknown_instead_of_rejected() -> None:
     assert result.filled_quantity == 0
     assert result.remaining_quantity == 75
     assert "malformed" in result.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("requested", "filled"),
+    [
+        (True, 0),
+        (-1, 0),
+        ("75.5", 0),
+        (75, True),
+        (75, -1),
+        (75, 76),
+    ],
+)
+def test_quantity_normalization_rejects_nonexact_or_impossible_values(
+    requested: object,
+    filled: object,
+) -> None:
+    contract = _contract_module()
+    result = contract.normalize_order_result(
+        order_id=None,
+        requested_quantity=requested,
+        filled_quantity=filled,
+        broker_state=None,
+    )
+    assert result.status is contract.OrderStatus.UNKNOWN
+    assert result.order_id == ""
+    assert "malformed" in result.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("state", "filled", "expected", "reason_fragment"),
+    [
+        ("PARTIAL", 25, "PARTIAL", "partial fill"),
+        ("PARTIAL", 0, "UNKNOWN", "terminal order outcome"),
+        ("COMPLETE", 75, "FILLED", "requested quantity filled"),
+        ("REJECTED", 0, "REJECTED", "terminal rejection"),
+    ],
+)
+def test_normalization_supplies_status_specific_default_reasons(
+    state: str,
+    filled: int,
+    expected: str,
+    reason_fragment: str,
+) -> None:
+    contract = _contract_module()
+    result = contract.normalize_order_result(
+        order_id="ORDER",
+        requested_quantity=75,
+        filled_quantity=filled,
+        broker_state=state,
+    )
+    assert result.status.name == expected
+    assert reason_fragment in result.reason.lower()
+
+
+def test_open_snapshot_types_reuse_contract_invariants() -> None:
+    contract = _contract_module()
+    with pytest.raises(ValueError, match="remaining_quantity"):
+        contract.OpenOrder(
+            order_id="OPEN-1",
+            symbol="NIFTY",
+            side="BUY",
+            requested_quantity=75,
+            filled_quantity=25,
+            remaining_quantity=75,
+            broker_state="OPEN",
+        )
+    with pytest.raises(ValueError, match="integer"):
+        contract.OpenPosition(
+            symbol="NIFTY",
+            quantity=True,
+            product_type="MIS",
+        )
+
+
+def test_indeterminate_query_uses_safe_defaults() -> None:
+    contract = _contract_module()
+    result = contract.BrokerQueryResult.indeterminate(" ", broker_state=" timed-out ")
+    assert result.items == ()
+    assert result.is_indeterminate is True
+    assert result.reason == "Broker query outcome is indeterminate."
+    assert result.broker_state == "timed-out"
 
 
 def test_query_failure_cannot_masquerade_as_a_successful_empty_list() -> None:
@@ -1983,6 +2113,502 @@ def test_kotak_recovery_waits_for_every_abandoned_sdk_future(
     while not first_future.done() and time.monotonic() < deadline:
         time.sleep(0.005)
     assert client.recover_after_reconciliation() is True
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (True, None),
+        ("bad", None),
+        (1.5, None),
+        (float("inf"), None),
+        ("75", 75),
+    ],
+)
+def test_broker_quantity_helpers_require_exact_finite_integers(
+    shoonya_module: ModuleType,
+    kotak_module: ModuleType,
+    flattrade_module: ModuleType,
+    value: object,
+    expected: int | None,
+) -> None:
+    """Each adapter rejects rounded or boolean quantities at its own boundary."""
+
+    assert shoonya_module._exact_int(value) == expected
+    assert kotak_module._exact_int(value) == expected
+    assert flattrade_module._exact_int(value) == expected
+
+
+def test_shoonya_login_success_and_missing_credentials_fail_closed(
+    shoonya_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Login accepts only a typed Ok response and never keeps a half-session."""
+
+    captured: dict[str, object] = {}
+
+    class LoginNoren:
+        def login(self, **kwargs):
+            captured.update(kwargs)
+            return {"stat": "Ok", "uname": "Test Trader"}
+
+    for name, value in {
+        "SHOONYA_USERID": "USER",
+        "SHOONYA_PASSWORD": "PASSWORD",
+        "SHOONYA_VENDOR_CODE": "VENDOR",
+        "SHOONYA_API_SECRET": "SECRET",
+        "SHOONYA_TOTP_SECRET": "TOTP-SEED",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(shoonya_module, "NorenApi", LoginNoren)
+    client = shoonya_module.ShoonyaExecutionClient()
+    monkeypatch.setattr(client, "_generate_totp", lambda _secret: "123456")
+
+    assert client.ensure_logged_in() is True
+    assert client.ensure_logged_in() is True
+    assert client.is_logged_in is True
+    assert captured["twoFA"] == "123456"
+
+    for name in (
+        "SHOONYA_USERID",
+        "SHOONYA_PASSWORD",
+        "SHOONYA_VENDOR_CODE",
+        "SHOONYA_API_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    missing = shoonya_module.ShoonyaExecutionClient()
+    assert missing.ensure_logged_in() is False
+    assert missing.client is None
+
+
+def test_shoonya_blank_totp_and_rejected_login_clear_session(
+    shoonya_module: ModuleType,
+    monkeypatch,
+) -> None:
+    class RejectedNoren:
+        def login(self, **_kwargs):
+            return {"stat": "Not_Ok", "emsg": "bad credentials"}
+
+    for name, value in {
+        "SHOONYA_USERID": "USER",
+        "SHOONYA_PASSWORD": "PASSWORD",
+        "SHOONYA_VENDOR_CODE": "VENDOR",
+        "SHOONYA_API_SECRET": "SECRET",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("SHOONYA_TOTP_SECRET", raising=False)
+
+    blank = shoonya_module.ShoonyaExecutionClient()
+    monkeypatch.setattr(blank, "_prompt_totp", lambda: "")
+    assert blank.ensure_logged_in() is False
+
+    monkeypatch.setenv("SHOONYA_TOTP_SECRET", "SEED")
+    monkeypatch.setattr(shoonya_module, "NorenApi", RejectedNoren)
+    rejected = shoonya_module.ShoonyaExecutionClient()
+    monkeypatch.setattr(rejected, "_generate_totp", lambda _secret: "123456")
+    assert rejected.ensure_logged_in() is False
+    assert rejected.client is None
+
+
+def test_shoonya_scrip_master_and_symbol_resolution_are_cached(
+    shoonya_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """The official master validates exact contracts without later downloads."""
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr(
+            "NFO_symbols.txt",
+            "Exchange,Token,LotSize,Symbol,TradingSymbol\n"
+            "NFO,1,75,NIFTY,NIFTY16JUL26C22500\n",
+        )
+
+    class Response:
+        content = archive.getvalue()
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    client = _ready_shoonya_client(
+        shoonya_module,
+        monkeypatch,
+        _FakeNorenClient(),
+    )
+    monkeypatch.setattr(shoonya_module.requests, "get", lambda *args, **kwargs: Response())
+
+    assert client.preload_scrip_master() is True
+    assert client.preload_scrip_master() is True
+    symbol = client.resolve_option_symbol("nifty", date(2026, 7, 16), "ce", 22500)
+    assert symbol == "NIFTY16JUL26C22500"
+    assert client.resolve_option_symbol("NIFTY", date(2026, 7, 16), "CE", 22500) == symbol
+    assert client.resolve_option_symbol("NIFTY", date(2026, 7, 16), "PE", 22500) == ""
+    assert client.resolve_option_symbol("NIFTY", None, "CE", 22500) == ""
+    assert client.resolve_option_symbol("NIFTY", "not-a-date", "CE", 22500) == ""
+    assert client.resolve_option_symbol("NIFTY", date(2026, 7, 16), "XX", 22500) == ""
+
+
+def test_shoonya_logout_and_recursive_order_id_extraction(
+    shoonya_module: ModuleType,
+) -> None:
+    client = shoonya_module.ShoonyaExecutionClient()
+    assert client.logout()["State"] == "NOT_OK"
+    assert client.extract_order_id({"data": [{"norenordno": "SH-NESTED"}]}) == "SH-NESTED"
+    assert client.extract_order_id([{"none": 0}, " SH-STRING "]) == "SH-STRING"
+    assert client.extract_order_id(123) == ""
+
+    class LogoutNoren:
+        @staticmethod
+        def logout():
+            return "bye"
+
+    client.client = LogoutNoren()
+    client.is_logged_in = True
+    assert client.logout() == {"State": "OK", "message": "bye"}
+    assert client.client is None
+    assert client.is_logged_in is False
+
+
+def test_kotak_login_success_normalizes_mobile_and_validates_two_factor(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Configuration:
+        edit_token = "trade-token"
+        edit_sid = "trade-session"
+        serverId = "server"
+        base_url = "https://example.invalid"
+        data_center = "dc"
+
+    class LoginNeo:
+        def __init__(self, **kwargs):
+            captured["constructor"] = kwargs
+            self.configuration = Configuration()
+
+        def totp_login(self, **kwargs):
+            captured["login"] = kwargs
+            return {"stat": "Ok"}
+
+        def totp_validate(self, **kwargs):
+            captured["validate"] = kwargs
+            return {"stat": "Ok"}
+
+    for name, value in {
+        "CONSUMER_KEY": "CONSUMER",
+        "MOBILE": "98765-43210",
+        "MPIN": "123456",
+        "UCC": "UCC123",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("COSNSUMER_KEY", raising=False)
+    monkeypatch.setattr(kotak_module, "NeoAPI", LoginNeo)
+    client = kotak_module.KotakExecutionClient()
+    monkeypatch.setattr(client, "_prompt_totp", lambda: "654321")
+
+    assert client.ensure_logged_in() is True
+    assert client.ensure_logged_in() is True
+    assert captured["login"]["mobile_number"] == "+919876543210"
+    assert captured["validate"] == {"mpin": "123456"}
+    assert kotak_module.KotakExecutionClient._normalize_mobile("919876543210") == "+919876543210"
+    assert kotak_module.KotakExecutionClient._normalize_mobile("+919876543210") == "+919876543210"
+    assert kotak_module.KotakExecutionClient._normalize_mobile("unexpected") == "unexpected"
+
+
+def test_kotak_login_rejects_missing_credentials_and_incomplete_two_factor(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    for name in ("COSNSUMER_KEY", "CONSUMER_KEY", "MOBILE", "MPIN", "UCC"):
+        monkeypatch.delenv(name, raising=False)
+    assert kotak_module.KotakExecutionClient().ensure_logged_in() is False
+
+    class Configuration:
+        edit_token = ""
+        edit_sid = ""
+
+    class IncompleteNeo:
+        def __init__(self, **_kwargs):
+            self.configuration = Configuration()
+
+        @staticmethod
+        def totp_login(**_kwargs):
+            return {"stat": "Ok"}
+
+        @staticmethod
+        def totp_validate(**_kwargs):
+            return {"stat": "Not_Ok"}
+
+    for name, value in {
+        "CONSUMER_KEY": "CONSUMER",
+        "MOBILE": "9876543210",
+        "MPIN": "123456",
+        "UCC": "UCC123",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(kotak_module, "NeoAPI", IncompleteNeo)
+    incomplete = kotak_module.KotakExecutionClient()
+    monkeypatch.setattr(incomplete, "_prompt_totp", lambda: "654321")
+    assert incomplete.ensure_logged_in() is False
+    assert incomplete.client is None
+
+
+def test_kotak_scrip_master_resolution_and_miss_diagnostics(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    expiry = date(2026, 7, 16)
+    encoded_expiry = int(
+        (pd.Timestamp(expiry) - pd.to_timedelta(315511200, unit="s")).timestamp()
+    )
+
+    class ScripKotak(_FakeKotakSdk):
+        @staticmethod
+        def scrip_master(exchange_segment):
+            assert exchange_segment == "nse_fo"
+            return "https://example.invalid/nfo.csv"
+
+    class Response:
+        text = (
+            "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
+            f"{encoded_expiry},NIFTY,CE,2250000,NIFTY26JUL22500CE\n"
+        )
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    client = _ready_kotak_client(kotak_module, monkeypatch, ScripKotak())
+    monkeypatch.setattr(kotak_module.requests, "get", lambda *args, **kwargs: Response())
+
+    assert client.preload_scrip_master() is True
+    assert client.preload_scrip_master() is True
+    symbol = client.resolve_option_symbol("nifty", expiry, "ce", 22500)
+    assert symbol == "NIFTY26JUL22500CE"
+    assert client.resolve_option_symbol("NIFTY", expiry, "CE", 22500) == symbol
+    assert client.resolve_option_symbol("NIFTY", expiry, "PE", 22500) == ""
+    assert client.resolve_option_symbol("NIFTY", None, "CE", 22500) == ""
+    assert client.resolve_option_symbol("NIFTY", "not-a-date", "CE", 22500) == ""
+    assert kotak_module.KotakExecutionClient._match_in_df(None, "NIFTY", "CE", "", 1) == ""
+
+
+def test_kotak_logout_and_recursive_order_id_extraction(
+    kotak_module: ModuleType,
+) -> None:
+    client = kotak_module.KotakExecutionClient()
+    assert client.logout()["State"] == "NOT_OK"
+    assert client.extract_order_id({"data": [{"nOrdNo": "KT-NESTED"}]}) == "KT-NESTED"
+    assert client.extract_order_id([{"none": 0}, " KT-STRING "]) == "KT-STRING"
+    assert client.extract_order_id(123) == ""
+
+    class LogoutKotak:
+        @staticmethod
+        def logout():
+            return "bye"
+
+    client.client = LogoutKotak()
+    client.is_logged_in = True
+    assert client.logout() == {"State": "OK", "message": "bye"}
+    assert client.client is None
+
+
+def _flattrade_master_fixture() -> pd.DataFrame:
+    """Return one valid and one filtered-out Flattrade catalogue row."""
+
+    return pd.DataFrame(
+        {
+            "Exchange": ["NFO", "NSE"],
+            "Lotsize": ["75", "1"],
+            "Symbol": ["NIFTY", "NIFTY"],
+            "Tradingsymbol": ["NIFTY16JUL26C22500", "NIFTY-SPOT"],
+            "Expiry": ["16-JUL-2026", "16-JUL-2026"],
+            "Strike": ["22500.00", "0"],
+            "Optiontype": ["CE", "XX"],
+        }
+    )
+
+
+def test_flattrade_env_parsing_session_validation_and_login_fast_path(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MAT_TEST_QUOTED", "' value '")
+    monkeypatch.setenv("MAT_TEST_BAD_INT", "bad")
+    monkeypatch.setenv("MAT_TEST_NEGATIVE", "-1")
+    assert flattrade_module._env_str("MAT_TEST_QUOTED") == "value"
+    assert flattrade_module._env_str("MAT_TEST_MISSING", "fallback") == "fallback"
+    assert flattrade_module._env_non_negative_int("MAT_TEST_BAD_INT", 3) == 3
+    assert flattrade_module._env_non_negative_int("MAT_TEST_NEGATIVE", 3) == 3
+
+    client = flattrade_module.FlattradeExecutionClient()
+    client._client_id = "CLIENT"
+    client._access_token = "TOKEN"
+    monkeypatch.setattr(
+        client,
+        "_post_api",
+        lambda *_args, **_kwargs: {
+            "stat": "Ok",
+            "actid": "ACCOUNT",
+            "exarr": ["NFO"],
+        },
+    )
+    assert client._validate_session_locked() is True
+    assert client._account_id == "ACCOUNT"
+
+    monkeypatch.setenv("FLATTRADE_CLIENT_ID", "CLIENT")
+    monkeypatch.setenv("FLATTRADE_ACCESS_TOKEN", "TOKEN")
+    login = flattrade_module.FlattradeExecutionClient()
+    monkeypatch.setattr(login, "_validate_session_locked", lambda: True)
+    assert login.ensure_logged_in() is True
+    assert login.ensure_logged_in() is True
+
+
+def test_flattrade_browser_token_exchange_is_validated_before_login(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """The interactive flow hashes the secret and accepts only a validated token."""
+
+    captured: dict[str, object] = {}
+
+    class Response:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, str]:
+            return {"status": "Ok", "token": "DAILY-TOKEN", "client": "CLIENT"}
+
+    class Session:
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            captured["timeout"] = kwargs["timeout"]
+            return Response()
+
+    for name, value in {
+        "FLATTRADE_CLIENT_ID": "CLIENT",
+        "FLATTRADE_API_KEY": "API-KEY",
+        "FLATTRADE_API_SECRET": "API-SECRET",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("FLATTRADE_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "REQUEST-CODE")
+    monkeypatch.setattr(flattrade_module.webbrowser, "open", lambda _url: True)
+
+    client = flattrade_module.FlattradeExecutionClient()
+    monkeypatch.setattr(client, "_ensure_session_locked", lambda: Session())
+    monkeypatch.setattr(client, "_validate_session_locked", lambda: True)
+
+    assert client.ensure_logged_in() is True
+    assert client._access_token == "DAILY-TOKEN"
+    expected_digest = flattrade_module.hashlib.sha256(
+        b"API-KEYREQUEST-CODEAPI-SECRET"
+    ).hexdigest()
+    assert captured["json"] == {
+        "api_key": "API-KEY",
+        "request_code": "REQUEST-CODE",
+        "api_secret": expected_digest,
+    }
+
+
+def test_flattrade_login_rejects_missing_identity_or_authorization_inputs(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    for name in (
+        "FLATTRADE_CLIENT_ID",
+        "FLATTRADE_ACCESS_TOKEN",
+        "FLATTRADE_API_KEY",
+        "FLATTRADE_API_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert flattrade_module.FlattradeExecutionClient().ensure_logged_in() is False
+
+    monkeypatch.setenv("FLATTRADE_CLIENT_ID", "CLIENT")
+    assert flattrade_module.FlattradeExecutionClient().ensure_logged_in() is False
+
+    monkeypatch.setenv("FLATTRADE_API_KEY", "API-KEY")
+    monkeypatch.setenv("FLATTRADE_API_SECRET", "API-SECRET")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    assert flattrade_module.FlattradeExecutionClient().ensure_logged_in() is False
+
+
+def test_flattrade_downloads_and_caches_the_official_scrip_master(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    csv_text = _flattrade_master_fixture().to_csv(index=False)
+
+    class Response:
+        text = csv_text
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        calls = 0
+
+        def get(self, _url, **_kwargs):
+            self.calls += 1
+            return Response()
+
+    session = Session()
+    client = _ready_flattrade_client(flattrade_module, monkeypatch)
+    client.client = session
+    assert client.preload_scrip_master() is True
+    assert client.preload_scrip_master() is True
+    assert session.calls == 1
+    assert client._scrip_df is not None
+    assert len(client._scrip_df) == 1
+
+
+def test_flattrade_scrip_preparation_resolution_and_logout(
+    flattrade_module: ModuleType,
+    monkeypatch,
+) -> None:
+    with pytest.raises(ValueError, match="missing columns"):
+        flattrade_module.FlattradeExecutionClient._prepare_scrip_master(pd.DataFrame())
+    unusable = _flattrade_master_fixture()
+    unusable["Exchange"] = "NSE"
+    with pytest.raises(ValueError, match="no usable NFO"):
+        flattrade_module.FlattradeExecutionClient._prepare_scrip_master(unusable)
+
+    prepared = flattrade_module.FlattradeExecutionClient._prepare_scrip_master(
+        _flattrade_master_fixture()
+    )
+    assert len(prepared) == 1
+    client = _ready_flattrade_client(flattrade_module, monkeypatch)
+    client._scrip_df = prepared
+    assert (
+        client.resolve_option_symbol("nifty", date(2026, 7, 16), "ce", 22500)
+        == "NIFTY16JUL26C22500"
+    )
+    assert (
+        client.resolve_option_symbol("NIFTY", date(2026, 7, 16), "CE", 22500)
+        == "NIFTY16JUL26C22500"
+    )
+    assert client.resolve_option_symbol("NIFTY", date(2026, 7, 16), "PE", 22500) == ""
+    assert client.resolve_option_symbol("NIFTY", "bad-date", "CE", "bad") == ""
+    assert client.resolve_option_symbol("NIFTY", date(2026, 7, 16), "CE", 22500, "NSE") == ""
+
+    class Session:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    session = Session()
+    client.client = session
+    result = client.logout()
+    assert result["stat"] == "Ok"
+    assert session.closed is True
+    assert client.is_logged_in is False
+    assert client._access_token == ""
 
 
 _DIAGNOSTIC_PATHS = (

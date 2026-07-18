@@ -132,3 +132,32 @@ ignore_missing_imports = true
 # The vendored Shoonya SDK is third-party code; type-check our wrappers, not it.
 module = ["NorenApi"]
 ignore_errors = true
+
+[tool.coverage.run]
+# Measure branch exits as well as statements. ``thread`` matters because the
+# master runner and several fault-injection tests execute safety paths in worker
+# threads. Relative paths keep the JSON report identical on Windows and Linux.
+branch = true
+relative_files = true
+concurrency = ["thread"]
+source = ["."]
+omit = [
+    "*/test_*.py",
+    "*/tests/*",
+    "Backtest Outputs/*",
+    "My Backtest Files (For Reference)/*",
+    "Dependencies/Shoonya API/NorenApi.py",
+]
+
+[tool.coverage.report]
+# MAT-110 measured the branch-enabled runtime baseline before installing this
+# gate. Per-module 90%/80% budgets are enforced from coverage.json by the small
+# policy script because Coverage.py has only one global fail-under setting.
+fail_under = 54.7
+precision = 1
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

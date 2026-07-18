@@ -44,14 +44,18 @@ One process, cooperating threads:
   (best-effort alerts; never blocks trading).
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
   **`execution_client`** (see Broker layer). On a clean end-of-day, per-strategy P&L is written to a
-  Google Sheet. All behaviour is driven by a single `.env` — nothing is hard-coded per run.
+  Google Sheet with separate PAPER/LIVE/MIXED row labels. All behaviour is driven by a single `.env`
+  — nothing is hard-coded per run.
 
 ## Repository layout
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose
 test_nifty_multi_strategy_master.py                # unittest suite for the master
-requirements.txt                                   # core deps (+ commented optional broker/ML deps)
+requirements.txt                                   # exact core runtime dependencies
+requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
+requirements-ai.txt                                # exact optional Claude Agent SDK stack
+requirements-dev.txt                               # exact local/CI quality tools
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
 Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/,
@@ -65,6 +69,7 @@ Dependencies/
                     test_flattrade_execution.py
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
+scripts/check_coverage_thresholds.py               # branch-coverage policy gate
 Backtest Outputs/                                  # generated CSVs/logs (gitignored)
 ```
 
@@ -103,10 +108,21 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
 - **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
   mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
   under `Signal Generators/`.
-- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):** the two test suites plus
-  `python -m ruff check .`, `python -m mypy` (scoped in `pyproject.toml` — the spaced-name master is
-  covered by `compileall` + tests instead), `python -m compileall -q .`, and `python -m bandit` per the
-  CI workflow. Dev tools install via `pip install -r requirements-dev.txt`.
-- **Dependencies:** `pip install -r requirements.txt`; optional broker/ML extras are documented (commented) inside it.
-- **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with the
-  `Co-Authored-By: Claude <noreply@anthropic.com>` trailer. `.env`, `Backtest Outputs/`, and `*.log` stay gitignored.
+- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):**
+  `python -m unittest test_nifty_multi_strategy_master`,
+  `python -m unittest test_market_data_health`,
+  `python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q`,
+  the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
+  pip-audit of committed pins locally plus the clean resolved CI environment,
+  Ruff, mypy, compileall,
+  Bandit, and pre-commit. Coverage floors are 54.7% overall, 90% for new
+  execution/reconciliation/data-safety modules, and 80% per broker adapter.
+- **Dependencies:** install core with `pip install -r requirements.txt`; add
+  `requirements-ai.txt` for SL Hunting and `requirements-dev.txt` for local
+  gates. `requirements-brokers.txt` is the isolated upstream compatibility
+  environment and must not be combined with core because Kotak pins older
+  pandas/requests; use the safe per-broker commands in README. Kotak v2 comes
+  from its official `v2.0.1` Git tag.
+- **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with a
+  `Co-Authored-By:` trailer identifying the agent that produced the change. `.env`,
+  `Backtest Outputs/`, and `*.log` stay gitignored.
