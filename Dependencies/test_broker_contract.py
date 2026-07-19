@@ -17,7 +17,7 @@ import importlib.util
 import io
 import json
 import re
-import subprocess
+import subprocess  # nosec B404 - used only to import this repo's own adapters
 import sys
 import threading
 import time
@@ -445,7 +445,9 @@ def test_adapter_imports_under_its_diagnostic_search_path(
         f"import {module_name}\n"
         "print('IMPORT OK')\n"
     )
-    completed = subprocess.run(
+    # nosec B603 - argv is [sys.executable, "-c", <literal built from ROOT and a
+    # hard-coded parametrize entry>]; no shell, and no external input reaches it.
+    completed = subprocess.run(  # nosec B603
         [sys.executable, "-c", probe],
         cwd=ROOT,
         capture_output=True,
