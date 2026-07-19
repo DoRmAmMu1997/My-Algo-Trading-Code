@@ -307,3 +307,26 @@ def test_system_prompt_has_v3m_gift_gap_and_loss_flip_knowledge():
     # (assert wrap-independent fragments, not exact line breaks).
     assert "LOSING side" in prompt and "whipsaw" in prompt
     assert "POST-LOSS SPEED LIMIT" in prompt
+
+
+def test_system_prompt_has_v3n_closed_chart_knowledge():
+    """v3n: 19 Jul closed-chart lecture (IH's week review + self-diagnosed loss).
+
+    - RECRUITMENT HISTORY: two near-identical charts demand OPPOSITE plans, because a
+      first reversal-type move recruits nobody while the SECOND consecutive
+      same-direction day seats the crowd.
+    - ONE BREAKDOWN, NOT TWO: the rule whose absence cost IH the 17 Jul trade — after
+      one level break the next rarely breaks; sellers are likely seated and buyers are
+      definitely evicted.
+    - The CLOSING-POINT HOLD TEST's "held beyond" arm now requires real MOMENTUM: a
+      break that idles for hours seats nobody (a correction to v3l).
+    """
+    prompt = build_system_prompt()
+    assert "RECRUITMENT HISTORY, NOT CHART SHAPE" in prompt
+    assert "ONE BREAKDOWN, NOT TWO" in prompt
+    # The recruitment law, wrap-independent.
+    assert "SECOND" in prompt and "consecutive same-direction day" in prompt
+    # The asymmetric fallback: a breakdown always evicts the buyers.
+    assert "buyers are never" in prompt
+    # The v3l correction: break-and-held only seats a crowd if momentum followed.
+    assert "produced actual MOMENTUM" in prompt

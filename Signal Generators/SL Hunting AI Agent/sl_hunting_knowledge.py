@@ -160,6 +160,11 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   * BROKE it and held beyond → that crowd is SEATED overnight with live SLs. They are
     huntable: expect a rejection and a move back THROUGH their stops (the textbook
     hunt — after a down-break that held, look UP).
+    BUT the break must have produced actual MOMENTUM to seat anyone. A level that was
+    broken and then went NOWHERE — price idling beyond it for a couple of hours with
+    no follow-through — seats NOBODY: whoever took that break either never committed
+    size or left while it stalled. "Broken and held" without momentum is the
+    no-inventory case below, not this one.
   * Did NOT break it (price rejected but stalled at/above the closing point, often
     hovering there a long time) → whoever traded that move BOOKED the momentum and
     LEFT; they did not carry the position overnight. There is NO inventory to hunt,
@@ -168,6 +173,20 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
     trade, not the hunt up).
   The level does the work here: an unbroken closing point means the crowd never got
   the confirmation it needed to hold, so its SLs never came into being.
+- ONE BREAKDOWN, NOT TWO (a structural read on where the crowd ended up): once price
+  has broken ONE significant level, it does NOT normally break the NEXT level straight
+  after — the second break is the low-probability path. Two inferences follow, and the
+  weaker one is still usable:
+  * The breakdown itself RECRUITS the other side: as price broke down and kept
+    grinding lower with retracements, sellers joined progressively, so they are likely
+    SEATED with live SLs → treat them as the huntable crowd (gap-up or gap-down →
+    buy-side setups; flat → go with the selling).
+  * Even if you are unsure they seated, a breakdown has DEFINITELY evicted the buyers —
+    they were stopped out or scared off. So after a level breakdown, buyers are never
+    the target. When in doubt about who is seated, this asymmetry alone rules out the
+    buyer-hunt.
+  Read it with TRAP-DENSITY (which sizes the move) rather than against it: this says
+  WHO ended up positioned and where the next break is unlikely, not how far price ran.
 - TARGET-BOOKED crowd test: before hunting yesterday's crowd, ask whether the prior
   move already paid them and let them exit. Breakdown + retracement + continuation
   often means put buyers / sellers already booked profit; they are not today's
@@ -178,6 +197,23 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   the old crowd may be profit-booked, already trapped, or too far away to hunt. In
   that case, follow the NEW chart: identify who is being recruited now, where their
   fresh SLs sit, and whether the current move is building a fresh trap.
+- RECRUITMENT HISTORY, NOT CHART SHAPE (this is the TEST that PREVIOUS-CHART LINKAGE
+  asks for): two days can print an almost IDENTICAL chart — same gap direction, near
+  identical points — and still demand OPPOSITE plans, because what matters is not the
+  shape but whether the prior move actually RECRUITED a crowd:
+  * Prior chart was NEGATIVE and then REVERSED up → buyers could NOT participate in
+    that move (it ran against the prevailing mood and turned too suddenly for them to
+    join) → there is NO buyer inventory → flat / gap-down is a BUY setup.
+  * Prior chart was ALREADY POSITIVE and went positive AGAIN (a second consecutive
+    with-trend day) → now traders gain confidence and start taking risk on the long
+    side → buyer inventory EXISTS → flat / gap-down is a SELL setup (target those
+    buyers); on a gap-up they are already in profit and cannot be targeted, so go WITH
+    the market instead.
+  The general law: a FIRST, reversal-type move recruits nobody — it is the SECOND
+  consecutive same-direction day that seats the crowd. So never carry yesterday's plan
+  forward just because today's chart "looks the same"; re-derive who was recruited.
+  (This is the principle underneath the two-day AVERAGING TRAP trigger above, which is
+  its gap-down-specific case.)
 - WEEKEND / HOLIDAY CARRY-RISK: before a Friday close, weekend, or multi-day market
   holiday, large retail inventory may be absent or reduced because traders avoid
   overnight/news risk. Do not hunt a crowd that likely exited or never entered; use
