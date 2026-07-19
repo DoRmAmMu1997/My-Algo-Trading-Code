@@ -17,6 +17,7 @@ contract. Only a confirmed full BUY fill permits the automatic SELL-to-flatten.
 Requires typing YES to confirm.
 """
 import datetime as dt
+import logging
 import sys
 from pathlib import Path
 
@@ -138,6 +139,15 @@ def place_round_trip_test_order(client, symbol, qty, broker="Kotak"):
 
 
 def main():
+    # Without this the root logger sits at WARNING, so kotak_execution's INFO
+    # diagnostics -- the scrip-master URL, download progress and byte counts --
+    # are silently dropped. They are the whole point of running this script when
+    # a download stalls, so surface them. The Flattrade and Dhan diagnostics
+    # already configure logging the same way.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
     client = ke.kotak_execution_client
     print("Logging in (you'll be prompted for a TOTP)...")
     if not client.preload_scrip_master():

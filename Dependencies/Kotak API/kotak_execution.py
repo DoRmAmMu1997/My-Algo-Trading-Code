@@ -502,58 +502,27 @@ class KotakExecutionClient:
                 f"data_center={getattr(cfg, 'data_center', None)!r}"
             )
             if not server_id:
-                log.warning(
-                    "Kotak login returned NO serverId (hsServerId). The order "
-                    "endpoint needs Auth+Sid+serverId, so order placement will be rejected "
-                    "as 'unauthorized' (data + scrip lookups still work via consumer_key). "
-                    "This usually means the account/API key is not enabled for live order "
-                    "placement - check Trade API order permission / F&O segment with Kotak."
+                # An empty hsServerId does NOT block order placement, contrary
+                # to what an earlier version of this warning asserted (it told
+                # operators to go ask Kotak for order permissions they already
+                # had).  Measured against a live account returning hsServerId "":
+                #
+                #   * limits() -- a REST call that sends the SAME ``sId`` query
+                #     parameter as place_order -- returned stCode 200 / stat Ok.
+                #   * place_order reached Kotak's OMS and was rejected with
+                #     stCode 1041 "Last Traded Price (LTP) not available for
+                #     this instrument", i.e. a market-microstructure refusal
+                #     outside trading hours, NOT an authorization failure.
+                #
+                # hsServerId feeds ``NeoWebSocket(sid, token, server_id,
+                # data_center)`` -- the HS streaming socket, which this
+                # REST-only adapter never opens.  So this is informational and
+                # would only matter if live streaming were added later.
+                log.info(
+                    "Kotak login returned an empty serverId (hsServerId). REST "
+                    "order placement is unaffected: it is the HS streaming "
+                    "socket that needs it, and this adapter never opens one."
                 )
-                # Show WHAT Kotak actually sent. Until now these two responses
-                # were logged only when 2FA failed outright, so this exact case
-                # -- 2FA fine, serverId missing -- discarded the only evidence
-                # that could explain why. Everything goes through
-                # ``redact_payload`` first: tokens, session ids and the supplied
-                # credentials never reach the log.
-                secrets = (mobile, ucc, mpin, totp, consumer_key)
-                log.warning(
-                    "  totp_login    -> %s", redact_payload(login_resp, secrets)
-                )
-                log.warning(
-                    "  totp_validate -> %s", redact_payload(validate_resp, secrets)
-                )
-                log.warning(
-                    "  configuration fields present: %s",
-                    sorted(
-                        name
-                        for name in dir(cfg)
-                        if not name.startswith("_")
-                        and not callable(getattr(cfg, name, None))
-                    ),
-                )
-                # Turn the "orders will be rejected" inference into evidence
-                # WITHOUT placing an order.  ``limits`` is a read-only call that
-                # authorizes with the very same ``sId`` query parameter as
-                # place_order, so if an empty serverId is genuinely fatal this
-                # fails the same way a real order would -- and if it succeeds,
-                # the assumption was wrong and worth revisiting.
-                try:
-                    limits_probe = self._sdk_call(
-                        "limits_sid_probe",
-                        lambda: self.client.limits(
-                            segment="ALL", exchange="ALL", product="ALL"
-                        ),
-                    )
-                except Exception as exc:
-                    log.warning(
-                        "  sId probe (limits, read-only) raised: %s",
-                        redact_text(str(exc), secrets),
-                    )
-                else:
-                    log.warning(
-                        "  sId probe (limits, read-only) -> %s",
-                        redact_payload(limits_probe, secrets),
-                    )
             return True
         except Exception as exc:
             # Reset state on any failure so a stale half-session never leaks.
