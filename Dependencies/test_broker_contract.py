@@ -2,6 +2,12 @@
 
 These tests stay entirely in memory.  They never construct a real broker
 session, enable a live-trading flag, or make a network request.
+
+One deliberate exception: ``test_adapter_imports_under_its_diagnostic_search_path``
+spawns a short-lived subprocess per adapter.  ``sys.path`` semantics cannot be
+tested faithfully in-process without polluting the running interpreter, and that
+search path is precisely what the test exists to pin down.  Those subprocesses
+still only import a module -- no session, no flag, no network.
 """
 
 from __future__ import annotations
@@ -10,6 +16,8 @@ import importlib
 import importlib.util
 import io
 import json
+import re
+import subprocess  # nosec B404 - used only to import this repo's own adapters
 import sys
 import threading
 import time
@@ -392,6 +400,73 @@ def test_execution_client_protocol_covers_reconciliation_surface() -> None:
             return {}
 
     assert isinstance(CompleteFakeClient(), contract.ExecutionClient)
+
+
+@pytest.mark.parametrize(
+    ("relative_dir", "module_name"),
+    [
+        ("Dependencies/Kotak API", "kotak_execution"),
+        ("Dependencies/Shoonya API", "shoonya_execution"),
+        ("Dependencies/Flattrade API", "flattrade_execution"),
+        ("Dependencies/Dhan API", "dhan_execution"),
+    ],
+)
+def test_adapter_imports_under_its_diagnostic_search_path(
+    relative_dir: str,
+    module_name: str,
+) -> None:
+    """Every adapter must import the way its sibling diagnostic launches it.
+
+    ``python <script>`` puts the SCRIPT's directory on ``sys.path[0]`` and never
+    the working directory.  So an adapter that reaches for ``Dependencies.<x>``
+    has to put the repo ROOT on the path itself -- adding only ``Dependencies``
+    is not enough, because that import needs the package's PARENT.
+
+    This is a regression guard: MAT-108 added
+    ``from Dependencies.secret_redaction import ...`` to the Kotak and Shoonya
+    adapters ABOVE their ``sys.path`` setup, which broke both diagnostics -- run
+    directly and through ``algo.py diagnose`` -- with "No module named
+    'Dependencies'".  The runner never noticed because it is launched from the
+    repo root, and no test imported an adapter under a diagnostic's search path.
+
+    A genuinely absent optional broker SDK is a different thing and is
+    tolerated: CI deliberately runs one job without ``dhanhq`` and another
+    without ``neo_api_client``.
+    """
+
+    # Rebuild the interpreter's search path exactly as `python <script>` would:
+    # the script's own directory first, with '' and the CWD removed so the repo
+    # root cannot leak in and mask the bug.
+    probe = (
+        "import os, sys\n"
+        "cwd = os.getcwd()\n"
+        f"sys.path[:] = [{str(ROOT / relative_dir)!r}]"
+        " + [p for p in sys.path if p not in ('', cwd)]\n"
+        f"import {module_name}\n"
+        "print('IMPORT OK')\n"
+    )
+    # nosec B603 - argv is [sys.executable, "-c", <literal built from ROOT and a
+    # hard-coded parametrize entry>]; no shell, and no external input reaches it.
+    completed = subprocess.run(  # nosec B603
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+
+    assert "No module named 'Dependencies'" not in output, (
+        f"{module_name} cannot import under its diagnostic's search path; the "
+        f"repo root is missing from sys.path.\n{output}"
+    )
+    if "IMPORT OK" in output:
+        return
+    absent_module = re.search(r"No module named '([\w.]+)'", output)
+    if absent_module is None:
+        pytest.fail(f"{module_name} failed to import:\n{output}")
+    pytest.skip(f"optional broker SDK {absent_module.group(1)!r} is not installed")
 
 
 @pytest.fixture(scope="module")
@@ -1528,6 +1603,35 @@ def test_vendored_noren_preserves_non_ok_payloads(
     assert positions == payload
 
 
+class _FakeStreamingResponse:
+    """Model a streamed ``requests`` response, not the old ``.text`` shape.
+
+    The Kotak scrip-master download streams so it can log how far a transfer
+    got before a deadline expired, which means the doubles have to support the
+    context-manager + ``iter_content`` protocol the real response provides.
+    """
+
+    encoding = "utf-8"
+
+    def __init__(self, body: str, chunk_size: int = 64) -> None:
+        self._payload = body.encode("utf-8")
+        self._chunk_size = chunk_size
+
+    def __enter__(self) -> _FakeStreamingResponse:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> bool:
+        return False
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_content(self, chunk_size: int = 0):
+        step = chunk_size or self._chunk_size
+        for start in range(0, len(self._payload), step):
+            yield self._payload[start : start + step]
+
+
 @pytest.fixture(scope="module")
 def kotak_module() -> ModuleType:
     """Return a private copy of the Kotak adapter; calls use behavioral fakes."""
@@ -1861,6 +1965,24 @@ def test_kotak_sdk_deadline_and_executor_are_fixed(
     assert client._sdk_executor._max_workers == 1
 
 
+def test_kotak_scrip_master_budget_is_separate_from_the_order_deadline(
+    kotak_module: ModuleType,
+) -> None:
+    """A bulk catalogue download must not be capped by the ORDER deadline.
+
+    Ten seconds exists so a live order can never go stale in flight.  The scrip
+    master is a multi-megabyte CSV fetched once, which is not that kind of call
+    -- holding it to the same budget made it time out on slower links and
+    disabled live trading for the whole session.  The two budgets are therefore
+    separate, and the order one must stay exactly ten seconds.
+    """
+
+    assert kotak_module._BROKER_DEADLINE_SECONDS == 10.0
+    assert kotak_module._SCRIP_MASTER_TIMEOUT_SECONDS > (
+        kotak_module._BROKER_DEADLINE_SECONDS
+    )
+
+
 def test_kotak_scrip_master_download_has_total_deadline(
     kotak_module: ModuleType,
     monkeypatch,
@@ -1874,21 +1996,19 @@ def test_kotak_scrip_master_download_has_total_deadline(
         def scrip_master(self, exchange_segment):
             return "https://example.invalid/nfo.csv"
 
-    class _SlowResponse:
-        text = (
+    def slow_get(*args, **kwargs):
+        started.set()
+        release.wait(0.5)
+        return _FakeStreamingResponse(
             "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
             "0,NIFTY,CE,2250000,NIFTY-TEST\n"
         )
 
-        def raise_for_status(self):
-            return None
-
-    def slow_get(*args, **kwargs):
-        started.set()
-        release.wait(0.5)
-        return _SlowResponse()
-
     client = _ready_kotak_client(kotak_module, monkeypatch, ScripKotak())
+    # The download runs on its own budget now, so shrink THAT one; the order
+    # deadline is shrunk too so a regression that reverts to it still trips
+    # this test rather than silently waiting 20s.
+    monkeypatch.setattr(kotak_module, "_SCRIP_MASTER_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(kotak_module, "_BROKER_DEADLINE_SECONDS", 0.05)
     monkeypatch.setattr(kotak_module.requests, "get", slow_get)
     results = []
@@ -2395,18 +2515,17 @@ def test_kotak_scrip_master_resolution_and_miss_diagnostics(
             assert exchange_segment == "nse_fo"
             return "https://example.invalid/nfo.csv"
 
-    class Response:
-        text = (
-            "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
-            f"{encoded_expiry},NIFTY,CE,2250000,NIFTY26JUL22500CE\n"
-        )
-
-        @staticmethod
-        def raise_for_status() -> None:
-            return None
+    csv_body = (
+        "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
+        f"{encoded_expiry},NIFTY,CE,2250000,NIFTY26JUL22500CE\n"
+    )
 
     client = _ready_kotak_client(kotak_module, monkeypatch, ScripKotak())
-    monkeypatch.setattr(kotak_module.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        kotak_module.requests,
+        "get",
+        lambda *args, **kwargs: _FakeStreamingResponse(csv_body),
+    )
 
     assert client.preload_scrip_master() is True
     assert client.preload_scrip_master() is True
