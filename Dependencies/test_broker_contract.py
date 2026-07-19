@@ -2,6 +2,12 @@
 
 These tests stay entirely in memory.  They never construct a real broker
 session, enable a live-trading flag, or make a network request.
+
+One deliberate exception: ``test_adapter_imports_under_its_diagnostic_search_path``
+spawns a short-lived subprocess per adapter.  ``sys.path`` semantics cannot be
+tested faithfully in-process without polluting the running interpreter, and that
+search path is precisely what the test exists to pin down.  Those subprocesses
+still only import a module -- no session, no flag, no network.
 """
 
 from __future__ import annotations
@@ -10,6 +16,8 @@ import importlib
 import importlib.util
 import io
 import json
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -392,6 +400,71 @@ def test_execution_client_protocol_covers_reconciliation_surface() -> None:
             return {}
 
     assert isinstance(CompleteFakeClient(), contract.ExecutionClient)
+
+
+@pytest.mark.parametrize(
+    ("relative_dir", "module_name"),
+    [
+        ("Dependencies/Kotak API", "kotak_execution"),
+        ("Dependencies/Shoonya API", "shoonya_execution"),
+        ("Dependencies/Flattrade API", "flattrade_execution"),
+        ("Dependencies/Dhan API", "dhan_execution"),
+    ],
+)
+def test_adapter_imports_under_its_diagnostic_search_path(
+    relative_dir: str,
+    module_name: str,
+) -> None:
+    """Every adapter must import the way its sibling diagnostic launches it.
+
+    ``python <script>`` puts the SCRIPT's directory on ``sys.path[0]`` and never
+    the working directory.  So an adapter that reaches for ``Dependencies.<x>``
+    has to put the repo ROOT on the path itself -- adding only ``Dependencies``
+    is not enough, because that import needs the package's PARENT.
+
+    This is a regression guard: MAT-108 added
+    ``from Dependencies.secret_redaction import ...`` to the Kotak and Shoonya
+    adapters ABOVE their ``sys.path`` setup, which broke both diagnostics -- run
+    directly and through ``algo.py diagnose`` -- with "No module named
+    'Dependencies'".  The runner never noticed because it is launched from the
+    repo root, and no test imported an adapter under a diagnostic's search path.
+
+    A genuinely absent optional broker SDK is a different thing and is
+    tolerated: CI deliberately runs one job without ``dhanhq`` and another
+    without ``neo_api_client``.
+    """
+
+    # Rebuild the interpreter's search path exactly as `python <script>` would:
+    # the script's own directory first, with '' and the CWD removed so the repo
+    # root cannot leak in and mask the bug.
+    probe = (
+        "import os, sys\n"
+        "cwd = os.getcwd()\n"
+        f"sys.path[:] = [{str(ROOT / relative_dir)!r}]"
+        " + [p for p in sys.path if p not in ('', cwd)]\n"
+        f"import {module_name}\n"
+        "print('IMPORT OK')\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+
+    assert "No module named 'Dependencies'" not in output, (
+        f"{module_name} cannot import under its diagnostic's search path; the "
+        f"repo root is missing from sys.path.\n{output}"
+    )
+    if "IMPORT OK" in output:
+        return
+    absent_module = re.search(r"No module named '([\w.]+)'", output)
+    if absent_module is None:
+        pytest.fail(f"{module_name} failed to import:\n{output}")
+    pytest.skip(f"optional broker SDK {absent_module.group(1)!r} is not installed")
 
 
 @pytest.fixture(scope="module")

@@ -73,13 +73,21 @@ from typing import Any
 import pandas as pd
 import requests
 
-from Dependencies.secret_redaction import redact_payload, redact_text
-
 # Make the broker-neutral contract importable when this helper is loaded by the
 # master and when the sibling diagnostic executes it as a standalone script.
+#
+# The REPO ROOT has to go on the path too, not just ``Dependencies``: the
+# redaction helpers below are imported as ``Dependencies.secret_redaction``,
+# which needs the package's PARENT directory.  The master already has it because
+# it is launched from the repo root, but ``python <script>`` puts the SCRIPT's
+# directory on ``sys.path[0]`` and never the working directory -- so the sibling
+# diagnostic (directly or via ``algo.py diagnose``) used to die on import with
+# "No module named 'Dependencies'".
 _DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
-if str(_DEPENDENCIES_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+_REPO_ROOT = _DEPENDENCIES_DIR.parent
+for _import_root in (_REPO_ROOT, _DEPENDENCIES_DIR):
+    if str(_import_root) not in sys.path:
+        sys.path.insert(0, str(_import_root))
 
 from broker_contract import (  # noqa: E402
     TERMINAL_BROKER_STATES,
@@ -90,6 +98,8 @@ from broker_contract import (  # noqa: E402
     OrderStatus,
     normalize_order_result,
 )
+
+from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
 # --- Make the downloaded "Kotak Neo API" SDK importable (if vendored) ---------
 # The SDK may live in a "Kotak Neo API" folder somewhere above this file, but the
