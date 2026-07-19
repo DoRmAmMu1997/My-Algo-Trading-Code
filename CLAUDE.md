@@ -67,6 +67,7 @@ Dependencies/
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
   Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py,
                     test_flattrade_execution.py
+  Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py, test_dhan_execution.py
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 scripts/check_coverage_thresholds.py               # branch-coverage policy gate
@@ -80,23 +81,34 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   name→prefix map is `STRATEGY_ENV_PREFIX`. **Never commit secrets** — `env.example` holds blank placeholders.
 - **Live-trading safety (critical):** paper by default. A strategy trades live ONLY when the global
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
-  (`KOTAK` | `SHOONYA` | `FLATTRADE`) selects the broker; an unknown value **fails closed** (live
-  disabled, paper only).
+  (`KOTAK` | `SHOONYA` | `FLATTRADE` | `DHAN`) selects the broker; an unknown value **fails closed**
+  (live disabled, paper only).
   An entry falls back to paper only after an explicit `REJECTED` result with zero fill. `PARTIAL` or
   `UNKNOWN` means exposure may exist: freeze new live entries, keep exits available, and reconcile;
   never treat an acknowledgement, truthy value, or order ID as proof of fill. A rejected live exit
   keeps the position open. Every broker network/SDK call has a ten-second deadline that includes its
-  shared lock/rate-limit wait; native HTTP timeouts remain enabled for Shoonya and Flattrade.
+  shared lock/rate-limit wait; native HTTP timeouts remain enabled for Shoonya, Flattrade and Dhan
+  (the Dhan SDK ships a 60s default that `_login_locked` overrides down to 10s).
 - **Per-strategy on/off:** each strategy also has a `<PREFIX>_VIRTUAL_TRADING` gate (default true).
   Set it false to stop that strategy's worker thread from starting at all (so it does neither paper
   nor live). Unlike live trading there is **no** global master switch — default is everything runs.
   `main()` filters the `workers` list via `_strategy_virtual_trading_enabled` before starting threads.
-- **Broker layer:** the Kotak, Shoonya, and Flattrade clients expose the SAME surface —
+- **Broker layer:** the Kotak, Shoonya, Flattrade and Dhan clients expose the SAME surface —
   `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
   `get_order_status`, `cancel_order`, `list_open_orders`, `list_open_positions`,
   `recover_after_reconciliation`, `extract_order_id`, `logout`, `is_logged_in` — so the runner only
-  touches the generic `execution_client`. The Shoonya
-  `NorenApi` client is vendored under `Dependencies/Shoonya API/`.
+  touches the generic `execution_client`. The shared result types live in
+  `Dependencies/broker_contract.py`. The Shoonya `NorenApi` client is vendored under
+  `Dependencies/Shoonya API/`. Dhan is the only broker whose SDK serves both market data and
+  execution, but the two sessions stay separate (`DhanBrokerClient` vs `dhan_execution_client`).
+  Two Dhan quirks the adapter exists to contain: its SDK returns `{'status':'failure',
+  'remarks': str(exc)}` for *transport* errors, which is shape-identical to a real rejection — so
+  `REJECTED` is never derived from the placement envelope (a `dict` `remarks` means the server
+  refused, a `str` means it is indeterminate); and `order_tag` is sent as Dhan's `correlationId`
+  so `get_order_by_correlationID` can recover an order whose response was lost. Dhan's
+  non-contract states are aliased adapter-locally (`EXPIRED`→`CANCELLED`,
+  `PART_TRADED`→`PARTIAL`); `TRANSIT`/`PENDING` stay unmapped so they remain transient.
+  Dhan resolves contracts from the local `Dependencies/all_instrument <date>.csv`, not a download.
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module

@@ -385,8 +385,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # DHAN_CLIENT_CODE  : 10-digit dhanClientId (e.g. "1100000000").
 # DHAN_API_KEY      : long-lived "app_id" used by the OAuth setup script.
 # DHAN_API_SECRET   : long-lived "app_secret" pair to DHAN_API_KEY.
-# DHAN_ACCESS_TOKEN : 12-month token produced by the setup script. This is
-#                     what the dhanhq SDK actually authenticates with.
+# DHAN_ACCESS_TOKEN : token produced by the setup script. This is what the
+#                     dhanhq SDK actually authenticates with. Its validity is
+#                     stamped into the token by DhanHQ and is NOT 12 months --
+#                     web.dhan.co currently issues 24-hour tokens, so refresh
+#                     it outside market hours before each trading day.
 CLIENT_CODE = _env_str("DHAN_CLIENT_CODE", "")
 API_KEY = _env_str("DHAN_API_KEY", "")
 API_SECRET = _env_str("DHAN_API_SECRET", "")
@@ -1002,15 +1005,15 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, or Flattrade.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All three helpers expose
+# This is how real (non-paper) orders reach the broker. All four helpers expose
 # the SAME contract: login/symbol resolution, typed place/status/cancel results,
 # determinate-or-indeterminate open order/position queries, and logout. The runner
 # uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
 # Each import is
 # wrapped in try/except on purpose: if a broker's SDK/deps are missing, that
-# client is set to None and the runner keeps working (the OTHER broker, or
+# client is set to None and the runner keeps working (the OTHER brokers, or
 # paper-only). main() forces any "live" strategy back to paper when the selected
 # client is None.
 try:
@@ -1052,6 +1055,19 @@ except Exception as _flattrade_import_exc:
         _flattrade_import_exc,
     )
 
+try:
+    _dhan_execution_module = load_module(
+        "master_dhan_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Dhan API" / "dhan_execution.py",
+    )
+    dhan_execution_client = _dhan_execution_module.dhan_execution_client
+except Exception as _dhan_import_exc:
+    dhan_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Dhan execution layer unavailable (%s); Dhan live trading disabled.",
+        _dhan_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1074,8 +1090,11 @@ def _select_execution_client(broker_name: str):
     if broker == "FLATTRADE":
         product = _env_str("FLATTRADE_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return flattrade_execution_client, "NFO", product
+    if broker == "DHAN":
+        product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return dhan_execution_client, "NSE_FNO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, or FLATTRADE); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
         "live trading DISABLED (paper only).",
         broker_name,
     )

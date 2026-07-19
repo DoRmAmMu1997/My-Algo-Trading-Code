@@ -68,6 +68,8 @@ files = [
     "Dependencies/Shoonya API/diagnose_shoonya_symbol.py",
     "Dependencies/Flattrade API/flattrade_execution.py",
     "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
+    "Dependencies/Dhan API/dhan_execution.py",
+    "Dependencies/Dhan API/diagnose_dhan_symbol.py",
     "Signal Generators/ema_trend_strategy_logic.py",
     "Signal Generators/heikin_ashi_strategy_logic.py",
     "Signal Generators/renko_strategy_logic.py",

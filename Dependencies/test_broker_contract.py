@@ -2778,3 +2778,653 @@ def test_diagnostics_treat_entry_exception_as_indeterminate(
     assert flat is False
     assert "indeterminate" in output.lower()
     assert "No position opened" not in output
+
+
+# ---------------------------------------------------------------------------
+# Dhan adapter
+# ---------------------------------------------------------------------------
+# Dhan's SDK collapses BOTH a genuine broker refusal and a local network
+# exception into ``{'status': 'failure', ...}``.  Most of the tests below exist
+# to prove the adapter keeps those two apart, because mistaking a timed-out live
+# order for a rejection would send the runner back to paper while real exposure
+# sits at the broker.
+
+DHAN_SYMBOL = "NIFTY-Jul2026-24000-CE"
+DHAN_SECURITY_ID = "45022"
+
+
+@pytest.fixture(scope="module")
+def dhan_module() -> ModuleType:
+    """Return a private, network-free copy of the Dhan adapter."""
+
+    return _load_file_module(
+        "mat101_dhan_execution",
+        "Dependencies/Dhan API/dhan_execution.py",
+    )
+
+
+class _FakeDhanSdk:
+    """Minimal stand-in for the ``dhanhq`` client used by the adapter."""
+
+    def __init__(self, replies=None, correlation_reply=None) -> None:
+        self._replies = iter(replies or [])
+        self._correlation_reply = correlation_reply
+        self.place_calls: list[dict] = []
+        self.correlation_calls: list[str] = []
+        self.cancelled: list[str] = []
+
+    def _next(self):
+        return next(self._replies)
+
+    def place_order(self, **kwargs):
+        self.place_calls.append(dict(kwargs))
+        return self._next()
+
+    def get_order_by_id(self, order_id):
+        return self._next()
+
+    def get_order_by_correlationID(self, correlation_id):
+        self.correlation_calls.append(str(correlation_id))
+        if self._correlation_reply is None:
+            raise AssertionError("correlation lookup was not expected here")
+        if isinstance(self._correlation_reply, Exception):
+            raise self._correlation_reply
+        return self._correlation_reply
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(str(order_id))
+        return self._next()
+
+    def get_order_list(self):
+        return self._next()
+
+    def get_positions(self):
+        return self._next()
+
+    def get_fund_limits(self):
+        return self._next()
+
+
+def _ok(data):
+    """Build the SDK's success envelope."""
+
+    return {"status": "success", "remarks": "", "data": data}
+
+
+def _refused(message="DH-905 insufficient margin"):
+    """Build the envelope Dhan returns when its SERVER answers and refuses.
+
+    ``remarks`` is a dict here -- that is the only signal distinguishing this
+    from a local transport failure.
+    """
+
+    return {
+        "status": "failure",
+        "remarks": {
+            "error_code": "DH-905",
+            "error_type": "Order_Error",
+            "error_message": message,
+        },
+        "data": "",
+    }
+
+
+def _transport_failure(message="ConnectionError(read timed out)"):
+    """Build the envelope the SDK returns when its own request RAISED.
+
+    ``remarks`` is a plain string.  The order may well have reached the
+    exchange, so this must never normalize to REJECTED.
+    """
+
+    return {"status": "failure", "remarks": message, "data": ""}
+
+
+def _status_row(state, filled, quantity=75):
+    return {
+        "orderId": "DH-1",
+        "orderStatus": state,
+        "filledQty": filled,
+        "quantity": quantity,
+        "tradingSymbol": DHAN_SYMBOL,
+        "transactionType": "BUY",
+    }
+
+
+def _ready_dhan_client(dhan_module: ModuleType, monkeypatch, fake):
+    """Build an authenticated-looking client without touching Dhan."""
+
+    client = dhan_module.DhanExecutionClient()
+    client._client_code = "TEST"
+    client.client = fake
+    client.is_logged_in = True
+    # The order API is driven by securityId, so the resolver's map must already
+    # know this symbol -- exactly as it would after preload_scrip_master().
+    client._security_id_by_symbol[DHAN_SYMBOL] = DHAN_SECURITY_ID
+    monkeypatch.setattr(client, "ensure_logged_in", lambda: True)
+    monkeypatch.setattr(dhan_module, "_FILL_POLL_INTERVAL", 0.001)
+    return client
+
+
+@pytest.mark.parametrize(
+    ("state", "filled", "expected_status", "remaining"),
+    [
+        ("REJECTED", 0, "REJECTED", 75),
+        ("TRADED", 75, "FILLED", 0),
+        ("TRADED", 25, "PARTIAL", 50),
+        # EXPIRED is not in the shared contract vocabulary; the adapter aliases
+        # it to CANCELLED so a clean "never traded" is a terminal rejection
+        # rather than an UNKNOWN that would freeze every live strategy.
+        ("EXPIRED", 0, "REJECTED", 75),
+    ],
+)
+def test_dhan_place_order_normalizes_terminal_outcomes(
+    dhan_module: ModuleType,
+    monkeypatch,
+    state: str,
+    filled: int,
+    expected_status: str,
+    remaining: int,
+) -> None:
+    """An acknowledgement is followed by a typed fill snapshot."""
+
+    fake = _FakeDhanSdk(
+        [
+            _ok({"orderId": "DH-1", "orderStatus": "TRANSIT"}),
+            _ok(_status_row(state, filled)),
+        ]
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75)
+
+    assert result.status.name == expected_status
+    assert result.order_id == "DH-1"
+    assert result.filled_quantity == filled
+    assert result.remaining_quantity == remaining
+
+
+def test_dhan_mid_fill_part_traded_snapshot_polls_to_completion(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A market order caught mid-fill is transient, not terminal.
+
+    Returning that first PART_TRADED snapshot as the outcome would freeze
+    every live entry over a healthy order; the loop must poll again.
+    """
+
+    fake = _FakeDhanSdk(
+        [
+            _ok({"orderId": "DH-MIDFILL", "orderStatus": "PENDING"}),
+            _ok(_status_row("PART_TRADED", 25)),
+            _ok(_status_row("TRADED", 75)),
+        ]
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75)
+
+    assert result.status.name == "FILLED"
+    assert result.order_id == "DH-MIDFILL"
+    assert result.filled_quantity == 75
+
+
+def test_dhan_transport_failure_is_unknown_never_rejected(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """THE critical Dhan case: a lost response is not proof of a zero fill.
+
+    ``DhanHTTP._send_request`` turns a post-submission socket timeout into
+    ``{'status': 'failure', 'remarks': '<exception text>'}`` -- shape-identical
+    to a real rejection.  Believing it would re-enter on paper while a real
+    position sits at the broker.
+    """
+
+    fake = _FakeDhanSdk([_transport_failure()])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75)
+
+    assert result.status.name == "UNKNOWN"
+    assert result.filled_quantity == 0
+    assert result.remaining_quantity == 75
+    # No correlation tag was supplied, so no lookup should have been attempted.
+    assert fake.correlation_calls == []
+
+
+def test_dhan_transport_failure_recovers_the_order_via_correlation_id(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A completely lost placement response is still traceable by tag.
+
+    This is the payoff of sending ``order_tag`` as Dhan's ``correlationId``:
+    the order is found and its real fill reported, instead of the runner being
+    frozen on an avoidable unknown.
+    """
+
+    fake = _FakeDhanSdk(
+        [
+            _transport_failure(),
+            _ok(_status_row("TRADED", 75)),
+        ],
+        correlation_reply=_ok({"orderId": "DH-1", "orderStatus": "TRADED"}),
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75, order_tag="TAG-1")
+
+    assert fake.correlation_calls == ["TAG-1"]
+    assert result.status.name == "FILLED"
+    assert result.order_id == "DH-1"
+    assert result.filled_quantity == 75
+
+
+def test_dhan_transport_failure_stays_unknown_when_lookup_also_fails(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Two failed observations still prove nothing about exposure."""
+
+    fake = _FakeDhanSdk(
+        [_transport_failure()],
+        correlation_reply=_transport_failure(),
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75, order_tag="TAG-2")
+
+    assert fake.correlation_calls == ["TAG-2"]
+    assert result.status.name == "UNKNOWN"
+
+
+def test_dhan_server_refusal_confirmed_by_lookup_is_rejected(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A structured refusal plus "no such order" is a provable zero fill.
+
+    Only this combination -- Dhan's server answering with an errorCode AND the
+    correlation lookup finding nothing -- earns REJECTED, which is what lets
+    the runner safely fall back to paper for that trade.
+    """
+
+    fake = _FakeDhanSdk([_refused()], correlation_reply=_refused("not found"))
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75, order_tag="TAG-3")
+
+    assert result.status.name == "REJECTED"
+    assert result.filled_quantity == 0
+    assert "insufficient margin" in result.reason
+
+
+def test_dhan_server_refusal_that_still_created_an_order_is_not_rejected(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """If the lookup finds an order, the refusal envelope was misleading."""
+
+    fake = _FakeDhanSdk(
+        [_refused(), _ok(_status_row("TRADED", 75))],
+        correlation_reply=_ok({"orderId": "DH-1", "orderStatus": "TRADED"}),
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75, order_tag="TAG-4")
+
+    assert result.status.name == "FILLED"
+    assert result.order_id == "DH-1"
+
+
+def test_dhan_server_refusal_with_unverifiable_lookup_is_unknown(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A refusal we could not corroborate must not become a rejection."""
+
+    fake = _FakeDhanSdk([_refused()], correlation_reply=_transport_failure())
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75, order_tag="TAG-5")
+
+    assert result.status.name == "UNKNOWN"
+
+
+def test_dhan_unknown_symbol_is_rejected_without_submitting(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Refusing beats guessing: a wrong securityId would trade another contract."""
+
+    fake = _FakeDhanSdk([])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order("NIFTY-NEVER-RESOLVED-CE", "BUY", 75)
+
+    assert result.status.name == "REJECTED"
+    assert fake.place_calls == []
+    assert "securityId" in result.reason
+
+
+def test_dhan_transmits_execution_ledger_tag_and_order_fields(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """The tag reaches Dhan as correlationId, and the order is a MARKET order."""
+
+    fake = _FakeDhanSdk(
+        [
+            _ok({"orderId": "DH-TAG", "orderStatus": "TRANSIT"}),
+            _ok(_status_row("TRADED", 75)),
+        ]
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    client.place_market_order(DHAN_SYMBOL, "BUY", 75, order_tag="STRAT-A1-E1")
+
+    assert len(fake.place_calls) == 1
+    sent = fake.place_calls[0]
+    assert sent["tag"] == "STRAT-A1-E1"
+    assert sent["security_id"] == DHAN_SECURITY_ID
+    assert sent["transaction_type"] == "BUY"
+    assert sent["order_type"] == "MARKET"
+    assert sent["product_type"] == "INTRADAY"
+    assert sent["exchange_segment"] == "NSE_FNO"
+    assert sent["quantity"] == 75
+
+
+def test_dhan_zero_broker_quantity_cannot_confirm_a_fill(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A status row disagreeing about size is malformed, not a fill."""
+
+    fake = _FakeDhanSdk(
+        [
+            _ok({"orderId": "DH-QTY", "orderStatus": "TRANSIT"}),
+            _ok(_status_row("TRADED", 75, quantity=10)),
+        ]
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    result = client.place_market_order(DHAN_SYMBOL, "BUY", 75)
+
+    assert result.status.name == "UNKNOWN"
+    assert result.filled_quantity == 0
+
+
+def test_dhan_cancel_and_reconciliation_queries_are_typed(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Cancel returns a typed snapshot; book queries return typed collections."""
+
+    fake = _FakeDhanSdk(
+        [
+            _ok({"orderId": "DH-C1"}),
+            _ok(_status_row("CANCELLED", 0)),
+            _ok(
+                [
+                    {
+                        "orderId": "DH-OPEN",
+                        "orderStatus": "PENDING",
+                        "quantity": 75,
+                        "filledQty": 25,
+                        "tradingSymbol": DHAN_SYMBOL,
+                        "transactionType": "BUY",
+                    },
+                    {
+                        "orderId": "DH-DONE",
+                        "orderStatus": "TRADED",
+                        "quantity": 75,
+                        "filledQty": 75,
+                        "tradingSymbol": DHAN_SYMBOL,
+                        "transactionType": "BUY",
+                    },
+                ]
+            ),
+            _ok(
+                [
+                    {"tradingSymbol": DHAN_SYMBOL, "netQty": 75, "productType": "INTRADAY"},
+                    {"tradingSymbol": "NIFTY-FLAT-PE", "netQty": 0, "productType": "INTRADAY"},
+                ]
+            ),
+        ]
+    )
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    cancelled = client.cancel_order("DH-C1", requested_quantity=75)
+    orders = client.list_open_orders()
+    positions = client.list_open_positions()
+
+    assert cancelled.status.name == "REJECTED"
+    assert fake.cancelled == ["DH-C1"]
+    # Only the still-working order survives; the completed one is filtered out.
+    assert orders.is_indeterminate is False
+    assert [order.order_id for order in orders.items] == ["DH-OPEN"]
+    assert orders.items[0].remaining_quantity == 50
+    # A flat (netQty 0) leg is not an open position.
+    assert positions.is_indeterminate is False
+    assert [position.symbol for position in positions.items] == [DHAN_SYMBOL]
+    assert positions.items[0].quantity == 75
+
+
+def test_dhan_query_failures_are_indeterminate_not_empty(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A failed book query must never look like a flat account."""
+
+    fake = _FakeDhanSdk([_transport_failure(), _refused()])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    orders = client.list_open_orders()
+    positions = client.list_open_positions()
+
+    assert orders.is_indeterminate is True
+    assert positions.is_indeterminate is True
+
+
+def test_dhan_successful_empty_queries_are_distinct_from_failure(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A genuinely empty book is a success, not an indeterminate result."""
+
+    fake = _FakeDhanSdk([_ok([]), _ok([])])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+
+    orders = client.list_open_orders()
+    positions = client.list_open_positions()
+
+    assert orders.items == () and orders.is_indeterminate is False
+    assert positions.items == () and positions.is_indeterminate is False
+
+
+def test_dhan_deadline_constants_are_exactly_ten_seconds(
+    dhan_module: ModuleType,
+) -> None:
+    """The SDK boundary is ten seconds and physically single-threaded."""
+
+    client = dhan_module.DhanExecutionClient()
+    assert dhan_module._API_TIMEOUT_SECONDS == 10.0
+    assert dhan_module._BROKER_CALL_DEADLINE_SECONDS == 10.0
+    assert client._sdk_executor._max_workers == 1
+
+
+def test_dhan_login_overrides_the_sdk_sixty_second_timeout(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """The SDK ships a 60s default; leaving it would blow the 10s budget.
+
+    ``DhanContext.__init__`` also swallows its own exceptions, so the adapter
+    must verify the HTTP layer exists rather than assume it.
+    """
+
+    class _Http:
+        timeout = 60
+
+    class _Context:
+        def __init__(self, client_id, access_token) -> None:
+            self.http = _Http()
+
+        def get_dhan_http(self):
+            return self.http
+
+    contexts: list[_Context] = []
+
+    def make_context(client_id, access_token):
+        context = _Context(client_id, access_token)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setenv("DHAN_CLIENT_CODE", "1000000001")
+    monkeypatch.setenv("DHAN_ACCESS_TOKEN", "not-a-real-token")
+    monkeypatch.setattr(dhan_module, "DhanContext", make_context)
+    monkeypatch.setattr(dhan_module, "dhanhq", lambda context: _FakeDhanSdk([_ok({})]))
+
+    client = dhan_module.DhanExecutionClient()
+
+    assert client.ensure_logged_in() is True
+    assert contexts[0].http.timeout == 10.0
+
+
+def test_dhan_login_fails_closed_on_half_built_context(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A DhanContext that swallowed its own error must not reach an order."""
+
+    class _BrokenContext:
+        def __init__(self, client_id, access_token) -> None:
+            pass
+
+        def get_dhan_http(self):
+            return None
+
+    monkeypatch.setenv("DHAN_CLIENT_CODE", "1000000001")
+    monkeypatch.setenv("DHAN_ACCESS_TOKEN", "not-a-real-token")
+    monkeypatch.setattr(dhan_module, "DhanContext", _BrokenContext)
+
+    client = dhan_module.DhanExecutionClient()
+
+    assert client.ensure_logged_in() is False
+    assert client.client is None
+
+
+def test_dhan_login_fails_closed_without_credentials(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Missing credentials disable live trading instead of raising."""
+
+    monkeypatch.delenv("DHAN_CLIENT_CODE", raising=False)
+    monkeypatch.delenv("DHAN_ACCESS_TOKEN", raising=False)
+
+    client = dhan_module.DhanExecutionClient()
+
+    assert client.ensure_logged_in() is False
+
+
+def test_dhan_total_deadline_includes_lock_wait(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Waiting for the shared session lock cannot exceed the broker budget."""
+
+    fake = _FakeDhanSdk([_ok({})])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+    monkeypatch.setattr(dhan_module, "_BROKER_CALL_DEADLINE_SECONDS", 0.05)
+    monkeypatch.setattr(client._api_limiter, "acquire", lambda *_a, **_k: None)
+
+    locked = threading.Event()
+    release = threading.Event()
+
+    def hold_lock() -> None:
+        with client._lock:
+            locked.set()
+            release.wait(0.4)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert locked.wait(0.2)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError, match="lock"):
+            client._call_api("fund limits", lambda sdk: sdk.get_fund_limits())
+    finally:
+        release.set()
+        holder.join(timeout=1)
+    assert time.monotonic() - started < 0.25
+
+
+def test_dhan_total_deadline_includes_rate_limiter_lock_wait(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A stuck limiter mutex cannot postpone dispatch past the deadline."""
+
+    class _NeverCalled(_FakeDhanSdk):
+        def get_fund_limits(self):
+            raise AssertionError("SDK must not start after limiter deadline")
+
+    fake = _NeverCalled([])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+    monkeypatch.setattr(dhan_module, "_BROKER_CALL_DEADLINE_SECONDS", 0.05)
+
+    locked = threading.Event()
+    release = threading.Event()
+
+    def hold_limiter_lock() -> None:
+        with client._api_limiter._lock:
+            locked.set()
+            release.wait(0.4)
+
+    holder = threading.Thread(target=hold_limiter_lock)
+    holder.start()
+    assert locked.wait(0.2)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError, match="limiter lock"):
+            client._call_api("fund limits", lambda sdk: sdk.get_fund_limits())
+    finally:
+        release.set()
+        holder.join(timeout=1)
+    assert time.monotonic() - started < 0.25
+
+
+def test_dhan_slow_response_poisons_the_session_until_reconciliation(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """An abandoned in-flight call blocks new orders until it has ended."""
+
+    release = threading.Event()
+
+    class _SlowSdk(_FakeDhanSdk):
+        def get_fund_limits(self):
+            release.wait(0.5)
+            return _ok({})
+
+    fake = _SlowSdk([])
+    client = _ready_dhan_client(dhan_module, monkeypatch, fake)
+    monkeypatch.setattr(dhan_module, "_BROKER_CALL_DEADLINE_SECONDS", 0.05)
+    monkeypatch.setattr(client._api_limiter, "acquire", lambda *_a, **_k: None)
+
+    try:
+        with pytest.raises(TimeoutError, match="broker deadline"):
+            client._call_api("fund limits", lambda sdk: sdk.get_fund_limits())
+        assert client._sdk_poisoned is True
+        # A poisoned session refuses new orders outright.
+        blocked = client.place_market_order(DHAN_SYMBOL, "BUY", 75)
+        assert blocked.status.name == "UNKNOWN"
+        assert blocked.broker_state == "SESSION_POISONED"
+        # Recovery is refused while the abandoned call is still running.
+        assert client.recover_after_reconciliation() is False
+    finally:
+        release.set()
+    client._timed_out_future.result(timeout=1)
+    assert client.recover_after_reconciliation() is True
