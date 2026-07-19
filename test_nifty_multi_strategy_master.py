@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -2056,6 +2057,70 @@ class TestEnvBool(unittest.TestCase):
             self.assertTrue(master_file._env_bool("X_FLAG", True))
         os.environ.pop("X_FLAG", None)
         self.assertFalse(master_file._env_bool("X_FLAG", False))
+
+
+class TestSelectExecutionClient(unittest.TestCase):
+    """`_select_execution_client` routes brokers and fails closed on a typo.
+
+    Its own docstring calls this out as the reason the decision lives in one
+    small function: a typo must never route real-money orders to another
+    broker, and an unrecognised name must disable live trading entirely.
+    """
+
+    def _select(self, broker, **clients):
+        """Run the selector with every broker client patched to a sentinel."""
+        defaults = {
+            "kotak_execution_client": "KOTAK-CLIENT",
+            "shoonya_execution_client": "SHOONYA-CLIENT",
+            "flattrade_execution_client": "FLATTRADE-CLIENT",
+            "dhan_execution_client": "DHAN-CLIENT",
+        }
+        defaults.update(clients)
+        with ExitStack() as stack:
+            for name, value in defaults.items():
+                stack.enter_context(patch.object(master_file, name, value))
+            return master_file._select_execution_client(broker)
+
+    def test_each_broker_routes_to_its_own_client_and_segment(self):
+        # The exchange-segment string is broker-specific and is passed straight
+        # through to the order call, so a wrong value would reject every order.
+        expected = {
+            "KOTAK": ("KOTAK-CLIENT", "nse_fo"),
+            "SHOONYA": ("SHOONYA-CLIENT", "NFO"),
+            "FLATTRADE": ("FLATTRADE-CLIENT", "NFO"),
+            "DHAN": ("DHAN-CLIENT", "NSE_FNO"),
+        }
+        for broker, (client, segment) in expected.items():
+            with self.subTest(broker=broker), patch.dict(os.environ, {}, clear=False):
+                got_client, got_segment, got_product = self._select(broker)
+                self.assertEqual(got_client, client)
+                self.assertEqual(got_segment, segment)
+                self.assertEqual(got_product, "INTRADAY")
+
+    def test_broker_name_is_case_and_whitespace_insensitive(self):
+        client, segment, _product = self._select("  dhan  ")
+        self.assertEqual(client, "DHAN-CLIENT")
+        self.assertEqual(segment, "NSE_FNO")
+
+    def test_product_type_comes_from_the_brokers_own_env_key(self):
+        with patch.dict(os.environ, {"DHAN_PRODUCT_TYPE": "normal"}):
+            _client, _segment, product = self._select("DHAN")
+        self.assertEqual(product, "NORMAL")
+
+    def test_unknown_broker_fails_closed(self):
+        for broker in ("ZERODHA", "", "dhann", None):
+            with self.subTest(broker=broker):
+                self.assertEqual(
+                    self._select(broker),
+                    (None, "", "INTRADAY"),
+                )
+
+    def test_missing_client_yields_none_so_startup_forces_paper(self):
+        # A broker whose SDK failed to import is None; the selector still
+        # returns it so `_configure_startup_live_trading` disables live mode.
+        client, segment, _product = self._select("DHAN", dhan_execution_client=None)
+        self.assertIsNone(client)
+        self.assertEqual(segment, "NSE_FNO")
 
 
 class TestTimezoneAssumption(unittest.TestCase):
