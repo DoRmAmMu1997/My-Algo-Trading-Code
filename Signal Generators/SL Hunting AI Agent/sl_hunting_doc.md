@@ -1026,3 +1026,68 @@ nothing was loosened.
 - `RETAIL_POSITIONING`: GIFT-GAP AFTER A NOBODY'S-CROWD DAY.
 - `RISK`: NO INSTANT FLIP extended with the losing-side panic-flip ban.
 - Test marker: `test_system_prompt_has_v3m_gift_gap_and_loss_flip_knowledge`.
+
+## Video addendum - 19 Jul closed-chart lecture (v3n)
+
+> Source: `OVs8-y2HTl8` (19 Jul 2026, "The Secret of the Closed Chart | Every Trader
+> Must Know", 22:22). Full Hindi auto-transcript captured from the transcript panel.
+>
+> NO agent-vs-IH journal comparison for this addendum: 19 Jul was a Sunday, markets
+> shut, so there are no 2026-07-19 journal rows and no trade to compare. The last
+> trading day (Fri 17 Jul) is covered by v3m.
+
+What this video is: not a trade session but a **week-in-review teaching session**. IH
+walks the CLOSED chart of each day of 13-17 Jul and explains how the next day's
+conditional plan was built from it — **including a self-diagnosis of the 17 Jul losing
+trade**. It therefore exposes the reasoning BEHIND the conditional gap plans distilled
+piecemeal since v3d, and it patches a gap that cost him real money.
+
+**Net-new method distilled:**
+- RECRUITMENT HISTORY, NOT CHART SHAPE: he shows two consecutive days whose charts are
+  near-identical ("even point-wise both are almost the same") and asks why the plans
+  were OPPOSITE. The discriminator is what the prior move RECRUITED — a chart that was
+  negative and then reversed up recruits NO buyers (the move ran against the mood and
+  turned too suddenly for them to join), whereas an already-positive chart that goes
+  positive AGAIN does seat buyers ("traders slowly start taking risk"). The law: a
+  FIRST, reversal-type move recruits nobody; the SECOND consecutive same-direction day
+  seats the crowd. This turns the existing PREVIOUS-CHART LINKAGE instruction into an
+  actual test, and is the general principle underneath v3j's two-day AVERAGING TRAP
+  trigger (its gap-down-specific case).
+- ONE BREAKDOWN, NOT TWO — the rule whose absence cost him 17 Jul. Diagnosing that
+  loss: "when the market breaks down one level, normally the market does NOT break the
+  second level". After the 500-level breakdown, sellers had joined progressively and
+  were SEATED, so the correct plan was the seller-seated template (gap-up -> buy,
+  gap-down -> buy, flat -> sell); he instead read buyers as available, planned
+  flat -> sell, and lost. Stated corollary: even if the breakdown did NOT seat
+  sellers, it AT MINIMUM evicted the buyers — so after a level breakdown, buyers are
+  never the target. That asymmetry alone rules out the buyer-hunt when the seated side
+  is uncertain.
+- BREAK-WITHOUT-MOMENTUM — **a correction to v3l**. He shows a 58,000 breakout that
+  then produced no momentum for ~2 hours and concludes "even if someone bought, they
+  would not have held; we don't need to target the buyers". As originally written, the
+  v3l CLOSING-POINT HOLD TEST said break-AND-held-beyond => crowd seated, which would
+  misread exactly this case. The "held beyond" arm now additionally requires that the
+  break produced real MOMENTUM; a break that idles beyond the level for hours seats
+  nobody and falls into the no-inventory arm instead.
+
+**Confirmed but deliberately NOT re-encoded (already present):** crowd-opposite
+psychology ("if the crowd is buying, the one who makes money sells"); the
+gap-up/gap-down/flat conditional framework (v3d/v3k/v3l/v3m); a big gap-down changing
+the whole structure; counter-trend risk-takers booking their momentum and leaving
+rather than holding (already TARGET-BOOKED); and the loss discipline ("accept the
+mistake, take the loss, don't sit insisting the market must fall") from v3m.
+
+Also NOT encoded, deliberately: the lecture's meta-thesis that learning happens on the
+CLOSED chart and that tomorrow's plan is built from it overnight. True for a human
+studying after hours, but the agent decides per completed 1-minute bar and performs no
+overnight study — it is not actionable for it. (The reflection coach in
+`sl_hunting_coach.py` is the closest analogue and already operates off-loop.)
+
+**Knowledge changes (v3n, all prose):**
+- `RETAIL_POSITIONING`: RECRUITMENT HISTORY, NOT CHART SHAPE (after PREVIOUS-CHART
+  LINKAGE, which it sharpens).
+- `RETAIL_POSITIONING`: ONE BREAKDOWN, NOT TWO (beside the other inventory-existence
+  tests).
+- `RETAIL_POSITIONING`: momentum requirement added to the CLOSING-POINT HOLD TEST's
+  "BROKE it and held beyond" arm (self-correction to v3l).
+- Test marker: `test_system_prompt_has_v3n_closed_chart_knowledge`.
