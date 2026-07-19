@@ -42,6 +42,31 @@ _neo_api_test_module.NeoAPI = _NeoApiTestDouble
 sys.modules["neo_api_client"] = _neo_api_test_module
 
 
+class _DhanhqTestDouble:
+    """Import-only stand-in; behavioral tests inject their own SDK clients."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+# ``dhanhq`` differs from Kotak's SDK: it is a CORE dependency (it also serves
+# market data), so the main quality job HAS the real package and other suites in
+# the same pytest process bind names from it.  The isolated broker-dependency
+# job installs requirements-brokers.txt alone, where it is deliberately absent.
+#
+# Hence the conditional: stand in only when the real package is genuinely
+# missing.  Clobbering an installed core dependency for every run would be a
+# latent trap for whichever suite happens to import it next.
+try:  # pragma: no cover - which branch runs depends on the CI environment
+    import dhanhq as _installed_dhanhq  # noqa: F401
+except ModuleNotFoundError:
+    _dhanhq_test_module = ModuleType("dhanhq")
+    _dhanhq_test_module.DhanContext = _DhanhqTestDouble
+    _dhanhq_test_module.dhanhq = _DhanhqTestDouble
+    sys.modules["dhanhq"] = _dhanhq_test_module
+
+
 def _load_file_module(name: str, relative_path: str) -> ModuleType:
     """Load a broker helper whose parent folder contains spaces."""
 
@@ -2903,6 +2928,22 @@ def _ready_dhan_client(dhan_module: ModuleType, monkeypatch, fake):
     monkeypatch.setattr(client, "ensure_logged_in", lambda: True)
     monkeypatch.setattr(dhan_module, "_FILL_POLL_INTERVAL", 0.001)
     return client
+
+
+def test_dhan_adapter_loads_without_an_installed_sdk(
+    dhan_module: ModuleType,
+) -> None:
+    """The adapter must import in the SDK-free broker-dependency job.
+
+    That job installs requirements-brokers.txt alone, so ``dhanhq`` is absent
+    and the import-only double above stands in; the core quality job has the
+    real package and uses it as-is.  Either way the module must load, because
+    every behavioral test replaces ``client`` with its own broker-shaped fake
+    and none of them exercise the real SDK.
+    """
+
+    assert dhan_module.DhanContext is sys.modules["dhanhq"].DhanContext
+    assert callable(dhan_module.dhanhq)
 
 
 @pytest.mark.parametrize(
