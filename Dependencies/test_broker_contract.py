@@ -1603,6 +1603,35 @@ def test_vendored_noren_preserves_non_ok_payloads(
     assert positions == payload
 
 
+class _FakeStreamingResponse:
+    """Model a streamed ``requests`` response, not the old ``.text`` shape.
+
+    The Kotak scrip-master download streams so it can log how far a transfer
+    got before a deadline expired, which means the doubles have to support the
+    context-manager + ``iter_content`` protocol the real response provides.
+    """
+
+    encoding = "utf-8"
+
+    def __init__(self, body: str, chunk_size: int = 64) -> None:
+        self._payload = body.encode("utf-8")
+        self._chunk_size = chunk_size
+
+    def __enter__(self) -> _FakeStreamingResponse:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> bool:
+        return False
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_content(self, chunk_size: int = 0):
+        step = chunk_size or self._chunk_size
+        for start in range(0, len(self._payload), step):
+            yield self._payload[start : start + step]
+
+
 @pytest.fixture(scope="module")
 def kotak_module() -> ModuleType:
     """Return a private copy of the Kotak adapter; calls use behavioral fakes."""
@@ -1967,19 +1996,13 @@ def test_kotak_scrip_master_download_has_total_deadline(
         def scrip_master(self, exchange_segment):
             return "https://example.invalid/nfo.csv"
 
-    class _SlowResponse:
-        text = (
-            "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
-            "0,NIFTY,CE,2250000,NIFTY-TEST\n"
-        )
-
-        def raise_for_status(self):
-            return None
-
     def slow_get(*args, **kwargs):
         started.set()
         release.wait(0.5)
-        return _SlowResponse()
+        return _FakeStreamingResponse(
+            "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
+            "0,NIFTY,CE,2250000,NIFTY-TEST\n"
+        )
 
     client = _ready_kotak_client(kotak_module, monkeypatch, ScripKotak())
     # The download runs on its own budget now, so shrink THAT one; the order
@@ -2492,18 +2515,17 @@ def test_kotak_scrip_master_resolution_and_miss_diagnostics(
             assert exchange_segment == "nse_fo"
             return "https://example.invalid/nfo.csv"
 
-    class Response:
-        text = (
-            "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
-            f"{encoded_expiry},NIFTY,CE,2250000,NIFTY26JUL22500CE\n"
-        )
-
-        @staticmethod
-        def raise_for_status() -> None:
-            return None
+    csv_body = (
+        "pExpiryDate,pSymbolName,pOptionType,dStrikePrice;,pTrdSymbol\n"
+        f"{encoded_expiry},NIFTY,CE,2250000,NIFTY26JUL22500CE\n"
+    )
 
     client = _ready_kotak_client(kotak_module, monkeypatch, ScripKotak())
-    monkeypatch.setattr(kotak_module.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        kotak_module.requests,
+        "get",
+        lambda *args, **kwargs: _FakeStreamingResponse(csv_body),
+    )
 
     assert client.preload_scrip_master() is True
     assert client.preload_scrip_master() is True

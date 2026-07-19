@@ -163,7 +163,13 @@ _BROKER_DEADLINE_SECONDS = 10.0
 # this download off the order path in practice; the lazy fallback inside
 # ``resolve_option_symbol`` runs before the order-submission gate, so a slow
 # catalogue delays symbol resolution rather than an in-flight order.
-_SCRIP_MASTER_TIMEOUT_SECONDS = 20.0
+_SCRIP_MASTER_TIMEOUT_SECONDS = 60.0
+# Stream the CSV rather than reading it in one go, and report progress every few
+# seconds.  Two fixed guesses (10s, then 20s) both expired with no way to tell
+# whether the transfer was slow-but-moving or stalled outright; byte counts in
+# the log answer that directly the next time it happens.
+_SCRIP_MASTER_CHUNK_BYTES = 1 << 20
+_SCRIP_MASTER_PROGRESS_SECONDS = 5.0
 
 
 class _SdkDeadlineExceeded(TimeoutError):
@@ -525,6 +531,29 @@ class KotakExecutionClient:
                         and not callable(getattr(cfg, name, None))
                     ),
                 )
+                # Turn the "orders will be rejected" inference into evidence
+                # WITHOUT placing an order.  ``limits`` is a read-only call that
+                # authorizes with the very same ``sId`` query parameter as
+                # place_order, so if an empty serverId is genuinely fatal this
+                # fails the same way a real order would -- and if it succeeds,
+                # the assumption was wrong and worth revisiting.
+                try:
+                    limits_probe = self._sdk_call(
+                        "limits_sid_probe",
+                        lambda: self.client.limits(
+                            segment="ALL", exchange="ALL", product="ALL"
+                        ),
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "  sId probe (limits, read-only) raised: %s",
+                        redact_text(str(exc), secrets),
+                    )
+                else:
+                    log.warning(
+                        "  sId probe (limits, read-only) -> %s",
+                        redact_payload(limits_probe, secrets),
+                    )
             return True
         except Exception as exc:
             # Reset state on any failure so a stale half-session never leaks.
@@ -587,14 +616,47 @@ class KotakExecutionClient:
             log.warning(f"Kotak scrip_master() returned no CSV url: {url!r}")
             return False
         # Step 2: download the CSV and load it into a pandas table (DataFrame).
+        # Log the URL so a stuck download can be reproduced with curl/a browser
+        # outside this process.  It is a plain contract-catalogue path, but it
+        # goes through redact_text in case Kotak ever signs it with a token.
+        log.info("Kotak scrip master URL: %s", redact_text(url))
         try:
             def download_scrip_master() -> str:
-                response = requests.get(
+                # Streamed, not response.text, so the log can show HOW FAR the
+                # transfer got.  A timeout that reports "0.0 MB after 60s" is a
+                # stall; one reporting steady megabytes is simply a slow link,
+                # and only the second is fixed by a longer deadline.
+                started_download = time.monotonic()
+                received = 0
+                next_report = _SCRIP_MASTER_PROGRESS_SECONDS
+                parts: list[bytes] = []
+                with requests.get(
                     url,
                     timeout=_SCRIP_MASTER_TIMEOUT_SECONDS,
-                )  # requests' timeout is retained as the native inactivity cap
-                response.raise_for_status()
-                return response.text
+                    stream=True,
+                ) as response:  # native timeout stays the inactivity cap
+                    response.raise_for_status()
+                    encoding = response.encoding or "utf-8"
+                    for chunk in response.iter_content(
+                        chunk_size=_SCRIP_MASTER_CHUNK_BYTES
+                    ):
+                        parts.append(chunk)
+                        received += len(chunk)
+                        elapsed = time.monotonic() - started_download
+                        if elapsed >= next_report:
+                            log.info(
+                                "Kotak scrip master: %.1f MB after %.0fs (%.2f MB/s).",
+                                received / 1_000_000,
+                                elapsed,
+                                received / 1_000_000 / max(elapsed, 1e-9),
+                            )
+                            next_report = elapsed + _SCRIP_MASTER_PROGRESS_SECONDS
+                log.info(
+                    "Kotak scrip master downloaded %.1f MB in %.1fs.",
+                    received / 1_000_000,
+                    time.monotonic() - started_download,
+                )
+                return b"".join(parts).decode(encoding, errors="replace")
 
             # ``requests`` alone has no total wall-clock deadline for a body
             # that keeps dribbling bytes. Reuse the isolated serial executor so
