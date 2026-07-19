@@ -57,6 +57,7 @@ files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
     "Dependencies/broker_contract.py",
+    "Dependencies/diagnostic_preflight.py",
     "Dependencies/next_open_entry.py",
     "Dependencies/market_data_health.py",
     "Dependencies/risk_sizing.py",

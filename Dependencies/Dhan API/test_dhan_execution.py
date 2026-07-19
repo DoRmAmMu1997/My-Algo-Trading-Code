@@ -345,24 +345,18 @@ def _diagnostic() -> ModuleType:
 diag = _diagnostic()
 
 
-@pytest.mark.parametrize(
-    ("quantity", "lot_size", "rejected"),
-    [
-        (1, 65, True),      # the exact case that produced "Invalid IP"
-        (64, 65, True),
-        (100, 65, True),
-        (65, 65, False),    # one lot
-        (130, 65, False),   # two lots
-        (30, 30, False),    # BankNIFTY lot
-        (1, 0, False),      # catalogue carried no lot size -> nothing to check
-    ],
-)
-def test_quantity_must_be_a_whole_lot_multiple(quantity, lot_size, rejected) -> None:
-    message = diag.validate_quantity_for_lot(quantity, lot_size)
+def test_quantity_check_is_the_shared_one_not_a_local_copy() -> None:
+    """Behaviour lives in Dependencies/test_diagnostic_preflight.py.
 
-    assert bool(message) is rejected
-    if rejected:
-        assert str(lot_size) in message
+    All four diagnostics import one implementation; this only pins that the
+    Dhan one is wired to it rather than carrying a copy that could drift.
+    """
+
+    # Imported here, not at module scope: it resolves through the sys.path the
+    # adapter sets up when this test module loads the diagnostic.
+    import diagnostic_preflight
+
+    assert diag.validate_quantity_for_lot is diagnostic_preflight.validate_quantity_for_lot
 
 
 class _MarginClient:

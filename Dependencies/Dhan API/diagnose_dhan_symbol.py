@@ -33,6 +33,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dhan_execution as de
 from broker_contract import OrderResult, OrderStatus
+from diagnostic_preflight import validate_quantity_for_lot
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -167,40 +168,6 @@ def select_contract(
         str(int(row["security_id"])),
         lot_size,
     )
-
-
-def validate_quantity_for_lot(quantity: int, lot_size: int) -> str:
-    """Return an error message when ``quantity`` is not a whole-lot multiple.
-
-    Index options trade only in exchange-defined lots, so a quantity such as 1
-    against a lot of 65 can never be accepted.  Catching that locally matters
-    because Dhan reports it as a generic ``DH-905 Input_Exception`` whose
-    ``error_message`` has been observed to read "Invalid IP" -- an error that
-    sends operators hunting a network fault that does not exist.
-
-    This validates the operator's OWN number; it deliberately does not derive
-    one.  ``--place-order`` still requires an explicit ``--qty`` because lot
-    sizes change and guessing one would risk a wrong-sized live order.
-
-    Args:
-        quantity: The explicit unit quantity supplied on the command line.
-        lot_size: Official lot size from the contract catalogue, 0 if absent.
-
-    Returns:
-        An empty string when the quantity is placeable, else the reason.
-    """
-    if lot_size <= 0:
-        # The catalogue row carried no lot size, so there is nothing to check
-        # against. The broker remains the authority.
-        return ""
-    if quantity % lot_size:
-        return (
-            f"--qty {quantity} is not a multiple of the official lot size "
-            f"{lot_size}. Index options trade in whole lots only, so Dhan "
-            f"would reject this order. Use {lot_size} for one lot "
-            f"(or {lot_size * 2} for two)."
-        )
-    return ""
 
 
 def check_entry_margin(
