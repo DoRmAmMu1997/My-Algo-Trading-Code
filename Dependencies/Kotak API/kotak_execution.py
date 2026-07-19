@@ -152,6 +152,19 @@ _FILLED_ORDER_STATES = {"complete", "traded", "executed", "filled"}
 _FAILED_ORDER_STATES = {"rejected", "cancelled", "canceled", "cancel", "lapsed"}
 _BROKER_DEADLINE_SECONDS = 10.0
 
+# The scrip master is a multi-megabyte bulk CSV fetched once, not an order, so
+# it gets its own (longer) budget.  Holding it to the ORDER deadline was a
+# category error: ten seconds is chosen so a live order can never go stale in
+# flight, and a catalogue download simply is not that kind of call -- on a
+# slower link it was timing out and disabling live trading for the session.
+#
+# ``_BROKER_DEADLINE_SECONDS`` deliberately stays at exactly 10s: every order
+# path still uses it, and a test pins that value.  The startup preload keeps
+# this download off the order path in practice; the lazy fallback inside
+# ``resolve_option_symbol`` runs before the order-submission gate, so a slow
+# catalogue delays symbol resolution rather than an in-flight order.
+_SCRIP_MASTER_TIMEOUT_SECONDS = 20.0
+
 
 class _SdkDeadlineExceeded(TimeoutError):
     """Raised when a Kotak SDK call outlives the fixed broker deadline."""
@@ -268,13 +281,27 @@ class KotakExecutionClient:
         operation,
         *,
         block_when_poisoned: bool = False,
+        deadline_seconds: float | None = None,
     ) -> Any:
-        """Run one SDK operation serially with the fixed ten-second deadline."""
+        """Run one SDK operation serially under a total wall-clock deadline.
 
+        Args:
+            label: Operation name used in deadline messages.
+            operation: Zero-argument callable performing the SDK request.
+            block_when_poisoned: Refuse to start when the session is poisoned.
+            deadline_seconds: Override the default budget.  Only the bulk
+                scrip-master download uses this; every ORDER path keeps the
+                fixed ten-second deadline, so a live order can never go stale
+                in flight.
+        """
+
+        budget = (
+            _BROKER_DEADLINE_SECONDS if deadline_seconds is None else deadline_seconds
+        )
         started = time.monotonic()
-        if not self._sdk_call_lock.acquire(timeout=_BROKER_DEADLINE_SECONDS):
+        if not self._sdk_call_lock.acquire(timeout=budget):
             raise _SdkDeadlineExceeded(
-                f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s "
+                f"Kotak {label} exceeded {budget:g}s "
                 "waiting for the SDK interaction gate"
             )
         try:
@@ -284,11 +311,10 @@ class KotakExecutionClient:
                         "Kotak session is poisoned; a new order cannot be submitted "
                         "before explicit reconciliation and recovery."
                     )
-            remaining = _BROKER_DEADLINE_SECONDS - (time.monotonic() - started)
+            remaining = budget - (time.monotonic() - started)
             if remaining <= 0:
                 raise _SdkDeadlineExceeded(
-                    f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s "
-                    "before SDK submission"
+                    f"Kotak {label} exceeded {budget:g}s before SDK submission"
                 )
             future = self._sdk_executor.submit(operation)
             try:
@@ -310,7 +336,7 @@ class KotakExecutionClient:
                     if not cancelled_before_start:
                         self._timed_out_futures.add(future)
                 raise _SdkDeadlineExceeded(
-                    f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s"
+                    f"Kotak {label} exceeded {budget:g}s"
                 ) from exc
         finally:
             self._sdk_call_lock.release()
@@ -477,6 +503,28 @@ class KotakExecutionClient:
                     "This usually means the account/API key is not enabled for live order "
                     "placement - check Trade API order permission / F&O segment with Kotak."
                 )
+                # Show WHAT Kotak actually sent. Until now these two responses
+                # were logged only when 2FA failed outright, so this exact case
+                # -- 2FA fine, serverId missing -- discarded the only evidence
+                # that could explain why. Everything goes through
+                # ``redact_payload`` first: tokens, session ids and the supplied
+                # credentials never reach the log.
+                secrets = (mobile, ucc, mpin, totp, consumer_key)
+                log.warning(
+                    "  totp_login    -> %s", redact_payload(login_resp, secrets)
+                )
+                log.warning(
+                    "  totp_validate -> %s", redact_payload(validate_resp, secrets)
+                )
+                log.warning(
+                    "  configuration fields present: %s",
+                    sorted(
+                        name
+                        for name in dir(cfg)
+                        if not name.startswith("_")
+                        and not callable(getattr(cfg, name, None))
+                    ),
+                )
             return True
         except Exception as exc:
             # Reset state on any failure so a stale half-session never leaks.
@@ -543,7 +591,7 @@ class KotakExecutionClient:
             def download_scrip_master() -> str:
                 response = requests.get(
                     url,
-                    timeout=_BROKER_DEADLINE_SECONDS,
+                    timeout=_SCRIP_MASTER_TIMEOUT_SECONDS,
                 )  # requests' timeout is retained as the native inactivity cap
                 response.raise_for_status()
                 return response.text
@@ -554,6 +602,7 @@ class KotakExecutionClient:
             csv_text = self._sdk_call(
                 "scrip_master_download",
                 download_scrip_master,
+                deadline_seconds=_SCRIP_MASTER_TIMEOUT_SECONDS,
             )
             df = pd.read_csv(io.StringIO(csv_text))
             df = df.rename(columns=lambda c: c.strip())  # trim stray spaces in headers

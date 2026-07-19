@@ -1936,6 +1936,24 @@ def test_kotak_sdk_deadline_and_executor_are_fixed(
     assert client._sdk_executor._max_workers == 1
 
 
+def test_kotak_scrip_master_budget_is_separate_from_the_order_deadline(
+    kotak_module: ModuleType,
+) -> None:
+    """A bulk catalogue download must not be capped by the ORDER deadline.
+
+    Ten seconds exists so a live order can never go stale in flight.  The scrip
+    master is a multi-megabyte CSV fetched once, which is not that kind of call
+    -- holding it to the same budget made it time out on slower links and
+    disabled live trading for the whole session.  The two budgets are therefore
+    separate, and the order one must stay exactly ten seconds.
+    """
+
+    assert kotak_module._BROKER_DEADLINE_SECONDS == 10.0
+    assert kotak_module._SCRIP_MASTER_TIMEOUT_SECONDS > (
+        kotak_module._BROKER_DEADLINE_SECONDS
+    )
+
+
 def test_kotak_scrip_master_download_has_total_deadline(
     kotak_module: ModuleType,
     monkeypatch,
@@ -1964,6 +1982,10 @@ def test_kotak_scrip_master_download_has_total_deadline(
         return _SlowResponse()
 
     client = _ready_kotak_client(kotak_module, monkeypatch, ScripKotak())
+    # The download runs on its own budget now, so shrink THAT one; the order
+    # deadline is shrunk too so a regression that reverts to it still trips
+    # this test rather than silently waiting 20s.
+    monkeypatch.setattr(kotak_module, "_SCRIP_MASTER_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(kotak_module, "_BROKER_DEADLINE_SECONDS", 0.05)
     monkeypatch.setattr(kotak_module.requests, "get", slow_get)
     results = []
