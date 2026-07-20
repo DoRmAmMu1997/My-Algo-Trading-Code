@@ -12,6 +12,35 @@ updates:
       python-runtime:
         patterns:
           - "*"
+    # Packages Dependabot must NOT propose, because its grouped bump would be
+    # un-mergeable by policy (each reason below is enforced by CI, so an
+    # auto-bump only produces a red PR -- exactly what happened in PR #76):
+    ignore:
+      # Kotak's official v2.0.1 tag hard-depends on websocket-client==1.8.0,
+      # and pyotp rides in the same isolated broker environment. Bump these
+      # only together with a new validated Kotak SDK tag.
+      - dependency-name: "websocket-client"
+      - dependency-name: "pyotp"
+      # MAT-106 pins the exact TA-Lib build as the deterministic indicator
+      # backend for every strategy. A version change can shift warm-up and
+      # smoothing semantics, so it is bumped deliberately, with revalidation,
+      # never automatically.
+      - dependency-name: "ta-lib"
+      # The numeric core under pandas + TA-Lib. Patches are welcome; minor and
+      # major bumps can change floating-point behaviour across the indicator
+      # pipeline, so they follow the same deliberate path as TA-Lib.
+      - dependency-name: "numpy"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # Typing majors routinely break the mypy gate wholesale; take them as
+      # dedicated upgrades, not weekly noise.
+      - dependency-name: "mypy"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "pandas-stubs"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: github-actions
     directory: "/"
