@@ -49,6 +49,7 @@ from misc_strategy_common import (
     normalize_ohlc_frame,
     require_columns,
     rsi,
+    validate_finite_config,
 )
 
 
@@ -62,6 +63,7 @@ class RSIDivergenceConfig:
     target_pct: float = 0.04      # profit target, 4% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if int(self.rsi_period) <= 0:
             raise ValueError("rsi_period must be positive.")
         if int(self.swing_window) <= 0:

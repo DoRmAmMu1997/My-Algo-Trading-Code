@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import ema, finite, normalize_ohlc_frame, require_columns, rsi, sma
+from misc_strategy_common import ema, finite, normalize_ohlc_frame, require_columns, rsi, sma, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,7 @@ class MultiTimeframeConfig:
     target_pct: float = 0.04      # profit target, 4% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         positive_ints = {
             "trend_sma_period": self.trend_sma_period,
             "ema_fast": self.ema_fast,

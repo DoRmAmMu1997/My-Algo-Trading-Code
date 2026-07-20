@@ -50,6 +50,7 @@ from misc_strategy_common import (
     normalize_ohlc_frame,
     require_columns,
     rsi,
+    validate_finite_config,
 )
 
 # The inputs the model learns from. Each is one number per candle describing a
@@ -97,6 +98,7 @@ class MLEnsembleConfig:
     target_pct: float = 0.05      # profit target, 5% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         positive_ints = {
             "rsi_fast": self.rsi_fast,
             "rsi_slow": self.rsi_slow,

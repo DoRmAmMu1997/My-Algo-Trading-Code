@@ -72,6 +72,13 @@ class CPRAlgo3Config:
     # three algos compute indicators identically.
     indicator_config: CPRStrategyConfig = field(default_factory=CPRStrategyConfig)
 
+    def __post_init__(self) -> None:
+        thresholds = (float(self.call_arsi_min), float(self.put_arsi_max))
+        if not all(math.isfinite(value) for value in thresholds):
+            raise ValueError("CPR Algo 3 configuration values must be finite.")
+        if not (0.0 <= thresholds[0] < thresholds[1] <= 100.0):
+            raise ValueError("Require 0 <= call_arsi_min < put_arsi_max <= 100.")
+
 
 # Spot pivot columns that form the target "ladder", listed low -> high. The target
 # for a CE is the next one ABOVE the spot close; for a PE, the next one BELOW.

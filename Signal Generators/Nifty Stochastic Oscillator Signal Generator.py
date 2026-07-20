@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, sma, stochastic
+from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, sma, stochastic, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,7 @@ class StochasticOscillatorConfig:
     target_pct: float = 0.03      # profit target, 3% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         positive_ints = {
             "k_period": self.k_period,
             "d_period": self.d_period,

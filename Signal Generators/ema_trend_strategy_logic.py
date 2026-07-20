@@ -34,20 +34,12 @@ Beginner mental model:
 - The rest of the codebase only has to ask: "What should I do now?"
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-
-try:
-    # TA-Lib is preferred because it gives standard indicator implementations
-    # directly and matches the user's request to use TA-Lib wherever possible.
-    import talib
-except ImportError:  # pragma: no cover - fallback only used when TA-Lib is unavailable
-    # The strategy can still run without TA-Lib because beginner users may not
-    # always have the package installed on the first attempt. (The ignore
-    # carries both codes because the error only exists where stubs are present.)
-    talib = None  # type: ignore[assignment, unused-ignore]
+import talib
 
 
 @dataclass(frozen=True)
@@ -67,6 +59,18 @@ class EMATrendConfig:
     full_body_min_ratio: float = 0.5
 
     def __post_init__(self) -> None:
+        invalid_finite = [
+            name
+            for name, value in vars(self).items()
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and not math.isfinite(float(value))
+        ]
+        if invalid_finite:
+            raise ValueError(
+                "EMA strategy configuration values must be finite. Invalid: "
+                + ", ".join(invalid_finite)
+            )
         # A negative or zero period would make no mathematical sense for EMA,
         # ATR, ADX, or lookback-based slope calculations. We validate here once
         # so the rest of the file can assume the config is sane.
@@ -81,6 +85,26 @@ class EMATrendConfig:
         invalid = [name for name, value in numeric_periods.items() if int(value) <= 0]
         if invalid:
             raise ValueError(f"All period values must be positive. Invalid: {', '.join(invalid)}")
+        if not (
+            int(self.ema_fast_period)
+            < int(self.ema_mid_period)
+            < int(self.ema_slow_period)
+        ):
+            raise ValueError("Require ema_fast_period < ema_mid_period < ema_slow_period.")
+        non_negative = {
+            "adx_threshold": self.adx_threshold,
+            "distance_atr_multiplier": self.distance_atr_multiplier,
+            "ema11_slope_atr_multiplier": self.ema11_slope_atr_multiplier,
+            "ema18_slope_atr_multiplier": self.ema18_slope_atr_multiplier,
+        }
+        invalid_non_negative = [
+            name for name, value in non_negative.items() if float(value) < 0.0
+        ]
+        if invalid_non_negative:
+            raise ValueError(
+                "EMA thresholds and multipliers must be non-negative. Invalid: "
+                + ", ".join(invalid_non_negative)
+            )
         if not (0.0 <= float(self.full_body_min_ratio) <= 1.0):
             raise ValueError("`full_body_min_ratio` must be between 0.0 and 1.0.")
 
@@ -142,71 +166,6 @@ def _resolve_timestamp(ohlc: pd.DataFrame) -> pd.Series:
     if timestamp.isna().all():
         raise ValueError("A valid 'timestamp' column or datetime-like index is required.")
     return timestamp
-
-
-def _fallback_ema(values: pd.Series, period: int) -> pd.Series:
-    """EMA fallback used only when TA-Lib is unavailable."""
-    # `adjust=False` makes pandas use the recursive EMA formula, which behaves
-    # closer to the indicator most traders expect from charting software.
-    return values.ewm(span=period, adjust=False, min_periods=period).mean()
-
-
-def _fallback_atr(df: pd.DataFrame, period: int) -> pd.Series:
-    """ATR fallback matching the standard True Range definition."""
-    # ATR first needs True Range, which is the biggest "real" move the candle
-    # experienced once gaps from the previous close are also considered.
-    prev_close = df["close"].shift(1)
-    tr = pd.concat(
-        [
-            (df["high"] - df["low"]).abs(),
-            (df["high"] - prev_close).abs(),
-            (df["low"] - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-
-
-def _fallback_adx(df: pd.DataFrame, period: int) -> pd.Series:
-    """ADX fallback based on Wilder-style smoothing."""
-    # ADX is more involved than EMA/ATR:
-    # 1. Measure directional movement up and down.
-    # 2. Smooth those movements.
-    # 3. Convert them into DI+ and DI-.
-    # 4. Measure how far apart those DI lines are.
-    # 5. Smooth that result into ADX.
-    high = df["high"]
-    low = df["low"]
-    close = df["close"]
-
-    up_move = high.diff()
-    down_move = low.shift(1) - low
-
-    plus_dm = pd.Series(
-        np.where((up_move > down_move) & (up_move > 0), up_move, 0.0),
-        index=df.index,
-    )
-    minus_dm = pd.Series(
-        np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
-        index=df.index,
-    )
-
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [
-            (high - low).abs(),
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-
-    atr = tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-    plus_di = 100.0 * plus_dm.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean() / atr
-    minus_di = 100.0 * minus_dm.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean() / atr
-    di_sum = (plus_di + minus_di).replace(0.0, np.nan)
-    dx = 100.0 * (plus_di - minus_di).abs() / di_sum
-    return dx.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
 
 
 def _build_long_setup(frame: pd.DataFrame, config: EMATrendConfig) -> pd.Series:
@@ -309,36 +268,26 @@ def build_ema_trend_with_indicators(
     high = frame["high"].astype(float)
     low = frame["low"].astype(float)
 
-    if talib is not None:
-        # Preferred path: use TA-Lib's standard indicator implementations.
-        # np.asarray with an explicit np.float64 dtype does the same conversion
-        # as .to_numpy(dtype="float64") but is typed as a float64 array, which
-        # is exactly what TA-Lib's type stubs require.
-        close_values = np.asarray(close, dtype=np.float64)
-        high_values = np.asarray(high, dtype=np.float64)
-        low_values = np.asarray(low, dtype=np.float64)
-        frame["ema4"] = talib.EMA(close_values, timeperiod=config.ema_fast_period)
-        frame["ema11"] = talib.EMA(close_values, timeperiod=config.ema_mid_period)
-        frame["ema18"] = talib.EMA(close_values, timeperiod=config.ema_slow_period)
-        frame["atr"] = talib.ATR(
-            high_values,
-            low_values,
-            close_values,
-            timeperiod=config.atr_period,
-        )
-        frame["adx"] = talib.ADX(
-            high_values,
-            low_values,
-            close_values,
-            timeperiod=config.adx_period,
-        )
-    else:
-        # Fallback path: keep the strategy usable even without TA-Lib.
-        frame["ema4"] = _fallback_ema(close, config.ema_fast_period)
-        frame["ema11"] = _fallback_ema(close, config.ema_mid_period)
-        frame["ema18"] = _fallback_ema(close, config.ema_slow_period)
-        frame["atr"] = _fallback_atr(frame, config.atr_period)
-        frame["adx"] = _fallback_adx(frame, config.adx_period)
+    # A single pinned backend keeps live and backtest warm-up/smoothing
+    # semantics identical on every supported Python version.
+    close_values = np.asarray(close, dtype=np.float64)
+    high_values = np.asarray(high, dtype=np.float64)
+    low_values = np.asarray(low, dtype=np.float64)
+    frame["ema4"] = talib.EMA(close_values, timeperiod=config.ema_fast_period)
+    frame["ema11"] = talib.EMA(close_values, timeperiod=config.ema_mid_period)
+    frame["ema18"] = talib.EMA(close_values, timeperiod=config.ema_slow_period)
+    frame["atr"] = talib.ATR(
+        high_values,
+        low_values,
+        close_values,
+        timeperiod=config.atr_period,
+    )
+    frame["adx"] = talib.ADX(
+        high_values,
+        low_values,
+        close_values,
+        timeperiod=config.adx_period,
+    )
 
     # Candle-structure filter:
     # The user defined a "full-bodied" candle as:

@@ -56,6 +56,26 @@ def test_fetch_builds_dhan_context_not_two_positional_args():
     assert list(result.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
 
 
+def test_access_token_is_environment_only_never_a_cli_flag(monkeypatch):
+    """MAT-108: a secret typed on the command line lands in shell history."""
+
+    defaults = fetcher.IndexFetchDefaults(
+        display_name="NIFTY",
+        security_id="13",
+        default_output="out.csv",
+    )
+    monkeypatch.setenv("DHAN_TOKEN_ID", "env-only-token")
+    monkeypatch.setattr(sys, "argv", ["fetcher"])
+
+    args = fetcher.parse_args(defaults)
+    assert args.access_token == "env-only-token"
+
+    # The old --access-token flag must be gone: argparse rejects it (exit 2).
+    monkeypatch.setattr(sys, "argv", ["fetcher", "--access-token", "cli-token"])
+    with pytest.raises(SystemExit):
+        fetcher.parse_args(defaults)
+
+
 def _payload(timestamps, *, close=None):
     count = len(timestamps)
     return {

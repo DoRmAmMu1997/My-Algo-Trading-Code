@@ -26,13 +26,7 @@ if TYPE_CHECKING:
 else:
     from Dependencies.market_data_health import complete_minute_bucket_mask
 
-try:
-    import talib
-except ImportError:  # pragma: no cover - fallback path is used when TA-Lib is absent
-    # The assignment error only exists where TA-Lib (with stubs) is installed;
-    # on stub-less machines the ignore is unused, hence the dual code.
-    talib = None  # type: ignore[assignment, unused-ignore]
-
+import talib
 
 OHLC_COLUMNS = ["open", "high", "low", "close"]
 
@@ -75,6 +69,18 @@ class CPRStrategyConfig:
     )
 
     def __post_init__(self) -> None:
+        invalid_finite = [
+            name
+            for name, value in vars(self).items()
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and not np.isfinite(float(value))
+        ]
+        if invalid_finite:
+            raise ValueError(
+                "CPR strategy configuration values must be finite. Invalid: "
+                + ", ".join(invalid_finite)
+            )
         positive_ints = {
             "ema_fast_period": self.ema_fast_period,
             "ema_slow_period": self.ema_slow_period,
@@ -89,10 +95,12 @@ class CPRStrategyConfig:
         invalid = [name for name, value in positive_ints.items() if int(value) <= 0]
         if invalid:
             raise ValueError(f"Config values must be positive: {', '.join(invalid)}")
-        if float(self.max_entry_wick_ratio) < 0.0:
-            raise ValueError("max_entry_wick_ratio must be non-negative.")
-        if float(self.trend_move_pct) < 0.0:
-            raise ValueError("trend_move_pct must be non-negative.")
+        if int(self.ema_fast_period) >= int(self.ema_slow_period):
+            raise ValueError("ema_fast_period must be smaller than ema_slow_period.")
+        if not (0.0 <= float(self.max_entry_wick_ratio) <= 1.0):
+            raise ValueError("max_entry_wick_ratio must be between 0 and 1.")
+        if not (0.0 <= float(self.trend_move_pct) < 1.0):
+            raise ValueError("trend_move_pct must be between 0 (inclusive) and 1 (exclusive).")
         if float(self.zone_width_points) <= 0.0:
             raise ValueError("zone_width_points must be greater than zero.")
 
@@ -257,33 +265,19 @@ def classify_daily_cpr_width(high: float, low: float, close: float) -> str:
 
 
 def _ema(values: pd.Series, period: int) -> pd.Series:
-    """Calculate EMA with TA-Lib when available, otherwise pandas."""
-    if talib is not None:
-        return pd.Series(
-            talib.EMA(values.to_numpy(dtype=float), timeperiod=int(period)),
-            index=values.index,
-        )
-    return values.ewm(span=int(period), adjust=False, min_periods=int(period)).mean()
+    """Calculate EMA with the repository's pinned TA-Lib backend."""
+    return pd.Series(
+        talib.EMA(values.to_numpy(dtype=float), timeperiod=int(period)),
+        index=values.index,
+    )
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
     """Calculate Wilder-style RSI."""
-    if talib is not None:
-        return pd.Series(
-            talib.RSI(close.to_numpy(dtype=float), timeperiod=int(period)),
-            index=close.index,
-        )
-
-    delta = close.diff()
-    gain = delta.clip(lower=0.0)
-    loss = (-delta).clip(lower=0.0)
-    avg_gain = gain.ewm(alpha=1.0 / int(period), adjust=False, min_periods=int(period)).mean()
-    avg_loss = loss.ewm(alpha=1.0 / int(period), adjust=False, min_periods=int(period)).mean()
-    relative_strength = avg_gain / avg_loss.replace(0.0, np.nan)
-    result = 100.0 - (100.0 / (1.0 + relative_strength))
-    result = result.mask((avg_loss == 0.0) & (avg_gain > 0.0), 100.0)
-    result = result.mask((avg_loss == 0.0) & (avg_gain == 0.0), 50.0)
-    return result
+    return pd.Series(
+        talib.RSI(close.to_numpy(dtype=float), timeperiod=int(period)),
+        index=close.index,
+    )
 
 
 def _add_daily_cpr(frame: pd.DataFrame) -> pd.DataFrame:

@@ -30,6 +30,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flattrade_execution as fe
 from broker_contract import OrderResult, OrderStatus
+from diagnostic_preflight import validate_quantity_for_lot
 
 UNDERLYING = "NIFTY"
 
@@ -352,6 +353,14 @@ def main(argv: list[str] | None = None) -> int:
         if not args.place_order:
             print("\nRead-only diagnostic complete. No order was placed.")
             return 0
+
+        # Pre-flight before the typed-YES prompt, so an order the exchange can
+        # never accept does not reach the broker or burn a confirmation.
+        lot_error = validate_quantity_for_lot(args.qty, lot_size)
+        if lot_error:
+            print(f"\n{lot_error}", file=sys.stderr)
+            return 2
+
         return 0 if place_round_trip_test_order(client, resolved, args.qty) else 1
     except Exception as exc:
         print(f"Flattrade diagnostic failed: {exc}", file=sys.stderr)

@@ -74,10 +74,9 @@ class SLHuntingUsageLimitError(SLHuntingAgentError):
 class SLHuntingTimeoutError(SLHuntingAgentError):
     """The SDK call exceeded its time budget and was abandoned (SLH-001).
 
-    decide() runs on the strategy worker's OWN thread; while it blocks, the
-    worker's per-poll stop/target check, max-loss and 15:15 square-off are all
-    frozen. Bounding the call means a hung Claude CLI costs one bar's decision
-    (a fail-soft HOLD), not the position's entire mechanical safety net.
+    The master runs decide() on a dedicated inference thread, while its strategy
+    worker continues per-poll stop/target, max-loss and 15:15 square-off checks.
+    This secondary timeout bounds the abandoned SDK/CLI resources as well.
     """
 
     def __init__(self, timeout_seconds: float, thread: threading.Thread | None = None) -> None:
@@ -318,13 +317,12 @@ class SLHuntingAgent:
         self._runner = runner
         self._fast_mode = bool(fast_mode)
         self._cfg = indicator_config or SLHuntingIndicatorConfig()
-        # SLH-001: hard budget for one SDK call. decide() blocks the worker
-        # thread that also enforces stop/target/max-loss/square-off, so a hung
-        # CLI call must cost one bar (fail-soft HOLD), not the safety net.
-        # <= 0 disables the bound (not recommended for the live runner).
-        self._sdk_timeout_seconds: float | None = (
-            float(sdk_timeout_seconds) if float(sdk_timeout_seconds) > 0 else None
-        )
+        # SLH-001: hard 5-120 second budget for one SDK call. The master keeps
+        # hard risk off-loop; this bound prevents a hung CLI from living forever.
+        timeout = float(sdk_timeout_seconds)
+        if not math.isfinite(timeout) or not 5.0 <= timeout <= 120.0:
+            raise ValueError("SLHuntingAgent: sdk_timeout_seconds must be between 5 and 120.")
+        self._sdk_timeout_seconds = timeout
         # SLH-001 / Codex: a worker thread from a PRIOR timed-out call that is
         # still alive. While set, decide() gates new calls (no fresh thread or
         # subprocess) so a persistently hung CLI can accumulate at most one.
@@ -597,6 +595,9 @@ class SLHuntingAgent:
         bnf_candles: pd.DataFrame | None = None,
         live_active: bool = False,
         broker: str | None = None,
+        generation: int = 0,
+        generation_is_current: Callable[[int], bool] | None = None,
+        execution_lock: Any | None = None,
     ) -> SLHuntingDecision:
         """Run one agentic pass for the latest bar and return the decision.
 
@@ -617,6 +618,10 @@ class SLHuntingAgent:
         tool_context = SLHuntingToolContext.build(
             prepared, executor, cfg=self._cfg, live_active=live_active, broker=broker,
             bnf_candles=bnf_candles,
+            generation=generation,
+            generation_is_current=generation_is_current,
+            deadline_seconds=self._sdk_timeout_seconds,
+            execution_lock=execution_lock,
         )
         position = executor.snapshot()
         prompt = self._build_user_prompt(prepared, position)
@@ -650,6 +655,53 @@ class SLHuntingAgent:
                 reasoning=reasoning, model_used=self._model,
             )
 
+        def _tool_authoritative(
+            reported: SLHuntingDecision | None,
+        ) -> SLHuntingDecision | None:
+            """Make the accepted order-tool result the immutable record of action."""
+            result = tool_context.execution_result
+            if result is not None and bool(result.get("accepted")):
+                action = str(result.get("action", "")).upper()
+                base = reported or SLHuntingDecision(
+                    action="HOLD",
+                    confidence=0,
+                    setup="tool_execution",
+                    reasoning="The order tool accepted an action; its result is authoritative.",
+                    model_used=self._model,
+                )
+                if action in ("ENTER_LONG", "ENTER_SHORT"):
+                    return base.model_copy(
+                        update={
+                            "action": action,
+                            "stop": float(result.get("stop", 0.0)),
+                            "target": float(result.get("target", 0.0)),
+                            "exit_leg": "BOTH",
+                            "model_used": self._model,
+                        }
+                    )
+                if action == "EXIT":
+                    leg = str(result.get("leg", "BOTH")).upper()
+                    if leg not in ("NIFTY", "BNF", "BOTH"):
+                        leg = "BOTH"
+                    return base.model_copy(
+                        update={
+                            "action": "EXIT",
+                            "stop": 0.0,
+                            "target": 0.0,
+                            "exit_leg": leg,
+                            "model_used": self._model,
+                        }
+                    )
+            if reported is not None and reported.action != "HOLD":
+                return SLHuntingDecision(
+                    action="HOLD",
+                    confidence=0,
+                    setup="unexecuted_action",
+                    reasoning="Final output claimed an action that the order tool did not accept; holding.",
+                    model_used=self._model,
+                )
+            return reported
+
         # Codex (PR #41): if a prior call timed out and its worker thread is still
         # hung, do NOT start another one -- gate to a fail-soft HOLD until it
         # finishes so we never accumulate abandoned threads/subprocesses.
@@ -679,18 +731,26 @@ class SLHuntingAgent:
             logger.warning("SL Hunting agent holding — %s", exc)
             return _hold("Agent call timed out; holding.")
         except SLHuntingUsageLimitError as exc:
+            tool_context.expire("usage_limit")
             # Actionable, content-free message (e.g. "...usage limit was hit (HTTP 429)").
             logger.warning("SL Hunting agent holding — %s", exc)
             return _hold("Agent usage-limited; holding.")
         except SLHuntingAuthError as exc:
+            tool_context.expire("auth_error")
             # Tells the operator exactly how to fix it (run `claude setup-token`).
             logger.warning("SL Hunting agent holding — %s", exc)
             return _hold("Agent auth failed; holding.")
         except Exception as exc:  # noqa: BLE001 - other infra failure (SDK/CLI)
+            tool_context.expire("agent_error")
             logger.warning("SLHuntingAgent run failed (%s); holding.", type(exc).__name__, exc_info=True)
             return _hold(f"Agent unavailable ({type(exc).__name__}); holding.")
+        tool_context.expire("agent_complete")
         try:
-            return _parse(text)
+            reported = _parse(text)
         except (SLHuntingAgentError, ValidationError) as exc:
+            authoritative = _tool_authoritative(None)
+            if authoritative is not None:
+                return authoritative
             logger.warning("SLHuntingAgent returned invalid output (%s); holding.", type(exc).__name__)
             return _hold(f"Agent returned invalid output ({type(exc).__name__}); holding.")
+        return _tool_authoritative(reported) or _hold("Agent produced no authoritative decision; holding.")

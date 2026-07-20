@@ -168,7 +168,12 @@ def newest_completed_minute_timestamp(
     *,
     now: datetime | None = None,
 ) -> datetime | None:
-    """Return the newest candle whose one-minute interval has completed."""
+    """Return the newest candle whose one-minute interval has completed.
+
+    Candles are stamped with their START minute, so the row stamped with the
+    CURRENT minute is still forming and is deliberately excluded -- freshness
+    is judged only on candles the market has finished printing.
+    """
 
     if frame is None or frame.empty or "timestamp" not in frame.columns:
         return None
@@ -184,7 +189,23 @@ def newest_completed_minute_timestamp(
 
 @dataclass(frozen=True)
 class MarketDataHealthSnapshot:
-    """Immutable worker-facing view of the current feed safety state."""
+    """Immutable worker-facing view of the current feed safety state.
+
+    - ``monitoring``            : False outside a live producer session; every
+                                  gate then passes so offline tools/backtests
+                                  are unaffected.
+    - ``entry_allowed``         : True only when the feed is currently healthy
+                                  AND has been healthy for the required streak
+                                  of producer refreshes (recovery hysteresis).
+    - ``liquidation_required``  : True once the feed has been continuously
+                                  unhealthy past the liquidation deadline --
+                                  live workers must start flattening.
+    - ``healthy_streak``        : consecutive healthy producer refreshes.
+    - ``unhealthy_seconds``     : how long the current unhealthy episode has
+                                  lasted (0 while healthy).
+    - ``reasons``               : operator-readable explanations, empty when
+                                  healthy.
+    """
 
     monitoring: bool
     entry_allowed: bool
@@ -195,7 +216,29 @@ class MarketDataHealthSnapshot:
 
 
 class MarketDataHealth:
-    """Track freshness, recovery hysteresis, and the liquidation deadline."""
+    """Track freshness, recovery hysteresis, and the liquidation deadline.
+
+    Beginner's map of the timing rules (all configurable via ``__init__``):
+
+    - An LTP older than **10s** or a newest completed 1-minute bar older than
+      **90s** marks the whole feed unhealthy.  90s (not 60s) for the bar
+      because a candle stamped 09:20 only COMPLETES at 09:21, and the producer
+      then needs a poll cycle to fetch it -- 90s is "one full candle plus
+      slack", while 60s would false-alarm every minute boundary.
+    - Unhealthy for **30s** continuously -> ``liquidation_required``: a blip
+      should not dump positions, but half a minute without prices means live
+      stops/targets are flying blind, so tracked exposure must come off.
+    - Recovery needs **3 consecutive healthy refreshes** before entries
+      resume.  A single good poll right after an outage is often the first
+      gasp of a flapping connection; the streak requirement stops the gate
+      from oscillating open/closed ("hysteresis").
+
+    Two entry points feed the same state: the producer calls
+    ``record_refresh`` once per fetch cycle (the only place the healthy streak
+    can ADVANCE), while workers call ``snapshot`` on their own schedule (which
+    re-evaluates ages so a silently WEDGED producer still goes stale on time
+    -- see the ``snapshot`` docstring).
+    """
 
     def __init__(
         self,
@@ -263,20 +306,36 @@ class MarketDataHealth:
             }
             reasons = self._reasons_locked(now_ist)
             if reasons:
+                # Any problem resets the recovery streak to zero and pins the
+                # START of the unhealthy episode (kept, not overwritten, so the
+                # 30s liquidation clock measures the WHOLE outage).
                 self._healthy_streak = 0
                 if self._unhealthy_since is None:
                     self._unhealthy_since = now_ist
             else:
+                # Only a producer refresh may advance the streak: three healthy
+                # WORKER polls in the same second prove nothing new about the
+                # feed, three healthy PRODUCER cycles do.
                 self._healthy_streak += 1
                 self._unhealthy_since = None
             return self._snapshot_locked(now_ist, reasons)
 
     def snapshot(self, *, now: datetime | None = None) -> MarketDataHealthSnapshot:
-        """Evaluate current ages so a silent producer becomes stale on time."""
+        """Evaluate current ages so a silent producer becomes stale on time.
+
+        This deliberately re-runs the age checks against ``now`` instead of
+        replaying the producer's last verdict: if the fetcher thread wedges and
+        never calls ``record_refresh`` again, its final (healthy) result would
+        otherwise stay "fresh" forever.  Recomputing here means the stored
+        timestamps age naturally and the gates fail closed on schedule even
+        when the producer has gone completely quiet.
+        """
 
         now_ist = _as_aware_ist(now or datetime.now(IST))
         with self._lock:
             if not self._monitoring:
+                # No live producer session: every gate passes so backtests and
+                # offline diagnostics are unaffected by freshness rules.
                 return MarketDataHealthSnapshot(
                     monitoring=False,
                     entry_allowed=True,
@@ -287,6 +346,9 @@ class MarketDataHealth:
                 )
             reasons = self._reasons_locked(now_ist)
             if reasons:
+                # Same episode bookkeeping as record_refresh -- but note the
+                # healthy branch does NOT advance the streak here: only the
+                # producer's own refreshes count as recovery evidence.
                 self._healthy_streak = 0
                 if self._unhealthy_since is None:
                     self._unhealthy_since = now_ist
@@ -295,6 +357,7 @@ class MarketDataHealth:
             return self._snapshot_locked(now_ist, reasons)
 
     def _reasons_locked(self, now: datetime) -> tuple[str, ...]:
+        """Collect every current problem; an empty tuple means healthy."""
         reasons: list[str] = []
         if not self._refresh_ok:
             reasons.append("latest OHLC refresh failed")
@@ -302,6 +365,9 @@ class MarketDataHealth:
             reasons.append("newest completed one-minute bar is unavailable")
         else:
             bar_age = (now - self._newest_completed_bar).total_seconds()
+            # A slightly future timestamp is normal clock skew; more than 5s
+            # ahead means the feed's clock (or an epoch-unit bug) cannot be
+            # trusted, which is just as unsafe as stale data.
             if bar_age < -5.0:
                 reasons.append("newest completed one-minute bar is in the future")
             elif bar_age > self._bar_max_age:
@@ -324,6 +390,7 @@ class MarketDataHealth:
         now: datetime,
         reasons: tuple[str, ...],
     ) -> MarketDataHealthSnapshot:
+        """Freeze the two gate decisions into one immutable, coherent view."""
         unhealthy_seconds = (
             max(0.0, (now - self._unhealthy_since).total_seconds())
             if self._unhealthy_since is not None
@@ -332,6 +399,10 @@ class MarketDataHealth:
         healthy = not reasons
         return MarketDataHealthSnapshot(
             monitoring=self._monitoring,
+            # Entries need BOTH currently-healthy and a full recovery streak;
+            # liquidation needs BOTH currently-unhealthy and a full 30s episode.
+            # The asymmetry is deliberate: reopening entries is the risky
+            # direction, so it carries the extra hysteresis requirement.
             entry_allowed=healthy and self._healthy_streak >= self._recovery_refreshes,
             liquidation_required=bool(
                 reasons and unhealthy_seconds >= self._liquidation_after
