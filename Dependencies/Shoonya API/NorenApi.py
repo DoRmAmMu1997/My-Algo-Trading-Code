@@ -39,8 +39,9 @@ class BuyorSell:
     Sell = 'S'
     
 def reportmsg(msg):
-    #print(msg)
-    logger.debug(msg)
+    # Requests contain jKey/password/TOTP and responses may contain session
+    # tokens. Never emit either body, even at DEBUG level.
+    logger.debug("Noren broker request/response completed (body redacted).")
 
 def reporterror(msg):
     #print(msg)
@@ -545,7 +546,7 @@ class NorenApi:
 
         #prepare the uri
         url = f"{config['host']}{config['routes']['modifyorder']}" 
-        print(url)
+        logger.debug("Noren modify-order endpoint invoked.")
 
         #prepare the data
         values                  = {'ordersource':'API'}
@@ -593,7 +594,7 @@ class NorenApi:
 
         #prepare the uri
         url = f"{config['host']}{config['routes']['cancelorder']}" 
-        print(url)
+        logger.debug("Noren cancel-order endpoint invoked.")
 
         #prepare the data
         values              = {'ordersource':'API'}
@@ -605,7 +606,7 @@ class NorenApi:
         reportmsg(payload)
 
         res = requests.post(url, data=payload, timeout=_HTTP_TIMEOUT)
-        print(res.text)
+        reportmsg(res.text)
 
         resDict = json.loads(res.text)
         if resDict['stat'] != 'Ok':            
@@ -618,7 +619,7 @@ class NorenApi:
 
         #prepare the uri
         url = f"{config['host']}{config['routes']['exitorder']}" 
-        print(url)
+        logger.debug("Noren exit-order endpoint invoked.")
 
         #prepare the data
         values              = {'ordersource':'API'}
@@ -647,7 +648,7 @@ class NorenApi:
 
         #prepare the uri
         url = f"{config['host']}{config['routes']['product_conversion']}" 
-        print(url)
+        logger.debug("Noren product-conversion endpoint invoked.")
 
         #prepare the data
         values              = {'ordersource':'API'}
@@ -681,7 +682,7 @@ class NorenApi:
 
         #prepare the uri
         url = f"{config['host']}{config['routes']['singleorderhistory']}" 
-        print(url)
+        logger.debug("Noren order-history endpoint invoked.")
         
         #prepare the data
         values              = {'ordersource':'API'}

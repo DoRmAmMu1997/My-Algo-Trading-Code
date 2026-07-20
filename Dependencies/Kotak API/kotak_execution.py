@@ -66,6 +66,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
@@ -74,11 +75,22 @@ import requests
 
 # Make the broker-neutral contract importable when this helper is loaded by the
 # master and when the sibling diagnostic executes it as a standalone script.
+#
+# The REPO ROOT has to go on the path too, not just ``Dependencies``: the
+# redaction helpers below are imported as ``Dependencies.secret_redaction``,
+# which needs the package's PARENT directory.  The master already has it because
+# it is launched from the repo root, but ``python <script>`` puts the SCRIPT's
+# directory on ``sys.path[0]`` and never the working directory -- so the sibling
+# diagnostic (directly or via ``algo.py diagnose``) used to die on import with
+# "No module named 'Dependencies'".
 _DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
-if str(_DEPENDENCIES_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+_REPO_ROOT = _DEPENDENCIES_DIR.parent
+for _import_root in (_REPO_ROOT, _DEPENDENCIES_DIR):
+    if str(_import_root) not in sys.path:
+        sys.path.insert(0, str(_import_root))
 
 from broker_contract import (  # noqa: E402
+    TERMINAL_BROKER_STATES,
     BrokerQueryResult,
     OpenOrder,
     OpenPosition,
@@ -86,6 +98,8 @@ from broker_contract import (  # noqa: E402
     OrderStatus,
     normalize_order_result,
 )
+
+from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
 # --- Make the downloaded "Kotak Neo API" SDK importable (if vendored) ---------
 # The SDK may live in a "Kotak Neo API" folder somewhere above this file, but the
@@ -137,6 +151,25 @@ _FILL_POLL_INTERVAL = 0.5
 _FILLED_ORDER_STATES = {"complete", "traded", "executed", "filled"}
 _FAILED_ORDER_STATES = {"rejected", "cancelled", "canceled", "cancel", "lapsed"}
 _BROKER_DEADLINE_SECONDS = 10.0
+
+# The scrip master is a multi-megabyte bulk CSV fetched once, not an order, so
+# it gets its own (longer) budget.  Holding it to the ORDER deadline was a
+# category error: ten seconds is chosen so a live order can never go stale in
+# flight, and a catalogue download simply is not that kind of call -- on a
+# slower link it was timing out and disabling live trading for the session.
+#
+# ``_BROKER_DEADLINE_SECONDS`` deliberately stays at exactly 10s: every order
+# path still uses it, and a test pins that value.  The startup preload keeps
+# this download off the order path in practice; the lazy fallback inside
+# ``resolve_option_symbol`` runs before the order-submission gate, so a slow
+# catalogue delays symbol resolution rather than an in-flight order.
+_SCRIP_MASTER_TIMEOUT_SECONDS = 60.0
+# Stream the CSV rather than reading it in one go, and report progress every few
+# seconds.  Two fixed guesses (10s, then 20s) both expired with no way to tell
+# whether the transfer was slow-but-moving or stalled outright; byte counts in
+# the log answer that directly the next time it happens.
+_SCRIP_MASTER_CHUNK_BYTES = 1 << 20
+_SCRIP_MASTER_PROGRESS_SECONDS = 5.0
 
 
 class _SdkDeadlineExceeded(TimeoutError):
@@ -254,13 +287,27 @@ class KotakExecutionClient:
         operation,
         *,
         block_when_poisoned: bool = False,
+        deadline_seconds: float | None = None,
     ) -> Any:
-        """Run one SDK operation serially with the fixed ten-second deadline."""
+        """Run one SDK operation serially under a total wall-clock deadline.
 
+        Args:
+            label: Operation name used in deadline messages.
+            operation: Zero-argument callable performing the SDK request.
+            block_when_poisoned: Refuse to start when the session is poisoned.
+            deadline_seconds: Override the default budget.  Only the bulk
+                scrip-master download uses this; every ORDER path keeps the
+                fixed ten-second deadline, so a live order can never go stale
+                in flight.
+        """
+
+        budget = (
+            _BROKER_DEADLINE_SECONDS if deadline_seconds is None else deadline_seconds
+        )
         started = time.monotonic()
-        if not self._sdk_call_lock.acquire(timeout=_BROKER_DEADLINE_SECONDS):
+        if not self._sdk_call_lock.acquire(timeout=budget):
             raise _SdkDeadlineExceeded(
-                f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s "
+                f"Kotak {label} exceeded {budget:g}s "
                 "waiting for the SDK interaction gate"
             )
         try:
@@ -270,11 +317,10 @@ class KotakExecutionClient:
                         "Kotak session is poisoned; a new order cannot be submitted "
                         "before explicit reconciliation and recovery."
                     )
-            remaining = _BROKER_DEADLINE_SECONDS - (time.monotonic() - started)
+            remaining = budget - (time.monotonic() - started)
             if remaining <= 0:
                 raise _SdkDeadlineExceeded(
-                    f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s "
-                    "before SDK submission"
+                    f"Kotak {label} exceeded {budget:g}s before SDK submission"
                 )
             future = self._sdk_executor.submit(operation)
             try:
@@ -296,7 +342,7 @@ class KotakExecutionClient:
                     if not cancelled_before_start:
                         self._timed_out_futures.add(future)
                 raise _SdkDeadlineExceeded(
-                    f"Kotak {label} exceeded {_BROKER_DEADLINE_SECONDS:g}s"
+                    f"Kotak {label} exceeded {budget:g}s"
                 ) from exc
         finally:
             self._sdk_call_lock.release()
@@ -304,9 +350,12 @@ class KotakExecutionClient:
     def recover_after_reconciliation(self) -> bool:
         """Clear timeout poison only after the abandoned SDK call has returned.
 
-        MAT-102 can call this hook after it reconciles orders and positions. The
-        method refuses early recovery while the timed-out operation is still
-        running, preserving the no-overlap guarantee.
+        "Poisoned" means an earlier SDK call outlived its 10-second budget and
+        was abandoned -- but Python cannot kill a running thread, so that call
+        may STILL be executing inside the SDK and may still place/affect an
+        order.  MAT-102 can call this hook after it reconciles orders and
+        positions.  The method refuses early recovery while any timed-out
+        operation is still running, preserving the no-overlap guarantee.
         """
 
         with self._lock:
@@ -355,7 +404,7 @@ class KotakExecutionClient:
         from a worker thread mid-session, so it cannot stall trading.
         """
         try:
-            return input("Enter Kotak Neo TOTP (6 digits from your authenticator app): ").strip()
+            return getpass("Enter Kotak Neo TOTP (input hidden): ").strip()
         except (EOFError, OSError):
             return ""
 
@@ -433,10 +482,10 @@ class KotakExecutionClient:
             if not two_fa_complete:
                 self.is_logged_in = False
                 self.client = None
-                log.error("Kotak login did NOT complete 2FA - orders & scrip lookups "
-                      "will be rejected. Raw responses:")
-                log.error(f"  totp_login    -> {login_resp}")
-                log.error(f"  totp_validate -> {validate_resp}")
+                secrets = (mobile, ucc, mpin, totp, consumer_key)
+                log.error("Kotak login did NOT complete 2FA - orders & scrip lookups will be rejected.")
+                log.error("  totp_login    -> %s", redact_payload(login_resp, secrets))
+                log.error("  totp_validate -> %s", redact_payload(validate_resp, secrets))
                 return False
 
             # Surface the ORDER-critical fields too, not just edit_token/edit_sid.
@@ -453,19 +502,33 @@ class KotakExecutionClient:
                 f"data_center={getattr(cfg, 'data_center', None)!r}"
             )
             if not server_id:
-                log.warning(
-                    "Kotak login returned NO serverId (hsServerId). The order "
-                    "endpoint needs Auth+Sid+serverId, so order placement will be rejected "
-                    "as 'unauthorized' (data + scrip lookups still work via consumer_key). "
-                    "This usually means the account/API key is not enabled for live order "
-                    "placement - check Trade API order permission / F&O segment with Kotak."
+                # An empty hsServerId does NOT block order placement, contrary
+                # to what an earlier version of this warning asserted (it told
+                # operators to go ask Kotak for order permissions they already
+                # had).  Measured against a live account returning hsServerId "":
+                #
+                #   * limits() -- a REST call that sends the SAME ``sId`` query
+                #     parameter as place_order -- returned stCode 200 / stat Ok.
+                #   * place_order reached Kotak's OMS and was rejected with
+                #     stCode 1041 "Last Traded Price (LTP) not available for
+                #     this instrument", i.e. a market-microstructure refusal
+                #     outside trading hours, NOT an authorization failure.
+                #
+                # hsServerId feeds ``NeoWebSocket(sid, token, server_id,
+                # data_center)`` -- the HS streaming socket, which this
+                # REST-only adapter never opens.  So this is informational and
+                # would only matter if live streaming were added later.
+                log.info(
+                    "Kotak login returned an empty serverId (hsServerId). REST "
+                    "order placement is unaffected: it is the HS streaming "
+                    "socket that needs it, and this adapter never opens one."
                 )
             return True
         except Exception as exc:
             # Reset state on any failure so a stale half-session never leaks.
             self.is_logged_in = False
             self.client = None
-            log.error(f"Kotak execution client login failed: {exc}")
+            log.error("Kotak execution client login failed: %s", redact_text(exc))
             return False
 
     def ensure_logged_in(self) -> bool:
@@ -522,14 +585,47 @@ class KotakExecutionClient:
             log.warning(f"Kotak scrip_master() returned no CSV url: {url!r}")
             return False
         # Step 2: download the CSV and load it into a pandas table (DataFrame).
+        # Log the URL so a stuck download can be reproduced with curl/a browser
+        # outside this process.  It is a plain contract-catalogue path, but it
+        # goes through redact_text in case Kotak ever signs it with a token.
+        log.info("Kotak scrip master URL: %s", redact_text(url))
         try:
             def download_scrip_master() -> str:
-                response = requests.get(
+                # Streamed, not response.text, so the log can show HOW FAR the
+                # transfer got.  A timeout that reports "0.0 MB after 60s" is a
+                # stall; one reporting steady megabytes is simply a slow link,
+                # and only the second is fixed by a longer deadline.
+                started_download = time.monotonic()
+                received = 0
+                next_report = _SCRIP_MASTER_PROGRESS_SECONDS
+                parts: list[bytes] = []
+                with requests.get(
                     url,
-                    timeout=_BROKER_DEADLINE_SECONDS,
-                )  # requests' timeout is retained as the native inactivity cap
-                response.raise_for_status()
-                return response.text
+                    timeout=_SCRIP_MASTER_TIMEOUT_SECONDS,
+                    stream=True,
+                ) as response:  # native timeout stays the inactivity cap
+                    response.raise_for_status()
+                    encoding = response.encoding or "utf-8"
+                    for chunk in response.iter_content(
+                        chunk_size=_SCRIP_MASTER_CHUNK_BYTES
+                    ):
+                        parts.append(chunk)
+                        received += len(chunk)
+                        elapsed = time.monotonic() - started_download
+                        if elapsed >= next_report:
+                            log.info(
+                                "Kotak scrip master: %.1f MB after %.0fs (%.2f MB/s).",
+                                received / 1_000_000,
+                                elapsed,
+                                received / 1_000_000 / max(elapsed, 1e-9),
+                            )
+                            next_report = elapsed + _SCRIP_MASTER_PROGRESS_SECONDS
+                log.info(
+                    "Kotak scrip master downloaded %.1f MB in %.1fs.",
+                    received / 1_000_000,
+                    time.monotonic() - started_download,
+                )
+                return b"".join(parts).decode(encoding, errors="replace")
 
             # ``requests`` alone has no total wall-clock deadline for a body
             # that keeps dribbling bytes. Reuse the isolated serial executor so
@@ -537,6 +633,7 @@ class KotakExecutionClient:
             csv_text = self._sdk_call(
                 "scrip_master_download",
                 download_scrip_master,
+                deadline_seconds=_SCRIP_MASTER_TIMEOUT_SECONDS,
             )
             df = pd.read_csv(io.StringIO(csv_text))
             df = df.rename(columns=lambda c: c.strip())  # trim stray spaces in headers
@@ -905,10 +1002,20 @@ class KotakExecutionClient:
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
-        """Poll briefly for a terminal result without hiding ambiguity.
+        """Poll until the order reaches a truly terminal state, or time out.
 
         Every status read still flows through the same single-worker executor, so
         it cannot overlap the placement call that preceded it.
+
+        Why the loop keeps polling on PARTIAL/UNKNOWN snapshots: a market order
+        is often observed mid-fill (state "open" with some quantity already
+        traded) or in one of Kotak's routine hand-off states ("validation
+        pending", "put order req received").  Those are TRANSIENT -- the next
+        0.5s poll usually shows COMPLETE -- so returning them as the final
+        outcome would freeze every live strategy over a perfectly healthy
+        order.  A partial/unknown snapshot becomes the real outcome only when
+        the broker label is terminal (the order can never fill further, e.g. a
+        partial fill followed by a cancel) or the timeout below expires.
         """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_result = normalize_order_result(
@@ -920,11 +1027,15 @@ class KotakExecutionClient:
         )
         while time.monotonic() < deadline:
             last_result = self.get_order_status(order_id, requested_quantity=want_qty)
-            if last_result.status is not OrderStatus.UNKNOWN:
+            if last_result.status in {OrderStatus.FILLED, OrderStatus.REJECTED}:
+                return last_result
+            if last_result.broker_state in TERMINAL_BROKER_STATES:
+                # Terminal label with a partial/contradictory quantity snapshot:
+                # no further fills are possible, so this IS the final outcome.
                 return last_result
             if "error:" in last_result.reason.lower() or self.session_poisoned:
-                return last_result
-            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                # A failed status read is already indeterminate; repeating it
+                # inside the same order interaction adds no evidence.
                 return last_result
             time.sleep(_FILL_POLL_INTERVAL)
         return normalize_order_result(
