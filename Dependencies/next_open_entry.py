@@ -100,6 +100,10 @@ class PendingNextOpenEntry:
         assert setup_stop is not None
         assert setup_target is not None
 
+        # Geometry check: a LONG only makes sense with the stop BELOW the
+        # entry and the target ABOVE it (mirrored for SHORT).  Anything else
+        # means the signal engine handed over levels that would fill as an
+        # instant stop-out or an instant "win" -- refuse them at the source.
         if normalized_direction == "LONG":
             valid_geometry = setup_stop < setup_entry < setup_target
             stop_distance = setup_entry - setup_stop
@@ -111,6 +115,10 @@ class PendingNextOpenEntry:
         if not valid_geometry:
             raise ValueError("setup entry/stop/target geometry is invalid")
 
+        # Candles are stamped by their START minute: the signal candle stamped
+        # 09:20 completes at 09:25, so its "next open" is the bar STAMPED
+        # 09:25 -- one full timeframe after the signal stamp.  The intent then
+        # expires one further bar later (see the module docstring).
         bar = timedelta(minutes=timeframe_minutes)
         expected_open_at = signal_at + bar
         return cls(
@@ -147,12 +155,20 @@ class PendingNextOpenEntry:
 
         if not isinstance(observed_at, datetime):
             return None
+        # EXACT slot equality, not >=: a later bar means the intended entry
+        # moment was missed (a feed gap or a slow poll), and executing on a
+        # substitute bar would be a different trade from the one the setup
+        # described.  The caller keeps the intent queued until it expires.
         if observed_at != self.expected_open_at:
             return None
         entry = _finite_price(observed_entry)
         if entry is None:
             return None
 
+        # Shift the ORIGINAL stop/target distances onto the actually observed
+        # open, then re-check geometry: a large opening gap can push the
+        # rebased stop to zero/negative territory, which the finite-positive
+        # check below turns into a refusal rather than a nonsense order.
         if self.direction == "LONG":
             stop = entry - self.stop_distance
             target = entry + self.target_distance

@@ -96,9 +96,18 @@ from dhanhq import DhanContext, dhanhq
 # The broker helpers live in folders with spaces and are also executable as
 # standalone diagnostics.  Add their shared ``Dependencies`` parent explicitly
 # so the broker-neutral contract imports the same way in both entry points.
+#
+# The REPO ROOT goes on the path too, not just ``Dependencies``: the redaction
+# helper below is imported as ``Dependencies.secret_redaction``, which needs
+# the package's PARENT directory.  The master already has it because it is
+# launched from the repo root, but ``python <script>`` puts the SCRIPT's
+# directory on ``sys.path[0]`` and never the working directory (same fix the
+# Kotak/Shoonya helpers carry).
 _DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
-if str(_DEPENDENCIES_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+_REPO_ROOT = _DEPENDENCIES_DIR.parent
+for _import_root in (_REPO_ROOT, _DEPENDENCIES_DIR):
+    if str(_import_root) not in sys.path:
+        sys.path.insert(0, str(_import_root))
 
 from broker_contract import (  # noqa: E402
     TERMINAL_BROKER_STATES,
@@ -109,6 +118,8 @@ from broker_contract import (  # noqa: E402
     OrderStatus,
     normalize_order_result,
 )
+
+from Dependencies.secret_redaction import redact_text  # noqa: E402
 
 try:
     from dotenv import load_dotenv
@@ -581,7 +592,12 @@ class DhanExecutionClient:
         except Exception as exc:
             self.client = None
             self._context = None
-            log.error("Dhan session construction failed: %s", exc)
+            # MAT-108: SDK construction errors can echo their arguments, and one
+            # of those arguments IS the access token -- never log the raw text.
+            log.error(
+                "Dhan session construction failed: %s",
+                redact_text(exc, (access_token,)),
+            )
             return False
 
         if not self._validate_session_locked():
@@ -597,7 +613,9 @@ class DhanExecutionClient:
         try:
             envelope = self._call_api("fund limits", lambda client: client.get_fund_limits())
         except Exception as exc:
-            log.error("Dhan session validation failed: %s", exc)
+            # MAT-108: exception/response text from an auth-adjacent call is
+            # exactly where a credential could surface -- redact before logging.
+            log.error("Dhan session validation failed: %s", redact_text(exc))
             return False
         outcome, _data, reason = _classify_envelope(envelope)
         if outcome != "ok":
@@ -605,7 +623,7 @@ class DhanExecutionClient:
                 "Dhan session validation rejected (%s): %s. "
                 "Re-run 'python algo.py setup-token' if the token has expired.",
                 outcome,
-                reason,
+                redact_text(reason),
             )
             return False
         return True

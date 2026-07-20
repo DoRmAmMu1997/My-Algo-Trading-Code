@@ -467,9 +467,14 @@ class ExecutionLedger:
             raise ValueError("requested_quantity must be a positive integer")
         with self._lock:
             leg = self._legs[str(exposure_id)]
+            # One attempt at a time per leg: while the previous order may still
+            # fill, submitting more quantity could overshoot the target.
             if leg.latest_attempt is not None and not leg.latest_attempt.terminal:
                 raise RuntimeError("the previous order attempt is not terminal")
             if intent is OrderIntent.OPEN:
+                # A leg is one-directional: once closing has begun, "reopening"
+                # would blur which fills belong to the entry and which to the
+                # exit.  A fresh signal gets a fresh correlation instead.
                 if leg.closing_started:
                     raise RuntimeError(
                         "cannot open a live leg after closing has started; "
@@ -480,6 +485,9 @@ class ExecutionLedger:
             else:
                 safe_quantity = self._snapshot_leg(leg).safe_close_retry_quantity
                 phase = "X"
+            # The caller must ask for EXACTLY the quantity the ledger deems
+            # safe (see the safe-retry properties). Rejecting any other number
+            # makes it impossible to bypass the quantity maths by accident.
             if requested_quantity != safe_quantity:
                 raise ValueError(f"requested_quantity must equal safe retry quantity {safe_quantity}")
             sequence = leg.attempt_count + 1
@@ -493,6 +501,8 @@ class ExecutionLedger:
             leg.attempt_count = sequence
             if intent is OrderIntent.CLOSE:
                 leg.closing_started = True
+            # From this instant until a terminal result arrives, the leg's
+            # true exposure is unknown -- the order is (about to be) in flight.
             leg.exposure_indeterminate = True
             leg.latest_attempt = _MutableOrderAttempt(
                 intent=intent,
@@ -523,15 +533,26 @@ class ExecutionLedger:
             attempt = leg.latest_attempt
             if attempt is None:
                 raise RuntimeError("cannot apply a result before start_attempt")
+            # Identity checks: a status probe launched for attempt #1 can
+            # return AFTER a retry already started attempt #2.  The handle's
+            # sequence/tag pin the evidence to the attempt it describes, so a
+            # late reply can never be mistaken for news about the newer order.
             if attempt.sequence != handle.sequence or attempt.order_tag != handle.order_tag:
                 raise RuntimeError("stale order-attempt handle cannot mutate the current attempt")
             if result.requested_quantity != attempt.requested_quantity:
                 raise ValueError("broker result requested quantity changed within an attempt")
             if attempt.order_id and result.order_id and result.order_id != attempt.order_id:
                 raise ValueError("broker result order id changed within an attempt")
+            # Brokers report fills CUMULATIVELY per order; a count that shrank
+            # means one of the two snapshots is wrong, and guessing which
+            # would corrupt the quantity books.
             if result.filled_quantity < attempt.filled_quantity:
                 raise ValueError("broker cumulative filled quantity moved backwards")
             broker_state = str(result.broker_state).upper().strip()
+            # PARTIAL alone is not final -- the order may still be filling.
+            # It becomes terminal only alongside a terminal broker label
+            # (e.g. partially filled, then cancelled): the same rule the
+            # adapters' fill-confirmation loops poll by.
             terminal = result.status in {OrderStatus.FILLED, OrderStatus.REJECTED} or (
                 result.status is OrderStatus.PARTIAL
                 and broker_state in _TERMINAL_BROKER_STATES
@@ -546,17 +567,24 @@ class ExecutionLedger:
                 # snapshot already applied to this attempt, so it cannot reopen
                 # uncertainty or undo an entry/flat decision.
                 return self._snapshot_leg(leg)
+            # The DELTA is what this snapshot newly proves: cumulative report
+            # minus what this attempt had already been credited.  Applying
+            # deltas (never totals) is what makes a repeated or re-ordered
+            # status report unable to double-count a fill.
             fill_delta = result.filled_quantity - attempt.filled_quantity
             new_entry_filled = leg.filled_quantity
             new_entry_remaining = leg.remaining_quantity
             new_live_quantity = leg.confirmed_live_quantity
             if attempt.intent is OrderIntent.OPEN:
+                # Entry fills grow both the entry tally and the live position.
                 if leg.filled_quantity + fill_delta > leg.spec.target_quantity:
                     raise ValueError("open fills exceed the leg target quantity")
                 new_entry_filled += fill_delta
                 new_entry_remaining = leg.spec.target_quantity - new_entry_filled
                 new_live_quantity += fill_delta
             else:
+                # Close fills only shrink the live position; the entry tally
+                # keeps recording how much was ever opened.
                 if fill_delta > leg.confirmed_live_quantity:
                     raise ValueError("close fills exceed confirmed live quantity")
                 new_live_quantity -= fill_delta

@@ -3,6 +3,13 @@
 Coverage.py's ``percent_covered`` combines statements and measured branch exits.
 The CI run enables branch measurement globally, then this script applies stricter
 budgets to the live-money safety core and each broker adapter.
+
+Why this script exists at all: Coverage.py has exactly ONE global
+``fail_under`` setting (pyproject pins it to the repository's 54.7% baseline),
+so the stricter 90%/80% per-module budgets have to be enforced from the JSON
+report by hand.  The split is deliberate -- the global floor stops overall
+erosion, while these budgets stop a specific safety module from quietly losing
+its tests.
 """
 
 from __future__ import annotations
@@ -20,12 +27,20 @@ SAFETY_THRESHOLDS = {
     "Dependencies/market_data_health.py": 90.0,
     "Dependencies/next_open_entry.py": 90.0,
     "Dependencies/risk_sizing.py": 90.0,
+    # MAT-108's redaction layer is data-safety code: a regression here leaks
+    # credentials into logs, so it carries the same 90% budget.
+    "Dependencies/secret_redaction.py": 90.0,
 }
 
+# EVERY live execution adapter belongs in this dict. A broker added without a
+# row here silently escapes the "80% per broker adapter" policy that
+# CLAUDE.md/AGENTS.md promise (exactly what happened when the Dhan adapter
+# first landed), so treat this list as part of adding a broker.
 BROKER_THRESHOLDS = {
     "Dependencies/Kotak API/kotak_execution.py": 80.0,
     "Dependencies/Shoonya API/shoonya_execution.py": 80.0,
     "Dependencies/Flattrade API/flattrade_execution.py": 80.0,
+    "Dependencies/Dhan API/dhan_execution.py": 80.0,
 }
 
 
@@ -54,13 +69,21 @@ def evaluate_coverage(
         path = _portable_path(raw_path)
         details = files.get(path)
         if details is None:
+            # A renamed/deleted module must FAIL the gate, not silently drop
+            # out of it -- otherwise moving a file would retire its budget.
             failures.append(f"{path}: missing from coverage report")
             continue
         summary = details.get("summary") or {}
         if int(summary.get("num_branches", 0)) <= 0:
+            # Percent alone can look fine while branch measurement was never
+            # switched on (a broken [tool.coverage.run] branch=true would
+            # silently weaken every budget). Zero measured branches in modules
+            # this size is only ever a measurement failure.
             failures.append(f"{path}: branch data was not measured")
             continue
         measured = float(summary.get("percent_covered", 0.0))
+        # The epsilon keeps an exactly-on-budget module passing despite float
+        # representation (e.g. a true 80.0 stored as 79.999...).
         if measured + 1e-9 < float(threshold):
             failures.append(
                 f"{path}: {measured:.2f}% is below the {float(threshold):.1f}% budget"

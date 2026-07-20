@@ -258,6 +258,13 @@ def summarize_journal(rows: list[dict[str, Any]], limit: int = 60) -> str:
     )
 
     # Build newest-first against the total character budget, then restore chronology.
+    #
+    # How the loop works: each iteration PREPENDS one older trade to the
+    # candidate list and renders the whole block.  If that render busts the
+    # character budget, the loop stops and keeps ``included`` -- the largest
+    # set that fit.  Walking newest-first means the trades sacrificed to the
+    # budget are always the OLDEST ones, and because each accepted candidate
+    # was prepended, ``included`` is already back in chronological order.
     included: list[dict[str, Any]] = []
     for trade in reversed(recent):
         candidate = [trade.model_dump(mode="json"), *included]
@@ -286,7 +293,14 @@ def summarize_journal(rows: list[dict[str, Any]], limit: int = 60) -> str:
 
 
 def _build_read_only_options(model: str, system_prompt: str, max_turns: int) -> dict[str, Any]:
-    """Build the coach SDK options with every tool surface explicitly disabled."""
+    """Build the coach SDK options with every tool surface explicitly disabled.
+
+    Both ``tools`` and ``allowed_tools`` are empty ON PURPOSE (belt and
+    braces): the journal text the coach reads is untrusted, so even a
+    perfectly injected "run this tool" instruction has no tool to run.
+    ``setting_sources`` is empty so no local settings file can quietly
+    re-enable one.
+    """
     return {
         "model": model,
         "system_prompt": system_prompt,
