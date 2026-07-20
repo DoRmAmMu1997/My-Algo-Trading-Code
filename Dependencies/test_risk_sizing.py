@@ -117,3 +117,48 @@ def test_invalid_sizing_inputs_fail_closed(
 
     assert decision.accepted is False
     assert decision.quantity == 0
+
+
+@pytest.mark.parametrize("lots", (True, 0, 1.5))
+def test_fixed_sizing_rejects_invalid_lot_counts(lots: object) -> None:
+    decision = SizingDecision.fixed(lots=lots, lot_size=50)  # type: ignore[arg-type]
+    assert decision.accepted is False
+    assert decision.quantity == 0
+
+
+@pytest.mark.parametrize("lot_size", (True, 0, 50.5))
+def test_fixed_sizing_rejects_invalid_exchange_lot_sizes(lot_size: object) -> None:
+    decision = SizingDecision.fixed(lots=2, lot_size=lot_size)  # type: ignore[arg-type]
+    assert decision.accepted is False
+    assert decision.max_lots == 2
+
+
+def test_fixed_sizing_returns_a_complete_decision() -> None:
+    decision = SizingDecision.fixed(lots=2, lot_size=50)
+    assert decision.accepted is True
+    assert decision.lots == 2
+    assert decision.quantity == 100
+    assert decision.total_risk == 0.0
+
+
+@pytest.mark.parametrize("budget", (True, "not-a-budget", None))
+def test_budget_rejects_booleans_and_conversion_failures(budget: object) -> None:
+    decision = SizingDecision.from_risk_budget(
+        entry=100.0,
+        stop=99.0,
+        lot_size=50,
+        budget=budget,  # type: ignore[arg-type]
+    )
+    assert decision.accepted is False
+    assert "budget" in decision.reason.lower()
+
+
+def test_overflowing_one_lot_risk_is_rejected() -> None:
+    decision = SizingDecision.from_risk_budget(
+        entry=1e308,
+        stop=1.0,
+        lot_size=2,
+        budget=1e308,
+    )
+    assert decision.accepted is False
+    assert "one-lot risk" in decision.reason.lower()

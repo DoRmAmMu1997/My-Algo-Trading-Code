@@ -5,22 +5,35 @@ One-time DhanHQ OAuth setup script.
 
 WHAT THIS DOES (read this first if you have never run it)
 ---------------------------------------------------------
-DhanHQ's "API Key + API Secret" auth flow produces a 12-month access token
-through a 3-step OAuth process. Two of those three steps happen here in
-code; the middle step requires you to log in via a browser (DhanHQ does
-this for security so they can show you the standard login page).
+DhanHQ's "API Key + API Secret" auth flow produces an access token through a
+3-step OAuth process. Two of those three steps happen here in code; the
+middle step requires you to log in via a browser (DhanHQ does this for
+security so they can show you the standard login page).
 
 This script walks you through the whole thing and writes the resulting
 access token back into the `.env` file that sits next to it (i.e.
-`Multithreading/Dependencies/.env`). After that, the three trading scripts
-read the token from that `.env` automatically -- no more copy-pasting
-24-hour JWTs from web.dhan.co every morning.
+`Multithreading/Dependencies/.env`). After that, the trading scripts read
+the token from that `.env` automatically.
+
+HOW LONG THE TOKEN LASTS -- CHECK, DO NOT ASSUME
+------------------------------------------------
+DhanHQ decides the validity when the token is minted, and it is stamped into
+the token itself. Tokens generated from the web.dhan.co screen currently
+default to **24 hours** (that screen says so). Do not assume a long-lived
+token: this script prints the real expiry after it finishes, so read it.
+
+This matters for live trading. If the token dies mid-session, order placement
+starts failing -- and because a rejected live EXIT leaves the position open,
+you can be left holding intraday positions you cannot square off through the
+API. Mint the token OUTSIDE market hours (after the 15:30 close or before the
+09:15 open) so its window covers the whole session, never at midday.
 
 WHEN TO RUN THIS SCRIPT
 -----------------------
 - Once after you first generate the API Key / API Secret pair on
   web.dhan.co (My Profile -> DhanHQ Trading APIs -> Generate API).
-- Again whenever the 12-month access token eventually expires.
+- Again whenever the access token expires -- for a 24-hour token that means
+  before each trading day, outside market hours.
 - Again if you regenerate the API Key / Secret for any reason.
 
 WHAT YOU NEED FIRST (before running this)
@@ -44,8 +57,8 @@ to a URL that looks like:
 
 Copy the value after `tokenId=` (or the whole URL, the script tolerates
 both) and paste it into the prompt. The script then exchanges that
-short-lived `tokenId` for the 12-month `accessToken` and writes it into
-the local `.env`.
+short-lived `tokenId` for the `accessToken` and writes it into the
+local `.env`.
 
 THE 3 OAUTH STEPS, EXPLAINED FOR BEGINNERS
 ------------------------------------------
@@ -55,7 +68,7 @@ THE 3 OAUTH STEPS, EXPLAINED FOR BEGINNERS
    DhanHQ redirects the browser to a URL containing a `tokenId`.
 3. The user pastes that `tokenId` back into this script. We send it +
    our API Key/Secret back to DhanHQ. If everything matches up, DhanHQ
-   returns the long-lived `accessToken`.
+   returns the `accessToken`.
 
 This dance is essentially the same OAuth pattern you have probably seen
 when granting a third-party app access to your Google or GitHub account.
@@ -70,9 +83,12 @@ from __future__ import annotations
 # `re`     - small regex helpers for parsing the redirect URL and rewriting .env.
 # `sys`    - used to exit cleanly with an exit code on errors.
 # `Path`   - cross-platform path object for locating the sibling `.env` file.
+import base64
+import json
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from getpass import getpass
 from pathlib import Path
 
@@ -251,6 +267,77 @@ def _extract_token_id(user_input: str) -> str:
     return cleaned
 
 
+def _describe_token_expiry(access_token: str) -> str:
+    """Report when this token actually dies, read from the token itself.
+
+    DhanHQ access tokens are JWTs whose middle segment carries an ``exp``
+    claim.  Decoding it (no signature check -- we are only reading a
+    timestamp we were just handed) beats assuming a validity, because the
+    web console currently mints 24-hour tokens while this flow may issue
+    something longer.
+
+    The warning matters for live trading: if the token expires during market
+    hours, order placement starts failing, and because a rejected live EXIT
+    leaves a position open, intraday positions can be left un-squareable
+    through the API.
+
+    A weekday expiry lands in one of three situations, each with its own
+    message (a weekend expiry needs none -- no session is at risk that day):
+
+    - BETWEEN 09:15 and 15:30 -> the real danger: the token dies mid-session,
+      so the loud DURING-market-hours warning fires.
+    - BEFORE 09:15            -> nothing can fail mid-session, but that day's
+      session is not covered at all; a calmer note says to re-mint before
+      trading that day.
+    - AFTER 15:30             -> the whole session of the expiry day is
+      covered; say so, so the operator knows this is the GOOD outcome.
+
+    Returns:
+        A human-readable line for the operator; never raises, because a
+        cosmetic decode problem must not fail an otherwise good setup run.
+    """
+    try:
+        segments = access_token.split(".")
+        if len(segments) != 3:
+            return "Token validity: unknown (token is not a JWT); check web.dhan.co."
+        padded = segments[1] + "=" * (-len(segments[1]) % 4)
+        expires_at = datetime.fromtimestamp(
+            json.loads(base64.urlsafe_b64decode(padded))["exp"], UTC
+        ).astimezone()
+    except Exception:
+        return "Token validity: could not be read from the token; check web.dhan.co."
+
+    hours_left = (expires_at - datetime.now().astimezone()).total_seconds() / 3600
+    line = f"Token expires {expires_at:%Y-%m-%d %H:%M:%S} (about {hours_left:.0f}h from now)."
+    if expires_at.weekday() >= 5:
+        # Weekend expiry: no session is at risk that day, and main() already
+        # prints the generic "re-run whenever it expires" advice.
+        return line
+    # 09:15-15:30 IST is the NSE equity-derivatives session. See the
+    # docstring for the three weekday situations distinguished below.
+    session_open = expires_at.replace(hour=9, minute=15, second=0, microsecond=0)
+    session_close = expires_at.replace(hour=15, minute=30, second=0, microsecond=0)
+    if session_open <= expires_at < session_close:
+        line += (
+            "\n  WARNING: that is DURING market hours. If it expires while positions"
+            "\n  are open you may be unable to square off through the API. Re-run this"
+            "\n  script outside market hours so the window covers a whole session."
+        )
+    elif expires_at < session_open:
+        line += (
+            "\n  NOTE: that is BEFORE that day's 09:15 open, so the token does NOT"
+            "\n  cover that day's trading session at all. Nothing can fail"
+            "\n  mid-session, but re-run this script before trading that day"
+            "\n  (outside market hours)."
+        )
+    else:
+        line += (
+            "\n  Good: that is after the 15:30 close, so the token covers that"
+            "\n  day's whole trading session."
+        )
+    return line
+
+
 def main() -> None:
     """
     Driver: walks the user through Steps 1, 2, 3 of the OAuth flow.
@@ -340,12 +427,12 @@ def main() -> None:
         print("ERROR: empty tokenId. Aborting.")
         sys.exit(2)
 
-    # --- Step 3 of 3: exchange tokenId for the long-lived access token --------
+    # --- Step 3 of 3: exchange tokenId for the access token -------------------
     # This call sends the short-lived tokenId + our API Key/Secret to
     # /app/consumeApp-consent. DhanHQ verifies the consent ID matches the
-    # one we created in Step 1 and, if all is well, returns a 12-month
-    # access token.
-    print("\nStep 3/3: exchanging tokenId for the 12-month access token...")
+    # one we created in Step 1 and, if all is well, returns the access token.
+    # DhanHQ chooses the validity; `_describe_token_expiry` reads it back.
+    print("\nStep 3/3: exchanging tokenId for the access token...")
     try:
         access_response = login.consume_token_id(token_id, api_key, api_secret)
     except Exception as exc:
@@ -406,7 +493,8 @@ def main() -> None:
     # it up on their next start.
     _write_access_token_to_env(access_token)
     print(f"\nDone. DHAN_ACCESS_TOKEN written to {ENV_PATH}")
-    print("This token is valid for 12 months. Re-run this script to refresh.")
+    print(_describe_token_expiry(access_token))
+    print("Re-run this script to refresh the token whenever it expires.")
 
 
 # Standard "only run main() when executed directly" guard. Lets other code

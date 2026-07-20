@@ -1,4 +1,25 @@
-"""One-bar lifetime and price rebasing for ``NEXT_OPEN`` strategy signals."""
+"""One-bar lifetime and price rebasing for ``NEXT_OPEN`` strategy signals.
+
+Some strategies (Goldmine, Money Machine) generate a setup on a COMPLETED
+candle but are only allowed to enter at the OPEN of the candle that follows.
+This module holds the two rules that make that safe:
+
+1.  **Exactly one bar of life.**  Candles in this repo are labelled by their
+    START time: a 5-minute candle stamped 09:20 covers 09:20-09:24 and is
+    complete at 09:25.  So a signal read from the 09:20 candle may execute
+    only at the bar labelled 09:25 (``signal_at + timeframe``) and expires the
+    moment data for 09:30 or later exists.  A gap in the feed can therefore
+    never revive a stale setup minutes later at prices the setup never
+    contemplated.
+
+2.  **Rebasing keeps DISTANCES, not levels.**  The setup's stop and target are
+    meaningful relative to its intended entry price.  If the next bar opens
+    with a gap, re-using the original absolute levels could put the target
+    behind the new entry (an instant "win") or the stop absurdly far away.
+    Rebasing shifts stop and target onto the ACTUAL observed open while
+    preserving the original stop/target distances, then re-checks that the
+    geometry still makes sense.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +45,11 @@ def _finite_price(value: Any) -> float | None:
 
 @dataclass(frozen=True, slots=True)
 class RebasedNextOpenEntry:
-    """Observed entry plus stop/target shifted by the setup distances."""
+    """Observed entry plus stop/target shifted by the setup distances.
+
+    ``entry`` is the real next-bar open the market printed; ``stop`` and
+    ``target`` sit at the setup's original distances from that entry.
+    """
 
     direction: str
     observed_at: datetime
@@ -75,6 +100,10 @@ class PendingNextOpenEntry:
         assert setup_stop is not None
         assert setup_target is not None
 
+        # Geometry check: a LONG only makes sense with the stop BELOW the
+        # entry and the target ABOVE it (mirrored for SHORT).  Anything else
+        # means the signal engine handed over levels that would fill as an
+        # instant stop-out or an instant "win" -- refuse them at the source.
         if normalized_direction == "LONG":
             valid_geometry = setup_stop < setup_entry < setup_target
             stop_distance = setup_entry - setup_stop
@@ -86,6 +115,10 @@ class PendingNextOpenEntry:
         if not valid_geometry:
             raise ValueError("setup entry/stop/target geometry is invalid")
 
+        # Candles are stamped by their START minute: the signal candle stamped
+        # 09:20 completes at 09:25, so its "next open" is the bar STAMPED
+        # 09:25 -- one full timeframe after the signal stamp.  The intent then
+        # expires one further bar later (see the module docstring).
         bar = timedelta(minutes=timeframe_minutes)
         expected_open_at = signal_at + bar
         return cls(
@@ -111,16 +144,31 @@ class PendingNextOpenEntry:
         observed_at: datetime,
         observed_entry: float,
     ) -> RebasedNextOpenEntry | None:
-        """Shift stop/target distances onto the exact observed next-bar open."""
+        """Shift stop/target distances onto the exact observed next-bar open.
+
+        Returns ``None`` (no trade) unless the observed row is EXACTLY the
+        expected next bar, its open is a usable price, and the rebased levels
+        still form valid geometry (stop below a LONG entry, target above it,
+        and mirrored for SHORT).  A gap large enough to break that geometry
+        rejects the entry rather than trading a setup that no longer exists.
+        """
 
         if not isinstance(observed_at, datetime):
             return None
+        # EXACT slot equality, not >=: a later bar means the intended entry
+        # moment was missed (a feed gap or a slow poll), and executing on a
+        # substitute bar would be a different trade from the one the setup
+        # described.  The caller keeps the intent queued until it expires.
         if observed_at != self.expected_open_at:
             return None
         entry = _finite_price(observed_entry)
         if entry is None:
             return None
 
+        # Shift the ORIGINAL stop/target distances onto the actually observed
+        # open, then re-check geometry: a large opening gap can push the
+        # rebased stop to zero/negative territory, which the finite-positive
+        # check below turns into a refusal rather than a nonsense order.
         if self.direction == "LONG":
             stop = entry - self.stop_distance
             target = entry + self.target_distance

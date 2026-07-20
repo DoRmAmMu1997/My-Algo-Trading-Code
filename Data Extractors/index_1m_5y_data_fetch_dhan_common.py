@@ -62,9 +62,12 @@ class IndexFetchDefaults:
     instrument_type: str = "INDEX"
     interval: int = 1
     lookback: str = "5y"
-    # SECURITY: never hardcode credentials here. Resolution order is CLI flag ->
-    # environment variable (DHAN_CLIENT_CODE / DHAN_TOKEN_ID, e.g. from
-    # Dependencies/.env) -> these blanks. A real client id + access token used
+    # SECURITY: never hardcode credentials here. The client id resolves CLI
+    # flag -> environment variable (DHAN_CLIENT_CODE) -> this blank. The access
+    # token is a SECRET and resolves environment variable (DHAN_TOKEN_ID, e.g.
+    # from Dependencies/.env) -> this blank ONLY -- there is deliberately no
+    # CLI flag for it (MAT-108): a token typed on the command line lands in
+    # shell history and process listings. A real client id + access token used
     # to live in these defaults; they were removed (and remain in old git
     # history, so treat that token as burned).
     default_client_id: str = ""
@@ -88,17 +91,15 @@ def parse_args(defaults: IndexFetchDefaults):
     )
 
     # Credentials:
-    # - first preference: explicit CLI values
-    # - second preference: environment variables
-    # - last fallback: wrapper-provided defaults (blank unless you choose
-    #   to hardcode them in the wrapper)
+    # - the CLIENT ID is an account identifier (not a secret), so it may come
+    #   from the CLI flag, then the environment, then the wrapper default.
+    # - the ACCESS TOKEN is a secret and is read from the environment ONLY
+    #   (DHAN_TOKEN_ID, e.g. loaded from Dependencies/.env). There is
+    #   deliberately no --access-token flag: a token typed on the command
+    #   line would land in shell history and process listings.
     parser.add_argument(
         "--client-id",
         default=os.getenv("DHAN_CLIENT_CODE", defaults.default_client_id),
-    )
-    parser.add_argument(
-        "--access-token",
-        default=os.getenv("DHAN_TOKEN_ID", defaults.default_access_token),
     )
 
     parser.add_argument(
@@ -139,7 +140,11 @@ def parse_args(defaults: IndexFetchDefaults):
     )
     parser.add_argument("--start-date", default="")
     parser.add_argument("--end-date", default="")
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Attach the token AFTER parsing so it can never be supplied (or leaked)
+    # through the command line; downstream code keeps reading args.access_token.
+    args.access_token = os.getenv("DHAN_TOKEN_ID", defaults.default_access_token)
+    return args
 
 
 def resolve_date_range(args):
@@ -478,8 +483,9 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
 
     if not args.client_id or not args.access_token:
         raise ValueError(
-            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_TOKEN_ID, "
-            "or pass --client-id and --access-token."
+            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_TOKEN_ID in the "
+            "environment (e.g. Dependencies/.env). Only --client-id may be "
+            "overridden on the command line; the token is environment-only."
         )
 
     if args.chunk_days <= 0 or args.chunk_days > 90:

@@ -132,3 +132,77 @@ def test_nonfinite_observed_open_is_not_rebased() -> None:
         is None
     )
     assert pending.expires_at - pending.expected_open_at == timedelta(minutes=5)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("direction", "SIDEWAYS", "direction"),
+        ("signal_at", "2026-07-16", "signal_at"),
+        ("timeframe_minutes", True, "timeframe_minutes"),
+        ("timeframe_minutes", 0, "timeframe_minutes"),
+        ("entry", True, "finite positive"),
+        ("stop", "bad", "finite positive"),
+        ("target", float("nan"), "finite positive"),
+    ],
+)
+def test_invalid_setup_types_and_prices_fail_closed(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    kwargs: dict[str, object] = {
+        "direction": "LONG",
+        "signal_at": datetime(2026, 7, 16, 10, 0),
+        "entry": 100.0,
+        "stop": 95.0,
+        "target": 110.0,
+        "timeframe_minutes": 5,
+    }
+    kwargs[field] = value
+    with pytest.raises(ValueError, match=message):
+        PendingNextOpenEntry.from_setup(**kwargs)  # type: ignore[arg-type]
+
+
+def test_expiry_rejects_a_nondatetime_observation() -> None:
+    pending = PendingNextOpenEntry.from_setup(
+        direction="LONG",
+        signal_at=datetime(2026, 7, 16, 10, 0),
+        entry=100.0,
+        stop=95.0,
+        target=110.0,
+        timeframe_minutes=5,
+    )
+    with pytest.raises(ValueError, match="observed_at"):
+        pending.expired_as_of("2026-07-16")  # type: ignore[arg-type]
+
+
+def test_rebase_rejects_nondatetime_and_nonpositive_observed_open() -> None:
+    pending = PendingNextOpenEntry.from_setup(
+        direction="LONG",
+        signal_at=datetime(2026, 7, 16, 10, 0),
+        entry=100.0,
+        stop=95.0,
+        target=110.0,
+        timeframe_minutes=5,
+    )
+    assert pending.rebase_at_open(observed_at="bad", observed_entry=100.0) is None  # type: ignore[arg-type]
+    assert pending.rebase_at_open(observed_at=pending.expected_open_at, observed_entry=0) is None
+
+
+def test_large_gap_that_would_create_a_nonpositive_stop_is_rejected() -> None:
+    pending = PendingNextOpenEntry.from_setup(
+        direction="LONG",
+        signal_at=datetime(2026, 7, 16, 10, 0),
+        entry=100.0,
+        stop=1.0,
+        target=110.0,
+        timeframe_minutes=5,
+    )
+    assert (
+        pending.rebase_at_open(
+            observed_at=pending.expected_open_at,
+            observed_entry=50.0,
+        )
+        is None
+    )

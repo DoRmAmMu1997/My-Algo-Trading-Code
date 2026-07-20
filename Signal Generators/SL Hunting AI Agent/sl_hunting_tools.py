@@ -99,7 +99,23 @@ CONTEXT_TOOL_NAMES = [
 
 
 class ToolContextState(StrEnum):
-    """Lifecycle of the one side-effect capability granted to an agent pass."""
+    """Lifecycle of the one side-effect capability granted to an agent pass.
+
+    The transitions, in plain English:
+
+    - ``ACTIVE``    : the pass may still place its one order.  Rejected
+                      validation attempts return here so the model can
+                      correct its levels within the same pass.
+    - ``EXECUTING`` : an order is inside the executor right now -- a second
+                      call arriving mid-flight is refused, never queued.
+    - ``CONSUMED``  : an ACCEPTED side effect happened.  Terminal: one pass
+                      gets at most one accepted ENTER or EXIT, ever.
+    - ``EXPIRED``   : the decision window closed (deadline, stale generation,
+                      mechanical exit, or the pass simply finished) before an
+                      accepted action.  Terminal: a late tool call from an
+                      abandoned SDK loop finds a dead capability, not a
+                      market order.
+    """
 
     ACTIVE = "ACTIVE"
     EXECUTING = "EXECUTING"
@@ -283,6 +299,13 @@ class SLHuntingToolContext:
         else:
             return {"accepted": False, "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT or EXIT"}
 
+        # The final gate.  The freshness checks (state, generation, deadline)
+        # run INSIDE the same lock that serializes the executor call, because
+        # checking first and locking second would leave a gap: the mechanical
+        # risk loop could invalidate this pass between the check and the
+        # order.  Inside the lock, what was checked is what executes.  This is
+        # also the lock the worker's stop/target/square-off paths hold while
+        # THEY act, so an agent order and a mechanical exit can never race.
         with self._execution_lock:
             refusal = self._refusal_inside_lock()
             if refusal is not None:
@@ -291,6 +314,8 @@ class SLHuntingToolContext:
             try:
                 result = executor_call()
             except BaseException:
+                # An executor that blew up mid-order leaves unknown exposure;
+                # this pass must not get a second try at it.
                 self.expired_reason = "executor raised"
                 self.state = ToolContextState.EXPIRED
                 raise

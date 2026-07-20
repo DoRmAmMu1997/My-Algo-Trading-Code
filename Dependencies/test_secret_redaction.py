@@ -5,7 +5,13 @@ from __future__ import annotations
 import io
 import logging
 
-from Dependencies.secret_redaction import REDACTED, RedactingFilter, redact_payload, redact_text
+from Dependencies.secret_redaction import (
+    REDACTED,
+    RedactingFilter,
+    install_redaction_filter,
+    redact_payload,
+    redact_text,
+)
 
 
 def test_recursive_redaction_covers_broker_and_identity_fields():
@@ -47,3 +53,38 @@ def test_debug_and_exception_records_never_emit_canary_secrets():
     output = stream.getvalue()
     assert secret not in output
     assert REDACTED in output
+
+
+def test_redaction_reaches_secrets_inside_tuples_and_sets():
+    """Broker payloads can nest sequences; every container type is walked."""
+    payload = (
+        "password=CANARY-TUPLE",
+        {"CANARY-SET-SECRET", "harmless"},
+        ["token=CANARY-LIST"],
+    )
+    safe = redact_payload(payload, ("CANARY-SET-SECRET",))
+    rendered = repr(safe)
+    assert "CANARY" not in rendered
+    assert isinstance(safe, tuple)
+    assert isinstance(safe[1], set)
+
+
+def test_install_redaction_filter_covers_logger_and_existing_handlers():
+    """One install call must guard both the logger and its current handlers."""
+    secret = "CANARY-INSTALL-SECRET"
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logger = logging.getLogger("mat110.install.canary")
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+
+    install_redaction_filter(logger, [secret])
+    logger.debug("session token is %s somewhere in this line", secret)
+
+    output = stream.getvalue()
+    assert secret not in output
+    assert REDACTED in output
+    # The guard sits on the handler too, so records that reach the handler
+    # directly (propagated from child loggers) are also scrubbed.
+    assert any(isinstance(f, RedactingFilter) for f in handler.filters)
