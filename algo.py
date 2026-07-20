@@ -95,6 +95,7 @@ BACKTEST_SCRIPTS = {
 # these keys automatically; each value is the script that receives the remaining
 # CE/PE, strike, expiry, and --place-order arguments unchanged.
 BROKER_DIAGNOSTICS = {
+    "dhan": "Dependencies/Dhan API/diagnose_dhan_symbol.py",
     "flattrade": "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
     "kotak": "Dependencies/Kotak API/diagnose_kotak_symbol.py",
     "shoonya": "Dependencies/Shoonya API/diagnose_shoonya_symbol.py",

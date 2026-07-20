@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import finite, normalize_ohlc_frame, require_columns
+from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ class VolatilityBreakoutConfig:
     target_pct: float = 0.04      # profit target, 4% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if float(self.k_factor) <= 0.0:
             raise ValueError("k_factor must be greater than zero.")
         if float(self.stop_loss_pct) <= 0.0 or float(self.target_pct) <= 0.0:

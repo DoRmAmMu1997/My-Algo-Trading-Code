@@ -64,6 +64,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
@@ -72,11 +73,22 @@ import requests
 
 # Make the broker-neutral contract available both when the master dynamically
 # loads this file and when the sibling diagnostic runs it as a standalone script.
+#
+# The REPO ROOT has to go on the path too, not just ``Dependencies``: the
+# redaction helpers below are imported as ``Dependencies.secret_redaction``,
+# which needs the package's PARENT directory.  The master already has it because
+# it is launched from the repo root, but ``python <script>`` puts the SCRIPT's
+# directory on ``sys.path[0]`` and never the working directory -- so the sibling
+# diagnostic (directly or via ``algo.py diagnose``) used to die on import with
+# "No module named 'Dependencies'".
 _DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
-if str(_DEPENDENCIES_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+_REPO_ROOT = _DEPENDENCIES_DIR.parent
+for _import_root in (_REPO_ROOT, _DEPENDENCIES_DIR):
+    if str(_import_root) not in sys.path:
+        sys.path.insert(0, str(_import_root))
 
 from broker_contract import (  # noqa: E402
+    TERMINAL_BROKER_STATES,
     BrokerQueryResult,
     OpenOrder,
     OpenPosition,
@@ -84,6 +96,8 @@ from broker_contract import (  # noqa: E402
     OrderStatus,
     normalize_order_result,
 )
+
+from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
 # --- Make the vendored "Shoonya API" SDK importable ---------------------------
 # The NorenApi client may live in a "Shoonya API" folder somewhere above this
@@ -208,6 +222,9 @@ class ShoonyaExecutionClient:
         # The set of valid NFO trading symbols (uppercased), downloaded once and
         # reused for validation. Stays None until first loaded.
         self._symbol_set: set | None = None
+        # tsym -> exchange lot size, filled from the same master download. Used
+        # only by the diagnostic's pre-flight quantity check.
+        self._lot_size_by_symbol: dict[str, int] = {}
 
     @staticmethod
     def _remaining_broker_budget(started: float) -> float:
@@ -270,7 +287,15 @@ class ShoonyaExecutionClient:
             self._lock.release()
 
     def recover_after_reconciliation(self) -> bool:
-        """Explicitly clear deadline poison after the abandoned call has ended."""
+        """Explicitly clear deadline poison after the abandoned call has ended.
+
+        "Poisoned" means an earlier call outlived its 10-second budget and was
+        abandoned -- but Python cannot kill a running thread, so that call may
+        STILL be executing inside the SDK and may still place/affect an order.
+        Only after (a) reconciliation has proven the account state and (b) the
+        abandoned call has actually finished is it safe to accept new orders;
+        this method refuses (returns False) until both hold.
+        """
 
         with self._lock:
             if self._timed_out_future is not None and not self._timed_out_future.done():
@@ -314,7 +339,7 @@ class ShoonyaExecutionClient:
         aborted login -> paper fallback.
         """
         try:
-            return input("Enter Shoonya TOTP (6 digits from your authenticator app): ").strip()
+            return getpass("Enter Shoonya TOTP (input hidden): ").strip()
         except (EOFError, OSError):
             return ""
 
@@ -380,7 +405,11 @@ class ShoonyaExecutionClient:
             if not isinstance(resp, dict) or str(resp.get("stat", "")).strip().lower() != "ok":
                 self.is_logged_in = False
                 self.client = None
-                log.error(f"Shoonya login failed (no valid session). Raw response: {resp}")
+                secrets = (userid, password, two_fa, vendor_code, api_secret, imei)
+                log.error(
+                    "Shoonya login failed (no valid session). Response: %s",
+                    redact_payload(resp, secrets),
+                )
                 return False
 
             self.is_logged_in = True
@@ -402,7 +431,7 @@ class ShoonyaExecutionClient:
                 hint = (" -- Shoonya returned a non-JSON response (e.g. an HTTP 502 / "
                         "maintenance page), which usually means the broker API is "
                         "temporarily down. This is server-side; retry in a few minutes.")
-            log.error(f"Shoonya execution client login failed: {exc}{hint}")
+            log.error("Shoonya execution client login failed: %s%s", redact_text(exc), hint)
             return False
 
     def ensure_logged_in(self) -> bool:
@@ -462,12 +491,43 @@ class ShoonyaExecutionClient:
             log.warning(f"Shoonya NFO symbol master missing 'TradingSymbol' column: {list(df.columns)}")
             return False
         try:
-            self._symbol_set = set(df["TradingSymbol"].astype(str).str.strip().str.upper())
+            symbols = df["TradingSymbol"].astype(str).str.strip().str.upper()
+            self._symbol_set = set(symbols)
+            # Keep the lot size alongside the symbol set. The master already
+            # carries it and the frame is discarded straight after, so this is
+            # the only chance to retain it. The sibling diagnostic uses it to
+            # refuse a --qty that is not a whole-lot multiple before any real
+            # order is submitted; live trading does not depend on it, so a
+            # master without the column simply leaves the map empty.
+            lot_column = next(
+                (name for name in ("LotSize", "Lotsize", "lotsize") if name in df.columns),
+                None,
+            )
+            if lot_column is None:
+                self._lot_size_by_symbol = {}
+                log.info("Shoonya symbol master has no lot-size column; sizes unavailable.")
+            else:
+                lots = pd.to_numeric(df[lot_column], errors="coerce").fillna(0).astype(int)
+                self._lot_size_by_symbol = {
+                    symbol: int(lot)
+                    for symbol, lot in zip(symbols, lots, strict=False)
+                    if lot > 0
+                }
             log.info(f"Shoonya NSE F&O symbol master loaded ({len(df)} rows).")
             return True
         except Exception as exc:
             log.warning(f"Shoonya NFO symbol master parse failed: {exc}")
             return False
+
+    def lot_size_for_symbol(self, trading_symbol: str) -> int:
+        """Return the exchange lot size for one tsym, or 0 when unknown.
+
+        Exposed for the sibling diagnostic's pre-flight quantity check. It never
+        triggers a download: an unloaded master just reports 0, which makes the
+        check a no-op rather than blocking on missing metadata.
+        """
+        with self._lock:
+            return self._lot_size_by_symbol.get(str(trading_symbol).strip().upper(), 0)
 
     def resolve_option_symbol(
         self,
@@ -556,6 +616,8 @@ class ShoonyaExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """Serialize one submission through its typed fill confirmation."""
 
@@ -593,6 +655,7 @@ class ShoonyaExecutionClient:
                 quantity_i,
                 exchange_segment,
                 product_type,
+                order_tag=order_tag,
             )
         finally:
             self._order_submission_lock.release()
@@ -604,6 +667,8 @@ class ShoonyaExecutionClient:
         quantity: int,
         exchange_segment: str = "NFO",
         product_type: str = "INTRADAY",
+        *,
+        order_tag: str = "",
     ) -> OrderResult:
         """
         Place ONE market order (buy or sell at the current price) on Shoonya.
@@ -656,7 +721,7 @@ class ShoonyaExecutionClient:
                     price=0,
                     trigger_price=0,
                     retention="DAY",
-                    remarks="multistrategy_master",
+                    remarks=order_tag or "multistrategy_master",
                 )
 
         try:
@@ -782,10 +847,19 @@ class ShoonyaExecutionClient:
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
-        """Poll briefly for a terminal result without hiding ambiguity.
+        """Poll until the order reaches a truly terminal state, or time out.
 
         Polling happens outside the lock; each history request re-takes it only
         for the native, deadline-bound Noren call.
+
+        Why the loop keeps polling on PARTIAL/UNKNOWN snapshots: a market order
+        is often observed mid-fill (Noren state "open" with some quantity
+        already traded on `fillshares`).  That is TRANSIENT -- the next 0.5s
+        poll usually shows COMPLETE -- so returning it as the final outcome
+        would freeze every live strategy over a perfectly healthy order.  A
+        partial/unknown snapshot becomes the real outcome only when the broker
+        label is terminal (the order can never fill further, e.g. a partial
+        fill followed by a cancel) or the timeout below expires.
         """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_result = normalize_order_result(
@@ -797,11 +871,15 @@ class ShoonyaExecutionClient:
         )
         while time.monotonic() < deadline:
             last_result = self.get_order_status(order_id, requested_quantity=want_qty)
-            if last_result.status is not OrderStatus.UNKNOWN:
+            if last_result.status in {OrderStatus.FILLED, OrderStatus.REJECTED}:
+                return last_result
+            if last_result.broker_state in TERMINAL_BROKER_STATES:
+                # Terminal label with a partial/contradictory quantity snapshot:
+                # no further fills are possible, so this IS the final outcome.
                 return last_result
             if "error:" in last_result.reason.lower():
-                return last_result
-            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
+                # A failed status read is already indeterminate; repeating it
+                # inside the same order interaction adds no evidence.
                 return last_result
             time.sleep(_FILL_POLL_INTERVAL)
         return normalize_order_result(

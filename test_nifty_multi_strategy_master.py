@@ -6,7 +6,8 @@ import sys
 import tempfile
 import threading
 import unittest
-from datetime import date, datetime, timedelta
+from contextlib import ExitStack
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
@@ -158,6 +159,27 @@ class TestSharedMarketDataStore(unittest.TestCase):
         self.store.update_ltp_map({("NSE_FNO", 1234): -50.0})
         self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
 
+        self.store.update_ltp_map({("NSE_FNO", 1234): float("inf")})
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
+
+        self.store.update_ltp_map({("NSE_FNO", 1234): "not-a-price"})
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
+
+    def test_invalid_ohlc_does_not_replace_last_good_snapshot(self):
+        """Publication is atomic: invalid replacement data leaves the prior snapshot intact."""
+        good = pd.DataFrame({
+            "timestamp": ["2026-05-15 10:00:00"],
+            "open": [100.0], "high": [105.0], "low": [95.0], "close": [102.0],
+        })
+        self.store.update("1", good)
+        invalid = good.copy()
+        invalid.loc[0, "close"] = float("inf")
+
+        with self.assertRaises(master_file.MarketDataValidationError):
+            self.store.update("1", invalid)
+
+        self.assertEqual(self.store.get("1").frame.iloc[-1]["close"], 102.0)
+
     def test_subscriptions(self):
         """Check if option subscriptions can be correctly registered and unregistered."""
         sub = master_file.OptionSubscription(
@@ -172,6 +194,118 @@ class TestSharedMarketDataStore(unittest.TestCase):
 
         self.store.unregister_option_subscription("NSE_FNO", 123)
         self.assertEqual(len(self.store.snapshot_option_subscriptions()), 0)
+
+
+class TestWorkerMarketDataSafety(unittest.TestCase):
+    """The feed gate and stale-feed unwind protect REAL money: live workers only.
+
+    Operator decision (2026-07-17): a paper worker keeps entering and keeps its
+    virtual position on the last-good snapshot -- the gate had blocked every
+    paper strategy through the 17 Jul opening window while the feed warmed up.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            self.store,
+            threading.Event(),
+            MagicMock(),
+        )
+
+    def test_live_entry_is_blocked_until_feed_recovers(self):
+        self.worker.live_trading = True
+        self.store.begin_market_data_monitoring()
+        with patch.object(self.worker, "_get_underlying_spot") as get_spot:
+            self.assertFalse(self.worker.enter_position("LONG", 22500.0))
+        get_spot.assert_not_called()
+
+    def test_paper_entry_allowed_while_feed_unhealthy(self):
+        """A paper (virtual) worker sails through the feed gate: the entry
+        attempt must reach the spot lookup instead of being blocked."""
+        self.assertFalse(self.worker.live_trading)
+        self.store.begin_market_data_monitoring()
+        with patch.object(self.worker, "_get_underlying_spot", return_value=0.0) as get_spot:
+            # Returns False further down (no spot LTP in this synthetic setup),
+            # but the market-data gate itself must have been passed.
+            self.assertFalse(self.worker.enter_position("LONG", 22500.0))
+        get_spot.assert_called_once()
+
+    def test_thirty_second_unhealthy_state_invokes_square_off_for_live(self):
+        self.worker.live_trading = True
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("LTP IDX_I/13 is stale (41.0s)",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock()
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertTrue(consumed)
+        self.worker.exit_position.assert_called_once_with("MARKET_DATA_UNHEALTHY")
+        self.worker._flatten_additional_positions.assert_called_once_with(
+            "MARKET_DATA_UNHEALTHY"
+        )
+        self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
+
+    def test_paper_worker_skips_market_data_square_off(self):
+        """A paper worker's virtual position must survive a 30s+ feed outage:
+        no forced close, no orphan sweep, and the poll is NOT consumed (the
+        strategy keeps running on the last-good snapshot)."""
+        self.assertFalse(self.worker.live_trading)
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("LTP IDX_I/13 is stale (41.0s)",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock()
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertFalse(consumed)
+        self.worker.exit_position.assert_not_called()
+        self.worker._flatten_additional_positions.assert_not_called()
+        self.worker._sweep_orphan_live_legs.assert_not_called()
+        # The 30s+ outage is still logged once for the operator's audit trail.
+        self.assertTrue(self.worker._market_data_liquidation_logged)
+
+    def test_unhealthy_primary_close_error_cannot_skip_other_exposure(self):
+        self.worker.live_trading = True
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("newest completed one-minute bar is stale",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock(side_effect=RuntimeError("primary close failed"))
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertTrue(consumed)
+        self.worker._flatten_additional_positions.assert_called_once_with(
+            "MARKET_DATA_UNHEALTHY"
+        )
+        self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
 
 
 # =============================================================================
@@ -308,6 +442,17 @@ class TestPureHelpers(unittest.TestCase):
             self.assertTrue(master_file.is_after_time(11, 0))
             self.assertFalse(master_file.is_after_time(13, 0))
 
+    def test_time_gates_convert_utc_now_to_ist(self):
+        """Market cutoffs use Asia/Kolkata even when the host clock is UTC."""
+
+        # 07:30 UTC is 13:00 IST. A host-local comparison would incorrectly
+        # report that noon has not arrived yet.
+        utc_now = datetime(2026, 5, 15, 7, 30, tzinfo=UTC)
+        with patch.object(master_file, "datetime") as mock_dt:
+            mock_dt.now.return_value = utc_now
+            self.assertTrue(master_file.is_after_time(12, 0))
+            self.assertFalse(master_file.is_before_time(12, 0))
+
     def test_resample_ohlc_from_1m_passthrough(self):
         """1-minute resampling is a no-op."""
         ohlc = pd.DataFrame({
@@ -344,6 +489,22 @@ class TestPureHelpers(unittest.TestCase):
         ohlc = pd.DataFrame({"timestamp": [pd.Timestamp("2026-05-15 09:15")]})
         with self.assertRaises(ValueError):
             master_file.resample_ohlc_from_1m(ohlc, 5)
+
+    def test_resample_rejects_count_complete_but_slot_incomplete_bucket(self):
+        """A duplicate minute cannot hide a missing minute in a five-row bucket."""
+        timestamps = pd.to_datetime([
+            "2026-05-15 09:15", "2026-05-15 09:15", "2026-05-15 09:17",
+            "2026-05-15 09:18", "2026-05-15 09:19",
+        ])
+        ohlc = pd.DataFrame({
+            "timestamp": timestamps,
+            "open": [100, 100, 102, 103, 104],
+            "high": [101, 101, 103, 104, 105],
+            "low": [99, 99, 101, 102, 103],
+            "close": [100.5, 100.5, 102.5, 103.5, 104.5],
+        })
+        result = master_file.resample_ohlc_from_1m(ohlc, 5)
+        self.assertTrue(result.empty)
 
     def test_color_pnl_text_static(self):
         """`_color_pnl_text` colors positive green, negative red, zero plain."""
@@ -426,6 +587,25 @@ class TestNormalizeDhanResponse(unittest.TestCase):
         """Below-MIN_BARS frames are rejected to avoid corrupt warm-up."""
         resp = self._make_dict_resp(master_file.MIN_BARS - 5)
         with self.assertRaises(ValueError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+    def test_normalize_rejects_non_finite_and_impossible_ohlc(self):
+        """Infinity and impossible high/low geometry fail closed at ingestion."""
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["close"][3] = float("inf")
+        with self.assertRaises(master_file.MarketDataValidationError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["high"][3] = resp["data"]["close"][3] - 1.0
+        with self.assertRaises(master_file.MarketDataValidationError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+    def test_normalize_rejects_mixed_epoch_units(self):
+        """One millisecond value among second epochs cannot corrupt the whole timeline."""
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["timestamp"][3] *= 1000
+        with self.assertRaises(master_file.MarketDataValidationError):
             master_file.normalize_dhan_intraday_response(resp)
 
 
@@ -529,6 +709,50 @@ class TestOptionChainParsers(unittest.TestCase):
                 {}, target_delta=0.2, right="ce"
             )
         )
+
+
+class TestOpeningStrikeEntryAcknowledgement(unittest.TestCase):
+    """The one-shot setup belongs to a successful entry, not an emitted signal."""
+
+    def setUp(self):
+        self.worker = master_file.OpeningStrikePCRVWAPATRWorker(
+            master_file.SharedMarketDataStore(),
+            threading.Event(),
+            MagicMock(),
+        )
+        self.worker.signal_engine = MagicMock()
+        self.worker.signal_engine._entry_signal_sent = False
+        self.worker.signal_engine.evaluate.return_value = (
+            master_file.OPENING_STRIKE_LOGIC.NiftyOpeningStrikePCRVWAPATRDecision(
+                action="BUY_CALL",
+                signal_triggered=True,
+                entry_underlying=25000.0,
+            )
+        )
+        self.worker._build_option_chain_oi_change = MagicMock(
+            return_value=pd.DataFrame({"strike": [25000.0]})
+        )
+        self.frame = pd.DataFrame(
+            {
+                "timestamp": [datetime(2026, 7, 16, 10, 0)],
+                "open": [24990.0],
+                "close": [25000.0],
+            }
+        )
+
+    def test_failed_entry_does_not_consume_one_shot_signal(self):
+        self.worker.enter_position = MagicMock(return_value=False)
+
+        self.worker.process_strategy_frame(self.frame)
+
+        self.worker.signal_engine.acknowledge_entry.assert_not_called()
+
+    def test_successful_entry_consumes_one_shot_signal(self):
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        self.worker.process_strategy_frame(self.frame)
+
+        self.worker.signal_engine.acknowledge_entry.assert_called_once_with()
 
 
 # =============================================================================
@@ -1174,6 +1398,79 @@ class TestBasePaperStrategyWorker(unittest.TestCase):
         self.assertNotEqual(oid1, oid2)
         self.assertTrue(oid2.endswith("-0002"))
 
+    def test_session_execution_mode_tracks_live_and_paper_fallbacks_without_telegram(self):
+        """Mode telemetry is trading state, not a side effect of enabling Telegram."""
+        self.assertEqual(self.worker.session_execution_mode(), "PAPER")
+
+        self.worker.live_trading = True
+        self.worker.publish_trade_event({"action": "ENTRY", "mode": "LIVE"})
+        self.assertEqual(self.worker.session_execution_mode(), "LIVE")
+
+        self.worker.publish_trade_event({"action": "ENTRY", "mode": "PAPER_FALLBACK"})
+        self.assertEqual(self.worker.session_execution_mode(), "MIXED")
+
+    def test_stop_event_flattens_before_worker_reaches_stopped(self):
+        """A pre-set terminal event is translated into flatten-then-stop."""
+
+        self.worker.pos.active = True
+        self.stop_event.set()
+
+        def close_position(_reason):
+            self.worker.pos.active = False
+
+        with patch.object(self.worker, "exit_position", side_effect=close_position) as close:
+            self.assertTrue(self.worker._run_shutdown_cycle_if_requested())
+
+        close.assert_called_once_with("STOP_EVENT")
+        self.assertEqual(
+            self.worker.lifecycle.snapshot().state,
+            master_file.LifecycleState.STOPPED,
+        )
+
+    def test_transient_close_failure_retries_on_one_second_backoff(self):
+        """A failed first close keeps ownership and a later retry reaches flat."""
+
+        clock = [100.0]
+        self.worker.lifecycle = master_file.TradingLifecycle(monotonic=lambda: clock[0])
+        self.worker.pos.active = True
+        attempts = []
+
+        def close_position(reason):
+            attempts.append(reason)
+            if len(attempts) == 2:
+                self.worker.pos.active = False
+
+        with patch.object(self.worker, "exit_position", side_effect=close_position):
+            self.worker.handle_square_off_and_stop()
+            waiting = self.worker.lifecycle.snapshot()
+            self.assertEqual(waiting.state, master_file.LifecycleState.RECONCILING)
+            self.assertEqual(waiting.next_retry_at, 101.0)
+
+            # Before the deadline, no duplicate close is submitted.
+            self.assertTrue(self.worker._run_shutdown_cycle_if_requested())
+            self.assertEqual(attempts, ["TIME_CUTOFF"])
+
+            clock[0] = 101.0
+            self.assertTrue(self.worker._run_shutdown_cycle_if_requested())
+
+        self.assertEqual(attempts, ["TIME_CUTOFF", "TIME_CUTOFF"])
+        self.assertEqual(
+            self.worker.lifecycle.snapshot().state,
+            master_file.LifecycleState.STOPPED,
+        )
+
+    def test_permanent_close_failure_never_reports_stopped(self):
+        """Unresolved exposure remains in degraded reconciliation indefinitely."""
+
+        self.worker.pos.active = True
+        with patch.object(self.worker, "exit_position") as close:
+            self.worker.handle_max_loss_and_stop(-1000.0, -1000.0)
+
+        close.assert_called_once_with("MAX_LOSS_BREACH")
+        snapshot = self.worker.lifecycle.snapshot()
+        self.assertEqual(snapshot.state, master_file.LifecycleState.RECONCILING)
+        self.assertFalse(snapshot.entry_allowed)
+
 
 # =============================================================================
 # TEST SUITE: ATM SINGLE-LEG STRATEGY WORKER
@@ -1262,6 +1559,33 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
         )
         self.assertFalse(result)
 
+    def test_rejected_sizing_decision_skips_entry_before_order_routing(self):
+        decision = master_file.SizingDecision.from_risk_budget(
+            entry=22500.0,
+            stop=22400.0,
+            lot_size=50,
+            budget=1000.0,
+            max_lots=5,
+        )
+        self.assertFalse(decision.accepted)
+        with (
+            patch.object(
+                self.worker,
+                "_compute_entry_sizing",
+                return_value=decision,
+            ),
+            patch.object(self.worker, "_place_real_leg") as route_order,
+        ):
+            result = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+            )
+
+        self.assertFalse(result)
+        self.assertFalse(self.worker.pos.active)
+        route_order.assert_not_called()
+
     def test_get_open_position_pnl_marks_to_market(self):
         """Open MTM = (live - entry) * qty for the BUY leg."""
         self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
@@ -1323,14 +1647,32 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance fails closed instead of inventing fallback risk."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0,
             stop_underlying=22500.0,
             lot_size=50,
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_one_lot_over_budget_is_skipped(self):
+        lots = self.worker._compute_entry_lots(
+            entry_underlying=22500.0,
+            stop_underlying=22449.0,
+            lot_size=50,
+        )
+
+        self.assertEqual(lots, 0)
+
+    def test_tiny_stop_never_exceeds_namespaced_five_lot_cap(self):
+        lots = self.worker._compute_entry_lots(
+            entry_underlying=22500.0,
+            stop_underlying=22499.9,
+            lot_size=50,
+        )
+
+        self.assertEqual(lots, master_file.PROFIT_SHOOTER_MAX_LOTS)
 
     def test_build_strategy_frame_resamples_to_five_minutes(self):
         """Profit Shooter is a 5-minute method: the strategy frame must be built
@@ -1352,11 +1694,146 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         self.assertEqual(len(spacing), 1)
         self.assertEqual(pd.Timedelta(spacing[0]), pd.Timedelta(minutes=5))
 
+    def test_open_position_bypasses_entry_indicator_warmup(self):
+        """An existing trade's hard stop cannot wait for 200 entry bars."""
+
+        self.worker.pos.active = True
+
+        self.assertEqual(self.worker.minimum_strategy_rows(), 1)
+        self.assertEqual(self.worker.minimum_source_rows(), 1)
+
 
 # =============================================================================
 # TEST SUITE: GOLDMINE DYNAMIC LOT SIZING
 # =============================================================================
-class TestGoldmineStrategyWorker(unittest.TestCase):
+class _NextOpenWorkerTestMixin:
+    """Shared acceptance tests for one-bar ``NEXT_OPEN`` worker intents."""
+
+    worker = None
+    decision_type = None
+
+    def _next_open_decision(
+        self,
+        *,
+        action="ENTER_LONG",
+        entry=100.0,
+        stop=95.0,
+        target=110.0,
+        signal_at=datetime(2026, 7, 16, 10, 0),
+    ):
+        return self.decision_type(
+            action=action,
+            entry_underlying=entry,
+            stop_underlying=stop,
+            target_underlying=target,
+            signal_triggered=True,
+            debug={"entry_timing": "NEXT_OPEN", "timestamp": signal_at},
+        )
+
+    def test_next_open_signal_is_queued_instead_of_entered_immediately(self):
+        decision = self._next_open_decision()
+        self.worker.signal_engine.evaluate_candle = MagicMock(return_value=decision)
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        self.worker.process_strategy_frame(pd.DataFrame({"close": [100.0]}))
+
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNotNone(self.worker._pending_next_open)
+        self.assertEqual(
+            self.worker._pending_next_open.expected_open_at,
+            datetime(2026, 7, 16, 10, 5),
+        )
+
+    def test_long_gap_rebases_stop_and_target_from_observed_next_open(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 5)],
+                    "open": [120.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_called_once_with(
+            "LONG",
+            120.0,
+            115.0,
+            target_underlying=130.0,
+        )
+        self.assertEqual(self.worker.entry_submit_count, 1)
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_short_gap_rebases_stop_and_target_from_observed_next_open(self):
+        decision = self._next_open_decision(
+            action="ENTER_SHORT",
+            entry=100.0,
+            stop=105.0,
+            target=90.0,
+        )
+        self.assertTrue(self.worker._queue_next_open_decision("SHORT", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 5)],
+                    "open": [80.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_called_once_with(
+            "SHORT",
+            80.0,
+            85.0,
+            target_underlying=70.0,
+        )
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_missing_expected_open_expires_after_one_bar(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 10)],
+                    "open": [120.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_pending_intent_waits_until_expected_open_slot(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 4)],
+                    "open": [101.0],
+                }
+            )
+        )
+
+        self.assertFalse(consumed)
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNotNone(self.worker._pending_next_open)
+
+
+class TestGoldmineStrategyWorker(_NextOpenWorkerTestMixin, unittest.TestCase):
     """Goldmine reuses Profit Shooter's risk-based `_compute_entry_lots`."""
 
     def setUp(self):
@@ -1366,6 +1843,7 @@ class TestGoldmineStrategyWorker(unittest.TestCase):
         self.worker = master_file.GoldmineStrategyWorker(
             store=self.store, stop_event=self.stop_event, broker=self.broker
         )
+        self.decision_type = master_file.GOLDMINE_LOGIC.GoldmineDecision
 
     def test_compute_entry_lots_returns_positive_integer(self):
         """For a reasonable SL distance, the sizer returns >= 1 lot."""
@@ -1376,18 +1854,28 @@ class TestGoldmineStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance is an explicit no-trade decision."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0, stop_underlying=22500.0, lot_size=50
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_namespaced_max_lots_caps_tiny_stop(self):
+        with patch.object(master_file, "GOLDMINE_MAX_LOTS", 2):
+            lots = self.worker._compute_entry_lots(
+                entry_underlying=22500.0,
+                stop_underlying=22499.9,
+                lot_size=50,
+            )
+
+        self.assertEqual(lots, 2)
 
 
 # =============================================================================
 # TEST SUITE: MONEY MACHINE DYNAMIC LOT SIZING
 # =============================================================================
-class TestMoneyMachineStrategyWorker(unittest.TestCase):
+class TestMoneyMachineStrategyWorker(_NextOpenWorkerTestMixin, unittest.TestCase):
     """Money Machine reuses the same risk-based `_compute_entry_lots`."""
 
     def setUp(self):
@@ -1397,6 +1885,7 @@ class TestMoneyMachineStrategyWorker(unittest.TestCase):
         self.worker = master_file.MoneyMachineStrategyWorker(
             store=self.store, stop_event=self.stop_event, broker=self.broker
         )
+        self.decision_type = master_file.MONEY_MACHINE_LOGIC.MoneyMachineDecision
 
     def test_compute_entry_lots_returns_positive_integer(self):
         """For a reasonable SL distance, the sizer returns >= 1 lot."""
@@ -1407,12 +1896,22 @@ class TestMoneyMachineStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance is an explicit no-trade decision."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0, stop_underlying=22500.0, lot_size=50
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_namespaced_max_lots_caps_tiny_stop(self):
+        with patch.object(master_file, "MONEY_MACHINE_MAX_LOTS", 3):
+            lots = self.worker._compute_entry_lots(
+                entry_underlying=22500.0,
+                stop_underlying=22499.9,
+                lot_size=50,
+            )
+
+        self.assertEqual(lots, 3)
 
 
 # =============================================================================
@@ -1496,6 +1995,7 @@ class _FakeShoonya:
 
     def __init__(self, fail_on=None, resolve_returns=None, result_status=OrderStatus.FILLED):
         self.calls = []      # (shoonya_symbol, side, quantity)
+        self.order_tags = []
         self.resolved = []   # (underlying, option_type, strike)
         self._fail_on = fail_on or (lambda symbol, side: False)
         self._resolve_returns = resolve_returns
@@ -1509,8 +2009,10 @@ class _FakeShoonya:
         return f"SHOONYA-{underlying}-{int(strike)}-{option_type}"
 
     def place_market_order(self, symbol, side, quantity,
-                           exchange_segment="NFO", product_type="INTRADAY"):
+                           exchange_segment="NFO", product_type="INTRADAY",
+                           *, order_tag=""):
         self.calls.append((symbol, side, quantity))
+        self.order_tags.append(order_tag)
         status = (
             OrderStatus.REJECTED
             if self._fail_on(symbol, side)
@@ -1557,31 +2059,91 @@ class TestEnvBool(unittest.TestCase):
         self.assertFalse(master_file._env_bool("X_FLAG", False))
 
 
+class TestSelectExecutionClient(unittest.TestCase):
+    """`_select_execution_client` routes brokers and fails closed on a typo.
+
+    Its own docstring calls this out as the reason the decision lives in one
+    small function: a typo must never route real-money orders to another
+    broker, and an unrecognised name must disable live trading entirely.
+    """
+
+    def _select(self, broker, **clients):
+        """Run the selector with every broker client patched to a sentinel."""
+        defaults = {
+            "kotak_execution_client": "KOTAK-CLIENT",
+            "shoonya_execution_client": "SHOONYA-CLIENT",
+            "flattrade_execution_client": "FLATTRADE-CLIENT",
+            "dhan_execution_client": "DHAN-CLIENT",
+        }
+        defaults.update(clients)
+        with ExitStack() as stack:
+            for name, value in defaults.items():
+                stack.enter_context(patch.object(master_file, name, value))
+            return master_file._select_execution_client(broker)
+
+    def test_each_broker_routes_to_its_own_client_and_segment(self):
+        # The exchange-segment string is broker-specific and is passed straight
+        # through to the order call, so a wrong value would reject every order.
+        expected = {
+            "KOTAK": ("KOTAK-CLIENT", "nse_fo"),
+            "SHOONYA": ("SHOONYA-CLIENT", "NFO"),
+            "FLATTRADE": ("FLATTRADE-CLIENT", "NFO"),
+            "DHAN": ("DHAN-CLIENT", "NSE_FNO"),
+        }
+        for broker, (client, segment) in expected.items():
+            with self.subTest(broker=broker), patch.dict(os.environ, {}, clear=False):
+                got_client, got_segment, got_product = self._select(broker)
+                self.assertEqual(got_client, client)
+                self.assertEqual(got_segment, segment)
+                self.assertEqual(got_product, "INTRADAY")
+
+    def test_broker_name_is_case_and_whitespace_insensitive(self):
+        client, segment, _product = self._select("  dhan  ")
+        self.assertEqual(client, "DHAN-CLIENT")
+        self.assertEqual(segment, "NSE_FNO")
+
+    def test_product_type_comes_from_the_brokers_own_env_key(self):
+        with patch.dict(os.environ, {"DHAN_PRODUCT_TYPE": "normal"}):
+            _client, _segment, product = self._select("DHAN")
+        self.assertEqual(product, "NORMAL")
+
+    def test_unknown_broker_fails_closed(self):
+        for broker in ("ZERODHA", "", "dhann", None):
+            with self.subTest(broker=broker):
+                self.assertEqual(
+                    self._select(broker),
+                    (None, "", "INTRADAY"),
+                )
+
+    def test_missing_client_yields_none_so_startup_forces_paper(self):
+        # A broker whose SDK failed to import is None; the selector still
+        # returns it so `_configure_startup_live_trading` disables live mode.
+        client, segment, _product = self._select("DHAN", dhan_execution_client=None)
+        self.assertIsNone(client)
+        self.assertEqual(segment, "NSE_FNO")
+
+
 class TestTimezoneAssumption(unittest.TestCase):
-    """OPS-001: every trading-window gate compares against the LOCAL wall clock
-    (naive datetime.now()), assuming the box runs in IST. A wrong system
-    timezone silently shifts market-open, entry cutoffs and the 15:15
-    square-off, so startup must call it out loudly."""
+    """MAT-103: trading windows are pinned to Asia/Kolkata explicitly."""
 
     def test_ist_offset_produces_no_warning(self):
         offset = timedelta(hours=5, minutes=30)
         self.assertIsNone(master_file._timezone_assumption_warning(offset))
 
-    def test_non_ist_offset_produces_actionable_warning(self):
+    def test_non_ist_host_offset_no_longer_needs_a_warning(self):
         for offset in (timedelta(0), timedelta(hours=-5), timedelta(hours=5, minutes=45)):
-            warning = master_file._timezone_assumption_warning(offset)
-            self.assertIsNotNone(warning, offset)
-            self.assertIn("IST", warning)
-            self.assertIn("timezone", warning.lower())
+            self.assertIsNone(master_file._timezone_assumption_warning(offset), offset)
 
     def test_default_uses_system_offset(self):
-        # Whatever this machine's offset is, the helper must not crash and must
-        # answer consistently with an explicit call using the same offset.
+        # Kept as a compatibility helper for callers from older scripts.
         system_offset = datetime.now().astimezone().utcoffset()
-        self.assertEqual(
-            master_file._timezone_assumption_warning(),
-            master_file._timezone_assumption_warning(system_offset),
-        )
+        self.assertIsNone(master_file._timezone_assumption_warning())
+        self.assertIsNone(master_file._timezone_assumption_warning(system_offset))
+
+    def test_ist_clock_is_timezone_aware(self):
+        now = master_file._ist_now()
+        self.assertIsNotNone(now.tzinfo)
+        self.assertEqual(now.utcoffset(), timedelta(hours=5, minutes=30))
 
 
 class TestGoogleSheetRetry(unittest.TestCase):
@@ -1647,6 +2209,73 @@ class TestGoogleSheetRetry(unittest.TestCase):
         self._run_writer(fake)                          # must not raise
         self.assertEqual(calls["oauth"], 3)             # bounded attempts
         self.assertEqual(calls["updates"], [])
+
+
+class TestExecutionModeResults(unittest.TestCase):
+    """End-of-day logs, Telegram, and Sheet rows must retain execution provenance."""
+
+    @staticmethod
+    def _worker(name: str, mode: str, pnl: float, trades: int):
+        worker = MagicMock()
+        worker.strategy_name = name
+        worker.realized_pnl = pnl
+        worker.completed_trades = trades
+        worker.session_execution_mode.return_value = mode
+        return worker
+
+    def test_eod_summary_reports_mixed_mode_and_per_strategy_modes(self):
+        event_queue = master_file.queue.Queue()
+        workers = [
+            self._worker("Renko", "LIVE", 100.0, 1),
+            self._worker("EMA", "PAPER", -25.0, 2),
+        ]
+
+        master_file._publish_eod_summary(workers, event_queue)
+
+        event = event_queue.get_nowait()
+        self.assertEqual(event["mode"], "MIXED")
+        self.assertEqual([row["mode"] for row in event["rows"]], ["LIVE", "PAPER"])
+        self.assertIn("[MIXED]", master_file.format_trade_message(event))
+
+    def test_log_parser_keeps_new_modes_and_legacy_paper_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-07-16 15:15:00,000 | INFO | RenkoThread | "
+                "Result summary | Mode=LIVE | Trades=1 | RealizedPnL=100.00\n"
+                "2026-07-16 15:16:00,000 | INFO | EMAThread | "
+                "Result summary | Mode=MIXED | Trades=2 | RealizedPnL=-25.00\n"
+                "2026-07-15 15:15:00,000 | INFO | RenkoThread | "
+                "Paper summary | Trades=1 | RealizedPnL=50.00\n",
+                encoding="utf-8",
+            )
+
+            parsed = master_file._parse_eod_pnl_by_day(path)
+
+        self.assertEqual(parsed["2026-07-16"]["Renko"], {"pnl": 100.0, "mode": "LIVE"})
+        self.assertEqual(parsed["2026-07-16"]["EMA"], {"pnl": -25.0, "mode": "MIXED"})
+        self.assertEqual(parsed["2026-07-15"]["Renko"], {"pnl": 50.0, "mode": "PAPER"})
+
+    def test_sheet_uses_mode_specific_labels_without_turning_pnl_into_text(self):
+        values = [
+            ["Strategy", "2026-07-16"],
+            ["Renko Strategy [LIVE]", ""],
+            ["EMA Strategy [MIXED]", ""],
+            ["Renko Strategy", ""],
+        ]
+        pnl_by_day = {
+            "2026-07-16": {
+                "Renko": {"pnl": 100.0, "mode": "LIVE"},
+                "EMA": {"pnl": -25.0, "mode": "MIXED"},
+            }
+        }
+
+        updates, unmatched = master_file._compute_pnl_sheet_updates(
+            values, pnl_by_day, "2026-07-16"
+        )
+
+        self.assertEqual(updates, [(1, 1, 100.0), (2, 1, -25.0)])
+        self.assertEqual(unmatched, [])
 
 
 class TestStrategyEnvPrefixMap(unittest.TestCase):
@@ -1900,6 +2529,50 @@ class TestLongStrangleWorker(unittest.TestCase):
         worker, _ = self._make_worker()
         self.assertFalse(worker.live_trading)
 
+    def test_partial_entry_is_force_closed_by_strangle_cutoff_override(self):
+        """The custom cutoff path must sweep a live leg with no ce_pos owner."""
+
+        class TerminalPartialThenCloseFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if side == "BUY":
+                    filled, status, broker_state = 20, OrderStatus.PARTIAL, "CANCELLED"
+                else:
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"STRANGLE-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted strangle cutoff recovery",
+                )
+
+        worker, store = self._make_worker()
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+             master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+        })
+        worker.live_trading = True
+        fake = TerminalPartialThenCloseFake()
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            self.assertFalse(worker._enter_leg("CE", 22510.0))
+            self.assertFalse(worker.ce_pos.active)
+            self.assertEqual(len(worker._orphan_live_legs), 1)
+            worker.handle_square_off_and_stop()
+
+        self.assertEqual(
+            [(side, quantity) for _symbol, side, quantity in fake.calls],
+            [("BUY", 75), ("SELL", 20)],
+        )
+        self.assertEqual(worker._orphan_live_legs, [])
+
     def test_pnl_sheet_label_present(self):
         self.assertIn("LongStrangle", master_file._PNL_SHEET_ROW_LABELS)
 
@@ -2036,8 +2709,8 @@ class TestLongStrangleWorker(unittest.TestCase):
             worker._enter_both_legs()
         self.assertTrue(worker.ce_pos.active)               # tracked as paper
         self.assertTrue(worker.pe_pos.active)
-        self.assertFalse(worker.ce_pos.live_legs_open)      # ...but no real leg opened
-        self.assertFalse(worker.pe_pos.live_legs_open)
+        self.assertIsNone(worker.ce_pos.live_leg)           # ...but no real leg opened
+        self.assertIsNone(worker.pe_pos.live_leg)
 
         # A fresh client for the exits must receive ZERO orders...
         exit_fake = _FakeShoonya()
@@ -2051,7 +2724,7 @@ class TestLongStrangleWorker(unittest.TestCase):
 
     def test_confirmed_live_leg_marks_legs_open_and_exit_sells(self):
         """The invariant's other side (non-regression): a confirmed live leg BUY marks
-        live_legs_open True, and closing that leg DOES send the real SELL exactly once.
+        an entry-complete live-leg snapshot, and closing it sends one real SELL.
         Also covers the shared `_buy_leg` path used by momentum re-entries."""
         worker, store = self._make_worker()
         worker.live_trading = True
@@ -2063,8 +2736,8 @@ class TestLongStrangleWorker(unittest.TestCase):
         entry_fake = _FakeShoonya()                          # every order fills
         with patch.object(master_file, "execution_client", entry_fake):
             worker._enter_both_legs()
-        self.assertTrue(worker.ce_pos.live_legs_open)        # both legs really open
-        self.assertTrue(worker.pe_pos.live_legs_open)
+        self.assertTrue(worker.ce_pos.live_leg.entry_complete)  # both legs really open
+        self.assertTrue(worker.pe_pos.live_leg.entry_complete)
 
         # Closing the CE leg sends exactly one real SELL for that leg; PE untouched.
         exit_fake = _FakeShoonya()
@@ -2073,6 +2746,175 @@ class TestLongStrangleWorker(unittest.TestCase):
         self.assertEqual([s for (_sym, s, _q) in exit_fake.calls], ["SELL"])
         self.assertFalse(worker.ce_pos.active)
         self.assertTrue(worker.pe_pos.active)
+
+    def test_initial_live_legs_share_correlation_but_have_distinct_roles(self):
+        """The CE/PE basket is traceable as one correlation without conflating legs."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            worker._enter_both_legs()
+
+        self.assertIsNotNone(worker.ce_pos.live_leg)
+        self.assertIsNotNone(worker.pe_pos.live_leg)
+        self.assertEqual(worker.ce_pos.live_leg.spec.role, "C")
+        self.assertEqual(worker.pe_pos.live_leg.spec.role, "P")
+        self.assertEqual(
+            worker.ce_pos.live_leg.spec.correlation_id,
+            worker.pe_pos.live_leg.spec.correlation_id,
+        )
+
+    def test_reentry_gets_new_correlation_after_prior_leg_is_confirmed_flat(self):
+        """A stopped leg's new life never reuses its broker-audit identity."""
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        client = _FakeShoonya()
+        with patch.object(master_file, "execution_client", client):
+            worker._enter_both_legs()
+            old_live_leg = worker.ce_pos.live_leg
+
+            store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 90.0})
+            worker._manage_leg("CE")
+            self.assertTrue(store.execution_ledger.get(old_live_leg.exposure_id).broker_confirmed_flat)
+
+            store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 95.0})
+            worker._manage_reentry("CE")
+
+        self.assertTrue(worker.ce_pos.live_leg.entry_complete)
+        self.assertNotEqual(
+            worker.ce_pos.live_leg.spec.correlation_id,
+            old_live_leg.spec.correlation_id,
+        )
+
+    def test_partial_close_keeps_leg_active_then_retries_only_remaining_quantity(self):
+        """A terminal partial SELL preserves 50 open units and retries exactly 50."""
+
+        class PartialCloseClient(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.sell_count = 0
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if side == "SELL":
+                    self.sell_count += 1
+                    if self.sell_count == 1:
+                        return OrderResult(
+                            order_id="SELL-PARTIAL",
+                            requested_quantity=int(quantity),
+                            filled_quantity=25,
+                            remaining_quantity=int(quantity) - 25,
+                            status=OrderStatus.PARTIAL,
+                            broker_state="CANCELLED",
+                            reason="terminal partial close",
+                        )
+                return OrderResult(
+                    order_id=f"ORD-{len(self.calls)}",
+                    requested_quantity=int(quantity),
+                    filled_quantity=int(quantity),
+                    remaining_quantity=0,
+                    status=OrderStatus.FILLED,
+                    broker_state="FILLED",
+                    reason="simulated fill",
+                )
+
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        client = PartialCloseClient()
+        with patch.object(master_file, "execution_client", client):
+            worker._enter_both_legs()
+            worker._exit_leg("CE", "TEST_PARTIAL")
+
+            self.assertTrue(worker.ce_pos.active)
+            self.assertIsNotNone(worker.ce_pos.live_leg)
+            self.assertEqual(worker.ce_pos.live_leg.confirmed_live_quantity, 50)
+
+            worker._exit_leg("CE", "TEST_RETRY")
+
+        sell_quantities = [qty for (_symbol, side, qty) in client.calls if side == "SELL"]
+        self.assertEqual(sell_quantities, [75, 50])
+        self.assertFalse(worker.ce_pos.active)
+        self.assertTrue(worker.pe_pos.active)
+
+    def test_partial_initial_leg_stays_tracked_and_retries_only_remaining_quantity(self):
+        """A partial CE retries 50, then its planned PE companion may open."""
+
+        class PartialEntryClient(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.buy_count = 0
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                self.buy_count += 1
+                if self.buy_count > 1:
+                    return OrderResult(
+                        order_id="BUY-REMAINDER",
+                        requested_quantity=int(quantity),
+                        filled_quantity=int(quantity),
+                        remaining_quantity=0,
+                        status=OrderStatus.FILLED,
+                        broker_state="FILLED",
+                        reason="remaining entry filled",
+                    )
+                return OrderResult(
+                    order_id="BUY-PARTIAL",
+                    requested_quantity=int(quantity),
+                    filled_quantity=25,
+                    remaining_quantity=int(quantity) - 25,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial entry",
+                )
+
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22510.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+        })
+        client = PartialEntryClient()
+        with patch.object(master_file, "execution_client", client):
+            worker._enter_both_legs()
+
+            active = store.execution_ledger.active_states()
+            self.assertFalse(worker.ce_pos.active)
+            self.assertFalse(worker.ce_initial_done)
+            self.assertEqual(len(active), 1)
+            self.assertEqual(active[0].spec.role, "C")
+            self.assertEqual(active[0].confirmed_live_quantity, 25)
+            self.assertEqual(active[0].remaining_quantity, 50)
+
+            worker._enter_both_legs()
+
+        buy_quantities = [qty for (_symbol, side, qty) in client.calls if side == "BUY"]
+        self.assertEqual(buy_quantities, [75, 50, 75])
+        self.assertTrue(worker.ce_pos.active)
+        self.assertTrue(worker.ce_pos.live_leg.entry_complete)
+        self.assertTrue(worker.pe_pos.active)
+        self.assertTrue(worker.pe_pos.live_leg.entry_complete)
+        self.assertEqual(
+            worker.ce_pos.live_leg.spec.correlation_id,
+            worker.pe_pos.live_leg.spec.correlation_id,
+        )
 
     def test_paper_fallback_leg_exit_is_tagged_paper_fallback(self):
         """Codex on PR #47 (propagated to this stacked PR): a paper-fallback
@@ -2089,7 +2931,7 @@ class TestLongStrangleWorker(unittest.TestCase):
         })
         with patch.object(master_file, "execution_client", _FakeShoonya(fail_on=lambda s, side: True)):
             worker._enter_both_legs()
-        self.assertFalse(worker.ce_pos.live_legs_open)
+        self.assertIsNone(worker.ce_pos.live_leg)
         with patch.object(master_file, "execution_client", _FakeShoonya()):
             worker._exit_leg("CE", "TEST_EXIT")
         exit_modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
@@ -2151,9 +2993,10 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
     def test_mirror_opens_with_same_lot_count(self):
         worker, _ = self._make_worker()
-        # 10-pt stop -> risk_based_lots => ceil(2500 / (10*75)) = 4 NIFTY lots.
+        # 10-pt stop -> floor(2500 / (10*75)) = 3 NIFTY lots.
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         nifty_lots = worker.pos.quantity // 75
+        self.assertEqual(nifty_lots, 3)
         self.assertTrue(worker._mirror_pos.active)
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
@@ -2163,6 +3006,46 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             57910.0, "LONG",
             expiry_date=worker._bnf_resolver.get_monthly_rollover_expiry.return_value,
         )
+
+    def test_hung_inference_cannot_delay_square_off_and_does_not_stack(self):
+        """The LLM runs off-loop: cutoff closes exposure while one pass is hung."""
+        worker, _ = self._make_worker()
+        worker._mirror_enabled = False
+        worker._use_bnf = False
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        release = threading.Event()
+        calls = {"count": 0}
+
+        def _hung_decide(*args, **kwargs):
+            calls["count"] += 1
+            release.wait(5)
+            return MagicMock(action="HOLD", confidence=0, setup="none", stop=0, target=0)
+
+        worker.agent.decide = _hung_decide
+        frame = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-07-16 10:00:00")],
+                "open": [24300.0], "high": [24305.0], "low": [24295.0], "close": [24300.0],
+            }
+        )
+
+        poll = threading.Thread(target=worker.process_strategy_frame, args=(frame,))
+        poll.start()
+        poll.join(timeout=0.5)
+        self.assertFalse(poll.is_alive())
+
+        later = frame.copy()
+        later["timestamp"] = pd.Timestamp("2026-07-16 10:01:00")
+        worker.process_strategy_frame(later)
+        self.assertEqual(calls["count"], 1)
+
+        square_off = threading.Thread(target=worker.handle_square_off_and_stop)
+        square_off.start()
+        square_off.join(timeout=0.5)
+        self.assertFalse(square_off.is_alive())
+        self.assertFalse(worker.pos.active)
+        release.set()
 
     def test_basket_exits_together_and_pnl_includes_both_legs(self):
         worker, store = self._make_worker()
@@ -2206,27 +3089,27 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         """_place_real_leg must resolve the mirror's broker symbol as BANKNIFTY."""
         worker, _ = self._make_worker()
         captured = []
+        original_place_real_leg = worker._place_real_leg
 
-        def fake_real_leg(side, leg, *, opens_exposure):
+        def capturing_real_leg(side, leg, *, opens_exposure):
             captured.append((side, dict(leg)))
-            quantity = int(leg["quantity"])
-            return OrderResult(
-                order_id="MIRROR-TEST",
-                requested_quantity=quantity,
-                filled_quantity=quantity,
-                remaining_quantity=0,
-                status=OrderStatus.FILLED,
-                broker_state="FILLED",
-                reason="simulated full fill",
+            return original_place_real_leg(
+                side,
+                leg,
+                opens_exposure=opens_exposure,
             )
 
-        worker._place_real_leg = fake_real_leg
+        worker._place_real_leg = capturing_real_leg
         # Exit orders are now gated on live_legs_open, which is only set True when the
         # entry ran live and confirmed. Run this worker live so both legs' exits fire
         # and we can assert the BANKNIFTY underlying on every real call.
         worker.live_trading = True
-        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
-        worker.exit_position("AI_TARGET")
+        with (
+            patch.object(master_file, "execution_client", _FakeShoonya()),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+            worker.exit_position("AI_TARGET")
         mirror_legs = [(s, leg) for s, leg in captured if leg.get("underlying") == "BANKNIFTY"]
         self.assertEqual([s for s, _ in mirror_legs], ["BUY", "SELL"])
         # The NIFTY legs carry no underlying override (default applies).
@@ -2393,6 +3276,277 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         bnf_sells = [c for c in exit_fake.calls if "BANKNIFTY" in c[0] and c[1] == "SELL"]
         self.assertEqual(len(bnf_sells), 1)
 
+    def test_live_mirror_shares_correlation_with_nifty_and_uses_distinct_roles(self):
+        """The two broker legs must be recognizable as one strategy basket."""
+
+        worker, _ = self._make_worker()
+        worker.live_trading = True
+        fake = _FakeShoonya()
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        self.assertIsNotNone(worker.pos.live_leg)
+        self.assertIsNotNone(worker._mirror_pos.live_leg)
+        self.assertEqual(
+            worker.pos.live_leg.spec.correlation_id,
+            worker._mirror_pos.live_leg.spec.correlation_id,
+        )
+        self.assertEqual(worker.pos.live_leg.spec.role, "N")
+        self.assertEqual(worker._mirror_pos.live_leg.spec.role, "B")
+
+    def test_partial_mirror_entry_stays_tracked_and_closes_only_confirmed_quantity(self):
+        """An asymmetric BNF fill must remain reachable by the worker's exit path."""
+
+        class PartialMirrorEntryFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self._partial_bnf_entry_sent = False
+                self.status_queries = []
+
+            def place_market_order(
+                self,
+                symbol,
+                side,
+                quantity,
+                exchange_segment="NFO",
+                product_type="INTRADAY",
+                *,
+                order_tag="",
+            ):
+                if side == "BUY" and "BANKNIFTY" in symbol and not self._partial_bnf_entry_sent:
+                    self._partial_bnf_entry_sent = True
+                    self.calls.append((symbol, side, quantity))
+                    self.order_tags.append(order_tag)
+                    return OrderResult(
+                        order_id="BNF-ENTRY-1",
+                        requested_quantity=int(quantity),
+                        filled_quantity=35,
+                        remaining_quantity=int(quantity) - 35,
+                        status=OrderStatus.PARTIAL,
+                        broker_state="OPEN",
+                        reason="simulated asymmetric mirror entry",
+                    )
+                return super().place_market_order(
+                    symbol,
+                    side,
+                    quantity,
+                    exchange_segment,
+                    product_type,
+                    order_tag=order_tag,
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=int(requested_quantity),
+                    filled_quantity=35,
+                    remaining_quantity=int(requested_quantity) - 35,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal asymmetric mirror entry",
+                )
+
+        worker, _ = self._make_worker()
+        worker.live_trading = True
+        fake = PartialMirrorEntryFake()
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+            self.assertTrue(worker.pos.active)
+            self.assertTrue(worker._mirror_pos.active)
+            # MAT-104 floor sizing: 10-pt stop -> floor(2500 / (10*75)) = 3
+            # NIFTY lots, mirrored as 3 BNF lots x 35 = 105 units.
+            self.assertEqual(worker._mirror_pos.quantity, 105)
+            self.assertEqual(worker._mirror_pos.live_leg.confirmed_live_quantity, 35)
+            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 105)
+
+            worker.exit_position("ASYMMETRIC_ENTRY_RECOVERY")
+
+        bnf_orders = [
+            (side, quantity)
+            for symbol, side, quantity in fake.calls
+            if "BANKNIFTY" in symbol
+        ]
+        self.assertEqual(bnf_orders, [("BUY", 105), ("SELL", 35)])
+        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 105)])
+        self.assertFalse(worker._mirror_pos.active)
+
+    def test_unknown_mirror_entry_uses_conservative_risk_quantity_for_mtm(self):
+        """Zero confirmed units cannot make a possibly filled mirror look harmless."""
+
+        class UnknownMirrorEntryFake(_FakeShoonya):
+            def place_market_order(
+                self,
+                symbol,
+                side,
+                quantity,
+                exchange_segment="NFO",
+                product_type="INTRADAY",
+                *,
+                order_tag="",
+            ):
+                if side == "BUY" and "BANKNIFTY" in symbol:
+                    self.calls.append((symbol, side, quantity))
+                    self.order_tags.append(order_tag)
+                    return OrderResult(
+                        order_id="BNF-UNKNOWN-1",
+                        requested_quantity=int(quantity),
+                        filled_quantity=0,
+                        remaining_quantity=int(quantity),
+                        status=OrderStatus.UNKNOWN,
+                        broker_state="OPEN",
+                        reason="mirror acknowledgement lost",
+                    )
+                return super().place_market_order(
+                    symbol,
+                    side,
+                    quantity,
+                    exchange_segment,
+                    product_type,
+                    order_tag=order_tag,
+                )
+
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        fake = UnknownMirrorEntryFake()
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        mirror = worker._mirror_pos
+        self.assertTrue(mirror.active)
+        self.assertEqual(mirror.live_leg.confirmed_live_quantity, 0)
+        # MAT-104 floor sizing: 3 NIFTY lots -> 3 BNF lots x 35 = 105 units.
+        self.assertEqual(mirror.live_leg.risk_quantity, 105)
+        self.assertEqual(mirror.quantity, 105)
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 490.0})
+        self.assertEqual(worker._mirror_leg_pnl(), -1050.0)
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            worker.exit_bnf_mirror_only("UNKNOWN_ENTRY_RECOVERY")
+        self.assertTrue(worker._mirror_pos.active)
+        self.assertEqual(worker._mirror_pos.quantity, 105)
+        self.assertFalse(
+            any(
+                side == "SELL" and "BANKNIFTY" in symbol
+                for symbol, side, _quantity in fake.calls
+            )
+        )
+        # Possible-but-unconfirmed quantity is counted for adverse MTM only;
+        # phantom upside must never mask a max-loss breach on the NIFTY leg.
+        store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 510.0})
+        self.assertEqual(worker._mirror_leg_pnl(), 0.0)
+
+    def test_partial_mirror_close_retries_only_remaining_and_defers_journal(self):
+        """A partial BNF sell stays owned until only its confirmed remainder closes."""
+
+        class PartialMirrorCloseFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self._partial_bnf_sell_sent = False
+                self.status_queries = []
+
+            def place_market_order(
+                self,
+                symbol,
+                side,
+                quantity,
+                exchange_segment="NFO",
+                product_type="INTRADAY",
+                *,
+                order_tag="",
+            ):
+                if side == "SELL" and "BANKNIFTY" in symbol and not self._partial_bnf_sell_sent:
+                    self._partial_bnf_sell_sent = True
+                    self.calls.append((symbol, side, quantity))
+                    self.order_tags.append(order_tag)
+                    filled = 35
+                    return OrderResult(
+                        order_id="BNF-EXIT-1",
+                        requested_quantity=int(quantity),
+                        filled_quantity=filled,
+                        remaining_quantity=int(quantity) - filled,
+                        status=OrderStatus.PARTIAL,
+                        broker_state="OPEN",
+                        reason="simulated partial mirror close",
+                    )
+                return super().place_market_order(
+                    symbol,
+                    side,
+                    quantity,
+                    exchange_segment,
+                    product_type,
+                    order_tag=order_tag,
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=int(requested_quantity),
+                    filled_quantity=35,
+                    remaining_quantity=int(requested_quantity) - 35,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial mirror close",
+                )
+
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        fake = PartialMirrorCloseFake()
+        worker._journal = MagicMock()
+        worker._open_trade_id = "partial-mirror"
+        worker._entry_realized_pnl = 0.0
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+            original_quantity = worker._mirror_pos.quantity
+            exposure_id = worker._mirror_pos.live_leg.exposure_id
+            store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0})
+
+            worker.exit_position("AI_TARGET")
+
+            self.assertFalse(worker.pos.active)
+            self.assertTrue(worker._mirror_pos.active)
+            self.assertEqual(worker._mirror_pos.quantity, original_quantity - 35)
+            self.assertEqual(
+                worker._mirror_pos.live_leg.confirmed_live_quantity,
+                original_quantity - 35,
+            )
+            worker._journal.close_trade.assert_not_called()
+            self.assertIsNotNone(worker._pending_journal_exit)
+
+            worker.exit_bnf_mirror_only("RETRY_PARTIAL_CLOSE")
+            worker.exit_bnf_mirror_only("IDEMPOTENT_RETRY")
+
+        bnf_sell_quantities = [
+            quantity
+            for symbol, side, quantity in fake.calls
+            if side == "SELL" and "BANKNIFTY" in symbol
+        ]
+        self.assertEqual(bnf_sell_quantities, [original_quantity, original_quantity - 35])
+        self.assertEqual(fake.status_queries, [("BNF-EXIT-1", original_quantity)])
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertTrue(store.execution_ledger.get(exposure_id).broker_confirmed_flat)
+        worker._journal.close_trade.assert_called_once()
+        self.assertIsNone(worker._pending_journal_exit)
+        self.assertIsNone(worker._open_trade_id)
+
     def test_mirror_paper_fallback_close_is_tagged_paper_fallback(self):
         """Codex on PR #47: a paper-fallback mirror close sends no broker SELL, so
         its MIRROR EXIT event must read PAPER_FALLBACK, not LIVE."""
@@ -2533,6 +3687,23 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertTrue(self.worker.pos.active)
         self.assertEqual(self.worker.pos.entry_trade_price, 100.0)
 
+    def test_shutdown_request_blocks_entry_before_broker_submission(self):
+        """The final execution lock rechecks lifecycle entry permission."""
+
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        self.worker.lifecycle.request_shutdown("Ctrl+C")
+
+        with patch.object(master_file, "execution_client", fake):
+            opened = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+
+        self.assertFalse(opened)
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(fake.calls, [])
+
     def test_live_exit_places_sell_and_realizes_pnl(self):
         fake = _FakeShoonya()
         self.worker.live_trading = True
@@ -2619,6 +3790,303 @@ class TestLiveOrderRouting(unittest.TestCase):
         frozen, reason = self.store.execution_safety.entry_freeze_snapshot()
         self.assertTrue(frozen)
         self.assertEqual(reason, "simulated partial outcome")
+
+    def test_terminal_partial_entry_retries_only_the_unfinished_quantity(self):
+        """A cancelled partial fill may continue, but only for the exact remainder."""
+
+        class PartialThenFillFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if len(self.calls) == 1:
+                    return OrderResult(
+                        order_id="ENTRY-1",
+                        requested_quantity=quantity,
+                        filled_quantity=20,
+                        remaining_quantity=quantity - 20,
+                        status=OrderStatus.PARTIAL,
+                        broker_state="OPEN",
+                        reason="entry still working",
+                    )
+                return OrderResult(
+                    order_id="ENTRY-2",
+                    requested_quantity=quantity,
+                    filled_quantity=quantity,
+                    remaining_quantity=0,
+                    status=OrderStatus.FILLED,
+                    broker_state="COMPLETE",
+                    reason="remainder filled",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=20,
+                    remaining_quantity=requested_quantity - 20,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial entry",
+                )
+
+        fake = PartialThenFillFake()
+        self.worker.live_trading = True
+        leg = self._leg("CE", 22500.0, 50, "NIFTY-22500-CE")
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            first = self.worker._place_real_leg("BUY", leg, opens_exposure=True)
+            state = leg["live_leg"]
+            second = self.worker._place_real_leg("BUY", leg, opens_exposure=True)
+
+        self.assertEqual(first.status, OrderStatus.PARTIAL)
+        self.assertEqual(second.status, OrderStatus.FILLED)
+        self.assertEqual(fake.status_queries, [("ENTRY-1", 50)])
+        self.assertEqual(self._sides(fake), [("BUY", 50), ("BUY", 30)])
+        state = self.store.execution_ledger.get(state.exposure_id)
+        self.assertEqual(state.confirmed_live_quantity, 50)
+        self.assertTrue(state.entry_complete)
+        self.assertEqual(len(set(fake.order_tags)), 2)
+
+    def test_terminal_partial_entry_is_force_closed_at_cutoff_without_new_signal(self):
+        """A partial entry must retain a shutdown owner even when its signal vanishes."""
+
+        class TerminalPartialThenCloseFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if side == "BUY":
+                    filled = 20
+                    status = OrderStatus.PARTIAL
+                    broker_state = "CANCELLED"
+                else:
+                    filled = quantity
+                    status = OrderStatus.FILLED
+                    broker_state = "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted cutoff recovery",
+                )
+
+        fake = TerminalPartialThenCloseFake()
+        self.worker.live_trading = True
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.assertFalse(
+                self.worker.enter_position("LONG", entry_underlying=22500.0)
+            )
+            self.assertFalse(self.worker.pos.active)
+            self.assertEqual(len(self.worker._orphan_live_legs), 1)
+            self.worker.handle_square_off_and_stop()
+
+        self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 20)])
+        self.assertEqual(self.worker._orphan_live_legs, [])
+        self.assertEqual(self.store.execution_ledger.active_states(), ())
+
+    def test_rebuilt_entry_uses_original_ledger_target_when_sizing_changes(self):
+        """A later smaller signal cannot shrink bookkeeping for an older live leg."""
+
+        class PartialThenFillFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                first = len(self.calls) == 1
+                filled = 20 if first else quantity
+                return OrderResult(
+                    order_id=f"ENTRY-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=OrderStatus.PARTIAL if first else OrderStatus.FILLED,
+                    broker_state="CANCELLED" if first else "COMPLETE",
+                    reason="scripted target normalization",
+                )
+
+        fake = PartialThenFillFake()
+        self.worker.live_trading = True
+        self.worker.lots = 5
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.assertFalse(
+                self.worker.enter_position("LONG", entry_underlying=22500.0)
+            )
+            self.worker.lots = 1
+            self.assertTrue(
+                self.worker.enter_position("LONG", entry_underlying=22500.0)
+            )
+
+        self.assertEqual(self._sides(fake), [("BUY", 250), ("BUY", 230)])
+        self.assertEqual(self.worker.pos.live_leg.spec.target_quantity, 250)
+        self.assertEqual(self.worker.pos.quantity, 250)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_terminal_partial_close_retries_only_confirmed_remaining_exposure(self):
+        """A partial close subtracts fills and never re-sends the original quantity."""
+
+        class EntryThenPartialCloseFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if side == "BUY":
+                    filled = quantity
+                    status = OrderStatus.FILLED
+                    state = "COMPLETE"
+                elif len([call for call in self.calls if call[1] == "SELL"]) == 1:
+                    filled = 12
+                    status = OrderStatus.PARTIAL
+                    state = "OPEN"
+                else:
+                    filled = quantity
+                    status = OrderStatus.FILLED
+                    state = "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=state,
+                    reason="simulated quantity-aware close",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=12,
+                    remaining_quantity=requested_quantity - 12,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial close",
+                )
+
+        fake = EntryThenPartialCloseFake()
+        self.worker.live_trading = True
+        entry_leg = self._leg("CE", 22500.0, 50, "NIFTY-22500-CE")
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.worker._place_real_leg("BUY", entry_leg, opens_exposure=True)
+            state = entry_leg["live_leg"]
+            close_leg = dict(entry_leg)
+            close_leg["live_leg"] = state
+            first = self.worker._place_real_leg("SELL", close_leg, opens_exposure=False)
+            second = self.worker._place_real_leg("SELL", close_leg, opens_exposure=False)
+
+        self.assertEqual(first.status, OrderStatus.PARTIAL)
+        self.assertEqual(second.status, OrderStatus.FILLED)
+        self.assertEqual(fake.status_queries, [("ORDER-2", 50)])
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 50), ("SELL", 50), ("SELL", 38)],
+        )
+        state = self.store.execution_ledger.get(state.exposure_id)
+        self.assertEqual(state.confirmed_live_quantity, 0)
+        self.assertTrue(state.broker_confirmed_flat)
+
+    def test_public_single_leg_flow_retains_quantity_through_entry_and_close(self):
+        """Strategy-owned state survives rebuilt leg dictionaries and partial retries."""
+
+        class ScriptedQuantityFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                call_number = len(self.calls)
+                scripted = {
+                    1: ("ENTRY-1", 20, OrderStatus.PARTIAL, "OPEN"),
+                    2: ("ENTRY-2", quantity, OrderStatus.FILLED, "COMPLETE"),
+                    3: ("EXIT-1", 12, OrderStatus.PARTIAL, "OPEN"),
+                    4: ("EXIT-2", quantity, OrderStatus.FILLED, "COMPLETE"),
+                }
+                order_id, filled, status, broker_state = scripted[call_number]
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason=f"scripted call {call_number}",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                filled = 20 if order_id == "ENTRY-1" else 12
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=requested_quantity - filled,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal scripted partial",
+                )
+
+        fake = ScriptedQuantityFake()
+        self.worker.live_trading = True
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.assertFalse(
+                self.worker.enter_position("LONG", entry_underlying=22500.0)
+            )
+            pending = self.store.execution_ledger.active_states()
+            self.assertEqual(len(pending), 1)
+            exposure_id = pending[0].exposure_id
+            self.assertEqual(pending[0].confirmed_live_quantity, 20)
+
+            self.assertTrue(
+                self.worker.enter_position("LONG", entry_underlying=22500.0)
+            )
+            self.assertTrue(self.worker.pos.active)
+            self.assertEqual(self.worker.pos.live_leg.exposure_id, exposure_id)
+            self.assertEqual(self.worker.pos.live_leg.confirmed_live_quantity, 50)
+
+            self.worker.exit_position("SCRIPTED_PARTIAL_CLOSE")
+            self.assertTrue(self.worker.pos.active)
+            self.assertEqual(self.worker.pos.live_leg.confirmed_live_quantity, 38)
+
+            self.worker.exit_position("SCRIPTED_CLOSE_RETRY")
+
+        self.assertFalse(self.worker.pos.active)
+        final_state = self.store.execution_ledger.get(exposure_id)
+        self.assertTrue(final_state.broker_confirmed_flat)
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 50), ("BUY", 30), ("SELL", 50), ("SELL", 38)],
+        )
+        self.assertEqual(
+            fake.status_queries,
+            [("ENTRY-1", 50), ("EXIT-1", 50)],
+        )
 
     def test_concurrent_worker_cannot_queue_past_shared_entry_freeze(self):
         """A queued entry must recheck the shared gate after ambiguity is known."""
@@ -2708,6 +4176,78 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         self.assertFalse(self.worker.pos.active)
         self.assertFalse(second_worker.pos.active)
+
+    def test_shutdown_after_attempt_staging_aborts_entry_before_broker_submission(self):
+        """The final broker boundary must recheck a concurrently requested stop."""
+
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        attempt_staged = threading.Event()
+        release_attempt = threading.Event()
+        original_start_attempt = self.store.execution_ledger.start_attempt
+
+        def stage_then_pause(*args, **kwargs):
+            handle = original_start_attempt(*args, **kwargs)
+            attempt_staged.set()
+            release_attempt.wait(1.0)
+            return handle
+
+        result = {}
+
+        def enter():
+            result["entered"] = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(
+                self.store.execution_ledger,
+                "start_attempt",
+                side_effect=stage_then_pause,
+            ),
+        ):
+            thread = threading.Thread(target=enter)
+            thread.start()
+            self.assertTrue(attempt_staged.wait(0.5))
+            self.worker.request_worker_shutdown("TEST_SHUTDOWN_RACE")
+            release_attempt.set()
+            thread.join(timeout=1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result, {"entered": False})
+        self.assertEqual(fake.calls, [])
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.store.execution_ledger.active_states(), ())
+
+    def test_worker_shutdown_blocks_only_its_own_entries(self):
+        """One strategy's shutdown must not freeze the shared account gate.
+
+        A paper strategy's max-loss stop (or the earliest 15:15 square-off)
+        blocks new entries for THAT worker through its own lifecycle gate; the
+        other live strategies keep trading. The shared freeze stays reserved
+        for genuinely account-wide conditions (indeterminate exposure, a
+        failed startup audit).
+        """
+
+        self.worker.live_trading = True
+        self.worker.request_worker_shutdown("MAX_LOSS_BREACH")
+
+        # The shared account-wide gate is untouched...
+        frozen, _reason = self.store.execution_safety.entry_freeze_snapshot()
+        self.assertFalse(frozen)
+
+        # ...but this worker's own entries are refused at the order boundary.
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            entered = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+        self.assertFalse(entered)
+        self.assertEqual(fake.calls, [])
+        self.assertFalse(self.worker.pos.active)
 
     def test_live_exit_still_reduces_after_entry_gate_is_disabled(self):
         """Turning off future entries must never suppress a known live close."""
@@ -2843,6 +4383,92 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertTrue(worker.pos.active)
         self.assertEqual(self._sides(reject_exit), [("SELL", 50 * worker.lots)])
 
+    def test_heikin_reversal_retries_close_remainder_before_opposite_entry(self):
+        """A partial reversal closes exactly the remainder before opening opposite."""
+
+        worker = master_file.HeikinAshiStrategyWorker(
+            store=self.store,
+            stop_event=self.stop_event,
+            broker=self.broker,
+        )
+        worker.contract_resolver = self.worker.contract_resolver
+        worker.live_trading = True
+        with patch.object(master_file, "execution_client", _FakeShoonya()):
+            self.assertTrue(worker.enter_position("LONG", 22500.0))
+        old_exposure_id = worker.pos.live_leg.exposure_id
+
+        class PartialReversalFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                call_number = len(self.calls)
+                filled = 20 if call_number == 1 else quantity
+                status = OrderStatus.PARTIAL if call_number == 1 else OrderStatus.FILLED
+                return OrderResult(
+                    order_id=f"REV-{call_number}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state="OPEN" if call_number == 1 else "COMPLETE",
+                    reason=f"reversal call {call_number}",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=20,
+                    remaining_quantity=requested_quantity - 20,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial reversal close",
+                )
+
+            def list_open_orders(self):
+                return BrokerQueryResult.success(())
+
+            def list_open_positions(self):
+                return BrokerQueryResult.success(())
+
+            def recover_after_reconciliation(self):
+                return True
+
+        worker.signal_engine = MagicMock()
+        worker.signal_engine.evaluate_candle.return_value = MagicMock(
+            action="REVERSE_TO_SHORT",
+            exit_reason="REVERSAL_TO_SHORT",
+            entry_underlying=22500.0,
+        )
+        fake = PartialReversalFake()
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            worker.process_strategy_frame(pd.DataFrame({"close": [22500.0]}))
+            self.assertTrue(worker.pos.active)
+            self.assertEqual(worker.pos.direction, "LONG")
+            self.assertEqual(worker.pos.live_leg.confirmed_live_quantity, 30)
+            worker.signal_engine.consume_short_setup.assert_not_called()
+
+            worker.process_strategy_frame(pd.DataFrame({"close": [22500.0]}))
+
+        self.assertEqual(
+            self._sides(fake),
+            [("SELL", 50), ("SELL", 30), ("BUY", 50)],
+        )
+        self.assertTrue(
+            self.store.execution_ledger.get(old_exposure_id).broker_confirmed_flat
+        )
+        self.assertTrue(worker.pos.active)
+        self.assertEqual(worker.pos.direction, "SHORT")
+        worker.signal_engine.consume_short_setup.assert_called_once()
+
     def test_paper_exit_always_flattens(self):
         """Paper mode (or live success) still flattens normally."""
         self.worker.live_trading = False
@@ -2926,6 +4552,130 @@ class TestLiveOrderRouting(unittest.TestCase):
             result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
         self.assertEqual(result.status, OrderStatus.FILLED)
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50)])
+        self.assertTrue(main_leg["live_leg"].entry_complete)
+        self.assertTrue(hedge_leg["live_leg"].entry_complete)
+        self.assertEqual(main_leg["live_leg"].spec.role, "M")
+        self.assertEqual(hedge_leg["live_leg"].spec.role, "H")
+        self.assertEqual(
+            main_leg["live_leg"].spec.correlation_id,
+            hedge_leg["live_leg"].spec.correlation_id,
+        )
+
+    def test_completed_partial_hedge_can_authorize_its_main_companion(self):
+        """A resolved role H retry may finish the planned role M basket leg."""
+
+        class PartialHedgeThenFillFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                first = len(self.calls) == 1
+                filled = 10 if first else quantity
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=OrderStatus.PARTIAL if first else OrderStatus.FILLED,
+                    broker_state="OPEN" if first else "COMPLETE",
+                    reason="scripted companion authorization",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=10,
+                    remaining_quantity=requested_quantity - 10,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal first hedge partial",
+                )
+
+        fake = PartialHedgeThenFillFake()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            first = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+            second = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+
+        self.assertEqual(first.status, OrderStatus.PARTIAL)
+        self.assertEqual(second.status, OrderStatus.FILLED)
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 25), ("BUY", 15), ("SELL", 50)],
+        )
+        self.assertTrue(main_leg["live_leg"].entry_complete)
+        self.assertTrue(hedge_leg["live_leg"].entry_complete)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_companion_exception_cannot_bypass_another_baskets_freeze(self):
+        """Freeze attribution, not merely terminality, controls companion orders."""
+
+        class CrossBasketFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                is_other_partial = "22500" in symbol
+                filled = 20 if is_other_partial else quantity
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=OrderStatus.PARTIAL if is_other_partial else OrderStatus.FILLED,
+                    broker_state="CANCELLED" if is_other_partial else "COMPLETE",
+                    reason="scripted cross-basket freeze",
+                )
+
+        other = master_file.AtmSingleLegStrategyWorker(
+            store=self.store,
+            stop_event=self.stop_event,
+            broker=self.broker,
+        )
+        self.worker.live_trading = True
+        other.live_trading = True
+        anchor = self._leg("PE", 21000.0, 25, "HEDGE")
+        anchor.update({"role": "H", "correlation_id": "BASKET01"})
+        other_leg = self._leg("CE", 22500.0, 50, "OTHER")
+        other_leg.update({"role": "N", "correlation_id": "OTHER001"})
+        companion = self._leg("PE", 22000.0, 50, "MAIN")
+        companion.update({"role": "M", "correlation_id": "BASKET01"})
+        fake = CrossBasketFake()
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+            patch.object(other, "_start_execution_reconciliation"),
+        ):
+            self.assertEqual(
+                self.worker._place_real_leg("BUY", anchor, opens_exposure=True).status,
+                OrderStatus.FILLED,
+            )
+            self.assertEqual(
+                other._place_real_leg("BUY", other_leg, opens_exposure=True).status,
+                OrderStatus.PARTIAL,
+            )
+            result = self.worker._place_real_leg(
+                "SELL",
+                companion,
+                opens_exposure=True,
+            )
+
+        self.assertEqual(result.status, OrderStatus.UNKNOWN)
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 25), ("BUY", 50)],
+        )
+        self.assertNotIn("live_leg", companion)
 
     def test_hedged_entry_partial_main_keeps_protective_hedge(self):
         """A partially opened short keeps its confirmed protective long hedge."""
@@ -2947,6 +4697,167 @@ class TestLiveOrderRouting(unittest.TestCase):
         # Do not unwind protection while an unknown amount of the short is live.
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50)])
 
+    def test_hedged_entry_retries_only_terminal_partial_main_remainder(self):
+        """A full hedge is never rebought while the short finishes its remainder."""
+
+        class TerminalPartialMainFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                main_calls = [call for call in self.calls if call[1] == "SELL"]
+                if side == "SELL" and len(main_calls) == 1:
+                    filled, status, broker_state = 20, OrderStatus.PARTIAL, "OPEN"
+                else:
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted asymmetric hedge entry",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=20,
+                    remaining_quantity=requested_quantity - 20,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial main",
+                )
+
+        fake = TerminalPartialMainFake()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            first = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+            second = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+
+        self.assertEqual(first.status, OrderStatus.PARTIAL)
+        self.assertEqual(second.status, OrderStatus.FILLED)
+        self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50), ("SELL", 30)])
+        self.assertEqual(fake.status_queries, [("ORDER-2", 50)])
+        self.assertTrue(main_leg["live_leg"].entry_complete)
+        self.assertEqual(main_leg["live_leg"].confirmed_live_quantity, 50)
+        self.assertEqual(hedge_leg["live_leg"].confirmed_live_quantity, 25)
+
+    def test_rejected_main_remainder_cannot_become_paper_fallback(self):
+        """A later zero-fill reject cannot hide the short quantity filled earlier."""
+
+        class PartialThenRejectFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                main_calls = [call for call in self.calls if call[1] == "SELL"]
+                if side == "SELL" and len(main_calls) == 1:
+                    filled, status, broker_state = 20, OrderStatus.PARTIAL, "OPEN"
+                elif side == "SELL":
+                    filled, status, broker_state = 0, OrderStatus.REJECTED, "REJECTED"
+                else:
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted main remainder rejection",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=20,
+                    remaining_quantity=requested_quantity - 20,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal initial partial",
+                )
+
+        fake = PartialThenRejectFake()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+            result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+
+        self.assertNotEqual(result.status, OrderStatus.REJECTED)
+        self.assertFalse(self.worker._entry_outcome_allows_position(result))
+        self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50), ("SELL", 30)])
+        self.assertEqual(main_leg["live_leg"].confirmed_live_quantity, 20)
+        self.assertEqual(hedge_leg["live_leg"].confirmed_live_quantity, 25)
+
+    def test_rejected_hedge_remainder_cannot_become_paper_fallback(self):
+        """A later reject cannot erase a protective hedge's earlier partial fill."""
+
+        class PartialThenRejectHedgeFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if len(self.calls) == 1:
+                    filled, status, broker_state = 10, OrderStatus.PARTIAL, "OPEN"
+                else:
+                    filled, status, broker_state = 0, OrderStatus.REJECTED, "REJECTED"
+                return OrderResult(
+                    order_id=f"HEDGE-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted hedge remainder rejection",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=10,
+                    remaining_quantity=requested_quantity - 10,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal initial hedge partial",
+                )
+
+        fake = PartialThenRejectHedgeFake()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+            result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+
+        self.assertNotEqual(result.status, OrderStatus.REJECTED)
+        self.assertFalse(self.worker._entry_outcome_allows_position(result))
+        self.assertEqual(self._sides(fake), [("BUY", 25), ("BUY", 15)])
+        self.assertEqual(hedge_leg["live_leg"].confirmed_live_quantity, 10)
+        self.assertNotIn("live_leg", main_leg)
+
     def test_hedged_entry_rejected_main_unwinds_hedge(self):
         """A known zero-fill main rejection safely unwinds the filled hedge."""
 
@@ -2962,6 +4873,31 @@ class TestLiveOrderRouting(unittest.TestCase):
         # BUY hedge (filled) -> SELL main (rejected) -> SELL hedge (filled unwind).
         self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 50), ("SELL", 25)])
 
+    def test_hedged_entry_missing_main_symbol_unwinds_hedge(self):
+        """A locally unsubmitted main leg must not strand the filled hedge."""
+
+        class MissingMainSymbolFake(_FakeShoonya):
+            def resolve_option_symbol(
+                self, underlying, expiry, option_type, strike, exchange_segment="NFO"
+            ):
+                self.resolved.append((underlying, option_type, float(strike)))
+                if float(strike) == 22000.0:
+                    return ""
+                return f"SHOONYA-{underlying}-{int(strike)}-{option_type}"
+
+        fake = MissingMainSymbolFake()
+        self.worker.live_trading = True
+        main_leg = self._leg("PE", 22000.0, 50, "MAIN")
+        hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
+
+        with patch.object(master_file, "execution_client", fake):
+            result = self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+
+        self.assertEqual(result.status, OrderStatus.REJECTED)
+        self.assertEqual(self._sides(fake), [("BUY", 25), ("SELL", 25)])
+        self.assertTrue(hedge_leg["live_leg"].broker_confirmed_flat)
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
     def test_hedged_exit_buys_main_sells_hedge(self):
         """Hedged exit: BUY-to-close main, SELL-to-close hedge (real legs open)."""
         fake = _FakeShoonya()
@@ -2969,33 +4905,73 @@ class TestLiveOrderRouting(unittest.TestCase):
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            result = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=True)
+            self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+            fake.calls.clear()
+            result = self.worker._place_real_hedged_exit(main_leg, hedge_leg)
         self.assertEqual(result.status, OrderStatus.FILLED)
         self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
+        self.assertTrue(main_leg["live_leg"].broker_confirmed_flat)
+        self.assertTrue(hedge_leg["live_leg"].broker_confirmed_flat)
 
     def test_hedged_exit_partial_hedge_does_not_rebuy_closed_main(self):
-        """A filled main close must never be repeated after an ambiguous hedge close."""
+        """A terminal partial hedge retries its remainder without rebuying main."""
 
-        fake = _FakeShoonya(
-            result_status=lambda _symbol, side: (
-                OrderStatus.PARTIAL if side == "SELL" else OrderStatus.FILLED
-            )
-        )
+        class PartialHedgeExitFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+                self.exit_started = False
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if self.exit_started and side == "SELL" and quantity == 25:
+                    filled, status, broker_state = 10, OrderStatus.PARTIAL, "OPEN"
+                else:
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted asymmetric hedge exit",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=10,
+                    remaining_quantity=requested_quantity - 10,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial hedge close",
+                )
+
+        fake = PartialHedgeExitFake()
         self.worker.live_trading = True
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
 
-        with patch.object(master_file, "execution_client", fake):
-            first = self.worker._place_real_hedged_exit(
-                main_leg, hedge_leg, live_legs_open=True
-            )
-            second = self.worker._place_real_hedged_exit(
-                main_leg, hedge_leg, live_legs_open=True
-            )
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            self.worker._place_real_hedged_entry(main_leg, hedge_leg)
+            fake.calls.clear()
+            fake.exit_started = True
+            first = self.worker._place_real_hedged_exit(main_leg, hedge_leg)
+            second = self.worker._place_real_hedged_exit(main_leg, hedge_leg)
 
         self.assertEqual(first.status, OrderStatus.PARTIAL)
-        self.assertEqual(second.status, OrderStatus.UNKNOWN)
-        self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25)])
+        self.assertEqual(second.status, OrderStatus.FILLED)
+        self.assertEqual(self._sides(fake), [("BUY", 50), ("SELL", 25), ("SELL", 15)])
+        self.assertEqual(fake.status_queries, [("ORDER-2", 25)])
+        self.assertTrue(main_leg["live_leg"].broker_confirmed_flat)
+        self.assertTrue(hedge_leg["live_leg"].broker_confirmed_flat)
 
     def test_hedged_exit_sends_no_orders_for_paper_fallback_position(self):
         """A live worker whose entry fell back to paper (live_legs_open False) must
@@ -3006,7 +4982,7 @@ class TestLiveOrderRouting(unittest.TestCase):
         main_leg = self._leg("PE", 22000.0, 50, "MAIN")
         hedge_leg = self._leg("PE", 21000.0, 25, "HEDGE")
         with patch.object(master_file, "execution_client", fake):
-            result = self.worker._place_real_hedged_exit(main_leg, hedge_leg, live_legs_open=False)
+            result = self.worker._place_real_hedged_exit(main_leg, hedge_leg)
         self.assertEqual(result.status, OrderStatus.FILLED)
         self.assertEqual(fake.calls, [])  # but nothing was sent to the broker
 
@@ -3052,6 +5028,70 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
         orphan = self.worker._orphan_live_legs[0]
         self.assertEqual(orphan["quantity"], 25)       # the bought hedge, not the main
         self.assertEqual(orphan["strike"], 21000.0)
+        self.assertEqual(orphan["live_leg"].confirmed_live_quantity, 25)
+        self.assertFalse(orphan["live_leg"].broker_confirmed_flat)
+
+    def test_orphan_reconciliation_never_reuses_the_filled_entry_order_id(self):
+        """A rejected close with no ID must not poll the earlier filled BUY.
+
+        The reconciliation probe is bound to the latest ledger attempt.  If its
+        synthetic result carries the hedge entry's order ID, a FILLED status for
+        that BUY can be applied to the rejected SELL attempt and falsely subtract
+        the entire live hedge from local exposure.
+        """
+
+        class MissingRejectionIdsFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                del kwargs
+                self.calls.append((symbol, side, quantity))
+                is_hedge_entry = side == "BUY"
+                return OrderResult(
+                    order_id="HEDGE-ENTRY" if is_hedge_entry else "",
+                    requested_quantity=quantity,
+                    filled_quantity=quantity if is_hedge_entry else 0,
+                    remaining_quantity=0 if is_hedge_entry else quantity,
+                    status=OrderStatus.FILLED if is_hedge_entry else OrderStatus.REJECTED,
+                    broker_state="COMPLETE" if is_hedge_entry else "REJECTED",
+                    reason="scripted missing rejection order id",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=requested_quantity,
+                    remaining_quantity=0,
+                    status=OrderStatus.FILLED,
+                    broker_state="COMPLETE",
+                    reason="filled hedge entry status",
+                )
+
+        class ImmediateThread:
+            def __init__(self, *, target, **kwargs):
+                del kwargs
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        fake = MissingRejectionIdsFake()
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(master_file.threading, "Thread", ImmediateThread),
+        ):
+            result = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+
+        self.assertEqual(result.status, OrderStatus.UNKNOWN)
+        self.assertEqual(result.order_id, "")
+        self.assertEqual(fake.status_queries, [])
+        orphan = self.worker._orphan_live_legs[0]["live_leg"]
+        self.assertEqual(orphan.confirmed_live_quantity, 25)
+        self.assertFalse(orphan.broker_confirmed_flat)
 
     def test_single_failure_with_clean_unwind_records_nothing(self):
         # Only the MAIN SELL fails (strike 22000); the unwind SELL succeeds.
@@ -3083,19 +5123,106 @@ class TestOrphanHedgeLegRecovery(unittest.TestCase):
         self.assertEqual(len(fail_fake.calls), attempts_after_first)
         self.assertEqual(len(self.worker._orphan_live_legs), 1)   # still tracked
 
-    def test_partial_orphan_unwind_is_not_retried_at_full_quantity(self):
-        """A partial SELL changes the remaining quantity, so MAT-102 must reconcile it."""
+    def test_terminal_partial_orphan_unwind_retries_only_remainder(self):
+        """A 10/25 close can retry 15 after cancellation, never the original 25."""
+
+        class PartialThenFillFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if len(self.calls) == 1:
+                    filled, status, broker_state = 10, OrderStatus.PARTIAL, "OPEN"
+                else:
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORPHAN-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted orphan recovery",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=10,
+                    remaining_quantity=requested_quantity - 10,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal partial orphan close",
+                )
 
         self._double_fail_entry()
-        partial_fake = _FakeShoonya(result_status=OrderStatus.PARTIAL)
+        partial_fake = PartialThenFillFake()
         self.worker._next_orphan_retry_ts = 0.0
 
-        with patch.object(master_file, "execution_client", partial_fake):
+        with (
+            patch.object(master_file, "execution_client", partial_fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
             self.worker._sweep_orphan_live_legs(force=True)
             self.worker._sweep_orphan_live_legs(force=True)
 
-        self.assertEqual(self._sides(partial_fake), [("SELL", 25)])
-        self.assertEqual(len(self.worker._orphan_live_legs), 1)
+        self.assertEqual(self._sides(partial_fake), [("SELL", 25), ("SELL", 15)])
+        self.assertEqual(partial_fake.status_queries, [("ORPHAN-1", 25)])
+        self.assertEqual(self.worker._orphan_live_legs, [])
+
+    def test_forced_sweep_keeps_hedge_when_partial_short_cannot_close(self):
+        """A failed main BUY-to-close must never expose a naked short basket."""
+
+        class PartialMainCloseRejectFake(_FakeShoonya):
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if "21000" in symbol and side == "BUY":
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                elif "22000" in symbol and side == "SELL":
+                    filled, status, broker_state = 20, OrderStatus.PARTIAL, "CANCELLED"
+                elif "22000" in symbol and side == "BUY":
+                    filled, status, broker_state = 0, OrderStatus.REJECTED, "REJECTED"
+                else:
+                    # This is the unsafe protective-hedge SELL the regression
+                    # test must prove is never submitted.
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"ORDER-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted correlated orphan recovery",
+                )
+
+        fake = PartialMainCloseRejectFake()
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(self.worker, "_start_execution_reconciliation"),
+        ):
+            result = self.worker._place_real_hedged_entry(self.main_leg, self.hedge_leg)
+            self.assertEqual(result.status, OrderStatus.PARTIAL)
+            self.assertEqual(len(self.worker._orphan_live_legs), 2)
+            self.worker.handle_square_off_and_stop()
+
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 25), ("SELL", 50), ("BUY", 20)],
+        )
+        states = {
+            leg["live_leg"].spec.role: leg["live_leg"]
+            for leg in self.worker._orphan_live_legs
+        }
+        self.assertEqual(states["M"].confirmed_live_quantity, 20)
+        self.assertEqual(states["H"].confirmed_live_quantity, 25)
+        self.assertEqual(len(self.worker._orphan_live_legs), 2)
 
     def test_wait_for_next_poll_sweeps_orphans_each_cadence(self):
         self._double_fail_entry()
@@ -3128,8 +5255,26 @@ class TestHedgedPaperFallbackExit(unittest.TestCase):
         )
         worker.live_trading = True
         seg = master_file.OPTION_EXCHANGE_SEGMENT
+        main_live_leg = None
+        hedge_live_leg = None
+        if live_legs_open:
+            main_leg = {
+                "option_type": "PE", "strike": 22000.0,
+                "expiry": date.today() + timedelta(days=2), "quantity": 50,
+                "dhan_symbol": "NIFTY-22000-PE",
+            }
+            hedge_leg = {
+                "option_type": "PE", "strike": 21000.0,
+                "expiry": date.today() + timedelta(days=2), "quantity": 50,
+                "dhan_symbol": "NIFTY-21000-PE",
+            }
+            with patch.object(master_file, "execution_client", _FakeShoonya()):
+                worker._place_real_hedged_entry(main_leg, hedge_leg)
+            main_live_leg = main_leg["live_leg"]
+            hedge_live_leg = hedge_leg["live_leg"]
         worker.pos = master_file.HedgedPaperPosition(
-            active=True, direction="LONG", live_legs_open=live_legs_open,
+            active=True, direction="LONG",
+            main_live_leg=main_live_leg, hedge_live_leg=hedge_live_leg,
             entry_underlying=22500.0,
             main_symbol="NIFTY-22000-PE", main_side="SELL", main_security_id=5001,
             main_exchange_segment=seg, main_right="PE", main_strike=22000.0,
@@ -3182,6 +5327,62 @@ class TestHedgedPaperFallbackExit(unittest.TestCase):
         modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
                  if c.args[0].get("action") == "EXIT"]
         self.assertEqual(modes, ["LIVE"])
+
+    def test_partial_hedge_close_updates_position_and_retries_only_remainder(self):
+        """Public exit keeps asymmetric state until both broker legs are flat."""
+
+        class PartialThenFinishFake(_FakeShoonya):
+            def __init__(self):
+                super().__init__()
+                self.status_queries = []
+
+            def place_market_order(self, symbol, side, quantity, **kwargs):
+                self.calls.append((symbol, side, quantity))
+                self.order_tags.append(kwargs.get("order_tag", ""))
+                if side == "SELL" and len(self.calls) == 2:
+                    filled, status, broker_state = 20, OrderStatus.PARTIAL, "OPEN"
+                else:
+                    filled, status, broker_state = quantity, OrderStatus.FILLED, "COMPLETE"
+                return OrderResult(
+                    order_id=f"EXIT-{len(self.calls)}",
+                    requested_quantity=quantity,
+                    filled_quantity=filled,
+                    remaining_quantity=quantity - filled,
+                    status=status,
+                    broker_state=broker_state,
+                    reason="scripted public hedged exit",
+                )
+
+            def get_order_status(self, order_id, requested_quantity=0):
+                self.status_queries.append((order_id, requested_quantity))
+                return OrderResult(
+                    order_id=order_id,
+                    requested_quantity=requested_quantity,
+                    filled_quantity=20,
+                    remaining_quantity=requested_quantity - 20,
+                    status=OrderStatus.PARTIAL,
+                    broker_state="CANCELLED",
+                    reason="terminal public hedge partial",
+                )
+
+        worker = self._make_bullish_worker(live_legs_open=True)
+        fake = PartialThenFinishFake()
+        with (
+            patch.object(master_file, "execution_client", fake),
+            patch.object(worker, "_start_execution_reconciliation"),
+        ):
+            worker.exit_position("FIRST_ATTEMPT")
+            self.assertTrue(worker.pos.active)
+            self.assertTrue(worker.pos.main_live_leg.broker_confirmed_flat)
+            self.assertEqual(worker.pos.hedge_live_leg.confirmed_live_quantity, 30)
+            worker.exit_position("SECOND_ATTEMPT")
+
+        self.assertFalse(worker.pos.active)
+        self.assertEqual(
+            [(side, quantity) for _symbol, side, quantity in fake.calls],
+            [("BUY", 50), ("SELL", 50), ("SELL", 30)],
+        )
+        self.assertEqual(fake.status_queries, [("EXIT-2", 50)])
 
 
 class TestExecModeTag(unittest.TestCase):
@@ -4102,6 +6303,687 @@ class TestCPRAlgo3StrategyWorker(unittest.TestCase):
 
     def test_paper_by_default(self):
         self.assertFalse(self.worker.live_trading)
+
+
+class TestStartupLiveExposureWiring(unittest.TestCase):
+    """Prove that startup cannot enable a worker before both books are safe."""
+
+    class _Worker:
+        def __init__(self, strategy_name: str) -> None:
+            self.strategy_name = strategy_name
+            # Starting true makes the test prove that the startup helper first
+            # clears stale state rather than relying on constructor defaults.
+            self.live_trading = True
+            self.lots = 1
+            self.max_loss = 5500.0
+            self.trading_start_hour = 9
+            self.trading_start_minute = 15
+            self.square_off_hour = 15
+            self.square_off_minute = 15
+
+    class _Client:
+        def __init__(
+            self,
+            workers,
+            *,
+            orders,
+            positions,
+            login_ok: bool = True,
+            preload_ok: bool = True,
+        ) -> None:
+            self.workers = workers
+            self.orders = orders
+            self.positions = positions
+            self.login_ok = login_ok
+            self.preload_ok = preload_ok
+            self.calls = []
+            self.mutations = []
+
+        def _record_read(self, name: str) -> None:
+            # Login, preload and both reconciliation reads must all happen while
+            # every strategy is still paper-only.
+            if any(worker.live_trading for worker in self.workers):
+                raise AssertionError(f"{name} ran after a live worker was enabled")
+            self.calls.append(name)
+
+        def ensure_logged_in(self):
+            self._record_read("login")
+            return self.login_ok
+
+        def preload_scrip_master(self):
+            self._record_read("preload")
+            return self.preload_ok
+
+        def list_open_orders(self):
+            self._record_read("orders")
+            return self.orders
+
+        def list_open_positions(self):
+            self._record_read("positions")
+            return self.positions
+
+        def place_market_order(self, *args, **kwargs):
+            self.mutations.append("place_market_order")
+            raise AssertionError("startup must not place orders")
+
+        def cancel_order(self, *args, **kwargs):
+            self.mutations.append("cancel_order")
+            raise AssertionError("startup must not cancel orders")
+
+        def recover(self, *args, **kwargs):
+            self.mutations.append("recover")
+            raise AssertionError("startup must not recover broker state")
+
+    def _workers_and_store(self):
+        workers = [self._Worker("Renko"), self._Worker("EMA")]
+        return workers, master_file.SharedMarketDataStore()
+
+    def _live_env(self, name, default=False):
+        del default
+        return name == "RENKO_LIVE_TRADING"
+
+    def test_clean_books_enable_only_intended_candidates_after_preload(self):
+        workers, store = self._workers_and_store()
+
+        def checked_env(name, default=False):
+            self.assertTrue(all(not worker.live_trading for worker in workers))
+            return self._live_env(name, default)
+
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success(()),
+            # A symbol-master failure is non-fatal, but the attempt must still
+            # finish before either broker book is audited.
+            preload_ok=False,
+        )
+        with patch.object(master_file, "_env_bool", side_effect=checked_env):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(client.calls, ["login", "preload", "orders", "positions"])
+        self.assertEqual([worker.live_trading for worker in workers], [True, False])
+        self.assertEqual(live_count, 1)
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertIs(store.startup_exposure_audit, audit)
+        self.assertEqual(client.mutations, [])
+
+    def test_open_order_blocks_every_candidate_and_queues_safe_alert(self):
+        from Dependencies.broker_contract import OpenOrder
+
+        workers, store = self._workers_and_store()
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.success(
+                (
+                    OpenOrder(
+                        order_id="SECRET-ORDER-ID",
+                        symbol="NIFTY16JUL2622500CE",
+                        side="BUY",
+                        requested_quantity=50,
+                        filled_quantity=10,
+                        remaining_quantity=40,
+                        broker_state="OPEN",
+                    ),
+                )
+            ),
+            positions=BrokerQueryResult.success(()),
+        )
+        with patch.object(master_file, "_env_bool", side_effect=self._live_env):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(live_count, 0)
+        self.assertTrue(all(not worker.live_trading for worker in workers))
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertEqual(client.calls, ["login", "preload", "orders", "positions"])
+        self.assertEqual(client.mutations, [])
+        self.assertTrue(store.execution_safety.entry_freeze_snapshot()[0])
+
+        event_queue = master_file.queue.Queue()
+        self.assertTrue(master_file._enqueue_startup_exposure_alert(audit, event_queue))
+        alert = event_queue.get_nowait()
+        self.assertEqual(alert["action"], "STARTUP_LIVE_BLOCKED")
+        self.assertIn("Broker reported 1 open order.", alert["reason"])
+        self.assertNotIn("SECRET-ORDER-ID", repr(alert))
+
+    def test_indeterminate_book_blocks_live_without_broker_mutation(self):
+        workers, store = self._workers_and_store()
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.indeterminate("token=DO-NOT-LOG"),
+            positions=BrokerQueryResult.success(()),
+        )
+        with patch.object(master_file, "_env_bool", side_effect=self._live_env):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(live_count, 0)
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertEqual(client.calls, ["login", "preload", "orders", "positions"])
+        self.assertEqual(client.mutations, [])
+        self.assertNotIn("DO-NOT-LOG", repr(audit))
+
+    def test_missing_client_or_failed_login_stays_paper(self):
+        for case in ("missing", "login_failed"):
+            with self.subTest(case=case):
+                workers, store = self._workers_and_store()
+                client = None
+                if case == "login_failed":
+                    client = self._Client(
+                        workers,
+                        orders=BrokerQueryResult.success(()),
+                        positions=BrokerQueryResult.success(()),
+                        login_ok=False,
+                    )
+                with patch.object(master_file, "_env_bool", side_effect=self._live_env):
+                    live_count, audit = master_file._configure_startup_live_trading(
+                        workers,
+                        store,
+                        master_live=True,
+                        client=client,
+                    )
+
+                self.assertEqual(live_count, 0)
+                self.assertTrue(all(not worker.live_trading for worker in workers))
+                self.assertIsNotNone(audit)
+                self.assertFalse(audit.safe_to_enable_live)
+                self.assertIs(store.startup_exposure_audit, audit)
+                self.assertTrue(store.execution_safety.entry_freeze_snapshot()[0])
+                if client is not None:
+                    self.assertEqual(client.calls, ["login"])
+                    self.assertEqual(client.mutations, [])
+
+    def test_invalid_numeric_live_config_skips_broker_login_and_stays_paper(self):
+        workers = [self._Worker("Renko")]
+        store = master_file.SharedMarketDataStore()
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success(()),
+        )
+        with (
+            patch.dict(os.environ, {"RENKO_MAX_LOSS": "not-a-number"}),
+            patch.object(master_file, "_env_bool", side_effect=self._live_env),
+        ):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(live_count, 0)
+        self.assertFalse(workers[0].live_trading)
+        self.assertEqual(client.calls, [])
+        self.assertIsNotNone(audit)
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertIn("RENKO_MAX_LOSS", " ".join(audit.evidence))
+
+    def test_one_invalid_requested_strategy_blocks_every_live_candidate(self):
+        workers = [self._Worker("Renko"), self._Worker("EMA")]
+        store = master_file.SharedMarketDataStore()
+        client = self._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success(()),
+        )
+        with (
+            patch.dict(os.environ, {"RENKO_MAX_LOSS": "invalid"}),
+            patch.object(
+                master_file,
+                "_env_bool",
+                side_effect=lambda name, default=False: name
+                in {"RENKO_LIVE_TRADING", "EMA_LIVE_TRADING"},
+            ),
+        ):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers,
+                store,
+                master_live=True,
+                client=client,
+            )
+
+        self.assertEqual(live_count, 0)
+        self.assertTrue(all(not worker.live_trading for worker in workers))
+        self.assertEqual(client.calls, [])
+        self.assertIsNotNone(audit)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_nonpositive_lots_and_bad_cutoff_disable_only_live_mode(self):
+        worker = self._Worker("Renko")
+        worker.lots = 0
+        worker.square_off_hour = 25
+
+        errors = master_file._live_config_errors(worker, "RENKO")
+
+        self.assertTrue(any("lots" in error.lower() for error in errors))
+        self.assertTrue(any("cutoff" in error.lower() for error in errors))
+        # Virtual/paper worker construction is intentionally unaffected.
+        self.assertTrue(worker.live_trading)
+
+    def test_shared_hedged_clock_env_names_are_strictly_validated(self):
+        for strategy_name, prefix in (
+            ("SupertrendBullish", "BULLISH"),
+            ("DonchianBearish", "BEARISH"),
+        ):
+            with self.subTest(strategy_name=strategy_name):
+                worker = self._Worker(strategy_name)
+                with patch.dict(
+                    os.environ,
+                    {"SUPERTREND_SQUARE_OFF_HOUR": "not-an-hour"},
+                ):
+                    errors = master_file._live_config_errors(worker, prefix)
+
+                self.assertIn(
+                    "SUPERTREND_SQUARE_OFF_HOUR is not numeric",
+                    errors,
+                )
+
+    def test_malformed_raw_trading_start_cannot_hide_behind_default(self):
+        worker = self._Worker("Renko")
+        with patch.dict(os.environ, {"RENKO_TRADING_START_HOUR": "bad"}):
+            errors = master_file._live_config_errors(worker, "RENKO")
+
+        self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
+
+    def test_risk_budget_max_lots_must_be_a_positive_integer_for_live(self):
+        worker = self._Worker("ProfitShooter")
+        with patch.dict(os.environ, {"PROFIT_SHOOTER_MAX_LOTS": "2.5"}):
+            errors = master_file._live_config_errors(worker, "PROFIT_SHOOTER")
+
+        self.assertIn(
+            "PROFIT_SHOOTER_MAX_LOTS must be a positive integer",
+            errors,
+        )
+
+    def test_resolved_risk_budget_max_lots_fails_closed_for_live(self):
+        worker = self._Worker("MoneyMachine")
+        with patch.object(master_file, "MONEY_MACHINE_MAX_LOTS", 0):
+            errors = master_file._live_config_errors(worker, "MONEY_MACHINE")
+
+        self.assertIn(
+            "resolved MONEY_MACHINE_MAX_LOTS must be a positive integer",
+            errors,
+        )
+
+
+class TestCoordinatedShutdownSupervisor(unittest.TestCase):
+    """Process finalization is forbidden until local and broker books are flat."""
+
+    class _RuntimeWorker:
+        def __init__(self, *, start_error=None, interrupt_shutdown_once=False):
+            self.start_error = start_error
+            self.interrupt_shutdown_once = interrupt_shutdown_once
+            self.started = False
+            self.alive = False
+            self.shutdown_requests = []
+
+        def start(self):
+            if self.start_error is not None:
+                raise self.start_error
+            self.started = True
+            self.alive = True
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            if self.shutdown_requests:
+                self.alive = False
+
+        def request_worker_shutdown(self, reason):
+            if self.interrupt_shutdown_once:
+                self.interrupt_shutdown_once = False
+                raise KeyboardInterrupt
+            self.shutdown_requests.append(reason)
+
+    class _ShutdownClient:
+        def __init__(self, audits):
+            self.is_logged_in = True
+            self._audits = list(audits)
+            self.logout_calls = 0
+
+        def list_open_orders(self):
+            outcome = self._audits[0]
+            return outcome[0]
+
+        def list_open_positions(self):
+            outcome = self._audits.pop(0) if len(self._audits) > 1 else self._audits[0]
+            return outcome[1]
+
+        def logout(self):
+            self.logout_calls += 1
+
+    @staticmethod
+    def _flat_books():
+        return (BrokerQueryResult.success(()), BrokerQueryResult.success(()))
+
+    @staticmethod
+    def _indeterminate_books():
+        return (
+            BrokerQueryResult.indeterminate("status timeout"),
+            BrokerQueryResult.success(()),
+        )
+
+    @staticmethod
+    def _store_with_tracked_leg():
+        """Build a store whose execution ledger tracks one unresolved live leg."""
+        from Dependencies.execution_ledger import LegSpec
+
+        store = master_file.SharedMarketDataStore()
+        spec = LegSpec(
+            strategy="Renko",
+            correlation_id="ABCD1234",
+            role="N",
+            underlying="NIFTY",
+            symbol="NIFTY16JUL2622500CE",
+            option_type="CE",
+            strike=22500.0,
+            expiry=None,
+            opening_side="BUY",
+            target_quantity=75,
+        )
+        state = store.execution_ledger.register(spec)
+        return store, state
+
+    @staticmethod
+    def _flatten_tracked_leg(store, state):
+        """Resolve the tracked leg with a terminal zero-fill rejection (flat)."""
+        from Dependencies.broker_contract import OrderResult, OrderStatus
+        from Dependencies.execution_ledger import OrderIntent
+
+        handle = store.execution_ledger.start_attempt(
+            state.exposure_id, OrderIntent.OPEN, 75
+        )
+        store.execution_ledger.apply_result(
+            handle,
+            OrderResult(
+                order_id="TEST-FLAT-1",
+                requested_quantity=75,
+                filled_quantity=0,
+                remaining_quantity=75,
+                status=OrderStatus.REJECTED,
+                broker_state="REJECTED",
+                reason="test rejection",
+            ),
+        )
+
+    def test_ctrl_c_requests_worker_shutdown_without_setting_terminal_event(self):
+        workers = [MagicMock(), MagicMock()]
+        terminal_event = threading.Event()
+
+        count = master_file._request_worker_shutdown(workers, "KEYBOARD_INTERRUPT")
+
+        self.assertEqual(count, 2)
+        self.assertFalse(terminal_event.is_set())
+        for worker in workers:
+            worker.request_worker_shutdown.assert_called_once_with("KEYBOARD_INTERRUPT")
+
+    def test_partial_thread_start_failure_still_coordinates_started_worker(self):
+        fetcher = MagicMock()
+        first = self._RuntimeWorker()
+        second = self._RuntimeWorker(start_error=RuntimeError("start failed"))
+
+        natural_eod = master_file._start_and_supervise_runtime_threads(
+            fetcher,
+            None,
+            [first, second],
+        )
+
+        self.assertFalse(natural_eod)
+        self.assertTrue(first.started)
+        self.assertFalse(first.alive)
+        self.assertEqual(first.shutdown_requests, ["SUPERVISOR_EXCEPTION"])
+
+    def test_interrupt_during_shutdown_request_is_ignored_until_worker_stops(self):
+        fetcher = MagicMock()
+        worker = self._RuntimeWorker(interrupt_shutdown_once=True)
+
+        def interrupt_after_start():
+            worker.started = True
+            worker.alive = True
+            raise KeyboardInterrupt
+
+        worker.start = interrupt_after_start
+
+        natural_eod = master_file._start_and_supervise_runtime_threads(
+            fetcher,
+            None,
+            [worker],
+        )
+
+        self.assertFalse(natural_eod)
+        self.assertFalse(worker.alive)
+        self.assertEqual(worker.shutdown_requests, ["KEYBOARD_INTERRUPT"])
+
+    def test_wait_retries_until_runner_ledger_confirms_flat(self):
+        """Unresolved RUNNER exposure blocks; account books never block here."""
+
+        client = self._ShutdownClient([self._indeterminate_books()])
+        store, state = self._store_with_tracked_leg()
+        sleeps = []
+
+        def flattening_sleep(delay):
+            sleeps.append(delay)
+            self._flatten_tracked_leg(store, state)
+
+        flat = master_file._wait_for_shutdown_account_flat(
+            store,
+            client,
+            sleep=flattening_sleep,
+            max_attempts=3,
+        )
+
+        self.assertTrue(flat)
+        self.assertEqual(sleeps, [1.0])
+
+    def test_permanent_runner_exposure_never_allows_clean_finalization(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, _state = self._store_with_tracked_leg()
+        sleeps = []
+
+        flat = master_file._wait_for_shutdown_account_flat(
+            store,
+            client,
+            sleep=sleeps.append,
+            max_attempts=4,
+        )
+
+        self.assertFalse(flat)
+        self.assertEqual(sleeps, [1.0, 2.0, 5.0])
+
+    def test_missing_client_after_live_session_is_not_treated_as_flat(self):
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+
+        audit = master_file._advisory_account_audit(store, None)
+
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertIn("unavailable", " ".join(audit.reasons).lower())
+
+    def test_shutdown_audit_recovers_logged_out_live_session_before_query(self):
+        class RecoveringClient(self._ShutdownClient):
+            def __init__(self):
+                super().__init__([TestCoordinatedShutdownSupervisor._flat_books()])
+                self.is_logged_in = False
+                self.ensure_calls = 0
+
+            def ensure_logged_in(self):
+                self.ensure_calls += 1
+                self.is_logged_in = True
+                return True
+
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        client = RecoveringClient()
+
+        audit = master_file._advisory_account_audit(store, client)
+
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertEqual(client.ensure_calls, 1)
+
+    def test_shutdown_audit_keeps_failed_session_recovery_indeterminate(self):
+        client = self._ShutdownClient([self._flat_books()])
+        client.is_logged_in = False
+        client.ensure_logged_in = MagicMock(return_value=False)
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+
+        audit = master_file._advisory_account_audit(store, client)
+
+        self.assertFalse(audit.safe_to_enable_live)
+        client.ensure_logged_in.assert_called_once_with()
+
+    def test_additional_interrupt_cannot_bypass_final_runner_reconciliation(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, state = self._store_with_tracked_leg()
+        sleeps = []
+
+        def interrupted_flattening_sleep(delay):
+            sleeps.append(delay)
+            self._flatten_tracked_leg(store, state)
+            raise KeyboardInterrupt
+
+        flat = master_file._wait_for_shutdown_account_flat(
+            store,
+            client,
+            sleep=interrupted_flattening_sleep,
+            max_attempts=3,
+        )
+
+        self.assertTrue(flat)
+        self.assertEqual(sleeps, [1.0])
+
+    def test_logout_results_and_refresh_are_blocked_while_runner_exposure_open(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, _state = self._store_with_tracked_leg()
+        workers = [MagicMock()]
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                workers,
+                store,
+                client,
+                trade_event_queue=None,
+                natural_eod=True,
+            )
+
+        self.assertFalse(finalized)
+        self.assertEqual(client.logout_calls, 0)
+        summary.assert_not_called()
+        sheet.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_manual_account_exposure_warns_but_does_not_block_finalization(self):
+        """The operator's own positions alert loudly; results/logout proceed."""
+        from Dependencies.broker_contract import OpenPosition
+
+        client = self._ShutdownClient(
+            [
+                (
+                    BrokerQueryResult.success(()),
+                    BrokerQueryResult.success(
+                        (
+                            OpenPosition(
+                                symbol="NIFTY16JUL2622500CE",
+                                quantity=75,
+                                product_type="NRML",
+                            ),
+                        )
+                    ),
+                )
+            ]
+        )
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        event_queue = master_file.queue.Queue()
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                [MagicMock()],
+                store,
+                client,
+                trade_event_queue=event_queue,
+                natural_eod=True,
+            )
+
+        self.assertTrue(finalized)
+        self.assertEqual(client.logout_calls, 1)
+        summary.assert_called_once()
+        sheet.assert_called_once_with()
+        refresh.assert_called_once_with()
+        alert = event_queue.get_nowait()
+        self.assertEqual(alert["action"], "SHUTDOWN_ACCOUNT_WARNING")
+        self.assertIn("position", alert["reason"].lower())
+        # Fixed vocabulary only: the operator's symbol never reaches the alert.
+        self.assertNotIn("NIFTY16JUL2622500CE", repr(alert))
+
+    def test_interrupt_during_final_flat_audit_blocks_finalization(self):
+        client = self._ShutdownClient([self._flat_books()])
+        with (
+            patch.object(
+                master_file,
+                "_runner_exposure_audit",
+                side_effect=KeyboardInterrupt,
+            ),
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                [MagicMock()],
+                master_file.SharedMarketDataStore(),
+                client,
+                trade_event_queue=None,
+                natural_eod=True,
+            )
+
+        self.assertFalse(finalized)
+        self.assertEqual(client.logout_calls, 0)
+        summary.assert_not_called()
+        sheet.assert_not_called()
+        refresh.assert_not_called()
+
+    def test_flat_session_may_logout_and_refresh_after_final_audit(self):
+        client = self._ShutdownClient([self._flat_books()])
+        workers = [MagicMock()]
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                workers,
+                master_file.SharedMarketDataStore(),
+                client,
+                trade_event_queue=None,
+                natural_eod=False,
+            )
+
+        self.assertTrue(finalized)
+        self.assertEqual(client.logout_calls, 1)
+        summary.assert_not_called()
+        sheet.assert_not_called()
+        refresh.assert_called_once_with()
 
 
 if __name__ == "__main__":

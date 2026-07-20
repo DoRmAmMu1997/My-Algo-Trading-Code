@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import bollinger_bands, finite, normalize_ohlc_frame, require_columns
+from misc_strategy_common import bollinger_bands, finite, normalize_ohlc_frame, require_columns, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,7 @@ class BollingerBandsConfig:
     stop_loss_pct: float = 0.02  # protective stop, 2% from entry (target is the middle band)
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if int(self.bb_period) <= 0:
             raise ValueError("bb_period must be positive.")
         if float(self.bb_std) <= 0.0:
