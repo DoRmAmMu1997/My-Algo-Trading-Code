@@ -11,5 +11,5 @@
 # Shoonya's two pins directly and install the tagged Kotak package with --no-deps
 # so pip cannot silently downgrade the audited core runtime.
 neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1
-pyotp==2.9.0
-websocket-client==1.8.0
+pyotp==2.10.0
+websocket-client==1.9.0
