@@ -50,6 +50,7 @@ from misc_strategy_common import (
     normalize_ohlc_frame,
     require_columns,
     rsi,
+    validate_finite_config,
 )
 
 # The inputs the model learns from. Each is one number per candle describing a
@@ -97,6 +98,7 @@ class MLEnsembleConfig:
     target_pct: float = 0.05      # profit target, 5% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         positive_ints = {
             "rsi_fast": self.rsi_fast,
             "rsi_slow": self.rsi_slow,
@@ -256,6 +258,8 @@ class MLEnsembleSignalEngine:
         # eligible for training -> drop the trailing `forward_bars` rows.
         trainable = frame.iloc[: max(0, n - int(self.config.forward_bars))]
         trainable = trainable.dropna(subset=[*FEATURE_COLUMNS, "ml_target"])
+        finite_values = trainable[[*FEATURE_COLUMNS, "ml_target"]].to_numpy(dtype="float64")
+        trainable = trainable.loc[np.isfinite(finite_values).all(axis=1)]
         if len(trainable) < int(self.config.min_training_rows):
             return
         trainable = trainable.iloc[-int(self.config.training_window):]

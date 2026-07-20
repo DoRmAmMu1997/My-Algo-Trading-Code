@@ -23,6 +23,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import sys
+from dataclasses import fields, replace
 from functools import cache
 from pathlib import Path
 
@@ -108,6 +109,28 @@ def _port_under_test(filename: str, prefix: str, build_name: str, needs: str | N
     return module, config, engine, frame
 
 
+def test_ml_training_discards_infinite_feature_rows():
+    """scikit-learn must never receive infinity from malformed market data."""
+    pytest.importorskip("sklearn")
+    module = _load_port("Nifty ML Ensemble Signal Generator.py")
+    config = module.MLEnsembleConfig(
+        training_window=8,
+        min_training_rows=4,
+        forward_bars=1,
+        retrain_every=1,
+    )
+    engine = module.MLEnsembleSignalEngine(config)
+    rows = 8
+    frame = pd.DataFrame({column: [float(index + 1) for index in range(rows)]
+                          for column in module.FEATURE_COLUMNS})
+    frame["ml_target"] = [0, 1, 0, 1, 0, 1, 0, 1]
+    frame.loc[2, module.FEATURE_COLUMNS[0]] = float("inf")
+
+    engine._maybe_train(frame)
+
+    assert engine.model is not None
+
+
 @pytest.mark.parametrize(("filename", "prefix", "build_name", "needs"), PORTS, ids=PORT_IDS)
 def test_port_exposes_the_factory_contract(filename, prefix, build_name, needs):
     """The master's worker factory looks these attributes up by name.
@@ -123,6 +146,34 @@ def test_port_exposes_the_factory_contract(filename, prefix, build_name, needs):
     for attr in (f"{prefix}SignalEngine", f"build_{build_name}_with_indicators",
                  f"{prefix}PositionContext", f"{prefix}Config"):
         assert hasattr(module, attr), f"{filename} is missing {attr}"
+
+
+@pytest.mark.parametrize(("filename", "prefix", "build_name", "needs"), PORTS, ids=PORT_IDS)
+def test_config_rejects_non_finite_numeric_values(filename, prefix, build_name, needs):
+    """NaN must never slip through a comparison and become live configuration."""
+
+    module = _load_port(filename)
+    config = getattr(module, f"{prefix}Config")()
+    float_field = next(
+        field.name
+        for field in fields(config)
+        if isinstance(getattr(config, field.name), float)
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        replace(config, **{float_field: float("nan")})
+
+
+@pytest.mark.parametrize(("filename", "prefix", "build_name", "needs"), PORTS, ids=PORT_IDS)
+def test_config_rejects_percentage_at_or_above_one(filename, prefix, build_name, needs):
+    """Decimal percentage settings must remain below 100% (1.0)."""
+
+    module = _load_port(filename)
+    config = getattr(module, f"{prefix}Config")()
+    percentage_field = next(field.name for field in fields(config) if field.name.endswith("_pct"))
+
+    with pytest.raises(ValueError, match="percentage"):
+        replace(config, **{percentage_field: 1.0})
 
 
 @pytest.mark.parametrize(("filename", "prefix", "build_name", "needs"), PORTS, ids=PORT_IDS)

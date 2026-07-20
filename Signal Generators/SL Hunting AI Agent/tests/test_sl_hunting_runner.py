@@ -39,6 +39,15 @@ def test_resample_drops_incomplete_tail_bucket():
     assert len(out) == 2
 
 
+def test_resample_rejects_non_exact_minute_slots():
+    frame = _one_min(n=10)
+    frame["timestamp"] = frame["timestamp"] + pd.Timedelta(seconds=30)
+
+    out = resample_1m_to_n(frame, 5)
+
+    assert out.empty
+
+
 def test_manage_open_position_fills_long_target_and_stop():
     ex = StandaloneExecutor()
     ex.enter("LONG", stop=24970, target=25100, reason="t", price=25000)

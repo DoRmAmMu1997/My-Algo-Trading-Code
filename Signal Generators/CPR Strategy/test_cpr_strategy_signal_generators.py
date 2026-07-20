@@ -109,6 +109,22 @@ class TestCPRStrategySignalGenerators(unittest.TestCase):
         self.assertEqual(result.iloc[1]["open"], 105.0)
         self.assertEqual(result.iloc[1]["close"], 109.25)
 
+    def test_resample_rejects_rows_not_on_exact_minute_slots(self):
+        module = load_module(LOGIC_PATH, "cpr_strategy_logic_bad_slots")
+        start = pd.Timestamp("2026-05-05 09:15:30")
+        rows = [
+            {
+                "timestamp": start + pd.Timedelta(minutes=index),
+                "open": 100.0, "high": 101.0, "low": 99.0,
+                "close": 100.5, "volume": 10,
+            }
+            for index in range(10)
+        ]
+
+        result = module.prepare_cpr_ohlc_input(pd.DataFrame(rows))
+
+        self.assertTrue(result.empty)
+
     def test_generates_bullish_algo1_condition1_signal(self):
         module = load_module(LOGIC_PATH, "cpr_strategy_logic_bull_c1")
         current = build_day("2026-05-05", 100.6, rows=40, step=0.02)
@@ -330,6 +346,46 @@ class TestCPRAlgo3SignalGenerator(unittest.TestCase):
 
         self.assertEqual(decision.action, "HOLD")
         self.assertFalse(decision.signal_triggered)
+
+    def test_latest_signal_rejects_stale_latest_common_bar(self):
+        """A lagging option stream cannot make an old common bar look current."""
+        module = load_module(ALGO3_PATH, "cpr_algo3_skew")
+        spot = trending_spot("up", prev2_updates=self.WIDE_SPOT_PREV)
+        ce = algo3_instrument(200.0, 201.0, 0.3)
+        pe = algo3_instrument(200.0, 199.0, -0.3)
+        extra = spot.iloc[-1].copy()
+        extra["timestamp"] = pd.Timestamp(extra["timestamp"]) + pd.Timedelta(minutes=5)
+        spot = pd.concat([spot, pd.DataFrame([extra])], ignore_index=True)
+
+        decision = module.get_latest_nifty_cpr_algo3_signal(
+            spot, ce, pe, config=self._config(module)
+        )
+
+        self.assertEqual(decision.action, "HOLD")
+        self.assertIn("current/aligned", decision.exit_reason)
+
+    def test_malformed_infinite_target_holds(self):
+        """An infinite pivot must not escape as an executable target."""
+        module = load_module(ALGO3_PATH, "cpr_algo3_bad_target")
+        generator = module.NiftyCPRAlgo3SignalGenerator(self._config(module))
+        spot = pd.Series({
+            "close": 100.0, "vwap": 99.0, "cpr_upper": 99.5,
+            "cpr_lower": 98.5, "rsi": 60.0, "rsi_ema20": 50.0,
+            **{name: float("inf") for name in module._SPOT_LEVEL_COLUMNS},
+        })
+        ce = pd.Series({
+            "close": 210.0, "vwap": 205.0, "cpr_upper": 206.0,
+            "cpr_lower": 204.0, "rsi": 50.0, "rsi_ema20": 49.0,
+        })
+        pe = pd.Series({
+            "close": 190.0, "vwap": 195.0, "cpr_upper": 196.0,
+            "cpr_lower": 194.0, "rsi": 50.0, "rsi_ema20": 49.0,
+        })
+
+        decision = generator._evaluate(spot, ce, pe)
+
+        self.assertEqual(decision.action, "HOLD")
+        self.assertIn("target", decision.exit_reason)
 
 
 if __name__ == "__main__":

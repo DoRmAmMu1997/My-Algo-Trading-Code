@@ -19,14 +19,27 @@ High-level flow used by the wrapper scripts:
 """
 
 import argparse
+import math
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 from dhanhq import DhanContext, dhanhq
+
+if TYPE_CHECKING:
+    # mypy_path includes Dependencies/, where this module is known by its bare
+    # name. Runtime entry points execute from the repository root instead.
+    from market_data_health import MarketDataValidationError, validate_ohlc_frame
+else:
+    from Dependencies.market_data_health import (
+        MarketDataValidationError,
+        validate_ohlc_frame,
+    )
 
 
 @dataclass(frozen=True)
@@ -49,9 +62,12 @@ class IndexFetchDefaults:
     instrument_type: str = "INDEX"
     interval: int = 1
     lookback: str = "5y"
-    # SECURITY: never hardcode credentials here. Resolution order is CLI flag ->
-    # environment variable (DHAN_CLIENT_CODE / DHAN_TOKEN_ID, e.g. from
-    # Dependencies/.env) -> these blanks. A real client id + access token used
+    # SECURITY: never hardcode credentials here. The client id resolves CLI
+    # flag -> environment variable (DHAN_CLIENT_CODE) -> this blank. The access
+    # token is a SECRET and resolves environment variable (DHAN_TOKEN_ID, e.g.
+    # from Dependencies/.env) -> this blank ONLY -- there is deliberately no
+    # CLI flag for it (MAT-108): a token typed on the command line lands in
+    # shell history and process listings. A real client id + access token used
     # to live in these defaults; they were removed (and remain in old git
     # history, so treat that token as burned).
     default_client_id: str = ""
@@ -75,17 +91,15 @@ def parse_args(defaults: IndexFetchDefaults):
     )
 
     # Credentials:
-    # - first preference: explicit CLI values
-    # - second preference: environment variables
-    # - last fallback: wrapper-provided defaults (blank unless you choose
-    #   to hardcode them in the wrapper)
+    # - the CLIENT ID is an account identifier (not a secret), so it may come
+    #   from the CLI flag, then the environment, then the wrapper default.
+    # - the ACCESS TOKEN is a secret and is read from the environment ONLY
+    #   (DHAN_TOKEN_ID, e.g. loaded from Dependencies/.env). There is
+    #   deliberately no --access-token flag: a token typed on the command
+    #   line would land in shell history and process listings.
     parser.add_argument(
         "--client-id",
         default=os.getenv("DHAN_CLIENT_CODE", defaults.default_client_id),
-    )
-    parser.add_argument(
-        "--access-token",
-        default=os.getenv("DHAN_TOKEN_ID", defaults.default_access_token),
     )
 
     parser.add_argument(
@@ -126,7 +140,11 @@ def parse_args(defaults: IndexFetchDefaults):
     )
     parser.add_argument("--start-date", default="")
     parser.add_argument("--end-date", default="")
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Attach the token AFTER parsing so it can never be supplied (or leaked)
+    # through the command line; downstream code keeps reading args.access_token.
+    args.access_token = os.getenv("DHAN_TOKEN_ID", defaults.default_access_token)
+    return args
 
 
 def resolve_date_range(args):
@@ -190,6 +208,22 @@ def infer_epoch_unit(values: pd.Series) -> Literal["s", "ms", "us"]:
     return "s"
 
 
+def validate_single_epoch_unit(values: pd.Series) -> None:
+    """Reject a chunk whose numeric timestamps mix epoch units."""
+
+    numbers = pd.to_numeric(values, errors="coerce").dropna().abs()
+    if numbers.empty:
+        return
+    units = {
+        "us" if value > 1e14 else "ms" if value > 1e11 else "s"
+        for value in numbers
+    }
+    if len(units) != 1:
+        raise MarketDataValidationError(
+            f"Dhan chunk mixes epoch units: {', '.join(sorted(units))}"
+        )
+
+
 def normalize_response_data(data) -> pd.DataFrame:
     """
     Convert the raw broker payload into one clean OHLC DataFrame.
@@ -246,11 +280,13 @@ def normalize_response_data(data) -> pd.DataFrame:
     )
 
     if pd.api.types.is_numeric_dtype(out["timestamp_raw"]):
+        validate_single_epoch_unit(out["timestamp_raw"])
         unit = infer_epoch_unit(out["timestamp_raw"])
         ts = pd.to_datetime(out["timestamp_raw"], unit=unit, errors="coerce", utc=True)
     else:
         maybe_num = pd.to_numeric(out["timestamp_raw"], errors="coerce")
         if maybe_num.notna().sum() >= max(1, len(out) // 2):
+            validate_single_epoch_unit(maybe_num)
             unit = infer_epoch_unit(maybe_num)
             ts = pd.to_datetime(maybe_num, unit=unit, errors="coerce", utc=True)
         else:
@@ -259,7 +295,13 @@ def normalize_response_data(data) -> pd.DataFrame:
     # Dhan timestamps are normalized into India market time because that is the
     # timezone your backtest data uses across the project.
     out["timestamp"] = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-    out = out.drop(columns=["timestamp_raw"]).dropna()
+    out = out.drop(columns=["timestamp_raw"])
+    out = validate_ohlc_frame(out)
+
+    volume = pd.to_numeric(out["volume"], errors="coerce")
+    if volume.isna().any() or not volume.map(math.isfinite).all() or (volume < 0).any():
+        raise MarketDataValidationError("Dhan chunk contains invalid volume")
+    out["volume"] = volume
 
     return out[["timestamp", "open", "high", "low", "close", "volume"]]
 
@@ -309,7 +351,16 @@ def fetch_chunk(
             f"API failed for {chunk_start} -> {chunk_end}: status={status}, details={remarks}"
         )
 
-    return normalize_response_data(resp.get("data"))
+    normalized = normalize_response_data(resp.get("data"))
+    if normalized.empty:
+        return normalized
+
+    dates = pd.DatetimeIndex(normalized["timestamp"]).date
+    if any(timestamp_date < chunk_start or timestamp_date > chunk_end for timestamp_date in dates):
+        raise MarketDataValidationError(
+            f"Dhan returned a candle outside requested chunk {chunk_start} -> {chunk_end}"
+        )
+    return normalized
 
 
 def normalize_exchange_segment(segment: str) -> str:
@@ -399,6 +450,25 @@ def fetch_1m_history(args, defaults: IndexFetchDefaults) -> pd.DataFrame:
     return df
 
 
+def atomic_write_csv(frame: pd.DataFrame, output: str | os.PathLike[str]) -> None:
+    """Replace a CSV only after writing its complete sibling temporary file."""
+
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    os.close(file_descriptor)
+    temporary = Path(temporary_name)
+    try:
+        frame.to_csv(temporary, index=False)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     """
     Main script flow used by each wrapper.
@@ -413,8 +483,9 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
 
     if not args.client_id or not args.access_token:
         raise ValueError(
-            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_TOKEN_ID, "
-            "or pass --client-id and --access-token."
+            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_TOKEN_ID in the "
+            "environment (e.g. Dependencies/.env). Only --client-id may be "
+            "overridden on the command line; the token is environment-only."
         )
 
     if args.chunk_days <= 0 or args.chunk_days > 90:
@@ -425,6 +496,6 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     output_dir = os.path.dirname(args.output)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-    df.to_csv(args.output, index=False)
+    atomic_write_csv(df, args.output)
 
     print(f"Saved {len(df)} rows to: {args.output}")

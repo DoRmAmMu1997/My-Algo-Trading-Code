@@ -18,12 +18,14 @@ confirmed full BUY fill permits the automatic SELL-to-flatten. Requires typing
 YES to confirm. (Needs an EXPIRY.)
 """
 import datetime as dt
+import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import shoonya_execution as se  # handles sys.path to the SDK + loads .env
 from broker_contract import OrderResult, OrderStatus
+from diagnostic_preflight import validate_quantity_for_lot
 
 
 def _arg_val(name, default):
@@ -141,6 +143,14 @@ def place_round_trip_test_order(client, symbol, qty, broker="Shoonya"):
 
 
 def main():
+    # Without this the root logger sits at WARNING, so shoonya_execution's INFO
+    # diagnostics -- symbol-master load counts and lot-size availability -- are
+    # silently dropped, which is exactly what someone runs this script to see.
+    # The Kotak, Flattrade and Dhan diagnostics configure logging the same way.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
     client = se.shoonya_execution_client
     print("Logging in to Shoonya...")
     if not client.preload_scrip_master():
@@ -181,10 +191,18 @@ def main():
                 "\n--place-order requires an explicit positive --qty using the "
                 "current contract lot size; no order placed."
             )
-        elif sym:
-            place_round_trip_test_order(client, sym, QTY, broker="Shoonya")
-        else:
+        elif not sym:
             print("\n--place-order requested but the symbol did not resolve; no order placed.")
+        else:
+            # Pre-flight before the typed-YES prompt, so an order the exchange
+            # can never accept never reaches the broker.
+            lot_size = client.lot_size_for_symbol(sym)
+            print(f"official lot    : {lot_size or 'unknown (not in this master)'}")
+            lot_error = validate_quantity_for_lot(QTY, lot_size)
+            if lot_error:
+                print(f"\n{lot_error}\nNo order placed.")
+            else:
+                place_round_trip_test_order(client, sym, QTY, broker="Shoonya")
 
 
 if __name__ == "__main__":

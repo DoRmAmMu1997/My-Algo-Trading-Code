@@ -37,7 +37,7 @@ Thirteen strategies ported from the public TradingBot project, kept flat in this
 folder. Each is self-contained (frozen `Config` + `PositionContext` + `Decision`
 dataclasses, a `build_*_with_indicators()`, a stateful `*SignalEngine`, and a
 `*SignalGenerator`) and shares `misc_strategy_common.py` for its indicators
-(TA-Lib first, pandas fallback). All are wired into the front-test master via the
+(the mandatory TA-Lib 0.6.8 backend). All are wired into the front-test master via the
 shared `_build_signal_gen_worker_class` factory as ATM single-leg workers, each
 independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 

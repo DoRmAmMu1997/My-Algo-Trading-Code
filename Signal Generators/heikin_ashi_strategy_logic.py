@@ -79,6 +79,10 @@ def build_heikin_ashi(ohlc: pd.DataFrame) -> pd.DataFrame:
 
     frame = ohlc.copy()
     frame["timestamp"] = _resolve_timestamp(frame)
+    # A single unparseable timestamp must not survive just because other rows
+    # are valid.  NaT sorts to the end and could otherwise become the newest
+    # candle, which is the most dangerous possible place for malformed data.
+    frame = frame.dropna(subset=["timestamp"])
     frame = frame.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
 
     numeric_columns = [column for column in ("open", "high", "low", "close") if column in frame.columns]

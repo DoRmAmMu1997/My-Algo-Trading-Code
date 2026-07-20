@@ -52,6 +52,15 @@ def test_cross_index_unavailable_without_bnf():
     assert "NIFTY alone" in out["reason"]
 
 
+def test_cross_index_rejects_latest_timestamp_skew():
+    lagging = _BNF_AT_SUPPORT.iloc[:-1].copy()
+
+    out = cross_index_signal(_NIFTY_AT_SUPPORT, lagging)
+
+    assert out["available"] is False
+    assert "current/aligned" in out["reason"]
+
+
 def test_cross_index_both_at_support_biases_down():
     out = cross_index_signal(_NIFTY_AT_SUPPORT, _BNF_AT_SUPPORT)
     assert out["available"] is True

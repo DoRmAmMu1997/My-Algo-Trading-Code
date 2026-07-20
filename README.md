@@ -20,14 +20,14 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 
 # Recent additions
 - **Per-strategy "off" switch — `<PREFIX>_VIRTUAL_TRADING`.** Every strategy now has a virtual (paper) toggle that **defaults to true**. Set it false to stop that strategy's worker thread from starting at all — so it does no paper trading (and, since the thread never runs, no live trading either). Unlike live trading there is **no** global master switch: the default is that everything runs, and you silence individual strategies. Lets you run just the strategies you want on a given day instead of the whole roster.
-- **Quality gates & CI.** A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs the full gate on every push/PR across Python 3.12 + 3.13: both test suites, `compileall`, **ruff**, **mypy** (scoped in `pyproject.toml`), and **bandit**. Config lives in `pyproject.toml` + `requirements-dev.txt`, with a `.pre-commit-config.yaml` for local checks. Install the dev tools with `pip install -r requirements-dev.txt`.
+- **Quality gates & CI.** A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs the full gate on every push/PR across Python 3.12 + 3.13: all repository suites, branch-coverage budgets, `pip-audit`, `compileall`, **Ruff**, **mypy** (scoped in `pyproject.toml`), **Bandit**, and pre-commit validation. Exact tooling lives in `requirements-dev.txt`.
 - **SL Hunting AI Agent — BankNIFTY mirror basket + newer knowledge (v3c–v3e).** The agent now trades Intraday Hunter's multi-index style: every NIFTY entry is mirrored with an **equal-lot BankNIFTY ATM** leg (`SL_HUNTING_BNF_MIRROR`, default true). The two legs are **tied for hard risk** (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's **premise independently** and can cut one alone via the EXIT `exit_leg` selector (`NIFTY` | `BNF` | `BOTH`). Entry stays NIFTY-only (the mirror copies it). Its knowledge also grew several distilled-from-video layers — a scoped **gap-up opening-drive**, a **2-week verbatim transcript sweep**, and a **live-day match** against the agent's own journal (details in `Signal Generators/SL Hunting AI Agent/README.md`).
-- **Optional LLM trading agent — the "SL Hunting AI Agent" (opt-in 27th worker).** A Claude agent (via the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) on your Claude subscription — **no API key**) trades the discretionary *SL Hunting* price-action method on NIFTY ATM options. Once per completed 1-min bar (the method's native timeframe) it reads the NIFTY chart (with **BankNIFTY cross-confirmation**) and — only on a confirmed setup at a real level — acts through the SAME tested `enter_position`/`exit_position` path as every other worker. Position sizing floors affordable whole lots, never exceeds `SL_HUNTING_RISK_BUDGET`, skips one-lot-over-budget setups, and caps at `SL_HUNTING_MAX_LOTS` (default 5); the equal-lot BankNIFTY mirror can roughly double basket risk. It **stops opening new positions after noon** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — *not* a square-off: open positions, their stops/targets, and the 15:15 square-off are unaffected. It is **off by default** (`SL_HUNTING_ENABLED`), trades **paper** unless both `LIVE_TRADING_ENABLED` and `SL_HUNTING_LIVE_TRADING` are set, and is **fail-soft** — any agent/SDK error becomes a safe HOLD (never an exception into the trading loop), and its extra deps are lazily imported so a missing dep just disables this one worker. It can also **learn from its own trades**: a per-trade journal feeds an off-loop reflection *coach* that proposes lessons, which the operator human-gates into the prompt (paper-first, off by default). Needs `pip install claude-agent-sdk pydantic` and a one-time `claude setup-token` (keep `ANTHROPIC_API_KEY` **UNSET** so it bills your Claude plan, not per-token API). Full details — knowledge, tools, safety model, the learning loop — are in `Signal Generators/SL Hunting AI Agent/README.md`. This is the optional **27th** worker.
+- **Optional LLM trading agent — the "SL Hunting AI Agent" (opt-in 27th worker).** A Claude agent (via the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) on your Claude subscription — **no API key**) trades the discretionary *SL Hunting* price-action method on NIFTY ATM options. Once per completed 1-min bar (the method's native timeframe) it reads the NIFTY chart (with **BankNIFTY cross-confirmation**) and — only on a confirmed setup at a real level — acts through the SAME tested `enter_position`/`exit_position` path as every other worker. Position sizing floors affordable whole lots, never exceeds `SL_HUNTING_RISK_BUDGET`, skips one-lot-over-budget setups, and caps at `SL_HUNTING_MAX_LOTS` (default 5); the equal-lot BankNIFTY mirror can roughly double basket risk. It **stops opening new positions after noon** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — *not* a square-off: open positions, their stops/targets, and the 15:15 square-off are unaffected. It is **off by default** (`SL_HUNTING_ENABLED`), trades **paper** unless both `LIVE_TRADING_ENABLED` and `SL_HUNTING_LIVE_TRADING` are set, and is **fail-soft** — any agent/SDK error becomes a safe HOLD while its separate mechanical risk loop keeps checking stop, target, max-loss, stale data, and square-off. It can also **learn from its own trades** through a tool-free, schema-validated reflection coach with digest-bound human approval (paper-first, off by default). Install the exact optional stack with `pip install -r requirements-ai.txt` and run one-time `claude setup-token` (keep `ANTHROPIC_API_KEY` **UNSET** so it bills your Claude plan, not per-token API). Full details — knowledge, tools, safety model, the learning loop — are in `Signal Generators/SL Hunting AI Agent/README.md`. This is the optional **27th** worker.
 - **CPR Algo 3 (multi-instrument) is now wired into the front test.** A new `CPRAlgo3StrategyWorker` runs the "CPR basic setup" strategy, which watches THREE charts at once — the NIFTY spot plus a ~ITM CE and a ~ITM PE of the current-week expiry — and only fires when VWAP and the CPR band align across all three (RSI/ARSI on spot). The two ITM options are **observation only**: a signal still BUYS the ATM CE/PE of the next-next expiry through the same tested path as the other directional workers, so it shares CPR's risk knobs (tunable via `CPR_ALGO3_*` in `.env`, including `CPR_ALGO3_ITM_OFFSET`). It fetches the two option 1-min OHLC feeds on demand and drives its own spot target/stop exit. This brings the runner to **26 workers**. (The standalone Algo 3 signal generator + its unit tests live under `Signal Generators/CPR Strategy/`.)
 - **Code-quality pass.** Added a `requirements.txt`; gave every Shoonya broker HTTP call a timeout (a hung call could otherwise stall a worker thread and the shared broker lock); removed hardcoded credentials from the vendored Shoonya client; routed the execution layer's status/errors through `logging` instead of `print()`; and ported the master test suite into the repo (`test_nifty_multi_strategy_master.py` — see Tests below).
 - **Live broker execution is broker-selectable (Kotak Neo, Shoonya, or Flattrade).** `LIVE_BROKER` picks `KOTAK`, `SHOONYA`, or `FLATTRADE`, and every real order goes through one generic `execution_client`. The global `LIVE_TRADING_ENABLED` kill-switch and each strategy's `<PREFIX>_LIVE_TRADING` flag must both be true; unknown broker names fail closed to paper. Each broker folder contains an execution client and a read-only diagnostic with an optional, typed-`YES`, round-trip test order. Flattrade uses its official Pi v2 browser-token flow, exact NFO index scrip master, documented request limits, market-order protection, and `SingleOrdHist` fill confirmation. Everything still defaults to paper. (Shoonya's legacy QuickAuth endpoint is being decommissioned by Finvasia.)
 - **End-of-day P&L is now written to a Google Sheet.** When all workers exit on a clean end of day, the master parses the run's log for each strategy's realised P&L and writes it into a tracker sheet — one row per strategy, one column per calendar day — overwriting today's cell and backfilling any blank earlier-this-month cells from the (append-mode) log. Auth is OAuth user-token via `gspread`; configure `GSHEET_ID` + an OAuth client in `.env` (see Setup). It's a safe no-op when unconfigured, so it never disturbs shutdown.
-- **13 TradingBot signal-generator ports added — the front test now runs 24 workers.** Thirteen more ATM single-leg strategies were ported into `Signal Generators/` (SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic, Supertrend, Volatility Breakout), all sharing `misc_strategy_common.py` (TA-Lib-first indicator helpers). They're wired into the master via one shared factory as `AtmSingleLegStrategyWorker`s — the same family as Renko/Goldmine/CPR — and each is fully tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`, `KELTNER_SQUEEZE_*`). This brings the runner to **24 workers** (21 ATM single-leg + 2 Hedged Puts + 1 Delta-0.2). ML Ensemble needs `scikit-learn`.
+- **13 TradingBot signal-generator ports.** Thirteen ATM single-leg strategies were ported into `Signal Generators/` (SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic, Supertrend, Volatility Breakout), all sharing `misc_strategy_common.py` and the mandatory TA-Lib 0.6.8 indicator backend. They're wired through the shared `AtmSingleLegStrategyWorker` factory and each is tunable from `.env` by its own prefix. ML Ensemble needs `scikit-learn`.
 - **CPR (Central Pivot Range) strategy is now live in the front test.** It runs as an ATM single-leg worker (`CPRStrategyWorker`) alongside the other strategies: the master file feeds it 1-min OHLC, the CPR logic resamples to complete 5-min candles internally, and a LONG/SHORT signal buys the ATM CE/PE of the next-next expiry. Tunable via `CPR_*` knobs in the `.env` (lots, max-loss, poll, 09:25-15:15 window). (This brought the master file to nine workers at the time; see the latest addition at the top of this list for the current total.)
 - **Telegram trade notifications.** A queue-based `TelegramMessageWorker` posts a message to a Telegram group/channel on every entry and exit from *any* worker. Each alert shows the strategy, the exact option instrument(s), lot size, entry and exit price, and P&L (hedged spreads show both legs). It runs on its own thread so Telegram latency or downtime never blocks the trading loop, and it's a cheap no-op when disabled. See Setup below to switch it on.
 
@@ -37,7 +37,7 @@ You might have to adjust the import addresses from which the files are to be imp
 # Repository structure
 ```
 .
-├── Nifty Multi Strategy Front Test - Master File.py   # multithreaded paper + live runner (26 strategies + 1 optional LLM agent)
+├── Nifty Multi Strategy Front Test - Master File.py   # multithreaded paper/live runner (~26 + optional LLM worker)
 ├── Data Extractors/                                   # 1m OHLC downloaders + shared helper
 ├── My Backtest Files (For Reference)/                 # backtesting.py-based backtests
 ├── Signal Generators/                                 # strategy / signal logic modules
@@ -56,7 +56,18 @@ Each subfolder has its own `Readme.md` with the details.
    ```
    pip install -r requirements.txt
    ```
-   That covers the core (data fetch, backtests, runner). For live trading also install your broker's client — see the commented "Live trading (optional)" section in `requirements.txt`: Kotak Neo (`neo_api_client`) and/or Shoonya (`pyotp` + `websocket-client`; the NorenApi client itself is vendored). Flattrade uses the core `requests` and `pandas` dependencies, so it needs no extra SDK.
+   That covers the core (data fetch, backtests, runner). Install exact optional sets only when needed:
+   ```
+   pip install -r requirements-ai.txt        # SL Hunting Claude SDK stack
+   pip install -r requirements-dev.txt       # local quality/security gates
+   pip install pyotp==2.9.0 websocket-client==1.8.0  # Shoonya runtime
+   pip install --no-deps "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1#egg=neo_api_client"
+   ```
+   Flattrade uses the core `requests` and `pandas` dependencies. Shoonya's NorenApi
+   client is vendored. Kotak's official tag declares older exact pandas/requests
+   versions, so `--no-deps` prevents it from silently downgrading the audited core
+   runtime. `requirements-brokers.txt` records and tests the upstream broker
+   dependency environment separately in CI; do not combine it with `requirements.txt`.
 3. Configure credentials. Copy `Dependencies/env.example` to `Dependencies/.env` and fill it in (`.env` is git-ignored). Set your Dhan credentials there, then run the one-time token setup:
    ```
    python "Dependencies/dhan_token_setup.py"
@@ -76,7 +87,7 @@ Each subfolder has its own `Readme.md` with the details.
    GSHEET_OAUTH_CLIENT_FILE=Dependencies/gsheet_oauth_client.json
    GSHEET_OAUTH_TOKEN_FILE=Dependencies/gsheet_oauth_token.json
    ```
-   Auth is OAuth user-token via `gspread`: in Google Cloud enable the Sheets API, create an OAuth client of type **Desktop app**, download its JSON to `GSHEET_OAUTH_CLIENT_FILE`, and share the sheet with your Google account. The first run opens a browser once for consent and caches a token at `GSHEET_OAUTH_TOKEN_FILE`. The sheet needs one row per strategy in column A with exact labels (e.g. `Renko Strategy`, `SMA Crossover Strategy`, `Stochastic Oscillator Strategy`, `Supertrend Strategy`, …); unmatched strategies are skipped with a warning. Leave `GSHEET_ID` blank to disable (safe no-op).
+   Auth is OAuth user-token via `gspread`: in Google Cloud enable the Sheets API, create an OAuth client of type **Desktop app**, download its JSON to `GSHEET_OAUTH_CLIENT_FILE`, and share the sheet with your Google account. The first run opens a browser once for consent and caches a token at `GSHEET_OAUTH_TOKEN_FILE`. PAPER results use the existing row labels in column A (e.g. `Renko Strategy`); LIVE and MIXED results use separate `Renko Strategy [LIVE]` and `Renko Strategy [MIXED]` rows so real-money outcomes cannot contaminate paper history. Unmatched strategies are skipped with a warning. Leave `GSHEET_ID` blank to disable (safe no-op).
 
 6. (Optional) Live broker execution. Everything is paper by default. To place REAL orders, set in `Dependencies/.env`:
    ```
@@ -84,7 +95,7 @@ Each subfolder has its own `Readme.md` with the details.
    LIVE_BROKER=KOTAK                # KOTAK, SHOONYA, or FLATTRADE
    RENKO_LIVE_TRADING=true          # flip the specific strategies you want live
    ```
-   Then fill the selected broker's credential block. Flattrade needs `FLATTRADE_CLIENT_ID`, `FLATTRADE_API_KEY`, and `FLATTRADE_API_SECRET`; its optional `FLATTRADE_ACCESS_TOKEN` is validated when supplied, otherwise startup opens browser authorization and asks for the returned `request_code`. A strategy trades live only when `LIVE_TRADING_ENABLED` **and** its own `<PREFIX>_LIVE_TRADING` are both true; any order failure falls back to paper for that trade. Check connectivity first with the read-only diagnostics — they can place a confirmation-gated round-trip (buy + auto square-off) test order via `--place-order`:
+   Then fill the selected broker's credential block. Flattrade needs `FLATTRADE_CLIENT_ID`, `FLATTRADE_API_KEY`, and `FLATTRADE_API_SECRET`; its optional `FLATTRADE_ACCESS_TOKEN` is validated when supplied, otherwise startup opens browser authorization and asks for the returned `request_code`. A strategy trades live only when `LIVE_TRADING_ENABLED` **and** its own `<PREFIX>_LIVE_TRADING` are both true. An entry falls back to paper only after a typed zero-fill `REJECTED`; `PARTIAL` or `UNKNOWN` means exposure may exist, freezes new live entries, and starts reconciliation. Check connectivity first with the read-only diagnostics — they can place a confirmation-gated round-trip (buy + auto square-off) test order via `--place-order`:
    ```
    python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order
    python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
@@ -118,19 +129,30 @@ The front-test master has a unittest suite — env toggles, broker paper/live ro
 ```
 python -m unittest test_nifty_multi_strategy_master
 ```
-175 tests; broker/SDK-specific cases skip automatically when optional dependencies are absent, and all Flattrade HTTP/browser/order behaviour is mocked. (The CPR, Subhamoy, and SL Hunting AI Agent signal generators have their own tests under `Signal Generators/`.) CI runs the whole quality gate on every push/PR — see "Quality gates & CI" below.
+Broker/SDK-specific cases skip automatically when optional dependencies are absent, and all broker HTTP/browser/order behaviour is mocked. Signal generators, execution/reconciliation primitives, data extractors, and repository-policy checks have focused suites under their respective folders. CI runs the whole quality gate on every push/PR — see "Quality gates & CI" below.
 
 # Quality gates & CI
 A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs on every push and pull request across Python 3.12 and 3.13. Locally, the same gate is:
 ```
-pip install -r requirements-dev.txt          # ruff, mypy, bandit, pre-commit, pytest
+pip install -r requirements-dev.txt
+pip install -r requirements-ai.txt
 python -m unittest test_nifty_multi_strategy_master
-python -m pytest "Signal Generators" "Dependencies" -q
+python -m unittest test_market_data_health
+python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+python -m coverage erase
+python -m coverage run -m unittest test_nifty_multi_strategy_master
+python -m coverage run --append -m unittest test_market_data_health
+python -m coverage run --append -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+python -m coverage json -o coverage.json
+python scripts/check_coverage_thresholds.py coverage.json
+python -m pip_audit -r requirements.txt --no-deps --progress-spinner off
+python -m pip_audit -r requirements-ai.txt --no-deps --progress-spinner off
+python -m pip_audit -r requirements-dev.txt --no-deps --progress-spinner off
 python -m compileall -q .
 python -m ruff check .
 python -m mypy
 ```
-`pyproject.toml` holds the ruff + mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
+Coverage is branch-enabled: overall runtime coverage may not fall below 54.7%, new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The three local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
 
 # License
 Released under the MIT License — see [LICENSE](LICENSE).
