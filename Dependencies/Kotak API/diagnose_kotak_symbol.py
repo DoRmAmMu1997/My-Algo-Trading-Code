@@ -17,12 +17,34 @@ contract. Only a confirmed full BUY fill permits the automatic SELL-to-flatten.
 Requires typing YES to confirm.
 """
 import datetime as dt
+import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kotak_execution as ke  # handles sys.path to the SDK + loads .env
 from broker_contract import OrderResult, OrderStatus
+from diagnostic_preflight import validate_quantity_for_lot
+
+# Kotak's contract master spells the lot-size column differently across master
+# revisions, so try the known forms rather than hard-coding one. An unknown
+# column yields 0, which makes the shared quantity check a no-op instead of
+# blocking a good order over missing catalogue metadata.
+_LOT_SIZE_COLUMNS = ("lLotSize", "lotSize", "LotSize", "pLotSize")
+
+
+def _lot_size_for(df, trading_symbol):
+    """Return the official lot size for one resolved Kotak symbol, else 0."""
+    column = next((name for name in _LOT_SIZE_COLUMNS if name in df.columns), None)
+    if column is None:
+        return 0
+    rows = df[df["pTrdSymbol"].astype(str).str.strip() == str(trading_symbol).strip()]
+    if rows.empty:
+        return 0
+    try:
+        return int(float(rows.iloc[0][column]))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _arg_val(name, default):
@@ -138,6 +160,15 @@ def place_round_trip_test_order(client, symbol, qty, broker="Kotak"):
 
 
 def main():
+    # Without this the root logger sits at WARNING, so kotak_execution's INFO
+    # diagnostics -- the scrip-master URL, download progress and byte counts --
+    # are silently dropped. They are the whole point of running this script when
+    # a download stalls, so surface them. The Flattrade and Dhan diagnostics
+    # already configure logging the same way.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
     client = ke.kotak_execution_client
     print("Logging in (you'll be prompted for a TOTP)...")
     if not client.preload_scrip_master():
@@ -160,7 +191,12 @@ def main():
     # if compared as text, which looks scrambled).
     expiries = sorted(base["_expiry_str"].dropna().unique().tolist(),
                       key=lambda s: dt.datetime.strptime(s, "%d%b%Y"))
-    print(f"available expiries ({len(expiries)}):", expiries[:15])
+    # Print how many are being SHOWN as well as how many exist -- the count and
+    # the list disagreed before (18 reported, 15 printed), which reads like the
+    # resolver lost contracts rather than the display truncating them.
+    shown = expiries[:15]
+    truncated = "" if len(shown) == len(expiries) else f", showing first {len(shown)}"
+    print(f"available expiries ({len(expiries)} total{truncated}):", shown)
 
     # Show rows near our strike on the x100 scale, across the nearest expiries.
     near = base[(base["_strike_f"] >= STRIKE * 100 - 5000) & (base["_strike_f"] <= STRIKE * 100 + 5000)]
@@ -170,10 +206,14 @@ def main():
 
     # Try the actual resolver against the nearest available expiry as a demo.
     sym = ""
+    lot_size = 0
     if expiries:
         demo_exp = dt.datetime.strptime(expiries[0], "%d%b%Y").date()
         sym = client.resolve_option_symbol(UNDERLYING, demo_exp, OPT, STRIKE)
         print(f"\nresolve_option_symbol({UNDERLYING}, {demo_exp}, {OPT}, {STRIKE}) -> {sym!r}")
+        if sym:
+            lot_size = _lot_size_for(df, sym)
+            print(f"official lot    : {lot_size or 'unknown (not in this master)'}")
     print("\nIf the rows above show your strike but resolve returns '', compare the")
     print("'_expiry_str' values to the expiry your strategy actually trades.")
 
@@ -184,10 +224,16 @@ def main():
                 "\n--place-order requires an explicit positive --qty using the "
                 "current contract lot size; no order placed."
             )
-        elif sym:
-            place_round_trip_test_order(client, sym, QTY, broker="Kotak")
-        else:
+        elif not sym:
             print("\n--place-order requested but the symbol did not resolve; no order placed.")
+        else:
+            # Pre-flight before the typed-YES prompt, so an order the exchange
+            # can never accept never reaches the broker.
+            lot_error = validate_quantity_for_lot(QTY, lot_size)
+            if lot_error:
+                print(f"\n{lot_error}\nNo order placed.")
+            else:
+                place_round_trip_test_order(client, sym, QTY, broker="Kotak")
 
 
 if __name__ == "__main__":

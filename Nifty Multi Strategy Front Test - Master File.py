@@ -250,6 +250,7 @@ from Dependencies.market_data_health import (
 )
 from Dependencies.next_open_entry import PendingNextOpenEntry
 from Dependencies.risk_sizing import SizingDecision
+from Dependencies.secret_redaction import redact_text
 from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
@@ -384,8 +385,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # DHAN_CLIENT_CODE  : 10-digit dhanClientId (e.g. "1100000000").
 # DHAN_API_KEY      : long-lived "app_id" used by the OAuth setup script.
 # DHAN_API_SECRET   : long-lived "app_secret" pair to DHAN_API_KEY.
-# DHAN_ACCESS_TOKEN : 12-month token produced by the setup script. This is
-#                     what the dhanhq SDK actually authenticates with.
+# DHAN_ACCESS_TOKEN : token produced by the setup script. This is what the
+#                     dhanhq SDK actually authenticates with. Its validity is
+#                     stamped into the token by DhanHQ and is NOT 12 months --
+#                     web.dhan.co currently issues 24-hour tokens, so refresh
+#                     it outside market hours before each trading day.
 CLIENT_CODE = _env_str("DHAN_CLIENT_CODE", "")
 API_KEY = _env_str("DHAN_API_KEY", "")
 API_SECRET = _env_str("DHAN_API_SECRET", "")
@@ -1001,15 +1005,15 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, or Flattrade.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All three helpers expose
+# This is how real (non-paper) orders reach the broker. All four helpers expose
 # the SAME contract: login/symbol resolution, typed place/status/cancel results,
 # determinate-or-indeterminate open order/position queries, and logout. The runner
 # uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
 # Each import is
 # wrapped in try/except on purpose: if a broker's SDK/deps are missing, that
-# client is set to None and the runner keeps working (the OTHER broker, or
+# client is set to None and the runner keeps working (the OTHER brokers, or
 # paper-only). main() forces any "live" strategy back to paper when the selected
 # client is None.
 try:
@@ -1051,6 +1055,19 @@ except Exception as _flattrade_import_exc:
         _flattrade_import_exc,
     )
 
+try:
+    _dhan_execution_module = load_module(
+        "master_dhan_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Dhan API" / "dhan_execution.py",
+    )
+    dhan_execution_client = _dhan_execution_module.dhan_execution_client
+except Exception as _dhan_import_exc:
+    dhan_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Dhan execution layer unavailable (%s); Dhan live trading disabled.",
+        _dhan_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1073,8 +1090,11 @@ def _select_execution_client(broker_name: str):
     if broker == "FLATTRADE":
         product = _env_str("FLATTRADE_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return flattrade_execution_client, "NFO", product
+    if broker == "DHAN":
+        product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return dhan_execution_client, "NSE_FNO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, or FLATTRADE); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
         "live trading DISABLED (paper only).",
         broker_name,
     )
@@ -3271,6 +3291,12 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+        # Actual session provenance is derived from order outcomes, not merely
+        # from the live configuration flag. A live-enabled worker can execute a
+        # confirmed broker fill and later take an explicit zero-fill paper
+        # fallback, which makes that strategy's daily result MIXED.
+        self._execution_modes_seen: set[str] = set()
+        self._execution_mode_lock = threading.Lock()
         # Distinguish otherwise-identical legs owned by different worker
         # instances.  A frozen worker may finish its own partial order, but a
         # second worker must never adopt that continuation merely because its
@@ -3412,6 +3438,16 @@ class BasePaperStrategyWorker(threading.Thread):
         opening_side = str(opening_side).upper().strip()
         if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
             return False
+        # Each tuple is (completed anchor's role, companion's role, anchor's
+        # opening side, companion's opening side) -- the ONLY basket shapes
+        # this runner ever builds:
+        #   H -> M : protective hedge BUY confirmed, now the main short SELL
+        #            (the hedged-puts / Delta-0.2 spread order of operations);
+        #   N -> B : NIFTY leg BUY confirmed, now the equal-lot BankNIFTY
+        #            mirror BUY (SL Hunting basket);
+        #   C -> P : strangle CE BUY confirmed, now its PE BUY twin.
+        # Anything not in this table is a brand-new exposure, which a frozen
+        # account must never accept.
         allowed_transitions = {
             ("H", "M", "BUY", "SELL"),
             ("N", "B", "BUY", "BUY"),
@@ -4564,17 +4600,32 @@ class BasePaperStrategyWorker(threading.Thread):
         (TelegramMessageWorker) owns all formatting and network I/O, so the
         trading threads are never exposed to Telegram latency or failures.
         """
-        event_queue = getattr(self, "trade_event_queue", None)
-        if event_queue is None:
-            return
         try:
             event.setdefault("strategy", self.strategy_name)
             event.setdefault("ts", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            event.setdefault("mode", "PAPER")
+            event.setdefault("mode", "LIVE" if self.live_trading else "PAPER")
+            mode_parts = _execution_mode_parts(event["mode"])
+            with self._execution_mode_lock:
+                self._execution_modes_seen.update(mode_parts)
+            event_queue = getattr(self, "trade_event_queue", None)
+            if event_queue is None:
+                return
             event_queue.put_nowait(event)
         except Exception:
             # A failed enqueue must never disturb the trading loop.
             pass
+
+    def session_execution_mode(self) -> str:
+        """Return PAPER, LIVE, or MIXED from this worker's actual outcomes."""
+        with self._execution_mode_lock:
+            observed = set(self._execution_modes_seen)
+        if len(observed) > 1:
+            return "MIXED"
+        if observed:
+            return next(iter(observed))
+        # A no-trade day has no order outcome. Report the mode in which the
+        # strategy was armed rather than falsely claiming a paper execution.
+        return "LIVE" if self.live_trading else "PAPER"
 
     # ------------------------------------------------------------------
     # Helpers
@@ -4739,8 +4790,19 @@ class BasePaperStrategyWorker(threading.Thread):
             self._wait_for_shutdown_retry()
 
     def _market_data_entries_allowed(self) -> bool:
-        """Fail closed for every entry path while the shared feed is unhealthy."""
+        """Fail closed for every REAL entry path while the shared feed is unhealthy.
 
+        Scope (operator decision, 2026-07-17): this gate protects MONEY, so it
+        applies only to live-trading workers. A paper worker keeps entering on
+        the last-good snapshot -- a virtual trade on slightly stale data is a
+        data-quality footnote, whereas blocking it costs the paper track record
+        its opening window (on 17 Jul the gate blocked every paper strategy
+        until ~09:24 while the feed warmed up, so no strategy could trade the
+        open at all).
+        """
+
+        if not self.live_trading:
+            return True
         health = self.store.market_data_health.snapshot(now=_ist_now())
         if not health.monitoring:
             return True
@@ -4762,16 +4824,41 @@ class BasePaperStrategyWorker(threading.Thread):
         return False
 
     def _handle_market_data_health(self) -> bool:
-        """Flatten tracked exposure after a feed has been unhealthy for 30s.
+        """Flatten tracked LIVE exposure after a feed has been unhealthy for 30s.
 
         This is deliberately separate from terminal daily shutdown. A feed can
         recover, but only three consecutive healthy producer cycles reopen the
         entry gate. Returning ``True`` tells the caller to consume this poll so
         no strategy logic runs alongside a safety-driven liquidation attempt.
+
+        Scope (operator decision, 2026-07-17): like the entry gate above, the
+        forced square-off exists to protect real money, so it applies only to
+        live-trading workers. A paper worker keeps its virtual position and its
+        strategy logic keeps running on the last-good snapshot. A LIVE worker
+        still flattens EVERYTHING it owns -- including a rare paper-fallback
+        position -- because its books mirror a real trading stream and
+        splitting real-vs-paper mid-liquidation would complicate
+        reconciliation.
         """
 
         health = self.store.market_data_health.snapshot(now=_ist_now())
         if not health.monitoring:
+            return False
+        if not self.live_trading:
+            # Paper worker: never force-close, never consume the poll. Log the
+            # 30s+ condition once per unhealthy episode so the operator can
+            # still see the feed outage in this worker's stream.
+            if health.liquidation_required and not self._market_data_liquidation_logged:
+                self._market_data_liquidation_logged = True
+                self.log.info(
+                    "Market data unhealthy for %.1fs; PAPER worker continues "
+                    "(square-off skipped -- no real exposure) | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
+            if health.entry_allowed:
+                # Reset the once-per-episode latch after recovery.
+                self._market_data_liquidation_logged = False
             return False
         if not health.entry_allowed:
             self._market_data_entries_allowed()
@@ -4838,20 +4925,23 @@ class BasePaperStrategyWorker(threading.Thread):
         )
 
     def request_worker_shutdown(self, reason: str) -> None:
-        """Block entries immediately and start this worker's safe shutdown."""
+        """Block THIS worker's entries immediately and start its safe shutdown.
+
+        The block is deliberately scoped to this one worker: its own lifecycle
+        gate refuses new opening orders both at the top of `_place_real_leg`
+        and again at the final broker-submission boundary, so a max-loss stop
+        or an early square-off here never freezes the shared account-wide
+        entry gate that the OTHER strategies are still trading through.  The
+        shared gate stays reserved for conditions that genuinely make the
+        whole account unsafe: indeterminate broker exposure, a failed startup
+        audit, and the stale-market-data guard.
+        """
 
         before = self.lifecycle.snapshot()
         snapshot = self.lifecycle.request_shutdown(reason)
         if before.state is LifecycleState.RUNNING:
-            # An unattributed freeze is intentional: shutdown forbids even a
-            # planned basket companion from increasing account exposure.
-            self.store.execution_safety.freeze_entries(
-                f"{self.strategy_name} shutdown requested: {snapshot.shutdown_reason}"
-            )
-            self._live_execution_frozen = True
-            self._live_execution_freeze_reason = snapshot.shutdown_reason
             self.log.warning(
-                "LIFECYCLE %s -> %s | reason=%s | new entries blocked.",
+                "LIFECYCLE %s -> %s | reason=%s | new entries blocked for this worker.",
                 before.state.value,
                 snapshot.state.value,
                 snapshot.shutdown_reason,
@@ -4867,7 +4957,11 @@ class BasePaperStrategyWorker(threading.Thread):
             return
         if not self._shutdown_summary_logged:
             self._shutdown_summary_logged = True
-            self.log.info("Paper summary | %s", self.summary_text())
+            self.log.info(
+                "Result summary | Mode=%s | %s",
+                self.session_execution_mode(),
+                self.summary_text(),
+            )
             self.log.info(
                 "Strategy stopped only after broker-confirmed flat lifecycle completion."
             )
@@ -4950,7 +5044,15 @@ class BasePaperStrategyWorker(threading.Thread):
         )
 
     def _wait_for_shutdown_retry(self) -> None:
-        """Wait without spinning even when the legacy stop event is already set."""
+        """Wait without spinning even when the legacy stop event is already set.
+
+        The run loop cannot use ``stop_event.wait`` here: during shutdown the
+        event is typically already set, so waiting on it would return
+        immediately and turn the flatten/reconcile loop into a busy spin.  A
+        plain sleep, capped at the poll cadence and floored at 50ms, keeps the
+        worker responsive to its 1/2/5-second retry schedule without burning a
+        CPU core while it waits to become broker-confirmed flat.
+        """
 
         snapshot = self.lifecycle.snapshot()
         if snapshot.state in {LifecycleState.FLAT, LifecycleState.STOPPED}:
@@ -11076,6 +11178,10 @@ if SL_HUNTING_AVAILABLE:
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
+            # Agent actions and mechanical liquidation share this lock. The
+            # tool context rechecks its generation/deadline while holding it,
+            # so square-off cannot race a late agent entry.
+            self._agent_action_lock = threading.RLock()
             # Optional learned-lessons block (loaded ONCE at construction so the prompt
             # prefix stays stable per session — preserves prompt caching). Gated + off
             # by default; only APPROVED lessons are in the live store.
@@ -11094,14 +11200,17 @@ if SL_HUNTING_AVAILABLE:
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
                 lessons_block=lessons_block,
-                # SLH-001: bound each SDK call. decide() blocks THIS worker's
-                # thread -- the same thread that enforces the per-poll
-                # stop/target check, max-loss and the 15:15 square-off -- so a
-                # hung CLI call must cost one bar's decision, not the safety net.
+                # Bound the off-loop SDK call to 5-120 seconds (default 90).
+                # Mechanical stop/target, max-loss and square-off keep polling
+                # independently while this inference is running.
                 sdk_timeout_seconds=_env_float("SL_HUNTING_SDK_TIMEOUT_SECONDS", 90.0),
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
+            self._agent_inference_lock = threading.Lock()
+            self._agent_inference_thread = None
+            self._agent_inference_result = None
+            self._agent_generation = 0
             # Throttle: consult the LLM only once per NEW completed bar (not per poll).
             self._last_decision_bar = None
             # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
@@ -11540,19 +11649,27 @@ if SL_HUNTING_AVAILABLE:
 
         def _flatten_additional_positions(self, reason: str) -> None:
             """Retry a lone BankNIFTY mirror on every due flatten pass."""
+            self._invalidate_agent_inference(reason)
+            with self._agent_action_lock:
+                if self._mirror_pos.active:
+                    self._close_bnf_mirror(reason)
 
-            if self._mirror_pos.active:
-                self._close_bnf_mirror(reason)
+        def request_worker_shutdown(self, reason: str) -> None:
+            """Disarm any in-flight inference before the shared flatten lifecycle."""
+            self._invalidate_agent_inference(reason)
+            super().request_worker_shutdown(reason)
 
         def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
             """Basket-level max-loss uses the shared retrying lifecycle."""
-
-            super().handle_max_loss_and_stop(total_pnl, open_pnl)
+            self._invalidate_agent_inference("MAX_LOSS")
+            with self._agent_action_lock:
+                super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
         def handle_square_off_and_stop(self) -> None:
             """15:15 square-off uses the shared retrying lifecycle."""
-
-            super().handle_square_off_and_stop()
+            self._invalidate_agent_inference("TIME_CUTOFF")
+            with self._agent_action_lock:
+                super().handle_square_off_and_stop()
 
         def _journal_exit_static(self, closed_position, reason: str) -> dict:
             """The NIFTY-leg exit context for the journal row (everything EXCEPT the
@@ -11655,9 +11772,122 @@ if SL_HUNTING_AVAILABLE:
         def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
             return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
 
+        def _agent_generation_is_current(self, generation: int) -> bool:
+            """Called inside the tool's final execution lock."""
+            return generation == self._agent_generation and not self.stop_event.is_set()
+
+        def _invalidate_agent_inference(self, reason: str) -> None:
+            """Make every previously issued tool capability stale immediately."""
+            with self._agent_action_lock:
+                self._agent_generation += 1
+            self.log.debug("SL Hunting inference invalidated: %s", reason)
+
+        def _consume_agent_decision(self) -> None:
+            """Collect a completed background pass without ever waiting for it.
+
+            The harvest half of the inference cycle: `_start_agent_inference`
+            launches a daemon thread and returns immediately; every later poll
+            calls this first to pick up the finished decision (log + journal
+            it) -- never `join()`ing, so a hung SDK call can never delay the
+            stop/target, max-loss, or 15:15 square-off checks that run right
+            after.  Any real order the agent placed already happened DURING
+            the pass via the locked tool context; a stale generation here only
+            skips the bookkeeping, never an order.
+            """
+            payload = None
+            with self._agent_inference_lock:
+                thread = self._agent_inference_thread
+                if thread is None or thread.is_alive():
+                    return
+                payload = self._agent_inference_result
+                self._agent_inference_thread = None
+                self._agent_inference_result = None
+            if payload is None:
+                return
+            generation, decision, was_active, strategy_frame, bnf_candles = payload
+            if generation != self._agent_generation:
+                self.log.info("Discarding late SL Hunting result for stale generation %s.", generation)
+                return
+            if decision.action != "HOLD":
+                self.log.info(
+                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
+                    decision.action, decision.confidence, decision.setup,
+                    decision.stop, decision.target, decision.reasoning,
+                )
+            if self._decisions_path is not None:
+                try:
+                    SL_HUNTING_JOURNAL_MODULE.append_decision(
+                        self._decisions_path,
+                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
+                            decision, strategy_frame, bnf_candles
+                        ),
+                    )
+                except Exception as exc:
+                    self.log.warning("SL Hunting decision-log failed: %s", exc)
+            if (
+                self._journal is not None
+                and self._open_trade_id is None
+                and not was_active
+                and self.pos.active
+            ):
+                self._journal_open_row(decision, strategy_frame, bnf_candles)
+
+        def _start_agent_inference(
+            self, strategy_frame: pd.DataFrame, bnf_candles: pd.DataFrame | None
+        ) -> bool:
+            """Start one daemon inference pass; return immediately to the risk loop.
+
+            At most one pass exists at a time (returns False while one is
+            running).  Bumping the generation counter first makes every
+            previously issued tool capability stale, and deep-copying both
+            frames gives the pass an immutable market snapshot the fetcher
+            thread cannot mutate mid-inference.
+            """
+            with self._agent_inference_lock:
+                if self._agent_inference_thread is not None:
+                    return False
+                with self._agent_action_lock:
+                    self._agent_generation += 1
+                    generation = self._agent_generation
+                    was_active = self.pos.active
+                nifty_snapshot = strategy_frame.copy(deep=True)
+                bnf_snapshot = bnf_candles.copy(deep=True) if bnf_candles is not None else None
+
+                def _run_agent() -> None:
+                    decision = self.agent.decide(
+                        nifty_snapshot,
+                        self._executor,
+                        bnf_candles=bnf_snapshot,
+                        live_active=bool(self.live_trading),
+                        broker=LIVE_BROKER,
+                        generation=generation,
+                        generation_is_current=self._agent_generation_is_current,
+                        execution_lock=self._agent_action_lock,
+                    )
+                    with self._agent_inference_lock:
+                        self._agent_inference_result = (
+                            generation,
+                            decision,
+                            was_active,
+                            nifty_snapshot,
+                            bnf_snapshot,
+                        )
+
+                self._agent_inference_thread = threading.Thread(
+                    target=_run_agent,
+                    name="sl-hunting-inference",
+                    daemon=True,
+                )
+                self._agent_inference_thread.start()
+                return True
+
         def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
             if strategy_frame is None or strategy_frame.empty:
                 return
+
+            # Harvest only completed work. This never joins or waits, so the
+            # mechanical stop/max-loss/square-off path remains responsive.
+            self._consume_agent_decision()
 
             # Enforce the agent's UNDERLYING stop/target on EVERY poll (not just once
             # per bar), so the configured risk guard stays active between the agent's
@@ -11672,7 +11902,9 @@ if SL_HUNTING_AVAILABLE:
                     )
                     if hit:
                         self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
-                        self.exit_position(hit)
+                        self._invalidate_agent_inference(hit)
+                        with self._agent_action_lock:
+                            self.exit_position(hit)
                         return
 
             # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
@@ -11736,40 +11968,9 @@ if SL_HUNTING_AVAILABLE:
                 )
                 return
 
-            # The agent acts via the order tool DURING decide() (it calls our
-            # enter_position / exit_position through the executor); the returned
-            # decision is the agent's own record of what it did, for the log.
-            was_active = self.pos.active
-            decision = self.agent.decide(
-                strategy_frame,
-                self._executor,
-                bnf_candles=bnf_candles,
-                live_active=bool(self.live_trading),
-                broker=LIVE_BROKER,
-            )
-            if decision.action != "HOLD":
-                self.log.info(
-                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
-                    decision.action, decision.confidence, decision.setup,
-                    decision.stop, decision.target, decision.reasoning,
-                )
-            # Decision log: persist EVERY decision (HOLD included) to its own JSONL so the
-            # operator can review what the agent decided each bar. Best-effort.
-            if self._decisions_path is not None:
-                try:
-                    SL_HUNTING_JOURNAL_MODULE.append_decision(
-                        self._decisions_path,
-                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
-                            decision, strategy_frame, bnf_candles
-                        ),
-                    )
-                except Exception as exc:  # never let logging disturb trading
-                    self.log.warning("SL Hunting decision-log failed: %s", exc)
-            # Journal a fresh entry (flat -> active during decide). Exits are journaled
-            # in after_exit, so EVERY close path is captured there.
-            if (self._journal is not None and self._open_trade_id is None
-                    and not was_active and self.pos.active):
-                self._journal_open_row(decision, strategy_frame, bnf_candles)
+            # Inference runs on its own daemon thread. At most one pass exists;
+            # later polls keep enforcing hard risk and only harvest when complete.
+            self._start_agent_inference(strategy_frame, bnf_candles)
 
     SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
     SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"
@@ -11864,6 +12065,28 @@ def _format_inr(value) -> str:
     return f"{sign}₹{abs(amount):,.2f}"
 
 
+def _execution_mode_parts(mode) -> set[str]:
+    """Normalize detailed order tags into daily PAPER/LIVE provenance parts."""
+    normalized = str(mode or "").strip().upper()
+    if normalized == "MIXED":
+        return {"PAPER", "LIVE"}
+    if normalized in {"LIVE", "LIVE_REJECTED", "LIVE_INDETERMINATE"}:
+        return {"LIVE"}
+    # PAPER_FALLBACK is deliberately paper provenance: the broker explicitly
+    # rejected the entry with zero fill and the simulated trade was opened.
+    return {"PAPER"}
+
+
+def _combined_execution_mode(modes) -> str:
+    """Combine worker/session modes into one PAPER, LIVE, or MIXED label."""
+    parts: set[str] = set()
+    for mode in modes:
+        parts.update(_execution_mode_parts(mode))
+    if len(parts) > 1:
+        return "MIXED"
+    return next(iter(parts), "PAPER")
+
+
 def _format_eod_summary(event: dict) -> str:
     """
     Build the end-of-day cumulative P&L message: one line per strategy worker
@@ -11878,8 +12101,12 @@ def _format_eod_summary(event: dict) -> str:
         lines.append(f"<i>{ts}</i>")
     for row in sorted(rows, key=lambda r: _safe_float(r.get("pnl", 0.0), 0.0), reverse=True):
         strat = html.escape(str(row.get("strategy", "?")))
+        row_mode = html.escape(str(row.get("mode", "PAPER")))
         trades = _to_int_safe(row.get("trades", 0), 0)
-        lines.append(f"{strat}: <b>{_format_inr(row.get('pnl', 0.0))}</b> ({trades} trade(s))")
+        lines.append(
+            f"{strat} [{row_mode}]: <b>{_format_inr(row.get('pnl', 0.0))}</b> "
+            f"({trades} trade(s))"
+        )
     lines.append("──────────")
     lines.append(
         f"<b>Total: {_format_inr(event.get('total_pnl', 0.0))} "
@@ -12081,10 +12308,14 @@ class TelegramMessageWorker(threading.Thread):
                     "Telegram API returned HTTP %s on attempt %d: %s",
                     response.status_code,
                     attempt,
-                    response.text[:300],
+                    redact_text(response.text[:300], (self.bot_token,)),
                 )
             except Exception as exc:
-                self.log.warning("Telegram send error on attempt %d: %s", attempt, exc)
+                self.log.warning(
+                    "Telegram send error on attempt %d: %s",
+                    attempt,
+                    redact_text(exc, (self.bot_token,)),
+                )
             if attempt < 3:
                 self.stop_event.wait(1.5 * attempt)
         self.failed_count += 1
@@ -12107,12 +12338,21 @@ def _publish_eod_summary(workers, event_queue) -> None:
     for worker in workers:
         pnl = _safe_float(getattr(worker, "realized_pnl", 0.0), 0.0)
         trades = _to_int_safe(getattr(worker, "completed_trades", 0), 0)
-        rows.append({"strategy": worker.strategy_name, "pnl": pnl, "trades": trades})
+        mode_getter = getattr(worker, "session_execution_mode", None)
+        if callable(mode_getter):
+            worker_mode = mode_getter()
+        else:
+            worker_mode = "LIVE" if getattr(worker, "live_trading", False) else "PAPER"
+        rows.append(
+            {"strategy": worker.strategy_name, "pnl": pnl, "trades": trades, "mode": worker_mode}
+        )
         total_pnl += pnl
         total_trades += trades
 
+    overall_mode = _combined_execution_mode(row["mode"] for row in rows)
     logger.info(
-        "END-OF-DAY cumulative paper P&L across %d workers = %.2f over %d trade(s).",
+        "END-OF-DAY cumulative %s P&L across %d workers = %.2f over %d trade(s).",
+        overall_mode,
         len(workers),
         total_pnl,
         total_trades,
@@ -12127,7 +12367,7 @@ def _publish_eod_summary(workers, event_queue) -> None:
                 "total_pnl": total_pnl,
                 "total_trades": total_trades,
                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "mode": "PAPER",
+                "mode": overall_mode,
             }
         )
     except Exception:
@@ -12184,7 +12424,8 @@ _PNL_SHEET_ROW_LABELS = {
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
-# Only Paper-summary lines inside this window are used for the sheet. Covers
+_PNL_MODE_RE = re.compile(r"\bMode=(PAPER|LIVE|MIXED)\b")
+# Only result-summary lines inside this window are used for the sheet. Covers
 # max-loss during the session (from 9:15) through the last square-off (15:20)
 # while ignoring after-market test runs that log fresh summaries at 17:00+.
 _PNL_LOG_WINDOW_START = (9, 15)
@@ -12222,8 +12463,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
     """
     Parse the runner's log for each strategy's end-of-day realised P&L per day.
 
-    Reads the per-strategy "Paper summary | ... RealizedPnL=<pnl>" lines that
-    every worker logs at square-off / max-loss. The log format is
+    Reads the per-strategy "Result summary | Mode=<mode> | ... RealizedPnL=<pnl>"
+    lines that every worker logs at square-off / max-loss. Legacy "Paper summary"
+    rows remain readable as PAPER. The log format is
     "<asctime> | <level> | <threadName> | <message>", and threadName is
     "<strategy_name>Thread", so we recover the date (from asctime), the strategy
     (from the thread name), and the figure. Returns {"YYYY-MM-DD":
@@ -12244,7 +12486,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
             for line in handle:
                 # Cheap pre-filter: skip everything that isn't a P&L summary line
                 # before doing the costlier split/regex work below.
-                if "Paper summary" not in line or "RealizedPnL=" not in line:
+                is_legacy_paper = "Paper summary" in line
+                is_mode_result = "Result summary" in line
+                if (not is_legacy_paper and not is_mode_result) or "RealizedPnL=" not in line:
                     continue
                 # Break into the 4 log fields. maxsplit=3 keeps the message intact
                 # even if the message itself contains " | ".
@@ -12272,10 +12516,19 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                 match = _PNL_LOG_LINE_RE.search(message)
                 if not match:
                     continue
+                mode = "PAPER"
+                if is_mode_result:
+                    mode_match = _PNL_MODE_RE.search(message)
+                    if not mode_match:
+                        continue
+                    mode = mode_match.group(1)
                 try:
                     # Last write wins: a later summary for the same strategy/day
                     # (e.g. a re-entry's final line) overwrites the earlier one.
-                    result.setdefault(date_str, {})[strategy] = float(match.group(1))
+                    result.setdefault(date_str, {})[strategy] = {
+                        "pnl": float(match.group(1)),
+                        "mode": mode,
+                    }
                 except ValueError:
                     continue
     except Exception as exc:  # pragma: no cover - defensive
@@ -12331,11 +12584,31 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
         if date_str[:7] != current_month or date_str not in date_to_col:
             continue
         col_idx = date_to_col[date_str]
-        for strategy, pnl in per_strategy.items():
+        for strategy, result_record in per_strategy.items():
             # Map the code's strategy name to the sheet's exact row label.
-            label = _PNL_SHEET_ROW_LABELS.get(strategy)
-            if label is None or label not in label_to_row:
+            base_label = _PNL_SHEET_ROW_LABELS.get(strategy)
+            if isinstance(result_record, dict):
+                pnl = result_record.get("pnl")
+                mode = str(result_record.get("mode", "")).strip().upper()
+                if mode not in {"PAPER", "LIVE", "MIXED"}:
+                    unmatched.add(strategy)
+                    continue
+            else:
+                # Backward-compatible input for older callers/tests: numeric
+                # records came from the legacy Paper-summary parser.
+                pnl = result_record
+                mode = "PAPER"
+            # Keep the existing paper rows intact. Live and mixed results require
+            # distinct numeric rows so broker P&L can never contaminate the paper
+            # tracker's historical series.
+            if base_label is None:
                 # No mapping, or the sheet is missing that row -> report it.
+                unmatched.add(strategy)
+                continue
+            label = base_label if mode == "PAPER" else f"{base_label} [{mode}]"
+            if label not in label_to_row:
+                # Live and mixed modes use dedicated rows. If the operator has
+                # not added that row yet, warn instead of overwriting paper P&L.
                 unmatched.add(strategy)
                 continue
             row_idx = label_to_row[label]
@@ -12902,11 +13175,17 @@ def _start_and_supervise_runtime_threads(
     return False
 
 
-def _shutdown_account_audit(
-    store: SharedMarketDataStore,
-    client: ExecutionClient | None,
-) -> StartupExposureAudit:
-    """Return fixed-vocabulary evidence that process-wide exposure is flat."""
+def _runner_exposure_audit(store: SharedMarketDataStore) -> StartupExposureAudit:
+    """Hard finalization gate: is the RUNNER's own tracked exposure flat?
+
+    The execution ledger registers every live order attempt BEFORE it is
+    submitted and keeps the leg active while any quantity is confirmed open or
+    still indeterminate, so an empty ledger means every order this process
+    placed is broker-confirmed flat.  Exposure the runner did not create --
+    the operator's own manual trades in the same account -- is deliberately
+    NOT part of this gate: it is reported loudly by the advisory account
+    audit below instead of blocking results/logout forever.
+    """
 
     active_states = store.execution_ledger.active_states()
     if active_states:
@@ -12918,23 +13197,44 @@ def _shutdown_account_audit(
                 f"risk_quantity={sum(state.risk_quantity for state in active_states)}",
             ),
         )
+    return StartupExposureAudit(
+        safe_to_enable_live=True,
+        reasons=(),
+        evidence=("tracked_legs=0",),
+    )
+
+
+def _advisory_account_audit(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+) -> StartupExposureAudit:
+    """Best-effort ACCOUNT-level book check, reported but never blocking.
+
+    The operator may hold manual positions or working orders in the same
+    account, so a non-flat account combined with a flat runner ledger is a
+    WARNING (log + Telegram alert), not a reason to withhold the day's
+    results or the logout forever.  Fixed vocabulary only: raw broker
+    payloads, symbols and order ids never reach the alert text.
+    """
 
     if client is None:
         if store.live_session_started:
             return StartupExposureAudit(
                 safe_to_enable_live=False,
                 reasons=("The live broker client was unavailable at shutdown.",),
-                evidence=("execution_client=unavailable", "tracked_legs=0"),
+                evidence=("execution_client=unavailable",),
             )
         return StartupExposureAudit(
             safe_to_enable_live=True,
             reasons=(),
-            evidence=("execution_client=unavailable", "tracked_legs=0"),
+            evidence=("execution_client=unavailable",),
         )
 
     login_state = getattr(client, "is_logged_in", None)
     if login_state is False:
         if store.live_session_started:
+            # One best-effort re-login so the books can actually be read for
+            # the warning; a failure downgrades to "session unavailable".
             try:
                 recovered = client.ensure_logged_in()
             except Exception:  # noqa: BLE001 - never log broker auth payloads
@@ -12943,23 +13243,20 @@ def _shutdown_account_audit(
                 return StartupExposureAudit(
                     safe_to_enable_live=False,
                     reasons=("The live broker session was unavailable at shutdown.",),
-                    evidence=(
-                        "broker_session=recovery_failed",
-                        "tracked_legs=0",
-                    ),
+                    evidence=("broker_session=recovery_failed",),
                 )
             login_state = True
         else:
             return StartupExposureAudit(
                 safe_to_enable_live=True,
                 reasons=(),
-                evidence=("broker_session=not_logged_in", "tracked_legs=0"),
+                evidence=("broker_session=not_logged_in",),
             )
     if login_state is not True:
         return StartupExposureAudit(
             safe_to_enable_live=False,
             reasons=("Broker session state was indeterminate at shutdown.",),
-            evidence=("broker_session=indeterminate", "tracked_legs=0"),
+            evidence=("broker_session=indeterminate",),
         )
 
     try:
@@ -12972,6 +13269,48 @@ def _shutdown_account_audit(
         )
 
 
+def _warn_if_account_not_flat(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    event_queue: queue.Queue | None,
+) -> bool:
+    """Alert (never block) when the ACCOUNT shows exposure after the runner is flat.
+
+    Returns True when a warning was raised, so tests can assert the alert path.
+    """
+
+    try:
+        advisory = _advisory_account_audit(store, client)
+    except KeyboardInterrupt:
+        logger.error(
+            "Advisory account check interrupted; finalizing on the flat runner ledger."
+        )
+        return False
+    if advisory.safe_to_enable_live:
+        return False
+    safe_detail = " ".join((*advisory.reasons, *advisory.evidence))
+    logger.error(
+        "SHUTDOWN ACCOUNT WARNING | the runner's own exposure is flat, but the "
+        "account books are not proven flat (manual positions/orders, or an "
+        "unreadable book) | %s",
+        safe_detail,
+    )
+    if event_queue is not None:
+        with contextlib.suppress(Exception):
+            event_queue.put_nowait(
+                {
+                    "action": "SHUTDOWN_ACCOUNT_WARNING",
+                    "strategy": "Process Supervisor",
+                    # The generic Telegram format renders `direction` as the
+                    # detail line, exactly like the startup-exposure alert.
+                    "direction": safe_detail,
+                    "reason": safe_detail,
+                    "mode": "LIVE" if store.live_session_started else "PAPER",
+                }
+            )
+    return True
+
+
 def _wait_for_shutdown_account_flat(
     store: SharedMarketDataStore,
     client: ExecutionClient | None,
@@ -12980,11 +13319,14 @@ def _wait_for_shutdown_account_flat(
     sleep=time.sleep,
     max_attempts: int | None = None,
 ) -> bool:
-    """Retry the final account audit forever in production until it is flat.
+    """Retry until the RUNNER's tracked exposure is broker-confirmed flat.
 
     ``max_attempts`` exists only for deterministic tests and diagnostics.  The
-    production caller leaves it as ``None`` so a permanent broker failure keeps
+    production caller leaves it as ``None`` so unresolved runner exposure keeps
     the process alive and alerting instead of allowing logout or clean results.
+    Account-level books are deliberately not part of this gate: the operator
+    may hold manual positions in the same account, and those are reported as
+    a warning by `_finalize_flat_session` rather than blocking here forever.
     """
 
     if max_attempts is not None and max_attempts <= 0:
@@ -12993,24 +13335,25 @@ def _wait_for_shutdown_account_flat(
     while True:
         attempt += 1
         try:
-            audit = _shutdown_account_audit(store, client)
+            audit = _runner_exposure_audit(store)
         except KeyboardInterrupt:
             logger.error(
-                "Shutdown reconciliation is still proving broker exposure flat; "
+                "Shutdown reconciliation is still proving runner exposure flat; "
                 "interrupt ignored."
             )
             continue
         if audit.safe_to_enable_live:
             logger.info(
-                "SHUTDOWN ACCOUNT FLAT | final broker audit passed after %d attempt(s).",
+                "SHUTDOWN RUNNER FLAT | the execution ledger confirmed flat "
+                "after %d attempt(s).",
                 attempt,
             )
             return True
 
         safe_detail = " ".join((*audit.reasons, *audit.evidence))
         logger.error(
-            "DEGRADED PROCESS SHUTDOWN | account is not broker-confirmed flat | "
-            "attempt=%d | %s",
+            "DEGRADED PROCESS SHUTDOWN | runner exposure is not broker-confirmed "
+            "flat | attempt=%d | %s",
             attempt,
             safe_detail,
         )
@@ -13035,7 +13378,7 @@ def _wait_for_shutdown_account_flat(
             sleep(delay)
         except KeyboardInterrupt:
             logger.error(
-                "Shutdown reconciliation is still proving broker exposure flat; "
+                "Shutdown reconciliation is still proving runner exposure flat; "
                 "interrupt ignored."
             )
 
@@ -13048,22 +13391,31 @@ def _finalize_flat_session(
     trade_event_queue: queue.Queue | None,
     natural_eod: bool,
 ) -> bool:
-    """Write results, logout, and refresh only after a fresh flat audit."""
+    """Write results, logout, and refresh once the RUNNER's exposure is flat.
+
+    The hard gate is the execution ledger (this process's own tracked
+    exposure).  The account-level books are then checked once, as an advisory
+    warning: the operator's manual positions must not strand the day's
+    results, the logout, or the next-day instrument refresh forever.
+    """
 
     try:
-        audit = _shutdown_account_audit(store, client)
+        audit = _runner_exposure_audit(store)
     except KeyboardInterrupt:
         logger.error(
-            "Final broker-flat proof is still in progress; interrupt ignored and "
+            "Final runner-flat proof is still in progress; interrupt ignored and "
             "session finalization remains blocked."
         )
         return False
     if not audit.safe_to_enable_live:
         logger.error(
-            "SESSION FINALIZATION BLOCKED | broker exposure is not confirmed flat | %s",
+            "SESSION FINALIZATION BLOCKED | the runner's tracked exposure is not "
+            "confirmed flat | %s",
             " ".join((*audit.reasons, *audit.evidence)),
         )
         return False
+
+    _warn_if_account_not_flat(store, client, trade_event_queue)
 
     if natural_eod:
         _publish_eod_summary(workers, trade_event_queue)
@@ -13280,9 +13632,11 @@ def main() -> None:
         workers,
     )
 
-    # Even after every local owner reaches STOPPED, the broker books get one
-    # process-wide proof. An indeterminate/open book keeps this process alive
-    # on 1/2/5-second capped retries; no logout, result write, or refresh occurs.
+    # Even after every local owner reaches STOPPED, the execution ledger gets
+    # one process-wide proof. Unresolved RUNNER exposure keeps this process
+    # alive on 1/2/5-second capped retries; no logout, result write, or refresh
+    # occurs. Account-level books (which may hold the operator's own manual
+    # positions) are then checked once and reported as a warning, not a block.
     _wait_for_shutdown_account_flat(
         store,
         execution_client,

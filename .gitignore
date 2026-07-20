@@ -27,3 +27,10 @@ Dependencies/all_instrument*.csv
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local/CI coverage artifacts
+.coverage
+.coverage.*
+coverage.json
+coverage-*.json
+htmlcov/

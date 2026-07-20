@@ -117,6 +117,7 @@ def execution_tool_name(live_active: bool, broker: str | None) -> str:
     - not live                     → ``place_paper_order``
     - live + LIVE_BROKER=KOTAK     → ``place_kotak_order``
     - live + LIVE_BROKER=SHOONYA   → ``place_shoonya_order``
+    - live + LIVE_BROKER=FLATTRADE → ``place_flattrade_order``
 
     Only this one name is ever registered, so the agent cannot pick the venue.
     """
@@ -127,6 +128,8 @@ def execution_tool_name(live_active: bool, broker: str | None) -> str:
         return "place_kotak_order"
     if broker_up == "SHOONYA":
         return "place_shoonya_order"
+    if broker_up == "FLATTRADE":
+        return "place_flattrade_order"
     # Fail closed: unknown broker → paper (mirrors the master's broker fail-closed).
     return "place_paper_order"
 
