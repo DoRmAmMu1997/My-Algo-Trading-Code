@@ -2,7 +2,7 @@
 # Versions mirror the Streamlit Scanner App's verified set where shared.
 pytest==9.1.1
 ruff==0.15.22
-mypy==1.19.1
+mypy==1.20.2
 bandit==1.9.4
 pre-commit==4.6.0
 coverage==7.15.2
