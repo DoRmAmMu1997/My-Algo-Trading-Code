@@ -62,6 +62,7 @@ def test_execution_tool_name_mapping():
     assert execution_tool_name(False, "KOTAK") == "place_paper_order"
     assert execution_tool_name(True, "KOTAK") == "place_kotak_order"
     assert execution_tool_name(True, "shoonya") == "place_shoonya_order"
+    assert execution_tool_name(True, "flattrade") == "place_flattrade_order"
     # Unknown broker fails closed to paper.
     assert execution_tool_name(True, "ZERODHA") == "place_paper_order"
 
@@ -74,7 +75,8 @@ def test_standalone_executor_enter_exit_and_guards():
     ex = StandaloneExecutor(lots=1, lot_size=75)
     assert ex.exit("flat", price=25000)["accepted"] is False  # cannot exit when flat
 
-    r = ex.enter("LONG", stop=24950, target=25100, reason="test", price=25000)
+    # A 30-point stop risks Rs.2,250 for one 75-unit lot, within the budget.
+    r = ex.enter("LONG", stop=24970, target=25100, reason="test", price=25000)
     assert r["accepted"] is True
     assert ex.snapshot()["in_position"] is True
 
@@ -103,7 +105,8 @@ def test_tool_context_do_order_routes_to_executor():
     ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
     assert ctx.action_tool_name() == "place_paper_order"
 
-    res = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="pivot bounce")
+    # The latest synthetic close is 25029, so this 29-point stop fits one lot.
+    res = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="pivot bounce")
     assert res["accepted"] is True
     assert ex.snapshot()["in_position"] is True
     assert ex.pos.direction == "LONG"
@@ -111,6 +114,40 @@ def test_tool_context_do_order_routes_to_executor():
     # context tool payloads are JSON-serialisable dicts
     assert ctx.pivot_and_levels_payload()["available"] is True
     assert ctx.position_state_payload()["in_position"] is True
+
+
+def test_tool_context_allows_only_one_accepted_side_effect_per_pass():
+    """ENTER -> EXIT -> ENTER from one agent pass executes only the first action."""
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+
+    first = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="first")
+    second = ctx.do_order("EXIT", stop=0, target=0, reason="second")
+    third = ctx.do_order("ENTER_SHORT", stop=25060, target=24950, reason="third")
+
+    assert first["accepted"] is True
+    assert second["accepted"] is False
+    assert third["accepted"] is False
+    assert ctx.state.value == "CONSUMED"
+    assert ex.snapshot()["direction"] == "LONG"
+
+
+def test_tool_context_rechecks_generation_inside_execution_lock():
+    ex = StandaloneExecutor()
+    current = {"generation": 8}
+    ctx = SLHuntingToolContext.build(
+        _candles(),
+        ex,
+        generation=7,
+        generation_is_current=lambda generation: generation == current["generation"],
+    )
+
+    result = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="stale")
+
+    assert result["accepted"] is False
+    assert "generation" in result["reason"]
+    assert ctx.state.value == "EXPIRED"
+    assert ex.snapshot()["in_position"] is False
 
 
 # --------------------------------------------------------------------------
@@ -135,6 +172,60 @@ def test_agent_decide_parses_canned_json_and_stamps_model():
     assert decision.action == "HOLD"
     assert decision.confidence == 3
     assert decision.model_used == "test-model"  # stamped by the agent
+
+
+def test_tool_execution_is_authoritative_when_final_json_disagrees():
+    async def _runner(prompt, *, system_prompt, model, max_turns, tool_context=None):
+        result = tool_context.do_order(
+            "ENTER_LONG", stop=25000, target=25080, reason="accepted tool action"
+        )
+        assert result["accepted"] is True
+        return AgentRunResult(
+            text=json.dumps(
+                {
+                    "action": "HOLD",
+                    "confidence": 2,
+                    "setup": "contradictory_final",
+                    "reasoning": "The final text disagrees with the accepted tool call.",
+                }
+            )
+        )
+
+    ex = StandaloneExecutor()
+    decision = SLHuntingAgent(model="test-model", runner=_runner).decide(_candles(), ex)
+
+    assert decision.action == "ENTER_LONG"
+    assert decision.stop == 25000
+    assert decision.target == 25080
+    assert ex.snapshot()["in_position"] is True
+
+
+def test_unexecuted_final_order_claim_is_downgraded_to_hold():
+    claimed_entry = json.dumps(
+        {
+            "action": "ENTER_LONG",
+            "stop": 25000,
+            "target": 25080,
+            "confidence": 9,
+            "setup": "claimed_only",
+            "reasoning": "Claims an entry without calling the order tool.",
+        }
+    )
+    decision = SLHuntingAgent(model="test-model", runner=_FakeRunner(claimed_entry)).decide(
+        _candles(), StandaloneExecutor()
+    )
+    assert decision.action == "HOLD"
+    assert decision.setup == "unexecuted_action"
+
+
+def test_sdk_timeout_must_be_between_five_and_120_seconds():
+    import pytest
+
+    for invalid in (0, 4.99, 120.01, float("inf")):
+        with pytest.raises(ValueError):
+            SLHuntingAgent(model="test-model", runner=_FakeRunner("{}"), sdk_timeout_seconds=invalid)
+    assert SLHuntingAgent(model="test-model", runner=_FakeRunner("{}"), sdk_timeout_seconds=5)
+    assert SLHuntingAgent(model="test-model", runner=_FakeRunner("{}"), sdk_timeout_seconds=120)
 
 
 def test_agent_decide_holds_on_malformed_output():
@@ -395,8 +486,10 @@ def test_do_order_accepts_sane_entry_and_exit_ignores_levels():
     res = ctx.do_order("ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce")
     assert res["accepted"] is True
     assert ex.snapshot()["in_position"] is True
-    # EXIT carries no meaningful levels (schema placeholder 0) -- never blocked by them.
-    out = ctx.do_order("EXIT", stop=0.0, target=0.0, reason="premise done")
+    # A later agent pass gets a fresh context. EXIT carries no meaningful levels
+    # (schema placeholder 0) and is never blocked by entry-level validation.
+    exit_ctx = SLHuntingToolContext.build(_candles(), ex)
+    out = exit_ctx.do_order("EXIT", stop=0.0, target=0.0, reason="premise done")
     assert out["accepted"] is True
     assert ex.snapshot()["in_position"] is False
 
@@ -550,7 +643,8 @@ def test_agent_decide_times_out_holds_and_disarms_order_tool():
             return AgentRunResult(text="{}")
 
     ex = StandaloneExecutor()
-    agent = SLHuntingAgent(model="test-model", runner=_HangingRunner(), sdk_timeout_seconds=0.2)
+    agent = SLHuntingAgent(model="test-model", runner=_HangingRunner(), sdk_timeout_seconds=5)
+    agent._sdk_timeout_seconds = 0.2
     start = time.monotonic()
     decision = agent.decide(_candles(), ex)
     assert time.monotonic() - start < 5          # bounded, not 30s
@@ -606,7 +700,8 @@ def test_hung_call_gates_next_bars_then_resumes_when_it_finishes():
         return AgentRunResult(text=hold_json)
 
     ex = StandaloneExecutor()
-    agent = SLHuntingAgent(model="test-model", runner=_runner, sdk_timeout_seconds=0.2)
+    agent = SLHuntingAgent(model="test-model", runner=_runner, sdk_timeout_seconds=5)
+    agent._sdk_timeout_seconds = 0.2
 
     # Bar 1: the call hangs -> times out -> HOLD, one abandoned thread tracked.
     d1 = agent.decide(_candles(), ex)

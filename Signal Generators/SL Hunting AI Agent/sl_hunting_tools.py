@@ -32,7 +32,11 @@ from __future__ import annotations
 
 import json
 import math
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 import pandas as pd
@@ -94,6 +98,31 @@ CONTEXT_TOOL_NAMES = [
 ]
 
 
+class ToolContextState(StrEnum):
+    """Lifecycle of the one side-effect capability granted to an agent pass.
+
+    The transitions, in plain English:
+
+    - ``ACTIVE``    : the pass may still place its one order.  Rejected
+                      validation attempts return here so the model can
+                      correct its levels within the same pass.
+    - ``EXECUTING`` : an order is inside the executor right now -- a second
+                      call arriving mid-flight is refused, never queued.
+    - ``CONSUMED``  : an ACCEPTED side effect happened.  Terminal: one pass
+                      gets at most one accepted ENTER or EXIT, ever.
+    - ``EXPIRED``   : the decision window closed (deadline, stale generation,
+                      mechanical exit, or the pass simply finished) before an
+                      accepted action.  Terminal: a late tool call from an
+                      abandoned SDK loop finds a dead capability, not a
+                      market order.
+    """
+
+    ACTIVE = "ACTIVE"
+    EXECUTING = "EXECUTING"
+    CONSUMED = "CONSUMED"
+    EXPIRED = "EXPIRED"
+
+
 @dataclass
 class SLHuntingToolContext:
     """Everything the tools need for ONE per-bar decision about NIFTY.
@@ -117,6 +146,12 @@ class SLHuntingToolContext:
     # later, against a market that has moved on; once expired, `do_order`
     # refuses instead of touching the executor.
     expired_reason: str | None = field(default=None)
+    generation: int = 0
+    deadline_monotonic: float | None = None
+    generation_is_current: Callable[[int], bool] | None = field(default=None, repr=False)
+    state: ToolContextState = field(default=ToolContextState.ACTIVE, init=False)
+    _execution_result: dict[str, Any] | None = field(default=None, init=False, repr=False)
+    _execution_lock: Any = field(default_factory=threading.RLock, repr=False)
 
     @classmethod
     def build(
@@ -128,6 +163,10 @@ class SLHuntingToolContext:
         live_active: bool = False,
         broker: str | None = None,
         bnf_candles: pd.DataFrame | None = None,
+        generation: int = 0,
+        generation_is_current: Callable[[int], bool] | None = None,
+        deadline_seconds: float | None = None,
+        execution_lock: Any | None = None,
     ) -> SLHuntingToolContext:
         """Prepare the per-bar context: clean the candles, cache the last price, attach BNF.
 
@@ -152,6 +191,14 @@ class SLHuntingToolContext:
             broker=broker,
             last_price=last_price,
             bnf_candles=prepared_bnf,
+            generation=int(generation),
+            generation_is_current=generation_is_current,
+            deadline_monotonic=(
+                time.monotonic() + float(deadline_seconds)
+                if deadline_seconds is not None
+                else None
+            ),
+            _execution_lock=execution_lock or threading.RLock(),
         )
 
     # --- tool payload builders (plain functions; easy to unit test) ---------
@@ -191,7 +238,32 @@ class SLHuntingToolContext:
 
     def expire(self, reason: str) -> None:
         """Disarm this bar's order tool (the decision window is over -- SLH-001)."""
-        self.expired_reason = str(reason)
+        with self._execution_lock:
+            if self.state is ToolContextState.CONSUMED:
+                return
+            self.expired_reason = str(reason)
+            self.state = ToolContextState.EXPIRED
+
+    @property
+    def execution_result(self) -> dict[str, Any] | None:
+        """Copy of the accepted side effect, used as the authoritative decision."""
+        with self._execution_lock:
+            return dict(self._execution_result) if self._execution_result is not None else None
+
+    def _refusal_inside_lock(self) -> dict[str, Any] | None:
+        """Recheck pass freshness at the final side-effect boundary."""
+        if self.state is not ToolContextState.ACTIVE:
+            reason = self.expired_reason or f"tool context is {self.state.value.lower()}"
+            return {"accepted": False, "reason": f"decision window expired/unavailable ({reason}); order refused"}
+        if self.generation_is_current is not None and not self.generation_is_current(self.generation):
+            self.expired_reason = "stale generation"
+            self.state = ToolContextState.EXPIRED
+            return {"accepted": False, "reason": "decision generation is stale; order refused"}
+        if self.deadline_monotonic is not None and time.monotonic() > self.deadline_monotonic:
+            self.expired_reason = "deadline elapsed"
+            self.state = ToolContextState.EXPIRED
+            return {"accepted": False, "reason": "decision deadline elapsed; order refused"}
+        return None
 
     def do_order(
         self, action: str, stop: float, target: float, reason: str, exit_leg: str = "BOTH"
@@ -207,12 +279,8 @@ class SLHuntingToolContext:
         entry goes back to the model mid-loop as `accepted: false` with the reason,
         so it can correct its levels; the executor is never touched.
         """
-        if self.expired_reason:
-            return {
-                "accepted": False,
-                "reason": f"decision window expired ({self.expired_reason}); order refused",
-            }
         action = (action or "").strip().upper()
+        executor_call: Callable[[], dict[str, Any]]
         if action in ("ENTER_LONG", "ENTER_SHORT"):
             direction = "LONG" if action == "ENTER_LONG" else "SHORT"
             stop = float(stop or 0.0)
@@ -220,13 +288,45 @@ class SLHuntingToolContext:
             problem = _entry_levels_error(direction, stop, target, self.last_price)
             if problem:
                 return {"accepted": False, "reason": f"invalid entry levels: {problem}"}
-            return self.executor.enter(direction, stop, target, reason, self.last_price)
-        if action == "EXIT":
+            def executor_call() -> dict[str, Any]:
+                return self.executor.enter(direction, stop, target, reason, self.last_price)
+        elif action == "EXIT":
             leg = (exit_leg or "BOTH").strip().upper()
             if leg not in ("NIFTY", "BNF", "BOTH"):
                 return {"accepted": False, "reason": f"invalid exit_leg {exit_leg!r}; expected NIFTY, BNF or BOTH"}
-            return self.executor.exit(reason, self.last_price, leg=leg)
-        return {"accepted": False, "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT or EXIT"}
+            def executor_call() -> dict[str, Any]:
+                return self.executor.exit(reason, self.last_price, leg=leg)
+        else:
+            return {"accepted": False, "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT or EXIT"}
+
+        # The final gate.  The freshness checks (state, generation, deadline)
+        # run INSIDE the same lock that serializes the executor call, because
+        # checking first and locking second would leave a gap: the mechanical
+        # risk loop could invalidate this pass between the check and the
+        # order.  Inside the lock, what was checked is what executes.  This is
+        # also the lock the worker's stop/target/square-off paths hold while
+        # THEY act, so an agent order and a mechanical exit can never race.
+        with self._execution_lock:
+            refusal = self._refusal_inside_lock()
+            if refusal is not None:
+                return refusal
+            self.state = ToolContextState.EXECUTING
+            try:
+                result = executor_call()
+            except BaseException:
+                # An executor that blew up mid-order leaves unknown exposure;
+                # this pass must not get a second try at it.
+                self.expired_reason = "executor raised"
+                self.state = ToolContextState.EXPIRED
+                raise
+            if bool(result.get("accepted")):
+                self._execution_result = dict(result)
+                self.state = ToolContextState.CONSUMED
+            else:
+                # Rejected validation/execution may be corrected once within the
+                # same pass; only an accepted side effect consumes the context.
+                self.state = ToolContextState.ACTIVE
+            return result
 
 
 def _as_tool_text(payload: dict[str, Any]) -> dict[str, Any]:
@@ -289,10 +389,13 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
         return _as_tool_text(context.cross_index_payload())
 
     order_name = context.action_tool_name()
-    venue = (
-        "PAPER" if order_name == "place_paper_order"
-        else ("KOTAK (LIVE)" if order_name == "place_kotak_order" else "SHOONYA (LIVE)")
-    )
+    venue_by_tool = {
+        "place_paper_order": "PAPER",
+        "place_kotak_order": "KOTAK (LIVE)",
+        "place_shoonya_order": "SHOONYA (LIVE)",
+        "place_flattrade_order": "FLATTRADE (LIVE)",
+    }
+    venue = venue_by_tool[order_name]
 
     @tool(
         order_name,

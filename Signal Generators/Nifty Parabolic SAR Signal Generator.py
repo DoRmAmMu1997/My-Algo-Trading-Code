@@ -35,7 +35,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import adx, finite, normalize_ohlc_frame, parabolic_sar, require_columns
+from misc_strategy_common import (
+    adx,
+    finite,
+    normalize_ohlc_frame,
+    parabolic_sar,
+    require_columns,
+    validate_finite_config,
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,7 @@ class ParabolicSARConfig:
     target_pct: float = 0.04      # profit target, 4% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if int(self.adx_period) <= 0:
             raise ValueError("adx_period must be positive.")
         if not (0.0 < float(self.af_start) <= float(self.af_max)):

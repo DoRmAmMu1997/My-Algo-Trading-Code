@@ -39,9 +39,18 @@ def test_resample_drops_incomplete_tail_bucket():
     assert len(out) == 2
 
 
+def test_resample_rejects_non_exact_minute_slots():
+    frame = _one_min(n=10)
+    frame["timestamp"] = frame["timestamp"] + pd.Timedelta(seconds=30)
+
+    out = resample_1m_to_n(frame, 5)
+
+    assert out.empty
+
+
 def test_manage_open_position_fills_long_target_and_stop():
     ex = StandaloneExecutor()
-    ex.enter("LONG", stop=24950, target=25100, reason="t", price=25000)
+    ex.enter("LONG", stop=24970, target=25100, reason="t", price=25000)
     # A bar whose high reaches the target fills the target.
     bar = pd.Series({"high": 25120.0, "low": 25010.0})
     _manage_open_position(ex, bar)
@@ -49,8 +58,8 @@ def test_manage_open_position_fills_long_target_and_stop():
     assert ex.closed_trades[-1]["exit_reason"] == "target_hit"
 
     ex2 = StandaloneExecutor()
-    ex2.enter("LONG", stop=24950, target=25100, reason="t", price=25000)
-    bar2 = pd.Series({"high": 25010.0, "low": 24940.0})  # low breaches stop
+    ex2.enter("LONG", stop=24970, target=25100, reason="t", price=25000)
+    bar2 = pd.Series({"high": 25010.0, "low": 24960.0})  # low breaches stop
     _manage_open_position(ex2, bar2)
     assert ex2.snapshot()["in_position"] is False
     assert ex2.closed_trades[-1]["exit_reason"] == "stop_hit"
@@ -65,7 +74,7 @@ def test_runner_journal_helpers_open_and_close(tmp_path):
     from sl_hunting_runner import _close_journal_row, _open_journal_row
 
     ex = StandaloneExecutor(lot_size=75, risk_budget=2500)
-    ex.enter("LONG", stop=24985, target=25060, reason="t", price=25000)  # 15-pt stop -> 3 lots
+    ex.enter("LONG", stop=24985, target=25060, reason="t", price=25000)  # 15-pt stop -> 2 lots
     j = TradeJournal(str(tmp_path / "j.jsonl"))
     dec = SLHuntingDecision(action="ENTER_LONG", stop=24985, target=25060, confidence=7,
                             setup="pivot_support", reasoning="r")
@@ -76,7 +85,7 @@ def test_runner_journal_helpers_open_and_close(tmp_path):
     _close_journal_row(j, oid, ex)
     assert j.open_count == 0
     row = json.loads((tmp_path / "j.jsonl").read_text(encoding="utf-8").strip())
-    assert row["direction"] == "LONG" and row["lots"] == 3
+    assert row["direction"] == "LONG" and row["lots"] == 2
     assert row["outcome"]["exit_reason"] == "target_hit"
 
 
@@ -115,7 +124,7 @@ def test_open_journal_row_uses_executor_state_not_decision(tmp_path):
 
 def test_manage_open_position_fills_short():
     ex = StandaloneExecutor()
-    ex.enter("SHORT", stop=25050, target=24900, reason="t", price=25000)
+    ex.enter("SHORT", stop=25030, target=24900, reason="t", price=25000)
     bar = pd.Series({"high": 25010.0, "low": 24880.0})  # low reaches target
     _manage_open_position(ex, bar)
     assert ex.closed_trades[-1]["exit_reason"] == "target_hit"

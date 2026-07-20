@@ -15,10 +15,10 @@ Each wrapper has the index-specific defaults baked in, so this is enough:
 ```
 python "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py"
 ```
-Override anything via CLI — `--from-date`, `--to-date`, `--output`, `--client-id`, `--access-token`, `--chunk-days`. Run with `--help` for the full list.
+Override anything via CLI — `--from-date`, `--to-date`, `--output`, `--client-id`, `--chunk-days`. Run with `--help` for the full list. (The access token has no CLI flag on purpose — see Credentials.)
 
 # Where the CSV lands
 By default, in `<repo_root>/Backtest Outputs/<index>_renko_futures_5y_1min_data.csv`. The folder is auto-created. Override with `--output`.
 
 # Credentials
-Either set `DHAN_CLIENT_CODE` and `DHAN_TOKEN_ID` as environment variables, or pass them via `--client-id` and `--access-token`.
+Set `DHAN_CLIENT_CODE` and `DHAN_TOKEN_ID` as environment variables (e.g. in `Dependencies/.env`). The client id may also be passed via `--client-id`; the access token is deliberately environment-only — a token typed on the command line would land in shell history and process listings.

@@ -6,32 +6,39 @@ is responsible for preparing 5-minute candles before calling these strategies.
 
 Beginner mental model:
 1. Normalize the caller's OHLC table into predictable lowercase columns.
-2. Calculate standard indicators through TA-Lib first whenever it is available.
-3. Fall back to pandas only so the files remain usable on machines where the
-   native TA-Lib package has not been installed yet.
-4. Keep small reusable candle helpers here so Goldmine and Money Machine do not
+2. Calculate standard indicators through the repository's pinned TA-Lib build.
+3. Keep small reusable candle helpers here so Goldmine and Money Machine do not
    each carry their own copy of the same boilerplate.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import cast
+from dataclasses import fields
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
-
-try:
-    # TA-Lib is the preferred indicator backend in this repo because it matches
-    # the user's request for standard library indicator implementations.
-    import talib
-except ImportError:  # pragma: no cover - used only when TA-Lib is absent
-    # The assignment error only exists where TA-Lib (with stubs) is installed;
-    # on stub-less machines the ignore is unused, hence the dual code.
-    talib = None  # type: ignore[assignment, unused-ignore]
-
+import talib
 
 OHLC_COLUMNS = ["open", "high", "low", "close"]
+
+
+def validate_finite_config(config: Any) -> None:
+    """Reject NaN/infinity in numeric strategy configuration fields."""
+
+    invalid = [
+        field.name
+        for field in fields(config)
+        if not isinstance((value := getattr(config, field.name)), bool)
+        and isinstance(value, (int, float, np.integer, np.floating))
+        and not np.isfinite(float(value))
+    ]
+    if invalid:
+        raise ValueError(
+            "Strategy configuration values must be finite. Invalid: "
+            + ", ".join(invalid)
+        )
 
 
 def find_first_col(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
@@ -136,44 +143,27 @@ def validate_five_minute_spacing(frame: pd.DataFrame) -> None:
 
 
 def sma(values: pd.Series, period: int) -> pd.Series:
-    """Calculate simple moving average with TA-Lib first, then pandas."""
-    if talib is not None:
-        return pd.Series(
-            talib.SMA(values.to_numpy(dtype="float64"), timeperiod=int(period)),
-            index=values.index,
-        )
-    return values.rolling(window=int(period), min_periods=int(period)).mean()
+    """Calculate simple moving average with the pinned TA-Lib backend."""
+    return pd.Series(
+        talib.SMA(values.to_numpy(dtype="float64"), timeperiod=int(period)),
+        index=values.index,
+    )
 
 
 def atr(frame: pd.DataFrame, period: int) -> pd.Series:
-    """Calculate ATR with TA-Lib first, then Wilder-style pandas smoothing."""
+    """Calculate ATR with the pinned TA-Lib backend."""
     high = frame["high"].astype(float)
     low = frame["low"].astype(float)
     close = frame["close"].astype(float)
-    if talib is not None:
-        # np.asarray with an explicit np.float64 dtype does the same conversion
-        # as .to_numpy(dtype="float64") but is typed as a float64 array, which
-        # is exactly what TA-Lib's type stubs require.
-        return pd.Series(
-            talib.ATR(
-                np.asarray(high, dtype=np.float64),
-                np.asarray(low, dtype=np.float64),
-                np.asarray(close, dtype=np.float64),
-                timeperiod=int(period),
-            ),
-            index=frame.index,
-        )
-
-    previous_close = close.shift(1)
-    true_range = pd.concat(
-        [
-            (high - low).abs(),
-            (high - previous_close).abs(),
-            (low - previous_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return true_range.ewm(alpha=1.0 / int(period), adjust=False, min_periods=int(period)).mean()
+    return pd.Series(
+        talib.ATR(
+            np.asarray(high, dtype=np.float64),
+            np.asarray(low, dtype=np.float64),
+            np.asarray(close, dtype=np.float64),
+            timeperiod=int(period),
+        ),
+        index=frame.index,
+    )
 
 
 def add_candle_anatomy(frame: pd.DataFrame) -> pd.DataFrame:

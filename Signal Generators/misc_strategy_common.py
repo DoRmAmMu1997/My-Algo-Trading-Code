@@ -8,10 +8,8 @@ the same conventions as the existing strategy-logic modules in this codebase
 ``goldmine_strategy_logic.py``):
 
 1. Normalize the caller's OHLC table into predictable lowercase columns.
-2. Calculate indicators through TA-Lib first whenever it is available.
-3. Fall back to pure pandas/numpy so the files remain usable on machines where
-   the native TA-Lib package has not been installed yet.
-4. Keep one copy of every shared indicator here so the thirteen generators stay
+2. Calculate standard indicators through the repository's pinned TA-Lib build.
+3. Keep one copy of every shared indicator here so the thirteen generators stay
    small and consistent instead of each carrying its own boilerplate.
 
 This module does NOT resample data. The front-test/data-fetch layer (or, inside
@@ -24,9 +22,8 @@ Beginner orientation
 - An "indicator" is just a formula applied to those prices to summarise something
   (trend, momentum, volatility, ...). Every indicator function below takes price
   data in and returns a pandas Series (one number per candle) you can read.
-- "TA-Lib first, pandas fallback" means: if the fast C library `talib` is
-  installed we use it; otherwise we compute the same thing in plain pandas so the
-  code still runs. Both paths aim to produce the same numbers.
+- TA-Lib is mandatory so live, paper, and backtest runs use one exact set of
+  indicator warm-up and smoothing semantics.
 - Warm-up: most indicators need a minimum number of candles before their value is
   meaningful, so the first few rows come back as NaN (Not a Number). That is
   expected, and the strategies skip those rows.
@@ -35,19 +32,12 @@ Beginner orientation
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import fields
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
-try:
-    # TA-Lib is the preferred indicator backend in this repo because it matches
-    # the standard library indicator implementations used by the other folders.
-    import talib
-except ImportError:  # pragma: no cover - used only when TA-Lib is absent
-    # The assignment error only exists where TA-Lib (with stubs) is installed;
-    # on stub-less machines the ignore is unused, hence the dual code.
-    talib = None  # type: ignore[assignment, unused-ignore]
-
+import talib
 
 OHLC_COLUMNS = ["open", "high", "low", "close"]
 
@@ -157,6 +147,36 @@ def finite(value: object) -> bool:
         return False
 
 
+def validate_finite_config(config: Any) -> None:
+    """Reject NaN/infinity in every numeric field of a strategy dataclass."""
+
+    invalid: list[str] = []
+    for field in fields(config):
+        value = getattr(config, field.name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float, np.integer, np.floating)) and not finite(value):
+            invalid.append(field.name)
+    if invalid:
+        raise ValueError(
+            "Strategy configuration values must be finite. Invalid: "
+            + ", ".join(invalid)
+        )
+
+    invalid_percentages = [
+        field.name
+        for field in fields(config)
+        if field.name.endswith("_pct")
+        and not (0.0 <= float(getattr(config, field.name)) < 1.0)
+    ]
+    if invalid_percentages:
+        raise ValueError(
+            "Decimal percentage values must be between 0 (inclusive) and 1 "
+            "(exclusive). Invalid: "
+            + ", ".join(invalid_percentages)
+        )
+
+
 def _as_float_array(values: pd.Series) -> np.ndarray:
     """Convert a Series to a contiguous float64 numpy array for TA-Lib."""
     return np.asarray(values, dtype="float64")
@@ -172,12 +192,10 @@ def sma(values: pd.Series, period: int) -> pd.Series:
     Beginner view: it smooths the jagged price line into a single trend line.
     A rising SMA means price has been drifting up on average; a falling SMA means
     it has been drifting down. Bigger `period` = smoother but slower to react.
-    (TA-Lib first, then a pandas rolling-mean fallback.)
+    The pinned TA-Lib build supplies the calculation.
     """
     period = int(period)
-    if talib is not None:
-        return pd.Series(talib.SMA(_as_float_array(values), timeperiod=period), index=values.index)
-    return values.rolling(window=period, min_periods=period).mean()
+    return pd.Series(talib.SMA(_as_float_array(values), timeperiod=period), index=values.index)
 
 
 def ema(values: pd.Series, period: int) -> pd.Series:
@@ -186,13 +204,11 @@ def ema(values: pd.Series, period: int) -> pd.Series:
 
     Beginner view: because it weights the latest prices most heavily, the EMA
     "hugs" price more closely and turns faster than an SMA of the same length.
-    That responsiveness is why crossover strategies prefer it. (TA-Lib first,
-    then a pandas exponentially-weighted-mean fallback.)
+    That responsiveness is why crossover strategies prefer it. The pinned
+    TA-Lib build supplies the calculation.
     """
     period = int(period)
-    if talib is not None:
-        return pd.Series(talib.EMA(_as_float_array(values), timeperiod=period), index=values.index)
-    return values.ewm(span=period, adjust=False, min_periods=period).mean()
+    return pd.Series(talib.EMA(_as_float_array(values), timeperiod=period), index=values.index)
 
 
 # ---------------------------------------------------------------------------
@@ -205,24 +221,17 @@ def atr(frame: pd.DataFrame, period: int) -> pd.Series:
     Beginner view: ATR measures volatility ("how far price typically travels in
     one candle"), NOT direction. A large ATR means big, jumpy candles; a small
     ATR means a quiet, tight market. Strategies use it to size stops/targets to
-    current conditions (e.g. "stop = 1.5 x ATR away"). (TA-Lib first, then a
-    Wilder-smoothed pandas fallback.)
+    current conditions (e.g. "stop = 1.5 x ATR away"). The pinned TA-Lib build
+    supplies the calculation.
     """
     period = int(period)
     high = frame["high"].astype(float)
     low = frame["low"].astype(float)
     close = frame["close"].astype(float)
-    if talib is not None:
-        return pd.Series(
-            talib.ATR(_as_float_array(high), _as_float_array(low), _as_float_array(close), timeperiod=period),
-            index=frame.index,
-        )
-    previous_close = close.shift(1)
-    true_range = pd.concat(
-        [(high - low).abs(), (high - previous_close).abs(), (low - previous_close).abs()],
-        axis=1,
-    ).max(axis=1)
-    return true_range.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    return pd.Series(
+        talib.ATR(_as_float_array(high), _as_float_array(low), _as_float_array(close), timeperiod=period),
+        index=frame.index,
+    )
 
 
 def true_range(frame: pd.DataFrame) -> pd.Series:
@@ -254,22 +263,11 @@ def rsi(values: pd.Series, period: int) -> pd.Series:
     - Near 0   -> price has been falling hard ("oversold").
     - 50       -> balanced. The classic 30/70 lines flag oversold/overbought.
     Note RSI depends on the up/down *ratio*, not the size of the move, so a long
-    one-directional run pins it near 0 or 100. (TA-Lib first, then a Wilder-style
-    pandas fallback.)
+    one-directional run pins it near 0 or 100. The pinned TA-Lib build supplies
+    the calculation.
     """
     period = int(period)
-    if talib is not None:
-        return pd.Series(talib.RSI(_as_float_array(values), timeperiod=period), index=values.index)
-    delta = values.astype(float).diff()
-    gain = delta.clip(lower=0.0)
-    loss = (-delta).clip(lower=0.0)
-    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0.0, np.nan)
-    result = 100.0 - (100.0 / (1.0 + rs))
-    # When average loss is zero the market only rose, so RSI saturates at 100.
-    result = result.where(avg_loss != 0.0, 100.0)
-    return result
+    return pd.Series(talib.RSI(_as_float_array(values), timeperiod=period), index=values.index)
 
 
 def macd(
@@ -286,27 +284,20 @@ def macd(
     - signal line = an EMA of the macd line (a smoothed version of it).
     - histogram   = macd minus signal. Histogram > 0 means upward momentum is
       building; < 0 means downward momentum. Strategies here mostly read the
-      histogram's sign. (TA-Lib first, then a pandas EWM fallback.)
+      histogram's sign. The pinned TA-Lib build supplies the calculation.
     """
     fast_period, slow_period, signal_period = int(fast_period), int(slow_period), int(signal_period)
-    if talib is not None:
-        macd_line, signal_line, hist = talib.MACD(
-            _as_float_array(values),
-            fastperiod=fast_period,
-            slowperiod=slow_period,
-            signalperiod=signal_period,
-        )
-        return (
-            pd.Series(macd_line, index=values.index),
-            pd.Series(signal_line, index=values.index),
-            pd.Series(hist, index=values.index),
-        )
-    fast_ema = values.ewm(span=fast_period, adjust=False).mean()
-    slow_ema = values.ewm(span=slow_period, adjust=False).mean()
-    macd_line = fast_ema - slow_ema
-    signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
-    hist = macd_line - signal_line
-    return macd_line, signal_line, hist
+    macd_line, signal_line, hist = talib.MACD(
+        _as_float_array(values),
+        fastperiod=fast_period,
+        slowperiod=slow_period,
+        signalperiod=signal_period,
+    )
+    return (
+        pd.Series(macd_line, index=values.index),
+        pd.Series(signal_line, index=values.index),
+        pd.Series(hist, index=values.index),
+    )
 
 
 def stochastic(
@@ -325,31 +316,24 @@ def stochastic(
     20/80 levels mark oversold/overbought.
 
     Mirrors TA-Lib STOCH semantics: raw %K is smoothed by `smooth_k` to make the
-    "slow %K", and %D is the `d_period` SMA of slow %K. (TA-Lib first, then a
-    pandas fallback.)
+    "slow %K", and %D is the `d_period` SMA of slow %K. The pinned TA-Lib build
+    supplies the calculation.
     """
     k_period, d_period, smooth_k = int(k_period), int(d_period), int(smooth_k)
     high = frame["high"].astype(float)
     low = frame["low"].astype(float)
     close = frame["close"].astype(float)
-    if talib is not None:
-        slowk, slowd = talib.STOCH(
-            _as_float_array(high),
-            _as_float_array(low),
-            _as_float_array(close),
-            fastk_period=k_period,
-            slowk_period=smooth_k,
-            slowk_matype=0,  # type: ignore[arg-type, unused-ignore]
-            slowd_period=d_period,
-            slowd_matype=0,  # type: ignore[arg-type, unused-ignore]
-        )
-        return pd.Series(slowk, index=frame.index), pd.Series(slowd, index=frame.index)
-    lowest_low = low.rolling(window=k_period, min_periods=k_period).min()
-    highest_high = high.rolling(window=k_period, min_periods=k_period).max()
-    raw_k = 100.0 * (close - lowest_low) / (highest_high - lowest_low).replace(0.0, np.nan)
-    slow_k = raw_k.rolling(window=smooth_k, min_periods=smooth_k).mean()
-    slow_d = slow_k.rolling(window=d_period, min_periods=d_period).mean()
-    return slow_k, slow_d
+    slowk, slowd = talib.STOCH(
+        _as_float_array(high),
+        _as_float_array(low),
+        _as_float_array(close),
+        fastk_period=k_period,
+        slowk_period=smooth_k,
+        slowk_matype=0,  # type: ignore[arg-type, unused-ignore]
+        slowd_period=d_period,
+        slowd_matype=0,  # type: ignore[arg-type, unused-ignore]
+    )
+    return pd.Series(slowk, index=frame.index), pd.Series(slowd, index=frame.index)
 
 
 def adx(frame: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -361,28 +345,16 @@ def adx(frame: pd.DataFrame, period: int = 14) -> pd.Series:
     - Below ~20 -> weak/sideways; breakout and trend signals fail more often.
     It says nothing about up vs down - only how strong the move is. Strategies use
     it as a filter (e.g. only take a Parabolic SAR flip when ADX is high enough).
-    (TA-Lib first, then a Wilder-smoothed pandas fallback.)
+    The pinned TA-Lib build supplies the calculation.
     """
     period = int(period)
     high = frame["high"].astype(float)
     low = frame["low"].astype(float)
     close = frame["close"].astype(float)
-    if talib is not None:
-        return pd.Series(
-            talib.ADX(_as_float_array(high), _as_float_array(low), _as_float_array(close), timeperiod=period),
-            index=frame.index,
-        )
-    up_move = high.diff()
-    down_move = -low.diff()
-    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0.0), up_move, 0.0), index=frame.index)
-    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0.0), down_move, 0.0), index=frame.index)
-    tr = true_range(frame)
-    atr_wilder = tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-    plus_di = 100.0 * plus_dm.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean() / atr_wilder
-    minus_di = 100.0 * minus_dm.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean() / atr_wilder
-    di_sum = (plus_di + minus_di).replace(0.0, np.nan)
-    dx = 100.0 * (plus_di - minus_di).abs() / di_sum
-    return dx.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    return pd.Series(
+        talib.ADX(_as_float_array(high), _as_float_array(low), _as_float_array(close), timeperiod=period),
+        index=frame.index,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -400,31 +372,23 @@ def bollinger_bands(
     standard deviations above/below it. Price spends most of its time between the
     bands, so a tag of the lower band can signal "stretched low" (bounce candidate)
     and the upper band "stretched high". The bands widen when volatility rises and
-    pinch together when it falls. Returns (upper, middle, lower). (TA-Lib first,
-    then a pandas fallback; both use population std to match.)
+    pinch together when it falls. Returns (upper, middle, lower). The pinned
+    TA-Lib build supplies the calculation.
     """
     period = int(period)
     num_std = float(num_std)
-    if talib is not None:
-        upper, middle, lower = talib.BBANDS(
-            _as_float_array(values),
-            timeperiod=period,
-            nbdevup=num_std,
-            nbdevdn=num_std,
-            matype=0,  # type: ignore[arg-type, unused-ignore]
-        )
-        return (
-            pd.Series(upper, index=values.index),
-            pd.Series(middle, index=values.index),
-            pd.Series(lower, index=values.index),
-        )
-    middle = values.rolling(window=period, min_periods=period).mean()
-    # TA-Lib BBANDS uses the population standard deviation (ddof=0); match it so
-    # the fallback and the native backend agree.
-    rolling_std = values.rolling(window=period, min_periods=period).std(ddof=0)
-    upper = middle + num_std * rolling_std
-    lower = middle - num_std * rolling_std
-    return upper, middle, lower
+    upper, middle, lower = talib.BBANDS(
+        _as_float_array(values),
+        timeperiod=period,
+        nbdevup=num_std,
+        nbdevdn=num_std,
+        matype=0,  # type: ignore[arg-type, unused-ignore]
+    )
+    return (
+        pd.Series(upper, index=values.index),
+        pd.Series(middle, index=values.index),
+        pd.Series(lower, index=values.index),
+    )
 
 
 def keltner_channels(
@@ -444,7 +408,7 @@ def keltner_channels(
     "squeeze" that often precedes a breakout. Returns (upper, middle, lower).
 
     There is no TA-Lib primitive for Keltner, so this is always computed from the
-    shared ema()/atr() helpers (which are themselves TA-Lib-first).
+    shared ema()/atr() helpers, both supplied by the pinned TA-Lib build.
     """
     middle = ema(frame["close"].astype(float), period)
     channel_atr = atr(frame, atr_period)
@@ -499,7 +463,7 @@ def parabolic_sar(
         empty = pd.Series([], dtype="float64", index=frame.index)
         return empty, empty
 
-    if talib is not None and float(af_start) == float(af_step):
+    if float(af_start) == float(af_step):
         sar_values = talib.SAR(_as_float_array(high), _as_float_array(low),
                                acceleration=float(af_start), maximum=float(af_max))
         sar_series = pd.Series(sar_values, index=frame.index)
@@ -565,7 +529,7 @@ def supertrend(
     Bigger `multiplier` = looser line (fewer, later flips).
 
     Computed iteratively with the standard band carry-forward rules; ATR comes from
-    the shared TA-Lib-first helper. `direction` is NaN during the ATR warm-up.
+    the shared pinned TA-Lib helper. `direction` is NaN during the ATR warm-up.
     """
     atr_period = int(atr_period)
     multiplier = float(multiplier)

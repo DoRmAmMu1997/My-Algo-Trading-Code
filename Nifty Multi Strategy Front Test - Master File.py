@@ -66,7 +66,7 @@ One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
 tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
-and dynamic ~Rs.2500 risk-based sizing -- then acts through this runner's own
+and fail-closed hard-budget sizing -- then acts through this runner's own
 enter_position/exit_position (so it is just another ATM single-leg member of the
 family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
 default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
@@ -216,6 +216,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # --- Third-party imports -----------------------------------------------------
 import pandas as pd
@@ -240,10 +241,21 @@ from Dependencies.execution_ledger import (
     OrderAttemptHandle,
     OrderIntent,
 )
+from Dependencies.market_data_health import (
+    MarketDataHealth,
+    MarketDataValidationError,
+    complete_minute_bucket_mask,
+    newest_completed_minute_timestamp,
+    validate_ohlc_frame,
+)
+from Dependencies.next_open_entry import PendingNextOpenEntry
+from Dependencies.risk_sizing import SizingDecision
+from Dependencies.secret_redaction import redact_text
 from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
 )
+from Dependencies.trading_lifecycle import LifecycleState, TradingLifecycle
 
 try:
     # `python-dotenv` is optional. If installed, values such as the DhanHQ
@@ -373,8 +385,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # DHAN_CLIENT_CODE  : 10-digit dhanClientId (e.g. "1100000000").
 # DHAN_API_KEY      : long-lived "app_id" used by the OAuth setup script.
 # DHAN_API_SECRET   : long-lived "app_secret" pair to DHAN_API_KEY.
-# DHAN_ACCESS_TOKEN : 12-month token produced by the setup script. This is
-#                     what the dhanhq SDK actually authenticates with.
+# DHAN_ACCESS_TOKEN : token produced by the setup script. This is what the
+#                     dhanhq SDK actually authenticates with. Its validity is
+#                     stamped into the token by DhanHQ and is NOT 12 months --
+#                     web.dhan.co currently issues 24-hour tokens, so refresh
+#                     it outside market hours before each trading day.
 CLIENT_CODE = _env_str("DHAN_CLIENT_CODE", "")
 API_KEY = _env_str("DHAN_API_KEY", "")
 API_SECRET = _env_str("DHAN_API_SECRET", "")
@@ -990,15 +1005,15 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, or Flattrade.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All three helpers expose
+# This is how real (non-paper) orders reach the broker. All four helpers expose
 # the SAME contract: login/symbol resolution, typed place/status/cancel results,
 # determinate-or-indeterminate open order/position queries, and logout. The runner
 # uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
 # Each import is
 # wrapped in try/except on purpose: if a broker's SDK/deps are missing, that
-# client is set to None and the runner keeps working (the OTHER broker, or
+# client is set to None and the runner keeps working (the OTHER brokers, or
 # paper-only). main() forces any "live" strategy back to paper when the selected
 # client is None.
 try:
@@ -1040,6 +1055,19 @@ except Exception as _flattrade_import_exc:
         _flattrade_import_exc,
     )
 
+try:
+    _dhan_execution_module = load_module(
+        "master_dhan_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Dhan API" / "dhan_execution.py",
+    )
+    dhan_execution_client = _dhan_execution_module.dhan_execution_client
+except Exception as _dhan_import_exc:
+    dhan_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Dhan execution layer unavailable (%s); Dhan live trading disabled.",
+        _dhan_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1062,8 +1090,11 @@ def _select_execution_client(broker_name: str):
     if broker == "FLATTRADE":
         product = _env_str("FLATTRADE_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return flattrade_execution_client, "NFO", product
+    if broker == "DHAN":
+        product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return dhan_execution_client, "NSE_FNO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, or FLATTRADE); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
         "live trading DISABLED (paper only).",
         broker_name,
     )
@@ -1348,9 +1379,10 @@ PROFIT_SHOOTER_STRATEGY_CONFIG = PROFIT_SHOOTER_LOGIC.ProfitShooterConfig(
 # Operational sizing/risk for Profit Shooter (separate from signal config).
 PROFIT_SHOOTER_LOTS = _env_int("PROFIT_SHOOTER_LOTS", 1)
 # Per-trade rupee risk budget used by Profit Shooter's dynamic position sizer.
-# The worker overrides the static lot count and instead picks the smallest
-# whole-lot quantity whose underlying-points risk fits within this budget.
+# The worker floors affordable whole lots, rejects a setup when even one lot
+# exceeds the budget, and never exceeds the namespaced maximum.
 PROFIT_SHOOTER_RISK_BUDGET = _env_float("PROFIT_SHOOTER_RISK_BUDGET", 2500.0)
+PROFIT_SHOOTER_MAX_LOTS = _env_int("PROFIT_SHOOTER_MAX_LOTS", 5)
 PROFIT_SHOOTER_STARTING_CAPITAL = _env_float("PROFIT_SHOOTER_STARTING_CAPITAL", 600000.0)
 PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT = _env_float("PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT", 0.03)
 PROFIT_SHOOTER_MAX_LOSS = PROFIT_SHOOTER_STARTING_CAPITAL * PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT
@@ -1383,10 +1415,11 @@ GOLDMINE_STRATEGY_CONFIG = GOLDMINE_LOGIC.GoldmineStrategyConfig(
     max_bars_in_trade=_env_int("GOLDMINE_MAX_BARS_IN_TRADE", 6),
 )
 # Operational sizing/risk for Goldmine (Profit-Shooter-style dynamic sizing).
-# GOLDMINE_LOTS is only the fallback used when risk-based sizing cannot be
-# computed; normal entries size off GOLDMINE_RISK_BUDGET.
+# GOLDMINE_LOTS is retained for compatibility and paper snapshots; normal
+# entries use the fail-closed per-trade budget and maximum below.
 GOLDMINE_LOTS = _env_int("GOLDMINE_LOTS", 1)
 GOLDMINE_RISK_BUDGET = _env_float("GOLDMINE_RISK_BUDGET", 2500.0)
+GOLDMINE_MAX_LOTS = _env_int("GOLDMINE_MAX_LOTS", 5)
 GOLDMINE_STARTING_CAPITAL = _env_float("GOLDMINE_STARTING_CAPITAL", 600000.0)
 GOLDMINE_DAILY_MAX_LOSS_PCT = _env_float("GOLDMINE_DAILY_MAX_LOSS_PCT", 0.03)
 GOLDMINE_MAX_LOSS = GOLDMINE_STARTING_CAPITAL * GOLDMINE_DAILY_MAX_LOSS_PCT
@@ -1408,6 +1441,7 @@ MONEY_MACHINE_STRATEGY_CONFIG = MONEY_MACHINE_LOGIC.MoneyMachineStrategyConfig(
 # Operational sizing/risk for Money Machine (same dynamic sizing as Goldmine).
 MONEY_MACHINE_LOTS = _env_int("MONEY_MACHINE_LOTS", 1)
 MONEY_MACHINE_RISK_BUDGET = _env_float("MONEY_MACHINE_RISK_BUDGET", 2500.0)
+MONEY_MACHINE_MAX_LOTS = _env_int("MONEY_MACHINE_MAX_LOTS", 5)
 MONEY_MACHINE_STARTING_CAPITAL = _env_float("MONEY_MACHINE_STARTING_CAPITAL", 600000.0)
 MONEY_MACHINE_DAILY_MAX_LOSS_PCT = _env_float("MONEY_MACHINE_DAILY_MAX_LOSS_PCT", 0.03)
 MONEY_MACHINE_MAX_LOSS = MONEY_MACHINE_STARTING_CAPITAL * MONEY_MACHINE_DAILY_MAX_LOSS_PCT
@@ -1747,12 +1781,17 @@ class SharedMarketDataStore:
         self._snapshots: dict[str, MarketSnapshot] = {}
         self._ltp_snapshots: dict[tuple[str, int], LTPSnapshot] = {}
         self._option_subscriptions: dict[tuple[str, int], OptionSubscription] = {}
+        self.market_data_health = MarketDataHealth()
         self.execution_safety = ExecutionSafetyCoordinator()
         # The execution ledger is separate from market-data snapshots because it
         # has its own lock and must survive strategy-frame refreshes.  Every live
         # order leg is registered here before the broker submission starts.
         self.execution_ledger = ExecutionLedger()
         self.startup_exposure_audit: StartupExposureAudit | None = None
+        # Remains true after the first worker is enabled live, even if a broker
+        # timeout later poisons/logs out the session. Shutdown then knows that a
+        # missing session is indeterminate rather than proof of no exposure.
+        self.live_session_started = False
 
     # ------------------------------------------------------------------
     # OHLC pool
@@ -1764,17 +1803,16 @@ class SharedMarketDataStore:
         The new snapshot is built BEFORE the lock is taken; only the swap
         happens under lock so the critical section stays small.
         """
-        source_candle_ts = None
-        if frame is not None and not frame.empty and "timestamp" in frame.columns:
-            source_candle_ts = pd.to_datetime(frame.iloc[-1]["timestamp"])
-        candle_signature = build_last_row_signature(frame)
+        validated = validate_ohlc_frame(frame)
+        source_candle_ts = pd.to_datetime(validated.iloc[-1]["timestamp"])
+        candle_signature = build_last_row_signature(validated)
 
         snapshot = MarketSnapshot(
             timeframe=str(timeframe),
-            frame=frame.copy(),
+            frame=validated,
             source_candle_ts=source_candle_ts,
             candle_signature=candle_signature,
-            fetched_at=datetime.now(),
+            fetched_at=datetime.now(ZoneInfo("Asia/Kolkata")),
         )
         with self._lock:
             self._snapshots[str(timeframe)] = snapshot
@@ -1812,16 +1850,20 @@ class SharedMarketDataStore:
         """
         if not ltp_map:
             return
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         with self._lock:
             for (segment, sec_id), price in ltp_map.items():
-                if float(price) <= 0:
+                try:
+                    numeric_price = float(price)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric_price) or numeric_price <= 0:
                     continue
                 key = (str(segment), int(sec_id))
                 self._ltp_snapshots[key] = LTPSnapshot(
                     segment=str(segment),
                     security_id=int(sec_id),
-                    ltp=float(price),
+                    ltp=numeric_price,
                     fetched_at=now,
                 )
 
@@ -1864,6 +1906,39 @@ class SharedMarketDataStore:
         """Return a list copy of all currently subscribed option legs."""
         with self._lock:
             return list(self._option_subscriptions.values())
+
+    # ------------------------------------------------------------------
+    # Whole-feed health
+    # ------------------------------------------------------------------
+    def begin_market_data_monitoring(self) -> None:
+        """Enable live freshness enforcement when the producer thread starts."""
+
+        self.market_data_health.begin_monitoring(now=datetime.now(ZoneInfo("Asia/Kolkata")))
+
+    def record_market_data_refresh(
+        self,
+        *,
+        ohlc_ok: bool,
+        required_ltp_keys: set[tuple[str, int]],
+    ):
+        """Publish one combined OHLC/LTP refresh result to the health gate."""
+
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        with self._lock:
+            source = self._snapshots.get("1")
+            frame = source.frame.copy() if source is not None else pd.DataFrame()
+            ltp_times = {
+                key: snapshot.fetched_at
+                for key, snapshot in self._ltp_snapshots.items()
+                if key in required_ltp_keys
+            }
+        return self.market_data_health.record_refresh(
+            ohlc_ok=ohlc_ok,
+            newest_completed_bar=newest_completed_minute_timestamp(frame, now=now),
+            ltp_fetched_at=ltp_times,
+            required_ltp_keys=required_ltp_keys,
+            now=now,
+        )
 
 
 # =============================================================================
@@ -1919,6 +1994,22 @@ def _infer_epoch_unit(values: pd.Series) -> str:
     return "s"
 
 
+def _validate_single_epoch_unit(values: pd.Series) -> None:
+    """Reject a payload that mixes seconds, milliseconds, or microseconds."""
+
+    nums = pd.to_numeric(values, errors="coerce").dropna().abs()
+    if nums.empty:
+        return
+    units = {
+        "us" if value > 1e14 else "ms" if value > 1e11 else "s"
+        for value in nums
+    }
+    if len(units) != 1:
+        raise MarketDataValidationError(
+            f"Dhan timestamp payload mixes epoch units: {', '.join(sorted(units))}"
+        )
+
+
 def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
     """
     Normalize a `dhanhq.intraday_minute_data` response into a standard
@@ -1970,6 +2061,7 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
 
     ts_numeric = pd.to_numeric(df[ts_col], errors="coerce")
     if ts_numeric.notna().sum() >= max(1, len(df) // 2):
+        _validate_single_epoch_unit(ts_numeric)
         unit = _infer_epoch_unit(ts_numeric)
         ts = pd.to_datetime(ts_numeric, unit=unit, errors="coerce", utc=True)
     else:
@@ -1987,9 +2079,9 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
             "low": pd.to_numeric(df[l_col], errors="coerce"),
             "close": pd.to_numeric(df[c_col], errors="coerce"),
         }
-    ).dropna()
+    )
 
-    out = out.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+    out = validate_ohlc_frame(out)
     if len(out) < MIN_BARS:
         raise ValueError(f"Need >= {MIN_BARS} bars, got {len(out)}")
     return out
@@ -2056,6 +2148,17 @@ def resample_ohlc_from_1m(ohlc: pd.DataFrame, timeframe_minutes: int) -> pd.Data
     frame = frame.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     if frame.empty:
         return frame
+
+    # Count-only completeness can accept a duplicate minute while another
+    # minute is missing. Keep a bucket only when every exact minute slot occurs
+    # once and in order.
+    complete_mask = complete_minute_bucket_mask(
+        pd.DatetimeIndex(frame["timestamp"]),
+        int(timeframe_minutes),
+    )
+    frame = frame.loc[complete_mask.to_numpy()].reset_index(drop=True)
+    if frame.empty:
+        return pd.DataFrame(columns=required_columns)
 
     rule = f"{int(timeframe_minutes)}min"
     indexed = frame.set_index("timestamp")
@@ -2902,43 +3005,41 @@ class OptionsContractResolver:
 # =============================================================================
 # TIME HELPERS
 # =============================================================================
-# Every trading-time gate below compares against the machine's LOCAL wall
-# clock and assumes the box runs in IST. main() checks this at startup.
+# Every trading-time gate is explicitly pinned to the exchange timezone.  The
+# host can run in UTC (or any other timezone) without shifting a market cutoff.
 IST_UTC_OFFSET = timedelta(hours=5, minutes=30)
+IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _ist_now() -> datetime:
+    """Return the current timezone-aware exchange clock in Asia/Kolkata."""
+
+    now = datetime.now(IST_TIMEZONE)
+    # Test doubles and a few embedding callers may return a naive value even
+    # when a timezone argument was supplied. Treat such a value as already IST;
+    # real ``datetime.now(IST_TIMEZONE)`` always takes the aware branch.
+    if now.tzinfo is None:
+        return now.replace(tzinfo=IST_TIMEZONE)
+    return now.astimezone(IST_TIMEZONE)
 
 
 def _timezone_assumption_warning(offset: timedelta | None = None) -> str | None:
-    """Return a loud warning when the system clock's UTC offset is not IST.
+    """Backward-compatible diagnostic: host offset no longer affects gates."""
 
-    OPS-001. `is_before_time`/`is_after_time` (market open, entry cutoffs, the
-    15:15 square-off) all use naive `datetime.now()` -- the code assumes an IST
-    machine. On a mis-configured box (a UTC VPS, a travelling laptop) every
-    gate silently shifts by hours, so main() logs this check at startup rather
-    than trading at the wrong times. Returns None when the offset is IST.
-    The offset parameter exists for tests; the default reads the system clock.
-    """
-    if offset is None:
-        offset = datetime.now().astimezone().utcoffset()
-    if offset == IST_UTC_OFFSET:
-        return None
-    return (
-        f"System clock UTC offset is {offset}, but every trading-time gate in this "
-        "runner assumes IST (+5:30). Market-open, entry-cutoff and square-off gates "
-        "will fire at the WRONG local times -- fix the machine's timezone before "
-        "trading."
-    )
+    del offset
+    return None
 
 
 def is_before_time(hour: int, minute: int) -> bool:
-    """Return True when local wall-clock time is before HH:MM."""
-    now = datetime.now()
+    """Return True when the exchange clock is before HH:MM IST."""
+    now = _ist_now()
     threshold = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return now < threshold
 
 
 def is_after_time(hour: int, minute: int) -> bool:
-    """Return True when local wall-clock time is at or after HH:MM."""
-    now = datetime.now()
+    """Return True when the exchange clock is at or after HH:MM IST."""
+    now = _ist_now()
     threshold = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return now >= threshold
 
@@ -3005,7 +3106,7 @@ class CentralMarketDataFetcher(threading.Thread):
             instrument_type=NIFTY_INDEX_INSTRUMENT_TYPE,
         )
 
-    def refresh_index_and_option_ltps(self) -> None:
+    def refresh_index_and_option_ltps(self) -> set[tuple[str, int]]:
         """
         Refresh the NIFTY spot LTP plus every subscribed option LTP in a
         single batched ticker_data call.
@@ -3020,11 +3121,17 @@ class CentralMarketDataFetcher(threading.Thread):
             if int(sub.security_id) not in securities[segment]:
                 securities[segment].append(int(sub.security_id))
 
+        required_keys = {
+            (segment, int(security_id))
+            for segment, security_ids in securities.items()
+            for security_id in security_ids
+        }
+
         try:
             ltp_map = self.broker.fetch_ltp_map(securities)
         except Exception as exc:
             self.log.exception("Error while refreshing LTP batch: %s", exc)
-            return
+            return required_keys
 
         if ltp_map:
             self.store.update_ltp_map(ltp_map)
@@ -3038,10 +3145,13 @@ class CentralMarketDataFetcher(threading.Thread):
                 index_ltp,
                 len(subscriptions),
             )
+        return required_keys
 
     def run(self) -> None:
         self.log.info("Starting central market data fetcher (dhanhq backend).")
+        self.store.begin_market_data_monitoring()
         while not self.stop_event.is_set():
+            ohlc_ok = True
             for timeframe in REQUIRED_TIMEFRAMES:
                 if self.stop_event.is_set():
                     break
@@ -3057,11 +3167,25 @@ class CentralMarketDataFetcher(threading.Thread):
                             snapshot.source_candle_ts,
                         )
                 except Exception as exc:
+                    ohlc_ok = False
                     self.log.exception("Fetch error for timeframe=%s: %s", timeframe, exc)
             try:
-                self.refresh_index_and_option_ltps()
+                required_ltp_keys = self.refresh_index_and_option_ltps()
             except Exception as exc:
                 self.log.exception("Fetch error while refreshing LTPs: %s", exc)
+                required_ltp_keys = {
+                    (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
+                }
+            health = self.store.record_market_data_refresh(
+                ohlc_ok=ohlc_ok,
+                required_ltp_keys=required_ltp_keys,
+            )
+            if health.reasons:
+                self.log.warning(
+                    "Market data unhealthy | unhealthy_for=%.1fs | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
             self.stop_event.wait(FETCH_POLL_SECONDS)
         self.log.info("Central market data fetcher stopped.")
 
@@ -3153,6 +3277,8 @@ class BasePaperStrategyWorker(threading.Thread):
         # Guards so we never run the same shutdown / pre-open log twice.
         self.cutoff_handled = False
         self.preopen_wait_logged = False
+        self._market_data_unhealthy_logged = False
+        self._market_data_liquidation_logged = False
 
         # Optional trade-event sink (a queue.Queue) consumed by the Telegram
         # notifier. main() injects it after construction; it stays None when
@@ -3165,6 +3291,12 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+        # Actual session provenance is derived from order outcomes, not merely
+        # from the live configuration flag. A live-enabled worker can execute a
+        # confirmed broker fill and later take an explicit zero-fill paper
+        # fallback, which makes that strategy's daily result MIXED.
+        self._execution_modes_seen: set[str] = set()
+        self._execution_mode_lock = threading.Lock()
         # Distinguish otherwise-identical legs owned by different worker
         # instances.  A frozen worker may finish its own partial order, but a
         # second worker must never adopt that continuation merely because its
@@ -3191,6 +3323,14 @@ class BasePaperStrategyWorker(threading.Thread):
         # does not depend on a repeated signal or a human spotting an alert.
         self._orphan_live_legs: list[dict] = []
         self._next_orphan_retry_ts = 0.0
+
+        # Stopping a thread is not proof that its broker exposure is flat.  The
+        # lifecycle therefore survives a set ``stop_event`` and keeps this
+        # worker alive through close/reconcile retries before it may report
+        # STOPPED.  Each worker owns one lifecycle so a strategy-specific
+        # max-loss does not silently stop the other strategies.
+        self.lifecycle = TradingLifecycle()
+        self._shutdown_summary_logged = False
 
     @staticmethod
     def _synthetic_order_result(
@@ -3298,6 +3438,16 @@ class BasePaperStrategyWorker(threading.Thread):
         opening_side = str(opening_side).upper().strip()
         if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
             return False
+        # Each tuple is (completed anchor's role, companion's role, anchor's
+        # opening side, companion's opening side) -- the ONLY basket shapes
+        # this runner ever builds:
+        #   H -> M : protective hedge BUY confirmed, now the main short SELL
+        #            (the hedged-puts / Delta-0.2 spread order of operations);
+        #   N -> B : NIFTY leg BUY confirmed, now the equal-lot BankNIFTY
+        #            mirror BUY (SL Hunting basket);
+        #   C -> P : strangle CE BUY confirmed, now its PE BUY twin.
+        # Anything not in this table is a brand-new exposure, which a frozen
+        # account must never accept.
         allowed_transitions = {
             ("H", "M", "BUY", "SELL"),
             ("N", "B", "BUY", "BUY"),
@@ -3628,6 +3778,23 @@ class BasePaperStrategyWorker(threading.Thread):
         Reducing exits deliberately bypass this lease.
         """
 
+        if (
+            opens_exposure
+            and self.live_trading
+            and not self.lifecycle.snapshot().entry_allowed
+        ):
+            try:
+                quantity = int(leg["quantity"])
+            except (KeyError, TypeError, ValueError):
+                quantity = 0
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.UNKNOWN,
+                "New live entry was not submitted because this worker is in "
+                "flatten-then-stop shutdown.",
+                broker_state="ENTRY_BLOCKED",
+            )
+
         if not opens_exposure or not self.live_trading:
             return self._place_real_leg_with_entry_lease(
                 side,
@@ -3854,6 +4021,54 @@ class BasePaperStrategyWorker(threading.Thread):
             )
             self._freeze_live_entries(result, side=side, leg=leg)
             return result
+
+        if opens_exposure:
+            # Shutdown or broker-wide reconciliation may begin after the leg
+            # and attempt were staged but before the adapter call.  Recheck at
+            # the final broker boundary so that race cannot leak a new BUY.
+            shared_frozen, shared_reason = (
+                self.store.execution_safety.entry_freeze_snapshot()
+            )
+            companion_authorized = (
+                shared_frozen
+                and self._frozen_companion_entry_is_authorized(
+                    leg,
+                    broker_symbol=broker_symbol,
+                    opening_side=str(side).upper().strip(),
+                )
+            )
+            freeze_ids, _freeze_unattributed = (
+                self.store.execution_safety.freeze_attribution_snapshot()
+            )
+            continuation_authorized = state.exposure_id in freeze_ids
+            lifecycle_allows_entry = self.lifecycle.snapshot().entry_allowed
+            if not lifecycle_allows_entry or (
+                shared_frozen
+                and not continuation_authorized
+                and not companion_authorized
+            ):
+                # Close the locally staged attempt with zero-fill terminal
+                # evidence.  The returned UNKNOWN deliberately prevents the
+                # caller from converting this shutdown race into paper entry.
+                local_rejection = self._synthetic_order_result(
+                    submit_quantity,
+                    OrderStatus.REJECTED,
+                    "The staged entry was cancelled locally before broker submission.",
+                    broker_state="LOCAL_ENTRY_ABORTED",
+                )
+                state = self.store.execution_ledger.apply_result(
+                    attempt_handle,
+                    local_rejection,
+                )
+                leg["live_leg"] = state
+                return self._synthetic_order_result(
+                    submit_quantity,
+                    OrderStatus.UNKNOWN,
+                    "New live entry was not submitted because shutdown or "
+                    "broker reconciliation blocked the final submission boundary. "
+                    f"{shared_reason}",
+                    broker_state="ENTRY_BLOCKED",
+                )
 
         try:
             raw_result = execution_client.place_market_order(
@@ -4385,17 +4600,32 @@ class BasePaperStrategyWorker(threading.Thread):
         (TelegramMessageWorker) owns all formatting and network I/O, so the
         trading threads are never exposed to Telegram latency or failures.
         """
-        event_queue = getattr(self, "trade_event_queue", None)
-        if event_queue is None:
-            return
         try:
             event.setdefault("strategy", self.strategy_name)
             event.setdefault("ts", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            event.setdefault("mode", "PAPER")
+            event.setdefault("mode", "LIVE" if self.live_trading else "PAPER")
+            mode_parts = _execution_mode_parts(event["mode"])
+            with self._execution_mode_lock:
+                self._execution_modes_seen.update(mode_parts)
+            event_queue = getattr(self, "trade_event_queue", None)
+            if event_queue is None:
+                return
             event_queue.put_nowait(event)
         except Exception:
             # A failed enqueue must never disturb the trading loop.
             pass
+
+    def session_execution_mode(self) -> str:
+        """Return PAPER, LIVE, or MIXED from this worker's actual outcomes."""
+        with self._execution_mode_lock:
+            observed = set(self._execution_modes_seen)
+        if len(observed) > 1:
+            return "MIXED"
+        if observed:
+            return next(iter(observed))
+        # A no-trade day has no order outcome. Report the mode in which the
+        # strategy was armed rather than falsely claiming a paper execution.
+        return "LIVE" if self.live_trading else "PAPER"
 
     # ------------------------------------------------------------------
     # Helpers
@@ -4526,6 +4756,21 @@ class BasePaperStrategyWorker(threading.Thread):
         """
         return MIN_BARS
 
+    def minimum_source_rows(self) -> int:
+        """Minimum raw snapshot rows required before building strategy data."""
+
+        return MIN_BARS
+
+    def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
+        """Optional pre-signal hook for entries tied to an observed future slot.
+
+        Returning ``True`` means the hook consumed this poll, so the worker
+        skips evaluating the older completed signal candle again.
+        """
+
+        del ohlc
+        return False
+
     def wait_for_next_poll(self) -> None:
         """
         Sleep until the next strategy tick, returning early on shutdown.
@@ -4539,51 +4784,329 @@ class BasePaperStrategyWorker(threading.Thread):
         # retrying an orphaned live leg. Rate-limited inside the sweep; a no-op
         # on the overwhelming majority of polls.
         self._sweep_orphan_live_legs()
-        self.stop_event.wait(self.poll_seconds)
+        if self.lifecycle.snapshot().state is LifecycleState.RUNNING:
+            self.stop_event.wait(self.poll_seconds)
+        else:
+            self._wait_for_shutdown_retry()
+
+    def _market_data_entries_allowed(self) -> bool:
+        """Fail closed for every REAL entry path while the shared feed is unhealthy.
+
+        Scope (operator decision, 2026-07-17): this gate protects MONEY, so it
+        applies only to live-trading workers. A paper worker keeps entering on
+        the last-good snapshot -- a virtual trade on slightly stale data is a
+        data-quality footnote, whereas blocking it costs the paper track record
+        its opening window (on 17 Jul the gate blocked every paper strategy
+        until ~09:24 while the feed warmed up, so no strategy could trade the
+        open at all).
+        """
+
+        if not self.live_trading:
+            return True
+        health = self.store.market_data_health.snapshot(now=_ist_now())
+        if not health.monitoring:
+            return True
+        if health.entry_allowed:
+            if self._market_data_unhealthy_logged:
+                self.log.info(
+                    "Market data recovered after %d consecutive healthy refreshes; entries resumed.",
+                    health.healthy_streak,
+                )
+            self._market_data_unhealthy_logged = False
+            self._market_data_liquidation_logged = False
+            return True
+        if not self._market_data_unhealthy_logged:
+            self._market_data_unhealthy_logged = True
+            self.log.warning(
+                "Blocking new entries because market data is unhealthy | %s",
+                "; ".join(health.reasons) or "awaiting three healthy refreshes",
+            )
+        return False
+
+    def _handle_market_data_health(self) -> bool:
+        """Flatten tracked LIVE exposure after a feed has been unhealthy for 30s.
+
+        This is deliberately separate from terminal daily shutdown. A feed can
+        recover, but only three consecutive healthy producer cycles reopen the
+        entry gate. Returning ``True`` tells the caller to consume this poll so
+        no strategy logic runs alongside a safety-driven liquidation attempt.
+
+        Scope (operator decision, 2026-07-17): like the entry gate above, the
+        forced square-off exists to protect real money, so it applies only to
+        live-trading workers. A paper worker keeps its virtual position and its
+        strategy logic keeps running on the last-good snapshot. A LIVE worker
+        still flattens EVERYTHING it owns -- including a rare paper-fallback
+        position -- because its books mirror a real trading stream and
+        splitting real-vs-paper mid-liquidation would complicate
+        reconciliation.
+        """
+
+        health = self.store.market_data_health.snapshot(now=_ist_now())
+        if not health.monitoring:
+            return False
+        if not self.live_trading:
+            # Paper worker: never force-close, never consume the poll. Log the
+            # 30s+ condition once per unhealthy episode so the operator can
+            # still see the feed outage in this worker's stream.
+            if health.liquidation_required and not self._market_data_liquidation_logged:
+                self._market_data_liquidation_logged = True
+                self.log.info(
+                    "Market data unhealthy for %.1fs; PAPER worker continues "
+                    "(square-off skipped -- no real exposure) | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
+            if health.entry_allowed:
+                # Reset the once-per-episode latch after recovery.
+                self._market_data_liquidation_logged = False
+            return False
+        if not health.entry_allowed:
+            self._market_data_entries_allowed()
+        if not health.liquidation_required:
+            return False
+
+        reason = "MARKET_DATA_UNHEALTHY"
+        if not self._market_data_liquidation_logged:
+            self._market_data_liquidation_logged = True
+            self.log.error(
+                "Market data remained unhealthy for %.1fs; flattening every tracked leg | %s",
+                health.unhealthy_seconds,
+                "; ".join(health.reasons),
+            )
+            self.publish_trade_event(
+                {
+                    "action": "MARKET_DATA_AUTO_SQUARE_OFF",
+                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "reason": "; ".join(health.reasons),
+                    "unhealthy_seconds": health.unhealthy_seconds,
+                }
+            )
+        try:
+            if self._paper_positions_active():
+                self.exit_position(reason)
+        except Exception as exc:  # noqa: BLE001 - keep flattening every other leg
+            self.log.exception("Market-data primary close failed; retrying next poll: %s", exc)
+        try:
+            self._flatten_additional_positions(reason)
+        except Exception as exc:  # noqa: BLE001 - orphan sweep must still run
+            self.log.exception("Market-data additional close failed; retrying next poll: %s", exc)
+        try:
+            self._sweep_orphan_live_legs(force=True)
+        except Exception as exc:  # noqa: BLE001 - health loop must stay alive
+            self.log.exception("Market-data orphan close failed; retrying next poll: %s", exc)
+        return True
+
+    def _paper_positions_active(self) -> bool:
+        """Return whether this worker still owns local position bookkeeping."""
+
+        return bool(getattr(self.pos, "active", False))
+
+    def _owned_live_states(self) -> tuple[LiveLegState, ...]:
+        """Return active ledger legs owned by this exact worker instance."""
+
+        return tuple(
+            state
+            for state in self.store.execution_ledger.active_states()
+            if state.spec.owner_id == self._execution_owner_id
+        )
+
+    def _flatten_additional_positions(self, reason: str) -> None:
+        """Subclass hook for exposure not represented by ``self.pos``."""
+
+        return
+
+    def _shutdown_exposure_is_flat(self) -> bool:
+        """Prove this worker has no local or quantity-bearing live exposure."""
+
+        return (
+            not self._paper_positions_active()
+            and not self._orphan_live_legs
+            and not self._owned_live_states()
+        )
+
+    def request_worker_shutdown(self, reason: str) -> None:
+        """Block THIS worker's entries immediately and start its safe shutdown.
+
+        The block is deliberately scoped to this one worker: its own lifecycle
+        gate refuses new opening orders both at the top of `_place_real_leg`
+        and again at the final broker-submission boundary, so a max-loss stop
+        or an early square-off here never freezes the shared account-wide
+        entry gate that the OTHER strategies are still trading through.  The
+        shared gate stays reserved for conditions that genuinely make the
+        whole account unsafe: indeterminate broker exposure, a failed startup
+        audit, and the stale-market-data guard.
+        """
+
+        before = self.lifecycle.snapshot()
+        snapshot = self.lifecycle.request_shutdown(reason)
+        if before.state is LifecycleState.RUNNING:
+            self.log.warning(
+                "LIFECYCLE %s -> %s | reason=%s | new entries blocked for this worker.",
+                before.state.value,
+                snapshot.state.value,
+                snapshot.shutdown_reason,
+            )
+
+    def _finish_worker_shutdown(self) -> None:
+        """Move FLAT to STOPPED and emit the summary exactly once."""
+
+        snapshot = self.lifecycle.snapshot()
+        if snapshot.state is LifecycleState.FLAT:
+            snapshot = self.lifecycle.mark_stopped()
+        if snapshot.state is not LifecycleState.STOPPED:
+            return
+        if not self._shutdown_summary_logged:
+            self._shutdown_summary_logged = True
+            self.log.info(
+                "Result summary | Mode=%s | %s",
+                self.session_execution_mode(),
+                self.summary_text(),
+            )
+            self.log.info(
+                "Strategy stopped only after broker-confirmed flat lifecycle completion."
+            )
+
+    def _advance_shutdown_lifecycle(self) -> None:
+        """Take one due close/reconciliation step without ever giving up."""
+
+        snapshot = self.lifecycle.snapshot()
+        if snapshot.state is LifecycleState.RUNNING:
+            return
+        if snapshot.state in {LifecycleState.FLAT, LifecycleState.STOPPED}:
+            self._finish_worker_shutdown()
+            return
+        if snapshot.state is LifecycleState.RECONCILING:
+            if not self.lifecycle.retry_due():
+                return
+        elif snapshot.state is not LifecycleState.ENTRY_BLOCKED:
+            # FLATTENING is owned by the current caller. Another thread can
+            # safely observe it, but must not start a duplicate close pass.
+            return
+
+        flattening = self.lifecycle.start_flattening()
+        reason = flattening.shutdown_reason
+        try:
+            if self._paper_positions_active():
+                self.exit_position(reason)
+        except Exception as exc:  # noqa: BLE001 - retry loop must survive
+            self.log.exception(
+                "Flatten attempt %d raised while closing the primary position: %s",
+                flattening.flatten_attempts,
+                exc,
+            )
+        try:
+            self._flatten_additional_positions(reason)
+        except Exception as exc:  # noqa: BLE001 - retry loop must survive
+            self.log.exception(
+                "Flatten attempt %d raised while closing additional exposure: %s",
+                flattening.flatten_attempts,
+                exc,
+            )
+        try:
+            self._sweep_orphan_live_legs(force=True)
+        except Exception as exc:  # noqa: BLE001 - lifecycle must still reconcile
+            self.log.exception(
+                "Flatten attempt %d raised while sweeping orphan exposure: %s",
+                flattening.flatten_attempts,
+                exc,
+            )
+
+        self.lifecycle.start_reconciling()
+        reconciled = self.lifecycle.record_reconciliation(
+            broker_flat=self._shutdown_exposure_is_flat()
+        )
+        if reconciled.state is LifecycleState.FLAT:
+            self._finish_worker_shutdown()
+            return
+
+        retry_in = max(
+            0.0,
+            float(reconciled.next_retry_at or time.monotonic()) - time.monotonic(),
+        )
+        risk_quantity = sum(state.risk_quantity for state in self._owned_live_states())
+        self.log.error(
+            "DEGRADED SHUTDOWN | attempt=%d reason=%s risk_qty=%s | "
+            "exposure is not broker-confirmed flat; retrying in %.1fs.",
+            reconciled.flatten_attempts,
+            reconciled.shutdown_reason,
+            risk_quantity,
+            retry_in,
+        )
+        self.publish_trade_event(
+            {
+                "action": "SHUTDOWN_DEGRADED",
+                "mode": "LIVE_INDETERMINATE" if self.live_trading else "PAPER",
+                "reason": reconciled.shutdown_reason,
+                "attempt": reconciled.flatten_attempts,
+                "risk_quantity": risk_quantity,
+                "retry_seconds": retry_in,
+            }
+        )
+
+    def _wait_for_shutdown_retry(self) -> None:
+        """Wait without spinning even when the legacy stop event is already set.
+
+        The run loop cannot use ``stop_event.wait`` here: during shutdown the
+        event is typically already set, so waiting on it would return
+        immediately and turn the flatten/reconcile loop into a busy spin.  A
+        plain sleep, capped at the poll cadence and floored at 50ms, keeps the
+        worker responsive to its 1/2/5-second retry schedule without burning a
+        CPU core while it waits to become broker-confirmed flat.
+        """
+
+        snapshot = self.lifecycle.snapshot()
+        if snapshot.state in {LifecycleState.FLAT, LifecycleState.STOPPED}:
+            return
+        if snapshot.next_retry_at is None:
+            delay = min(max(float(self.poll_seconds), 0.05), 0.25)
+        else:
+            delay = min(
+                max(snapshot.next_retry_at - time.monotonic(), 0.05),
+                max(float(self.poll_seconds), 0.05),
+            )
+        time.sleep(delay)
+
+    def _run_shutdown_cycle_if_requested(self) -> bool:
+        """Translate stop signals and drive shutdown instead of exiting early."""
+
+        if (
+            self.stop_event.is_set()
+            and self.lifecycle.snapshot().state is LifecycleState.RUNNING
+        ):
+            self.request_worker_shutdown("STOP_EVENT")
+        if self.lifecycle.snapshot().state is LifecycleState.RUNNING:
+            return False
+        self._advance_shutdown_lifecycle()
+        return True
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-        """One-time shutdown sequence triggered by a risk breach."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.error(
-            "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
-            "Stopping strategy and closing paper positions.",
-            self.max_loss,
-            total_pnl,
-            open_pnl,
-        )
-        try:
-            if self.pos.active:
-                self.exit_position("MAX_LOSS_BREACH")
-        except Exception as exc:
-            self.log.exception("Error while exiting active position on max-loss breach: %s", exc)
-        # HEDGE-001: last forced attempt to close any orphaned live leg before
-        # this worker stops for the day (no more poll sweeps after this).
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+        """Request a retrying shutdown after a risk breach."""
+
+        if not self.cutoff_handled:
+            self.cutoff_handled = True
+            self.log.error(
+                "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
+                "Blocking entries and flattening until broker-confirmed flat.",
+                self.max_loss,
+                total_pnl,
+                open_pnl,
+            )
+        self.request_worker_shutdown("MAX_LOSS_BREACH")
+        self._advance_shutdown_lifecycle()
 
     def handle_square_off_and_stop(self) -> None:
-        """One-time shutdown sequence triggered by the daily time cutoff."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.info(
-            "%02d:%02d cutoff reached. Closing any open positions and halting trading for the day.",
-            self.square_off_hour,
-            self.square_off_minute,
-        )
-        try:
-            if self.pos.active:
-                self.exit_position("TIME_CUTOFF")
-        except Exception as exc:
-            self.log.exception("Error while exiting active position at cutoff: %s", exc)
-        # HEDGE-001: last forced attempt to close any orphaned live leg before
-        # this worker stops for the day (no more poll sweeps after this).
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day.")
+        """Request a retrying shutdown at the daily time cutoff."""
+
+        if not self.cutoff_handled:
+            self.cutoff_handled = True
+            self.log.info(
+                "%02d:%02d IST cutoff reached. Blocking entries and flattening "
+                "until broker-confirmed flat.",
+                self.square_off_hour,
+                self.square_off_minute,
+            )
+        self.request_worker_shutdown("TIME_CUTOFF")
+        self._advance_shutdown_lifecycle()
 
     # ------------------------------------------------------------------
     # Subclass contract (must be implemented by every concrete worker)
@@ -4629,16 +5152,24 @@ class BasePaperStrategyWorker(threading.Thread):
         for the rationale.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
@@ -4658,8 +5189,12 @@ class BasePaperStrategyWorker(threading.Thread):
                     # process start). Wait politely instead of crashing.
                     self.wait_for_next_poll()
                     continue
-                if len(snapshot.frame) < MIN_BARS:
+                if len(snapshot.frame) < self.minimum_source_rows():
                     # Have data, but not enough warm-up history yet.
+                    self.wait_for_next_poll()
+                    continue
+
+                if self.process_pending_entry(snapshot.frame):
                     self.wait_for_next_poll()
                     continue
 
@@ -4729,19 +5264,34 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         )
         return (live_price - self.pos.entry_trade_price) * self.pos.quantity
 
+    def _compute_entry_sizing(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> SizingDecision:
+        """
+        Return the complete, auditable sizing decision for this entry.
+
+        Default strategies use their static class-level ``self.lots``. The
+        four risk-budget strategies override this and may reject the setup.
+        """
+        del entry_underlying, stop_underlying
+        return SizingDecision.fixed(lots=self.lots, lot_size=lot_size)
+
     def _compute_entry_lots(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
     ) -> int:
-        """
-        Number of lots to use for this entry.
+        """Compatibility read for callers that only need the accepted lot count."""
 
-        Default: the static class-level `self.lots`. Subclasses (e.g. Profit
-        Shooter) override this to size dynamically off the underlying SL.
-        """
-        return self.lots
+        return self._compute_entry_sizing(
+            entry_underlying,
+            stop_underlying,
+            lot_size,
+        ).lots
 
     def enter_position(
         self,
@@ -4763,6 +5313,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         5. Persist all entry fields (including any strategy-specific flags
            like target/trailing for Profit Shooter) in `self.pos`.
         """
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=_safe_float(entry_underlying, 0.0))
         if spot <= 0:
             self.log.warning("Skipping %s entry because NIFTY spot LTP was unavailable.", direction)
@@ -4805,10 +5357,25 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
             return False
 
-        lots_for_entry = self._compute_entry_lots(
+        sizing = self._compute_entry_sizing(
             float(entry_underlying), float(stop_underlying), lot_size
         )
-        quantity = lot_size * lots_for_entry
+        if not sizing.accepted:
+            self.log.warning(
+                "ENTRY SKIPPED BY SIZING | %s %s | entry=%.2f stop=%.2f "
+                "lot_size=%s budget=%.2f one_lot_risk=%.2f | %s",
+                self.strategy_name,
+                direction,
+                entry_underlying,
+                stop_underlying,
+                lot_size,
+                sizing.budget,
+                sizing.one_lot_risk,
+                sizing.reason,
+            )
+            return False
+        lots_for_entry = sizing.lots
+        quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
         order_id = self._next_paper_order_id(entry_side)
 
@@ -5120,7 +5687,7 @@ class RenkoStrategyWorker(AtmSingleLegStrategyWorker):
 
     def is_in_midday_no_trade_window(self) -> bool:
         """True during the Renko midday no-new-entry window."""
-        now = datetime.now()
+        now = _ist_now()
         no_trade_start = now.replace(
             hour=RENKO_NO_TRADE_START_HOUR,
             minute=RENKO_NO_TRADE_START_MINUTE,
@@ -5411,42 +5978,42 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
         self.exit_count += 1
 
     def minimum_strategy_rows(self) -> int:
-        return PROFIT_SHOOTER_MIN_BARS
+        # A restored/open trade needs only the latest candle for hard-stop
+        # handling.  The full warm-up remains mandatory while flat.
+        return 1 if self.pos.active else PROFIT_SHOOTER_MIN_BARS
 
-    def _compute_entry_lots(
+    def minimum_source_rows(self) -> int:
+        """Do not let source-history warm-up suppress an existing hard stop."""
+
+        return 1 if self.pos.active else MIN_BARS
+
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """
-        Profit-Shooter-only risk-based sizing.
+    ) -> SizingDecision:
+        """Return Profit Shooter's hard-budget sizing decision."""
 
-        Pick the smallest whole-lot quantity whose worst-case underlying-points
-        loss (`risk_points * lot_size`) is within `PROFIT_SHOOTER_RISK_BUDGET`.
-        `math.ceil` over a positive ratio guarantees a minimum of 1 lot, so a
-        trade is never sized to zero -- a setup either trades at >=1 lot or
-        not at all.
-        """
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Profit Shooter dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(PROFIT_SHOOTER_RISK_BUDGET / (risk_points * lot_size))
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=PROFIT_SHOOTER_RISK_BUDGET,
+            max_lots=PROFIT_SHOOTER_MAX_LOTS,
+        )
         self.log.info(
             "Profit Shooter dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
             lot_size,
             PROFIT_SHOOTER_RISK_BUDGET,
-            lots,
-            lots * lot_size,
+            PROFIT_SHOOTER_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """
@@ -5522,9 +6089,138 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# NEXT-OPEN ATM STRATEGY BASE
+# =============================================================================
+class NextOpenAtmStrategyWorker(AtmSingleLegStrategyWorker):
+    """Queue completed-bar setups for the immediately following bar open."""
+
+    derived_timeframe_minutes = 5
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ) -> None:
+        super().__init__(store, stop_event, broker)
+        self._pending_next_open: PendingNextOpenEntry | None = None
+
+    @staticmethod
+    def _market_datetime(value) -> datetime | None:
+        """Normalize a pandas/native timestamp without inventing a timezone."""
+
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        if isinstance(parsed, pd.Timestamp):
+            return parsed.to_pydatetime()
+        return parsed if isinstance(parsed, datetime) else None
+
+    def _queue_next_open_decision(self, direction: str, decision) -> bool:
+        """Store a validated one-bar intent when the engine says NEXT_OPEN."""
+
+        debug = decision.debug if isinstance(decision.debug, dict) else {}
+        if str(debug.get("entry_timing", "")).upper().strip() != "NEXT_OPEN":
+            return False
+        signal_at = self._market_datetime(debug.get("timestamp"))
+        if signal_at is None:
+            self.log.error(
+                "%s NEXT_OPEN setup rejected: signal timestamp was invalid.",
+                self.strategy_name,
+            )
+            return True
+        try:
+            pending = PendingNextOpenEntry.from_setup(
+                direction=direction,
+                signal_at=signal_at,
+                entry=decision.entry_underlying,
+                stop=decision.stop_underlying,
+                target=decision.target_underlying,
+                timeframe_minutes=self.derived_timeframe_minutes,
+            )
+        except ValueError as exc:
+            self.log.error(
+                "%s NEXT_OPEN setup rejected before queueing: %s",
+                self.strategy_name,
+                exc,
+            )
+            return True
+        self._pending_next_open = pending
+        self.log.info(
+            "%s NEXT_OPEN queued | direction=%s signal=%s expected=%s expires=%s.",
+            self.strategy_name,
+            pending.direction,
+            pending.signal_at,
+            pending.expected_open_at,
+            pending.expires_at,
+        )
+        return True
+
+    def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
+        """Execute a queued setup from the exact observed next-bar open."""
+
+        pending = self._pending_next_open
+        if pending is None:
+            return False
+        if self.pos.active:
+            self._pending_next_open = None
+            return False
+        if ohlc is None or ohlc.empty or not {"timestamp", "open"}.issubset(ohlc.columns):
+            return False
+
+        frame = ohlc[["timestamp", "open"]].copy()
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+        frame = frame.dropna(subset=["timestamp"])
+        if frame.empty:
+            return False
+        latest_at = self._market_datetime(frame["timestamp"].max())
+        if latest_at is None:
+            return False
+        if pending.expired_as_of(latest_at):
+            self.log.warning(
+                "%s NEXT_OPEN expired without entry | expected=%s latest=%s.",
+                self.strategy_name,
+                pending.expected_open_at,
+                latest_at,
+            )
+            self._pending_next_open = None
+            return True
+
+        expected = pd.Timestamp(pending.expected_open_at)
+        observed_rows = frame[frame["timestamp"] == expected]
+        if observed_rows.empty:
+            return False
+        observed_at = self._market_datetime(observed_rows.iloc[-1]["timestamp"])
+        if observed_at is None:
+            return True
+        rebased = pending.rebase_at_open(
+            observed_at=observed_at,
+            observed_entry=observed_rows.iloc[-1]["open"],
+        )
+        if rebased is None:
+            self.log.error(
+                "%s NEXT_OPEN observed row was invalid; intent remains queued until %s.",
+                self.strategy_name,
+                pending.expires_at,
+            )
+            return True
+
+        entered = self.enter_position(
+            rebased.direction,
+            rebased.entry,
+            rebased.stop,
+            target_underlying=rebased.target,
+        )
+        if entered:
+            self.entry_submit_count += 1
+            self._pending_next_open = None
+        return True
+
+
+# =============================================================================
 # GOLDMINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
 # =============================================================================
-class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
+class GoldmineStrategyWorker(NextOpenAtmStrategyWorker):
     """
     Goldmine strategy. Reads 1-minute data from the shared store, locally
     resamples it into complete 5-minute candles, then runs the SMA20/SMA200
@@ -5575,35 +6271,33 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
         # Goldmine needs SMA200 warm-up; the engine reports its own minimum.
         return self.signal_engine.minimum_history_bars()
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """
-        Risk-based sizing (same model as Profit Shooter).
+    ) -> SizingDecision:
+        """Return Goldmine's hard-budget sizing decision."""
 
-        Pick the smallest whole-lot quantity whose worst-case underlying-points
-        loss (`risk_points * lot_size`) is within `GOLDMINE_RISK_BUDGET`.
-        `math.ceil` over a positive ratio guarantees at least 1 lot, so a setup
-        either trades at >=1 lot or not at all.
-        """
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Goldmine dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(GOLDMINE_RISK_BUDGET / (risk_points * lot_size))
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=GOLDMINE_RISK_BUDGET,
+            max_lots=GOLDMINE_MAX_LOTS,
+        )
         self.log.info(
             "Goldmine dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points, lot_size, GOLDMINE_RISK_BUDGET, lots, lots * lot_size,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
+            lot_size,
+            GOLDMINE_RISK_BUDGET,
+            GOLDMINE_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """Resample 1-min OHLC into complete 5-min candles, then attach Goldmine indicators."""
@@ -5644,6 +6338,8 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
             self.signal_count += 1
 
         if decision.action == "ENTER_LONG":
+            if self._queue_next_open_decision("LONG", decision):
+                return
             if self.enter_position(
                 "LONG",
                 decision.entry_underlying,
@@ -5653,6 +6349,8 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
                 self.entry_submit_count += 1
             return
         if decision.action == "ENTER_SHORT":
+            if self._queue_next_open_decision("SHORT", decision):
+                return
             if self.enter_position(
                 "SHORT",
                 decision.entry_underlying,
@@ -5666,7 +6364,7 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
 # =============================================================================
 # MONEY MACHINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
 # =============================================================================
-class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
+class MoneyMachineStrategyWorker(NextOpenAtmStrategyWorker):
     """
     Money Machine strategy. Reads 1-minute data from the shared store, locally
     resamples it into complete 5-minute candles, then runs the SMA20/SMA200
@@ -5714,28 +6412,33 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
         # Money Machine needs SMA200 warm-up; the engine reports its own minimum.
         return self.signal_engine.minimum_history_bars()
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """Risk-based sizing (same model as Profit Shooter / Goldmine)."""
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Money Machine dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(MONEY_MACHINE_RISK_BUDGET / (risk_points * lot_size))
+    ) -> SizingDecision:
+        """Return Money Machine's hard-budget sizing decision."""
+
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=MONEY_MACHINE_RISK_BUDGET,
+            max_lots=MONEY_MACHINE_MAX_LOTS,
+        )
         self.log.info(
             "Money Machine dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points, lot_size, MONEY_MACHINE_RISK_BUDGET, lots, lots * lot_size,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
+            lot_size,
+            MONEY_MACHINE_RISK_BUDGET,
+            MONEY_MACHINE_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """Resample 1-min OHLC into complete 5-min candles, then attach Money Machine indicators."""
@@ -5770,6 +6473,8 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
             self.signal_count += 1
 
         if decision.action == "ENTER_LONG":
+            if self._queue_next_open_decision("LONG", decision):
+                return
             if self.enter_position(
                 "LONG",
                 decision.entry_underlying,
@@ -5779,6 +6484,8 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
                 self.entry_submit_count += 1
             return
         if decision.action == "ENTER_SHORT":
+            if self._queue_next_open_decision("SHORT", decision):
+                return
             if self.enter_position(
                 "SHORT",
                 decision.entry_underlying,
@@ -5860,19 +6567,16 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
     1. `square_off_hour` / `square_off_minute` (= 15:15 by default).
        The BasePaperStrategyWorker's main `run()` loop checks
        `is_after_time(self.square_off_hour, self.square_off_minute)` on
-       EVERY single poll iteration. The moment we cross that wall-clock
-       time, the loop runs `handle_square_off_and_stop()` which:
-            (a) sets a one-shot `cutoff_handled` flag so it only runs once,
-            (b) if `self.pos.active` is True -> calls `exit_position(
-                "TIME_CUTOFF")` to close the open option leg at the live
-                LTP and record a normal PnL,
-            (c) logs the day's paper summary,
-            (d) `break`s out of the run loop so the thread exits cleanly.
+       EVERY single poll iteration against an explicit Asia/Kolkata clock.
+       The moment we cross the cutoff, `handle_square_off_and_stop()`
+       blocks new entries and repeatedly calls `exit_position("TIME_CUTOFF")`
+       on a 1/2/5-second capped retry cadence. The thread reaches STOPPED
+       only after its local position and every quantity-bearing ledger leg
+       are broker-confirmed flat; the summary is logged after that proof.
        Every scenario is covered:
          - In a trade at 15:15 -> the trade is exited at TIME_CUTOFF.
          - Flat at 15:15 with no signal having fired all day -> the worker
-           still hits the cutoff branch, logs the summary, and stops the
-           thread (so it won't waste CPU polling after market close).
+           still reaches FLAT/STOPPED without unnecessary broker orders.
          - Flat at 15:15 but holding a "we already entered once" flag on
            the signal engine -> same as above, the thread exits.
 
@@ -5884,8 +6588,9 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
 
     3. `max_loss` (=Rs.5500 by default). Independent of clock time. If
        realized + open PnL ever dips below `-max_loss` the base loop
-       force-closes the active trade and stops the worker, just like the
-       time-cutoff path. Set max_loss=0 in .env to disable this.
+       enters the same retrying flatten lifecycle. A non-positive max loss
+       may still disable paper-mode risk checks, but fail-closed startup keeps
+       that strategy out of LIVE mode.
 
     EDITABLE KNOBS (all live in `.env` under "OPENING_STRIKE_*")
     -----------------------------------------------------------
@@ -6218,7 +6923,7 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
         has ever succeeded). The caller treats `None`/empty as "skip
         this evaluation" and tries again on the next poll.
         """
-        now = datetime.now()
+        now = _ist_now()
 
         # If a cached frame is fresh enough, use it as-is to avoid
         # spending an API call.
@@ -6486,10 +7191,12 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
         if decision.action == "BUY_CALL":
             if self.enter_position("LONG", decision.entry_underlying):
                 self.entry_submit_count += 1
+                self.signal_engine.acknowledge_entry()
             return
         if decision.action == "BUY_PUT":
             if self.enter_position("SHORT", decision.entry_underlying):
                 self.entry_submit_count += 1
+                self.signal_engine.acknowledge_entry()
             return
 
 
@@ -7004,6 +7711,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
 
     def _enter_hedged_bullish_position(self, entry_underlying: float, latest_candle_ts) -> bool:
         """Open a new hedged bullish paper position (SELL Rs.160 PE + BUY Rs.10 PE)."""
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=entry_underlying)
         if spot <= 0:
             self.log.warning("Skipping bullish entry because NIFTY spot LTP was unavailable.")
@@ -7595,6 +8304,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
 
     def _enter_hedged_bearish_position(self, entry_underlying: float, latest_candle_ts) -> bool:
         """Open a new hedged bearish paper position (SELL Rs.160 CE + BUY Rs.10 CE)."""
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=entry_underlying)
         if spot <= 0:
             self.log.warning("Skipping bearish entry because NIFTY spot LTP was unavailable.")
@@ -7829,16 +8540,24 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         open. If an exit fires, we skip the entry path for that poll.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
@@ -8259,6 +8978,16 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
     # ------------------------------------------------------------------
     # Lifecycle / risk overrides (we use ce_pos+pe_pos, not self.pos)
     # ------------------------------------------------------------------
+    def _paper_positions_active(self) -> bool:
+        """Return whether either independently managed spread is open."""
+
+        return self.ce_pos.active or self.pe_pos.active
+
+    def _flatten_additional_positions(self, reason: str) -> None:
+        """Drop reference-only subscriptions once shutdown has started."""
+
+        self._unsubscribe_unentered_legs()
+
     def _get_open_position_pnl(self) -> float:
         """
         Live mark-to-market PnL summed across BOTH sides.
@@ -8315,48 +9044,14 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             self._exit_side("PE", reason)
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-        """One-time shutdown when the per-lot max loss is breached."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.error(
-            "MAX_LOSS breached | Limit=%.2f (%.0f * %d lots) | "
-            "SessionPnL=%.2f | OpenPnL=%.2f. Closing both sides and stopping.",
-            self.max_loss,
-            DELTA20_MAX_LOSS_PER_LOT,
-            self.lots,
-            total_pnl,
-            open_pnl,
-        )
-        try:
-            self.exit_position("MAX_LOSS_BREACH")
-        except Exception as exc:
-            self.log.exception("Error while exiting on max-loss breach: %s", exc)
-        self._unsubscribe_unentered_legs()
-        # HEDGE-001: last forced attempt to close any orphaned live leg.
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+        """Use the shared retrying lifecycle for the combined loss limit."""
+
+        super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
     def handle_square_off_and_stop(self) -> None:
-        """One-time shutdown at the daily 15:20 cutoff."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.info(
-            "%02d:%02d cutoff reached. Closing any open sides and halting trading for the day.",
-            self.square_off_hour,
-            self.square_off_minute,
-        )
-        try:
-            self.exit_position("TIME_CUTOFF")
-        except Exception as exc:
-            self.log.exception("Error while exiting at cutoff: %s", exc)
-        self._unsubscribe_unentered_legs()
-        # HEDGE-001: last forced attempt to close any orphaned live leg.
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day.")
+        """Use the shared retrying lifecycle at the daily cutoff."""
+
+        super().handle_square_off_and_stop()
 
     def summary_text(self) -> str:
         return (
@@ -8394,21 +9089,29 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         whole day - we log the trace and continue on the next poll.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 # 1. Risk check first. If the combined PnL across both
                 #    sides has dipped below -(per_lot * lots), we shut
-                #    everything down and break out of the loop.
+                #    every side down through the retrying lifecycle.
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 # 2. Daily time cutoff (15:20 by default). Close anything
                 #    still open and stop the worker for the day.
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 # 3. Pre-open wait. We do nothing before 09:20 - that's
                 #    when the reference snapshot is taken. The
@@ -8482,7 +9185,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         On success this branch is never reached again because `run`
         gates it with `self.reference_captured`.
         """
-        now = datetime.now()
+        now = _ist_now()
         if (
             self.last_capture_attempt_at is not None
             and (now - self.last_capture_attempt_at) < self.capture_backoff
@@ -8934,6 +9637,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             True on a successful entry, False on any guard failure
             (missing hedge LTP, invalid lot size, etc.).
         """
+        if not self._market_data_entries_allowed():
+            return False
         # Pull this side's metadata. We deliberately ignore the position
         # / done flags here - they were already checked by `_check_entry`.
         _, _, monitor_meta, hedge_meta, _, _ = self._side_state(side)
@@ -9551,6 +10256,16 @@ class LongStrangleWorker(BasePaperStrategyWorker):
     # ------------------------------------------------------------------
     # Risk / lifecycle overrides (we use ce_pos + pe_pos, not self.pos)
     # ------------------------------------------------------------------
+    def _paper_positions_active(self) -> bool:
+        """Return whether either long-strangle leg remains open."""
+
+        return self.ce_pos.active or self.pe_pos.active
+
+    def _flatten_additional_positions(self, reason: str) -> None:
+        """Drop momentum-watch subscriptions after shutdown is requested."""
+
+        self._unsubscribe_armed_legs()
+
     def _get_open_position_pnl(self) -> float:
         """
         Live mark-to-market PnL summed across both legs.
@@ -9584,41 +10299,14 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             self._exit_leg("PE", reason)
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-        """One-time shutdown when the strategy-wide max loss is breached."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.error(
-            "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
-            "Closing both legs and stopping.",
-            self.max_loss, total_pnl, open_pnl,
-        )
-        try:
-            self.exit_position("MAX_LOSS_BREACH")
-        except Exception as exc:
-            self.log.exception("Error while exiting on max-loss breach: %s", exc)
-        self._sweep_orphan_live_legs(force=True)
-        self._unsubscribe_armed_legs()
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+        """Use the shared retrying lifecycle for the basket loss limit."""
+
+        super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
     def handle_square_off_and_stop(self) -> None:
-        """One-time shutdown at the daily square-off cutoff (default 15:15)."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.info(
-            "%02d:%02d cutoff reached. Closing any open legs and halting trading for the day.",
-            self.square_off_hour, self.square_off_minute,
-        )
-        try:
-            self.exit_position("TIME_CUTOFF")
-        except Exception as exc:
-            self.log.exception("Error while exiting at cutoff: %s", exc)
-        self._sweep_orphan_live_legs(force=True)
-        self._unsubscribe_armed_legs()
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day.")
+        """Use the shared retrying lifecycle at the daily cutoff."""
+
+        super().handle_square_off_and_stop()
 
     def summary_text(self) -> str:
         return (
@@ -9647,16 +10335,24 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         cannot kill the worker for the whole day.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
@@ -9720,6 +10416,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         order placement / bookkeeping is shared with the re-entry path through
         `_buy_leg`.
         """
+        if not self._market_data_entries_allowed():
+            return False
         leg_pos = self._leg_pos(side)
         if leg_pos.active:
             return True
@@ -9749,6 +10447,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         stashed `_last_contract` provide these). `is_reentry` only changes the
         log/telemetry wording and bumps the per-leg re-entry counter.
         """
+        if not self._market_data_entries_allowed():
+            return False
         option_sec_id = int(contract["security_id"])
         option_segment = str(contract["exchange_segment"])
         trading_symbol = str(contract["trading_symbol"])
@@ -10413,10 +11113,11 @@ STRATEGY_ENV_PREFIX = {
 SLHuntingAIWorker = None
 if SL_HUNTING_AVAILABLE:
     _sl_hunting_ops = _signal_gen_ops("SL_HUNTING")
-    # Dynamic position sizing: ~Rs.2500 worst-case risk per trade (the same house
-    # convention/default as Profit Shooter). The agent does NOT choose lots; this is
-    # computed from the agent's underlying stop distance.
+    # Dynamic position sizing: the NIFTY leg never exceeds the configured risk
+    # budget. The agent does NOT choose lots; the runner floors affordable lots
+    # from the agent's underlying stop distance and caps them at MAX_LOTS.
     SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
+    SL_HUNTING_MAX_LOTS = _env_int("SL_HUNTING_MAX_LOTS", 5)
     # BankNIFTY mirror (Intraday Hunter style): every NIFTY entry is mirrored
     # with the SAME lot count on the BankNIFTY ATM option of the CURRENT
     # BankNIFTY monthly expiry (rolling forward inside its final week -- see
@@ -10477,6 +11178,10 @@ if SL_HUNTING_AVAILABLE:
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
+            # Agent actions and mechanical liquidation share this lock. The
+            # tool context rechecks its generation/deadline while holding it,
+            # so square-off cannot race a late agent entry.
+            self._agent_action_lock = threading.RLock()
             # Optional learned-lessons block (loaded ONCE at construction so the prompt
             # prefix stays stable per session — preserves prompt caching). Gated + off
             # by default; only APPROVED lessons are in the live store.
@@ -10495,14 +11200,17 @@ if SL_HUNTING_AVAILABLE:
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
                 lessons_block=lessons_block,
-                # SLH-001: bound each SDK call. decide() blocks THIS worker's
-                # thread -- the same thread that enforces the per-poll
-                # stop/target check, max-loss and the 15:15 square-off -- so a
-                # hung CLI call must cost one bar's decision, not the safety net.
+                # Bound the off-loop SDK call to 5-120 seconds (default 90).
+                # Mechanical stop/target, max-loss and square-off keep polling
+                # independently while this inference is running.
                 sdk_timeout_seconds=_env_float("SL_HUNTING_SDK_TIMEOUT_SECONDS", 90.0),
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
+            self._agent_inference_lock = threading.Lock()
+            self._agent_inference_thread = None
+            self._agent_inference_result = None
+            self._agent_generation = 0
             # Throttle: consult the LLM only once per NEW completed bar (not per poll).
             self._last_decision_bar = None
             # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
@@ -10934,25 +11642,34 @@ if SL_HUNTING_AVAILABLE:
             leaving the NIFTY leg running. Does not touch self.pos or the journal row."""
             self._close_bnf_mirror(reason)
 
+        def _paper_positions_active(self) -> bool:
+            """Treat either NIFTY or its BankNIFTY mirror as owned exposure."""
+
+            return super()._paper_positions_active() or self._mirror_pos.active
+
+        def _flatten_additional_positions(self, reason: str) -> None:
+            """Retry a lone BankNIFTY mirror on every due flatten pass."""
+            self._invalidate_agent_inference(reason)
+            with self._agent_action_lock:
+                if self._mirror_pos.active:
+                    self._close_bnf_mirror(reason)
+
+        def request_worker_shutdown(self, reason: str) -> None:
+            """Disarm any in-flight inference before the shared flatten lifecycle."""
+            self._invalidate_agent_inference(reason)
+            super().request_worker_shutdown(reason)
+
         def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-            """Basket-level max-loss closes BOTH legs. The base closes the NIFTY leg (and
-            its mirror via after_exit); if only a lone mirror remains (agent had cut the
-            NIFTY leg alone earlier), sweep it too so nothing leaks open."""
-            super().handle_max_loss_and_stop(total_pnl, open_pnl)
-            if self._mirror_pos.active:
-                try:
-                    self._close_bnf_mirror("MAX_LOSS_BREACH")
-                except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
-                    self.log.warning("Lone BNF mirror max-loss close failed: %s", exc)
+            """Basket-level max-loss uses the shared retrying lifecycle."""
+            self._invalidate_agent_inference("MAX_LOSS")
+            with self._agent_action_lock:
+                super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
         def handle_square_off_and_stop(self) -> None:
-            """15:15 square-off closes BOTH legs. Same orphan-mirror sweep as max-loss."""
-            super().handle_square_off_and_stop()
-            if self._mirror_pos.active:
-                try:
-                    self._close_bnf_mirror("TIME_CUTOFF")
-                except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
-                    self.log.warning("Lone BNF mirror square-off close failed: %s", exc)
+            """15:15 square-off uses the shared retrying lifecycle."""
+            self._invalidate_agent_inference("TIME_CUTOFF")
+            with self._agent_action_lock:
+                super().handle_square_off_and_stop()
 
         def _journal_exit_static(self, closed_position, reason: str) -> dict:
             """The NIFTY-leg exit context for the journal row (everything EXCEPT the
@@ -11020,30 +11737,160 @@ if SL_HUNTING_AVAILABLE:
             # Enough derived bars for swings / fibo / structure, with a margin.
             return max(40, int(getattr(SL_HUNTING_INDICATOR_CONFIG, "swing_lookback", 120)) // 2)
 
-        def _compute_entry_lots(self, entry_underlying: float, stop_underlying: float, lot_size: int) -> int:
-            """Dynamic risk-based sizing (~SL_HUNTING_RISK_BUDGET, default Rs.2500),
-            from the agent's UNDERLYING stop distance. Shares ONE implementation with
-            the standalone executor via `risk_based_lots`, and matches the Profit
-            Shooter sizer (ceil, minimum 1 lot — a setup trades at >=1 lot or not at all).
+        def _compute_entry_sizing(
+            self,
+            entry_underlying: float,
+            stop_underlying: float,
+            lot_size: int,
+        ) -> SizingDecision:
+            """Return the shared hard-budget decision for the NIFTY leg.
+
+            The equal-lot BankNIFTY mirror remains operator-accepted and can
+            roughly double total basket risk; this budget applies to NIFTY.
             """
-            lots = SL_HUNTING_EXECUTOR_MODULE.risk_based_lots(
-                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, self.lots
+            decision = SizingDecision.from_risk_budget(
+                entry=entry_underlying,
+                stop=stop_underlying,
+                lot_size=lot_size,
+                budget=SL_HUNTING_RISK_BUDGET,
+                max_lots=SL_HUNTING_MAX_LOTS,
             )
             self.log.info(
-                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s risk_budget=%.0f -> lots=%s qty=%s.",
-                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, lots, lots * lot_size,
+                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s "
+                "risk_budget=%.0f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+                entry_underlying,
+                stop_underlying,
+                lot_size,
+                SL_HUNTING_RISK_BUDGET,
+                SL_HUNTING_MAX_LOTS,
+                decision.accepted,
+                decision.lots,
+                decision.quantity,
             )
-            return lots
+            return decision
 
         def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
             return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+
+        def _agent_generation_is_current(self, generation: int) -> bool:
+            """Called inside the tool's final execution lock."""
+            return generation == self._agent_generation and not self.stop_event.is_set()
+
+        def _invalidate_agent_inference(self, reason: str) -> None:
+            """Make every previously issued tool capability stale immediately."""
+            with self._agent_action_lock:
+                self._agent_generation += 1
+            self.log.debug("SL Hunting inference invalidated: %s", reason)
+
+        def _consume_agent_decision(self) -> None:
+            """Collect a completed background pass without ever waiting for it.
+
+            The harvest half of the inference cycle: `_start_agent_inference`
+            launches a daemon thread and returns immediately; every later poll
+            calls this first to pick up the finished decision (log + journal
+            it) -- never `join()`ing, so a hung SDK call can never delay the
+            stop/target, max-loss, or 15:15 square-off checks that run right
+            after.  Any real order the agent placed already happened DURING
+            the pass via the locked tool context; a stale generation here only
+            skips the bookkeeping, never an order.
+            """
+            payload = None
+            with self._agent_inference_lock:
+                thread = self._agent_inference_thread
+                if thread is None or thread.is_alive():
+                    return
+                payload = self._agent_inference_result
+                self._agent_inference_thread = None
+                self._agent_inference_result = None
+            if payload is None:
+                return
+            generation, decision, was_active, strategy_frame, bnf_candles = payload
+            if generation != self._agent_generation:
+                self.log.info("Discarding late SL Hunting result for stale generation %s.", generation)
+                return
+            if decision.action != "HOLD":
+                self.log.info(
+                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
+                    decision.action, decision.confidence, decision.setup,
+                    decision.stop, decision.target, decision.reasoning,
+                )
+            if self._decisions_path is not None:
+                try:
+                    SL_HUNTING_JOURNAL_MODULE.append_decision(
+                        self._decisions_path,
+                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
+                            decision, strategy_frame, bnf_candles
+                        ),
+                    )
+                except Exception as exc:
+                    self.log.warning("SL Hunting decision-log failed: %s", exc)
+            if (
+                self._journal is not None
+                and self._open_trade_id is None
+                and not was_active
+                and self.pos.active
+            ):
+                self._journal_open_row(decision, strategy_frame, bnf_candles)
+
+        def _start_agent_inference(
+            self, strategy_frame: pd.DataFrame, bnf_candles: pd.DataFrame | None
+        ) -> bool:
+            """Start one daemon inference pass; return immediately to the risk loop.
+
+            At most one pass exists at a time (returns False while one is
+            running).  Bumping the generation counter first makes every
+            previously issued tool capability stale, and deep-copying both
+            frames gives the pass an immutable market snapshot the fetcher
+            thread cannot mutate mid-inference.
+            """
+            with self._agent_inference_lock:
+                if self._agent_inference_thread is not None:
+                    return False
+                with self._agent_action_lock:
+                    self._agent_generation += 1
+                    generation = self._agent_generation
+                    was_active = self.pos.active
+                nifty_snapshot = strategy_frame.copy(deep=True)
+                bnf_snapshot = bnf_candles.copy(deep=True) if bnf_candles is not None else None
+
+                def _run_agent() -> None:
+                    decision = self.agent.decide(
+                        nifty_snapshot,
+                        self._executor,
+                        bnf_candles=bnf_snapshot,
+                        live_active=bool(self.live_trading),
+                        broker=LIVE_BROKER,
+                        generation=generation,
+                        generation_is_current=self._agent_generation_is_current,
+                        execution_lock=self._agent_action_lock,
+                    )
+                    with self._agent_inference_lock:
+                        self._agent_inference_result = (
+                            generation,
+                            decision,
+                            was_active,
+                            nifty_snapshot,
+                            bnf_snapshot,
+                        )
+
+                self._agent_inference_thread = threading.Thread(
+                    target=_run_agent,
+                    name="sl-hunting-inference",
+                    daemon=True,
+                )
+                self._agent_inference_thread.start()
+                return True
 
         def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
             if strategy_frame is None or strategy_frame.empty:
                 return
 
+            # Harvest only completed work. This never joins or waits, so the
+            # mechanical stop/max-loss/square-off path remains responsive.
+            self._consume_agent_decision()
+
             # Enforce the agent's UNDERLYING stop/target on EVERY poll (not just once
-            # per bar), so the ~Rs.2500 risk is actually bounded between the agent's
+            # per bar), so the configured risk guard stays active between the agent's
             # bar-cadence decisions -- the agent only re-decides per completed bar, so
             # we cannot wait for it to call EXIT. Mirrors CPR Algo 3's spot stop/target
             # check; _get_underlying_spot reads the live LTP cache.
@@ -11055,7 +11902,9 @@ if SL_HUNTING_AVAILABLE:
                     )
                     if hit:
                         self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
-                        self.exit_position(hit)
+                        self._invalidate_agent_inference(hit)
+                        with self._agent_action_lock:
+                            self.exit_position(hit)
                         return
 
             # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
@@ -11075,9 +11924,13 @@ if SL_HUNTING_AVAILABLE:
 
             # Optional BankNIFTY for the agent's NF/BNF cross-confirmation. Fetched
             # on-demand via the shared broker (same fetch_index_1m_ohlc path as the
-            # central fetcher / CPR Algo 3). Any failure -> NIFTY-only this bar.
+            # central fetcher / CPR Algo 3). A flat worker skips the decision when
+            # this stream is unavailable or timestamp-skewed; an open worker may
+            # still use the NIFTY-only pass for a discretionary EXIT.
             bnf_candles = None
+            bnf_ready = not self._use_bnf
             if self._use_bnf:
+                self._last_bnf_close = 0.0
                 try:
                     bnf_1m = self.broker.fetch_index_1m_ohlc(
                         BANKNIFTY_INDEX_SECURITY_ID,
@@ -11086,48 +11939,38 @@ if SL_HUNTING_AVAILABLE:
                     )
                     bnf_candles = resample_ohlc_from_1m(bnf_1m, self.derived_timeframe_minutes)
                     if bnf_candles is not None and not bnf_candles.empty:
-                        # Remember BankNIFTY's latest close for the mirror leg's
-                        # ATM pick (no extra API call at entry time).
-                        self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
+                        bnf_latest_bar = bnf_candles["timestamp"].iloc[-1]
+                        if bnf_latest_bar == latest_bar:
+                            bnf_ready = True
+                            # Remember only an aligned BankNIFTY close for the
+                            # mirror's ATM pick (no stale cross-index mirror).
+                            self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
+                        else:
+                            self.log.warning(
+                                "BankNIFTY latest bar %s is not aligned with NIFTY %s; "
+                                "cross-index input is discarded.",
+                                bnf_latest_bar,
+                                latest_bar,
+                            )
+                            bnf_candles = None
                 except Exception as exc:
                     self.log.warning(
-                        "BankNIFTY fetch failed (%s); SL Hunting goes NIFTY-only this bar.", exc
+                        "BankNIFTY fetch failed (%s); cross-index input is unavailable this bar.", exc
                     )
 
-            # The agent acts via the order tool DURING decide() (it calls our
-            # enter_position / exit_position through the executor); the returned
-            # decision is the agent's own record of what it did, for the log.
-            was_active = self.pos.active
-            decision = self.agent.decide(
-                strategy_frame,
-                self._executor,
-                bnf_candles=bnf_candles,
-                live_active=bool(self.live_trading),
-                broker=LIVE_BROKER,
-            )
-            if decision.action != "HOLD":
-                self.log.info(
-                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
-                    decision.action, decision.confidence, decision.setup,
-                    decision.stop, decision.target, decision.reasoning,
+            # A flat worker must not create an unmirrored NIFTY position from a
+            # stale/missing BankNIFTY confirmation. Open positions may still ask
+            # the agent for a discretionary EXIT; their mechanical risk checks
+            # already ran above and never depend on BankNIFTY availability.
+            if self._use_bnf and not bnf_ready and not self.pos.active:
+                self.log.warning(
+                    "SL Hunting entry evaluation skipped: current/aligned BankNIFTY data is required."
                 )
-            # Decision log: persist EVERY decision (HOLD included) to its own JSONL so the
-            # operator can review what the agent decided each bar. Best-effort.
-            if self._decisions_path is not None:
-                try:
-                    SL_HUNTING_JOURNAL_MODULE.append_decision(
-                        self._decisions_path,
-                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
-                            decision, strategy_frame, bnf_candles
-                        ),
-                    )
-                except Exception as exc:  # never let logging disturb trading
-                    self.log.warning("SL Hunting decision-log failed: %s", exc)
-            # Journal a fresh entry (flat -> active during decide). Exits are journaled
-            # in after_exit, so EVERY close path is captured there.
-            if (self._journal is not None and self._open_trade_id is None
-                    and not was_active and self.pos.active):
-                self._journal_open_row(decision, strategy_frame, bnf_candles)
+                return
+
+            # Inference runs on its own daemon thread. At most one pass exists;
+            # later polls keep enforcing hard risk and only harvest when complete.
+            self._start_agent_inference(strategy_frame, bnf_candles)
 
     SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
     SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"
@@ -11222,6 +12065,28 @@ def _format_inr(value) -> str:
     return f"{sign}₹{abs(amount):,.2f}"
 
 
+def _execution_mode_parts(mode) -> set[str]:
+    """Normalize detailed order tags into daily PAPER/LIVE provenance parts."""
+    normalized = str(mode or "").strip().upper()
+    if normalized == "MIXED":
+        return {"PAPER", "LIVE"}
+    if normalized in {"LIVE", "LIVE_REJECTED", "LIVE_INDETERMINATE"}:
+        return {"LIVE"}
+    # PAPER_FALLBACK is deliberately paper provenance: the broker explicitly
+    # rejected the entry with zero fill and the simulated trade was opened.
+    return {"PAPER"}
+
+
+def _combined_execution_mode(modes) -> str:
+    """Combine worker/session modes into one PAPER, LIVE, or MIXED label."""
+    parts: set[str] = set()
+    for mode in modes:
+        parts.update(_execution_mode_parts(mode))
+    if len(parts) > 1:
+        return "MIXED"
+    return next(iter(parts), "PAPER")
+
+
 def _format_eod_summary(event: dict) -> str:
     """
     Build the end-of-day cumulative P&L message: one line per strategy worker
@@ -11236,8 +12101,12 @@ def _format_eod_summary(event: dict) -> str:
         lines.append(f"<i>{ts}</i>")
     for row in sorted(rows, key=lambda r: _safe_float(r.get("pnl", 0.0), 0.0), reverse=True):
         strat = html.escape(str(row.get("strategy", "?")))
+        row_mode = html.escape(str(row.get("mode", "PAPER")))
         trades = _to_int_safe(row.get("trades", 0), 0)
-        lines.append(f"{strat}: <b>{_format_inr(row.get('pnl', 0.0))}</b> ({trades} trade(s))")
+        lines.append(
+            f"{strat} [{row_mode}]: <b>{_format_inr(row.get('pnl', 0.0))}</b> "
+            f"({trades} trade(s))"
+        )
     lines.append("──────────")
     lines.append(
         f"<b>Total: {_format_inr(event.get('total_pnl', 0.0))} "
@@ -11439,10 +12308,14 @@ class TelegramMessageWorker(threading.Thread):
                     "Telegram API returned HTTP %s on attempt %d: %s",
                     response.status_code,
                     attempt,
-                    response.text[:300],
+                    redact_text(response.text[:300], (self.bot_token,)),
                 )
             except Exception as exc:
-                self.log.warning("Telegram send error on attempt %d: %s", attempt, exc)
+                self.log.warning(
+                    "Telegram send error on attempt %d: %s",
+                    attempt,
+                    redact_text(exc, (self.bot_token,)),
+                )
             if attempt < 3:
                 self.stop_event.wait(1.5 * attempt)
         self.failed_count += 1
@@ -11465,12 +12338,21 @@ def _publish_eod_summary(workers, event_queue) -> None:
     for worker in workers:
         pnl = _safe_float(getattr(worker, "realized_pnl", 0.0), 0.0)
         trades = _to_int_safe(getattr(worker, "completed_trades", 0), 0)
-        rows.append({"strategy": worker.strategy_name, "pnl": pnl, "trades": trades})
+        mode_getter = getattr(worker, "session_execution_mode", None)
+        if callable(mode_getter):
+            worker_mode = mode_getter()
+        else:
+            worker_mode = "LIVE" if getattr(worker, "live_trading", False) else "PAPER"
+        rows.append(
+            {"strategy": worker.strategy_name, "pnl": pnl, "trades": trades, "mode": worker_mode}
+        )
         total_pnl += pnl
         total_trades += trades
 
+    overall_mode = _combined_execution_mode(row["mode"] for row in rows)
     logger.info(
-        "END-OF-DAY cumulative paper P&L across %d workers = %.2f over %d trade(s).",
+        "END-OF-DAY cumulative %s P&L across %d workers = %.2f over %d trade(s).",
+        overall_mode,
         len(workers),
         total_pnl,
         total_trades,
@@ -11485,7 +12367,7 @@ def _publish_eod_summary(workers, event_queue) -> None:
                 "total_pnl": total_pnl,
                 "total_trades": total_trades,
                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "mode": "PAPER",
+                "mode": overall_mode,
             }
         )
     except Exception:
@@ -11542,7 +12424,8 @@ _PNL_SHEET_ROW_LABELS = {
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
-# Only Paper-summary lines inside this window are used for the sheet. Covers
+_PNL_MODE_RE = re.compile(r"\bMode=(PAPER|LIVE|MIXED)\b")
+# Only result-summary lines inside this window are used for the sheet. Covers
 # max-loss during the session (from 9:15) through the last square-off (15:20)
 # while ignoring after-market test runs that log fresh summaries at 17:00+.
 _PNL_LOG_WINDOW_START = (9, 15)
@@ -11580,8 +12463,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
     """
     Parse the runner's log for each strategy's end-of-day realised P&L per day.
 
-    Reads the per-strategy "Paper summary | ... RealizedPnL=<pnl>" lines that
-    every worker logs at square-off / max-loss. The log format is
+    Reads the per-strategy "Result summary | Mode=<mode> | ... RealizedPnL=<pnl>"
+    lines that every worker logs at square-off / max-loss. Legacy "Paper summary"
+    rows remain readable as PAPER. The log format is
     "<asctime> | <level> | <threadName> | <message>", and threadName is
     "<strategy_name>Thread", so we recover the date (from asctime), the strategy
     (from the thread name), and the figure. Returns {"YYYY-MM-DD":
@@ -11602,7 +12486,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
             for line in handle:
                 # Cheap pre-filter: skip everything that isn't a P&L summary line
                 # before doing the costlier split/regex work below.
-                if "Paper summary" not in line or "RealizedPnL=" not in line:
+                is_legacy_paper = "Paper summary" in line
+                is_mode_result = "Result summary" in line
+                if (not is_legacy_paper and not is_mode_result) or "RealizedPnL=" not in line:
                     continue
                 # Break into the 4 log fields. maxsplit=3 keeps the message intact
                 # even if the message itself contains " | ".
@@ -11630,10 +12516,19 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                 match = _PNL_LOG_LINE_RE.search(message)
                 if not match:
                     continue
+                mode = "PAPER"
+                if is_mode_result:
+                    mode_match = _PNL_MODE_RE.search(message)
+                    if not mode_match:
+                        continue
+                    mode = mode_match.group(1)
                 try:
                     # Last write wins: a later summary for the same strategy/day
                     # (e.g. a re-entry's final line) overwrites the earlier one.
-                    result.setdefault(date_str, {})[strategy] = float(match.group(1))
+                    result.setdefault(date_str, {})[strategy] = {
+                        "pnl": float(match.group(1)),
+                        "mode": mode,
+                    }
                 except ValueError:
                     continue
     except Exception as exc:  # pragma: no cover - defensive
@@ -11689,11 +12584,31 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
         if date_str[:7] != current_month or date_str not in date_to_col:
             continue
         col_idx = date_to_col[date_str]
-        for strategy, pnl in per_strategy.items():
+        for strategy, result_record in per_strategy.items():
             # Map the code's strategy name to the sheet's exact row label.
-            label = _PNL_SHEET_ROW_LABELS.get(strategy)
-            if label is None or label not in label_to_row:
+            base_label = _PNL_SHEET_ROW_LABELS.get(strategy)
+            if isinstance(result_record, dict):
+                pnl = result_record.get("pnl")
+                mode = str(result_record.get("mode", "")).strip().upper()
+                if mode not in {"PAPER", "LIVE", "MIXED"}:
+                    unmatched.add(strategy)
+                    continue
+            else:
+                # Backward-compatible input for older callers/tests: numeric
+                # records came from the legacy Paper-summary parser.
+                pnl = result_record
+                mode = "PAPER"
+            # Keep the existing paper rows intact. Live and mixed results require
+            # distinct numeric rows so broker P&L can never contaminate the paper
+            # tracker's historical series.
+            if base_label is None:
                 # No mapping, or the sheet is missing that row -> report it.
+                unmatched.add(strategy)
+                continue
+            label = base_label if mode == "PAPER" else f"{base_label} [{mode}]"
+            if label not in label_to_row:
+                # Live and mixed modes use dedicated rows. If the operator has
+                # not added that row yet, warn instead of overwriting paper P&L.
                 unmatched.add(strategy)
                 continue
             row_idx = label_to_row[label]
@@ -11845,6 +12760,144 @@ def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
     return _env_bool(f"{prefix}_VIRTUAL_TRADING", True)
 
 
+_RISK_BUDGET_PREFIXES = frozenset(
+    {"PROFIT_SHOOTER", "GOLDMINE", "MONEY_MACHINE", "SL_HUNTING"}
+)
+
+
+def _live_config_errors(
+    worker: BasePaperStrategyWorker,
+    prefix: str,
+) -> tuple[str, ...]:
+    """Return fail-closed errors for settings that bound live-money risk.
+
+    The forgiving ``_env_int``/``_env_float`` helpers remain useful for paper
+    experiments.  Live trading needs the stricter path below so malformed raw
+    text cannot silently turn into a plausible default.
+    """
+
+    errors: list[str] = []
+    normalized_prefix = str(prefix).upper().strip()
+
+    # The two legacy hedged workers share Supertrend's session cutoff.  Their
+    # live-gate prefixes still own lots/max-loss, so validate the env names the
+    # worker actually resolved rather than plausible-but-unused aliases.
+    start_clock_prefix = (
+        "SUPERTREND" if normalized_prefix == "BULLISH" else normalized_prefix
+    )
+    cutoff_clock_prefix = (
+        "SUPERTREND"
+        if normalized_prefix in {"BULLISH", "BEARISH"}
+        else normalized_prefix
+    )
+
+    raw_rules = {
+        f"{normalized_prefix}_LOTS": ("positive_integer", None),
+        f"{start_clock_prefix}_TRADING_START_HOUR": (
+            "integer_range",
+            (0, 23),
+        ),
+        f"{start_clock_prefix}_TRADING_START_MINUTE": (
+            "integer_range",
+            (0, 59),
+        ),
+        f"{cutoff_clock_prefix}_SQUARE_OFF_HOUR": (
+            "integer_range",
+            (0, 23),
+        ),
+        f"{cutoff_clock_prefix}_SQUARE_OFF_MINUTE": (
+            "integer_range",
+            (0, 59),
+        ),
+        f"{normalized_prefix}_MAX_LOSS": ("positive", None),
+        f"{normalized_prefix}_MAX_LOSS_PER_LOT": ("positive", None),
+        f"{normalized_prefix}_DAILY_MAX_LOSS_PCT": ("positive", None),
+        f"{normalized_prefix}_STARTING_CAPITAL": ("positive", None),
+    }
+    if normalized_prefix in _RISK_BUDGET_PREFIXES:
+        raw_rules[f"{normalized_prefix}_RISK_BUDGET"] = ("positive", None)
+        raw_rules[f"{normalized_prefix}_MAX_LOTS"] = (
+            "positive_integer",
+            None,
+        )
+
+    for name, (rule, bounds) in raw_rules.items():
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = float(raw.strip().strip('"').strip("'"))
+        except (TypeError, ValueError):
+            errors.append(f"{name} is not numeric")
+            continue
+        if not math.isfinite(value):
+            errors.append(f"{name} must be finite")
+            continue
+        if rule == "positive" and value <= 0:
+            errors.append(f"{name} must be positive")
+        elif rule == "positive_integer" and (
+            value <= 0 or not value.is_integer()
+        ):
+            errors.append(f"{name} must be a positive integer")
+        elif rule == "integer_range":
+            low, high = bounds
+            if not value.is_integer() or not low <= value <= high:
+                errors.append(f"{name} must be an integer from {low} to {high}")
+
+    lots = getattr(worker, "lots", None)
+    if isinstance(lots, bool) or not isinstance(lots, int) or lots <= 0:
+        errors.append("resolved lots must be a positive integer")
+
+    max_loss = getattr(worker, "max_loss", None)
+    if (
+        isinstance(max_loss, bool)
+        or not isinstance(max_loss, (int, float))
+        or not math.isfinite(float(max_loss))
+        or float(max_loss) <= 0
+    ):
+        errors.append("resolved max-loss must be finite and positive")
+
+    start_hour = getattr(worker, "trading_start_hour", None)
+    start_minute = getattr(worker, "trading_start_minute", None)
+    cutoff_hour = getattr(worker, "square_off_hour", None)
+    cutoff_minute = getattr(worker, "square_off_minute", None)
+    clock_values = (start_hour, start_minute, cutoff_hour, cutoff_minute)
+    valid_clock_types = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in clock_values
+    )
+    if not valid_clock_types or not (
+        0 <= start_hour <= 23
+        and 0 <= cutoff_hour <= 23
+        and 0 <= start_minute <= 59
+        and 0 <= cutoff_minute <= 59
+    ):
+        errors.append("resolved trading start/cutoff must be valid HH:MM values")
+    elif (cutoff_hour, cutoff_minute) <= (start_hour, start_minute):
+        errors.append("resolved cutoff must be after the trading start")
+
+    if normalized_prefix in _RISK_BUDGET_PREFIXES:
+        budget_name = f"{normalized_prefix}_RISK_BUDGET"
+        budget = globals().get(budget_name)
+        if (
+            isinstance(budget, bool)
+            or not isinstance(budget, (int, float))
+            or not math.isfinite(float(budget))
+            or float(budget) <= 0
+        ):
+            errors.append(f"resolved {budget_name} must be finite and positive")
+        max_lots_name = f"{normalized_prefix}_MAX_LOTS"
+        max_lots = globals().get(max_lots_name)
+        if (
+            isinstance(max_lots, bool)
+            or not isinstance(max_lots, int)
+            or max_lots <= 0
+        ):
+            errors.append(f"resolved {max_lots_name} must be a positive integer")
+
+    return tuple(dict.fromkeys(errors))
+
+
 def _configure_startup_live_trading(
     workers: list[BasePaperStrategyWorker],
     store: SharedMarketDataStore,
@@ -11864,8 +12917,10 @@ def _configure_startup_live_trading(
     for worker in workers:
         worker.live_trading = False
     store.startup_exposure_audit = None
+    store.live_session_started = False
 
     candidate_live_workers: list[BasePaperStrategyWorker] = []
+    invalid_live_evidence: list[str] = []
     for worker in workers:
         prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
         if prefix is None:
@@ -11875,7 +12930,33 @@ def _configure_startup_live_trading(
             )
             continue
         if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
+            config_errors = _live_config_errors(worker, prefix)
+            if config_errors:
+                logger.error(
+                    "LIVE CONFIG INVALID for %s; forcing this strategy to PAPER | %s",
+                    worker.strategy_name,
+                    "; ".join(config_errors),
+                )
+                invalid_live_evidence.extend(
+                    f"{worker.strategy_name}: {error}" for error in config_errors
+                )
+                continue
             candidate_live_workers.append(worker)
+
+    if invalid_live_evidence:
+        # One malformed live-money limit invalidates the process-wide live
+        # configuration.  Enabling the remaining candidates would make an
+        # operator typo look only partially effective and is not fail-closed.
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Requested live strategy configuration was invalid.",),
+            evidence=tuple(invalid_live_evidence),
+        )
+        store.startup_exposure_audit = audit
+        store.execution_safety.freeze_entries(
+            "Requested live strategy configuration was invalid."
+        )
+        return 0, audit
 
     if not candidate_live_workers:
         return 0, None
@@ -11967,6 +13048,7 @@ def _configure_startup_live_trading(
             LIVE_BROKER,
             LIVE_PRODUCT_TYPE,
         )
+    store.live_session_started = bool(candidate_live_workers)
     return len(candidate_live_workers), audit
 
 
@@ -11995,6 +13077,362 @@ def _enqueue_startup_exposure_alert(
         return False
 
 
+_SHUTDOWN_RETRY_DELAYS_SECONDS = (1.0, 2.0, 5.0)
+
+
+def _request_worker_shutdown(
+    workers: list[BasePaperStrategyWorker],
+    reason: str,
+) -> int:
+    """Request flattening on every worker without setting the terminal event."""
+
+    requested = 0
+    for worker in workers:
+        try:
+            worker.request_worker_shutdown(reason)
+            requested += 1
+        except Exception as exc:  # noqa: BLE001 - one worker must not strand peers
+            logger.exception(
+                "Could not request coordinated shutdown for %s: %s",
+                getattr(worker, "strategy_name", type(worker).__name__),
+                exc,
+            )
+    return requested
+
+
+def _start_and_supervise_runtime_threads(
+    fetcher: CentralMarketDataFetcher,
+    telegram_worker: TelegramMessageWorker | None,
+    workers: list[BasePaperStrategyWorker],
+) -> bool:
+    """Start workers inside the same interrupt-safe boundary that stops them.
+
+    Returning ``False`` means startup or supervision was interrupted/failed,
+    so end-of-day result publication must be skipped. A worker is recorded
+    before ``start()`` is called: even an interrupt at that exact boundary can
+    therefore request its idempotent shutdown without setting the terminal
+    event that the fetcher and notifier share.
+    """
+
+    started_workers: list[BasePaperStrategyWorker] = []
+    shutdown_reason = ""
+    try:
+        fetcher.start()
+        if telegram_worker is not None:
+            telegram_worker.start()
+        for worker in workers:
+            started_workers.append(worker)
+            worker.start()
+
+        while any(worker.is_alive() for worker in started_workers):
+            for worker in started_workers:
+                if worker.is_alive():
+                    worker.join(timeout=1.0)
+        return True
+    except KeyboardInterrupt:
+        shutdown_reason = "KEYBOARD_INTERRUPT"
+        logger.warning(
+            "Keyboard interrupt received during startup/supervision. Blocking "
+            "entries and flattening every worker that may have started."
+        )
+    except Exception:  # noqa: BLE001 - partial startup must still flatten
+        shutdown_reason = "SUPERVISOR_EXCEPTION"
+        logger.exception(
+            "Runtime startup/supervision failed. Blocking entries and "
+            "flattening every worker that may have started."
+        )
+
+    # Repeated Ctrl+C is deliberately ignored throughout both the shutdown
+    # request and join phases. The process-wide broker audit runs afterwards.
+    while True:
+        try:
+            _request_worker_shutdown(started_workers, shutdown_reason)
+            break
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown requests are still being delivered; interrupt ignored "
+                "until broker-confirmed flat."
+            )
+
+    while any(worker.is_alive() for worker in started_workers):
+        try:
+            for worker in started_workers:
+                if worker.is_alive():
+                    worker.join(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown is still reconciling live exposure; additional "
+                "interrupt ignored until broker-confirmed flat."
+            )
+            while True:
+                try:
+                    _request_worker_shutdown(started_workers, shutdown_reason)
+                    break
+                except KeyboardInterrupt:
+                    logger.error(
+                        "Shutdown requests remain in progress; interrupt ignored."
+                    )
+    return False
+
+
+def _runner_exposure_audit(store: SharedMarketDataStore) -> StartupExposureAudit:
+    """Hard finalization gate: is the RUNNER's own tracked exposure flat?
+
+    The execution ledger registers every live order attempt BEFORE it is
+    submitted and keeps the leg active while any quantity is confirmed open or
+    still indeterminate, so an empty ledger means every order this process
+    placed is broker-confirmed flat.  Exposure the runner did not create --
+    the operator's own manual trades in the same account -- is deliberately
+    NOT part of this gate: it is reported loudly by the advisory account
+    audit below instead of blocking results/logout forever.
+    """
+
+    active_states = store.execution_ledger.active_states()
+    if active_states:
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("The local execution ledger still tracks live exposure.",),
+            evidence=(
+                f"tracked_legs={len(active_states)}",
+                f"risk_quantity={sum(state.risk_quantity for state in active_states)}",
+            ),
+        )
+    return StartupExposureAudit(
+        safe_to_enable_live=True,
+        reasons=(),
+        evidence=("tracked_legs=0",),
+    )
+
+
+def _advisory_account_audit(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+) -> StartupExposureAudit:
+    """Best-effort ACCOUNT-level book check, reported but never blocking.
+
+    The operator may hold manual positions or working orders in the same
+    account, so a non-flat account combined with a flat runner ledger is a
+    WARNING (log + Telegram alert), not a reason to withhold the day's
+    results or the logout forever.  Fixed vocabulary only: raw broker
+    payloads, symbols and order ids never reach the alert text.
+    """
+
+    if client is None:
+        if store.live_session_started:
+            return StartupExposureAudit(
+                safe_to_enable_live=False,
+                reasons=("The live broker client was unavailable at shutdown.",),
+                evidence=("execution_client=unavailable",),
+            )
+        return StartupExposureAudit(
+            safe_to_enable_live=True,
+            reasons=(),
+            evidence=("execution_client=unavailable",),
+        )
+
+    login_state = getattr(client, "is_logged_in", None)
+    if login_state is False:
+        if store.live_session_started:
+            # One best-effort re-login so the books can actually be read for
+            # the warning; a failure downgrades to "session unavailable".
+            try:
+                recovered = client.ensure_logged_in()
+            except Exception:  # noqa: BLE001 - never log broker auth payloads
+                recovered = False
+            if recovered is not True or getattr(client, "is_logged_in", None) is not True:
+                return StartupExposureAudit(
+                    safe_to_enable_live=False,
+                    reasons=("The live broker session was unavailable at shutdown.",),
+                    evidence=("broker_session=recovery_failed",),
+                )
+            login_state = True
+        else:
+            return StartupExposureAudit(
+                safe_to_enable_live=True,
+                reasons=(),
+                evidence=("broker_session=not_logged_in",),
+            )
+    if login_state is not True:
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Broker session state was indeterminate at shutdown.",),
+            evidence=("broker_session=indeterminate",),
+        )
+
+    try:
+        return audit_startup_exposure(client)
+    except Exception:  # noqa: BLE001 - raw SDK text may contain credentials
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("The shutdown broker audit failed internally.",),
+            evidence=("shutdown_audit=indeterminate",),
+        )
+
+
+def _warn_if_account_not_flat(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    event_queue: queue.Queue | None,
+) -> bool:
+    """Alert (never block) when the ACCOUNT shows exposure after the runner is flat.
+
+    Returns True when a warning was raised, so tests can assert the alert path.
+    """
+
+    try:
+        advisory = _advisory_account_audit(store, client)
+    except KeyboardInterrupt:
+        logger.error(
+            "Advisory account check interrupted; finalizing on the flat runner ledger."
+        )
+        return False
+    if advisory.safe_to_enable_live:
+        return False
+    safe_detail = " ".join((*advisory.reasons, *advisory.evidence))
+    logger.error(
+        "SHUTDOWN ACCOUNT WARNING | the runner's own exposure is flat, but the "
+        "account books are not proven flat (manual positions/orders, or an "
+        "unreadable book) | %s",
+        safe_detail,
+    )
+    if event_queue is not None:
+        with contextlib.suppress(Exception):
+            event_queue.put_nowait(
+                {
+                    "action": "SHUTDOWN_ACCOUNT_WARNING",
+                    "strategy": "Process Supervisor",
+                    # The generic Telegram format renders `direction` as the
+                    # detail line, exactly like the startup-exposure alert.
+                    "direction": safe_detail,
+                    "reason": safe_detail,
+                    "mode": "LIVE" if store.live_session_started else "PAPER",
+                }
+            )
+    return True
+
+
+def _wait_for_shutdown_account_flat(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    *,
+    event_queue: queue.Queue | None = None,
+    sleep=time.sleep,
+    max_attempts: int | None = None,
+) -> bool:
+    """Retry until the RUNNER's tracked exposure is broker-confirmed flat.
+
+    ``max_attempts`` exists only for deterministic tests and diagnostics.  The
+    production caller leaves it as ``None`` so unresolved runner exposure keeps
+    the process alive and alerting instead of allowing logout or clean results.
+    Account-level books are deliberately not part of this gate: the operator
+    may hold manual positions in the same account, and those are reported as
+    a warning by `_finalize_flat_session` rather than blocking here forever.
+    """
+
+    if max_attempts is not None and max_attempts <= 0:
+        raise ValueError("max_attempts must be positive or None")
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            audit = _runner_exposure_audit(store)
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown reconciliation is still proving runner exposure flat; "
+                "interrupt ignored."
+            )
+            continue
+        if audit.safe_to_enable_live:
+            logger.info(
+                "SHUTDOWN RUNNER FLAT | the execution ledger confirmed flat "
+                "after %d attempt(s).",
+                attempt,
+            )
+            return True
+
+        safe_detail = " ".join((*audit.reasons, *audit.evidence))
+        logger.error(
+            "DEGRADED PROCESS SHUTDOWN | runner exposure is not broker-confirmed "
+            "flat | attempt=%d | %s",
+            attempt,
+            safe_detail,
+        )
+        if event_queue is not None:
+            with contextlib.suppress(Exception):
+                event_queue.put_nowait(
+                    {
+                        "action": "SHUTDOWN_DEGRADED",
+                        "strategy": "Process Supervisor",
+                        "mode": "LIVE_INDETERMINATE",
+                        "reason": safe_detail,
+                        "attempt": attempt,
+                    }
+                )
+
+        if max_attempts is not None and attempt >= max_attempts:
+            return False
+        delay = _SHUTDOWN_RETRY_DELAYS_SECONDS[
+            min(attempt - 1, len(_SHUTDOWN_RETRY_DELAYS_SECONDS) - 1)
+        ]
+        try:
+            sleep(delay)
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown reconciliation is still proving runner exposure flat; "
+                "interrupt ignored."
+            )
+
+
+def _finalize_flat_session(
+    workers: list[BasePaperStrategyWorker],
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    *,
+    trade_event_queue: queue.Queue | None,
+    natural_eod: bool,
+) -> bool:
+    """Write results, logout, and refresh once the RUNNER's exposure is flat.
+
+    The hard gate is the execution ledger (this process's own tracked
+    exposure).  The account-level books are then checked once, as an advisory
+    warning: the operator's manual positions must not strand the day's
+    results, the logout, or the next-day instrument refresh forever.
+    """
+
+    try:
+        audit = _runner_exposure_audit(store)
+    except KeyboardInterrupt:
+        logger.error(
+            "Final runner-flat proof is still in progress; interrupt ignored and "
+            "session finalization remains blocked."
+        )
+        return False
+    if not audit.safe_to_enable_live:
+        logger.error(
+            "SESSION FINALIZATION BLOCKED | the runner's tracked exposure is not "
+            "confirmed flat | %s",
+            " ".join((*audit.reasons, *audit.evidence)),
+        )
+        return False
+
+    _warn_if_account_not_flat(store, client, trade_event_queue)
+
+    if natural_eod:
+        _publish_eod_summary(workers, trade_event_queue)
+        _update_pnl_google_sheet()
+
+    if client is not None and getattr(client, "is_logged_in", False) is True:
+        try:
+            client.logout()
+            logger.info("%s execution session logged out after flat audit.", LIVE_BROKER)
+        except Exception as exc:  # noqa: BLE001 - final refresh can still proceed
+            logger.warning("%s logout failed after flat audit: %s", LIVE_BROKER, exc)
+
+    _refresh_instrument_master_for_next_day()
+    logger.info("Flat session finalization completed.")
+    return True
+
+
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
@@ -12010,19 +13448,15 @@ def main() -> None:
     3. Build the shared store and shared stop signal.
     4. Build one fetcher and all the workers.
     5. Start the fetcher first so workers see fresh data on their first poll.
-    6. Supervise: wait until workers exit or a Ctrl+C arrives.
-    7. Signal shutdown and join every thread with a bounded timeout.
+    6. Supervise: wait until workers flatten or Ctrl+C requests flattening.
+    7. Prove broker books flat, then finalize and signal terminal shutdown.
 
     The MAIN thread does NOT trade. It is purely a supervisor.
     """
     setup_logging()
-    # OPS-001: all trading-time gates assume an IST wall clock -- say so loudly
-    # at startup when the box disagrees, before any worker takes a decision.
-    tz_warning = _timezone_assumption_warning()
-    if tz_warning:
-        logger.warning("%s", tz_warning)
-    else:
-        logger.info("Timezone check: system offset is IST (+5:30), as the trading windows assume.")
+    logger.info(
+        "Trading clock pinned to Asia/Kolkata; host timezone cannot shift market cutoffs."
+    )
     os.chdir(ROOT_DIR)
 
     # Credentials must come from `.env` (or the shell env). We never carry
@@ -12192,62 +13626,55 @@ def main() -> None:
     # queue exists, without exposing raw broker payloads or identifiers.
     _enqueue_startup_exposure_alert(_startup_audit, trade_event_queue)
 
-    fetcher.start()
-    if telegram_worker is not None:
-        telegram_worker.start()
+    natural_eod = _start_and_supervise_runtime_threads(
+        fetcher,
+        telegram_worker,
+        workers,
+    )
+
+    # Even after every local owner reaches STOPPED, the execution ledger gets
+    # one process-wide proof. Unresolved RUNNER exposure keeps this process
+    # alive on 1/2/5-second capped retries; no logout, result write, or refresh
+    # occurs. Account-level books (which may hold the operator's own manual
+    # positions) are then checked once and reported as a warning, not a block.
+    _wait_for_shutdown_account_flat(
+        store,
+        execution_client,
+        event_queue=trade_event_queue,
+    )
+    while not _finalize_flat_session(
+        workers,
+        store,
+        execution_client,
+        trade_event_queue=trade_event_queue,
+        natural_eod=natural_eod,
+    ):
+        _wait_for_shutdown_account_flat(
+            store,
+            execution_client,
+            event_queue=trade_event_queue,
+        )
+
+    # Only a fully finalized flat session may release the fetcher/notifier.
+    stop_event.set()
     for worker in workers:
-        worker.start()
+        worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
+    fetcher.join(timeout=SHUTDOWN_JOIN_SECONDS)
+    if telegram_worker is not None:
+        telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
-    try:
-        # The main thread is a passive supervisor; it does not trade.
-        while any(worker.is_alive() for worker in workers):
-            for worker in workers:
-                worker.join(timeout=1.0)
-        # Every worker has exited on its own (square-off / max-loss) -> clean
-        # end of day. Send the cumulative per-strategy P&L summary through the
-        # Telegram worker, which is still alive here (stop_event is set below,
-        # in finally). On Ctrl+C this line is skipped, so partial/forced
-        # shutdowns do not emit a misleading summary.
-        _publish_eod_summary(workers, trade_event_queue)
-        # All workers have exited cleanly -> write each strategy's day-end P&L
-        # into the tracker Google Sheet (and backfill any blank days this month).
-        _update_pnl_google_sheet()
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received. Signaling all threads to stop.")
-        stop_event.set()
-    finally:
-        stop_event.set()
-        for worker in workers:
-            worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
-        fetcher.join(timeout=SHUTDOWN_JOIN_SECONDS)
-        if telegram_worker is not None:
-            telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
-
-        supervised_threads = [fetcher, telegram_worker, *workers]
-        alive_threads = [
-            thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
-        ]
-        if alive_threads:
-            logger.warning("Some threads did not exit within the shutdown window: %s", alive_threads)
-        else:
-            logger.info("All threads exited cleanly.")
-
-        # Politely log out of the broker on the way out, but only if we ever logged
-        # in (pure-paper runs never do). Wrapped in try/except so a logout hiccup
-        # can't stop the rest of shutdown.
-        if execution_client is not None and getattr(execution_client, "is_logged_in", False):
-            try:
-                execution_client.logout()
-                logger.info("%s execution session logged out.", LIVE_BROKER)
-            except Exception as exc:
-                logger.warning("%s logout failed: %s", LIVE_BROKER, exc)
-
-    # End-of-day instrument master refresh. Runs unconditionally (even after
-    # Ctrl+C or a partial shutdown) because the scheduler that re-launches
-    # this script tomorrow morning needs the fresh CSV regardless of how
-    # today's session ended. The helper is fail-soft: a failed download is
-    # logged and the existing CSV stays on disk as a fallback.
-    _refresh_instrument_master_for_next_day()
+    supervised_threads = [fetcher, telegram_worker, *workers]
+    alive_threads = [
+        thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
+    ]
+    if alive_threads:
+        logger.warning(
+            "Session was broker-confirmed flat, but some threads did not exit "
+            "within the terminal shutdown window: %s",
+            alive_threads,
+        )
+    else:
+        logger.info("All threads exited after broker-confirmed flat finalization.")
 
 
 if __name__ == "__main__":
