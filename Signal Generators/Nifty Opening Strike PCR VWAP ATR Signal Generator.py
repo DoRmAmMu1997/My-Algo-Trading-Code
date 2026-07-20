@@ -59,16 +59,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-
-try:
-    # TA-Lib is preferred when available because its ATR/RSI implementations
-    # match the standard indicators many charting platforms use.
-    import talib  # type: ignore
-
-    _TALIB_AVAILABLE = True
-except ImportError:  # pragma: no cover - only used on machines without TA-Lib
-    talib = None  # type: ignore
-    _TALIB_AVAILABLE = False
+import talib
 
 
 # =============================================================================
@@ -94,6 +85,18 @@ class NiftyOpeningStrikePCRVWAPATRConfig:
     allow_multiple_entries: bool = False
 
     def __post_init__(self) -> None:
+        invalid_finite = [
+            name
+            for name, value in vars(self).items()
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and not math.isfinite(float(value))
+        ]
+        if invalid_finite:
+            raise ValueError(
+                "Opening Strike configuration values must be finite. Invalid: "
+                + ", ".join(invalid_finite)
+            )
         # Validate values that would break calculations if they were zero or
         # negative. Unsupported option moneyness is handled as a NO_SIGNAL
         # decision later, because that is a strategy choice rather than a math
@@ -109,10 +112,20 @@ class NiftyOpeningStrikePCRVWAPATRConfig:
 
         if int(self.strike_window_n) < 0:
             raise ValueError("`strike_window_n` cannot be negative.")
+        if not (
+            0.0
+            < float(self.pcr_bearish_threshold)
+            < float(self.pcr_bullish_threshold)
+        ):
+            raise ValueError("Require 0 < pcr_bearish_threshold < pcr_bullish_threshold.")
         if float(self.vwap_near_atr_multiplier) < 0.0:
             raise ValueError("`vwap_near_atr_multiplier` cannot be negative.")
-        if float(self.initial_sl_points) < 0.0:
-            raise ValueError("`initial_sl_points` cannot be negative.")
+        if float(self.initial_sl_points) <= 0.0:
+            raise ValueError("`initial_sl_points` must be positive.")
+        if not (0.0 <= float(self.buy_rsi_min) <= 100.0):
+            raise ValueError("`buy_rsi_min` must be between 0 and 100.")
+        if not (0.0 <= float(self.sell_rsi_max) <= 100.0):
+            raise ValueError("`sell_rsi_max` must be between 0 and 100.")
 
 
 @dataclass(slots=True)
@@ -289,60 +302,23 @@ def _attach_vwap(frame: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
     return result, None
 
 
-def _fallback_atr(frame: pd.DataFrame, period: int) -> pd.Series:
-    """Pandas Wilder-style ATR fallback used when TA-Lib is unavailable."""
-
-    prev_close = frame["close"].shift(1)
-    true_range = pd.concat(
-        [
-            (frame["high"] - frame["low"]).abs(),
-            (frame["high"] - prev_close).abs(),
-            (frame["low"] - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return true_range.ewm(alpha=1.0 / int(period), adjust=False, min_periods=int(period)).mean()
-
-
 def _calculate_atr(frame: pd.DataFrame, period: int) -> pd.Series:
-    """Calculate ATR with TA-Lib first, then a pandas fallback."""
+    """Calculate ATR with the repository's pinned TA-Lib backend."""
 
-    if _TALIB_AVAILABLE:
-        atr_values = talib.ATR(  # type: ignore[union-attr]
-            frame["high"].to_numpy(dtype=float),
-            frame["low"].to_numpy(dtype=float),
-            frame["close"].to_numpy(dtype=float),
-            timeperiod=int(period),
-        )
-        return pd.Series(atr_values, index=frame.index)
-    return _fallback_atr(frame, period)
-
-
-def _fallback_rsi(close: pd.Series, period: int) -> pd.Series:
-    """Pandas Wilder-style RSI fallback used when TA-Lib is unavailable."""
-
-    delta = close.diff()
-    gain = delta.clip(lower=0.0)
-    loss = (-delta).clip(lower=0.0)
-    avg_gain = gain.ewm(alpha=1.0 / int(period), adjust=False, min_periods=int(period)).mean()
-    avg_loss = loss.ewm(alpha=1.0 / int(period), adjust=False, min_periods=int(period)).mean()
-    relative_strength = avg_gain / avg_loss.replace(0.0, np.nan)
-    rsi = 100.0 - (100.0 / (1.0 + relative_strength))
-
-    # When there are gains but no losses, RSI is conventionally 100. When both
-    # are zero, price is flat; 50 is a neutral, easy-to-read fallback.
-    rsi = rsi.mask((avg_loss == 0.0) & (avg_gain > 0.0), 100.0)
-    rsi = rsi.mask((avg_loss == 0.0) & (avg_gain == 0.0), 50.0)
-    return rsi
+    atr_values = talib.ATR(
+        frame["high"].to_numpy(dtype=float),
+        frame["low"].to_numpy(dtype=float),
+        frame["close"].to_numpy(dtype=float),
+        timeperiod=int(period),
+    )
+    return pd.Series(atr_values, index=frame.index)
 
 
 def _calculate_rsi(close: pd.Series, period: int) -> pd.Series:
-    """Calculate RSI with TA-Lib first, then a pandas fallback."""
+    """Calculate RSI with the repository's pinned TA-Lib backend."""
 
-    if _TALIB_AVAILABLE:
-        rsi_values = talib.RSI(close.to_numpy(dtype=float), timeperiod=int(period))  # type: ignore[union-attr]
-        return pd.Series(rsi_values, index=close.index)
-    return _fallback_rsi(close, period)
+    rsi_values = talib.RSI(close.to_numpy(dtype=float), timeperiod=int(period))
+    return pd.Series(rsi_values, index=close.index)
 
 
 def _risk_metadata(config: NiftyOpeningStrikePCRVWAPATRConfig) -> dict[str, Any]:
@@ -514,7 +490,7 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
         entry_underlying: float,
         debug: dict[str, Any],
     ) -> NiftyOpeningStrikePCRVWAPATRDecision:
-        """Build a BUY_CALL or BUY_PUT response and remember the entry."""
+        """Build a BUY_CALL or BUY_PUT proposal without consuming it."""
 
         debug["raw_signal_action"] = action
         if not self.config.allow_multiple_entries and self._entry_signal_sent:
@@ -524,7 +500,6 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
                 debug,
             )
 
-        self._entry_signal_sent = True
         debug["final_decision"] = action
         common_payload = {
             "action": action,
@@ -548,6 +523,11 @@ class NiftyOpeningStrikePCRVWAPATRSignalGenerator:
             selected_put_strike=selected_strike,
             **common_payload,
         )
+
+    def acknowledge_entry(self) -> None:
+        """Consume the one-shot setup only after the caller opens the trade."""
+
+        self._entry_signal_sent = True
 
     def evaluate(
         self,

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -158,6 +159,27 @@ class TestSharedMarketDataStore(unittest.TestCase):
         self.store.update_ltp_map({("NSE_FNO", 1234): -50.0})
         self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
 
+        self.store.update_ltp_map({("NSE_FNO", 1234): float("inf")})
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
+
+        self.store.update_ltp_map({("NSE_FNO", 1234): "not-a-price"})
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 1234), 150.5)
+
+    def test_invalid_ohlc_does_not_replace_last_good_snapshot(self):
+        """Publication is atomic: invalid replacement data leaves the prior snapshot intact."""
+        good = pd.DataFrame({
+            "timestamp": ["2026-05-15 10:00:00"],
+            "open": [100.0], "high": [105.0], "low": [95.0], "close": [102.0],
+        })
+        self.store.update("1", good)
+        invalid = good.copy()
+        invalid.loc[0, "close"] = float("inf")
+
+        with self.assertRaises(master_file.MarketDataValidationError):
+            self.store.update("1", invalid)
+
+        self.assertEqual(self.store.get("1").frame.iloc[-1]["close"], 102.0)
+
     def test_subscriptions(self):
         """Check if option subscriptions can be correctly registered and unregistered."""
         sub = master_file.OptionSubscription(
@@ -172,6 +194,118 @@ class TestSharedMarketDataStore(unittest.TestCase):
 
         self.store.unregister_option_subscription("NSE_FNO", 123)
         self.assertEqual(len(self.store.snapshot_option_subscriptions()), 0)
+
+
+class TestWorkerMarketDataSafety(unittest.TestCase):
+    """The feed gate and stale-feed unwind protect REAL money: live workers only.
+
+    Operator decision (2026-07-17): a paper worker keeps entering and keeps its
+    virtual position on the last-good snapshot -- the gate had blocked every
+    paper strategy through the 17 Jul opening window while the feed warmed up.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            self.store,
+            threading.Event(),
+            MagicMock(),
+        )
+
+    def test_live_entry_is_blocked_until_feed_recovers(self):
+        self.worker.live_trading = True
+        self.store.begin_market_data_monitoring()
+        with patch.object(self.worker, "_get_underlying_spot") as get_spot:
+            self.assertFalse(self.worker.enter_position("LONG", 22500.0))
+        get_spot.assert_not_called()
+
+    def test_paper_entry_allowed_while_feed_unhealthy(self):
+        """A paper (virtual) worker sails through the feed gate: the entry
+        attempt must reach the spot lookup instead of being blocked."""
+        self.assertFalse(self.worker.live_trading)
+        self.store.begin_market_data_monitoring()
+        with patch.object(self.worker, "_get_underlying_spot", return_value=0.0) as get_spot:
+            # Returns False further down (no spot LTP in this synthetic setup),
+            # but the market-data gate itself must have been passed.
+            self.assertFalse(self.worker.enter_position("LONG", 22500.0))
+        get_spot.assert_called_once()
+
+    def test_thirty_second_unhealthy_state_invokes_square_off_for_live(self):
+        self.worker.live_trading = True
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("LTP IDX_I/13 is stale (41.0s)",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock()
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertTrue(consumed)
+        self.worker.exit_position.assert_called_once_with("MARKET_DATA_UNHEALTHY")
+        self.worker._flatten_additional_positions.assert_called_once_with(
+            "MARKET_DATA_UNHEALTHY"
+        )
+        self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
+
+    def test_paper_worker_skips_market_data_square_off(self):
+        """A paper worker's virtual position must survive a 30s+ feed outage:
+        no forced close, no orphan sweep, and the poll is NOT consumed (the
+        strategy keeps running on the last-good snapshot)."""
+        self.assertFalse(self.worker.live_trading)
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("LTP IDX_I/13 is stale (41.0s)",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock()
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertFalse(consumed)
+        self.worker.exit_position.assert_not_called()
+        self.worker._flatten_additional_positions.assert_not_called()
+        self.worker._sweep_orphan_live_legs.assert_not_called()
+        # The 30s+ outage is still logged once for the operator's audit trail.
+        self.assertTrue(self.worker._market_data_liquidation_logged)
+
+    def test_unhealthy_primary_close_error_cannot_skip_other_exposure(self):
+        self.worker.live_trading = True
+        health = MagicMock(
+            monitoring=True,
+            entry_allowed=False,
+            liquidation_required=True,
+            healthy_streak=0,
+            unhealthy_seconds=31.0,
+            reasons=("newest completed one-minute bar is stale",),
+        )
+        self.worker.pos.active = True
+        self.worker.exit_position = MagicMock(side_effect=RuntimeError("primary close failed"))
+        self.worker._flatten_additional_positions = MagicMock()
+        self.worker._sweep_orphan_live_legs = MagicMock()
+
+        with patch.object(self.store.market_data_health, "snapshot", return_value=health):
+            consumed = self.worker._handle_market_data_health()
+
+        self.assertTrue(consumed)
+        self.worker._flatten_additional_positions.assert_called_once_with(
+            "MARKET_DATA_UNHEALTHY"
+        )
+        self.worker._sweep_orphan_live_legs.assert_called_once_with(force=True)
 
 
 # =============================================================================
@@ -356,6 +490,22 @@ class TestPureHelpers(unittest.TestCase):
         with self.assertRaises(ValueError):
             master_file.resample_ohlc_from_1m(ohlc, 5)
 
+    def test_resample_rejects_count_complete_but_slot_incomplete_bucket(self):
+        """A duplicate minute cannot hide a missing minute in a five-row bucket."""
+        timestamps = pd.to_datetime([
+            "2026-05-15 09:15", "2026-05-15 09:15", "2026-05-15 09:17",
+            "2026-05-15 09:18", "2026-05-15 09:19",
+        ])
+        ohlc = pd.DataFrame({
+            "timestamp": timestamps,
+            "open": [100, 100, 102, 103, 104],
+            "high": [101, 101, 103, 104, 105],
+            "low": [99, 99, 101, 102, 103],
+            "close": [100.5, 100.5, 102.5, 103.5, 104.5],
+        })
+        result = master_file.resample_ohlc_from_1m(ohlc, 5)
+        self.assertTrue(result.empty)
+
     def test_color_pnl_text_static(self):
         """`_color_pnl_text` colors positive green, negative red, zero plain."""
         pos = master_file.BasePaperStrategyWorker._color_pnl_text(12.5)
@@ -437,6 +587,25 @@ class TestNormalizeDhanResponse(unittest.TestCase):
         """Below-MIN_BARS frames are rejected to avoid corrupt warm-up."""
         resp = self._make_dict_resp(master_file.MIN_BARS - 5)
         with self.assertRaises(ValueError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+    def test_normalize_rejects_non_finite_and_impossible_ohlc(self):
+        """Infinity and impossible high/low geometry fail closed at ingestion."""
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["close"][3] = float("inf")
+        with self.assertRaises(master_file.MarketDataValidationError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["high"][3] = resp["data"]["close"][3] - 1.0
+        with self.assertRaises(master_file.MarketDataValidationError):
+            master_file.normalize_dhan_intraday_response(resp)
+
+    def test_normalize_rejects_mixed_epoch_units(self):
+        """One millisecond value among second epochs cannot corrupt the whole timeline."""
+        resp = self._make_dict_resp(master_file.MIN_BARS + 1)
+        resp["data"]["timestamp"][3] *= 1000
+        with self.assertRaises(master_file.MarketDataValidationError):
             master_file.normalize_dhan_intraday_response(resp)
 
 
@@ -540,6 +709,50 @@ class TestOptionChainParsers(unittest.TestCase):
                 {}, target_delta=0.2, right="ce"
             )
         )
+
+
+class TestOpeningStrikeEntryAcknowledgement(unittest.TestCase):
+    """The one-shot setup belongs to a successful entry, not an emitted signal."""
+
+    def setUp(self):
+        self.worker = master_file.OpeningStrikePCRVWAPATRWorker(
+            master_file.SharedMarketDataStore(),
+            threading.Event(),
+            MagicMock(),
+        )
+        self.worker.signal_engine = MagicMock()
+        self.worker.signal_engine._entry_signal_sent = False
+        self.worker.signal_engine.evaluate.return_value = (
+            master_file.OPENING_STRIKE_LOGIC.NiftyOpeningStrikePCRVWAPATRDecision(
+                action="BUY_CALL",
+                signal_triggered=True,
+                entry_underlying=25000.0,
+            )
+        )
+        self.worker._build_option_chain_oi_change = MagicMock(
+            return_value=pd.DataFrame({"strike": [25000.0]})
+        )
+        self.frame = pd.DataFrame(
+            {
+                "timestamp": [datetime(2026, 7, 16, 10, 0)],
+                "open": [24990.0],
+                "close": [25000.0],
+            }
+        )
+
+    def test_failed_entry_does_not_consume_one_shot_signal(self):
+        self.worker.enter_position = MagicMock(return_value=False)
+
+        self.worker.process_strategy_frame(self.frame)
+
+        self.worker.signal_engine.acknowledge_entry.assert_not_called()
+
+    def test_successful_entry_consumes_one_shot_signal(self):
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        self.worker.process_strategy_frame(self.frame)
+
+        self.worker.signal_engine.acknowledge_entry.assert_called_once_with()
 
 
 # =============================================================================
@@ -1185,6 +1398,17 @@ class TestBasePaperStrategyWorker(unittest.TestCase):
         self.assertNotEqual(oid1, oid2)
         self.assertTrue(oid2.endswith("-0002"))
 
+    def test_session_execution_mode_tracks_live_and_paper_fallbacks_without_telegram(self):
+        """Mode telemetry is trading state, not a side effect of enabling Telegram."""
+        self.assertEqual(self.worker.session_execution_mode(), "PAPER")
+
+        self.worker.live_trading = True
+        self.worker.publish_trade_event({"action": "ENTRY", "mode": "LIVE"})
+        self.assertEqual(self.worker.session_execution_mode(), "LIVE")
+
+        self.worker.publish_trade_event({"action": "ENTRY", "mode": "PAPER_FALLBACK"})
+        self.assertEqual(self.worker.session_execution_mode(), "MIXED")
+
     def test_stop_event_flattens_before_worker_reaches_stopped(self):
         """A pre-set terminal event is translated into flatten-then-stop."""
 
@@ -1335,6 +1559,33 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
         )
         self.assertFalse(result)
 
+    def test_rejected_sizing_decision_skips_entry_before_order_routing(self):
+        decision = master_file.SizingDecision.from_risk_budget(
+            entry=22500.0,
+            stop=22400.0,
+            lot_size=50,
+            budget=1000.0,
+            max_lots=5,
+        )
+        self.assertFalse(decision.accepted)
+        with (
+            patch.object(
+                self.worker,
+                "_compute_entry_sizing",
+                return_value=decision,
+            ),
+            patch.object(self.worker, "_place_real_leg") as route_order,
+        ):
+            result = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+            )
+
+        self.assertFalse(result)
+        self.assertFalse(self.worker.pos.active)
+        route_order.assert_not_called()
+
     def test_get_open_position_pnl_marks_to_market(self):
         """Open MTM = (live - entry) * qty for the BUY leg."""
         self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
@@ -1396,14 +1647,32 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance fails closed instead of inventing fallback risk."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0,
             stop_underlying=22500.0,
             lot_size=50,
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_one_lot_over_budget_is_skipped(self):
+        lots = self.worker._compute_entry_lots(
+            entry_underlying=22500.0,
+            stop_underlying=22449.0,
+            lot_size=50,
+        )
+
+        self.assertEqual(lots, 0)
+
+    def test_tiny_stop_never_exceeds_namespaced_five_lot_cap(self):
+        lots = self.worker._compute_entry_lots(
+            entry_underlying=22500.0,
+            stop_underlying=22499.9,
+            lot_size=50,
+        )
+
+        self.assertEqual(lots, master_file.PROFIT_SHOOTER_MAX_LOTS)
 
     def test_build_strategy_frame_resamples_to_five_minutes(self):
         """Profit Shooter is a 5-minute method: the strategy frame must be built
@@ -1425,11 +1694,146 @@ class TestProfitShooterStrategyWorker(unittest.TestCase):
         self.assertEqual(len(spacing), 1)
         self.assertEqual(pd.Timedelta(spacing[0]), pd.Timedelta(minutes=5))
 
+    def test_open_position_bypasses_entry_indicator_warmup(self):
+        """An existing trade's hard stop cannot wait for 200 entry bars."""
+
+        self.worker.pos.active = True
+
+        self.assertEqual(self.worker.minimum_strategy_rows(), 1)
+        self.assertEqual(self.worker.minimum_source_rows(), 1)
+
 
 # =============================================================================
 # TEST SUITE: GOLDMINE DYNAMIC LOT SIZING
 # =============================================================================
-class TestGoldmineStrategyWorker(unittest.TestCase):
+class _NextOpenWorkerTestMixin:
+    """Shared acceptance tests for one-bar ``NEXT_OPEN`` worker intents."""
+
+    worker = None
+    decision_type = None
+
+    def _next_open_decision(
+        self,
+        *,
+        action="ENTER_LONG",
+        entry=100.0,
+        stop=95.0,
+        target=110.0,
+        signal_at=datetime(2026, 7, 16, 10, 0),
+    ):
+        return self.decision_type(
+            action=action,
+            entry_underlying=entry,
+            stop_underlying=stop,
+            target_underlying=target,
+            signal_triggered=True,
+            debug={"entry_timing": "NEXT_OPEN", "timestamp": signal_at},
+        )
+
+    def test_next_open_signal_is_queued_instead_of_entered_immediately(self):
+        decision = self._next_open_decision()
+        self.worker.signal_engine.evaluate_candle = MagicMock(return_value=decision)
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        self.worker.process_strategy_frame(pd.DataFrame({"close": [100.0]}))
+
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNotNone(self.worker._pending_next_open)
+        self.assertEqual(
+            self.worker._pending_next_open.expected_open_at,
+            datetime(2026, 7, 16, 10, 5),
+        )
+
+    def test_long_gap_rebases_stop_and_target_from_observed_next_open(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 5)],
+                    "open": [120.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_called_once_with(
+            "LONG",
+            120.0,
+            115.0,
+            target_underlying=130.0,
+        )
+        self.assertEqual(self.worker.entry_submit_count, 1)
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_short_gap_rebases_stop_and_target_from_observed_next_open(self):
+        decision = self._next_open_decision(
+            action="ENTER_SHORT",
+            entry=100.0,
+            stop=105.0,
+            target=90.0,
+        )
+        self.assertTrue(self.worker._queue_next_open_decision("SHORT", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 5)],
+                    "open": [80.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_called_once_with(
+            "SHORT",
+            80.0,
+            85.0,
+            target_underlying=70.0,
+        )
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_missing_expected_open_expires_after_one_bar(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 10)],
+                    "open": [120.0],
+                }
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNone(self.worker._pending_next_open)
+
+    def test_pending_intent_waits_until_expected_open_slot(self):
+        decision = self._next_open_decision()
+        self.assertTrue(self.worker._queue_next_open_decision("LONG", decision))
+        self.worker.enter_position = MagicMock(return_value=True)
+
+        consumed = self.worker.process_pending_entry(
+            pd.DataFrame(
+                {
+                    "timestamp": [datetime(2026, 7, 16, 10, 4)],
+                    "open": [101.0],
+                }
+            )
+        )
+
+        self.assertFalse(consumed)
+        self.worker.enter_position.assert_not_called()
+        self.assertIsNotNone(self.worker._pending_next_open)
+
+
+class TestGoldmineStrategyWorker(_NextOpenWorkerTestMixin, unittest.TestCase):
     """Goldmine reuses Profit Shooter's risk-based `_compute_entry_lots`."""
 
     def setUp(self):
@@ -1439,6 +1843,7 @@ class TestGoldmineStrategyWorker(unittest.TestCase):
         self.worker = master_file.GoldmineStrategyWorker(
             store=self.store, stop_event=self.stop_event, broker=self.broker
         )
+        self.decision_type = master_file.GOLDMINE_LOGIC.GoldmineDecision
 
     def test_compute_entry_lots_returns_positive_integer(self):
         """For a reasonable SL distance, the sizer returns >= 1 lot."""
@@ -1449,18 +1854,28 @@ class TestGoldmineStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance is an explicit no-trade decision."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0, stop_underlying=22500.0, lot_size=50
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_namespaced_max_lots_caps_tiny_stop(self):
+        with patch.object(master_file, "GOLDMINE_MAX_LOTS", 2):
+            lots = self.worker._compute_entry_lots(
+                entry_underlying=22500.0,
+                stop_underlying=22499.9,
+                lot_size=50,
+            )
+
+        self.assertEqual(lots, 2)
 
 
 # =============================================================================
 # TEST SUITE: MONEY MACHINE DYNAMIC LOT SIZING
 # =============================================================================
-class TestMoneyMachineStrategyWorker(unittest.TestCase):
+class TestMoneyMachineStrategyWorker(_NextOpenWorkerTestMixin, unittest.TestCase):
     """Money Machine reuses the same risk-based `_compute_entry_lots`."""
 
     def setUp(self):
@@ -1470,6 +1885,7 @@ class TestMoneyMachineStrategyWorker(unittest.TestCase):
         self.worker = master_file.MoneyMachineStrategyWorker(
             store=self.store, stop_event=self.stop_event, broker=self.broker
         )
+        self.decision_type = master_file.MONEY_MACHINE_LOGIC.MoneyMachineDecision
 
     def test_compute_entry_lots_returns_positive_integer(self):
         """For a reasonable SL distance, the sizer returns >= 1 lot."""
@@ -1480,12 +1896,22 @@ class TestMoneyMachineStrategyWorker(unittest.TestCase):
         self.assertGreaterEqual(lots, 1)
 
     def test_compute_entry_lots_handles_zero_distance(self):
-        """Zero SL distance must not divide-by-zero - falls back to at least 1."""
+        """Zero SL distance is an explicit no-trade decision."""
         lots = self.worker._compute_entry_lots(
             entry_underlying=22500.0, stop_underlying=22500.0, lot_size=50
         )
         self.assertIsInstance(lots, int)
-        self.assertGreaterEqual(lots, 1)
+        self.assertEqual(lots, 0)
+
+    def test_namespaced_max_lots_caps_tiny_stop(self):
+        with patch.object(master_file, "MONEY_MACHINE_MAX_LOTS", 3):
+            lots = self.worker._compute_entry_lots(
+                entry_underlying=22500.0,
+                stop_underlying=22499.9,
+                lot_size=50,
+            )
+
+        self.assertEqual(lots, 3)
 
 
 # =============================================================================
@@ -1633,6 +2059,70 @@ class TestEnvBool(unittest.TestCase):
         self.assertFalse(master_file._env_bool("X_FLAG", False))
 
 
+class TestSelectExecutionClient(unittest.TestCase):
+    """`_select_execution_client` routes brokers and fails closed on a typo.
+
+    Its own docstring calls this out as the reason the decision lives in one
+    small function: a typo must never route real-money orders to another
+    broker, and an unrecognised name must disable live trading entirely.
+    """
+
+    def _select(self, broker, **clients):
+        """Run the selector with every broker client patched to a sentinel."""
+        defaults = {
+            "kotak_execution_client": "KOTAK-CLIENT",
+            "shoonya_execution_client": "SHOONYA-CLIENT",
+            "flattrade_execution_client": "FLATTRADE-CLIENT",
+            "dhan_execution_client": "DHAN-CLIENT",
+        }
+        defaults.update(clients)
+        with ExitStack() as stack:
+            for name, value in defaults.items():
+                stack.enter_context(patch.object(master_file, name, value))
+            return master_file._select_execution_client(broker)
+
+    def test_each_broker_routes_to_its_own_client_and_segment(self):
+        # The exchange-segment string is broker-specific and is passed straight
+        # through to the order call, so a wrong value would reject every order.
+        expected = {
+            "KOTAK": ("KOTAK-CLIENT", "nse_fo"),
+            "SHOONYA": ("SHOONYA-CLIENT", "NFO"),
+            "FLATTRADE": ("FLATTRADE-CLIENT", "NFO"),
+            "DHAN": ("DHAN-CLIENT", "NSE_FNO"),
+        }
+        for broker, (client, segment) in expected.items():
+            with self.subTest(broker=broker), patch.dict(os.environ, {}, clear=False):
+                got_client, got_segment, got_product = self._select(broker)
+                self.assertEqual(got_client, client)
+                self.assertEqual(got_segment, segment)
+                self.assertEqual(got_product, "INTRADAY")
+
+    def test_broker_name_is_case_and_whitespace_insensitive(self):
+        client, segment, _product = self._select("  dhan  ")
+        self.assertEqual(client, "DHAN-CLIENT")
+        self.assertEqual(segment, "NSE_FNO")
+
+    def test_product_type_comes_from_the_brokers_own_env_key(self):
+        with patch.dict(os.environ, {"DHAN_PRODUCT_TYPE": "normal"}):
+            _client, _segment, product = self._select("DHAN")
+        self.assertEqual(product, "NORMAL")
+
+    def test_unknown_broker_fails_closed(self):
+        for broker in ("ZERODHA", "", "dhann", None):
+            with self.subTest(broker=broker):
+                self.assertEqual(
+                    self._select(broker),
+                    (None, "", "INTRADAY"),
+                )
+
+    def test_missing_client_yields_none_so_startup_forces_paper(self):
+        # A broker whose SDK failed to import is None; the selector still
+        # returns it so `_configure_startup_live_trading` disables live mode.
+        client, segment, _product = self._select("DHAN", dhan_execution_client=None)
+        self.assertIsNone(client)
+        self.assertEqual(segment, "NSE_FNO")
+
+
 class TestTimezoneAssumption(unittest.TestCase):
     """MAT-103: trading windows are pinned to Asia/Kolkata explicitly."""
 
@@ -1719,6 +2209,73 @@ class TestGoogleSheetRetry(unittest.TestCase):
         self._run_writer(fake)                          # must not raise
         self.assertEqual(calls["oauth"], 3)             # bounded attempts
         self.assertEqual(calls["updates"], [])
+
+
+class TestExecutionModeResults(unittest.TestCase):
+    """End-of-day logs, Telegram, and Sheet rows must retain execution provenance."""
+
+    @staticmethod
+    def _worker(name: str, mode: str, pnl: float, trades: int):
+        worker = MagicMock()
+        worker.strategy_name = name
+        worker.realized_pnl = pnl
+        worker.completed_trades = trades
+        worker.session_execution_mode.return_value = mode
+        return worker
+
+    def test_eod_summary_reports_mixed_mode_and_per_strategy_modes(self):
+        event_queue = master_file.queue.Queue()
+        workers = [
+            self._worker("Renko", "LIVE", 100.0, 1),
+            self._worker("EMA", "PAPER", -25.0, 2),
+        ]
+
+        master_file._publish_eod_summary(workers, event_queue)
+
+        event = event_queue.get_nowait()
+        self.assertEqual(event["mode"], "MIXED")
+        self.assertEqual([row["mode"] for row in event["rows"]], ["LIVE", "PAPER"])
+        self.assertIn("[MIXED]", master_file.format_trade_message(event))
+
+    def test_log_parser_keeps_new_modes_and_legacy_paper_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-07-16 15:15:00,000 | INFO | RenkoThread | "
+                "Result summary | Mode=LIVE | Trades=1 | RealizedPnL=100.00\n"
+                "2026-07-16 15:16:00,000 | INFO | EMAThread | "
+                "Result summary | Mode=MIXED | Trades=2 | RealizedPnL=-25.00\n"
+                "2026-07-15 15:15:00,000 | INFO | RenkoThread | "
+                "Paper summary | Trades=1 | RealizedPnL=50.00\n",
+                encoding="utf-8",
+            )
+
+            parsed = master_file._parse_eod_pnl_by_day(path)
+
+        self.assertEqual(parsed["2026-07-16"]["Renko"], {"pnl": 100.0, "mode": "LIVE"})
+        self.assertEqual(parsed["2026-07-16"]["EMA"], {"pnl": -25.0, "mode": "MIXED"})
+        self.assertEqual(parsed["2026-07-15"]["Renko"], {"pnl": 50.0, "mode": "PAPER"})
+
+    def test_sheet_uses_mode_specific_labels_without_turning_pnl_into_text(self):
+        values = [
+            ["Strategy", "2026-07-16"],
+            ["Renko Strategy [LIVE]", ""],
+            ["EMA Strategy [MIXED]", ""],
+            ["Renko Strategy", ""],
+        ]
+        pnl_by_day = {
+            "2026-07-16": {
+                "Renko": {"pnl": 100.0, "mode": "LIVE"},
+                "EMA": {"pnl": -25.0, "mode": "MIXED"},
+            }
+        }
+
+        updates, unmatched = master_file._compute_pnl_sheet_updates(
+            values, pnl_by_day, "2026-07-16"
+        )
+
+        self.assertEqual(updates, [(1, 1, 100.0), (2, 1, -25.0)])
+        self.assertEqual(unmatched, [])
 
 
 class TestStrategyEnvPrefixMap(unittest.TestCase):
@@ -2436,9 +2993,10 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
     def test_mirror_opens_with_same_lot_count(self):
         worker, _ = self._make_worker()
-        # 10-pt stop -> risk_based_lots => ceil(2500 / (10*75)) = 4 NIFTY lots.
+        # 10-pt stop -> floor(2500 / (10*75)) = 3 NIFTY lots.
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         nifty_lots = worker.pos.quantity // 75
+        self.assertEqual(nifty_lots, 3)
         self.assertTrue(worker._mirror_pos.active)
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
@@ -2448,6 +3006,46 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             57910.0, "LONG",
             expiry_date=worker._bnf_resolver.get_monthly_rollover_expiry.return_value,
         )
+
+    def test_hung_inference_cannot_delay_square_off_and_does_not_stack(self):
+        """The LLM runs off-loop: cutoff closes exposure while one pass is hung."""
+        worker, _ = self._make_worker()
+        worker._mirror_enabled = False
+        worker._use_bnf = False
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        release = threading.Event()
+        calls = {"count": 0}
+
+        def _hung_decide(*args, **kwargs):
+            calls["count"] += 1
+            release.wait(5)
+            return MagicMock(action="HOLD", confidence=0, setup="none", stop=0, target=0)
+
+        worker.agent.decide = _hung_decide
+        frame = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-07-16 10:00:00")],
+                "open": [24300.0], "high": [24305.0], "low": [24295.0], "close": [24300.0],
+            }
+        )
+
+        poll = threading.Thread(target=worker.process_strategy_frame, args=(frame,))
+        poll.start()
+        poll.join(timeout=0.5)
+        self.assertFalse(poll.is_alive())
+
+        later = frame.copy()
+        later["timestamp"] = pd.Timestamp("2026-07-16 10:01:00")
+        worker.process_strategy_frame(later)
+        self.assertEqual(calls["count"], 1)
+
+        square_off = threading.Thread(target=worker.handle_square_off_and_stop)
+        square_off.start()
+        square_off.join(timeout=0.5)
+        self.assertFalse(square_off.is_alive())
+        self.assertFalse(worker.pos.active)
+        release.set()
 
     def test_basket_exits_together_and_pnl_includes_both_legs(self):
         worker, store = self._make_worker()
@@ -2764,9 +3362,11 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
             self.assertTrue(worker.pos.active)
             self.assertTrue(worker._mirror_pos.active)
-            self.assertEqual(worker._mirror_pos.quantity, 140)
+            # MAT-104 floor sizing: 10-pt stop -> floor(2500 / (10*75)) = 3
+            # NIFTY lots, mirrored as 3 BNF lots x 35 = 105 units.
+            self.assertEqual(worker._mirror_pos.quantity, 105)
             self.assertEqual(worker._mirror_pos.live_leg.confirmed_live_quantity, 35)
-            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 140)
+            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 105)
 
             worker.exit_position("ASYMMETRIC_ENTRY_RECOVERY")
 
@@ -2775,8 +3375,8 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             for symbol, side, quantity in fake.calls
             if "BANKNIFTY" in symbol
         ]
-        self.assertEqual(bnf_orders, [("BUY", 140), ("SELL", 35)])
-        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 140)])
+        self.assertEqual(bnf_orders, [("BUY", 105), ("SELL", 35)])
+        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 105)])
         self.assertFalse(worker._mirror_pos.active)
 
     def test_unknown_mirror_entry_uses_conservative_risk_quantity_for_mtm(self):
@@ -2826,17 +3426,18 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         mirror = worker._mirror_pos
         self.assertTrue(mirror.active)
         self.assertEqual(mirror.live_leg.confirmed_live_quantity, 0)
-        self.assertEqual(mirror.live_leg.risk_quantity, 140)
-        self.assertEqual(mirror.quantity, 140)
+        # MAT-104 floor sizing: 3 NIFTY lots -> 3 BNF lots x 35 = 105 units.
+        self.assertEqual(mirror.live_leg.risk_quantity, 105)
+        self.assertEqual(mirror.quantity, 105)
         store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 490.0})
-        self.assertEqual(worker._mirror_leg_pnl(), -1400.0)
+        self.assertEqual(worker._mirror_leg_pnl(), -1050.0)
         with (
             patch.object(master_file, "execution_client", fake),
             patch.object(worker, "_start_execution_reconciliation"),
         ):
             worker.exit_bnf_mirror_only("UNKNOWN_ENTRY_RECOVERY")
         self.assertTrue(worker._mirror_pos.active)
-        self.assertEqual(worker._mirror_pos.quantity, 140)
+        self.assertEqual(worker._mirror_pos.quantity, 105)
         self.assertFalse(
             any(
                 side == "SELL" and "BANKNIFTY" in symbol
@@ -3619,6 +4220,34 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(fake.calls, [])
         self.assertFalse(self.worker.pos.active)
         self.assertEqual(self.store.execution_ledger.active_states(), ())
+
+    def test_worker_shutdown_blocks_only_its_own_entries(self):
+        """One strategy's shutdown must not freeze the shared account gate.
+
+        A paper strategy's max-loss stop (or the earliest 15:15 square-off)
+        blocks new entries for THAT worker through its own lifecycle gate; the
+        other live strategies keep trading. The shared freeze stays reserved
+        for genuinely account-wide conditions (indeterminate exposure, a
+        failed startup audit).
+        """
+
+        self.worker.live_trading = True
+        self.worker.request_worker_shutdown("MAX_LOSS_BREACH")
+
+        # The shared account-wide gate is untouched...
+        frozen, _reason = self.store.execution_safety.entry_freeze_snapshot()
+        self.assertFalse(frozen)
+
+        # ...but this worker's own entries are refused at the order boundary.
+        fake = _FakeShoonya()
+        with patch.object(master_file, "execution_client", fake):
+            entered = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+            )
+        self.assertFalse(entered)
+        self.assertEqual(fake.calls, [])
+        self.assertFalse(self.worker.pos.active)
 
     def test_live_exit_still_reduces_after_entry_gate_is_disabled(self):
         """Turning off future entries must never suppress a known live close."""
@@ -5970,6 +6599,26 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
 
         self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
 
+    def test_risk_budget_max_lots_must_be_a_positive_integer_for_live(self):
+        worker = self._Worker("ProfitShooter")
+        with patch.dict(os.environ, {"PROFIT_SHOOTER_MAX_LOTS": "2.5"}):
+            errors = master_file._live_config_errors(worker, "PROFIT_SHOOTER")
+
+        self.assertIn(
+            "PROFIT_SHOOTER_MAX_LOTS must be a positive integer",
+            errors,
+        )
+
+    def test_resolved_risk_budget_max_lots_fails_closed_for_live(self):
+        worker = self._Worker("MoneyMachine")
+        with patch.object(master_file, "MONEY_MACHINE_MAX_LOTS", 0):
+            errors = master_file._live_config_errors(worker, "MONEY_MACHINE")
+
+        self.assertIn(
+            "resolved MONEY_MACHINE_MAX_LOTS must be a positive integer",
+            errors,
+        )
+
 
 class TestCoordinatedShutdownSupervisor(unittest.TestCase):
     """Process finalization is forbidden until local and broker books are flat."""
@@ -6029,6 +6678,49 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
             BrokerQueryResult.success(()),
         )
 
+    @staticmethod
+    def _store_with_tracked_leg():
+        """Build a store whose execution ledger tracks one unresolved live leg."""
+        from Dependencies.execution_ledger import LegSpec
+
+        store = master_file.SharedMarketDataStore()
+        spec = LegSpec(
+            strategy="Renko",
+            correlation_id="ABCD1234",
+            role="N",
+            underlying="NIFTY",
+            symbol="NIFTY16JUL2622500CE",
+            option_type="CE",
+            strike=22500.0,
+            expiry=None,
+            opening_side="BUY",
+            target_quantity=75,
+        )
+        state = store.execution_ledger.register(spec)
+        return store, state
+
+    @staticmethod
+    def _flatten_tracked_leg(store, state):
+        """Resolve the tracked leg with a terminal zero-fill rejection (flat)."""
+        from Dependencies.broker_contract import OrderResult, OrderStatus
+        from Dependencies.execution_ledger import OrderIntent
+
+        handle = store.execution_ledger.start_attempt(
+            state.exposure_id, OrderIntent.OPEN, 75
+        )
+        store.execution_ledger.apply_result(
+            handle,
+            OrderResult(
+                order_id="TEST-FLAT-1",
+                requested_quantity=75,
+                filled_quantity=0,
+                remaining_quantity=75,
+                status=OrderStatus.REJECTED,
+                broker_state="REJECTED",
+                reason="test rejection",
+            ),
+        )
+
     def test_ctrl_c_requests_worker_shutdown_without_setting_terminal_event(self):
         workers = [MagicMock(), MagicMock()]
         terminal_event = threading.Event()
@@ -6077,28 +6769,34 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         self.assertFalse(worker.alive)
         self.assertEqual(worker.shutdown_requests, ["KEYBOARD_INTERRUPT"])
 
-    def test_transient_account_audit_retries_then_proves_flat(self):
-        client = self._ShutdownClient(
-            [self._indeterminate_books(), self._flat_books()]
-        )
+    def test_wait_retries_until_runner_ledger_confirms_flat(self):
+        """Unresolved RUNNER exposure blocks; account books never block here."""
+
+        client = self._ShutdownClient([self._indeterminate_books()])
+        store, state = self._store_with_tracked_leg()
         sleeps = []
 
+        def flattening_sleep(delay):
+            sleeps.append(delay)
+            self._flatten_tracked_leg(store, state)
+
         flat = master_file._wait_for_shutdown_account_flat(
-            master_file.SharedMarketDataStore(),
+            store,
             client,
-            sleep=sleeps.append,
+            sleep=flattening_sleep,
             max_attempts=3,
         )
 
         self.assertTrue(flat)
         self.assertEqual(sleeps, [1.0])
 
-    def test_permanent_account_failure_never_allows_clean_finalization(self):
-        client = self._ShutdownClient([self._indeterminate_books()])
+    def test_permanent_runner_exposure_never_allows_clean_finalization(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, _state = self._store_with_tracked_leg()
         sleeps = []
 
         flat = master_file._wait_for_shutdown_account_flat(
-            master_file.SharedMarketDataStore(),
+            store,
             client,
             sleep=sleeps.append,
             max_attempts=4,
@@ -6111,7 +6809,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         store = master_file.SharedMarketDataStore()
         store.live_session_started = True
 
-        audit = master_file._shutdown_account_audit(store, None)
+        audit = master_file._advisory_account_audit(store, None)
 
         self.assertFalse(audit.safe_to_enable_live)
         self.assertIn("unavailable", " ".join(audit.reasons).lower())
@@ -6132,7 +6830,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         store.live_session_started = True
         client = RecoveringClient()
 
-        audit = master_file._shutdown_account_audit(store, client)
+        audit = master_file._advisory_account_audit(store, client)
 
         self.assertTrue(audit.safe_to_enable_live)
         self.assertEqual(client.ensure_calls, 1)
@@ -6144,33 +6842,34 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         store = master_file.SharedMarketDataStore()
         store.live_session_started = True
 
-        audit = master_file._shutdown_account_audit(store, client)
+        audit = master_file._advisory_account_audit(store, client)
 
         self.assertFalse(audit.safe_to_enable_live)
         client.ensure_logged_in.assert_called_once_with()
 
-    def test_additional_interrupt_cannot_bypass_final_account_reconciliation(self):
-        client = self._ShutdownClient(
-            [self._indeterminate_books(), self._flat_books()]
-        )
+    def test_additional_interrupt_cannot_bypass_final_runner_reconciliation(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, state = self._store_with_tracked_leg()
         sleeps = []
 
-        def interrupted_sleep(delay):
+        def interrupted_flattening_sleep(delay):
             sleeps.append(delay)
+            self._flatten_tracked_leg(store, state)
             raise KeyboardInterrupt
 
         flat = master_file._wait_for_shutdown_account_flat(
-            master_file.SharedMarketDataStore(),
+            store,
             client,
-            sleep=interrupted_sleep,
+            sleep=interrupted_flattening_sleep,
             max_attempts=3,
         )
 
         self.assertTrue(flat)
         self.assertEqual(sleeps, [1.0])
 
-    def test_logout_results_and_refresh_are_blocked_while_broker_is_indeterminate(self):
-        client = self._ShutdownClient([self._indeterminate_books()])
+    def test_logout_results_and_refresh_are_blocked_while_runner_exposure_open(self):
+        client = self._ShutdownClient([self._flat_books()])
+        store, _state = self._store_with_tracked_leg()
         workers = [MagicMock()]
         with (
             patch.object(master_file, "_publish_eod_summary") as summary,
@@ -6179,7 +6878,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         ):
             finalized = master_file._finalize_flat_session(
                 workers,
-                master_file.SharedMarketDataStore(),
+                store,
                 client,
                 trade_event_queue=None,
                 natural_eod=True,
@@ -6191,12 +6890,59 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         sheet.assert_not_called()
         refresh.assert_not_called()
 
+    def test_manual_account_exposure_warns_but_does_not_block_finalization(self):
+        """The operator's own positions alert loudly; results/logout proceed."""
+        from Dependencies.broker_contract import OpenPosition
+
+        client = self._ShutdownClient(
+            [
+                (
+                    BrokerQueryResult.success(()),
+                    BrokerQueryResult.success(
+                        (
+                            OpenPosition(
+                                symbol="NIFTY16JUL2622500CE",
+                                quantity=75,
+                                product_type="NRML",
+                            ),
+                        )
+                    ),
+                )
+            ]
+        )
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        event_queue = master_file.queue.Queue()
+        with (
+            patch.object(master_file, "_publish_eod_summary") as summary,
+            patch.object(master_file, "_update_pnl_google_sheet") as sheet,
+            patch.object(master_file, "_refresh_instrument_master_for_next_day") as refresh,
+        ):
+            finalized = master_file._finalize_flat_session(
+                [MagicMock()],
+                store,
+                client,
+                trade_event_queue=event_queue,
+                natural_eod=True,
+            )
+
+        self.assertTrue(finalized)
+        self.assertEqual(client.logout_calls, 1)
+        summary.assert_called_once()
+        sheet.assert_called_once_with()
+        refresh.assert_called_once_with()
+        alert = event_queue.get_nowait()
+        self.assertEqual(alert["action"], "SHUTDOWN_ACCOUNT_WARNING")
+        self.assertIn("position", alert["reason"].lower())
+        # Fixed vocabulary only: the operator's symbol never reaches the alert.
+        self.assertNotIn("NIFTY16JUL2622500CE", repr(alert))
+
     def test_interrupt_during_final_flat_audit_blocks_finalization(self):
         client = self._ShutdownClient([self._flat_books()])
         with (
             patch.object(
                 master_file,
-                "_shutdown_account_audit",
+                "_runner_exposure_audit",
                 side_effect=KeyboardInterrupt,
             ),
             patch.object(master_file, "_publish_eod_summary") as summary,

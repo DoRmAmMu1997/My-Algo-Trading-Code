@@ -74,6 +74,7 @@ if str(_DEPENDENCIES_DIR) not in sys.path:
     sys.path.insert(0, str(_DEPENDENCIES_DIR))
 
 from broker_contract import (  # noqa: E402
+    TERMINAL_BROKER_STATES,
     BrokerQueryResult,
     OpenOrder,
     OpenPosition,
@@ -366,7 +367,15 @@ class FlattradeExecutionClient:
             ) from exc
 
     def recover_after_reconciliation(self) -> bool:
-        """Explicitly clear deadline poison after the abandoned call has ended."""
+        """Explicitly clear deadline poison after the abandoned call has ended.
+
+        "Poisoned" means an earlier HTTP call outlived its 10-second budget and
+        was abandoned -- but Python cannot kill a running thread, so that call
+        may STILL be dribbling a response (or completing an order) inside
+        ``requests``.  Only after (a) reconciliation has proven the account
+        state and (b) the abandoned call has actually finished is it safe to
+        accept new orders; this method refuses (returns False) until both hold.
+        """
 
         with self._lock:
             if self._timed_out_future is not None and not self._timed_out_future.done():
@@ -454,6 +463,10 @@ class FlattradeExecutionClient:
             log.error("Flattrade login aborted: no request_code supplied.")
             return False
 
+        # Flattrade's documented recipe: the API secret is never sent raw.
+        # Instead sha256(api_key + request_code + api_secret) proves we hold
+        # the secret while binding this exchange to THIS request code -- a
+        # replayed digest is useless once the code expires.
         digest = hashlib.sha256(
             f"{api_key}{request_code}{raw_secret}".encode()
         ).hexdigest()
@@ -524,7 +537,15 @@ class FlattradeExecutionClient:
         return True
 
     def _validate_session_locked(self) -> bool:
-        """Validate the current token and remember Flattrade's account id."""
+        """Validate the current token and remember Flattrade's account id.
+
+        ``UserDetails`` is the cheapest authenticated read, so it doubles as
+        the token check.  Two extra facts are harvested while we are here:
+        the ``exarr`` exchange list (an account without NFO enabled could log
+        in fine and then have every option order rejected -- fail that at
+        startup instead) and ``actid`` (the account id later order payloads
+        must carry, which is not always identical to the login client id).
+        """
         try:
             payload = self._post_api("UserDetails", {"uid": self._client_id})
         except Exception as exc:
@@ -537,6 +558,8 @@ class FlattradeExecutionClient:
         enabled_exchanges = {
             str(value).upper() for value in (payload.get("exarr") or [])
         }
+        # An EMPTY exarr is tolerated (some responses omit it); only a present
+        # list that excludes NFO is proof the account cannot trade options.
         if enabled_exchanges and "NFO" not in enabled_exchanges:
             log.error("Flattrade account does not report NFO access; live trading disabled.")
             return False
@@ -1027,7 +1050,17 @@ class FlattradeExecutionClient:
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
-        """Poll briefly for a terminal result without hiding ambiguity."""
+        """Poll until the order reaches a truly terminal state, or time out.
+
+        Why the loop keeps polling on PARTIAL/UNKNOWN snapshots: a market order
+        is often observed mid-fill (Noren state "open" with some quantity
+        already traded on `fillshares`).  That is TRANSIENT -- the next 0.5s
+        poll usually shows COMPLETE -- so returning it as the final outcome
+        would freeze every live strategy over a perfectly healthy order.  A
+        partial/unknown snapshot becomes the real outcome only when the broker
+        label is terminal (the order can never fill further, e.g. a partial
+        fill followed by a cancel) or the timeout below expires.
+        """
         deadline = time.monotonic() + _FILL_TIMEOUT_SECONDS
         last_result = normalize_order_result(
             order_id=order_id,
@@ -1038,14 +1071,16 @@ class FlattradeExecutionClient:
         )
         while time.monotonic() < deadline:
             last_result = self.get_order_status(order_id, requested_quantity=want_qty)
-            if last_result.status is not OrderStatus.UNKNOWN:
+            if last_result.status in {OrderStatus.FILLED, OrderStatus.REJECTED}:
+                return last_result
+            if last_result.broker_state in TERMINAL_BROKER_STATES:
+                # Terminal label with a partial/contradictory quantity snapshot:
+                # no further fills are possible, so this IS the final outcome.
                 return last_result
             # A failed/malformed status call is already indeterminate. Repeating
             # it inside the same order interaction risks exceeding the deadline
             # without adding evidence, so return immediately with the known id.
             if "query failed" in last_result.reason.lower():
-                return last_result
-            if last_result.broker_state not in {"", "OPEN", "PENDING", "TRIGGER_PENDING"}:
                 return last_result
             time.sleep(_FILL_POLL_INTERVAL)
         return normalize_order_result(

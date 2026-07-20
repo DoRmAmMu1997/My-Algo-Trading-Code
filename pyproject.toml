@@ -57,6 +57,10 @@ files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
     "Dependencies/broker_contract.py",
+    "Dependencies/diagnostic_preflight.py",
+    "Dependencies/next_open_entry.py",
+    "Dependencies/market_data_health.py",
+    "Dependencies/risk_sizing.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
     "Dependencies/Kotak API/kotak_execution.py",
@@ -65,6 +69,8 @@ files = [
     "Dependencies/Shoonya API/diagnose_shoonya_symbol.py",
     "Dependencies/Flattrade API/flattrade_execution.py",
     "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
+    "Dependencies/Dhan API/dhan_execution.py",
+    "Dependencies/Dhan API/diagnose_dhan_symbol.py",
     "Signal Generators/ema_trend_strategy_logic.py",
     "Signal Generators/heikin_ashi_strategy_logic.py",
     "Signal Generators/renko_strategy_logic.py",
@@ -129,3 +135,32 @@ ignore_missing_imports = true
 # The vendored Shoonya SDK is third-party code; type-check our wrappers, not it.
 module = ["NorenApi"]
 ignore_errors = true
+
+[tool.coverage.run]
+# Measure branch exits as well as statements. ``thread`` matters because the
+# master runner and several fault-injection tests execute safety paths in worker
+# threads. Relative paths keep the JSON report identical on Windows and Linux.
+branch = true
+relative_files = true
+concurrency = ["thread"]
+source = ["."]
+omit = [
+    "*/test_*.py",
+    "*/tests/*",
+    "Backtest Outputs/*",
+    "My Backtest Files (For Reference)/*",
+    "Dependencies/Shoonya API/NorenApi.py",
+]
+
+[tool.coverage.report]
+# MAT-110 measured the branch-enabled runtime baseline before installing this
+# gate. Per-module 90%/80% budgets are enforced from coverage.json by the small
+# policy script because Coverage.py has only one global fail-under setting.
+fail_under = 54.7
+precision = 1
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

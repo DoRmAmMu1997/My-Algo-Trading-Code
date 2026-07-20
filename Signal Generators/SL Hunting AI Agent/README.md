@@ -28,8 +28,9 @@ and runs one agentic pass:
 
 `ENTER_LONG` buys an ATM **CALL**; `ENTER_SHORT` buys an ATM **PUT**. Stops and
 targets are levels on the NIFTY **underlying** (spot). The agent does **not** choose
-the lot count — position size is computed automatically so the worst-case risk is
-**~₹2500 per trade** (`SL_HUNTING_RISK_BUDGET`), from the agent's stop distance.
+the lot count. Position size floors the affordable whole lots from the agent's
+stop distance, never exceeds `SL_HUNTING_RISK_BUDGET`, skips the setup when even
+one NIFTY lot is unaffordable, and caps at `SL_HUNTING_MAX_LOTS` (default 5).
 
 ## Files
 | File | Purpose |
@@ -50,7 +51,7 @@ the lot count — position size is computed automatically so the worst-case risk
 
 ## Setup (one-time)
 ```bash
-pip install claude-agent-sdk pydantic
+pip install -r requirements-ai.txt
 # Authenticate to your Claude SUBSCRIPTION. For an UNATTENDED live runner prefer a
 # long-lived token; interactive `claude login` also works but its OAuth login expires.
 claude setup-token
@@ -91,7 +92,7 @@ SL_HUNTING_MODEL=claude-opus-4-8 # or claude-sonnet-4-6 to cut cost
 ```
 Then run the master as usual (`python algo.py run`). It trades on **paper** unless
 both `LIVE_TRADING_ENABLED` and `SL_HUNTING_LIVE_TRADING` are `true`; the live
-broker is the existing `LIVE_BROKER` (`KOTAK`/`SHOONYA`). Live orders go through the
+broker is the existing `LIVE_BROKER` (`KOTAK`/`SHOONYA`/`FLATTRADE`). Live orders go through the
 master's one shared, lock-guarded broker session and its `enter_position` /
 `exit_position` (so max-loss, square-off and Telegram all apply). See the
 `SL_HUNTING_*` block in `Dependencies/env.example` for all knobs.
@@ -104,19 +105,19 @@ cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of
 
 ## Safety
 - **Paper by default.** The agent is given exactly **one** order tool, chosen by
-  the env (`place_paper_order` / `place_kotak_order` / `place_shoonya_order`) — it
+  the env (`place_paper_order` / `place_kotak_order` / `place_shoonya_order` /
+  `place_flattrade_order`) — it
   can never pick paper-vs-real or the broker.
 - The agent **never raises** into the trading loop: any failure (SDK missing,
   malformed output, **auth 401 / usage-limit 429**, …) returns a safe `HOLD`, and the
   warning log names the cause (e.g. "authentication failed (HTTP 401) — run
   `claude setup-token`") so it's actionable.
-- Each SDK call is **time-bounded** (`SL_HUNTING_SDK_TIMEOUT_SECONDS`, default 90s).
-  The per-bar decision blocks the worker thread that also enforces stop/target,
-  max-loss and the 15:15 square-off, so a hung CLI call is abandoned at the budget:
-  that bar's order tool is disarmed (a late-waking loop cannot fire a zombie order)
-  and the agent records a fail-soft `HOLD`. If the CLI stays hung, subsequent bars
-  are **gated** until the abandoned call finishes — so at most one hung agent
-  call/subprocess exists at a time instead of one accumulating per bar.
+- Each SDK call is **time-bounded** (`SL_HUNTING_SDK_TIMEOUT_SECONDS`, default 90s;
+  accepted range 5–120s). Inference runs outside the mechanical risk loop, so
+  stop/target, max-loss, stale-feed, and 15:15 square-off checks continue while
+  one agent call is in flight. A timed-out or late result is disarmed inside the
+  final execution lock and becomes a fail-soft `HOLD`; at most one inference can
+  be active, so hung subprocesses cannot accumulate or place zombie orders.
 - Entry **stop/target are sanity-checked at the order tool** against the live price
   (correct side; stop within ~3%, target within ~10%) and bounded in the schema —
   a hallucinated level cannot silently disable the mechanical stop; the rejected
@@ -161,10 +162,14 @@ human-reviewed loop:
    when `SL_HUNTING_LESSONS_ENABLED=true`** (default off), loaded once per session so
    prompt caching holds. Validate first on paper: `sl_hunting_runner.py --lessons on|off`.
 
-**Safety/ML guardrails:** lessons are **human-gated, paper-first, and off by default**;
-the coach runs off the live loop; lessons are phrased as tendencies (not laws), require a
-minimum sample, separate process from outcome (a sound setup that lost ≠ a mistake), and
-the store is bounded/de-duplicated. Fine-tuning/RL and auto-promotion are out of scope.
+**Safety/ML guardrails:** lessons are **human-gated, paper-first, and off by default**.
+The coach runs off the live loop with `tools=[]`; journal rows are delimited untrusted
+data projected through strict schemas and length/row limits. Proposed and approved
+lessons use typed bounded schemas, promotion binds the approved content to a SHA-256
+digest, and atomic writes prevent a partial store. Modified approved content fails
+digest verification. Lessons remain tendencies (not laws), require a minimum sample,
+separate process from outcome (a sound setup that lost ≠ a mistake), and are
+bounded/de-duplicated. Fine-tuning/RL and auto-promotion are out of scope.
 
 ## Bank Nifty methodology (v3a)
 Knowledge-only drop distilled from 9 "Intraday Hunter" live-trading videos. General lessons
@@ -223,7 +228,7 @@ expiry** (BNF has no weekly series), rolling to the next month once fewer than
 `SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS` (default 7) days remain to it — never the illiquid
 second month out. Entry stays NIFTY-only (the mirror copies it). The mirror
 is mechanical; same paper/live gates as the NIFTY leg; fail-soft (a mirror problem only skips
-the mirror); **basket risk ≈ 2× the ~Rs.2500 budget** (operator-accepted — the daily max-loss
+the mirror); **basket risk can be roughly 2× the NIFTY-leg budget** (operator-accepted — the daily max-loss
 kill-switch still caps the day). Toggle: `SL_HUNTING_BNF_MIRROR` (default true). Journal rows'
 `option_pnl` includes both legs; MIRROR ENTRY/EXIT lines appear in the log and Telegram.
 
