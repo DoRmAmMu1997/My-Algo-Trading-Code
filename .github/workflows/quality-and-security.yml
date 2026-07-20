@@ -36,20 +36,33 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install \
+            -r requirements.txt \
+            -r requirements-dev.txt \
+            -r requirements-ai.txt
+          python -m pip check
+
+      - name: Audit installed Python dependencies
+        # The hosted runner starts clean, so --local audits exactly the core,
+        # developer, and AI environment installed above rather than unrelated
+        # packages from a developer's system Python.
+        run: python -m pip_audit --local --progress-spinner off
 
       - name: Validate pre-commit configuration
         run: python -m pre_commit validate-config .pre-commit-config.yaml
 
-      - name: Run the master unittest suite
-        # Loads the spaced-name master file via importlib with dhanhq mocked --
-        # this suite is the correctness gate for the runner itself.
-        run: python -m unittest test_nifty_multi_strategy_master
-
-      - name: Run the pytest suites
-        # Signal-generator + SL Hunting agent + broker-helper + data-fetcher
-        # tests. SDK-gated cases skip cleanly when an optional dependency is absent.
-        run: python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+      - name: Run branch-enabled test coverage
+        # The master is importlib-loaded because its filename has spaces. Append
+        # every suite into one branch-enabled runtime report, then enforce the
+        # 54.7% repository baseline plus the stricter per-safety/broker budgets.
+        run: |
+          python -m coverage erase
+          python -m coverage run -m unittest test_nifty_multi_strategy_master
+          python -m coverage run --append -m unittest test_market_data_health
+          python -m coverage run --append -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+          python -m coverage json -o coverage.json
+          python -m coverage report
+          python scripts/check_coverage_thresholds.py coverage.json
 
       - name: Compile every Python file
         # The master runner and most strategy files have SPACES in their names,
@@ -68,9 +81,44 @@ jobs:
       - name: Run Bandit security checks
         # B101 (asserts), B105 (false positives on token-URL/dict-key strings)
         # and B110 (documented best-effort fallbacks) are skipped; vendored and
-        # reference-only code is excluded. Coverage gating is a deliberate
-        # follow-up (measuring the importlib-loaded master needs its own work).
+        # reference-only code is excluded.
         run: >
           python -m bandit -r . -q
           -x "./Backtest Outputs,./My Backtest Files (For Reference),./Dependencies/Shoonya API/NorenApi.py"
           --skip B101,B105,B110
+
+  broker-dependencies:
+    name: Python ${{ matrix.python-version }} broker dependency validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install exact optional broker environment
+        # Kotak v2.0.1 declares older exact pandas/requests constraints that
+        # conflict with the app's newer audited core set. Validate the official
+        # SDK in its own clean environment instead of asking pip to construct an
+        # impossible combined dependency graph.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest==9.0.3 -r requirements-brokers.txt
+          python -m pip check
+
+      - name: Run broker contract and adapter suites
+        run: >
+          python -m pytest
+          "Dependencies/test_broker_contract.py"
+          "Dependencies/Flattrade API/test_flattrade_execution.py"
+          -q

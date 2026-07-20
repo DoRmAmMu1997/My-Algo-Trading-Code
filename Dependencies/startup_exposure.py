@@ -56,7 +56,16 @@ def _read_typed_book[BookItem: (OpenOrder, OpenPosition)](
     query: Callable[[], object],
     item_type: type[BookItem],
 ) -> tuple[BookItem, ...] | None:
-    """Return a validated book, or ``None`` for any ambiguous outcome."""
+    """Return a validated book, or ``None`` for any ambiguous outcome.
+
+    ``None`` never means "empty" here -- an empty-but-successful book is the
+    empty tuple.  ``None`` means "could not be proven", which the caller
+    treats exactly like exposure.  The type checks below look paranoid on
+    purpose: this function is the last line between an adapter bug (or a
+    monkeypatched test double drifting from the contract) and the decision to
+    let real orders start, so any shape that is not literally the contract's
+    is refused rather than coerced.
+    """
 
     try:
         result = query()
@@ -65,6 +74,8 @@ def _read_typed_book[BookItem: (OpenOrder, OpenPosition)](
 
     if not isinstance(result, BrokerQueryResult):
         return None
+    # ``type(...) is not bool`` rather than truthiness: a mock returning a
+    # truthy non-bool (e.g. a MagicMock) must not read as "determinate".
     if type(result.is_indeterminate) is not bool:  # bool is intentional here.
         return None
     if not isinstance(result.items, tuple):
@@ -73,6 +84,8 @@ def _read_typed_book[BookItem: (OpenOrder, OpenPosition)](
         return None
     if result.is_indeterminate:
         return None
+    # Every element must be the exact typed item -- one foreign object means
+    # the whole snapshot cannot be trusted.
     if any(not isinstance(item, item_type) for item in result.items):
         return None
     return result.items

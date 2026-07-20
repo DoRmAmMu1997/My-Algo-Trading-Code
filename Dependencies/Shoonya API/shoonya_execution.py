@@ -71,13 +71,21 @@ from typing import Any
 import pandas as pd
 import requests
 
-from Dependencies.secret_redaction import redact_payload, redact_text
-
 # Make the broker-neutral contract available both when the master dynamically
 # loads this file and when the sibling diagnostic runs it as a standalone script.
+#
+# The REPO ROOT has to go on the path too, not just ``Dependencies``: the
+# redaction helpers below are imported as ``Dependencies.secret_redaction``,
+# which needs the package's PARENT directory.  The master already has it because
+# it is launched from the repo root, but ``python <script>`` puts the SCRIPT's
+# directory on ``sys.path[0]`` and never the working directory -- so the sibling
+# diagnostic (directly or via ``algo.py diagnose``) used to die on import with
+# "No module named 'Dependencies'".
 _DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
-if str(_DEPENDENCIES_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEPENDENCIES_DIR))
+_REPO_ROOT = _DEPENDENCIES_DIR.parent
+for _import_root in (_REPO_ROOT, _DEPENDENCIES_DIR):
+    if str(_import_root) not in sys.path:
+        sys.path.insert(0, str(_import_root))
 
 from broker_contract import (  # noqa: E402
     TERMINAL_BROKER_STATES,
@@ -88,6 +96,8 @@ from broker_contract import (  # noqa: E402
     OrderStatus,
     normalize_order_result,
 )
+
+from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
 # --- Make the vendored "Shoonya API" SDK importable ---------------------------
 # The NorenApi client may live in a "Shoonya API" folder somewhere above this
@@ -212,6 +222,9 @@ class ShoonyaExecutionClient:
         # The set of valid NFO trading symbols (uppercased), downloaded once and
         # reused for validation. Stays None until first loaded.
         self._symbol_set: set | None = None
+        # tsym -> exchange lot size, filled from the same master download. Used
+        # only by the diagnostic's pre-flight quantity check.
+        self._lot_size_by_symbol: dict[str, int] = {}
 
     @staticmethod
     def _remaining_broker_budget(started: float) -> float:
@@ -478,12 +491,43 @@ class ShoonyaExecutionClient:
             log.warning(f"Shoonya NFO symbol master missing 'TradingSymbol' column: {list(df.columns)}")
             return False
         try:
-            self._symbol_set = set(df["TradingSymbol"].astype(str).str.strip().str.upper())
+            symbols = df["TradingSymbol"].astype(str).str.strip().str.upper()
+            self._symbol_set = set(symbols)
+            # Keep the lot size alongside the symbol set. The master already
+            # carries it and the frame is discarded straight after, so this is
+            # the only chance to retain it. The sibling diagnostic uses it to
+            # refuse a --qty that is not a whole-lot multiple before any real
+            # order is submitted; live trading does not depend on it, so a
+            # master without the column simply leaves the map empty.
+            lot_column = next(
+                (name for name in ("LotSize", "Lotsize", "lotsize") if name in df.columns),
+                None,
+            )
+            if lot_column is None:
+                self._lot_size_by_symbol = {}
+                log.info("Shoonya symbol master has no lot-size column; sizes unavailable.")
+            else:
+                lots = pd.to_numeric(df[lot_column], errors="coerce").fillna(0).astype(int)
+                self._lot_size_by_symbol = {
+                    symbol: int(lot)
+                    for symbol, lot in zip(symbols, lots, strict=False)
+                    if lot > 0
+                }
             log.info(f"Shoonya NSE F&O symbol master loaded ({len(df)} rows).")
             return True
         except Exception as exc:
             log.warning(f"Shoonya NFO symbol master parse failed: {exc}")
             return False
+
+    def lot_size_for_symbol(self, trading_symbol: str) -> int:
+        """Return the exchange lot size for one tsym, or 0 when unknown.
+
+        Exposed for the sibling diagnostic's pre-flight quantity check. It never
+        triggers a download: an unloaded master just reports 0, which makes the
+        check a no-op rather than blocking on missing metadata.
+        """
+        with self._lock:
+            return self._lot_size_by_symbol.get(str(trading_symbol).strip().upper(), 0)
 
     def resolve_option_symbol(
         self,

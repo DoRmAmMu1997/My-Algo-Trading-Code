@@ -12,6 +12,7 @@ from Dependencies.broker_contract import OrderResult, OrderStatus
 from Dependencies.execution_ledger import (
     ExecutionLedger,
     LegSpec,
+    OrderAttemptHandle,
     OrderIntent,
     build_order_tag,
 )
@@ -513,3 +514,189 @@ def test_public_states_are_immutable_coherent_snapshots() -> None:
     assert filled.confirmed_live_quantity == 50
     assert ledger.get(filled.exposure_id) == filled
     assert ledger.active_states() == (filled,)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("strategy", " ", "strategy"),
+        ("correlation_id", "SHORT", "correlation_id"),
+        ("role", "NN", "role"),
+        ("role", "_", "role"),
+        ("underlying", "", "underlying and symbol"),
+        ("symbol", "", "underlying and symbol"),
+        ("option_type", "CALL", "option_type"),
+        ("opening_side", "HOLD", "opening_side"),
+        ("owner_id", "SHORT", "owner_id"),
+    ],
+)
+def test_leg_identity_fields_fail_closed(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    kwargs: dict[str, object] = {
+        "strategy": " HeikinAshi ",
+        "correlation_id": "4f8d2q7j",
+        "role": "n",
+        "underlying": "nifty",
+        "symbol": " NIFTY-22500-CE ",
+        "option_type": "ce",
+        "strike": 22500.0,
+        "expiry": date(2026, 7, 16),
+        "opening_side": "buy",
+        "target_quantity": 50,
+        "owner_id": "",
+    }
+    kwargs[field] = value
+    with pytest.raises(ValueError, match=message):
+        LegSpec(**kwargs)  # type: ignore[arg-type]
+
+
+def test_leg_identity_is_normalized_once_at_registration() -> None:
+    spec = LegSpec(
+        strategy=" HeikinAshi ",
+        correlation_id="4f8d2q7j",
+        role="n",
+        underlying="nifty",
+        symbol=" NIFTY-22500-CE ",
+        option_type="ce",
+        strike=22500.0,
+        expiry=date(2026, 7, 16),
+        opening_side="buy",
+        target_quantity=50,
+        owner_id="8a7b6c5d",
+    )
+    assert spec.strategy == "HeikinAshi"
+    assert spec.correlation_id == "4F8D2Q7J"
+    assert spec.role == "N"
+    assert spec.underlying == "NIFTY"
+    assert spec.symbol == "NIFTY-22500-CE"
+    assert spec.option_type == "CE"
+    assert spec.opening_side == "BUY"
+    assert spec.owner_id == "8A7B6C5D"
+
+
+def test_registered_state_has_no_attempt_handle_and_no_safe_close() -> None:
+    state = ExecutionLedger().register(_spec())
+    assert state.latest_attempt_handle is None
+    assert state.safe_close_retry_quantity == 0
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("", "4F8D2Q7J", "N", "E", 1), "strategy"),
+        (("HeikinAshi", "SHORT", "N", "E", 1), "correlation_id"),
+        (("HeikinAshi", "4F8D2Q7J", "NN", "E", 1), "role"),
+        (("HeikinAshi", "4F8D2Q7J", "N", "_", 1), "phase"),
+        (("HeikinAshi", "4F8D2Q7J", "N", "E", True), "attempt"),
+        (("HeikinAshi", "4F8D2Q7J", "N", "E", 0), "attempt"),
+    ],
+)
+def test_order_tag_inputs_are_strict(
+    args: tuple[object, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build_order_tag(*args)  # type: ignore[arg-type]
+
+
+def test_completed_correlation_cannot_be_reused() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    attempt = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    ledger.apply_result(
+        attempt,
+        _result(
+            order_id="REJECTED",
+            requested=50,
+            filled=0,
+            status=OrderStatus.REJECTED,
+            broker_state="REJECTED",
+        ),
+    )
+    with pytest.raises(ValueError, match="already belongs"):
+        ledger.register(_spec())
+
+
+def test_start_attempt_rejects_invalid_intent_quantity_and_overlap() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    with pytest.raises(ValueError, match="intent"):
+        ledger.start_attempt(leg.exposure_id, "OPEN", 50)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="safe retry quantity"):
+        ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 25)
+
+    ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    with pytest.raises(RuntimeError, match="previous order attempt"):
+        ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+
+
+def test_apply_result_rejects_wrong_types_and_missing_attempt() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    handle = OrderAttemptHandle(leg.exposure_id, 1, "M2-ABC-4F8D2Q7J-NE01")
+    result = _result(
+        order_id="OPEN",
+        requested=50,
+        filled=0,
+        status=OrderStatus.UNKNOWN,
+        broker_state="OPEN",
+    )
+    with pytest.raises(ValueError, match="handle"):
+        ledger.apply_result("bad", result)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="result"):
+        ledger.apply_result(handle, object())  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="before start_attempt"):
+        ledger.apply_result(handle, result)
+
+
+def test_apply_result_rejects_changed_request_order_id_and_backwards_fill() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    attempt = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    ledger.apply_result(
+        attempt,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=20,
+            status=OrderStatus.PARTIAL,
+            broker_state="PARTIAL",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requested quantity changed"):
+        ledger.apply_result(
+            attempt,
+            _result(
+                order_id="OPEN-1",
+                requested=40,
+                filled=20,
+                status=OrderStatus.PARTIAL,
+                broker_state="PARTIAL",
+            ),
+        )
+    with pytest.raises(ValueError, match="order id changed"):
+        ledger.apply_result(
+            attempt,
+            _result(
+                order_id="OPEN-2",
+                requested=50,
+                filled=20,
+                status=OrderStatus.PARTIAL,
+                broker_state="PARTIAL",
+            ),
+        )
+    with pytest.raises(ValueError, match="moved backwards"):
+        ledger.apply_result(
+            attempt,
+            _result(
+                order_id="OPEN-1",
+                requested=50,
+                filled=10,
+                status=OrderStatus.PARTIAL,
+                broker_state="PARTIAL",
+            ),
+        )

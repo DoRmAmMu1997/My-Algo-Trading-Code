@@ -385,8 +385,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # DHAN_CLIENT_CODE  : 10-digit dhanClientId (e.g. "1100000000").
 # DHAN_API_KEY      : long-lived "app_id" used by the OAuth setup script.
 # DHAN_API_SECRET   : long-lived "app_secret" pair to DHAN_API_KEY.
-# DHAN_ACCESS_TOKEN : 12-month token produced by the setup script. This is
-#                     what the dhanhq SDK actually authenticates with.
+# DHAN_ACCESS_TOKEN : token produced by the setup script. This is what the
+#                     dhanhq SDK actually authenticates with. Its validity is
+#                     stamped into the token by DhanHQ and is NOT 12 months --
+#                     web.dhan.co currently issues 24-hour tokens, so refresh
+#                     it outside market hours before each trading day.
 CLIENT_CODE = _env_str("DHAN_CLIENT_CODE", "")
 API_KEY = _env_str("DHAN_API_KEY", "")
 API_SECRET = _env_str("DHAN_API_SECRET", "")
@@ -1002,15 +1005,15 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, or Flattrade.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All three helpers expose
+# This is how real (non-paper) orders reach the broker. All four helpers expose
 # the SAME contract: login/symbol resolution, typed place/status/cancel results,
 # determinate-or-indeterminate open order/position queries, and logout. The runner
 # uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
 # Each import is
 # wrapped in try/except on purpose: if a broker's SDK/deps are missing, that
-# client is set to None and the runner keeps working (the OTHER broker, or
+# client is set to None and the runner keeps working (the OTHER brokers, or
 # paper-only). main() forces any "live" strategy back to paper when the selected
 # client is None.
 try:
@@ -1052,6 +1055,19 @@ except Exception as _flattrade_import_exc:
         _flattrade_import_exc,
     )
 
+try:
+    _dhan_execution_module = load_module(
+        "master_dhan_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Dhan API" / "dhan_execution.py",
+    )
+    dhan_execution_client = _dhan_execution_module.dhan_execution_client
+except Exception as _dhan_import_exc:
+    dhan_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Dhan execution layer unavailable (%s); Dhan live trading disabled.",
+        _dhan_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1074,8 +1090,11 @@ def _select_execution_client(broker_name: str):
     if broker == "FLATTRADE":
         product = _env_str("FLATTRADE_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return flattrade_execution_client, "NFO", product
+    if broker == "DHAN":
+        product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return dhan_execution_client, "NSE_FNO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, or FLATTRADE); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
         "live trading DISABLED (paper only).",
         broker_name,
     )
@@ -3272,6 +3291,12 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+        # Actual session provenance is derived from order outcomes, not merely
+        # from the live configuration flag. A live-enabled worker can execute a
+        # confirmed broker fill and later take an explicit zero-fill paper
+        # fallback, which makes that strategy's daily result MIXED.
+        self._execution_modes_seen: set[str] = set()
+        self._execution_mode_lock = threading.Lock()
         # Distinguish otherwise-identical legs owned by different worker
         # instances.  A frozen worker may finish its own partial order, but a
         # second worker must never adopt that continuation merely because its
@@ -4575,17 +4600,32 @@ class BasePaperStrategyWorker(threading.Thread):
         (TelegramMessageWorker) owns all formatting and network I/O, so the
         trading threads are never exposed to Telegram latency or failures.
         """
-        event_queue = getattr(self, "trade_event_queue", None)
-        if event_queue is None:
-            return
         try:
             event.setdefault("strategy", self.strategy_name)
             event.setdefault("ts", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            event.setdefault("mode", "PAPER")
+            event.setdefault("mode", "LIVE" if self.live_trading else "PAPER")
+            mode_parts = _execution_mode_parts(event["mode"])
+            with self._execution_mode_lock:
+                self._execution_modes_seen.update(mode_parts)
+            event_queue = getattr(self, "trade_event_queue", None)
+            if event_queue is None:
+                return
             event_queue.put_nowait(event)
         except Exception:
             # A failed enqueue must never disturb the trading loop.
             pass
+
+    def session_execution_mode(self) -> str:
+        """Return PAPER, LIVE, or MIXED from this worker's actual outcomes."""
+        with self._execution_mode_lock:
+            observed = set(self._execution_modes_seen)
+        if len(observed) > 1:
+            return "MIXED"
+        if observed:
+            return next(iter(observed))
+        # A no-trade day has no order outcome. Report the mode in which the
+        # strategy was armed rather than falsely claiming a paper execution.
+        return "LIVE" if self.live_trading else "PAPER"
 
     # ------------------------------------------------------------------
     # Helpers
@@ -4917,7 +4957,11 @@ class BasePaperStrategyWorker(threading.Thread):
             return
         if not self._shutdown_summary_logged:
             self._shutdown_summary_logged = True
-            self.log.info("Paper summary | %s", self.summary_text())
+            self.log.info(
+                "Result summary | Mode=%s | %s",
+                self.session_execution_mode(),
+                self.summary_text(),
+            )
             self.log.info(
                 "Strategy stopped only after broker-confirmed flat lifecycle completion."
             )
@@ -12021,6 +12065,28 @@ def _format_inr(value) -> str:
     return f"{sign}₹{abs(amount):,.2f}"
 
 
+def _execution_mode_parts(mode) -> set[str]:
+    """Normalize detailed order tags into daily PAPER/LIVE provenance parts."""
+    normalized = str(mode or "").strip().upper()
+    if normalized == "MIXED":
+        return {"PAPER", "LIVE"}
+    if normalized in {"LIVE", "LIVE_REJECTED", "LIVE_INDETERMINATE"}:
+        return {"LIVE"}
+    # PAPER_FALLBACK is deliberately paper provenance: the broker explicitly
+    # rejected the entry with zero fill and the simulated trade was opened.
+    return {"PAPER"}
+
+
+def _combined_execution_mode(modes) -> str:
+    """Combine worker/session modes into one PAPER, LIVE, or MIXED label."""
+    parts: set[str] = set()
+    for mode in modes:
+        parts.update(_execution_mode_parts(mode))
+    if len(parts) > 1:
+        return "MIXED"
+    return next(iter(parts), "PAPER")
+
+
 def _format_eod_summary(event: dict) -> str:
     """
     Build the end-of-day cumulative P&L message: one line per strategy worker
@@ -12035,8 +12101,12 @@ def _format_eod_summary(event: dict) -> str:
         lines.append(f"<i>{ts}</i>")
     for row in sorted(rows, key=lambda r: _safe_float(r.get("pnl", 0.0), 0.0), reverse=True):
         strat = html.escape(str(row.get("strategy", "?")))
+        row_mode = html.escape(str(row.get("mode", "PAPER")))
         trades = _to_int_safe(row.get("trades", 0), 0)
-        lines.append(f"{strat}: <b>{_format_inr(row.get('pnl', 0.0))}</b> ({trades} trade(s))")
+        lines.append(
+            f"{strat} [{row_mode}]: <b>{_format_inr(row.get('pnl', 0.0))}</b> "
+            f"({trades} trade(s))"
+        )
     lines.append("──────────")
     lines.append(
         f"<b>Total: {_format_inr(event.get('total_pnl', 0.0))} "
@@ -12268,12 +12338,21 @@ def _publish_eod_summary(workers, event_queue) -> None:
     for worker in workers:
         pnl = _safe_float(getattr(worker, "realized_pnl", 0.0), 0.0)
         trades = _to_int_safe(getattr(worker, "completed_trades", 0), 0)
-        rows.append({"strategy": worker.strategy_name, "pnl": pnl, "trades": trades})
+        mode_getter = getattr(worker, "session_execution_mode", None)
+        if callable(mode_getter):
+            worker_mode = mode_getter()
+        else:
+            worker_mode = "LIVE" if getattr(worker, "live_trading", False) else "PAPER"
+        rows.append(
+            {"strategy": worker.strategy_name, "pnl": pnl, "trades": trades, "mode": worker_mode}
+        )
         total_pnl += pnl
         total_trades += trades
 
+    overall_mode = _combined_execution_mode(row["mode"] for row in rows)
     logger.info(
-        "END-OF-DAY cumulative paper P&L across %d workers = %.2f over %d trade(s).",
+        "END-OF-DAY cumulative %s P&L across %d workers = %.2f over %d trade(s).",
+        overall_mode,
         len(workers),
         total_pnl,
         total_trades,
@@ -12288,7 +12367,7 @@ def _publish_eod_summary(workers, event_queue) -> None:
                 "total_pnl": total_pnl,
                 "total_trades": total_trades,
                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "mode": "PAPER",
+                "mode": overall_mode,
             }
         )
     except Exception:
@@ -12345,7 +12424,8 @@ _PNL_SHEET_ROW_LABELS = {
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
-# Only Paper-summary lines inside this window are used for the sheet. Covers
+_PNL_MODE_RE = re.compile(r"\bMode=(PAPER|LIVE|MIXED)\b")
+# Only result-summary lines inside this window are used for the sheet. Covers
 # max-loss during the session (from 9:15) through the last square-off (15:20)
 # while ignoring after-market test runs that log fresh summaries at 17:00+.
 _PNL_LOG_WINDOW_START = (9, 15)
@@ -12383,8 +12463,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
     """
     Parse the runner's log for each strategy's end-of-day realised P&L per day.
 
-    Reads the per-strategy "Paper summary | ... RealizedPnL=<pnl>" lines that
-    every worker logs at square-off / max-loss. The log format is
+    Reads the per-strategy "Result summary | Mode=<mode> | ... RealizedPnL=<pnl>"
+    lines that every worker logs at square-off / max-loss. Legacy "Paper summary"
+    rows remain readable as PAPER. The log format is
     "<asctime> | <level> | <threadName> | <message>", and threadName is
     "<strategy_name>Thread", so we recover the date (from asctime), the strategy
     (from the thread name), and the figure. Returns {"YYYY-MM-DD":
@@ -12405,7 +12486,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
             for line in handle:
                 # Cheap pre-filter: skip everything that isn't a P&L summary line
                 # before doing the costlier split/regex work below.
-                if "Paper summary" not in line or "RealizedPnL=" not in line:
+                is_legacy_paper = "Paper summary" in line
+                is_mode_result = "Result summary" in line
+                if (not is_legacy_paper and not is_mode_result) or "RealizedPnL=" not in line:
                     continue
                 # Break into the 4 log fields. maxsplit=3 keeps the message intact
                 # even if the message itself contains " | ".
@@ -12433,10 +12516,19 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                 match = _PNL_LOG_LINE_RE.search(message)
                 if not match:
                     continue
+                mode = "PAPER"
+                if is_mode_result:
+                    mode_match = _PNL_MODE_RE.search(message)
+                    if not mode_match:
+                        continue
+                    mode = mode_match.group(1)
                 try:
                     # Last write wins: a later summary for the same strategy/day
                     # (e.g. a re-entry's final line) overwrites the earlier one.
-                    result.setdefault(date_str, {})[strategy] = float(match.group(1))
+                    result.setdefault(date_str, {})[strategy] = {
+                        "pnl": float(match.group(1)),
+                        "mode": mode,
+                    }
                 except ValueError:
                     continue
     except Exception as exc:  # pragma: no cover - defensive
@@ -12492,11 +12584,31 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
         if date_str[:7] != current_month or date_str not in date_to_col:
             continue
         col_idx = date_to_col[date_str]
-        for strategy, pnl in per_strategy.items():
+        for strategy, result_record in per_strategy.items():
             # Map the code's strategy name to the sheet's exact row label.
-            label = _PNL_SHEET_ROW_LABELS.get(strategy)
-            if label is None or label not in label_to_row:
+            base_label = _PNL_SHEET_ROW_LABELS.get(strategy)
+            if isinstance(result_record, dict):
+                pnl = result_record.get("pnl")
+                mode = str(result_record.get("mode", "")).strip().upper()
+                if mode not in {"PAPER", "LIVE", "MIXED"}:
+                    unmatched.add(strategy)
+                    continue
+            else:
+                # Backward-compatible input for older callers/tests: numeric
+                # records came from the legacy Paper-summary parser.
+                pnl = result_record
+                mode = "PAPER"
+            # Keep the existing paper rows intact. Live and mixed results require
+            # distinct numeric rows so broker P&L can never contaminate the paper
+            # tracker's historical series.
+            if base_label is None:
                 # No mapping, or the sheet is missing that row -> report it.
+                unmatched.add(strategy)
+                continue
+            label = base_label if mode == "PAPER" else f"{base_label} [{mode}]"
+            if label not in label_to_row:
+                # Live and mixed modes use dedicated rows. If the operator has
+                # not added that row yet, warn instead of overwriting paper P&L.
                 unmatched.add(strategy)
                 continue
             row_idx = label_to_row[label]

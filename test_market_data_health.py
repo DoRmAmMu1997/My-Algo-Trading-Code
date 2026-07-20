@@ -12,6 +12,7 @@ from Dependencies.market_data_health import (
     MarketDataHealth,
     MarketDataValidationError,
     complete_minute_bucket_mask,
+    newest_completed_minute_timestamp,
     validate_ohlc_frame,
 )
 
@@ -43,6 +44,43 @@ class TestOHLCValidation(unittest.TestCase):
         frame.loc[0, "close"] = float("inf")
         with self.assertRaises(MarketDataValidationError):
             validate_ohlc_frame(frame, now=self.now)
+
+    def test_rejects_empty_or_incomplete_snapshots(self) -> None:
+        for frame in (None, pd.DataFrame()):
+            with self.subTest(frame=frame), self.assertRaises(
+                MarketDataValidationError, msg="empty"
+            ):
+                validate_ohlc_frame(frame, now=self.now)  # type: ignore[arg-type]
+
+        with self.assertRaises(MarketDataValidationError, msg="missing"):
+            validate_ohlc_frame(pd.DataFrame({"timestamp": [self.now]}), now=self.now)
+
+    def test_rejects_invalid_or_misaligned_timestamps(self) -> None:
+        for timestamp in (pd.NaT, datetime(2026, 7, 16, 9, 59, 1)):
+            with self.subTest(timestamp=timestamp), self.assertRaises(
+                MarketDataValidationError
+            ):
+                validate_ohlc_frame(_frame([timestamp]), now=self.now)
+
+    def test_rejects_nonnumeric_price_and_each_geometry_violation(self) -> None:
+        nonnumeric = _frame([datetime(2026, 7, 16, 9, 59)])
+        nonnumeric["open"] = pd.Series(["not-a-price"], dtype=object)
+        with self.assertRaises(MarketDataValidationError):
+            validate_ohlc_frame(nonnumeric, now=self.now)
+
+        mutations = (
+            ("low", 101.5),   # low above open
+            ("low", 101.5),   # low above close
+            ("high", 99.5),   # high below open/close
+            ("low", 103.0),   # low above high
+        )
+        for column, value in mutations:
+            frame = _frame([datetime(2026, 7, 16, 9, 59)])
+            frame.loc[0, column] = value
+            with self.subTest(column=column, value=value), self.assertRaises(
+                MarketDataValidationError
+            ):
+                validate_ohlc_frame(frame, now=self.now)
 
         frame.loc[0, "close"] = 0.0
         with self.assertRaises(MarketDataValidationError):
@@ -107,6 +145,43 @@ class TestCompleteMinuteBuckets(unittest.TestCase):
         )
         self.assertEqual(complete_minute_bucket_mask(wrong_slots, 5).tolist(), [False] * 5)
 
+    def test_rejects_invalid_timeframes_and_handles_empty_or_partial_buckets(self) -> None:
+        with self.assertRaises(ValueError, msg="positive"):
+            complete_minute_bucket_mask(pd.DatetimeIndex([]), 0)
+
+        self.assertEqual(
+            complete_minute_bucket_mask(pd.DatetimeIndex([]), 5).tolist(),
+            [],
+        )
+        partial = pd.DatetimeIndex(["2026-07-16 09:15", "2026-07-16 09:16"])
+        self.assertEqual(complete_minute_bucket_mask(partial, 5).tolist(), [False, False])
+
+
+class TestCompletedMinuteTimestamp(unittest.TestCase):
+    """Only completed one-minute bars may drive freshness decisions."""
+
+    def test_returns_none_for_missing_inputs(self) -> None:
+        now = datetime(2026, 7, 16, 10, 0, 30, tzinfo=IST)
+        self.assertIsNone(newest_completed_minute_timestamp(None, now=now))  # type: ignore[arg-type]
+        self.assertIsNone(newest_completed_minute_timestamp(pd.DataFrame(), now=now))
+        self.assertIsNone(
+            newest_completed_minute_timestamp(pd.DataFrame({"open": [100]}), now=now)
+        )
+
+    def test_excludes_current_minute_and_returns_latest_completed_bar(self) -> None:
+        now = datetime(2026, 7, 16, 10, 0, 30, tzinfo=IST)
+        frame = _frame(
+            [
+                datetime(2026, 7, 16, 9, 58),
+                datetime(2026, 7, 16, 9, 59),
+                datetime(2026, 7, 16, 10, 0),
+            ]
+        )
+        self.assertEqual(
+            newest_completed_minute_timestamp(frame, now=now),
+            datetime(2026, 7, 16, 9, 59, tzinfo=IST),
+        )
+
 
 class TestMarketDataHealth(unittest.TestCase):
     """Live entry and liquidation state must follow explicit freshness rules."""
@@ -166,6 +241,47 @@ class TestMarketDataHealth(unittest.TestCase):
         snapshot = health.snapshot(now=self.now)
         self.assertFalse(snapshot.monitoring)
         self.assertTrue(snapshot.entry_allowed)
+
+    def test_stop_monitoring_restores_offline_entry_behavior(self) -> None:
+        self.health.stop_monitoring()
+        snapshot = self.health.snapshot(now=self.now)
+        self.assertFalse(snapshot.monitoring)
+        self.assertTrue(snapshot.entry_allowed)
+
+    def test_failed_refresh_and_missing_inputs_report_each_reason(self) -> None:
+        snapshot = self.health.record_refresh(
+            ohlc_ok=False,
+            newest_completed_bar=None,
+            ltp_fetched_at={},
+            required_ltp_keys={self.key},
+            now=self.now,
+        )
+        self.assertFalse(snapshot.entry_allowed)
+        self.assertEqual(snapshot.healthy_streak, 0)
+        self.assertTrue(any("refresh failed" in reason for reason in snapshot.reasons))
+        self.assertTrue(any("unavailable" in reason for reason in snapshot.reasons))
+
+    def test_future_bar_and_future_ltp_are_unhealthy(self) -> None:
+        snapshot = self.health.record_refresh(
+            ohlc_ok=True,
+            newest_completed_bar=self.now + timedelta(seconds=6),
+            ltp_fetched_at={self.key: self.now + timedelta(seconds=6)},
+            required_ltp_keys={self.key},
+            now=self.now,
+        )
+        self.assertTrue(any("bar is in the future" in reason for reason in snapshot.reasons))
+        self.assertTrue(any("future-dated" in reason for reason in snapshot.reasons))
+
+    def test_unhealthy_clock_starts_when_snapshot_first_observes_silence(self) -> None:
+        for offset in (0, 2, 4):
+            self._record_healthy(self.now + timedelta(seconds=offset))
+
+        first_stale = self.now + timedelta(seconds=20)
+        first = self.health.snapshot(now=first_stale)
+        later = self.health.snapshot(now=first_stale + timedelta(seconds=31))
+        self.assertEqual(first.unhealthy_seconds, 0.0)
+        self.assertGreaterEqual(later.unhealthy_seconds, 31.0)
+        self.assertTrue(later.liquidation_required)
 
 
 if __name__ == "__main__":
