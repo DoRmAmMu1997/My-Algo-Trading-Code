@@ -13,8 +13,9 @@ python-dotenv==1.2.2
 gspread==6.2.1
 pytz==2026.2
 # The broker, symbol-master and Telegram HTTP paths all use requests. Keep this
-# at the first release that clears the repository audit after PYSEC-2026-2275.
-requests==2.33.0
+# at the newest release that clears the repository audit (2.33.0 was the first
+# past PYSEC-2026-2275; 2.34.2 is the current audited pin).
+requests==2.34.2
 # The vendored Shoonya client imports websocket at module load. Keep this
 # harmless, conflict-free import dependency in the core set so diagnostics and
 # the broker coverage suite work even before optional live credentials exist.
