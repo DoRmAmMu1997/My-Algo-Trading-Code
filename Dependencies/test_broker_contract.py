@@ -16,6 +16,7 @@ import importlib
 import importlib.util
 import io
 import json
+import logging
 import re
 import subprocess  # nosec B404 - used only to import this repo's own adapters
 import sys
@@ -3487,6 +3488,98 @@ def test_dhan_login_fails_closed_without_credentials(
     client = dhan_module.DhanExecutionClient()
 
     assert client.ensure_logged_in() is False
+
+
+def test_dhan_login_failure_never_logs_the_access_token(
+    dhan_module: ModuleType,
+    monkeypatch,
+    caplog,
+) -> None:
+    """MAT-108 parity: a token-bearing construction error must be redacted.
+
+    The exception message here deliberately does NOT look like a
+    ``token=value`` assignment, so only the known-secret replacement can
+    scrub it -- proving the adapter passes the real token to ``redact_text``
+    rather than relying on the pattern pass getting lucky.
+    """
+
+    canary = "CANARY-DHAN-ACCESS-TOKEN"
+
+    class _LeakyContext:
+        def __init__(self, client_id, access_token) -> None:
+            raise RuntimeError(f"handshake rejected for {access_token} by gateway")
+
+    monkeypatch.setenv("DHAN_CLIENT_CODE", "1000000001")
+    monkeypatch.setenv("DHAN_ACCESS_TOKEN", canary)
+    monkeypatch.setattr(dhan_module, "DhanContext", _LeakyContext)
+
+    client = dhan_module.DhanExecutionClient()
+    with caplog.at_level(logging.ERROR):
+        assert client.ensure_logged_in() is False
+
+    assert canary not in caplog.text
+    assert "<redacted>" in caplog.text
+
+
+def test_dhan_logout_clears_local_session_state(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Logout is local-only: close the pool and erase every session cache."""
+
+    class _Session:
+        def __init__(self) -> None:
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+    class _Http:
+        def __init__(self) -> None:
+            self.session = _Session()
+
+    class _Context:
+        def __init__(self) -> None:
+            self.http = _Http()
+
+        def get_dhan_http(self):
+            return self.http
+
+    client = _ready_dhan_client(dhan_module, monkeypatch, _FakeDhanSdk([]))
+    context = _Context()
+    client._context = context
+    client._symbol_cache[("NIFTY",)] = DHAN_SYMBOL
+
+    result = client.logout()
+
+    assert result["status"] == "success"
+    assert context.http.session.closed == 1
+    assert client.is_logged_in is False
+    assert client.client is None
+    assert client._context is None
+    assert client._symbol_cache == {}
+    assert client._security_id_by_symbol == {}
+    assert client._scrip_df is None
+
+
+def test_dhan_logout_survives_a_failing_session_close(
+    dhan_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A pool that will not close still ends with a cleared local session."""
+
+    class _BrokenContext:
+        def get_dhan_http(self):
+            raise RuntimeError("connection pool already torn down")
+
+    client = _ready_dhan_client(dhan_module, monkeypatch, _FakeDhanSdk([]))
+    client._context = _BrokenContext()
+
+    result = client.logout()
+
+    assert result["status"] == "success"
+    assert client.client is None
+    assert client.is_logged_in is False
 
 
 def test_dhan_total_deadline_includes_lock_wait(
