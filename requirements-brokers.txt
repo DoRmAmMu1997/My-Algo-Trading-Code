@@ -1,0 +1,15 @@
+# Exact optional broker dependency environment validated on Python 3.12/3.13.
+#
+# Kotak does not publish the required v2.0.1 instruction as a usable PyPI release.
+# Install the official repository tag exactly as Kotak documents. Shoonya's client
+# is vendored, but it needs the pinned TOTP and WebSocket packages below. Flattrade
+# uses requests/pandas from requirements.txt and needs no extra SDK.
+#
+# IMPORTANT: Kotak's tag declares older exact pandas/requests constraints, so this
+# full file is an isolated compatibility/CI environment and must not be combined
+# with requirements.txt. For the live app environment, follow README.md: install
+# Shoonya's two pins directly and install the tagged Kotak package with --no-deps
+# so pip cannot silently downgrade the audited core runtime.
+neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1
+pyotp==2.9.0
+websocket-client==1.8.0

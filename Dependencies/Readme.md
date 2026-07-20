@@ -30,8 +30,10 @@ The master file guarded-loads all three broker clients and then picks one with
 touches a single generic `execution_client`, so the brokers are interchangeable.
 All clients expose the **same surface**:
 `ensure_logged_in()`, `preload_scrip_master()`, `resolve_option_symbol()`,
-`place_market_order()` (with fill confirmation), `extract_order_id()`, `logout()`,
-and an `is_logged_in` flag.
+`place_market_order()` (with fill confirmation), `get_order_status()`,
+`cancel_order()`, `list_open_orders()`, `list_open_positions()`,
+`recover_after_reconciliation()`, `extract_order_id()`, `logout()`, and an
+`is_logged_in` flag.
 
 Safety gates (all in `.env`):
 - `LIVE_TRADING_ENABLED` — global kill-switch (default `false` = everything paper).
@@ -39,8 +41,13 @@ Safety gates (all in `.env`):
   (live disabled, paper only) rather than guessing a broker.
 - `<PREFIX>_LIVE_TRADING` — per strategy. A strategy goes live only when the global
   switch **and** its own flag are both true.
-- On any order failure (login, unresolved symbol, reject, unconfirmed fill) the
-  strategy falls back to paper for that trade.
+- A live entry falls back to paper only after an explicit typed `REJECTED` result
+  with zero fill. `PARTIAL` or `UNKNOWN` means broker exposure may exist: entries
+  freeze, exits remain available, and reconciliation continues. A rejected or
+  ambiguous exit keeps the leg tracked and open.
+- Startup queries open orders and relevant option positions before any live
+  worker starts. Exposure or an indeterminate broker reply blocks all live
+  workers; it is never auto-adopted or auto-flattened.
 
 Product/exchange per broker is derived from `LIVE_BROKER`: Kotak uses `nse_fo` +
 `KOTAK_PRODUCT_TYPE`; Shoonya uses `NFO` + `SHOONYA_PRODUCT_TYPE`; Flattrade uses
@@ -48,11 +55,11 @@ Product/exchange per broker is derived from `LIVE_BROKER`: Kotak uses `nse_fo` +
 
 ## Credentials (in `.env`)
 - **Kotak Neo:** `CONSUMER_KEY`, `MOBILE`, `MPIN`, `UCC`. TOTP is typed at startup
-  (not stored). Needs `pip install neo_api_client`.
+  (not stored).
 - **Shoonya:** `SHOONYA_USERID`, `SHOONYA_PASSWORD`, `SHOONYA_VENDOR_CODE`,
   `SHOONYA_API_SECRET`, `SHOONYA_IMEI`, `SHOONYA_TOTP_SECRET` (base32 seed; the TOTP
   is auto-generated via `pyotp`, or you're prompted if blank). The client is vendored
-  here; needs `pip install pyotp websocket-client`.
+  here.
 - **Flattrade:** `FLATTRADE_CLIENT_ID`, `FLATTRADE_API_KEY`, and
   `FLATTRADE_API_SECRET`. `FLATTRADE_ACCESS_TOKEN` is optional: when blank, startup
   opens Flattrade authorization and asks for the returned `request_code`. Tokens
@@ -60,16 +67,28 @@ Product/exchange per broker is derived from `LIVE_BROKER`: Kotak uses `nse_fo` +
   and `pandas`; no extra SDK is required. Token exchange must originate from the
   static IP registered against your Flattrade API key.
 
+The exact upstream broker compatibility environment is recorded in:
+```
+pip install -r requirements-brokers.txt
+```
+Run that command only in a clean broker-validation environment: Kotak v2.0.1
+declares older exact pandas/requests constraints that conflict with the app's
+audited core runtime. In the live app environment install Shoonya with
+`pip install pyotp==2.9.0 websocket-client==1.8.0`, and install Kotak with the
+official tagged command plus `--no-deps` shown in the root README. Flattrade
+uses the pinned core `requests`/`pandas` set.
+
 > Note: Finvasia is decommissioning the legacy Shoonya QuickAuth endpoint (it returns
 > HTTP 502), so Shoonya live login needs the new OAuth API before it works again.
 
 ## Diagnostics (read-only, with an optional REAL test order)
 Each broker has a diagnostic that logs in and shows whether a contract resolves to a
-valid trading symbol. Passing `--place-order` additionally places a **real**,
-confirmation-gated **round-trip** order (1-lot BUY, confirm fill, then auto SELL to
-flatten) — it asks you to type `YES` first:
+valid trading symbol. Passing `--place-order` and an explicit `--qty` additionally
+places a **real**, confirmation-gated BUY. It attempts the matching SELL only after
+the BUY is confirmed fully filled; an ambiguous result requires broker reconciliation.
+The diagnostic asks you to type `YES` before submitting anything:
 ```
-python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order
-python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
-python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 14JUL26 --place-order
+python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order --qty <current-lot-size>
+python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 DDMMMYY --place-order --qty <current-lot-size>
+python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 DDMMMYY --place-order --qty <current-lot-size>
 ```

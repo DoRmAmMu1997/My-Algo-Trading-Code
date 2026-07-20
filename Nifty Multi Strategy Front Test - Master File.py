@@ -66,7 +66,7 @@ One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
 tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
-and dynamic ~Rs.2500 risk-based sizing -- then acts through this runner's own
+and fail-closed hard-budget sizing -- then acts through this runner's own
 enter_position/exit_position (so it is just another ATM single-leg member of the
 family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
 default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
@@ -199,6 +199,7 @@ ignores OHLC entirely (its triggers are option-leg LTPs against a
 from __future__ import annotations
 
 # --- Standard library imports ------------------------------------------------
+import contextlib
 import glob
 import html
 import importlib.util
@@ -210,10 +211,12 @@ import re
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # --- Third-party imports -----------------------------------------------------
 import pandas as pd
@@ -229,6 +232,30 @@ import requests
 # use only for `user_profile(...)` startup validation -- the OAuth dance
 # itself happens in `Dependencies/dhan_token_setup.py`, not here.
 from dhanhq import DhanContext, DhanLogin, dhanhq
+
+from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
+from Dependencies.execution_ledger import (
+    ExecutionLedger,
+    LegSpec,
+    LiveLegState,
+    OrderAttemptHandle,
+    OrderIntent,
+)
+from Dependencies.market_data_health import (
+    MarketDataHealth,
+    MarketDataValidationError,
+    complete_minute_bucket_mask,
+    newest_completed_minute_timestamp,
+    validate_ohlc_frame,
+)
+from Dependencies.next_open_entry import PendingNextOpenEntry
+from Dependencies.risk_sizing import SizingDecision
+from Dependencies.secret_redaction import redact_text
+from Dependencies.startup_exposure import (
+    StartupExposureAudit,
+    audit_startup_exposure,
+)
+from Dependencies.trading_lifecycle import LifecycleState, TradingLifecycle
 
 try:
     # `python-dotenv` is optional. If installed, values such as the DhanHQ
@@ -358,8 +385,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # DHAN_CLIENT_CODE  : 10-digit dhanClientId (e.g. "1100000000").
 # DHAN_API_KEY      : long-lived "app_id" used by the OAuth setup script.
 # DHAN_API_SECRET   : long-lived "app_secret" pair to DHAN_API_KEY.
-# DHAN_ACCESS_TOKEN : 12-month token produced by the setup script. This is
-#                     what the dhanhq SDK actually authenticates with.
+# DHAN_ACCESS_TOKEN : token produced by the setup script. This is what the
+#                     dhanhq SDK actually authenticates with. Its validity is
+#                     stamped into the token by DhanHQ and is NOT 12 months --
+#                     web.dhan.co currently issues 24-hour tokens, so refresh
+#                     it outside market hours before each trading day.
 CLIENT_CODE = _env_str("DHAN_CLIENT_CODE", "")
 API_KEY = _env_str("DHAN_API_KEY", "")
 API_SECRET = _env_str("DHAN_API_SECRET", "")
@@ -975,15 +1005,15 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, or Flattrade.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All three helpers expose
-# the SAME surface (ensure_logged_in /
-# preload_scrip_master / resolve_option_symbol / place_market_order /
-# extract_order_id / logout / is_logged_in), so the runner uses whichever one
-# LIVE_BROKER selects via a single generic `execution_client`. Each import is
+# This is how real (non-paper) orders reach the broker. All four helpers expose
+# the SAME contract: login/symbol resolution, typed place/status/cancel results,
+# determinate-or-indeterminate open order/position queries, and logout. The runner
+# uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
+# Each import is
 # wrapped in try/except on purpose: if a broker's SDK/deps are missing, that
-# client is set to None and the runner keeps working (the OTHER broker, or
+# client is set to None and the runner keeps working (the OTHER brokers, or
 # paper-only). main() forces any "live" strategy back to paper when the selected
 # client is None.
 try:
@@ -1025,6 +1055,19 @@ except Exception as _flattrade_import_exc:
         _flattrade_import_exc,
     )
 
+try:
+    _dhan_execution_module = load_module(
+        "master_dhan_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Dhan API" / "dhan_execution.py",
+    )
+    dhan_execution_client = _dhan_execution_module.dhan_execution_client
+except Exception as _dhan_import_exc:
+    dhan_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Dhan execution layer unavailable (%s); Dhan live trading disabled.",
+        _dhan_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1047,8 +1090,11 @@ def _select_execution_client(broker_name: str):
     if broker == "FLATTRADE":
         product = _env_str("FLATTRADE_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return flattrade_execution_client, "NFO", product
+    if broker == "DHAN":
+        product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return dhan_execution_client, "NSE_FNO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, or FLATTRADE); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
         "live trading DISABLED (paper only).",
         broker_name,
     )
@@ -1333,9 +1379,10 @@ PROFIT_SHOOTER_STRATEGY_CONFIG = PROFIT_SHOOTER_LOGIC.ProfitShooterConfig(
 # Operational sizing/risk for Profit Shooter (separate from signal config).
 PROFIT_SHOOTER_LOTS = _env_int("PROFIT_SHOOTER_LOTS", 1)
 # Per-trade rupee risk budget used by Profit Shooter's dynamic position sizer.
-# The worker overrides the static lot count and instead picks the smallest
-# whole-lot quantity whose underlying-points risk fits within this budget.
+# The worker floors affordable whole lots, rejects a setup when even one lot
+# exceeds the budget, and never exceeds the namespaced maximum.
 PROFIT_SHOOTER_RISK_BUDGET = _env_float("PROFIT_SHOOTER_RISK_BUDGET", 2500.0)
+PROFIT_SHOOTER_MAX_LOTS = _env_int("PROFIT_SHOOTER_MAX_LOTS", 5)
 PROFIT_SHOOTER_STARTING_CAPITAL = _env_float("PROFIT_SHOOTER_STARTING_CAPITAL", 600000.0)
 PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT = _env_float("PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT", 0.03)
 PROFIT_SHOOTER_MAX_LOSS = PROFIT_SHOOTER_STARTING_CAPITAL * PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT
@@ -1368,10 +1415,11 @@ GOLDMINE_STRATEGY_CONFIG = GOLDMINE_LOGIC.GoldmineStrategyConfig(
     max_bars_in_trade=_env_int("GOLDMINE_MAX_BARS_IN_TRADE", 6),
 )
 # Operational sizing/risk for Goldmine (Profit-Shooter-style dynamic sizing).
-# GOLDMINE_LOTS is only the fallback used when risk-based sizing cannot be
-# computed; normal entries size off GOLDMINE_RISK_BUDGET.
+# GOLDMINE_LOTS is retained for compatibility and paper snapshots; normal
+# entries use the fail-closed per-trade budget and maximum below.
 GOLDMINE_LOTS = _env_int("GOLDMINE_LOTS", 1)
 GOLDMINE_RISK_BUDGET = _env_float("GOLDMINE_RISK_BUDGET", 2500.0)
+GOLDMINE_MAX_LOTS = _env_int("GOLDMINE_MAX_LOTS", 5)
 GOLDMINE_STARTING_CAPITAL = _env_float("GOLDMINE_STARTING_CAPITAL", 600000.0)
 GOLDMINE_DAILY_MAX_LOSS_PCT = _env_float("GOLDMINE_DAILY_MAX_LOSS_PCT", 0.03)
 GOLDMINE_MAX_LOSS = GOLDMINE_STARTING_CAPITAL * GOLDMINE_DAILY_MAX_LOSS_PCT
@@ -1393,6 +1441,7 @@ MONEY_MACHINE_STRATEGY_CONFIG = MONEY_MACHINE_LOGIC.MoneyMachineStrategyConfig(
 # Operational sizing/risk for Money Machine (same dynamic sizing as Goldmine).
 MONEY_MACHINE_LOTS = _env_int("MONEY_MACHINE_LOTS", 1)
 MONEY_MACHINE_RISK_BUDGET = _env_float("MONEY_MACHINE_RISK_BUDGET", 2500.0)
+MONEY_MACHINE_MAX_LOTS = _env_int("MONEY_MACHINE_MAX_LOTS", 5)
 MONEY_MACHINE_STARTING_CAPITAL = _env_float("MONEY_MACHINE_STARTING_CAPITAL", 600000.0)
 MONEY_MACHINE_DAILY_MAX_LOSS_PCT = _env_float("MONEY_MACHINE_DAILY_MAX_LOSS_PCT", 0.03)
 MONEY_MACHINE_MAX_LOSS = MONEY_MACHINE_STARTING_CAPITAL * MONEY_MACHINE_DAILY_MAX_LOSS_PCT
@@ -1511,14 +1560,17 @@ class PaperPosition:
     option_strike: float = 0.0
     option_expiry: date | None = None
     option_lot_size: int = 0
-    # True only when a REAL broker leg was actually opened for this position (a
-    # live entry that confirmed). A live entry that fell back to paper -- a
-    # rejected/partial order or a symbol-master miss -- still records the position
-    # for paper tracking but leaves this False, so the later exit must NOT send a
-    # real closing order: SELLing an option we never bought would be a naked short,
-    # opening phantom live exposure. Paper-mode workers never place live orders
-    # regardless. Mirrors HedgedPaperPosition.live_legs_open (PR #42 / HEDGE-001).
-    live_legs_open: bool = False
+    # Immutable quantity snapshot for the real broker leg. ``None`` means this
+    # is paper (including an explicit zero-fill fallback). Exit attempts replace
+    # this snapshot with the ledger's newest value; the ledger itself remains the
+    # only mutable authority.
+    live_leg: LiveLegState | None = None
+
+    @property
+    def live_legs_open(self) -> bool:
+        """Compatibility read: whether broker exposure is known or possible."""
+
+        return self.live_leg is not None and self.live_leg.exposure_possible
 
 
 @dataclass
@@ -1572,13 +1624,19 @@ class HedgedPaperPosition:
     hedge_entry_price: float = 0.0
     hedge_entry_order_id: str = ""
 
-    # True only when BOTH real legs were actually opened at the broker (a live
-    # entry that fully confirmed). A live entry that fell back to paper -- a
-    # rejected/partial fill, or the double-failure orphan path -- leaves this
-    # False, so the later exit must NOT send real closing orders (that would BUY
-    # a never-opened main leg and re-SELL an already-closed hedge, opening
-    # phantom exposure). Paper-mode workers never place live orders regardless.
-    live_legs_open: bool = False
+    # Per-leg immutable snapshots.  One leg may be flat while the other still
+    # carries quantity; no basket-wide boolean is allowed to erase that asymmetry.
+    main_live_leg: LiveLegState | None = None
+    hedge_live_leg: LiveLegState | None = None
+
+    @property
+    def live_legs_open(self) -> bool:
+        """Compatibility read: whether either broker leg may still be exposed."""
+
+        return any(
+            state is not None and state.exposure_possible
+            for state in (self.main_live_leg, self.hedge_live_leg)
+        )
 
 
 @dataclass
@@ -1619,6 +1677,91 @@ class OptionSubscription:
 # =============================================================================
 # SHARED THREAD-SAFE DATA STORE
 # =============================================================================
+class ExecutionSafetyCoordinator:
+    """Broker-wide entry gate and one-at-a-time reconciliation trigger.
+
+    Every strategy worker shares one :class:`SharedMarketDataStore`, so keeping
+    this coordinator on the store makes an ambiguous order visible to every
+    worker immediately.  MAT-101 deliberately keeps the gate frozen after the
+    evidence probe: only MAT-102's quantity-aware reconciliation may prove the
+    account safe and resume live entries.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # One live entry owns this lease from the shared-freeze check through
+        # broker outcome classification.  An RLock lets a future multi-leg
+        # entry hold an outer basket lease while individual legs reuse the same
+        # boundary on the same thread.
+        self._entry_submission_lock = threading.RLock()
+        self._entries_frozen = False
+        self._freeze_reason = ""
+        self._freeze_exposure_ids: set[str] = set()
+        self._freeze_unattributed = False
+        self._reconciliation_running = False
+
+    def freeze_entries(self, reason: str, exposure_id: str = "") -> bool:
+        """Freeze new live entries, preserving the first broker evidence."""
+
+        with self._lock:
+            newly_frozen = not self._entries_frozen
+            if newly_frozen:
+                self._entries_frozen = True
+                self._freeze_reason = str(reason).strip()
+            normalized_id = str(exposure_id).strip()
+            if normalized_id:
+                self._freeze_exposure_ids.add(normalized_id)
+            else:
+                self._freeze_unattributed = True
+            return newly_frozen
+
+    def entry_freeze_snapshot(self) -> tuple[bool, str]:
+        """Return an atomic copy of the shared entry-gate state."""
+
+        with self._lock:
+            return self._entries_frozen, self._freeze_reason
+
+    def freeze_attribution_snapshot(self) -> tuple[frozenset[str], bool]:
+        """Return exposure IDs that contributed to the current entry freeze."""
+
+        with self._lock:
+            return frozenset(self._freeze_exposure_ids), self._freeze_unattributed
+
+    def acquire_entry_submission_lease(self, timeout: float = 10.0) -> bool:
+        """Serialize a live entry through final broker classification."""
+
+        return self._entry_submission_lock.acquire(timeout=max(0.0, float(timeout)))
+
+    def release_entry_submission_lease(self) -> None:
+        """Release a lease acquired by :meth:`acquire_entry_submission_lease`."""
+
+        self._entry_submission_lock.release()
+
+    def try_start_reconciliation(self) -> bool:
+        """Claim the single background reconciliation slot, if it is idle."""
+
+        with self._lock:
+            if self._reconciliation_running:
+                return False
+            self._reconciliation_running = True
+            return True
+
+    def finish_reconciliation_pass(self) -> None:
+        """Release the probe slot without unfreezing live entries."""
+
+        with self._lock:
+            self._reconciliation_running = False
+
+    def unfreeze_entries_after_reconciliation(self) -> None:
+        """Reopen the shared gate after a read-only audit proves the account flat."""
+
+        with self._lock:
+            self._entries_frozen = False
+            self._freeze_reason = ""
+            self._freeze_exposure_ids.clear()
+            self._freeze_unattributed = False
+
+
 class SharedMarketDataStore:
     """
     Thread-safe storage for centrally fetched OHLC and LTP values.
@@ -1638,6 +1781,17 @@ class SharedMarketDataStore:
         self._snapshots: dict[str, MarketSnapshot] = {}
         self._ltp_snapshots: dict[tuple[str, int], LTPSnapshot] = {}
         self._option_subscriptions: dict[tuple[str, int], OptionSubscription] = {}
+        self.market_data_health = MarketDataHealth()
+        self.execution_safety = ExecutionSafetyCoordinator()
+        # The execution ledger is separate from market-data snapshots because it
+        # has its own lock and must survive strategy-frame refreshes.  Every live
+        # order leg is registered here before the broker submission starts.
+        self.execution_ledger = ExecutionLedger()
+        self.startup_exposure_audit: StartupExposureAudit | None = None
+        # Remains true after the first worker is enabled live, even if a broker
+        # timeout later poisons/logs out the session. Shutdown then knows that a
+        # missing session is indeterminate rather than proof of no exposure.
+        self.live_session_started = False
 
     # ------------------------------------------------------------------
     # OHLC pool
@@ -1649,17 +1803,16 @@ class SharedMarketDataStore:
         The new snapshot is built BEFORE the lock is taken; only the swap
         happens under lock so the critical section stays small.
         """
-        source_candle_ts = None
-        if frame is not None and not frame.empty and "timestamp" in frame.columns:
-            source_candle_ts = pd.to_datetime(frame.iloc[-1]["timestamp"])
-        candle_signature = build_last_row_signature(frame)
+        validated = validate_ohlc_frame(frame)
+        source_candle_ts = pd.to_datetime(validated.iloc[-1]["timestamp"])
+        candle_signature = build_last_row_signature(validated)
 
         snapshot = MarketSnapshot(
             timeframe=str(timeframe),
-            frame=frame.copy(),
+            frame=validated,
             source_candle_ts=source_candle_ts,
             candle_signature=candle_signature,
-            fetched_at=datetime.now(),
+            fetched_at=datetime.now(ZoneInfo("Asia/Kolkata")),
         )
         with self._lock:
             self._snapshots[str(timeframe)] = snapshot
@@ -1697,16 +1850,20 @@ class SharedMarketDataStore:
         """
         if not ltp_map:
             return
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         with self._lock:
             for (segment, sec_id), price in ltp_map.items():
-                if float(price) <= 0:
+                try:
+                    numeric_price = float(price)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric_price) or numeric_price <= 0:
                     continue
                 key = (str(segment), int(sec_id))
                 self._ltp_snapshots[key] = LTPSnapshot(
                     segment=str(segment),
                     security_id=int(sec_id),
-                    ltp=float(price),
+                    ltp=numeric_price,
                     fetched_at=now,
                 )
 
@@ -1749,6 +1906,39 @@ class SharedMarketDataStore:
         """Return a list copy of all currently subscribed option legs."""
         with self._lock:
             return list(self._option_subscriptions.values())
+
+    # ------------------------------------------------------------------
+    # Whole-feed health
+    # ------------------------------------------------------------------
+    def begin_market_data_monitoring(self) -> None:
+        """Enable live freshness enforcement when the producer thread starts."""
+
+        self.market_data_health.begin_monitoring(now=datetime.now(ZoneInfo("Asia/Kolkata")))
+
+    def record_market_data_refresh(
+        self,
+        *,
+        ohlc_ok: bool,
+        required_ltp_keys: set[tuple[str, int]],
+    ):
+        """Publish one combined OHLC/LTP refresh result to the health gate."""
+
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        with self._lock:
+            source = self._snapshots.get("1")
+            frame = source.frame.copy() if source is not None else pd.DataFrame()
+            ltp_times = {
+                key: snapshot.fetched_at
+                for key, snapshot in self._ltp_snapshots.items()
+                if key in required_ltp_keys
+            }
+        return self.market_data_health.record_refresh(
+            ohlc_ok=ohlc_ok,
+            newest_completed_bar=newest_completed_minute_timestamp(frame, now=now),
+            ltp_fetched_at=ltp_times,
+            required_ltp_keys=required_ltp_keys,
+            now=now,
+        )
 
 
 # =============================================================================
@@ -1804,6 +1994,22 @@ def _infer_epoch_unit(values: pd.Series) -> str:
     return "s"
 
 
+def _validate_single_epoch_unit(values: pd.Series) -> None:
+    """Reject a payload that mixes seconds, milliseconds, or microseconds."""
+
+    nums = pd.to_numeric(values, errors="coerce").dropna().abs()
+    if nums.empty:
+        return
+    units = {
+        "us" if value > 1e14 else "ms" if value > 1e11 else "s"
+        for value in nums
+    }
+    if len(units) != 1:
+        raise MarketDataValidationError(
+            f"Dhan timestamp payload mixes epoch units: {', '.join(sorted(units))}"
+        )
+
+
 def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
     """
     Normalize a `dhanhq.intraday_minute_data` response into a standard
@@ -1855,6 +2061,7 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
 
     ts_numeric = pd.to_numeric(df[ts_col], errors="coerce")
     if ts_numeric.notna().sum() >= max(1, len(df) // 2):
+        _validate_single_epoch_unit(ts_numeric)
         unit = _infer_epoch_unit(ts_numeric)
         ts = pd.to_datetime(ts_numeric, unit=unit, errors="coerce", utc=True)
     else:
@@ -1872,9 +2079,9 @@ def normalize_dhan_intraday_response(resp) -> pd.DataFrame:
             "low": pd.to_numeric(df[l_col], errors="coerce"),
             "close": pd.to_numeric(df[c_col], errors="coerce"),
         }
-    ).dropna()
+    )
 
-    out = out.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+    out = validate_ohlc_frame(out)
     if len(out) < MIN_BARS:
         raise ValueError(f"Need >= {MIN_BARS} bars, got {len(out)}")
     return out
@@ -1941,6 +2148,17 @@ def resample_ohlc_from_1m(ohlc: pd.DataFrame, timeframe_minutes: int) -> pd.Data
     frame = frame.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     if frame.empty:
         return frame
+
+    # Count-only completeness can accept a duplicate minute while another
+    # minute is missing. Keep a bucket only when every exact minute slot occurs
+    # once and in order.
+    complete_mask = complete_minute_bucket_mask(
+        pd.DatetimeIndex(frame["timestamp"]),
+        int(timeframe_minutes),
+    )
+    frame = frame.loc[complete_mask.to_numpy()].reset_index(drop=True)
+    if frame.empty:
+        return pd.DataFrame(columns=required_columns)
 
     rule = f"{int(timeframe_minutes)}min"
     indexed = frame.set_index("timestamp")
@@ -2787,45 +3005,58 @@ class OptionsContractResolver:
 # =============================================================================
 # TIME HELPERS
 # =============================================================================
-# Every trading-time gate below compares against the machine's LOCAL wall
-# clock and assumes the box runs in IST. main() checks this at startup.
+# Every trading-time gate is explicitly pinned to the exchange timezone.  The
+# host can run in UTC (or any other timezone) without shifting a market cutoff.
 IST_UTC_OFFSET = timedelta(hours=5, minutes=30)
+IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _ist_now() -> datetime:
+    """Return the current timezone-aware exchange clock in Asia/Kolkata."""
+
+    now = datetime.now(IST_TIMEZONE)
+    # Test doubles and a few embedding callers may return a naive value even
+    # when a timezone argument was supplied. Treat such a value as already IST;
+    # real ``datetime.now(IST_TIMEZONE)`` always takes the aware branch.
+    if now.tzinfo is None:
+        return now.replace(tzinfo=IST_TIMEZONE)
+    return now.astimezone(IST_TIMEZONE)
 
 
 def _timezone_assumption_warning(offset: timedelta | None = None) -> str | None:
-    """Return a loud warning when the system clock's UTC offset is not IST.
+    """Backward-compatible diagnostic: host offset no longer affects gates."""
 
-    OPS-001. `is_before_time`/`is_after_time` (market open, entry cutoffs, the
-    15:15 square-off) all use naive `datetime.now()` -- the code assumes an IST
-    machine. On a mis-configured box (a UTC VPS, a travelling laptop) every
-    gate silently shifts by hours, so main() logs this check at startup rather
-    than trading at the wrong times. Returns None when the offset is IST.
-    The offset parameter exists for tests; the default reads the system clock.
-    """
-    if offset is None:
-        offset = datetime.now().astimezone().utcoffset()
-    if offset == IST_UTC_OFFSET:
-        return None
-    return (
-        f"System clock UTC offset is {offset}, but every trading-time gate in this "
-        "runner assumes IST (+5:30). Market-open, entry-cutoff and square-off gates "
-        "will fire at the WRONG local times -- fix the machine's timezone before "
-        "trading."
-    )
+    del offset
+    return None
 
 
 def is_before_time(hour: int, minute: int) -> bool:
-    """Return True when local wall-clock time is before HH:MM."""
-    now = datetime.now()
+    """Return True when the exchange clock is before HH:MM IST."""
+    now = _ist_now()
     threshold = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return now < threshold
 
 
 def is_after_time(hour: int, minute: int) -> bool:
-    """Return True when local wall-clock time is at or after HH:MM."""
-    now = datetime.now()
+    """Return True when the exchange clock is at or after HH:MM IST."""
+    now = _ist_now()
     threshold = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return now >= threshold
+
+
+def _should_open_bnf_mirror(
+    live_trading: bool,
+    main_leg_confirmed_live: bool,
+) -> bool:
+    """Return whether the SL Hunting mirror may use the worker's execution mode.
+
+    Paper mode mirrors both legs in paper. In live mode, a NIFTY entry can be
+    retained as a paper fallback after an explicit zero-fill rejection. A real
+    BankNIFTY BUY beside that paper NIFTY leg would create unintended standalone
+    exposure, so the mirror is allowed only after the NIFTY BUY is confirmed live.
+    """
+
+    return not live_trading or main_leg_confirmed_live
 
 
 # =============================================================================
@@ -2875,7 +3106,7 @@ class CentralMarketDataFetcher(threading.Thread):
             instrument_type=NIFTY_INDEX_INSTRUMENT_TYPE,
         )
 
-    def refresh_index_and_option_ltps(self) -> None:
+    def refresh_index_and_option_ltps(self) -> set[tuple[str, int]]:
         """
         Refresh the NIFTY spot LTP plus every subscribed option LTP in a
         single batched ticker_data call.
@@ -2890,11 +3121,17 @@ class CentralMarketDataFetcher(threading.Thread):
             if int(sub.security_id) not in securities[segment]:
                 securities[segment].append(int(sub.security_id))
 
+        required_keys = {
+            (segment, int(security_id))
+            for segment, security_ids in securities.items()
+            for security_id in security_ids
+        }
+
         try:
             ltp_map = self.broker.fetch_ltp_map(securities)
         except Exception as exc:
             self.log.exception("Error while refreshing LTP batch: %s", exc)
-            return
+            return required_keys
 
         if ltp_map:
             self.store.update_ltp_map(ltp_map)
@@ -2908,10 +3145,13 @@ class CentralMarketDataFetcher(threading.Thread):
                 index_ltp,
                 len(subscriptions),
             )
+        return required_keys
 
     def run(self) -> None:
         self.log.info("Starting central market data fetcher (dhanhq backend).")
+        self.store.begin_market_data_monitoring()
         while not self.stop_event.is_set():
+            ohlc_ok = True
             for timeframe in REQUIRED_TIMEFRAMES:
                 if self.stop_event.is_set():
                     break
@@ -2927,11 +3167,25 @@ class CentralMarketDataFetcher(threading.Thread):
                             snapshot.source_candle_ts,
                         )
                 except Exception as exc:
+                    ohlc_ok = False
                     self.log.exception("Fetch error for timeframe=%s: %s", timeframe, exc)
             try:
-                self.refresh_index_and_option_ltps()
+                required_ltp_keys = self.refresh_index_and_option_ltps()
             except Exception as exc:
                 self.log.exception("Fetch error while refreshing LTPs: %s", exc)
+                required_ltp_keys = {
+                    (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
+                }
+            health = self.store.record_market_data_refresh(
+                ohlc_ok=ohlc_ok,
+                required_ltp_keys=required_ltp_keys,
+            )
+            if health.reasons:
+                self.log.warning(
+                    "Market data unhealthy | unhealthy_for=%.1fs | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
             self.stop_event.wait(FETCH_POLL_SECONDS)
         self.log.info("Central market data fetcher stopped.")
 
@@ -2979,9 +3233,9 @@ class BasePaperStrategyWorker(threading.Thread):
     trading_start_minute = 15
     square_off_hour = 15
     square_off_minute = 15
-    # HEDGE-001: how often to retry selling-to-close a live leg orphaned by a
-    # hedged-entry double failure. Slow on purpose -- the broker just rejected
-    # the same order, so hammering it seconds later only burns rate limit.
+    # How often to retry closing a live leg whose entry never acquired a normal
+    # strategy-position owner. Slow on purpose -- the broker just returned an
+    # incomplete outcome, so hammering it seconds later only burns rate limit.
     ORPHAN_UNWIND_RETRY_SECONDS = 60.0
 
     def __init__(
@@ -3023,6 +3277,8 @@ class BasePaperStrategyWorker(threading.Thread):
         # Guards so we never run the same shutdown / pre-open log twice.
         self.cutoff_handled = False
         self.preopen_wait_logged = False
+        self._market_data_unhealthy_logged = False
+        self._market_data_liquidation_logged = False
 
         # Optional trade-event sink (a queue.Queue) consumed by the Telegram
         # notifier. main() injects it after construction; it stays None when
@@ -3035,25 +3291,552 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+        # Actual session provenance is derived from order outcomes, not merely
+        # from the live configuration flag. A live-enabled worker can execute a
+        # confirmed broker fill and later take an explicit zero-fill paper
+        # fallback, which makes that strategy's daily result MIXED.
+        self._execution_modes_seen: set[str] = set()
+        self._execution_mode_lock = threading.Lock()
+        # Distinguish otherwise-identical legs owned by different worker
+        # instances.  A frozen worker may finish its own partial order, but a
+        # second worker must never adopt that continuation merely because its
+        # strategy name and contract happen to match.
+        self._execution_owner_id = uuid.uuid4().hex[:8].upper()
 
-        # HEDGE-001: live legs orphaned by a hedged-entry DOUBLE failure (the
-        # protective hedge BUY filled, then the main SELL and the unwind SELL
-        # both failed). Each entry is the original leg dict. The worker keeps
-        # retrying to sell these to close (`_sweep_orphan_live_legs`, driven
-        # from wait_for_next_poll + a final forced attempt at shutdown) so
-        # recovery does not depend on a human spotting the Telegram alert.
+        # MAT-101: an ambiguous broker reply can mean real exposure exists even
+        # though the process did not receive a final fill state.  Freeze NEW live
+        # entries for this worker until MAT-102 reconciliation (or an operator)
+        # proves the account state.  Exit/recovery orders remain available so an
+        # already-known position can still be reduced.
+        self._live_execution_frozen = False
+        self._live_execution_freeze_reason = ""
+        # A PARTIAL/UNKNOWN exit must not be retried at the original full
+        # quantity: the first request may already have reduced the position.
+        # Keep only a path marker here; MAT-102 will replace it with reconciled
+        # per-leg remaining quantities.
+        self._indeterminate_exit_paths: set[tuple[str, str, str]] = set()
+
+        # Quantity-bearing live legs whose entry never acquired a normal
+        # PaperPosition/HedgedPaperPosition owner. Each entry retains the
+        # original leg dict and immutable ledger state. The worker closes these
+        # with the opposite side on a slow cadence and at shutdown, so recovery
+        # does not depend on a repeated signal or a human spotting an alert.
         self._orphan_live_legs: list[dict] = []
         self._next_orphan_retry_ts = 0.0
 
-    def _place_real_leg(self, side: str, leg: dict) -> bool:
+        # Stopping a thread is not proof that its broker exposure is flat.  The
+        # lifecycle therefore survives a set ``stop_event`` and keeps this
+        # worker alive through close/reconcile retries before it may report
+        # STOPPED.  Each worker owns one lifecycle so a strategy-specific
+        # max-loss does not silently stop the other strategies.
+        self.lifecycle = TradingLifecycle()
+        self._shutdown_summary_logged = False
+
+    @staticmethod
+    def _synthetic_order_result(
+        quantity: int,
+        status: OrderStatus,
+        reason: str,
+        *,
+        order_id: str = "",
+        broker_state: str = "LOCAL",
+        filled_quantity: int | None = None,
+    ) -> OrderResult:
+        """Build a quantity-safe local result for a path with no broker payload."""
+
+        requested = max(0, int(quantity))
+        if filled_quantity is None:
+            filled = requested if status is OrderStatus.FILLED else 0
+        else:
+            filled = min(requested, max(0, int(filled_quantity)))
+        return OrderResult(
+            order_id=str(order_id),
+            requested_quantity=requested,
+            filled_quantity=filled,
+            remaining_quantity=requested - filled,
+            status=status,
+            broker_state=broker_state,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _is_confirmed_fill(result: OrderResult) -> bool:
+        """Return True only when the entire requested quantity is confirmed filled."""
+
+        return (
+            result.status is OrderStatus.FILLED
+            and result.requested_quantity > 0
+            and result.filled_quantity == result.requested_quantity
+            and result.remaining_quantity == 0
+        )
+
+    @staticmethod
+    def _is_explicit_zero_fill_rejection(result: OrderResult) -> bool:
+        """Return True only for the one live-entry outcome safe for paper fallback."""
+
+        return (
+            result.status is OrderStatus.REJECTED
+            and result.requested_quantity > 0
+            and result.filled_quantity == 0
+            and result.remaining_quantity == result.requested_quantity
+        )
+
+    @staticmethod
+    def _live_order_path_key(side: str, leg: dict) -> tuple[str, str, str]:
+        """Identify one leg/side path without requiring a broker symbol lookup."""
+
+        contract = str(leg.get("dhan_symbol") or "").strip()
+        if not contract:
+            contract = "|".join(
+                str(leg.get(name, ""))
+                for name in ("expiry", "option_type", "strike")
+            )
+        return (
+            str(side).upper().strip(),
+            str(leg.get("underlying", UNDERLYING)).upper().strip(),
+            contract,
+        )
+
+    def _mark_indeterminate_exit_path(self, side: str, leg: dict) -> None:
+        """Block duplicate full-size exits until reconciliation supplies quantity."""
+
+        self._indeterminate_exit_paths.add(self._live_order_path_key(side, leg))
+
+    def _entry_outcome_allows_position(
+        self,
+        result: OrderResult,
+        live_leg: LiveLegState | None = None,
+    ) -> bool:
+        """Say whether strategy bookkeeping may create a position after an entry."""
+
+        if live_leg is not None:
+            return live_leg.entry_complete or (
+                live_leg.broker_confirmed_flat
+                and self._is_explicit_zero_fill_rejection(result)
+            )
+        return self._is_confirmed_fill(result) or self._is_explicit_zero_fill_rejection(result)
+
+    def _frozen_companion_entry_is_authorized(
+        self,
+        leg: dict,
+        *,
+        broker_symbol: str,
+        opening_side: str,
+    ) -> bool:
+        """Allow only a broker-confirmed anchor's planned basket companion.
+
+        A partial first leg freezes all unrelated entries.  Once that exact leg
+        finishes, however, the correlated hedge/main, NIFTY/BNF mirror, or
+        CE/PE strangle companion still has to be submitted for the basket to
+        reach its intended state.  This narrow exception requires the same
+        worker owner, strategy and correlation, a known role transition, and no
+        unresolved order from a different basket.
+        """
+
+        correlation_id = str(leg.get("correlation_id") or "").upper().strip()
+        role = str(leg.get("role") or "").upper().strip()[:1]
+        opening_side = str(opening_side).upper().strip()
+        if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
+            return False
+        # Each tuple is (completed anchor's role, companion's role, anchor's
+        # opening side, companion's opening side) -- the ONLY basket shapes
+        # this runner ever builds:
+        #   H -> M : protective hedge BUY confirmed, now the main short SELL
+        #            (the hedged-puts / Delta-0.2 spread order of operations);
+        #   N -> B : NIFTY leg BUY confirmed, now the equal-lot BankNIFTY
+        #            mirror BUY (SL Hunting basket);
+        #   C -> P : strangle CE BUY confirmed, now its PE BUY twin.
+        # Anything not in this table is a brand-new exposure, which a frozen
+        # account must never accept.
+        allowed_transitions = {
+            ("H", "M", "BUY", "SELL"),
+            ("N", "B", "BUY", "BUY"),
+            ("C", "P", "BUY", "BUY"),
+        }
+        active_states = self.store.execution_ledger.active_states()
+        freeze_ids, freeze_unattributed = (
+            self.store.execution_safety.freeze_attribution_snapshot()
+        )
+        if freeze_unattributed or not freeze_ids:
+            return False
+        for exposure_id in freeze_ids:
+            try:
+                freeze_state = self.store.execution_ledger.get(exposure_id)
+            except KeyError:
+                return False
+            if not (
+                freeze_state.spec.strategy == self.strategy_name
+                and freeze_state.spec.owner_id == self._execution_owner_id
+                and freeze_state.spec.correlation_id == correlation_id
+            ):
+                return False
+        return any(
+            state.entry_complete
+            and state.spec.symbol != broker_symbol
+            and (
+                state.spec.role,
+                role,
+                state.spec.opening_side,
+                opening_side,
+            )
+            in allowed_transitions
+            and state.spec.strategy == self.strategy_name
+            and state.spec.owner_id == self._execution_owner_id
+            and state.spec.correlation_id == correlation_id
+            for state in active_states
+        )
+
+    def _register_live_leg(
+        self,
+        leg: dict,
+        *,
+        broker_symbol: str,
+        opening_side: str,
+        allow_new: bool = True,
+    ) -> LiveLegState | None:
+        """Register one quantity-bearing live leg before its first submission.
+
+        The same unfinished state is reused when a strategy emits the same signal
+        again after a terminal partial fill.  A new eight-character correlation
+        id is generated only for a genuinely new basket.
+        """
+
+        existing = leg.get("live_leg")
+        if isinstance(existing, LiveLegState):
+            refreshed = self.store.execution_ledger.get(existing.exposure_id)
+            leg["live_leg"] = refreshed
+            leg["quantity"] = refreshed.spec.target_quantity
+            return refreshed
+        correlation_id = str(leg.get("correlation_id") or "").upper().strip()
+        if not re.fullmatch(r"[A-Z0-9]{8}", correlation_id):
+            correlation_id = uuid.uuid4().hex[:8].upper()
+            leg["correlation_id"] = correlation_id
+        role = str(leg.get("role") or "N").upper().strip()[:1] or "N"
+        expiry = leg.get("expiry")
+        if expiry is not None and not isinstance(expiry, date):
+            raise ValueError("live leg expiry must be a date or None")
+        spec = LegSpec(
+            strategy=self.strategy_name,
+            correlation_id=correlation_id,
+            role=role,
+            underlying=str(leg.get("underlying") or UNDERLYING),
+            symbol=broker_symbol,
+            option_type=str(leg.get("option_type") or ""),
+            strike=float(leg.get("strike", 0.0)),
+            expiry=expiry,
+            opening_side=opening_side,
+            target_quantity=int(leg["quantity"]),
+            owner_id=self._execution_owner_id,
+        )
+        state = self.store.execution_ledger.find_unfinished(spec)
+        if state is None:
+            if not allow_new:
+                return None
+            state = self.store.execution_ledger.register(spec)
+        leg["live_leg"] = state
+        # A rebuilt strategy dictionary may carry a newly calculated lot count,
+        # but an unfinished broker exposure keeps its original target.  Make the
+        # ledger target authoritative for all later position/PnL bookkeeping.
+        leg["quantity"] = state.spec.target_quantity
+        # Preserve the authoritative correlation when register() found an older
+        # unfinished state created by a previous signal invocation.
+        leg["correlation_id"] = state.spec.correlation_id
+        return state
+
+    def _current_attempt_result(self, state: LiveLegState, reason: str) -> OrderResult:
+        """Return the latest cumulative evidence without inventing a new order."""
+
+        attempt = state.latest_attempt
+        if attempt is None:
+            return self._synthetic_order_result(
+                state.spec.target_quantity,
+                OrderStatus.UNKNOWN,
+                reason,
+                broker_state="NO_ORDER_ATTEMPT",
+            )
+        return OrderResult(
+            order_id=attempt.order_id,
+            requested_quantity=attempt.requested_quantity,
+            filled_quantity=attempt.filled_quantity,
+            remaining_quantity=attempt.remaining_quantity,
+            status=attempt.status,
+            broker_state=attempt.broker_state,
+            reason=reason,
+        )
+
+    def _refresh_live_leg_attempt(self, leg: dict) -> OrderResult | None:
+        """Poll a non-terminal broker order once and apply cumulative fill deltas."""
+
+        state = leg.get("live_leg")
+        if not isinstance(state, LiveLegState):
+            raise ValueError("live leg state is required for broker reconciliation")
+        state = self.store.execution_ledger.get(state.exposure_id)
+        leg["live_leg"] = state
+        attempt = state.latest_attempt
+        if attempt is None or attempt.terminal:
+            return None
+        if execution_client is None or not attempt.order_id:
+            return self._current_attempt_result(
+                state,
+                "The previous broker order remains indeterminate and cannot be retried safely.",
+            )
+        try:
+            result = execution_client.get_order_status(
+                attempt.order_id,
+                requested_quantity=attempt.requested_quantity,
+            )
+            if not isinstance(result, OrderResult):
+                return self._current_attempt_result(
+                    state,
+                    "Broker status query returned an untyped result; quantity remains indeterminate.",
+                )
+            handle = state.latest_attempt_handle
+            if handle is None:  # pragma: no cover - guarded by ``attempt`` above.
+                raise RuntimeError("live leg lost its current attempt identity")
+            refreshed = self.store.execution_ledger.apply_result(handle, result)
+            leg["live_leg"] = refreshed
+            return result
+        except Exception as exc:  # noqa: BLE001 - fail closed around broker state
+            return self._current_attempt_result(
+                state,
+                f"Broker status refresh failed; quantity remains indeterminate: {exc}",
+            )
+
+    def _try_unfreeze_after_flat_reconciliation(self) -> bool:
+        """Resume entries only when every tracked leg and both broker books are flat."""
+
+        if self.store.execution_ledger.active_states():
+            return False
+        client = execution_client
+        if client is None:
+            return False
+        audit = audit_startup_exposure(client)
+        if not audit.safe_to_enable_live:
+            return False
+        recover = getattr(client, "recover_after_reconciliation", None)
+        if callable(recover):
+            try:
+                if recover() is not True:
+                    return False
+            except Exception:  # noqa: BLE001 - broker recovery must fail closed.
+                return False
+        self.store.execution_safety.unfreeze_entries_after_reconciliation()
+        self._live_execution_frozen = False
+        self._live_execution_freeze_reason = ""
+        self.log.warning(
+            "BROKER RECONCILIATION COMPLETE | all tracked legs and broker books "
+            "are flat; new live entries may resume."
+        )
+        return True
+
+    def _start_execution_reconciliation(
+        self,
+        result: OrderResult,
+        attempt_handle: OrderAttemptHandle | None = None,
+    ) -> None:
+        """Probe broker order/position books once after ambiguous exposure.
+
+        This pass records evidence but intentionally cannot unfreeze entries or
+        infer remaining quantities.  Those state-changing decisions require the
+        per-leg reconciliation model introduced by MAT-102.
+        """
+
+        coordinator = self.store.execution_safety
+        if not coordinator.try_start_reconciliation():
+            return
+
+        # Capture the client now.  Tests and diagnostics may patch the module
+        # global only for the duration of the order call, while this probe runs
+        # on a daemon thread immediately afterwards.
+        client = execution_client
+
+        def probe() -> None:
+            status_summary = "not queried (no order id)"
+            orders_summary = "not queried"
+            positions_summary = "not queried"
+            try:
+                if client is None:
+                    self.log.error(
+                        "BROKER RECONCILIATION BLOCKED | execution client is unavailable; "
+                        "live entries remain frozen."
+                    )
+                    return
+
+                if result.order_id:
+                    try:
+                        status = client.get_order_status(
+                            result.order_id,
+                            requested_quantity=result.requested_quantity,
+                        )
+                        if attempt_handle is not None and isinstance(status, OrderResult):
+                            # A synchronous retry may already own a newer
+                            # attempt. The ledger rejects this late result; the
+                            # probe still reports its evidence below.
+                            with contextlib.suppress(KeyError, RuntimeError, ValueError):
+                                self.store.execution_ledger.apply_result(
+                                    attempt_handle,
+                                    status,
+                                )
+                        status_summary = (
+                            f"{status.status.value} filled={status.filled_quantity} "
+                            f"remaining={status.remaining_quantity} state={status.broker_state}"
+                        )
+                    except Exception as exc:  # noqa: BLE001 - evidence probe must continue
+                        status_summary = f"indeterminate ({exc})"
+
+                try:
+                    open_orders = client.list_open_orders()
+                    orders_summary = (
+                        f"indeterminate ({open_orders.reason})"
+                        if open_orders.is_indeterminate
+                        else f"{len(open_orders.items)} open"
+                    )
+                except Exception as exc:  # noqa: BLE001 - still query positions
+                    orders_summary = f"indeterminate ({exc})"
+
+                try:
+                    open_positions = client.list_open_positions()
+                    positions_summary = (
+                        f"indeterminate ({open_positions.reason})"
+                        if open_positions.is_indeterminate
+                        else f"{len(open_positions.items)} open"
+                    )
+                except Exception as exc:  # noqa: BLE001 - report all collected evidence
+                    positions_summary = f"indeterminate ({exc})"
+
+                self.log.error(
+                    "BROKER RECONCILIATION SNAPSHOT | order_id=%s status=%s | "
+                    "orders=%s | positions=%s | live entries remain FROZEN pending "
+                    "quantity-aware reconciliation.",
+                    result.order_id or "UNKNOWN",
+                    status_summary,
+                    orders_summary,
+                    positions_summary,
+                )
+            finally:
+                coordinator.finish_reconciliation_pass()
+
+        threading.Thread(
+            target=probe,
+            name="BrokerReconciliationProbe",
+            daemon=True,
+        ).start()
+
+    def _freeze_live_entries(self, result: OrderResult, *, side: str, leg: dict) -> None:
+        """Stop new live entries and publish the broker evidence for reconciliation."""
+
+        self._live_execution_frozen = True
+        if not self._live_execution_freeze_reason:
+            self._live_execution_freeze_reason = result.reason
+        live_state = leg.get("live_leg")
+        exposure_id = (
+            live_state.exposure_id if isinstance(live_state, LiveLegState) else ""
+        )
+        self.store.execution_safety.freeze_entries(result.reason, exposure_id)
+        self.log.error(
+            "INDETERMINATE LIVE EXPOSURE | %s %s | status=%s order_id=%s "
+            "requested=%s filled=%s remaining=%s | %s | NEW live entries FROZEN.",
+            self.strategy_name,
+            side,
+            result.status.value,
+            result.order_id or "UNKNOWN",
+            result.requested_quantity,
+            result.filled_quantity,
+            result.remaining_quantity,
+            result.reason,
+        )
+        self.publish_trade_event(
+            {
+                "action": "INDETERMINATE_EXPOSURE",
+                "mode": "LIVE_INDETERMINATE",
+                "side": side,
+                "symbol": leg.get("dhan_symbol", ""),
+                "option_type": leg.get("option_type", ""),
+                "strike": leg.get("strike"),
+                "order_id": result.order_id,
+                "requested_quantity": result.requested_quantity,
+                "filled_quantity": result.filled_quantity,
+                "remaining_quantity": result.remaining_quantity,
+                "status": result.status.value,
+                "broker_state": result.broker_state,
+                "reason": result.reason,
+            }
+        )
+        attempt_handle = (
+            live_state.latest_attempt_handle
+            if isinstance(live_state, LiveLegState)
+            else None
+        )
+        self._start_execution_reconciliation(result, attempt_handle)
+
+    def _place_real_leg(self, side: str, leg: dict, *, opens_exposure: bool) -> OrderResult:
+        """Route one leg, serializing only orders that can increase exposure.
+
+        The shared lease closes the check-then-submit race across strategy
+        workers.  It is held until an ambiguous result freezes the coordinator,
+        so a queued worker must observe the freeze before it can reach a broker.
+        Reducing exits deliberately bypass this lease.
+        """
+
+        if (
+            opens_exposure
+            and self.live_trading
+            and not self.lifecycle.snapshot().entry_allowed
+        ):
+            try:
+                quantity = int(leg["quantity"])
+            except (KeyError, TypeError, ValueError):
+                quantity = 0
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.UNKNOWN,
+                "New live entry was not submitted because this worker is in "
+                "flatten-then-stop shutdown.",
+                broker_state="ENTRY_BLOCKED",
+            )
+
+        if not opens_exposure or not self.live_trading:
+            return self._place_real_leg_with_entry_lease(
+                side,
+                leg,
+                opens_exposure=opens_exposure,
+            )
+
+        try:
+            quantity = int(leg["quantity"])
+        except (KeyError, TypeError, ValueError):
+            quantity = 0
+        coordinator = self.store.execution_safety
+        if not coordinator.acquire_entry_submission_lease(timeout=10.0):
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.UNKNOWN,
+                "New live entry was not submitted because the shared execution "
+                "lease did not become available within 10 seconds.",
+                broker_state="ENTRY_LEASE_TIMEOUT",
+            )
+        try:
+            return self._place_real_leg_with_entry_lease(
+                side,
+                leg,
+                opens_exposure=opens_exposure,
+            )
+        finally:
+            coordinator.release_entry_submission_lease()
+
+    def _place_real_leg_with_entry_lease(
+        self,
+        side: str,
+        leg: dict,
+        *,
+        opens_exposure: bool,
+    ) -> OrderResult:
         """
         Send ONE real buy/sell order to the active broker for a single option ("leg").
 
-        This is the bridge between "paper" and "real": in paper mode it does
-        nothing and just returns True, so the rest of the trade code can call it
-        without caring which mode we're in. In live mode it actually places the
-        order via the selected `execution_client` (Kotak, Shoonya, or Flattrade). A "leg" is
-        one option contract (a spread has two legs).
+        This is the bridge between "paper" and "real".  It always returns the
+        shared :class:`OrderResult`; a broker acknowledgement, dictionary, or
+        truthy value is never treated as proof of a fill.
 
         `leg` is a dict describing the option:
             {"option_type": "CE"/"PE", "strike": float, "expiry": date,
@@ -3061,33 +3844,68 @@ class BasePaperStrategyWorker(threading.Thread):
         The broker order symbol is built/resolved by the client's
         `resolve_option_symbol` from the contract details.
 
-        Returns True on success. When this worker is not in live mode this is a
-        no-op that returns True, so every call site can invoke it unconditionally.
-
-        Failure policy: on any error (incl. an unresolvable symbol) we log a
-        warning and return False WITHOUT raising. Callers then fall back to paper
-        bookkeeping (the position is still recorded/closed as a paper trade) per
-        the user's chosen policy.
+        ``opens_exposure`` distinguishes entries from exits/recovery.  Once a
+        PARTIAL or UNKNOWN outcome freezes this worker, new live entries are
+        blocked while risk-reducing exit attempts remain possible.
         """
-        if not self.live_trading:
-            return True
-        quantity = leg["quantity"]
+        try:
+            quantity = int(leg["quantity"])
+        except (KeyError, TypeError, ValueError):
+            quantity = 0
+
+        if not self.live_trading and opens_exposure:
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.FILLED,
+                "Paper mode: no broker order was submitted.",
+                broker_state="PAPER",
+            )
+
+        if quantity <= 0:
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.REJECTED,
+                "Order was not submitted because quantity was not positive.",
+                broker_state="LOCAL_VALIDATION_REJECTED",
+            )
+
         dhan_symbol = leg.get("dhan_symbol", "")
         if execution_client is None:
             self.log.warning(
                 "REAL ORDER SKIPPED (no %s client) | %s %s qty=%s dhan=%s | falling back to paper.",
                 LIVE_BROKER, self.strategy_name, side, quantity, dhan_symbol,
             )
-            return False
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.REJECTED,
+                f"Order was not submitted because the {LIVE_BROKER} client is unavailable.",
+                broker_state="LOCAL_NOT_SUBMITTED",
+            )
         # Resolve the broker's order symbol for this contract before ordering.
         # A leg may name its own underlying (the SL Hunting BankNIFTY mirror);
         # everything else defaults to the NIFTY constant as before.
-        broker_symbol = execution_client.resolve_option_symbol(
-            underlying=leg.get("underlying", UNDERLYING),
-            expiry=leg.get("expiry"),
-            option_type=leg.get("option_type", ""),
-            strike=leg.get("strike", 0.0),
-        )
+        try:
+            broker_symbol = execution_client.resolve_option_symbol(
+                underlying=leg.get("underlying", UNDERLYING),
+                expiry=leg.get("expiry"),
+                option_type=leg.get("option_type", ""),
+                strike=leg.get("strike", 0.0),
+            )
+        except Exception as exc:
+            self.log.warning(
+                "REAL ORDER SKIPPED (%s symbol resolution raised) | %s %s dhan=%s | %s",
+                LIVE_BROKER,
+                self.strategy_name,
+                side,
+                dhan_symbol,
+                exc,
+            )
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.REJECTED,
+                f"Order was not submitted because {LIVE_BROKER} symbol resolution raised: {exc}",
+                broker_state="LOCAL_NOT_SUBMITTED",
+            )
         if not broker_symbol:
             self.log.warning(
                 "REAL ORDER SKIPPED (%s symbol not found) | %s %s strike=%s %s dhan=%s | "
@@ -3095,51 +3913,364 @@ class BasePaperStrategyWorker(threading.Thread):
                 LIVE_BROKER, self.strategy_name, side, leg.get("strike"),
                 leg.get("option_type"), dhan_symbol,
             )
-            return False
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.REJECTED,
+                f"Order was not submitted because {LIVE_BROKER} symbol resolution failed.",
+                broker_state="LOCAL_NOT_SUBMITTED",
+            )
+
+        shared_frozen, shared_reason = self.store.execution_safety.entry_freeze_snapshot()
+        if opens_exposure:
+            # A frozen account may reconcile/finish an already-registered leg,
+            # but it must never register a different exposure.  find_unfinished
+            # uses the resolved broker symbol, role and opening side, so another
+            # worker cannot masquerade as the continuation.
+            companion_authorized = shared_frozen and self._frozen_companion_entry_is_authorized(
+                leg,
+                broker_symbol=broker_symbol,
+                opening_side=str(side).upper().strip(),
+            )
+            state = self._register_live_leg(
+                leg,
+                broker_symbol=broker_symbol,
+                opening_side=str(side).upper().strip(),
+                allow_new=not shared_frozen or companion_authorized,
+            )
+            if state is None:
+                self._live_execution_frozen = True
+                if not self._live_execution_freeze_reason:
+                    self._live_execution_freeze_reason = shared_reason
+                return self._synthetic_order_result(
+                    quantity,
+                    OrderStatus.UNKNOWN,
+                    "New live entry blocked: the shared broker session has unresolved "
+                    "exposure. Original reason: "
+                    f"{shared_reason or self._live_execution_freeze_reason}",
+                    broker_state="ENTRY_FROZEN",
+                )
+        else:
+            state = leg.get("live_leg")
+            if not isinstance(state, LiveLegState):
+                return self._synthetic_order_result(
+                    quantity,
+                    OrderStatus.REJECTED,
+                    "Reducing order was not submitted because the position has no "
+                    "quantity-bearing live leg state.",
+                    broker_state="LOCAL_LIVE_STATE_MISSING",
+                )
+            state = self.store.execution_ledger.get(state.exposure_id)
+            leg["live_leg"] = state
+
+        refreshed_result = self._refresh_live_leg_attempt(leg)
+        state = leg["live_leg"]
+        if state.latest_attempt is not None and not state.latest_attempt.terminal:
+            result = refreshed_result or self._current_attempt_result(
+                state,
+                "The previous broker order remains non-terminal; duplicate submission blocked.",
+            )
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
+        # Idempotent callers may revisit a leg after a status refresh completed
+        # it. Return a local success and do not submit duplicate quantity.
+        if opens_exposure and state.entry_complete:
+            return self._synthetic_order_result(
+                state.spec.target_quantity,
+                OrderStatus.FILLED,
+                "Tracked live entry is already broker-confirmed complete.",
+                order_id=(state.latest_attempt.order_id if state.latest_attempt else ""),
+                broker_state="ALREADY_OPEN",
+            )
+        if not opens_exposure and state.broker_confirmed_flat:
+            self._try_unfreeze_after_flat_reconciliation()
+            return self._synthetic_order_result(
+                state.spec.target_quantity,
+                OrderStatus.FILLED,
+                "Tracked live leg is already broker-confirmed flat.",
+                order_id=(state.latest_attempt.order_id if state.latest_attempt else ""),
+                broker_state="ALREADY_FLAT",
+            )
+
+        submit_quantity = (
+            state.safe_open_retry_quantity
+            if opens_exposure
+            else state.safe_close_retry_quantity
+        )
+        if submit_quantity <= 0:
+            result = self._current_attempt_result(
+                state,
+                "No broker-safe retry quantity is currently available.",
+            )
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
+        intent = OrderIntent.OPEN if opens_exposure else OrderIntent.CLOSE
         try:
-            resp = execution_client.place_market_order(
+            attempt_handle = self.store.execution_ledger.start_attempt(
+                state.exposure_id,
+                intent,
+                submit_quantity,
+            )
+            state = self.store.execution_ledger.get(state.exposure_id)
+            leg["live_leg"] = state
+        except (KeyError, RuntimeError, ValueError) as exc:
+            result = self._current_attempt_result(
+                state,
+                f"Execution ledger refused an unsafe broker submission: {exc}",
+            )
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
+        if opens_exposure:
+            # Shutdown or broker-wide reconciliation may begin after the leg
+            # and attempt were staged but before the adapter call.  Recheck at
+            # the final broker boundary so that race cannot leak a new BUY.
+            shared_frozen, shared_reason = (
+                self.store.execution_safety.entry_freeze_snapshot()
+            )
+            companion_authorized = (
+                shared_frozen
+                and self._frozen_companion_entry_is_authorized(
+                    leg,
+                    broker_symbol=broker_symbol,
+                    opening_side=str(side).upper().strip(),
+                )
+            )
+            freeze_ids, _freeze_unattributed = (
+                self.store.execution_safety.freeze_attribution_snapshot()
+            )
+            continuation_authorized = state.exposure_id in freeze_ids
+            lifecycle_allows_entry = self.lifecycle.snapshot().entry_allowed
+            if not lifecycle_allows_entry or (
+                shared_frozen
+                and not continuation_authorized
+                and not companion_authorized
+            ):
+                # Close the locally staged attempt with zero-fill terminal
+                # evidence.  The returned UNKNOWN deliberately prevents the
+                # caller from converting this shutdown race into paper entry.
+                local_rejection = self._synthetic_order_result(
+                    submit_quantity,
+                    OrderStatus.REJECTED,
+                    "The staged entry was cancelled locally before broker submission.",
+                    broker_state="LOCAL_ENTRY_ABORTED",
+                )
+                state = self.store.execution_ledger.apply_result(
+                    attempt_handle,
+                    local_rejection,
+                )
+                leg["live_leg"] = state
+                return self._synthetic_order_result(
+                    submit_quantity,
+                    OrderStatus.UNKNOWN,
+                    "New live entry was not submitted because shutdown or "
+                    "broker reconciliation blocked the final submission boundary. "
+                    f"{shared_reason}",
+                    broker_state="ENTRY_BLOCKED",
+                )
+
+        try:
+            raw_result = execution_client.place_market_order(
                 symbol=broker_symbol,
                 side=side,
-                quantity=quantity,
+                quantity=submit_quantity,
                 exchange_segment=LIVE_EXCHANGE_SEGMENT,
                 product_type=LIVE_PRODUCT_TYPE,
+                order_tag=attempt_handle.order_tag,
             )
-            self.log.info(
-                "REAL ORDER OK | %s %s %s qty=%s sym=%s (dhan=%s) | OrderId=%s",
-                LIVE_BROKER, self.strategy_name, side, quantity, broker_symbol, dhan_symbol,
-                execution_client.extract_order_id(resp),
-            )
-            return True
-        except Exception as exc:
-            self.log.warning(
-                "REAL ORDER FAILED (falling back to paper) | %s %s %s qty=%s sym=%s (dhan=%s) | %s",
-                LIVE_BROKER, self.strategy_name, side, quantity, broker_symbol, dhan_symbol, exc,
-            )
-            return False
+            if isinstance(raw_result, OrderResult):
+                result = raw_result
+            else:
+                # MAT-101 deliberately drops compatibility with raw dictionaries
+                # and order IDs.  Preserve an ID when the legacy client can expose
+                # one, but the terminal state remains UNKNOWN.
+                try:
+                    legacy_order_id = execution_client.extract_order_id(raw_result)
+                except Exception:  # noqa: BLE001 - compatibility evidence is best-effort
+                    legacy_order_id = ""
+                result = self._synthetic_order_result(
+                    submit_quantity,
+                    OrderStatus.UNKNOWN,
+                    "Execution client returned a legacy/untyped result; fill state is unknown.",
+                    order_id=legacy_order_id,
+                    broker_state="UNTYPED_RESULT",
+                )
 
-    def _exec_mode_tag(self, real_ok: bool, *, live_legs_open: bool = True) -> str:
+            # An adapter returning a different requested quantity is not safe to
+            # reinterpret.  Preserve usable fill evidence and fail closed.
+            if result.requested_quantity != submit_quantity:
+                usable_filled = (
+                    result.filled_quantity
+                    if 0 <= result.filled_quantity <= submit_quantity
+                    else 0
+                )
+                result = self._synthetic_order_result(
+                    submit_quantity,
+                    OrderStatus.UNKNOWN,
+                    "Broker result quantity did not match the submitted quantity. "
+                    f"Adapter reported requested={result.requested_quantity}. {result.reason}",
+                    order_id=result.order_id,
+                    broker_state=result.broker_state or "QUANTITY_MISMATCH",
+                    filled_quantity=usable_filled,
+                )
+
+            # The ledger validates the attempt identity and applies only the
+            # cumulative fill delta.  Its returned immutable snapshot is the
+            # sole authority for all subsequent strategy decisions.
+            state = self.store.execution_ledger.apply_result(
+                attempt_handle,
+                result,
+            )
+            leg["live_leg"] = state
+
+            completed = state.entry_complete if opens_exposure else state.broker_confirmed_flat
+            if completed:
+                self.log.info(
+                    "REAL ORDER FILLED | %s %s %s qty=%s sym=%s (dhan=%s) | OrderId=%s",
+                    LIVE_BROKER,
+                    self.strategy_name,
+                    side,
+                    submit_quantity,
+                    broker_symbol,
+                    dhan_symbol,
+                    result.order_id or "UNKNOWN",
+                )
+                if not opens_exposure:
+                    self._try_unfreeze_after_flat_reconciliation()
+            elif (
+                opens_exposure
+                and state.broker_confirmed_flat
+                and self._is_explicit_zero_fill_rejection(result)
+            ):
+                self.log.warning(
+                    "REAL ORDER REJECTED WITH ZERO FILL | %s %s %s qty=%s sym=%s | %s",
+                    LIVE_BROKER,
+                    self.strategy_name,
+                    side,
+                    submit_quantity,
+                    broker_symbol,
+                    result.reason,
+                )
+            else:
+                # Invalid status/quantity combinations are just as unsafe as an
+                # explicit UNKNOWN response.  Convert them before alerting.
+                self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+        except Exception as exc:
+            result = self._synthetic_order_result(
+                submit_quantity,
+                OrderStatus.UNKNOWN,
+                f"Execution client raised after order submission may have started: {exc}",
+                broker_state="CLIENT_EXCEPTION",
+            )
+            try:
+                state = self.store.execution_ledger.apply_result(
+                    attempt_handle,
+                    result,
+                )
+                leg["live_leg"] = state
+            except (KeyError, RuntimeError, ValueError):
+                # The attempt was already registered before the adapter call, so
+                # exposure remains indeterminate even if malformed evidence could
+                # not be attached. Never attempt an automatic duplicate here.
+                pass
+            self._freeze_live_entries(result, side=side, leg=leg)
+            return result
+
+    def _exec_mode_tag(
+        self,
+        result: OrderResult,
+        *,
+        live_legs_open: bool = True,
+        is_exit: bool = False,
+    ) -> str:
         """
         Return a short label describing how a trade was actually executed, used in
         logs and Telegram messages so you can tell real fills from paper ones:
         - "PAPER"          : strategy is in paper mode.
-        - "LIVE"           : live mode and the real order(s) succeeded.
-        - "PAPER_FALLBACK" : live mode but no real order confirmed, so it was
-                             recorded/closed as paper instead.
+        - "LIVE"           : live mode and the requested quantity filled.
+        - "PAPER_FALLBACK" : a live entry was explicitly rejected with zero
+                             fill, or the position being closed never had live legs.
+        - "LIVE_REJECTED"  : a live exit was explicitly rejected with zero fill;
+                             the broker position remains open.
+        - "LIVE_INDETERMINATE": partial or unknown broker exposure.
 
         `live_legs_open` matters for EXITS: a live worker closing a position whose
-        entry fell back to paper sends NO broker order (there is nothing to close),
-        so `real_ok` is a vacuous True. Passing `live_legs_open=False` labels that
-        as PAPER_FALLBACK instead of LIVE, so an operator is never told a broker
-        leg was closed when it was deliberately skipped. Entry callers keep the
-        default (True) and are unaffected.
+        entry fell back to paper sends NO broker order (there is nothing to close).
+        Passing `live_legs_open=False` labels that as PAPER_FALLBACK instead of
+        LIVE, so an operator is never told a broker leg was closed when it was
+        deliberately skipped. Exit callers also pass ``is_exit=True`` so an
+        explicit rejection cannot be mistaken for a paper fallback.
         """
-        if not self.live_trading:
+        if not self.live_trading and not (is_exit and live_legs_open):
             return "PAPER"
         if not live_legs_open:
             return "PAPER_FALLBACK"
-        return "LIVE" if real_ok else "PAPER_FALLBACK"
+        if self._is_confirmed_fill(result):
+            return "LIVE"
+        if self._is_explicit_zero_fill_rejection(result):
+            return "LIVE_REJECTED" if is_exit else "PAPER_FALLBACK"
+        return "LIVE_INDETERMINATE"
 
-    def _place_real_hedged_entry(self, main_leg: dict, hedge_leg: dict) -> bool:
+    def _prepare_hedged_live_legs(self, main_leg: dict, hedge_leg: dict) -> None:
+        """Give both spread legs one correlation id and distinct broker roles."""
+
+        correlation_id = ""
+        for leg in (main_leg, hedge_leg):
+            state = leg.get("live_leg")
+            candidate = (
+                state.spec.correlation_id
+                if isinstance(state, LiveLegState)
+                else str(leg.get("correlation_id") or "").upper().strip()
+            )
+            if re.fullmatch(r"[A-Z0-9]{8}", candidate):
+                correlation_id = candidate
+                break
+        if not correlation_id:
+            correlation_id = uuid.uuid4().hex[:8].upper()
+        main_leg["correlation_id"] = correlation_id
+        main_leg["role"] = "M"
+        hedge_leg["correlation_id"] = correlation_id
+        hedge_leg["role"] = "H"
+
+    def _track_orphan_live_leg(self, leg: dict) -> None:
+        """Retain one quantity-bearing leg that has no strategy-position owner."""
+
+        state = leg.get("live_leg")
+        if not isinstance(state, LiveLegState) or state.broker_confirmed_flat:
+            return
+        record = dict(leg)
+        for index, existing in enumerate(self._orphan_live_legs):
+            existing_state = existing.get("live_leg")
+            if (
+                isinstance(existing_state, LiveLegState)
+                and existing_state.exposure_id == state.exposure_id
+            ):
+                self._orphan_live_legs[index] = record
+                break
+        else:
+            self._orphan_live_legs.append(record)
+        self._next_orphan_retry_ts = (
+            time.monotonic() + self.ORPHAN_UNWIND_RETRY_SECONDS
+        )
+
+    def _untrack_orphan_live_leg(self, leg: dict) -> None:
+        """Remove a leg once a normal strategy position has adopted its state."""
+
+        state = leg.get("live_leg")
+        if not isinstance(state, LiveLegState):
+            return
+        self._orphan_live_legs = [
+            existing
+            for existing in self._orphan_live_legs
+            if not (
+                isinstance(existing.get("live_leg"), LiveLegState)
+                and existing["live_leg"].exposure_id == state.exposure_id
+            )
+        ]
+
+    def _place_real_hedged_entry(self, main_leg: dict, hedge_leg: dict) -> OrderResult:
         """
         Open a real two-leg "hedged" position (sell one option, buy a cheaper one
         for protection). Each leg is a dict like in `_place_real_leg`.
@@ -3147,77 +4278,227 @@ class BasePaperStrategyWorker(threading.Thread):
         We BUY the protective hedge FIRST, then SELL the main leg. Why that order?
         If only one leg fills, being left holding a bought option (defined, small
         risk) is far safer than being left with a naked short (unlimited risk).
-        Returns True only if BOTH legs filled. If just the hedge filled, we close
-        it back out and return False so the caller treats the whole thing as paper.
-        No-op returning True in paper mode.
+        Returns the decisive typed result.  Paper fallback is possible only when
+        no exposure remains after an explicit zero-fill rejection.
         """
         if not self.live_trading:
-            return True
-        if not self._place_real_leg("BUY", hedge_leg):
-            return False
-        if not self._place_real_leg("SELL", main_leg):
+            return self._synthetic_order_result(
+                int(main_leg.get("quantity", 0)),
+                OrderStatus.FILLED,
+                "Paper mode: no hedged broker entry was submitted.",
+                broker_state="PAPER",
+            )
+        self._prepare_hedged_live_legs(main_leg, hedge_leg)
+        hedge_result = self._place_real_leg("BUY", hedge_leg, opens_exposure=True)
+        hedge_state = hedge_leg.get("live_leg")
+        if not (
+            isinstance(hedge_state, LiveLegState)
+            and hedge_state.entry_complete
+        ):
+            if isinstance(hedge_state, LiveLegState) and hedge_state.exposure_possible:
+                self._track_orphan_live_leg(hedge_leg)
+            if (
+                isinstance(hedge_state, LiveLegState)
+                and hedge_state.confirmed_live_quantity > 0
+                and self._is_explicit_zero_fill_rejection(hedge_result)
+            ):
+                return self._synthetic_order_result(
+                    hedge_state.spec.target_quantity,
+                    OrderStatus.PARTIAL,
+                    "The unfinished hedge retry was rejected, but confirmed long "
+                    "exposure from an earlier partial fill remains open.",
+                    order_id=hedge_result.order_id,
+                    broker_state="HEDGED_ENTRY_PARTIAL",
+                    filled_quantity=hedge_state.confirmed_live_quantity,
+                )
+            return hedge_result
+
+        # A retry may have found an older unfinished hedge.  Its ledger
+        # correlation is authoritative for the short leg in the same basket.
+        main_leg["correlation_id"] = hedge_state.spec.correlation_id
+
+        main_result = self._place_real_leg("SELL", main_leg, opens_exposure=True)
+        main_state = main_leg.get("live_leg")
+        if not (
+            isinstance(main_state, LiveLegState)
+            and main_state.entry_complete
+        ):
+            main_known_flat = main_state is None or (
+                isinstance(main_state, LiveLegState)
+                and main_state.broker_confirmed_flat
+            )
+            if not (
+                main_known_flat
+                and self._is_explicit_zero_fill_rejection(main_result)
+            ):
+                # A partial/unknown short may exist.  Keep the confirmed hedge in
+                # place rather than risking a naked short by unwinding it.
+                if isinstance(main_state, LiveLegState) and main_state.exposure_possible:
+                    # Track the short first so a forced sweep buys it back before
+                    # selling the protective long hedge.
+                    self._untrack_orphan_live_leg(hedge_leg)
+                    self._track_orphan_live_leg(main_leg)
+                self._track_orphan_live_leg(hedge_leg)
+                if (
+                    isinstance(main_state, LiveLegState)
+                    and main_state.confirmed_live_quantity > 0
+                    and self._is_explicit_zero_fill_rejection(main_result)
+                ):
+                    # The *retry* was rejected, not the quantity filled by an
+                    # earlier attempt.  Returning REJECTED here would let generic
+                    # entry code misclassify the basket as a paper fallback.
+                    return self._synthetic_order_result(
+                        main_state.spec.target_quantity,
+                        OrderStatus.PARTIAL,
+                        "The unfinished main-leg retry was rejected, but confirmed "
+                        "short exposure from an earlier partial fill remains open.",
+                        order_id=main_result.order_id,
+                        broker_state="HEDGED_ENTRY_PARTIAL",
+                        filled_quantity=main_state.confirmed_live_quantity,
+                    )
+                return main_result
+
             # Main leg failed after the hedge filled -> unwind the hedge so we
-            # aren't left holding a stray live leg, then fall back to paper.
-            unwound = self._place_real_leg("SELL", hedge_leg)
-            if unwound:
+            # are not left holding a stray live leg.  This SELL reduces exposure,
+            # so it remains allowed even though an earlier ambiguity may freeze
+            # new entries.
+            hedge_leg["live_leg"] = hedge_state
+            unwind_result = self._place_real_leg(
+                "SELL", hedge_leg, opens_exposure=False
+            )
+            hedge_state = hedge_leg.get("live_leg")
+            if (
+                isinstance(hedge_state, LiveLegState)
+                and hedge_state.broker_confirmed_flat
+            ):
                 self.log.warning(
-                    "Hedged entry PARTIAL fill (hedge filled, main failed) for %s; "
-                    "hedge unwound, falling back to paper.",
+                    "Hedged entry aborted (hedge filled, main rejected) for %s; "
+                    "hedge unwind filled, so paper fallback is safe.",
                     self.strategy_name,
                 )
-            else:
-                # Double failure: the hedge BUY filled but neither the main SELL
-                # nor the unwind SELL did. A LIVE long leg is open and untracked.
-                self.log.error(
-                    "MANUAL ACTION NEEDED | %s hedged entry: hedge filled but main "
-                    "AND unwind failed -> a LIVE BUY %s strike=%s qty=%s is OPEN and "
-                    "untracked. The worker will keep retrying the unwind (every ~%.0fs "
-                    "and at shutdown); square it off manually if it persists.",
-                    self.strategy_name, hedge_leg.get("option_type"),
-                    hedge_leg.get("strike"), hedge_leg.get("quantity"),
-                    self.ORPHAN_UNWIND_RETRY_SECONDS,
-                )
-                self.publish_trade_event({
-                    "action": "UNHEDGED_LEG_OPEN",
-                    "mode": "LIVE",
-                    "leg": "hedge",
-                    "option_type": hedge_leg.get("option_type"),
-                    "strike": hedge_leg.get("strike"),
-                    "quantity": hedge_leg.get("quantity"),
-                })
-                # HEDGE-001: remember the orphan so the worker ITSELF keeps
-                # retrying the unwind (poll cadence + a final forced attempt at
-                # shutdown) instead of relying on the alert being seen. First
-                # retry waits one full cadence -- the broker rejected this very
-                # order milliseconds ago, so an instant retry would just fail.
-                self._orphan_live_legs.append(dict(hedge_leg))
-                self._next_orphan_retry_ts = time.monotonic() + self.ORPHAN_UNWIND_RETRY_SECONDS
-            return False
-        return True
+                return main_result
 
-    def _place_real_hedged_exit(self, main_leg: dict, hedge_leg: dict, *, live_legs_open: bool) -> bool:
+            # Double failure: the hedge BUY filled but neither the main SELL nor
+            # the unwind completed.  Keep its exact ledger state; a PARTIAL
+            # unwind may have already reduced the quantity.
+            self.log.error(
+                "MANUAL ACTION NEEDED | %s hedged entry: hedge filled but main "
+                "and unwind did not flatten -> a LIVE BUY %s strike=%s risk_qty=%s "
+                "may remain. The worker will keep retrying the broker-safe "
+                "remainder (every ~%.0fs and at shutdown).",
+                self.strategy_name,
+                hedge_leg.get("option_type"),
+                hedge_leg.get("strike"),
+                hedge_state.risk_quantity if isinstance(hedge_state, LiveLegState) else "UNKNOWN",
+                self.ORPHAN_UNWIND_RETRY_SECONDS,
+            )
+            self.publish_trade_event({
+                "action": "UNHEDGED_LEG_OPEN",
+                "mode": "LIVE_INDETERMINATE",
+                "leg": "hedge",
+                "option_type": hedge_leg.get("option_type"),
+                "strike": hedge_leg.get("strike"),
+                "quantity": (
+                    hedge_state.risk_quantity
+                    if isinstance(hedge_state, LiveLegState)
+                    else int(hedge_leg.get("quantity", 0))
+                ),
+            })
+            self._track_orphan_live_leg(hedge_leg)
+            if self._is_explicit_zero_fill_rejection(unwind_result):
+                unresolved = self._synthetic_order_result(
+                    (
+                        hedge_state.risk_quantity
+                        if isinstance(hedge_state, LiveLegState)
+                        else int(hedge_leg.get("quantity", 0))
+                    ),
+                    OrderStatus.UNKNOWN,
+                    "Protective hedge filled, main entry was rejected, and hedge unwind was rejected; "
+                    "a known live long hedge remains open.",
+                    # This synthetic result describes the rejected SELL attempt,
+                    # never the earlier filled BUY.  Reusing the entry ID here
+                    # would let reconciliation apply a BUY fill to the CLOSE
+                    # attempt and falsely erase the orphaned live quantity.
+                    order_id=unwind_result.order_id,
+                    broker_state="ORPHAN_HEDGE_OPEN",
+                    filled_quantity=int(hedge_leg.get("quantity", 0)),
+                )
+                self._freeze_live_entries(unresolved, side="HEDGE_ORPHAN", leg=hedge_leg)
+                return unresolved
+            return unwind_result
+        self._untrack_orphan_live_leg(main_leg)
+        self._untrack_orphan_live_leg(hedge_leg)
+        return main_result
+
+    def _place_real_hedged_exit(
+        self,
+        main_leg: dict,
+        hedge_leg: dict,
+    ) -> OrderResult:
         """
         Close a real two-leg hedged position: BUY back the main leg we sold, and
         SELL the hedge leg we bought ("BUY-to-close" / "SELL-to-close").
 
-        We try BOTH legs no matter what, to close as much as possible. The caller
-        always flattens its own paper books afterward either way. Returns True
-        only if both legs closed cleanly. No-op returning True in paper mode.
+        Close the short main leg first.  Only a confirmed full main fill permits
+        selling the protective long hedge; otherwise protection stays in place.
+        The caller flattens its books only after both typed fills are confirmed.
 
-        `live_legs_open` is the closing position's flag: when False the entry
-        never opened real legs (paper mode, or a live entry that fell back to
-        paper / orphaned), so there is nothing to close at the broker and we must
-        NOT send orders -- doing so would open phantom exposure. Returning True
-        here lets the caller flatten its paper books normally.
+        The per-leg ledger snapshots decide which orders exist.  A main leg that
+        is already flat is never bought again while the hedge finishes closing.
         """
-        if not self.live_trading or not live_legs_open:
-            return True
-        main_ok = self._place_real_leg("BUY", main_leg)
-        hedge_ok = self._place_real_leg("SELL", hedge_leg)
-        return main_ok and hedge_ok
+        main_state = main_leg.get("live_leg")
+        hedge_state = hedge_leg.get("live_leg")
+        if not isinstance(main_state, LiveLegState) and not isinstance(
+            hedge_state, LiveLegState
+        ):
+            return self._synthetic_order_result(
+                int(main_leg.get("quantity", 0)),
+                OrderStatus.FILLED,
+                "No live hedged legs were open, so no broker exit was submitted.",
+                broker_state="PAPER",
+            )
+
+        main_result: OrderResult | None = None
+        if isinstance(main_state, LiveLegState):
+            main_state = self.store.execution_ledger.get(main_state.exposure_id)
+            main_leg["live_leg"] = main_state
+            if not main_state.broker_confirmed_flat:
+                main_result = self._place_real_leg(
+                    "BUY", main_leg, opens_exposure=False
+                )
+                main_state = main_leg.get("live_leg")
+                if not (
+                    isinstance(main_state, LiveLegState)
+                    and main_state.broker_confirmed_flat
+                ):
+                    # Keep the protective long hedge while any short quantity is
+                    # known or possible.
+                    return main_result
+
+        if isinstance(hedge_state, LiveLegState):
+            hedge_state = self.store.execution_ledger.get(hedge_state.exposure_id)
+            hedge_leg["live_leg"] = hedge_state
+            if not hedge_state.broker_confirmed_flat:
+                hedge_result = self._place_real_leg(
+                    "SELL", hedge_leg, opens_exposure=False
+                )
+                hedge_state = hedge_leg.get("live_leg")
+                if not (
+                    isinstance(hedge_state, LiveLegState)
+                    and hedge_state.broker_confirmed_flat
+                ):
+                    self._track_orphan_live_leg(hedge_leg)
+                return hedge_result
+
+        return main_result or self._synthetic_order_result(
+            int(main_leg.get("quantity", 0)),
+            OrderStatus.FILLED,
+            "All tracked live hedged legs were already broker-confirmed flat.",
+            broker_state="ALREADY_FLAT",
+        )
 
     def _sweep_orphan_live_legs(self, *, force: bool = False) -> None:
-        """Retry selling-to-close any live leg orphaned by a hedged double failure.
+        """Retry the opposite-side close for every unowned live entry leg.
 
         HEDGE-001. Rate-limited to one attempt per ORPHAN_UNWIND_RETRY_SECONDS
         (a rejected order rarely succeeds seconds later, and retries must never
@@ -3227,7 +4508,7 @@ class BasePaperStrategyWorker(threading.Thread):
         for the next pass. No-op in paper mode and when nothing is orphaned,
         which is every poll in a normal session.
         """
-        if not self._orphan_live_legs or not self.live_trading:
+        if not self._orphan_live_legs:
             return
         now = time.monotonic()
         if not force and now < self._next_orphan_retry_ts:
@@ -3235,14 +4516,55 @@ class BasePaperStrategyWorker(threading.Thread):
         self._next_orphan_retry_ts = now + self.ORPHAN_UNWIND_RETRY_SECONDS
         still_open: list[dict] = []
         for leg in self._orphan_live_legs:
+            state = leg.get("live_leg")
+            if not isinstance(state, LiveLegState):
+                still_open.append(leg)
+                self.log.error(
+                    "Orphaned live leg requires RECONCILIATION | %s strike=%s | "
+                    "quantity-bearing ledger state is missing.",
+                    leg.get("option_type"),
+                    leg.get("strike"),
+                )
+                continue
+            state = self.store.execution_ledger.get(state.exposure_id)
+            leg["live_leg"] = state
+            if state.broker_confirmed_flat:
+                continue
+            if state.spec.role == "H":
+                # A protective long hedge is the last leg of a short-option
+                # basket that may be sold.  Refresh the ledger after any earlier
+                # main-leg attempt in this same sweep and retain protection while
+                # correlated role M exposure is still known or possible.
+                correlated_main_open = any(
+                    candidate.spec.role == "M"
+                    and candidate.spec.strategy == state.spec.strategy
+                    and candidate.spec.owner_id == state.spec.owner_id
+                    and candidate.spec.correlation_id == state.spec.correlation_id
+                    for candidate in self.store.execution_ledger.active_states()
+                )
+                if correlated_main_open:
+                    still_open.append(leg)
+                    self.log.error(
+                        "Protective hedge retained | %s strike=%s risk_qty=%s | "
+                        "correlated short main leg is not broker-confirmed flat.",
+                        leg.get("option_type"),
+                        leg.get("strike"),
+                        state.risk_quantity,
+                    )
+                    continue
             try:
-                closed = self._place_real_leg("SELL", leg)
-            except Exception:  # noqa: BLE001 - the sweep must never kill the worker loop
-                closed = False
-            if closed:
+                close_side = "BUY" if state.spec.opening_side == "SELL" else "SELL"
+                self._place_real_leg(close_side, leg, opens_exposure=False)
+            except Exception as exc:  # noqa: BLE001 - never kill the worker loop
+                self.log.error("Orphan unwind retry raised unexpectedly: %s", exc)
+            state = leg.get("live_leg")
+            if isinstance(state, LiveLegState) and state.broker_confirmed_flat:
                 self.log.warning(
-                    "Orphaned live leg RECOVERED (sold to close) | %s strike=%s qty=%s",
-                    leg.get("option_type"), leg.get("strike"), leg.get("quantity"),
+                    "Orphaned live leg RECOVERED (%s to close) | %s strike=%s qty=%s",
+                    close_side,
+                    leg.get("option_type"),
+                    leg.get("strike"),
+                    state.spec.target_quantity,
                 )
                 self.publish_trade_event({
                     "action": "UNHEDGED_LEG_CLOSED",
@@ -3250,14 +4572,21 @@ class BasePaperStrategyWorker(threading.Thread):
                     "leg": "hedge",
                     "option_type": leg.get("option_type"),
                     "strike": leg.get("strike"),
-                    "quantity": leg.get("quantity"),
+                    "quantity": state.spec.target_quantity,
                 })
             else:
                 still_open.append(leg)
+                risk_quantity = (
+                    state.risk_quantity
+                    if isinstance(state, LiveLegState)
+                    else "UNKNOWN"
+                )
                 self.log.error(
-                    "Orphaned live leg STILL OPEN (unwind retry failed) | %s strike=%s "
-                    "qty=%s | will keep retrying; square it off manually if this persists.",
-                    leg.get("option_type"), leg.get("strike"), leg.get("quantity"),
+                    "Orphaned live leg STILL OPEN | %s strike=%s risk_qty=%s | "
+                    "will reconcile and retry only the broker-safe remainder.",
+                    leg.get("option_type"),
+                    leg.get("strike"),
+                    risk_quantity,
                 )
         self._orphan_live_legs = still_open
 
@@ -3271,17 +4600,32 @@ class BasePaperStrategyWorker(threading.Thread):
         (TelegramMessageWorker) owns all formatting and network I/O, so the
         trading threads are never exposed to Telegram latency or failures.
         """
-        event_queue = getattr(self, "trade_event_queue", None)
-        if event_queue is None:
-            return
         try:
             event.setdefault("strategy", self.strategy_name)
             event.setdefault("ts", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            event.setdefault("mode", "PAPER")
+            event.setdefault("mode", "LIVE" if self.live_trading else "PAPER")
+            mode_parts = _execution_mode_parts(event["mode"])
+            with self._execution_mode_lock:
+                self._execution_modes_seen.update(mode_parts)
+            event_queue = getattr(self, "trade_event_queue", None)
+            if event_queue is None:
+                return
             event_queue.put_nowait(event)
         except Exception:
             # A failed enqueue must never disturb the trading loop.
             pass
+
+    def session_execution_mode(self) -> str:
+        """Return PAPER, LIVE, or MIXED from this worker's actual outcomes."""
+        with self._execution_mode_lock:
+            observed = set(self._execution_modes_seen)
+        if len(observed) > 1:
+            return "MIXED"
+        if observed:
+            return next(iter(observed))
+        # A no-trade day has no order outcome. Report the mode in which the
+        # strategy was armed rather than falsely claiming a paper execution.
+        return "LIVE" if self.live_trading else "PAPER"
 
     # ------------------------------------------------------------------
     # Helpers
@@ -3412,6 +4756,21 @@ class BasePaperStrategyWorker(threading.Thread):
         """
         return MIN_BARS
 
+    def minimum_source_rows(self) -> int:
+        """Minimum raw snapshot rows required before building strategy data."""
+
+        return MIN_BARS
+
+    def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
+        """Optional pre-signal hook for entries tied to an observed future slot.
+
+        Returning ``True`` means the hook consumed this poll, so the worker
+        skips evaluating the older completed signal candle again.
+        """
+
+        del ohlc
+        return False
+
     def wait_for_next_poll(self) -> None:
         """
         Sleep until the next strategy tick, returning early on shutdown.
@@ -3425,51 +4784,329 @@ class BasePaperStrategyWorker(threading.Thread):
         # retrying an orphaned live leg. Rate-limited inside the sweep; a no-op
         # on the overwhelming majority of polls.
         self._sweep_orphan_live_legs()
-        self.stop_event.wait(self.poll_seconds)
+        if self.lifecycle.snapshot().state is LifecycleState.RUNNING:
+            self.stop_event.wait(self.poll_seconds)
+        else:
+            self._wait_for_shutdown_retry()
+
+    def _market_data_entries_allowed(self) -> bool:
+        """Fail closed for every REAL entry path while the shared feed is unhealthy.
+
+        Scope (operator decision, 2026-07-17): this gate protects MONEY, so it
+        applies only to live-trading workers. A paper worker keeps entering on
+        the last-good snapshot -- a virtual trade on slightly stale data is a
+        data-quality footnote, whereas blocking it costs the paper track record
+        its opening window (on 17 Jul the gate blocked every paper strategy
+        until ~09:24 while the feed warmed up, so no strategy could trade the
+        open at all).
+        """
+
+        if not self.live_trading:
+            return True
+        health = self.store.market_data_health.snapshot(now=_ist_now())
+        if not health.monitoring:
+            return True
+        if health.entry_allowed:
+            if self._market_data_unhealthy_logged:
+                self.log.info(
+                    "Market data recovered after %d consecutive healthy refreshes; entries resumed.",
+                    health.healthy_streak,
+                )
+            self._market_data_unhealthy_logged = False
+            self._market_data_liquidation_logged = False
+            return True
+        if not self._market_data_unhealthy_logged:
+            self._market_data_unhealthy_logged = True
+            self.log.warning(
+                "Blocking new entries because market data is unhealthy | %s",
+                "; ".join(health.reasons) or "awaiting three healthy refreshes",
+            )
+        return False
+
+    def _handle_market_data_health(self) -> bool:
+        """Flatten tracked LIVE exposure after a feed has been unhealthy for 30s.
+
+        This is deliberately separate from terminal daily shutdown. A feed can
+        recover, but only three consecutive healthy producer cycles reopen the
+        entry gate. Returning ``True`` tells the caller to consume this poll so
+        no strategy logic runs alongside a safety-driven liquidation attempt.
+
+        Scope (operator decision, 2026-07-17): like the entry gate above, the
+        forced square-off exists to protect real money, so it applies only to
+        live-trading workers. A paper worker keeps its virtual position and its
+        strategy logic keeps running on the last-good snapshot. A LIVE worker
+        still flattens EVERYTHING it owns -- including a rare paper-fallback
+        position -- because its books mirror a real trading stream and
+        splitting real-vs-paper mid-liquidation would complicate
+        reconciliation.
+        """
+
+        health = self.store.market_data_health.snapshot(now=_ist_now())
+        if not health.monitoring:
+            return False
+        if not self.live_trading:
+            # Paper worker: never force-close, never consume the poll. Log the
+            # 30s+ condition once per unhealthy episode so the operator can
+            # still see the feed outage in this worker's stream.
+            if health.liquidation_required and not self._market_data_liquidation_logged:
+                self._market_data_liquidation_logged = True
+                self.log.info(
+                    "Market data unhealthy for %.1fs; PAPER worker continues "
+                    "(square-off skipped -- no real exposure) | %s",
+                    health.unhealthy_seconds,
+                    "; ".join(health.reasons),
+                )
+            if health.entry_allowed:
+                # Reset the once-per-episode latch after recovery.
+                self._market_data_liquidation_logged = False
+            return False
+        if not health.entry_allowed:
+            self._market_data_entries_allowed()
+        if not health.liquidation_required:
+            return False
+
+        reason = "MARKET_DATA_UNHEALTHY"
+        if not self._market_data_liquidation_logged:
+            self._market_data_liquidation_logged = True
+            self.log.error(
+                "Market data remained unhealthy for %.1fs; flattening every tracked leg | %s",
+                health.unhealthy_seconds,
+                "; ".join(health.reasons),
+            )
+            self.publish_trade_event(
+                {
+                    "action": "MARKET_DATA_AUTO_SQUARE_OFF",
+                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "reason": "; ".join(health.reasons),
+                    "unhealthy_seconds": health.unhealthy_seconds,
+                }
+            )
+        try:
+            if self._paper_positions_active():
+                self.exit_position(reason)
+        except Exception as exc:  # noqa: BLE001 - keep flattening every other leg
+            self.log.exception("Market-data primary close failed; retrying next poll: %s", exc)
+        try:
+            self._flatten_additional_positions(reason)
+        except Exception as exc:  # noqa: BLE001 - orphan sweep must still run
+            self.log.exception("Market-data additional close failed; retrying next poll: %s", exc)
+        try:
+            self._sweep_orphan_live_legs(force=True)
+        except Exception as exc:  # noqa: BLE001 - health loop must stay alive
+            self.log.exception("Market-data orphan close failed; retrying next poll: %s", exc)
+        return True
+
+    def _paper_positions_active(self) -> bool:
+        """Return whether this worker still owns local position bookkeeping."""
+
+        return bool(getattr(self.pos, "active", False))
+
+    def _owned_live_states(self) -> tuple[LiveLegState, ...]:
+        """Return active ledger legs owned by this exact worker instance."""
+
+        return tuple(
+            state
+            for state in self.store.execution_ledger.active_states()
+            if state.spec.owner_id == self._execution_owner_id
+        )
+
+    def _flatten_additional_positions(self, reason: str) -> None:
+        """Subclass hook for exposure not represented by ``self.pos``."""
+
+        return
+
+    def _shutdown_exposure_is_flat(self) -> bool:
+        """Prove this worker has no local or quantity-bearing live exposure."""
+
+        return (
+            not self._paper_positions_active()
+            and not self._orphan_live_legs
+            and not self._owned_live_states()
+        )
+
+    def request_worker_shutdown(self, reason: str) -> None:
+        """Block THIS worker's entries immediately and start its safe shutdown.
+
+        The block is deliberately scoped to this one worker: its own lifecycle
+        gate refuses new opening orders both at the top of `_place_real_leg`
+        and again at the final broker-submission boundary, so a max-loss stop
+        or an early square-off here never freezes the shared account-wide
+        entry gate that the OTHER strategies are still trading through.  The
+        shared gate stays reserved for conditions that genuinely make the
+        whole account unsafe: indeterminate broker exposure, a failed startup
+        audit, and the stale-market-data guard.
+        """
+
+        before = self.lifecycle.snapshot()
+        snapshot = self.lifecycle.request_shutdown(reason)
+        if before.state is LifecycleState.RUNNING:
+            self.log.warning(
+                "LIFECYCLE %s -> %s | reason=%s | new entries blocked for this worker.",
+                before.state.value,
+                snapshot.state.value,
+                snapshot.shutdown_reason,
+            )
+
+    def _finish_worker_shutdown(self) -> None:
+        """Move FLAT to STOPPED and emit the summary exactly once."""
+
+        snapshot = self.lifecycle.snapshot()
+        if snapshot.state is LifecycleState.FLAT:
+            snapshot = self.lifecycle.mark_stopped()
+        if snapshot.state is not LifecycleState.STOPPED:
+            return
+        if not self._shutdown_summary_logged:
+            self._shutdown_summary_logged = True
+            self.log.info(
+                "Result summary | Mode=%s | %s",
+                self.session_execution_mode(),
+                self.summary_text(),
+            )
+            self.log.info(
+                "Strategy stopped only after broker-confirmed flat lifecycle completion."
+            )
+
+    def _advance_shutdown_lifecycle(self) -> None:
+        """Take one due close/reconciliation step without ever giving up."""
+
+        snapshot = self.lifecycle.snapshot()
+        if snapshot.state is LifecycleState.RUNNING:
+            return
+        if snapshot.state in {LifecycleState.FLAT, LifecycleState.STOPPED}:
+            self._finish_worker_shutdown()
+            return
+        if snapshot.state is LifecycleState.RECONCILING:
+            if not self.lifecycle.retry_due():
+                return
+        elif snapshot.state is not LifecycleState.ENTRY_BLOCKED:
+            # FLATTENING is owned by the current caller. Another thread can
+            # safely observe it, but must not start a duplicate close pass.
+            return
+
+        flattening = self.lifecycle.start_flattening()
+        reason = flattening.shutdown_reason
+        try:
+            if self._paper_positions_active():
+                self.exit_position(reason)
+        except Exception as exc:  # noqa: BLE001 - retry loop must survive
+            self.log.exception(
+                "Flatten attempt %d raised while closing the primary position: %s",
+                flattening.flatten_attempts,
+                exc,
+            )
+        try:
+            self._flatten_additional_positions(reason)
+        except Exception as exc:  # noqa: BLE001 - retry loop must survive
+            self.log.exception(
+                "Flatten attempt %d raised while closing additional exposure: %s",
+                flattening.flatten_attempts,
+                exc,
+            )
+        try:
+            self._sweep_orphan_live_legs(force=True)
+        except Exception as exc:  # noqa: BLE001 - lifecycle must still reconcile
+            self.log.exception(
+                "Flatten attempt %d raised while sweeping orphan exposure: %s",
+                flattening.flatten_attempts,
+                exc,
+            )
+
+        self.lifecycle.start_reconciling()
+        reconciled = self.lifecycle.record_reconciliation(
+            broker_flat=self._shutdown_exposure_is_flat()
+        )
+        if reconciled.state is LifecycleState.FLAT:
+            self._finish_worker_shutdown()
+            return
+
+        retry_in = max(
+            0.0,
+            float(reconciled.next_retry_at or time.monotonic()) - time.monotonic(),
+        )
+        risk_quantity = sum(state.risk_quantity for state in self._owned_live_states())
+        self.log.error(
+            "DEGRADED SHUTDOWN | attempt=%d reason=%s risk_qty=%s | "
+            "exposure is not broker-confirmed flat; retrying in %.1fs.",
+            reconciled.flatten_attempts,
+            reconciled.shutdown_reason,
+            risk_quantity,
+            retry_in,
+        )
+        self.publish_trade_event(
+            {
+                "action": "SHUTDOWN_DEGRADED",
+                "mode": "LIVE_INDETERMINATE" if self.live_trading else "PAPER",
+                "reason": reconciled.shutdown_reason,
+                "attempt": reconciled.flatten_attempts,
+                "risk_quantity": risk_quantity,
+                "retry_seconds": retry_in,
+            }
+        )
+
+    def _wait_for_shutdown_retry(self) -> None:
+        """Wait without spinning even when the legacy stop event is already set.
+
+        The run loop cannot use ``stop_event.wait`` here: during shutdown the
+        event is typically already set, so waiting on it would return
+        immediately and turn the flatten/reconcile loop into a busy spin.  A
+        plain sleep, capped at the poll cadence and floored at 50ms, keeps the
+        worker responsive to its 1/2/5-second retry schedule without burning a
+        CPU core while it waits to become broker-confirmed flat.
+        """
+
+        snapshot = self.lifecycle.snapshot()
+        if snapshot.state in {LifecycleState.FLAT, LifecycleState.STOPPED}:
+            return
+        if snapshot.next_retry_at is None:
+            delay = min(max(float(self.poll_seconds), 0.05), 0.25)
+        else:
+            delay = min(
+                max(snapshot.next_retry_at - time.monotonic(), 0.05),
+                max(float(self.poll_seconds), 0.05),
+            )
+        time.sleep(delay)
+
+    def _run_shutdown_cycle_if_requested(self) -> bool:
+        """Translate stop signals and drive shutdown instead of exiting early."""
+
+        if (
+            self.stop_event.is_set()
+            and self.lifecycle.snapshot().state is LifecycleState.RUNNING
+        ):
+            self.request_worker_shutdown("STOP_EVENT")
+        if self.lifecycle.snapshot().state is LifecycleState.RUNNING:
+            return False
+        self._advance_shutdown_lifecycle()
+        return True
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-        """One-time shutdown sequence triggered by a risk breach."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.error(
-            "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
-            "Stopping strategy and closing paper positions.",
-            self.max_loss,
-            total_pnl,
-            open_pnl,
-        )
-        try:
-            if self.pos.active:
-                self.exit_position("MAX_LOSS_BREACH")
-        except Exception as exc:
-            self.log.exception("Error while exiting active position on max-loss breach: %s", exc)
-        # HEDGE-001: last forced attempt to close any orphaned live leg before
-        # this worker stops for the day (no more poll sweeps after this).
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+        """Request a retrying shutdown after a risk breach."""
+
+        if not self.cutoff_handled:
+            self.cutoff_handled = True
+            self.log.error(
+                "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
+                "Blocking entries and flattening until broker-confirmed flat.",
+                self.max_loss,
+                total_pnl,
+                open_pnl,
+            )
+        self.request_worker_shutdown("MAX_LOSS_BREACH")
+        self._advance_shutdown_lifecycle()
 
     def handle_square_off_and_stop(self) -> None:
-        """One-time shutdown sequence triggered by the daily time cutoff."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.info(
-            "%02d:%02d cutoff reached. Closing any open positions and halting trading for the day.",
-            self.square_off_hour,
-            self.square_off_minute,
-        )
-        try:
-            if self.pos.active:
-                self.exit_position("TIME_CUTOFF")
-        except Exception as exc:
-            self.log.exception("Error while exiting active position at cutoff: %s", exc)
-        # HEDGE-001: last forced attempt to close any orphaned live leg before
-        # this worker stops for the day (no more poll sweeps after this).
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day.")
+        """Request a retrying shutdown at the daily time cutoff."""
+
+        if not self.cutoff_handled:
+            self.cutoff_handled = True
+            self.log.info(
+                "%02d:%02d IST cutoff reached. Blocking entries and flattening "
+                "until broker-confirmed flat.",
+                self.square_off_hour,
+                self.square_off_minute,
+            )
+        self.request_worker_shutdown("TIME_CUTOFF")
+        self._advance_shutdown_lifecycle()
 
     # ------------------------------------------------------------------
     # Subclass contract (must be implemented by every concrete worker)
@@ -3515,16 +5152,24 @@ class BasePaperStrategyWorker(threading.Thread):
         for the rationale.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
@@ -3544,8 +5189,12 @@ class BasePaperStrategyWorker(threading.Thread):
                     # process start). Wait politely instead of crashing.
                     self.wait_for_next_poll()
                     continue
-                if len(snapshot.frame) < MIN_BARS:
+                if len(snapshot.frame) < self.minimum_source_rows():
                     # Have data, but not enough warm-up history yet.
+                    self.wait_for_next_poll()
+                    continue
+
+                if self.process_pending_entry(snapshot.frame):
                     self.wait_for_next_poll()
                     continue
 
@@ -3615,19 +5264,34 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         )
         return (live_price - self.pos.entry_trade_price) * self.pos.quantity
 
+    def _compute_entry_sizing(
+        self,
+        entry_underlying: float,
+        stop_underlying: float,
+        lot_size: int,
+    ) -> SizingDecision:
+        """
+        Return the complete, auditable sizing decision for this entry.
+
+        Default strategies use their static class-level ``self.lots``. The
+        four risk-budget strategies override this and may reject the setup.
+        """
+        del entry_underlying, stop_underlying
+        return SizingDecision.fixed(lots=self.lots, lot_size=lot_size)
+
     def _compute_entry_lots(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
     ) -> int:
-        """
-        Number of lots to use for this entry.
+        """Compatibility read for callers that only need the accepted lot count."""
 
-        Default: the static class-level `self.lots`. Subclasses (e.g. Profit
-        Shooter) override this to size dynamically off the underlying SL.
-        """
-        return self.lots
+        return self._compute_entry_sizing(
+            entry_underlying,
+            stop_underlying,
+            lot_size,
+        ).lots
 
     def enter_position(
         self,
@@ -3649,6 +5313,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         5. Persist all entry fields (including any strategy-specific flags
            like target/trailing for Profit Shooter) in `self.pos`.
         """
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=_safe_float(entry_underlying, 0.0))
         if spot <= 0:
             self.log.warning("Skipping %s entry because NIFTY spot LTP was unavailable.", direction)
@@ -3691,21 +5357,52 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
             return False
 
-        lots_for_entry = self._compute_entry_lots(
+        sizing = self._compute_entry_sizing(
             float(entry_underlying), float(stop_underlying), lot_size
         )
-        quantity = lot_size * lots_for_entry
+        if not sizing.accepted:
+            self.log.warning(
+                "ENTRY SKIPPED BY SIZING | %s %s | entry=%.2f stop=%.2f "
+                "lot_size=%s budget=%.2f one_lot_risk=%.2f | %s",
+                self.strategy_name,
+                direction,
+                entry_underlying,
+                stop_underlying,
+                lot_size,
+                sizing.budget,
+                sizing.one_lot_risk,
+                sizing.reason,
+            )
+            return False
+        lots_for_entry = sizing.lots
+        quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
         order_id = self._next_paper_order_id(entry_side)
 
-        # Real execution (live mode only; no-op returning True in paper mode).
-        # On failure we fall back to paper: the position is still recorded below
-        # so the strategy keeps tracking it as a paper trade.
-        real_ok = self._place_real_leg(entry_side, {
+        # Only an explicit zero-fill rejection is safe to mirror in paper.  A
+        # partial or unknown broker outcome may already be live exposure, so it
+        # freezes new entries and returns before any paper position is created.
+        entry_leg = {
             "option_type": option_right, "strike": option_strike,
             "expiry": expiry_date, "quantity": quantity, "dhan_symbol": trading_symbol,
-        })
-        exec_mode = self._exec_mode_tag(real_ok)
+            "role": "N",
+        }
+        order_result = self._place_real_leg(
+            entry_side,
+            entry_leg,
+            opens_exposure=True,
+        )
+        live_leg = entry_leg.get("live_leg")
+        if not self._entry_outcome_allows_position(order_result, live_leg):
+            if isinstance(live_leg, LiveLegState) and live_leg.exposure_possible:
+                # No PaperPosition will be created for an incomplete live entry,
+                # so the generic recovery sweep owns it until a later signal
+                # completes and adopts the same ledger state.
+                self._track_orphan_live_leg(entry_leg)
+            return False
+        self._untrack_orphan_live_leg(entry_leg)
+        quantity = int(entry_leg["quantity"])
+        exec_mode = self._exec_mode_tag(order_result)
 
         # Keep the fetcher refreshing this option's LTP for the trade lifetime.
         self.store.register_option_subscription(
@@ -3722,9 +5419,11 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         self.pos = PaperPosition(
             active=True,
             direction=direction,
-            # True only if a real broker leg actually opened; a live entry that fell
-            # back to paper leaves this False so the exit sends no real SELL.
-            live_legs_open=(self.live_trading and real_ok),
+            live_leg=(
+                live_leg
+                if isinstance(live_leg, LiveLegState) and live_leg.entry_complete
+                else None
+            ),
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -3814,26 +5513,50 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         # at the broker. A live entry that fell back to paper (rejected order or a
         # symbol-master miss) recorded no live leg, so a SELL now would be a naked
         # short of an option we never bought. In that case there is nothing to close
-        # at the broker: skip the order and treat the exit as paper (real_ok stays
-        # True so we flatten the books normally, exactly like paper mode). Mirrors
+        # at the broker: skip the order and treat the exit as paper so we flatten
+        # the books normally, exactly like paper mode. Mirrors
         # the HedgedPaperPosition.live_legs_open guard (PR #42 / HEDGE-001).
-        if closed_position.live_legs_open:
-            real_ok = self._place_real_leg(exit_side, {
+        had_live_leg = closed_position.live_leg is not None
+        exit_leg = {
                 "option_type": closed_position.option_right, "strike": closed_position.option_strike,
                 "expiry": closed_position.option_expiry, "quantity": closed_position.quantity,
                 "dhan_symbol": closed_position.symbol,
-            })
+                "role": "N",
+                "live_leg": closed_position.live_leg,
+            }
+        if had_live_leg:
+            order_result = self._place_real_leg(
+                exit_side,
+                exit_leg,
+                opens_exposure=False,
+            )
+            refreshed_live_leg = exit_leg.get("live_leg")
+            if isinstance(refreshed_live_leg, LiveLegState):
+                closed_position.live_leg = refreshed_live_leg
         else:
-            real_ok = True  # no real leg was ever opened -> nothing to close
-        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed_position.live_legs_open)
+            order_result = self._synthetic_order_result(
+                closed_position.quantity,
+                OrderStatus.FILLED,
+                "No live leg was open, so no broker exit was submitted.",
+                broker_state="PAPER",
+            )
+        exec_mode = self._exec_mode_tag(
+            order_result,
+            live_legs_open=had_live_leg,
+            is_exit=True,
+        )
 
         # If a LIVE exit did not confirm a fill, the real broker position is still
-        # open. Do NOT flatten the books - keep the position active so the worker
-        # retries the exit on its next cycle, and alert for manual square-off.
-        if self.live_trading and not real_ok:
+        # open. Do NOT flatten the books; keep the position active for broker
+        # reconciliation or manual square-off.
+        if (
+            had_live_leg
+            and closed_position.live_leg is not None
+            and not closed_position.live_leg.broker_confirmed_flat
+        ):
             self.log.error(
                 "LIVE EXIT NOT CONFIRMED | %s %s | OptionSymbol=%s | Qty=%s | Reason=%s "
-                "| position kept OPEN for retry/manual square-off.",
+                "| position kept OPEN for reconciliation/manual square-off.",
                 self.strategy_name, closed_position.direction, closed_position.symbol,
                 closed_position.quantity, reason,
             )
@@ -3894,7 +5617,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             {
                 "action": "EXIT",
                 "mode": exec_mode,
-                "exit_order_failed": bool(self.live_trading and not real_ok),
+                "exit_order_failed": bool(
+                    self.live_trading
+                    and had_live_leg
+                    and closed_position.live_leg is not None
+                    and not closed_position.live_leg.broker_confirmed_flat
+                ),
                 "direction": closed_position.direction,
                 "reason": reason,
                 "lot_size": closed_position.option_lot_size,
@@ -3959,7 +5687,7 @@ class RenkoStrategyWorker(AtmSingleLegStrategyWorker):
 
     def is_in_midday_no_trade_window(self) -> bool:
         """True during the Renko midday no-new-entry window."""
-        now = datetime.now()
+        now = _ist_now()
         no_trade_start = now.replace(
             hour=RENKO_NO_TRADE_START_HOUR,
             minute=RENKO_NO_TRADE_START_MINUTE,
@@ -4177,11 +5905,17 @@ class HeikinAshiStrategyWorker(AtmSingleLegStrategyWorker):
             return
         if decision.action == "REVERSE_TO_LONG":
             self.exit_position(decision.exit_reason or "REVERSAL_TO_LONG")
+            # A live rejection/partial/unknown exit deliberately keeps ``pos``
+            # active. Never layer the opposite entry onto that unresolved leg.
+            if self.pos.active:
+                return
             if self.enter_position("LONG", decision.entry_underlying):
                 self.signal_engine.consume_long_setup()
             return
         if decision.action == "REVERSE_TO_SHORT":
             self.exit_position(decision.exit_reason or "REVERSAL_TO_SHORT")
+            if self.pos.active:
+                return
             if self.enter_position("SHORT", decision.entry_underlying):
                 self.signal_engine.consume_short_setup()
             return
@@ -4244,42 +5978,42 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
         self.exit_count += 1
 
     def minimum_strategy_rows(self) -> int:
-        return PROFIT_SHOOTER_MIN_BARS
+        # A restored/open trade needs only the latest candle for hard-stop
+        # handling.  The full warm-up remains mandatory while flat.
+        return 1 if self.pos.active else PROFIT_SHOOTER_MIN_BARS
 
-    def _compute_entry_lots(
+    def minimum_source_rows(self) -> int:
+        """Do not let source-history warm-up suppress an existing hard stop."""
+
+        return 1 if self.pos.active else MIN_BARS
+
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """
-        Profit-Shooter-only risk-based sizing.
+    ) -> SizingDecision:
+        """Return Profit Shooter's hard-budget sizing decision."""
 
-        Pick the smallest whole-lot quantity whose worst-case underlying-points
-        loss (`risk_points * lot_size`) is within `PROFIT_SHOOTER_RISK_BUDGET`.
-        `math.ceil` over a positive ratio guarantees a minimum of 1 lot, so a
-        trade is never sized to zero -- a setup either trades at >=1 lot or
-        not at all.
-        """
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Profit Shooter dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(PROFIT_SHOOTER_RISK_BUDGET / (risk_points * lot_size))
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=PROFIT_SHOOTER_RISK_BUDGET,
+            max_lots=PROFIT_SHOOTER_MAX_LOTS,
+        )
         self.log.info(
             "Profit Shooter dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
             lot_size,
             PROFIT_SHOOTER_RISK_BUDGET,
-            lots,
-            lots * lot_size,
+            PROFIT_SHOOTER_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """
@@ -4355,9 +6089,138 @@ class ProfitShooterStrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# NEXT-OPEN ATM STRATEGY BASE
+# =============================================================================
+class NextOpenAtmStrategyWorker(AtmSingleLegStrategyWorker):
+    """Queue completed-bar setups for the immediately following bar open."""
+
+    derived_timeframe_minutes = 5
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ) -> None:
+        super().__init__(store, stop_event, broker)
+        self._pending_next_open: PendingNextOpenEntry | None = None
+
+    @staticmethod
+    def _market_datetime(value) -> datetime | None:
+        """Normalize a pandas/native timestamp without inventing a timezone."""
+
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        if isinstance(parsed, pd.Timestamp):
+            return parsed.to_pydatetime()
+        return parsed if isinstance(parsed, datetime) else None
+
+    def _queue_next_open_decision(self, direction: str, decision) -> bool:
+        """Store a validated one-bar intent when the engine says NEXT_OPEN."""
+
+        debug = decision.debug if isinstance(decision.debug, dict) else {}
+        if str(debug.get("entry_timing", "")).upper().strip() != "NEXT_OPEN":
+            return False
+        signal_at = self._market_datetime(debug.get("timestamp"))
+        if signal_at is None:
+            self.log.error(
+                "%s NEXT_OPEN setup rejected: signal timestamp was invalid.",
+                self.strategy_name,
+            )
+            return True
+        try:
+            pending = PendingNextOpenEntry.from_setup(
+                direction=direction,
+                signal_at=signal_at,
+                entry=decision.entry_underlying,
+                stop=decision.stop_underlying,
+                target=decision.target_underlying,
+                timeframe_minutes=self.derived_timeframe_minutes,
+            )
+        except ValueError as exc:
+            self.log.error(
+                "%s NEXT_OPEN setup rejected before queueing: %s",
+                self.strategy_name,
+                exc,
+            )
+            return True
+        self._pending_next_open = pending
+        self.log.info(
+            "%s NEXT_OPEN queued | direction=%s signal=%s expected=%s expires=%s.",
+            self.strategy_name,
+            pending.direction,
+            pending.signal_at,
+            pending.expected_open_at,
+            pending.expires_at,
+        )
+        return True
+
+    def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
+        """Execute a queued setup from the exact observed next-bar open."""
+
+        pending = self._pending_next_open
+        if pending is None:
+            return False
+        if self.pos.active:
+            self._pending_next_open = None
+            return False
+        if ohlc is None or ohlc.empty or not {"timestamp", "open"}.issubset(ohlc.columns):
+            return False
+
+        frame = ohlc[["timestamp", "open"]].copy()
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+        frame = frame.dropna(subset=["timestamp"])
+        if frame.empty:
+            return False
+        latest_at = self._market_datetime(frame["timestamp"].max())
+        if latest_at is None:
+            return False
+        if pending.expired_as_of(latest_at):
+            self.log.warning(
+                "%s NEXT_OPEN expired without entry | expected=%s latest=%s.",
+                self.strategy_name,
+                pending.expected_open_at,
+                latest_at,
+            )
+            self._pending_next_open = None
+            return True
+
+        expected = pd.Timestamp(pending.expected_open_at)
+        observed_rows = frame[frame["timestamp"] == expected]
+        if observed_rows.empty:
+            return False
+        observed_at = self._market_datetime(observed_rows.iloc[-1]["timestamp"])
+        if observed_at is None:
+            return True
+        rebased = pending.rebase_at_open(
+            observed_at=observed_at,
+            observed_entry=observed_rows.iloc[-1]["open"],
+        )
+        if rebased is None:
+            self.log.error(
+                "%s NEXT_OPEN observed row was invalid; intent remains queued until %s.",
+                self.strategy_name,
+                pending.expires_at,
+            )
+            return True
+
+        entered = self.enter_position(
+            rebased.direction,
+            rebased.entry,
+            rebased.stop,
+            target_underlying=rebased.target,
+        )
+        if entered:
+            self.entry_submit_count += 1
+            self._pending_next_open = None
+        return True
+
+
+# =============================================================================
 # GOLDMINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
 # =============================================================================
-class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
+class GoldmineStrategyWorker(NextOpenAtmStrategyWorker):
     """
     Goldmine strategy. Reads 1-minute data from the shared store, locally
     resamples it into complete 5-minute candles, then runs the SMA20/SMA200
@@ -4408,35 +6271,33 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
         # Goldmine needs SMA200 warm-up; the engine reports its own minimum.
         return self.signal_engine.minimum_history_bars()
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """
-        Risk-based sizing (same model as Profit Shooter).
+    ) -> SizingDecision:
+        """Return Goldmine's hard-budget sizing decision."""
 
-        Pick the smallest whole-lot quantity whose worst-case underlying-points
-        loss (`risk_points * lot_size`) is within `GOLDMINE_RISK_BUDGET`.
-        `math.ceil` over a positive ratio guarantees at least 1 lot, so a setup
-        either trades at >=1 lot or not at all.
-        """
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Goldmine dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(GOLDMINE_RISK_BUDGET / (risk_points * lot_size))
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=GOLDMINE_RISK_BUDGET,
+            max_lots=GOLDMINE_MAX_LOTS,
+        )
         self.log.info(
             "Goldmine dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points, lot_size, GOLDMINE_RISK_BUDGET, lots, lots * lot_size,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
+            lot_size,
+            GOLDMINE_RISK_BUDGET,
+            GOLDMINE_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """Resample 1-min OHLC into complete 5-min candles, then attach Goldmine indicators."""
@@ -4477,6 +6338,8 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
             self.signal_count += 1
 
         if decision.action == "ENTER_LONG":
+            if self._queue_next_open_decision("LONG", decision):
+                return
             if self.enter_position(
                 "LONG",
                 decision.entry_underlying,
@@ -4486,6 +6349,8 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
                 self.entry_submit_count += 1
             return
         if decision.action == "ENTER_SHORT":
+            if self._queue_next_open_decision("SHORT", decision):
+                return
             if self.enter_position(
                 "SHORT",
                 decision.entry_underlying,
@@ -4499,7 +6364,7 @@ class GoldmineStrategyWorker(AtmSingleLegStrategyWorker):
 # =============================================================================
 # MONEY MACHINE STRATEGY WORKER (1-min source, locally resampled to 5-min)
 # =============================================================================
-class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
+class MoneyMachineStrategyWorker(NextOpenAtmStrategyWorker):
     """
     Money Machine strategy. Reads 1-minute data from the shared store, locally
     resamples it into complete 5-minute candles, then runs the SMA20/SMA200
@@ -4547,28 +6412,33 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
         # Money Machine needs SMA200 warm-up; the engine reports its own minimum.
         return self.signal_engine.minimum_history_bars()
 
-    def _compute_entry_lots(
+    def _compute_entry_sizing(
         self,
         entry_underlying: float,
         stop_underlying: float,
         lot_size: int,
-    ) -> int:
-        """Risk-based sizing (same model as Profit Shooter / Goldmine)."""
-        risk_points = abs(float(entry_underlying) - float(stop_underlying))
-        if risk_points <= 0 or lot_size <= 0:
-            self.log.warning(
-                "Money Machine dynamic sizing fell back to static lots=%s "
-                "(entry=%.2f, stop=%.2f, lot_size=%s).",
-                self.lots, entry_underlying, stop_underlying, lot_size,
-            )
-            return self.lots
-        lots = math.ceil(MONEY_MACHINE_RISK_BUDGET / (risk_points * lot_size))
+    ) -> SizingDecision:
+        """Return Money Machine's hard-budget sizing decision."""
+
+        decision = SizingDecision.from_risk_budget(
+            entry=entry_underlying,
+            stop=stop_underlying,
+            lot_size=lot_size,
+            budget=MONEY_MACHINE_RISK_BUDGET,
+            max_lots=MONEY_MACHINE_MAX_LOTS,
+        )
         self.log.info(
             "Money Machine dynamic sizing: risk_points=%.2f | lot_size=%s | "
-            "risk_budget=%.2f -> lots=%s, qty=%s.",
-            risk_points, lot_size, MONEY_MACHINE_RISK_BUDGET, lots, lots * lot_size,
+            "risk_budget=%.2f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+            decision.risk_points,
+            lot_size,
+            MONEY_MACHINE_RISK_BUDGET,
+            MONEY_MACHINE_MAX_LOTS,
+            decision.accepted,
+            decision.lots,
+            decision.quantity,
         )
-        return int(lots)
+        return decision
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
         """Resample 1-min OHLC into complete 5-min candles, then attach Money Machine indicators."""
@@ -4603,6 +6473,8 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
             self.signal_count += 1
 
         if decision.action == "ENTER_LONG":
+            if self._queue_next_open_decision("LONG", decision):
+                return
             if self.enter_position(
                 "LONG",
                 decision.entry_underlying,
@@ -4612,6 +6484,8 @@ class MoneyMachineStrategyWorker(AtmSingleLegStrategyWorker):
                 self.entry_submit_count += 1
             return
         if decision.action == "ENTER_SHORT":
+            if self._queue_next_open_decision("SHORT", decision):
+                return
             if self.enter_position(
                 "SHORT",
                 decision.entry_underlying,
@@ -4693,19 +6567,16 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
     1. `square_off_hour` / `square_off_minute` (= 15:15 by default).
        The BasePaperStrategyWorker's main `run()` loop checks
        `is_after_time(self.square_off_hour, self.square_off_minute)` on
-       EVERY single poll iteration. The moment we cross that wall-clock
-       time, the loop runs `handle_square_off_and_stop()` which:
-            (a) sets a one-shot `cutoff_handled` flag so it only runs once,
-            (b) if `self.pos.active` is True -> calls `exit_position(
-                "TIME_CUTOFF")` to close the open option leg at the live
-                LTP and record a normal PnL,
-            (c) logs the day's paper summary,
-            (d) `break`s out of the run loop so the thread exits cleanly.
+       EVERY single poll iteration against an explicit Asia/Kolkata clock.
+       The moment we cross the cutoff, `handle_square_off_and_stop()`
+       blocks new entries and repeatedly calls `exit_position("TIME_CUTOFF")`
+       on a 1/2/5-second capped retry cadence. The thread reaches STOPPED
+       only after its local position and every quantity-bearing ledger leg
+       are broker-confirmed flat; the summary is logged after that proof.
        Every scenario is covered:
          - In a trade at 15:15 -> the trade is exited at TIME_CUTOFF.
          - Flat at 15:15 with no signal having fired all day -> the worker
-           still hits the cutoff branch, logs the summary, and stops the
-           thread (so it won't waste CPU polling after market close).
+           still reaches FLAT/STOPPED without unnecessary broker orders.
          - Flat at 15:15 but holding a "we already entered once" flag on
            the signal engine -> same as above, the thread exits.
 
@@ -4717,8 +6588,9 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
 
     3. `max_loss` (=Rs.5500 by default). Independent of clock time. If
        realized + open PnL ever dips below `-max_loss` the base loop
-       force-closes the active trade and stops the worker, just like the
-       time-cutoff path. Set max_loss=0 in .env to disable this.
+       enters the same retrying flatten lifecycle. A non-positive max loss
+       may still disable paper-mode risk checks, but fail-closed startup keeps
+       that strategy out of LIVE mode.
 
     EDITABLE KNOBS (all live in `.env` under "OPENING_STRIKE_*")
     -----------------------------------------------------------
@@ -5051,7 +6923,7 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
         has ever succeeded). The caller treats `None`/empty as "skip
         this evaluation" and tries again on the next poll.
         """
-        now = datetime.now()
+        now = _ist_now()
 
         # If a cached frame is fresh enough, use it as-is to avoid
         # spending an API call.
@@ -5319,10 +7191,12 @@ class OpeningStrikePCRVWAPATRWorker(AtmSingleLegStrategyWorker):
         if decision.action == "BUY_CALL":
             if self.enter_position("LONG", decision.entry_underlying):
                 self.entry_submit_count += 1
+                self.signal_engine.acknowledge_entry()
             return
         if decision.action == "BUY_PUT":
             if self.enter_position("SHORT", decision.entry_underlying):
                 self.entry_submit_count += 1
+                self.signal_engine.acknowledge_entry()
             return
 
 
@@ -5837,6 +7711,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
 
     def _enter_hedged_bullish_position(self, entry_underlying: float, latest_candle_ts) -> bool:
         """Open a new hedged bullish paper position (SELL Rs.160 PE + BUY Rs.10 PE)."""
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=entry_underlying)
         if spot <= 0:
             self.log.warning("Skipping bullish entry because NIFTY spot LTP was unavailable.")
@@ -5869,17 +7745,29 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             )
             return False
 
-        # Real execution (live mode only; no-op True in paper mode). On failure
-        # we fall back to paper and still record the position below.
-        real_ok = self._place_real_hedged_entry(
-            main_leg={"option_type": str(main["option_type"]), "strike": float(main["strike"]),
-                      "expiry": main["expiry_date"], "quantity": main_qty,
-                      "dhan_symbol": str(main["trading_symbol"])},
-            hedge_leg={"option_type": str(hedge["option_type"]), "strike": float(hedge["strike"]),
-                       "expiry": hedge["expiry_date"], "quantity": hedge_qty,
-                       "dhan_symbol": str(hedge["trading_symbol"])},
+        main_live_order = {
+            "option_type": str(main["option_type"]),
+            "strike": float(main["strike"]),
+            "expiry": main["expiry_date"],
+            "quantity": main_qty,
+            "dhan_symbol": str(main["trading_symbol"]),
+        }
+        hedge_live_order = {
+            "option_type": str(hedge["option_type"]),
+            "strike": float(hedge["strike"]),
+            "expiry": hedge["expiry_date"],
+            "quantity": hedge_qty,
+            "dhan_symbol": str(hedge["trading_symbol"]),
+        }
+        order_result = self._place_real_hedged_entry(
+            main_live_order,
+            hedge_live_order,
         )
-        exec_mode = self._exec_mode_tag(real_ok)
+        if not self._entry_outcome_allows_position(order_result):
+            return False
+        main_qty = int(main_live_order["quantity"])
+        hedge_qty = int(hedge_live_order["quantity"])
+        exec_mode = self._exec_mode_tag(order_result)
 
         # Subscribe both legs so the fetcher keeps refreshing their LTPs.
         self.store.register_option_subscription(
@@ -5909,7 +7797,18 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="LONG",
-            live_legs_open=(self.live_trading and real_ok),
+            main_live_leg=(
+                main_live_order.get("live_leg")
+                if isinstance(main_live_order.get("live_leg"), LiveLegState)
+                and main_live_order["live_leg"].entry_complete
+                else None
+            ),
+            hedge_live_leg=(
+                hedge_live_order.get("live_leg")
+                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+                and hedge_live_order["live_leg"].entry_complete
+                else None
+            ),
             entry_underlying=float(entry_underlying),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -6035,25 +7934,45 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode).
-        real_ok = self._place_real_hedged_exit(
-            main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
-                      "expiry": closed.main_expiry, "quantity": closed.main_quantity,
-                      "dhan_symbol": closed.main_symbol},
-            hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
-                       "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
-                       "dhan_symbol": closed.hedge_symbol},
-            live_legs_open=closed.live_legs_open,
+        had_live_exposure = closed.live_legs_open
+        main_live_order = {
+            "option_type": closed.main_right,
+            "strike": closed.main_strike,
+            "expiry": closed.main_expiry,
+            "quantity": closed.main_quantity,
+            "dhan_symbol": closed.main_symbol,
+            "live_leg": closed.main_live_leg,
+        }
+        hedge_live_order = {
+            "option_type": closed.hedge_right,
+            "strike": closed.hedge_strike,
+            "expiry": closed.hedge_expiry,
+            "quantity": closed.hedge_quantity,
+            "dhan_symbol": closed.hedge_symbol,
+            "live_leg": closed.hedge_live_leg,
+        }
+        order_result = self._place_real_hedged_exit(
+            main_live_order,
+            hedge_live_order,
         )
-        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
+        closed.main_live_leg = main_live_order.get("live_leg")
+        closed.hedge_live_leg = hedge_live_order.get("live_leg")
+        exec_mode = self._exec_mode_tag(
+            order_result,
+            live_legs_open=had_live_exposure,
+            is_exit=True,
+        )
 
         # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
-        # is still open. Do NOT flatten the books - keep the position so the worker
-        # retries the exit next cycle, and alert for manual square-off.
-        if self.live_trading and not real_ok:
+        # is still open. Do NOT flatten the books; keep the position for broker
+        # reconciliation or manual square-off.
+        if (
+            had_live_exposure
+            and closed.live_legs_open
+        ):
             self.log.error(
                 "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
-                "for retry/manual square-off (main=%s, hedge=%s).",
+                "for reconciliation/manual square-off (main=%s, hedge=%s).",
                 self.strategy_name, closed.direction, reason, closed.main_symbol, closed.hedge_symbol,
             )
             self.publish_trade_event({
@@ -6130,7 +8049,9 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             {
                 "action": "EXIT",
                 "mode": exec_mode,
-                "exit_order_failed": bool(self.live_trading and not real_ok),
+                "exit_order_failed": bool(
+                    had_live_exposure and closed.live_legs_open
+                ),
                 "direction": closed.direction,
                 "reason": reason,
                 "lots": self.lots,
@@ -6383,6 +8304,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
 
     def _enter_hedged_bearish_position(self, entry_underlying: float, latest_candle_ts) -> bool:
         """Open a new hedged bearish paper position (SELL Rs.160 CE + BUY Rs.10 CE)."""
+        if not self._market_data_entries_allowed():
+            return False
         spot = self._get_underlying_spot(fallback=entry_underlying)
         if spot <= 0:
             self.log.warning("Skipping bearish entry because NIFTY spot LTP was unavailable.")
@@ -6415,17 +8338,29 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             )
             return False
 
-        # Real execution (live mode only; no-op True in paper mode). On failure
-        # we fall back to paper and still record the position below.
-        real_ok = self._place_real_hedged_entry(
-            main_leg={"option_type": str(main["option_type"]), "strike": float(main["strike"]),
-                      "expiry": main["expiry_date"], "quantity": main_qty,
-                      "dhan_symbol": str(main["trading_symbol"])},
-            hedge_leg={"option_type": str(hedge["option_type"]), "strike": float(hedge["strike"]),
-                       "expiry": hedge["expiry_date"], "quantity": hedge_qty,
-                       "dhan_symbol": str(hedge["trading_symbol"])},
+        main_live_order = {
+            "option_type": str(main["option_type"]),
+            "strike": float(main["strike"]),
+            "expiry": main["expiry_date"],
+            "quantity": main_qty,
+            "dhan_symbol": str(main["trading_symbol"]),
+        }
+        hedge_live_order = {
+            "option_type": str(hedge["option_type"]),
+            "strike": float(hedge["strike"]),
+            "expiry": hedge["expiry_date"],
+            "quantity": hedge_qty,
+            "dhan_symbol": str(hedge["trading_symbol"]),
+        }
+        order_result = self._place_real_hedged_entry(
+            main_live_order,
+            hedge_live_order,
         )
-        exec_mode = self._exec_mode_tag(real_ok)
+        if not self._entry_outcome_allows_position(order_result):
+            return False
+        main_qty = int(main_live_order["quantity"])
+        hedge_qty = int(hedge_live_order["quantity"])
+        exec_mode = self._exec_mode_tag(order_result)
 
         self.store.register_option_subscription(
             OptionSubscription(
@@ -6455,7 +8390,18 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="SHORT",
-            live_legs_open=(self.live_trading and real_ok),
+            main_live_leg=(
+                main_live_order.get("live_leg")
+                if isinstance(main_live_order.get("live_leg"), LiveLegState)
+                and main_live_order["live_leg"].entry_complete
+                else None
+            ),
+            hedge_live_leg=(
+                hedge_live_order.get("live_leg")
+                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+                and hedge_live_order["live_leg"].entry_complete
+                else None
+            ),
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -6594,16 +8540,24 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         open. If an exit fires, we skip the entry path for that poll.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
@@ -6700,25 +8654,45 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode).
-        real_ok = self._place_real_hedged_exit(
-            main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
-                      "expiry": closed.main_expiry, "quantity": closed.main_quantity,
-                      "dhan_symbol": closed.main_symbol},
-            hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
-                       "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
-                       "dhan_symbol": closed.hedge_symbol},
-            live_legs_open=closed.live_legs_open,
+        had_live_exposure = closed.live_legs_open
+        main_live_order = {
+            "option_type": closed.main_right,
+            "strike": closed.main_strike,
+            "expiry": closed.main_expiry,
+            "quantity": closed.main_quantity,
+            "dhan_symbol": closed.main_symbol,
+            "live_leg": closed.main_live_leg,
+        }
+        hedge_live_order = {
+            "option_type": closed.hedge_right,
+            "strike": closed.hedge_strike,
+            "expiry": closed.hedge_expiry,
+            "quantity": closed.hedge_quantity,
+            "dhan_symbol": closed.hedge_symbol,
+            "live_leg": closed.hedge_live_leg,
+        }
+        order_result = self._place_real_hedged_exit(
+            main_live_order,
+            hedge_live_order,
         )
-        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
+        closed.main_live_leg = main_live_order.get("live_leg")
+        closed.hedge_live_leg = hedge_live_order.get("live_leg")
+        exec_mode = self._exec_mode_tag(
+            order_result,
+            live_legs_open=had_live_exposure,
+            is_exit=True,
+        )
 
         # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
-        # is still open. Do NOT flatten the books - keep the position so the worker
-        # retries the exit next cycle, and alert for manual square-off.
-        if self.live_trading and not real_ok:
+        # is still open. Do NOT flatten the books; keep the position for broker
+        # reconciliation or manual square-off.
+        if (
+            had_live_exposure
+            and closed.live_legs_open
+        ):
             self.log.error(
                 "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
-                "for retry/manual square-off (main=%s, hedge=%s).",
+                "for reconciliation/manual square-off (main=%s, hedge=%s).",
                 self.strategy_name, closed.direction, reason, closed.main_symbol, closed.hedge_symbol,
             )
             self.publish_trade_event({
@@ -6793,7 +8767,9 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             {
                 "action": "EXIT",
                 "mode": exec_mode,
-                "exit_order_failed": bool(self.live_trading and not real_ok),
+                "exit_order_failed": bool(
+                    had_live_exposure and closed.live_legs_open
+                ),
                 "direction": closed.direction,
                 "reason": reason,
                 "lots": self.lots,
@@ -7002,6 +8978,16 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
     # ------------------------------------------------------------------
     # Lifecycle / risk overrides (we use ce_pos+pe_pos, not self.pos)
     # ------------------------------------------------------------------
+    def _paper_positions_active(self) -> bool:
+        """Return whether either independently managed spread is open."""
+
+        return self.ce_pos.active or self.pe_pos.active
+
+    def _flatten_additional_positions(self, reason: str) -> None:
+        """Drop reference-only subscriptions once shutdown has started."""
+
+        self._unsubscribe_unentered_legs()
+
     def _get_open_position_pnl(self) -> float:
         """
         Live mark-to-market PnL summed across BOTH sides.
@@ -7058,48 +9044,14 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             self._exit_side("PE", reason)
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-        """One-time shutdown when the per-lot max loss is breached."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.error(
-            "MAX_LOSS breached | Limit=%.2f (%.0f * %d lots) | "
-            "SessionPnL=%.2f | OpenPnL=%.2f. Closing both sides and stopping.",
-            self.max_loss,
-            DELTA20_MAX_LOSS_PER_LOT,
-            self.lots,
-            total_pnl,
-            open_pnl,
-        )
-        try:
-            self.exit_position("MAX_LOSS_BREACH")
-        except Exception as exc:
-            self.log.exception("Error while exiting on max-loss breach: %s", exc)
-        self._unsubscribe_unentered_legs()
-        # HEDGE-001: last forced attempt to close any orphaned live leg.
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+        """Use the shared retrying lifecycle for the combined loss limit."""
+
+        super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
     def handle_square_off_and_stop(self) -> None:
-        """One-time shutdown at the daily 15:20 cutoff."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.info(
-            "%02d:%02d cutoff reached. Closing any open sides and halting trading for the day.",
-            self.square_off_hour,
-            self.square_off_minute,
-        )
-        try:
-            self.exit_position("TIME_CUTOFF")
-        except Exception as exc:
-            self.log.exception("Error while exiting at cutoff: %s", exc)
-        self._unsubscribe_unentered_legs()
-        # HEDGE-001: last forced attempt to close any orphaned live leg.
-        self._sweep_orphan_live_legs(force=True)
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day.")
+        """Use the shared retrying lifecycle at the daily cutoff."""
+
+        super().handle_square_off_and_stop()
 
     def summary_text(self) -> str:
         return (
@@ -7137,21 +9089,29 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         whole day - we log the trace and continue on the next poll.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 # 1. Risk check first. If the combined PnL across both
                 #    sides has dipped below -(per_lot * lots), we shut
-                #    everything down and break out of the loop.
+                #    every side down through the retrying lifecycle.
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 # 2. Daily time cutoff (15:20 by default). Close anything
                 #    still open and stop the worker for the day.
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 # 3. Pre-open wait. We do nothing before 09:20 - that's
                 #    when the reference snapshot is taken. The
@@ -7225,7 +9185,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         On success this branch is never reached again because `run`
         gates it with `self.reference_captured`.
         """
-        now = datetime.now()
+        now = _ist_now()
         if (
             self.last_capture_attempt_at is not None
             and (now - self.last_capture_attempt_at) < self.capture_backoff
@@ -7677,6 +9637,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             True on a successful entry, False on any guard failure
             (missing hedge LTP, invalid lot size, etc.).
         """
+        if not self._market_data_entries_allowed():
+            return False
         # Pull this side's metadata. We deliberately ignore the position
         # / done flags here - they were already checked by `_check_entry`.
         _, _, monitor_meta, hedge_meta, _, _ = self._side_state(side)
@@ -7717,17 +9679,29 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         monitor_qty = monitor_lot_size * self.lots
         hedge_qty = hedge_lot_size * self.lots
 
-        # Real execution (live mode only; no-op True in paper mode). On failure
-        # we fall back to paper and still record the position below.
-        real_ok = self._place_real_hedged_entry(
-            main_leg={"option_type": str(monitor_meta["option_type"]), "strike": float(monitor_meta["strike"]),
-                      "expiry": monitor_meta["expiry_date"], "quantity": monitor_qty,
-                      "dhan_symbol": str(monitor_meta["trading_symbol"])},
-            hedge_leg={"option_type": str(hedge_meta["option_type"]), "strike": float(hedge_meta["strike"]),
-                       "expiry": hedge_meta["expiry_date"], "quantity": hedge_qty,
-                       "dhan_symbol": str(hedge_meta["trading_symbol"])},
+        main_live_order = {
+            "option_type": str(monitor_meta["option_type"]),
+            "strike": float(monitor_meta["strike"]),
+            "expiry": monitor_meta["expiry_date"],
+            "quantity": monitor_qty,
+            "dhan_symbol": str(monitor_meta["trading_symbol"]),
+        }
+        hedge_live_order = {
+            "option_type": str(hedge_meta["option_type"]),
+            "strike": float(hedge_meta["strike"]),
+            "expiry": hedge_meta["expiry_date"],
+            "quantity": hedge_qty,
+            "dhan_symbol": str(hedge_meta["trading_symbol"]),
+        }
+        order_result = self._place_real_hedged_entry(
+            main_live_order,
+            hedge_live_order,
         )
-        exec_mode = self._exec_mode_tag(real_ok)
+        if not self._entry_outcome_allows_position(order_result):
+            return False
+        monitor_qty = int(main_live_order["quantity"])
+        hedge_qty = int(hedge_live_order["quantity"])
+        exec_mode = self._exec_mode_tag(order_result)
         # Synthetic order ids for paper-trade audit trail. These are
         # unique within the worker and timestamp-encoded so a human
         # scanning the log can correlate ENTRY and EXIT lines easily.
@@ -7741,7 +9715,18 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         new_pos = HedgedPaperPosition(
             active=True,
             direction=side,  # "CE" or "PE" (used purely for log labelling)
-            live_legs_open=(self.live_trading and real_ok),
+            main_live_leg=(
+                main_live_order.get("live_leg")
+                if isinstance(main_live_order.get("live_leg"), LiveLegState)
+                and main_live_order["live_leg"].entry_complete
+                else None
+            ),
+            hedge_live_leg=(
+                hedge_live_order.get("live_leg")
+                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+                and hedge_live_order["live_leg"].entry_complete
+                else None
+            ),
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(monitor_meta["trading_symbol"]),
@@ -7877,25 +9862,45 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             fallback=closed.hedge_entry_price,
         )
 
-        # Real execution (live mode only; no-op True in paper mode).
-        real_ok = self._place_real_hedged_exit(
-            main_leg={"option_type": closed.main_right, "strike": closed.main_strike,
-                      "expiry": closed.main_expiry, "quantity": closed.main_quantity,
-                      "dhan_symbol": closed.main_symbol},
-            hedge_leg={"option_type": closed.hedge_right, "strike": closed.hedge_strike,
-                       "expiry": closed.hedge_expiry, "quantity": closed.hedge_quantity,
-                       "dhan_symbol": closed.hedge_symbol},
-            live_legs_open=closed.live_legs_open,
+        had_live_exposure = closed.live_legs_open
+        main_live_order = {
+            "option_type": closed.main_right,
+            "strike": closed.main_strike,
+            "expiry": closed.main_expiry,
+            "quantity": closed.main_quantity,
+            "dhan_symbol": closed.main_symbol,
+            "live_leg": closed.main_live_leg,
+        }
+        hedge_live_order = {
+            "option_type": closed.hedge_right,
+            "strike": closed.hedge_strike,
+            "expiry": closed.hedge_expiry,
+            "quantity": closed.hedge_quantity,
+            "dhan_symbol": closed.hedge_symbol,
+            "live_leg": closed.hedge_live_leg,
+        }
+        order_result = self._place_real_hedged_exit(
+            main_live_order,
+            hedge_live_order,
         )
-        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
+        closed.main_live_leg = main_live_order.get("live_leg")
+        closed.hedge_live_leg = hedge_live_order.get("live_leg")
+        exec_mode = self._exec_mode_tag(
+            order_result,
+            live_legs_open=had_live_exposure,
+            is_exit=True,
+        )
 
         # If a LIVE hedged exit did not confirm fills on BOTH legs, real exposure
-        # is still open. Do NOT flatten the books - keep the position so the worker
-        # retries the exit next cycle, and alert for manual square-off.
-        if self.live_trading and not real_ok:
+        # is still open. Do NOT flatten the books; keep the position for broker
+        # reconciliation or manual square-off.
+        if (
+            had_live_exposure
+            and closed.live_legs_open
+        ):
             self.log.error(
                 "LIVE HEDGED EXIT NOT CONFIRMED | %s %s | Reason=%s | position kept OPEN "
-                "for retry/manual square-off (main=%s, hedge=%s).",
+                "for reconciliation/manual square-off (main=%s, hedge=%s).",
                 self.strategy_name, closed.direction, reason, closed.main_symbol, closed.hedge_symbol,
             )
             self.publish_trade_event({
@@ -7971,7 +9976,9 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             {
                 "action": "EXIT",
                 "mode": exec_mode,
-                "exit_order_failed": bool(self.live_trading and not real_ok),
+                "exit_order_failed": bool(
+                    had_live_exposure and closed.live_legs_open
+                ),
                 "direction": side,
                 "reason": reason,
                 "lots": self.lots,
@@ -8191,6 +10198,11 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         self.ce_initial_done = False
         self.pe_initial_done = False
         self.entered_today = False
+        # The opening CE and PE belong to one auditable basket.  Their distinct
+        # C/P roles keep the quantity ledgers independent even though the
+        # correlation id is shared.  Re-entry correlations are created only
+        # after the prior leg has been broker-confirmed flat.
+        self._initial_correlation_id = uuid.uuid4().hex[:8].upper()
 
         # ----- Momentum re-entry state (per leg) ------------------------
         # When a leg is stopped out we (optionally) arm it: keep its LTP
@@ -8244,6 +10256,16 @@ class LongStrangleWorker(BasePaperStrategyWorker):
     # ------------------------------------------------------------------
     # Risk / lifecycle overrides (we use ce_pos + pe_pos, not self.pos)
     # ------------------------------------------------------------------
+    def _paper_positions_active(self) -> bool:
+        """Return whether either long-strangle leg remains open."""
+
+        return self.ce_pos.active or self.pe_pos.active
+
+    def _flatten_additional_positions(self, reason: str) -> None:
+        """Drop momentum-watch subscriptions after shutdown is requested."""
+
+        self._unsubscribe_armed_legs()
+
     def _get_open_position_pnl(self) -> float:
         """
         Live mark-to-market PnL summed across both legs.
@@ -8277,39 +10299,14 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             self._exit_leg("PE", reason)
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-        """One-time shutdown when the strategy-wide max loss is breached."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.error(
-            "MAX_LOSS breached | Limit=%.2f | SessionPnL=%.2f | OpenPnL=%.2f. "
-            "Closing both legs and stopping.",
-            self.max_loss, total_pnl, open_pnl,
-        )
-        try:
-            self.exit_position("MAX_LOSS_BREACH")
-        except Exception as exc:
-            self.log.exception("Error while exiting on max-loss breach: %s", exc)
-        self._unsubscribe_armed_legs()
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day due to max-loss shutdown.")
+        """Use the shared retrying lifecycle for the basket loss limit."""
+
+        super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
     def handle_square_off_and_stop(self) -> None:
-        """One-time shutdown at the daily square-off cutoff (default 15:15)."""
-        if self.cutoff_handled:
-            return
-        self.cutoff_handled = True
-        self.log.info(
-            "%02d:%02d cutoff reached. Closing any open legs and halting trading for the day.",
-            self.square_off_hour, self.square_off_minute,
-        )
-        try:
-            self.exit_position("TIME_CUTOFF")
-        except Exception as exc:
-            self.log.exception("Error while exiting at cutoff: %s", exc)
-        self._unsubscribe_armed_legs()
-        self.log.info("Paper summary | %s", self.summary_text())
-        self.log.info("Strategy stopped for the day.")
+        """Use the shared retrying lifecycle at the daily cutoff."""
+
+        super().handle_square_off_and_stop()
 
     def summary_text(self) -> str:
         return (
@@ -8338,16 +10335,24 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         cannot kill the worker for the whole day.
         """
         self.log.info("Starting %s strategy worker.", self.strategy_name)
-        while not self.stop_event.is_set():
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
             try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
                 breached, total_pnl, open_pnl = self.is_max_loss_breached()
                 if breached:
                     self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    break
+                    continue
 
                 if is_after_time(self.square_off_hour, self.square_off_minute):
                     self.handle_square_off_and_stop()
-                    break
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
 
                 if is_before_time(self.trading_start_hour, self.trading_start_minute):
                     if not self.preopen_wait_logged:
@@ -8411,6 +10416,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         order placement / bookkeeping is shared with the re-entry path through
         `_buy_leg`.
         """
+        if not self._market_data_entries_allowed():
+            return False
         leg_pos = self._leg_pos(side)
         if leg_pos.active:
             return True
@@ -8440,6 +10447,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         stashed `_last_contract` provide these). `is_reentry` only changes the
         log/telemetry wording and bumps the per-leg re-entry counter.
         """
+        if not self._market_data_entries_allowed():
+            return False
         option_sec_id = int(contract["security_id"])
         option_segment = str(contract["exchange_segment"])
         trading_symbol = str(contract["trading_symbol"])
@@ -8469,12 +10478,37 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         quantity = lot_size * self.lots
         order_id = self._next_paper_order_id("BUY")
 
-        # Real execution (live mode only; no-op returning True in paper mode).
-        real_ok = self._place_real_leg("BUY", {
+        correlation_id = (
+            uuid.uuid4().hex[:8].upper()
+            if is_reentry
+            else self._initial_correlation_id
+        )
+        entry_leg = {
             "option_type": option_right, "strike": option_strike,
             "expiry": expiry_date, "quantity": quantity, "dhan_symbol": trading_symbol,
-        })
-        exec_mode = self._exec_mode_tag(real_ok)
+            "role": "C" if side == "CE" else "P",
+            "correlation_id": correlation_id,
+        }
+        order_result = self._place_real_leg("BUY", entry_leg, opens_exposure=True)
+        live_leg = entry_leg.get("live_leg")
+        if not isinstance(live_leg, LiveLegState):
+            live_leg = None
+        if not self._entry_outcome_allows_position(order_result, live_leg):
+            if live_leg is not None and live_leg.exposure_possible:
+                self._track_orphan_live_leg(entry_leg)
+            return False
+        self._untrack_orphan_live_leg(entry_leg)
+        quantity = int(entry_leg["quantity"])
+        exec_mode = self._exec_mode_tag(order_result)
+
+        # A confirmed zero-fill rejection is the one outcome allowed to become
+        # a paper fallback.  Its ledger snapshot is broker-confirmed flat, so it
+        # must not make a later paper exit submit a naked SELL.
+        position_live_leg = (
+            live_leg
+            if live_leg is not None and not live_leg.broker_confirmed_flat
+            else None
+        )
 
         # Keep the fetcher refreshing this leg's LTP for its whole lifetime. On a
         # re-entry the subscription is already live (kept since the stop-out);
@@ -8493,10 +10527,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         new_pos = PaperPosition(
             active=True,
             direction=side,
-            # True only if a real broker leg actually opened; a live entry that fell
-            # back to paper leaves this False so `_exit_leg` sends no real SELL. This
-            # runs for the initial entry AND momentum re-entries (both share _buy_leg).
-            live_legs_open=(self.live_trading and real_ok),
+            live_leg=position_live_leg,
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -8729,31 +10760,68 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         # broker. A live entry that fell back to paper (rejected order or symbol-master
         # miss) recorded no live leg, so a SELL now would be a naked short of an OTM
         # option we never bought. In that case there is nothing to close at the broker:
-        # skip the order and treat the exit as paper (real_ok stays True so the books
-        # flatten normally, exactly like paper mode). Mirrors the single-leg ATM worker
-        # / HEDGE-001 live_legs_open guard.
-        if closed.live_legs_open:
-            real_ok = self._place_real_leg("SELL", {
+        # skip the order and treat the exit as paper so the books flatten normally,
+        # exactly like paper mode. Mirrors the single-leg ATM worker's
+        # quantity-bearing ``live_leg`` guard.
+        had_live_leg = closed.live_leg is not None
+        if had_live_leg:
+            exit_leg = {
                 "option_type": closed.option_right, "strike": closed.option_strike,
                 "expiry": closed.option_expiry, "quantity": closed.quantity,
                 "dhan_symbol": closed.symbol,
-            })
+                "live_leg": closed.live_leg,
+            }
+            order_result = self._place_real_leg(
+                "SELL",
+                exit_leg,
+                opens_exposure=False,
+            )
+            refreshed_live_leg = exit_leg.get("live_leg")
+            if isinstance(refreshed_live_leg, LiveLegState):
+                # Keep the newest immutable snapshot on the active position.
+                # A later retry therefore uses the ledger's exact remaining
+                # quantity rather than the original full contract quantity.
+                closed.live_leg = refreshed_live_leg
         else:
-            real_ok = True  # no real leg was ever opened -> nothing to close
-        exec_mode = self._exec_mode_tag(real_ok, live_legs_open=closed.live_legs_open)
+            order_result = self._synthetic_order_result(
+                closed.quantity,
+                OrderStatus.FILLED,
+                "No live leg was open, so no broker exit was submitted.",
+                broker_state="PAPER",
+            )
+        exec_mode = self._exec_mode_tag(
+            order_result,
+            live_legs_open=had_live_leg,
+            is_exit=True,
+        )
 
-        # If a LIVE exit did not confirm a fill, keep the leg OPEN for retry /
-        # manual square-off rather than flattening the books (same safety rule
-        # as the single-leg ATM worker).
-        if self.live_trading and not real_ok:
+        # A live leg is flat only when the quantity ledger says so.  This covers
+        # terminal partials, rejects, response loss, and a later remaining-qty
+        # retry; a successful retry may legitimately request less than the
+        # position's original quantity.
+        broker_confirmed_flat = (
+            closed.live_leg is not None
+            and closed.live_leg.broker_confirmed_flat
+        )
+        if had_live_leg and not broker_confirmed_flat:
             self.log.error(
-                "LIVE EXIT NOT CONFIRMED | %s %s | OptionSymbol=%s | Qty=%s | Reason=%s "
-                "| leg kept OPEN for retry/manual square-off.",
-                self.strategy_name, side, closed.symbol, closed.quantity, reason,
+                "LIVE EXIT NOT FLAT | %s %s | OptionSymbol=%s | RequestedQty=%s | "
+                "ConfirmedLiveQty=%s | Indeterminate=%s | Reason=%s | leg kept OPEN "
+                "for quantity-safe retry/reconciliation.",
+                self.strategy_name,
+                side,
+                closed.symbol,
+                closed.quantity,
+                closed.live_leg.confirmed_live_quantity if closed.live_leg else "UNKNOWN",
+                closed.live_leg.exposure_indeterminate if closed.live_leg else True,
+                reason,
             )
             self.publish_trade_event({
                 "action": "EXIT_FAILED", "mode": exec_mode, "direction": side, "reason": reason,
                 "quantity": closed.quantity,
+                "confirmed_live_quantity": (
+                    closed.live_leg.confirmed_live_quantity if closed.live_leg else None
+                ),
                 "legs": [{"symbol": closed.symbol, "side": "SELL",
                           "right": closed.option_right, "strike": closed.option_strike}],
             })
@@ -8781,7 +10849,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
         self.publish_trade_event({
             "action": "EXIT", "mode": exec_mode,
-            "exit_order_failed": bool(self.live_trading and not real_ok),
+            "exit_order_failed": False,
             "direction": side, "reason": reason,
             "lot_size": closed.option_lot_size, "quantity": closed.quantity,
             "pnl": pnl, "expiry": expiry_txt,
@@ -9045,10 +11113,11 @@ STRATEGY_ENV_PREFIX = {
 SLHuntingAIWorker = None
 if SL_HUNTING_AVAILABLE:
     _sl_hunting_ops = _signal_gen_ops("SL_HUNTING")
-    # Dynamic position sizing: ~Rs.2500 worst-case risk per trade (the same house
-    # convention/default as Profit Shooter). The agent does NOT choose lots; this is
-    # computed from the agent's underlying stop distance.
+    # Dynamic position sizing: the NIFTY leg never exceeds the configured risk
+    # budget. The agent does NOT choose lots; the runner floors affordable lots
+    # from the agent's underlying stop distance and caps them at MAX_LOTS.
     SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
+    SL_HUNTING_MAX_LOTS = _env_int("SL_HUNTING_MAX_LOTS", 5)
     # BankNIFTY mirror (Intraday Hunter style): every NIFTY entry is mirrored
     # with the SAME lot count on the BankNIFTY ATM option of the CURRENT
     # BankNIFTY monthly expiry (rolling forward inside its final week -- see
@@ -9109,6 +11178,10 @@ if SL_HUNTING_AVAILABLE:
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
+            # Agent actions and mechanical liquidation share this lock. The
+            # tool context rechecks its generation/deadline while holding it,
+            # so square-off cannot race a late agent entry.
+            self._agent_action_lock = threading.RLock()
             # Optional learned-lessons block (loaded ONCE at construction so the prompt
             # prefix stays stable per session — preserves prompt caching). Gated + off
             # by default; only APPROVED lessons are in the live store.
@@ -9127,14 +11200,17 @@ if SL_HUNTING_AVAILABLE:
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
                 lessons_block=lessons_block,
-                # SLH-001: bound each SDK call. decide() blocks THIS worker's
-                # thread -- the same thread that enforces the per-poll
-                # stop/target check, max-loss and the 15:15 square-off -- so a
-                # hung CLI call must cost one bar's decision, not the safety net.
+                # Bound the off-loop SDK call to 5-120 seconds (default 90).
+                # Mechanical stop/target, max-loss and square-off keep polling
+                # independently while this inference is running.
                 sdk_timeout_seconds=_env_float("SL_HUNTING_SDK_TIMEOUT_SECONDS", 90.0),
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)
+            self._agent_inference_lock = threading.Lock()
+            self._agent_inference_thread = None
+            self._agent_inference_result = None
+            self._agent_generation = 0
             # Throttle: consult the LLM only once per NEW completed bar (not per poll).
             self._last_decision_bar = None
             # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
@@ -9227,11 +11303,20 @@ if SL_HUNTING_AVAILABLE:
                 direction, entry_underlying, stop_underlying, target_underlying,
                 trailing_active, pending_trailing_exit,
             )
-            if ok and self._mirror_enabled:
+            mirror_safe = _should_open_bnf_mirror(
+                self.live_trading,
+                bool(ok and self.pos.live_legs_open),
+            )
+            if ok and self._mirror_enabled and mirror_safe:
                 try:
                     self._open_bnf_mirror(direction)
                 except Exception as exc:  # noqa: BLE001 - mirror must never disturb the main leg
                     self.log.warning("BNF mirror entry failed (NIFTY leg unaffected): %s", exc)
+            elif ok and self._mirror_enabled and self.live_trading:
+                self.log.warning(
+                    "BNF mirror skipped: NIFTY entry is paper fallback, not a "
+                    "broker-confirmed live fill."
+                )
             return ok
 
         def _open_bnf_mirror(self, direction: str) -> None:
@@ -9267,27 +11352,84 @@ if SL_HUNTING_AVAILABLE:
 
             quantity = lot_size * lots
             order_id = self._next_paper_order_id("BUY")
-            real_ok = self._place_real_leg("BUY", {
+            mirror_leg = {
                 "option_type": contract["option_type"], "strike": contract["strike"],
                 "expiry": contract["expiry_date"], "quantity": quantity,
                 "dhan_symbol": symbol, "underlying": "BANKNIFTY",
-            })
+                "role": "B",
+            }
+            main_live_leg = self.pos.live_leg
+            if main_live_leg is not None:
+                # Both orders belong to one auditable basket while retaining a
+                # distinct role in the execution ledger and broker order tag.
+                mirror_leg["correlation_id"] = main_live_leg.spec.correlation_id
+            order_result = self._place_real_leg(
+                "BUY",
+                mirror_leg,
+                opens_exposure=True,
+            )
+            live_leg = mirror_leg.get("live_leg")
+            entry_bookkeeping_allowed = self._entry_outcome_allows_position(
+                order_result,
+                live_leg,
+            )
+            recovery_live_leg = (
+                live_leg
+                if isinstance(live_leg, LiveLegState) and live_leg.exposure_possible
+                else None
+            )
+            if not entry_bookkeeping_allowed and recovery_live_leg is None:
+                return
+            tracked_quantity = quantity
+            if not entry_bookkeeping_allowed:
+                # The guard above proves this is a quantity-bearing recovery
+                # record, not a paper fallback.
+                assert recovery_live_leg is not None
+                # UNKNOWN can mean zero *confirmed* units while the whole order
+                # may still fill.  MTM/max-loss must use the conservative risk
+                # quantity so indeterminate BankNIFTY exposure never looks flat.
+                tracked_quantity = recovery_live_leg.risk_quantity
             self.store.register_option_subscription(OptionSubscription(
                 security_id=sec_id, exchange_segment=segment, trading_symbol=symbol,
                 right=str(contract["option_type"]), strike=float(contract["strike"]),
                 expiry=contract["expiry_date"],
             ))
             self._mirror_pos = PaperPosition(
-                active=True, direction=direction, symbol=symbol, quantity=quantity,
-                # True only if the mirror BUY actually opened live; a paper fallback
-                # leaves it False so _close_bnf_mirror sends no real SELL.
-                live_legs_open=(self.live_trading and real_ok),
+                active=True,
+                direction=direction,
+                symbol=symbol,
+                quantity=tracked_quantity,
+                # A terminal zero-fill rejection remains a paper fallback. A
+                # confirmed or unresolved live entry keeps the ledger snapshot
+                # that every later close attempt must refresh and reassign.
+                live_leg=(
+                    live_leg
+                    if isinstance(live_leg, LiveLegState)
+                    and (live_leg.entry_complete or live_leg.exposure_possible)
+                    else None
+                ),
                 entry_order_id=str(order_id), entry_underlying=bnf_spot,
                 entry_trade_price=float(option_ltp), option_security_id=sec_id,
                 option_exchange_segment=segment, option_right=str(contract["option_type"]),
                 option_strike=float(contract["strike"]), option_expiry=contract["expiry_date"],
                 option_lot_size=lot_size,
             )
+            if not entry_bookkeeping_allowed:
+                # A partial/unknown mirror BUY is not a paper position, but its
+                # confirmed quantity must remain reachable by square-off and
+                # reconciliation paths. The ledger separately preserves any
+                # still-indeterminate remainder.
+                assert recovery_live_leg is not None
+                self.log.error(
+                    "MANUAL ACTION NEEDED | BNF mirror BUY not fully confirmed | "
+                    "%s target=%s confirmed=%s risk=%s | mirror state retained for "
+                    "broker reconciliation and risk-reducing exit.",
+                    symbol,
+                    quantity,
+                    recovery_live_leg.confirmed_live_quantity,
+                    recovery_live_leg.risk_quantity,
+                )
+                return
             self.log.info(
                 "MIRROR ENTRY %s | OptionSymbol=%s | Strike=%.2f | Qty=%s (lots=%s x %s) | "
                 "BNFSpot=%.2f | EntryOptPx=%.2f | PaperRef=%s",
@@ -9295,7 +11437,7 @@ if SL_HUNTING_AVAILABLE:
                 bnf_spot, option_ltp, order_id,
             )
             self.publish_trade_event({
-                "action": "ENTRY", "mode": self._exec_mode_tag(real_ok),
+                "action": "ENTRY", "mode": self._exec_mode_tag(order_result),
                 "direction": direction, "lots": lots, "lot_size": lot_size,
                 "quantity": quantity, "spot": bnf_spot,
                 "expiry": contract["expiry_date"].isoformat() if contract["expiry_date"] else "NA",
@@ -9309,10 +11451,9 @@ if SL_HUNTING_AVAILABLE:
             """Sell the mirror leg and fold its P&L into this worker's books.
 
             Called from `after_exit`, so EVERY main-leg exit path (AI exit,
-            stop/target, max-loss, square-off) also closes the basket. If a LIVE
-            sell fails we still close the books and alert loudly (same policy as
-            the hedged workers' unwind path) rather than leaving a phantom open
-            record that nothing would ever retry."""
+            stop/target, max-loss, square-off) also closes the basket. For a LIVE
+            leg, an unconfirmed sell keeps the mirror record open so neither logs
+            nor paper bookkeeping can claim the BankNIFTY exposure is flat."""
             if not self._mirror_pos.active:
                 return
             mirror = self._mirror_pos
@@ -9321,39 +11462,113 @@ if SL_HUNTING_AVAILABLE:
                 fallback=mirror.entry_trade_price,
             )
             # Only close a REAL mirror leg. A live mirror BUY that fell back to
-            # paper (rejected / symbol-master miss) opened nothing at the broker, so
-            # a SELL now would be a phantom BankNIFTY short. Skip it and treat the
-            # close as paper (real_ok stays True -> no false "manual action" alert;
-            # the books still flatten below). Mirrors PR #42 / HEDGE-001.
-            if mirror.live_legs_open:
-                real_ok = self._place_real_leg("SELL", {
+            # paper (rejected / symbol-master miss) opened nothing at the broker,
+            # so a SELL now would be a phantom BankNIFTY short. A live position,
+            # however, must carry its exact immutable ledger snapshot across every
+            # partial/unknown close attempt.
+            live_state = mirror.live_leg
+            had_live_leg = live_state is not None
+            confirmed_before = (
+                live_state.confirmed_live_quantity
+                if live_state is not None
+                else 0
+            )
+            closing_started_before = bool(live_state is not None and live_state.closing_started)
+            if live_state is not None:
+                exit_leg = {
                     "option_type": mirror.option_right, "strike": mirror.option_strike,
-                    "expiry": mirror.option_expiry, "quantity": mirror.quantity,
+                    "expiry": mirror.option_expiry,
+                    "quantity": live_state.spec.target_quantity,
                     "dhan_symbol": mirror.symbol, "underlying": "BANKNIFTY",
-                })
+                    "role": "B",
+                    "live_leg": live_state,
+                }
+                order_result = self._place_real_leg(
+                    "SELL",
+                    exit_leg,
+                    opens_exposure=False,
+                )
+                refreshed_live_leg = exit_leg.get("live_leg")
+                if isinstance(refreshed_live_leg, LiveLegState):
+                    mirror.live_leg = refreshed_live_leg
+                confirmed_after = (
+                    mirror.live_leg.confirmed_live_quantity
+                    if mirror.live_leg is not None
+                    else confirmed_before
+                )
+                if closing_started_before:
+                    closed_quantity = max(0, confirmed_before - confirmed_after)
+                else:
+                    # Reconciliation can discover additional entry fills just
+                    # before the first reducing order is submitted. Compare the
+                    # total confirmed entry quantity with what remains live so
+                    # those same-call close fills are still booked exactly once.
+                    confirmed_entry_quantity = (
+                        mirror.live_leg.filled_quantity
+                        if mirror.live_leg is not None
+                        else confirmed_before
+                    )
+                    closed_quantity = max(
+                        0,
+                        confirmed_entry_quantity - confirmed_after,
+                    )
+                mirror.quantity = (
+                    mirror.live_leg.risk_quantity
+                    if mirror.live_leg is not None
+                    and mirror.live_leg.exposure_possible
+                    else confirmed_after
+                )
             else:
-                real_ok = True  # no real mirror leg was opened -> nothing to close
-            if self.live_trading and not real_ok:
+                order_result = self._synthetic_order_result(
+                    mirror.quantity,
+                    OrderStatus.FILLED,
+                    "No live mirror leg was open, so no broker exit was submitted.",
+                    broker_state="PAPER",
+                )
+                closed_quantity = mirror.quantity
+
+            # Book only the quantity the ledger proves was reduced. This avoids
+            # both losing a partial fill and double-counting it on the retry.
+            pnl = (exit_ltp - mirror.entry_trade_price) * closed_quantity
+            self.realized_pnl += pnl
+            if had_live_leg and (
+                mirror.live_leg is None or not mirror.live_leg.broker_confirmed_flat
+            ):
                 self.log.error(
                     "MANUAL ACTION NEEDED | BNF mirror SELL not confirmed | %s qty=%s -> a LIVE "
-                    "BankNIFTY long may be OPEN at the broker. Square it off manually.",
+                    "BankNIFTY long may be OPEN at the broker. Mirror record kept OPEN; "
+                    "square it off manually if reconciliation cannot confirm it.",
                     mirror.symbol, mirror.quantity,
                 )
-            pnl = (exit_ltp - mirror.entry_trade_price) * mirror.quantity
-            self.realized_pnl += pnl
+                self.publish_trade_event({
+                    "action": "EXIT_FAILED",
+                    "mode": self._exec_mode_tag(order_result, is_exit=True),
+                    "direction": mirror.direction,
+                    "reason": reason,
+                    "quantity": mirror.quantity,
+                    "filled_quantity": closed_quantity,
+                    "remaining_quantity": mirror.quantity,
+                    "legs": [{"symbol": mirror.symbol, "side": "SELL"}],
+                })
+                return
             self.store.unregister_option_subscription(
                 mirror.option_exchange_segment, mirror.option_security_id,
             )
             self.log.info(
                 "MIRROR EXIT %s | OptionSymbol=%s | Qty=%s | Reason=%s | EntryOptPx=%.2f | "
                 "ExitOptPx=%.2f | P&L=%.2f | CumPnL=%.2f",
-                mirror.direction, mirror.symbol, mirror.quantity, reason,
+                mirror.direction, mirror.symbol, closed_quantity, reason,
                 mirror.entry_trade_price, exit_ltp, pnl, self.realized_pnl,
             )
             self.publish_trade_event({
-                "action": "EXIT", "mode": self._exec_mode_tag(real_ok, live_legs_open=mirror.live_legs_open),
+                "action": "EXIT",
+                "mode": self._exec_mode_tag(
+                    order_result,
+                    live_legs_open=had_live_leg,
+                    is_exit=True,
+                ),
                 "direction": mirror.direction, "reason": reason, "pnl": pnl,
-                "quantity": mirror.quantity,
+                "quantity": closed_quantity,
                 "legs": [{
                     "symbol": mirror.symbol, "side": "SELL", "right": mirror.option_right,
                     "strike": mirror.option_strike, "exit_price": exit_ltp,
@@ -9384,7 +11599,14 @@ if SL_HUNTING_AVAILABLE:
                 self._mirror_pos.option_security_id,
                 fallback=self._mirror_pos.entry_trade_price,
             )
-            return (live - self._mirror_pos.entry_trade_price) * self._mirror_pos.quantity
+            unit_pnl = live - self._mirror_pos.entry_trade_price
+            quantity = self._mirror_pos.quantity
+            state = self._mirror_pos.live_leg
+            if state is not None and state.exposure_indeterminate and unit_pnl > 0:
+                # Possible unconfirmed fills count against us when adverse, but
+                # never as phantom profit that could hide a basket max-loss.
+                quantity = state.confirmed_live_quantity
+            return unit_pnl * quantity
 
         def nifty_leg_pnl(self) -> float:
             """MTM of the NIFTY leg ALONE (excludes the mirror) for the agent's per-leg read."""
@@ -9420,25 +11642,34 @@ if SL_HUNTING_AVAILABLE:
             leaving the NIFTY leg running. Does not touch self.pos or the journal row."""
             self._close_bnf_mirror(reason)
 
+        def _paper_positions_active(self) -> bool:
+            """Treat either NIFTY or its BankNIFTY mirror as owned exposure."""
+
+            return super()._paper_positions_active() or self._mirror_pos.active
+
+        def _flatten_additional_positions(self, reason: str) -> None:
+            """Retry a lone BankNIFTY mirror on every due flatten pass."""
+            self._invalidate_agent_inference(reason)
+            with self._agent_action_lock:
+                if self._mirror_pos.active:
+                    self._close_bnf_mirror(reason)
+
+        def request_worker_shutdown(self, reason: str) -> None:
+            """Disarm any in-flight inference before the shared flatten lifecycle."""
+            self._invalidate_agent_inference(reason)
+            super().request_worker_shutdown(reason)
+
         def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
-            """Basket-level max-loss closes BOTH legs. The base closes the NIFTY leg (and
-            its mirror via after_exit); if only a lone mirror remains (agent had cut the
-            NIFTY leg alone earlier), sweep it too so nothing leaks open."""
-            super().handle_max_loss_and_stop(total_pnl, open_pnl)
-            if self._mirror_pos.active:
-                try:
-                    self._close_bnf_mirror("MAX_LOSS_BREACH")
-                except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
-                    self.log.warning("Lone BNF mirror max-loss close failed: %s", exc)
+            """Basket-level max-loss uses the shared retrying lifecycle."""
+            self._invalidate_agent_inference("MAX_LOSS")
+            with self._agent_action_lock:
+                super().handle_max_loss_and_stop(total_pnl, open_pnl)
 
         def handle_square_off_and_stop(self) -> None:
-            """15:15 square-off closes BOTH legs. Same orphan-mirror sweep as max-loss."""
-            super().handle_square_off_and_stop()
-            if self._mirror_pos.active:
-                try:
-                    self._close_bnf_mirror("TIME_CUTOFF")
-                except Exception as exc:  # noqa: BLE001 - shutdown path must not raise
-                    self.log.warning("Lone BNF mirror square-off close failed: %s", exc)
+            """15:15 square-off uses the shared retrying lifecycle."""
+            self._invalidate_agent_inference("TIME_CUTOFF")
+            with self._agent_action_lock:
+                super().handle_square_off_and_stop()
 
         def _journal_exit_static(self, closed_position, reason: str) -> dict:
             """The NIFTY-leg exit context for the journal row (everything EXCEPT the
@@ -9494,8 +11725,10 @@ if SL_HUNTING_AVAILABLE:
                 self.log.warning("SL Hunting journal close failed: %s", exc)
                 self._open_trade_id = None
                 return
-            if self._suppress_mirror_close and self._mirror_pos.active:
-                # NIFTY cut alone, mirror still open -> defer until the mirror closes.
+            if self._mirror_pos.active:
+                # Any surviving mirror exposure defers the basket journal. This
+                # includes a normal BOTH exit whose broker SELL only partly filled,
+                # not just an intentional NIFTY-only cut.
                 self._pending_journal_exit = static
                 return
             self._finalize_journal(static)
@@ -9504,30 +11737,160 @@ if SL_HUNTING_AVAILABLE:
             # Enough derived bars for swings / fibo / structure, with a margin.
             return max(40, int(getattr(SL_HUNTING_INDICATOR_CONFIG, "swing_lookback", 120)) // 2)
 
-        def _compute_entry_lots(self, entry_underlying: float, stop_underlying: float, lot_size: int) -> int:
-            """Dynamic risk-based sizing (~SL_HUNTING_RISK_BUDGET, default Rs.2500),
-            from the agent's UNDERLYING stop distance. Shares ONE implementation with
-            the standalone executor via `risk_based_lots`, and matches the Profit
-            Shooter sizer (ceil, minimum 1 lot — a setup trades at >=1 lot or not at all).
+        def _compute_entry_sizing(
+            self,
+            entry_underlying: float,
+            stop_underlying: float,
+            lot_size: int,
+        ) -> SizingDecision:
+            """Return the shared hard-budget decision for the NIFTY leg.
+
+            The equal-lot BankNIFTY mirror remains operator-accepted and can
+            roughly double total basket risk; this budget applies to NIFTY.
             """
-            lots = SL_HUNTING_EXECUTOR_MODULE.risk_based_lots(
-                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, self.lots
+            decision = SizingDecision.from_risk_budget(
+                entry=entry_underlying,
+                stop=stop_underlying,
+                lot_size=lot_size,
+                budget=SL_HUNTING_RISK_BUDGET,
+                max_lots=SL_HUNTING_MAX_LOTS,
             )
             self.log.info(
-                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s risk_budget=%.0f -> lots=%s qty=%s.",
-                entry_underlying, stop_underlying, lot_size, SL_HUNTING_RISK_BUDGET, lots, lots * lot_size,
+                "SL Hunting dynamic sizing: entry=%.2f stop=%.2f lot_size=%s "
+                "risk_budget=%.0f max_lots=%s -> accepted=%s lots=%s qty=%s.",
+                entry_underlying,
+                stop_underlying,
+                lot_size,
+                SL_HUNTING_RISK_BUDGET,
+                SL_HUNTING_MAX_LOTS,
+                decision.accepted,
+                decision.lots,
+                decision.quantity,
             )
-            return lots
+            return decision
 
         def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
             return resample_ohlc_from_1m(ohlc, self.derived_timeframe_minutes)
+
+        def _agent_generation_is_current(self, generation: int) -> bool:
+            """Called inside the tool's final execution lock."""
+            return generation == self._agent_generation and not self.stop_event.is_set()
+
+        def _invalidate_agent_inference(self, reason: str) -> None:
+            """Make every previously issued tool capability stale immediately."""
+            with self._agent_action_lock:
+                self._agent_generation += 1
+            self.log.debug("SL Hunting inference invalidated: %s", reason)
+
+        def _consume_agent_decision(self) -> None:
+            """Collect a completed background pass without ever waiting for it.
+
+            The harvest half of the inference cycle: `_start_agent_inference`
+            launches a daemon thread and returns immediately; every later poll
+            calls this first to pick up the finished decision (log + journal
+            it) -- never `join()`ing, so a hung SDK call can never delay the
+            stop/target, max-loss, or 15:15 square-off checks that run right
+            after.  Any real order the agent placed already happened DURING
+            the pass via the locked tool context; a stale generation here only
+            skips the bookkeeping, never an order.
+            """
+            payload = None
+            with self._agent_inference_lock:
+                thread = self._agent_inference_thread
+                if thread is None or thread.is_alive():
+                    return
+                payload = self._agent_inference_result
+                self._agent_inference_thread = None
+                self._agent_inference_result = None
+            if payload is None:
+                return
+            generation, decision, was_active, strategy_frame, bnf_candles = payload
+            if generation != self._agent_generation:
+                self.log.info("Discarding late SL Hunting result for stale generation %s.", generation)
+                return
+            if decision.action != "HOLD":
+                self.log.info(
+                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
+                    decision.action, decision.confidence, decision.setup,
+                    decision.stop, decision.target, decision.reasoning,
+                )
+            if self._decisions_path is not None:
+                try:
+                    SL_HUNTING_JOURNAL_MODULE.append_decision(
+                        self._decisions_path,
+                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
+                            decision, strategy_frame, bnf_candles
+                        ),
+                    )
+                except Exception as exc:
+                    self.log.warning("SL Hunting decision-log failed: %s", exc)
+            if (
+                self._journal is not None
+                and self._open_trade_id is None
+                and not was_active
+                and self.pos.active
+            ):
+                self._journal_open_row(decision, strategy_frame, bnf_candles)
+
+        def _start_agent_inference(
+            self, strategy_frame: pd.DataFrame, bnf_candles: pd.DataFrame | None
+        ) -> bool:
+            """Start one daemon inference pass; return immediately to the risk loop.
+
+            At most one pass exists at a time (returns False while one is
+            running).  Bumping the generation counter first makes every
+            previously issued tool capability stale, and deep-copying both
+            frames gives the pass an immutable market snapshot the fetcher
+            thread cannot mutate mid-inference.
+            """
+            with self._agent_inference_lock:
+                if self._agent_inference_thread is not None:
+                    return False
+                with self._agent_action_lock:
+                    self._agent_generation += 1
+                    generation = self._agent_generation
+                    was_active = self.pos.active
+                nifty_snapshot = strategy_frame.copy(deep=True)
+                bnf_snapshot = bnf_candles.copy(deep=True) if bnf_candles is not None else None
+
+                def _run_agent() -> None:
+                    decision = self.agent.decide(
+                        nifty_snapshot,
+                        self._executor,
+                        bnf_candles=bnf_snapshot,
+                        live_active=bool(self.live_trading),
+                        broker=LIVE_BROKER,
+                        generation=generation,
+                        generation_is_current=self._agent_generation_is_current,
+                        execution_lock=self._agent_action_lock,
+                    )
+                    with self._agent_inference_lock:
+                        self._agent_inference_result = (
+                            generation,
+                            decision,
+                            was_active,
+                            nifty_snapshot,
+                            bnf_snapshot,
+                        )
+
+                self._agent_inference_thread = threading.Thread(
+                    target=_run_agent,
+                    name="sl-hunting-inference",
+                    daemon=True,
+                )
+                self._agent_inference_thread.start()
+                return True
 
         def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
             if strategy_frame is None or strategy_frame.empty:
                 return
 
+            # Harvest only completed work. This never joins or waits, so the
+            # mechanical stop/max-loss/square-off path remains responsive.
+            self._consume_agent_decision()
+
             # Enforce the agent's UNDERLYING stop/target on EVERY poll (not just once
-            # per bar), so the ~Rs.2500 risk is actually bounded between the agent's
+            # per bar), so the configured risk guard stays active between the agent's
             # bar-cadence decisions -- the agent only re-decides per completed bar, so
             # we cannot wait for it to call EXIT. Mirrors CPR Algo 3's spot stop/target
             # check; _get_underlying_spot reads the live LTP cache.
@@ -9539,7 +11902,9 @@ if SL_HUNTING_AVAILABLE:
                     )
                     if hit:
                         self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
-                        self.exit_position(hit)
+                        self._invalidate_agent_inference(hit)
+                        with self._agent_action_lock:
+                            self.exit_position(hit)
                         return
 
             # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
@@ -9559,9 +11924,13 @@ if SL_HUNTING_AVAILABLE:
 
             # Optional BankNIFTY for the agent's NF/BNF cross-confirmation. Fetched
             # on-demand via the shared broker (same fetch_index_1m_ohlc path as the
-            # central fetcher / CPR Algo 3). Any failure -> NIFTY-only this bar.
+            # central fetcher / CPR Algo 3). A flat worker skips the decision when
+            # this stream is unavailable or timestamp-skewed; an open worker may
+            # still use the NIFTY-only pass for a discretionary EXIT.
             bnf_candles = None
+            bnf_ready = not self._use_bnf
             if self._use_bnf:
+                self._last_bnf_close = 0.0
                 try:
                     bnf_1m = self.broker.fetch_index_1m_ohlc(
                         BANKNIFTY_INDEX_SECURITY_ID,
@@ -9570,48 +11939,38 @@ if SL_HUNTING_AVAILABLE:
                     )
                     bnf_candles = resample_ohlc_from_1m(bnf_1m, self.derived_timeframe_minutes)
                     if bnf_candles is not None and not bnf_candles.empty:
-                        # Remember BankNIFTY's latest close for the mirror leg's
-                        # ATM pick (no extra API call at entry time).
-                        self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
+                        bnf_latest_bar = bnf_candles["timestamp"].iloc[-1]
+                        if bnf_latest_bar == latest_bar:
+                            bnf_ready = True
+                            # Remember only an aligned BankNIFTY close for the
+                            # mirror's ATM pick (no stale cross-index mirror).
+                            self._last_bnf_close = float(bnf_candles["close"].iloc[-1])
+                        else:
+                            self.log.warning(
+                                "BankNIFTY latest bar %s is not aligned with NIFTY %s; "
+                                "cross-index input is discarded.",
+                                bnf_latest_bar,
+                                latest_bar,
+                            )
+                            bnf_candles = None
                 except Exception as exc:
                     self.log.warning(
-                        "BankNIFTY fetch failed (%s); SL Hunting goes NIFTY-only this bar.", exc
+                        "BankNIFTY fetch failed (%s); cross-index input is unavailable this bar.", exc
                     )
 
-            # The agent acts via the order tool DURING decide() (it calls our
-            # enter_position / exit_position through the executor); the returned
-            # decision is the agent's own record of what it did, for the log.
-            was_active = self.pos.active
-            decision = self.agent.decide(
-                strategy_frame,
-                self._executor,
-                bnf_candles=bnf_candles,
-                live_active=bool(self.live_trading),
-                broker=LIVE_BROKER,
-            )
-            if decision.action != "HOLD":
-                self.log.info(
-                    "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
-                    decision.action, decision.confidence, decision.setup,
-                    decision.stop, decision.target, decision.reasoning,
+            # A flat worker must not create an unmirrored NIFTY position from a
+            # stale/missing BankNIFTY confirmation. Open positions may still ask
+            # the agent for a discretionary EXIT; their mechanical risk checks
+            # already ran above and never depend on BankNIFTY availability.
+            if self._use_bnf and not bnf_ready and not self.pos.active:
+                self.log.warning(
+                    "SL Hunting entry evaluation skipped: current/aligned BankNIFTY data is required."
                 )
-            # Decision log: persist EVERY decision (HOLD included) to its own JSONL so the
-            # operator can review what the agent decided each bar. Best-effort.
-            if self._decisions_path is not None:
-                try:
-                    SL_HUNTING_JOURNAL_MODULE.append_decision(
-                        self._decisions_path,
-                        SL_HUNTING_JOURNAL_MODULE.make_decision_record(
-                            decision, strategy_frame, bnf_candles
-                        ),
-                    )
-                except Exception as exc:  # never let logging disturb trading
-                    self.log.warning("SL Hunting decision-log failed: %s", exc)
-            # Journal a fresh entry (flat -> active during decide). Exits are journaled
-            # in after_exit, so EVERY close path is captured there.
-            if (self._journal is not None and self._open_trade_id is None
-                    and not was_active and self.pos.active):
-                self._journal_open_row(decision, strategy_frame, bnf_candles)
+                return
+
+            # Inference runs on its own daemon thread. At most one pass exists;
+            # later polls keep enforcing hard risk and only harvest when complete.
+            self._start_agent_inference(strategy_frame, bnf_candles)
 
     SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
     SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"
@@ -9706,6 +12065,28 @@ def _format_inr(value) -> str:
     return f"{sign}₹{abs(amount):,.2f}"
 
 
+def _execution_mode_parts(mode) -> set[str]:
+    """Normalize detailed order tags into daily PAPER/LIVE provenance parts."""
+    normalized = str(mode or "").strip().upper()
+    if normalized == "MIXED":
+        return {"PAPER", "LIVE"}
+    if normalized in {"LIVE", "LIVE_REJECTED", "LIVE_INDETERMINATE"}:
+        return {"LIVE"}
+    # PAPER_FALLBACK is deliberately paper provenance: the broker explicitly
+    # rejected the entry with zero fill and the simulated trade was opened.
+    return {"PAPER"}
+
+
+def _combined_execution_mode(modes) -> str:
+    """Combine worker/session modes into one PAPER, LIVE, or MIXED label."""
+    parts: set[str] = set()
+    for mode in modes:
+        parts.update(_execution_mode_parts(mode))
+    if len(parts) > 1:
+        return "MIXED"
+    return next(iter(parts), "PAPER")
+
+
 def _format_eod_summary(event: dict) -> str:
     """
     Build the end-of-day cumulative P&L message: one line per strategy worker
@@ -9720,8 +12101,12 @@ def _format_eod_summary(event: dict) -> str:
         lines.append(f"<i>{ts}</i>")
     for row in sorted(rows, key=lambda r: _safe_float(r.get("pnl", 0.0), 0.0), reverse=True):
         strat = html.escape(str(row.get("strategy", "?")))
+        row_mode = html.escape(str(row.get("mode", "PAPER")))
         trades = _to_int_safe(row.get("trades", 0), 0)
-        lines.append(f"{strat}: <b>{_format_inr(row.get('pnl', 0.0))}</b> ({trades} trade(s))")
+        lines.append(
+            f"{strat} [{row_mode}]: <b>{_format_inr(row.get('pnl', 0.0))}</b> "
+            f"({trades} trade(s))"
+        )
     lines.append("──────────")
     lines.append(
         f"<b>Total: {_format_inr(event.get('total_pnl', 0.0))} "
@@ -9765,6 +12150,32 @@ def format_trade_message(event: dict) -> str:
     lines = [header]
     if direction:
         lines.append(f"Direction: <b>{direction}</b>")
+
+    if action == "INDETERMINATE_EXPOSURE":
+        side = html.escape(str(event.get("side", "")))
+        symbol = html.escape(str(event.get("symbol", "?")))
+        order_id = html.escape(str(event.get("order_id", "UNKNOWN")) or "UNKNOWN")
+        status = html.escape(str(event.get("status", "UNKNOWN")))
+        broker_state = html.escape(str(event.get("broker_state", "UNKNOWN")))
+        requested = _to_int_safe(event.get("requested_quantity", 0), 0)
+        filled = _to_int_safe(event.get("filled_quantity", 0), 0)
+        remaining = _to_int_safe(event.get("remaining_quantity", 0), 0)
+        reason = html.escape(str(event.get("reason", "")))
+        side_prefix = f"{side} " if side else ""
+        lines.extend(
+            [
+                f"Instrument: <b>{side_prefix}{symbol}</b>",
+                f"Order ID: <b>{order_id}</b>",
+                f"Outcome: <b>{status}</b> ({broker_state})",
+                f"Fill: <b>{filled} / {requested}</b> (remaining {remaining})",
+            ]
+        )
+        if reason:
+            lines.append(f"Reason: {reason}")
+    elif action == "EXIT_FAILED":
+        reason = html.escape(str(event.get("reason", "")))
+        if reason:
+            lines.append(f"Reason: {reason}")
 
     for leg in legs:
         symbol = html.escape(str(leg.get("symbol", "?")))
@@ -9897,10 +12308,14 @@ class TelegramMessageWorker(threading.Thread):
                     "Telegram API returned HTTP %s on attempt %d: %s",
                     response.status_code,
                     attempt,
-                    response.text[:300],
+                    redact_text(response.text[:300], (self.bot_token,)),
                 )
             except Exception as exc:
-                self.log.warning("Telegram send error on attempt %d: %s", attempt, exc)
+                self.log.warning(
+                    "Telegram send error on attempt %d: %s",
+                    attempt,
+                    redact_text(exc, (self.bot_token,)),
+                )
             if attempt < 3:
                 self.stop_event.wait(1.5 * attempt)
         self.failed_count += 1
@@ -9923,12 +12338,21 @@ def _publish_eod_summary(workers, event_queue) -> None:
     for worker in workers:
         pnl = _safe_float(getattr(worker, "realized_pnl", 0.0), 0.0)
         trades = _to_int_safe(getattr(worker, "completed_trades", 0), 0)
-        rows.append({"strategy": worker.strategy_name, "pnl": pnl, "trades": trades})
+        mode_getter = getattr(worker, "session_execution_mode", None)
+        if callable(mode_getter):
+            worker_mode = mode_getter()
+        else:
+            worker_mode = "LIVE" if getattr(worker, "live_trading", False) else "PAPER"
+        rows.append(
+            {"strategy": worker.strategy_name, "pnl": pnl, "trades": trades, "mode": worker_mode}
+        )
         total_pnl += pnl
         total_trades += trades
 
+    overall_mode = _combined_execution_mode(row["mode"] for row in rows)
     logger.info(
-        "END-OF-DAY cumulative paper P&L across %d workers = %.2f over %d trade(s).",
+        "END-OF-DAY cumulative %s P&L across %d workers = %.2f over %d trade(s).",
+        overall_mode,
         len(workers),
         total_pnl,
         total_trades,
@@ -9943,7 +12367,7 @@ def _publish_eod_summary(workers, event_queue) -> None:
                 "total_pnl": total_pnl,
                 "total_trades": total_trades,
                 "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "mode": "PAPER",
+                "mode": overall_mode,
             }
         )
     except Exception:
@@ -10000,7 +12424,8 @@ _PNL_SHEET_ROW_LABELS = {
 }
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
-# Only Paper-summary lines inside this window are used for the sheet. Covers
+_PNL_MODE_RE = re.compile(r"\bMode=(PAPER|LIVE|MIXED)\b")
+# Only result-summary lines inside this window are used for the sheet. Covers
 # max-loss during the session (from 9:15) through the last square-off (15:20)
 # while ignoring after-market test runs that log fresh summaries at 17:00+.
 _PNL_LOG_WINDOW_START = (9, 15)
@@ -10038,8 +12463,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
     """
     Parse the runner's log for each strategy's end-of-day realised P&L per day.
 
-    Reads the per-strategy "Paper summary | ... RealizedPnL=<pnl>" lines that
-    every worker logs at square-off / max-loss. The log format is
+    Reads the per-strategy "Result summary | Mode=<mode> | ... RealizedPnL=<pnl>"
+    lines that every worker logs at square-off / max-loss. Legacy "Paper summary"
+    rows remain readable as PAPER. The log format is
     "<asctime> | <level> | <threadName> | <message>", and threadName is
     "<strategy_name>Thread", so we recover the date (from asctime), the strategy
     (from the thread name), and the figure. Returns {"YYYY-MM-DD":
@@ -10060,7 +12486,9 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
             for line in handle:
                 # Cheap pre-filter: skip everything that isn't a P&L summary line
                 # before doing the costlier split/regex work below.
-                if "Paper summary" not in line or "RealizedPnL=" not in line:
+                is_legacy_paper = "Paper summary" in line
+                is_mode_result = "Result summary" in line
+                if (not is_legacy_paper and not is_mode_result) or "RealizedPnL=" not in line:
                     continue
                 # Break into the 4 log fields. maxsplit=3 keeps the message intact
                 # even if the message itself contains " | ".
@@ -10088,10 +12516,19 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                 match = _PNL_LOG_LINE_RE.search(message)
                 if not match:
                     continue
+                mode = "PAPER"
+                if is_mode_result:
+                    mode_match = _PNL_MODE_RE.search(message)
+                    if not mode_match:
+                        continue
+                    mode = mode_match.group(1)
                 try:
                     # Last write wins: a later summary for the same strategy/day
                     # (e.g. a re-entry's final line) overwrites the earlier one.
-                    result.setdefault(date_str, {})[strategy] = float(match.group(1))
+                    result.setdefault(date_str, {})[strategy] = {
+                        "pnl": float(match.group(1)),
+                        "mode": mode,
+                    }
                 except ValueError:
                     continue
     except Exception as exc:  # pragma: no cover - defensive
@@ -10147,11 +12584,31 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
         if date_str[:7] != current_month or date_str not in date_to_col:
             continue
         col_idx = date_to_col[date_str]
-        for strategy, pnl in per_strategy.items():
+        for strategy, result_record in per_strategy.items():
             # Map the code's strategy name to the sheet's exact row label.
-            label = _PNL_SHEET_ROW_LABELS.get(strategy)
-            if label is None or label not in label_to_row:
+            base_label = _PNL_SHEET_ROW_LABELS.get(strategy)
+            if isinstance(result_record, dict):
+                pnl = result_record.get("pnl")
+                mode = str(result_record.get("mode", "")).strip().upper()
+                if mode not in {"PAPER", "LIVE", "MIXED"}:
+                    unmatched.add(strategy)
+                    continue
+            else:
+                # Backward-compatible input for older callers/tests: numeric
+                # records came from the legacy Paper-summary parser.
+                pnl = result_record
+                mode = "PAPER"
+            # Keep the existing paper rows intact. Live and mixed results require
+            # distinct numeric rows so broker P&L can never contaminate the paper
+            # tracker's historical series.
+            if base_label is None:
                 # No mapping, or the sheet is missing that row -> report it.
+                unmatched.add(strategy)
+                continue
+            label = base_label if mode == "PAPER" else f"{base_label} [{mode}]"
+            if label not in label_to_row:
+                # Live and mixed modes use dedicated rows. If the operator has
+                # not added that row yet, warn instead of overwriting paper P&L.
                 unmatched.add(strategy)
                 continue
             row_idx = label_to_row[label]
@@ -10303,6 +12760,679 @@ def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
     return _env_bool(f"{prefix}_VIRTUAL_TRADING", True)
 
 
+_RISK_BUDGET_PREFIXES = frozenset(
+    {"PROFIT_SHOOTER", "GOLDMINE", "MONEY_MACHINE", "SL_HUNTING"}
+)
+
+
+def _live_config_errors(
+    worker: BasePaperStrategyWorker,
+    prefix: str,
+) -> tuple[str, ...]:
+    """Return fail-closed errors for settings that bound live-money risk.
+
+    The forgiving ``_env_int``/``_env_float`` helpers remain useful for paper
+    experiments.  Live trading needs the stricter path below so malformed raw
+    text cannot silently turn into a plausible default.
+    """
+
+    errors: list[str] = []
+    normalized_prefix = str(prefix).upper().strip()
+
+    # The two legacy hedged workers share Supertrend's session cutoff.  Their
+    # live-gate prefixes still own lots/max-loss, so validate the env names the
+    # worker actually resolved rather than plausible-but-unused aliases.
+    start_clock_prefix = (
+        "SUPERTREND" if normalized_prefix == "BULLISH" else normalized_prefix
+    )
+    cutoff_clock_prefix = (
+        "SUPERTREND"
+        if normalized_prefix in {"BULLISH", "BEARISH"}
+        else normalized_prefix
+    )
+
+    raw_rules = {
+        f"{normalized_prefix}_LOTS": ("positive_integer", None),
+        f"{start_clock_prefix}_TRADING_START_HOUR": (
+            "integer_range",
+            (0, 23),
+        ),
+        f"{start_clock_prefix}_TRADING_START_MINUTE": (
+            "integer_range",
+            (0, 59),
+        ),
+        f"{cutoff_clock_prefix}_SQUARE_OFF_HOUR": (
+            "integer_range",
+            (0, 23),
+        ),
+        f"{cutoff_clock_prefix}_SQUARE_OFF_MINUTE": (
+            "integer_range",
+            (0, 59),
+        ),
+        f"{normalized_prefix}_MAX_LOSS": ("positive", None),
+        f"{normalized_prefix}_MAX_LOSS_PER_LOT": ("positive", None),
+        f"{normalized_prefix}_DAILY_MAX_LOSS_PCT": ("positive", None),
+        f"{normalized_prefix}_STARTING_CAPITAL": ("positive", None),
+    }
+    if normalized_prefix in _RISK_BUDGET_PREFIXES:
+        raw_rules[f"{normalized_prefix}_RISK_BUDGET"] = ("positive", None)
+        raw_rules[f"{normalized_prefix}_MAX_LOTS"] = (
+            "positive_integer",
+            None,
+        )
+
+    for name, (rule, bounds) in raw_rules.items():
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = float(raw.strip().strip('"').strip("'"))
+        except (TypeError, ValueError):
+            errors.append(f"{name} is not numeric")
+            continue
+        if not math.isfinite(value):
+            errors.append(f"{name} must be finite")
+            continue
+        if rule == "positive" and value <= 0:
+            errors.append(f"{name} must be positive")
+        elif rule == "positive_integer" and (
+            value <= 0 or not value.is_integer()
+        ):
+            errors.append(f"{name} must be a positive integer")
+        elif rule == "integer_range":
+            low, high = bounds
+            if not value.is_integer() or not low <= value <= high:
+                errors.append(f"{name} must be an integer from {low} to {high}")
+
+    lots = getattr(worker, "lots", None)
+    if isinstance(lots, bool) or not isinstance(lots, int) or lots <= 0:
+        errors.append("resolved lots must be a positive integer")
+
+    max_loss = getattr(worker, "max_loss", None)
+    if (
+        isinstance(max_loss, bool)
+        or not isinstance(max_loss, (int, float))
+        or not math.isfinite(float(max_loss))
+        or float(max_loss) <= 0
+    ):
+        errors.append("resolved max-loss must be finite and positive")
+
+    start_hour = getattr(worker, "trading_start_hour", None)
+    start_minute = getattr(worker, "trading_start_minute", None)
+    cutoff_hour = getattr(worker, "square_off_hour", None)
+    cutoff_minute = getattr(worker, "square_off_minute", None)
+    clock_values = (start_hour, start_minute, cutoff_hour, cutoff_minute)
+    valid_clock_types = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in clock_values
+    )
+    if not valid_clock_types or not (
+        0 <= start_hour <= 23
+        and 0 <= cutoff_hour <= 23
+        and 0 <= start_minute <= 59
+        and 0 <= cutoff_minute <= 59
+    ):
+        errors.append("resolved trading start/cutoff must be valid HH:MM values")
+    elif (cutoff_hour, cutoff_minute) <= (start_hour, start_minute):
+        errors.append("resolved cutoff must be after the trading start")
+
+    if normalized_prefix in _RISK_BUDGET_PREFIXES:
+        budget_name = f"{normalized_prefix}_RISK_BUDGET"
+        budget = globals().get(budget_name)
+        if (
+            isinstance(budget, bool)
+            or not isinstance(budget, (int, float))
+            or not math.isfinite(float(budget))
+            or float(budget) <= 0
+        ):
+            errors.append(f"resolved {budget_name} must be finite and positive")
+        max_lots_name = f"{normalized_prefix}_MAX_LOTS"
+        max_lots = globals().get(max_lots_name)
+        if (
+            isinstance(max_lots, bool)
+            or not isinstance(max_lots, int)
+            or max_lots <= 0
+        ):
+            errors.append(f"resolved {max_lots_name} must be a positive integer")
+
+    return tuple(dict.fromkeys(errors))
+
+
+def _configure_startup_live_trading(
+    workers: list[BasePaperStrategyWorker],
+    store: SharedMarketDataStore,
+    *,
+    master_live: bool,
+    client: ExecutionClient | None,
+) -> tuple[int, StartupExposureAudit | None]:
+    """Enable selected live workers only after a read-only flat-account audit.
+
+    Worker constructors default to paper, but this helper deliberately clears
+    every flag again before it even reads the per-strategy switches.  Login,
+    symbol-master preload and both broker-book queries therefore happen while
+    no worker is capable of submitting a real entry.  The final assignments to
+    ``live_trading=True`` occur only after the audit proves both books safe.
+    """
+
+    for worker in workers:
+        worker.live_trading = False
+    store.startup_exposure_audit = None
+    store.live_session_started = False
+
+    candidate_live_workers: list[BasePaperStrategyWorker] = []
+    invalid_live_evidence: list[str] = []
+    for worker in workers:
+        prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
+        if prefix is None:
+            logger.error(
+                "No env prefix mapped for strategy %s; forcing PAPER.",
+                worker.strategy_name,
+            )
+            continue
+        if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
+            config_errors = _live_config_errors(worker, prefix)
+            if config_errors:
+                logger.error(
+                    "LIVE CONFIG INVALID for %s; forcing this strategy to PAPER | %s",
+                    worker.strategy_name,
+                    "; ".join(config_errors),
+                )
+                invalid_live_evidence.extend(
+                    f"{worker.strategy_name}: {error}" for error in config_errors
+                )
+                continue
+            candidate_live_workers.append(worker)
+
+    if invalid_live_evidence:
+        # One malformed live-money limit invalidates the process-wide live
+        # configuration.  Enabling the remaining candidates would make an
+        # operator typo look only partially effective and is not fail-closed.
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Requested live strategy configuration was invalid.",),
+            evidence=tuple(invalid_live_evidence),
+        )
+        store.startup_exposure_audit = audit
+        store.execution_safety.freeze_entries(
+            "Requested live strategy configuration was invalid."
+        )
+        return 0, audit
+
+    if not candidate_live_workers:
+        return 0, None
+
+    if client is None:
+        logger.error(
+            "%d strateg(ies) requested LIVE trading but the %s execution "
+            "layer is unavailable; forcing all strategies to PAPER.",
+            len(candidate_live_workers),
+            LIVE_BROKER,
+        )
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Execution client was unavailable for the startup exposure audit.",),
+            evidence=("execution_client=unavailable",),
+        )
+        store.startup_exposure_audit = audit
+        store.execution_safety.freeze_entries(
+            "Startup exposure audit could not query the broker account."
+        )
+        return 0, audit
+
+    logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
+    try:
+        login_ok = client.ensure_logged_in() is True
+    except Exception:  # noqa: BLE001 - a broker SDK failure must fail closed.
+        login_ok = False
+    if not login_ok:
+        logger.error(
+            "%s login failed at startup; forcing all strategies to PAPER.",
+            LIVE_BROKER,
+        )
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Broker login failed before the startup exposure audit.",),
+            evidence=("broker_login=failed",),
+        )
+        store.startup_exposure_audit = audit
+        store.execution_safety.freeze_entries(
+            "Startup exposure audit could not query the broker account."
+        )
+        return 0, audit
+
+    # Preload remains best effort, but the attempt must finish before the audit
+    # so account reconciliation is always the final broker gate.
+    logger.info(
+        "%s login OK; downloading NSE F&O scrip master (one-time)...",
+        LIVE_BROKER,
+    )
+    try:
+        preload_ok = client.preload_scrip_master() is True
+    except Exception:  # noqa: BLE001 - lazy symbol lookup remains available.
+        preload_ok = False
+    if not preload_ok:
+        logger.warning(
+            "Scrip master preload failed; symbols will be resolved lazily on first order."
+        )
+
+    try:
+        audit = audit_startup_exposure(client)
+    except Exception:  # pragma: no cover - pure audit already catches broker failures.
+        # This defensive boundary also uses fixed vocabulary: an SDK exception
+        # can contain request headers or tokens and must never reach logs.
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Startup exposure audit failed internally.",),
+            evidence=("startup_audit=indeterminate",),
+        )
+    store.startup_exposure_audit = audit
+
+    if not audit.safe_to_enable_live:
+        store.execution_safety.freeze_entries(
+            "Startup exposure audit did not prove the broker account flat."
+        )
+        safe_reasons = " ".join(audit.reasons) or "Account state was not proven flat."
+        safe_evidence = " ".join(audit.evidence) or "startup_audit=indeterminate"
+        logger.error(
+            "STARTUP LIVE BLOCKED by broker exposure audit | %s | %s",
+            safe_reasons,
+            safe_evidence,
+        )
+        return 0, audit
+
+    for worker in candidate_live_workers:
+        worker.live_trading = True
+        logger.warning(
+            "LIVE TRADING ENABLED for %s -> real %s orders (product=%s).",
+            worker.strategy_name,
+            LIVE_BROKER,
+            LIVE_PRODUCT_TYPE,
+        )
+    store.live_session_started = bool(candidate_live_workers)
+    return len(candidate_live_workers), audit
+
+
+def _enqueue_startup_exposure_alert(
+    audit: StartupExposureAudit | None,
+    event_queue: queue.Queue | None,
+) -> bool:
+    """Best-effort enqueue of the fixed-vocabulary startup-block alert."""
+
+    if audit is None or audit.safe_to_enable_live or event_queue is None:
+        return False
+    safe_details = " ".join((*audit.reasons, *audit.evidence))
+    event = {
+        "action": "STARTUP_LIVE_BLOCKED",
+        "strategy": "Startup Exposure Gate",
+        "direction": safe_details,
+        "reason": safe_details,
+        "mode": "PAPER",
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    try:
+        event_queue.put_nowait(event)
+        return True
+    except Exception:  # noqa: BLE001 - alerts must never block the runner.
+        logger.warning("Could not enqueue the startup exposure alert.")
+        return False
+
+
+_SHUTDOWN_RETRY_DELAYS_SECONDS = (1.0, 2.0, 5.0)
+
+
+def _request_worker_shutdown(
+    workers: list[BasePaperStrategyWorker],
+    reason: str,
+) -> int:
+    """Request flattening on every worker without setting the terminal event."""
+
+    requested = 0
+    for worker in workers:
+        try:
+            worker.request_worker_shutdown(reason)
+            requested += 1
+        except Exception as exc:  # noqa: BLE001 - one worker must not strand peers
+            logger.exception(
+                "Could not request coordinated shutdown for %s: %s",
+                getattr(worker, "strategy_name", type(worker).__name__),
+                exc,
+            )
+    return requested
+
+
+def _start_and_supervise_runtime_threads(
+    fetcher: CentralMarketDataFetcher,
+    telegram_worker: TelegramMessageWorker | None,
+    workers: list[BasePaperStrategyWorker],
+) -> bool:
+    """Start workers inside the same interrupt-safe boundary that stops them.
+
+    Returning ``False`` means startup or supervision was interrupted/failed,
+    so end-of-day result publication must be skipped. A worker is recorded
+    before ``start()`` is called: even an interrupt at that exact boundary can
+    therefore request its idempotent shutdown without setting the terminal
+    event that the fetcher and notifier share.
+    """
+
+    started_workers: list[BasePaperStrategyWorker] = []
+    shutdown_reason = ""
+    try:
+        fetcher.start()
+        if telegram_worker is not None:
+            telegram_worker.start()
+        for worker in workers:
+            started_workers.append(worker)
+            worker.start()
+
+        while any(worker.is_alive() for worker in started_workers):
+            for worker in started_workers:
+                if worker.is_alive():
+                    worker.join(timeout=1.0)
+        return True
+    except KeyboardInterrupt:
+        shutdown_reason = "KEYBOARD_INTERRUPT"
+        logger.warning(
+            "Keyboard interrupt received during startup/supervision. Blocking "
+            "entries and flattening every worker that may have started."
+        )
+    except Exception:  # noqa: BLE001 - partial startup must still flatten
+        shutdown_reason = "SUPERVISOR_EXCEPTION"
+        logger.exception(
+            "Runtime startup/supervision failed. Blocking entries and "
+            "flattening every worker that may have started."
+        )
+
+    # Repeated Ctrl+C is deliberately ignored throughout both the shutdown
+    # request and join phases. The process-wide broker audit runs afterwards.
+    while True:
+        try:
+            _request_worker_shutdown(started_workers, shutdown_reason)
+            break
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown requests are still being delivered; interrupt ignored "
+                "until broker-confirmed flat."
+            )
+
+    while any(worker.is_alive() for worker in started_workers):
+        try:
+            for worker in started_workers:
+                if worker.is_alive():
+                    worker.join(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown is still reconciling live exposure; additional "
+                "interrupt ignored until broker-confirmed flat."
+            )
+            while True:
+                try:
+                    _request_worker_shutdown(started_workers, shutdown_reason)
+                    break
+                except KeyboardInterrupt:
+                    logger.error(
+                        "Shutdown requests remain in progress; interrupt ignored."
+                    )
+    return False
+
+
+def _runner_exposure_audit(store: SharedMarketDataStore) -> StartupExposureAudit:
+    """Hard finalization gate: is the RUNNER's own tracked exposure flat?
+
+    The execution ledger registers every live order attempt BEFORE it is
+    submitted and keeps the leg active while any quantity is confirmed open or
+    still indeterminate, so an empty ledger means every order this process
+    placed is broker-confirmed flat.  Exposure the runner did not create --
+    the operator's own manual trades in the same account -- is deliberately
+    NOT part of this gate: it is reported loudly by the advisory account
+    audit below instead of blocking results/logout forever.
+    """
+
+    active_states = store.execution_ledger.active_states()
+    if active_states:
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("The local execution ledger still tracks live exposure.",),
+            evidence=(
+                f"tracked_legs={len(active_states)}",
+                f"risk_quantity={sum(state.risk_quantity for state in active_states)}",
+            ),
+        )
+    return StartupExposureAudit(
+        safe_to_enable_live=True,
+        reasons=(),
+        evidence=("tracked_legs=0",),
+    )
+
+
+def _advisory_account_audit(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+) -> StartupExposureAudit:
+    """Best-effort ACCOUNT-level book check, reported but never blocking.
+
+    The operator may hold manual positions or working orders in the same
+    account, so a non-flat account combined with a flat runner ledger is a
+    WARNING (log + Telegram alert), not a reason to withhold the day's
+    results or the logout forever.  Fixed vocabulary only: raw broker
+    payloads, symbols and order ids never reach the alert text.
+    """
+
+    if client is None:
+        if store.live_session_started:
+            return StartupExposureAudit(
+                safe_to_enable_live=False,
+                reasons=("The live broker client was unavailable at shutdown.",),
+                evidence=("execution_client=unavailable",),
+            )
+        return StartupExposureAudit(
+            safe_to_enable_live=True,
+            reasons=(),
+            evidence=("execution_client=unavailable",),
+        )
+
+    login_state = getattr(client, "is_logged_in", None)
+    if login_state is False:
+        if store.live_session_started:
+            # One best-effort re-login so the books can actually be read for
+            # the warning; a failure downgrades to "session unavailable".
+            try:
+                recovered = client.ensure_logged_in()
+            except Exception:  # noqa: BLE001 - never log broker auth payloads
+                recovered = False
+            if recovered is not True or getattr(client, "is_logged_in", None) is not True:
+                return StartupExposureAudit(
+                    safe_to_enable_live=False,
+                    reasons=("The live broker session was unavailable at shutdown.",),
+                    evidence=("broker_session=recovery_failed",),
+                )
+            login_state = True
+        else:
+            return StartupExposureAudit(
+                safe_to_enable_live=True,
+                reasons=(),
+                evidence=("broker_session=not_logged_in",),
+            )
+    if login_state is not True:
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Broker session state was indeterminate at shutdown.",),
+            evidence=("broker_session=indeterminate",),
+        )
+
+    try:
+        return audit_startup_exposure(client)
+    except Exception:  # noqa: BLE001 - raw SDK text may contain credentials
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("The shutdown broker audit failed internally.",),
+            evidence=("shutdown_audit=indeterminate",),
+        )
+
+
+def _warn_if_account_not_flat(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    event_queue: queue.Queue | None,
+) -> bool:
+    """Alert (never block) when the ACCOUNT shows exposure after the runner is flat.
+
+    Returns True when a warning was raised, so tests can assert the alert path.
+    """
+
+    try:
+        advisory = _advisory_account_audit(store, client)
+    except KeyboardInterrupt:
+        logger.error(
+            "Advisory account check interrupted; finalizing on the flat runner ledger."
+        )
+        return False
+    if advisory.safe_to_enable_live:
+        return False
+    safe_detail = " ".join((*advisory.reasons, *advisory.evidence))
+    logger.error(
+        "SHUTDOWN ACCOUNT WARNING | the runner's own exposure is flat, but the "
+        "account books are not proven flat (manual positions/orders, or an "
+        "unreadable book) | %s",
+        safe_detail,
+    )
+    if event_queue is not None:
+        with contextlib.suppress(Exception):
+            event_queue.put_nowait(
+                {
+                    "action": "SHUTDOWN_ACCOUNT_WARNING",
+                    "strategy": "Process Supervisor",
+                    # The generic Telegram format renders `direction` as the
+                    # detail line, exactly like the startup-exposure alert.
+                    "direction": safe_detail,
+                    "reason": safe_detail,
+                    "mode": "LIVE" if store.live_session_started else "PAPER",
+                }
+            )
+    return True
+
+
+def _wait_for_shutdown_account_flat(
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    *,
+    event_queue: queue.Queue | None = None,
+    sleep=time.sleep,
+    max_attempts: int | None = None,
+) -> bool:
+    """Retry until the RUNNER's tracked exposure is broker-confirmed flat.
+
+    ``max_attempts`` exists only for deterministic tests and diagnostics.  The
+    production caller leaves it as ``None`` so unresolved runner exposure keeps
+    the process alive and alerting instead of allowing logout or clean results.
+    Account-level books are deliberately not part of this gate: the operator
+    may hold manual positions in the same account, and those are reported as
+    a warning by `_finalize_flat_session` rather than blocking here forever.
+    """
+
+    if max_attempts is not None and max_attempts <= 0:
+        raise ValueError("max_attempts must be positive or None")
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            audit = _runner_exposure_audit(store)
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown reconciliation is still proving runner exposure flat; "
+                "interrupt ignored."
+            )
+            continue
+        if audit.safe_to_enable_live:
+            logger.info(
+                "SHUTDOWN RUNNER FLAT | the execution ledger confirmed flat "
+                "after %d attempt(s).",
+                attempt,
+            )
+            return True
+
+        safe_detail = " ".join((*audit.reasons, *audit.evidence))
+        logger.error(
+            "DEGRADED PROCESS SHUTDOWN | runner exposure is not broker-confirmed "
+            "flat | attempt=%d | %s",
+            attempt,
+            safe_detail,
+        )
+        if event_queue is not None:
+            with contextlib.suppress(Exception):
+                event_queue.put_nowait(
+                    {
+                        "action": "SHUTDOWN_DEGRADED",
+                        "strategy": "Process Supervisor",
+                        "mode": "LIVE_INDETERMINATE",
+                        "reason": safe_detail,
+                        "attempt": attempt,
+                    }
+                )
+
+        if max_attempts is not None and attempt >= max_attempts:
+            return False
+        delay = _SHUTDOWN_RETRY_DELAYS_SECONDS[
+            min(attempt - 1, len(_SHUTDOWN_RETRY_DELAYS_SECONDS) - 1)
+        ]
+        try:
+            sleep(delay)
+        except KeyboardInterrupt:
+            logger.error(
+                "Shutdown reconciliation is still proving runner exposure flat; "
+                "interrupt ignored."
+            )
+
+
+def _finalize_flat_session(
+    workers: list[BasePaperStrategyWorker],
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    *,
+    trade_event_queue: queue.Queue | None,
+    natural_eod: bool,
+) -> bool:
+    """Write results, logout, and refresh once the RUNNER's exposure is flat.
+
+    The hard gate is the execution ledger (this process's own tracked
+    exposure).  The account-level books are then checked once, as an advisory
+    warning: the operator's manual positions must not strand the day's
+    results, the logout, or the next-day instrument refresh forever.
+    """
+
+    try:
+        audit = _runner_exposure_audit(store)
+    except KeyboardInterrupt:
+        logger.error(
+            "Final runner-flat proof is still in progress; interrupt ignored and "
+            "session finalization remains blocked."
+        )
+        return False
+    if not audit.safe_to_enable_live:
+        logger.error(
+            "SESSION FINALIZATION BLOCKED | the runner's tracked exposure is not "
+            "confirmed flat | %s",
+            " ".join((*audit.reasons, *audit.evidence)),
+        )
+        return False
+
+    _warn_if_account_not_flat(store, client, trade_event_queue)
+
+    if natural_eod:
+        _publish_eod_summary(workers, trade_event_queue)
+        _update_pnl_google_sheet()
+
+    if client is not None and getattr(client, "is_logged_in", False) is True:
+        try:
+            client.logout()
+            logger.info("%s execution session logged out after flat audit.", LIVE_BROKER)
+        except Exception as exc:  # noqa: BLE001 - final refresh can still proceed
+            logger.warning("%s logout failed after flat audit: %s", LIVE_BROKER, exc)
+
+    _refresh_instrument_master_for_next_day()
+    logger.info("Flat session finalization completed.")
+    return True
+
+
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
@@ -10318,19 +13448,15 @@ def main() -> None:
     3. Build the shared store and shared stop signal.
     4. Build one fetcher and all the workers.
     5. Start the fetcher first so workers see fresh data on their first poll.
-    6. Supervise: wait until workers exit or a Ctrl+C arrives.
-    7. Signal shutdown and join every thread with a bounded timeout.
+    6. Supervise: wait until workers flatten or Ctrl+C requests flattening.
+    7. Prove broker books flat, then finalize and signal terminal shutdown.
 
     The MAIN thread does NOT trade. It is purely a supervisor.
     """
     setup_logging()
-    # OPS-001: all trading-time gates assume an IST wall clock -- say so loudly
-    # at startup when the box disagrees, before any worker takes a decision.
-    tz_warning = _timezone_assumption_warning()
-    if tz_warning:
-        logger.warning("%s", tz_warning)
-    else:
-        logger.info("Timezone check: system offset is IST (+5:30), as the trading windows assume.")
+    logger.info(
+        "Trading clock pinned to Asia/Kolkata; host timezone cannot shift market cutoffs."
+    )
     os.chdir(ROOT_DIR)
 
     # Credentials must come from `.env` (or the shell env). We never carry
@@ -10448,58 +13574,20 @@ def main() -> None:
     #   1) the global master switch LIVE_TRADING_ENABLED, and
     #   2) that strategy's own <PREFIX>_LIVE_TRADING flag.
     # This double-gate is a safety net: one switch can't accidentally send
-    # everything live. We work it out ONCE here (not inside the threads) and set
-    # each worker's `live_trading` flag. Default stays paper; if a strategy has no
-    # known prefix it is left on paper and an error is logged so it's noticed.
+    # everything live. We work out the candidates ONCE here (not inside the
+    # threads), then enable them only after the broker books prove startup flat.
+    # Default stays paper; an unmapped strategy is always left on paper.
     # Real orders go to whichever broker LIVE_BROKER selected (see execution_client).
     master_live = _env_bool("LIVE_TRADING_ENABLED", False)
-    live_count = 0  # how many strategies ended up live (for the summary log)
-    for worker in workers:
-        prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
-        per_strategy = _env_bool(f"{prefix}_LIVE_TRADING", False) if prefix else False
-        worker.live_trading = bool(master_live and per_strategy)
-        if worker.live_trading:
-            live_count += 1
-            logger.warning(
-                "LIVE TRADING ENABLED for %s -> real %s orders (product=%s).",
-                worker.strategy_name, LIVE_BROKER, LIVE_PRODUCT_TYPE,
-            )
-        elif prefix is None:
-            logger.error(
-                "No env prefix mapped for strategy %s; forcing PAPER.", worker.strategy_name
-            )
-
-    # Startup guard: never attempt live trading without a working broker client.
-    if live_count > 0 and execution_client is None:
-        logger.error(
-            '%d strateg(ies) flagged for LIVE trading but the %s execution layer is '
-            "unavailable (SDK/deps missing or failed to import). "
-            "Forcing ALL strategies back to PAPER.",
-            live_count, LIVE_BROKER,
-        )
-        for worker in workers:
-            worker.live_trading = False
-        live_count = 0
-
-    # Eagerly establish the broker session NOW (at startup) so worker threads never
-    # block on login mid-session (Kotak uses TOTP, Shoonya may auto-generate it,
-    # and Flattrade uses browser authorization). If login fails here, force every
-    # strategy to PAPER rather than failing one order at a time later.
-    if live_count > 0 and execution_client is not None:
-        logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
-        if not execution_client.ensure_logged_in():
-            logger.error("%s login failed at startup; forcing ALL strategies back to PAPER.", LIVE_BROKER)
-            for worker in workers:
-                worker.live_trading = False
-            live_count = 0
-        else:
-            # One-time scrip/symbol-master download so live orders can be resolved
-            # without paying the download cost mid-session.
-            logger.info("%s login OK; downloading NSE F&O scrip master (one-time)...", LIVE_BROKER)
-            if not execution_client.preload_scrip_master():
-                logger.warning(
-                    "Scrip master preload failed; symbols will be resolved lazily on first order."
-                )
+    # Candidate selection, broker login, symbol preload and both account-book
+    # reads all happen while every worker remains paper-only.  Only the final,
+    # safe audit result enables the intended candidate workers.
+    live_count, _startup_audit = _configure_startup_live_trading(
+        workers,
+        store,
+        master_live=master_live,
+        client=execution_client,
+    )
 
     if master_live:
         logger.warning(
@@ -10533,62 +13621,60 @@ def main() -> None:
     else:
         logger.info("Telegram notifications disabled (TELEGRAM_ENABLED=false).")
 
-    fetcher.start()
-    if telegram_worker is not None:
-        telegram_worker.start()
+    # The startup audit necessarily runs before notification wiring. Its
+    # immutable result remains on the store and is emitted now, if a Telegram
+    # queue exists, without exposing raw broker payloads or identifiers.
+    _enqueue_startup_exposure_alert(_startup_audit, trade_event_queue)
+
+    natural_eod = _start_and_supervise_runtime_threads(
+        fetcher,
+        telegram_worker,
+        workers,
+    )
+
+    # Even after every local owner reaches STOPPED, the execution ledger gets
+    # one process-wide proof. Unresolved RUNNER exposure keeps this process
+    # alive on 1/2/5-second capped retries; no logout, result write, or refresh
+    # occurs. Account-level books (which may hold the operator's own manual
+    # positions) are then checked once and reported as a warning, not a block.
+    _wait_for_shutdown_account_flat(
+        store,
+        execution_client,
+        event_queue=trade_event_queue,
+    )
+    while not _finalize_flat_session(
+        workers,
+        store,
+        execution_client,
+        trade_event_queue=trade_event_queue,
+        natural_eod=natural_eod,
+    ):
+        _wait_for_shutdown_account_flat(
+            store,
+            execution_client,
+            event_queue=trade_event_queue,
+        )
+
+    # Only a fully finalized flat session may release the fetcher/notifier.
+    stop_event.set()
     for worker in workers:
-        worker.start()
+        worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
+    fetcher.join(timeout=SHUTDOWN_JOIN_SECONDS)
+    if telegram_worker is not None:
+        telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
-    try:
-        # The main thread is a passive supervisor; it does not trade.
-        while any(worker.is_alive() for worker in workers):
-            for worker in workers:
-                worker.join(timeout=1.0)
-        # Every worker has exited on its own (square-off / max-loss) -> clean
-        # end of day. Send the cumulative per-strategy P&L summary through the
-        # Telegram worker, which is still alive here (stop_event is set below,
-        # in finally). On Ctrl+C this line is skipped, so partial/forced
-        # shutdowns do not emit a misleading summary.
-        _publish_eod_summary(workers, trade_event_queue)
-        # All workers have exited cleanly -> write each strategy's day-end P&L
-        # into the tracker Google Sheet (and backfill any blank days this month).
-        _update_pnl_google_sheet()
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received. Signaling all threads to stop.")
-        stop_event.set()
-    finally:
-        stop_event.set()
-        for worker in workers:
-            worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
-        fetcher.join(timeout=SHUTDOWN_JOIN_SECONDS)
-        if telegram_worker is not None:
-            telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
-
-        supervised_threads = [fetcher, telegram_worker, *workers]
-        alive_threads = [
-            thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
-        ]
-        if alive_threads:
-            logger.warning("Some threads did not exit within the shutdown window: %s", alive_threads)
-        else:
-            logger.info("All threads exited cleanly.")
-
-        # Politely log out of the broker on the way out, but only if we ever logged
-        # in (pure-paper runs never do). Wrapped in try/except so a logout hiccup
-        # can't stop the rest of shutdown.
-        if execution_client is not None and getattr(execution_client, "is_logged_in", False):
-            try:
-                execution_client.logout()
-                logger.info("%s execution session logged out.", LIVE_BROKER)
-            except Exception as exc:
-                logger.warning("%s logout failed: %s", LIVE_BROKER, exc)
-
-    # End-of-day instrument master refresh. Runs unconditionally (even after
-    # Ctrl+C or a partial shutdown) because the scheduler that re-launches
-    # this script tomorrow morning needs the fresh CSV regardless of how
-    # today's session ended. The helper is fail-soft: a failed download is
-    # logged and the existing CSV stays on disk as a fallback.
-    _refresh_instrument_master_for_next_day()
+    supervised_threads = [fetcher, telegram_worker, *workers]
+    alive_threads = [
+        thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
+    ]
+    if alive_threads:
+        logger.warning(
+            "Session was broker-confirmed flat, but some threads did not exit "
+            "within the terminal shutdown window: %s",
+            alive_threads,
+        )
+    else:
+        logger.info("All threads exited after broker-confirmed flat finalization.")
 
 
 if __name__ == "__main__":

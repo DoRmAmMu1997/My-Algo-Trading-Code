@@ -24,6 +24,7 @@ from subhamoy_strategy_common import (
     require_columns,
     rising_over_lookback,
     sma,
+    validate_finite_config,
 )
 
 
@@ -61,6 +62,7 @@ class MoneyMachineStrategyConfig:
         - Target multiple must be positive because target distance cannot be
           zero or negative.
         """
+        validate_finite_config(self)
         positive_ints = {
             "sma_fast_period": self.sma_fast_period,
             "sma_slow_period": self.sma_slow_period,
@@ -71,6 +73,8 @@ class MoneyMachineStrategyConfig:
         invalid = [name for name, value in positive_ints.items() if int(value) <= 0]
         if invalid:
             raise ValueError(f"Config values must be positive: {', '.join(invalid)}")
+        if int(self.sma_fast_period) >= int(self.sma_slow_period):
+            raise ValueError("sma_fast_period must be smaller than sma_slow_period.")
         bounded_ratios = {
             "marubozu_body_min_ratio": self.marubozu_body_min_ratio,
             "marubozu_wick_max_ratio": self.marubozu_wick_max_ratio,

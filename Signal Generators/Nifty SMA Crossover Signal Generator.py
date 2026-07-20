@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, sma
+from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, sma, validate_finite_config
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ class SMACrossoverConfig:
     target_pct: float = 0.03      # profit target, 3% from entry
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         positive_ints = {"short_window": self.short_window, "long_window": self.long_window}
         invalid = [name for name, value in positive_ints.items() if int(value) <= 0]
         if invalid:

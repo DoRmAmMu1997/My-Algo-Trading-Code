@@ -35,7 +35,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import finite, normalize_ohlc_frame, require_columns, rolling_zscore, sma
+from misc_strategy_common import (
+    finite,
+    normalize_ohlc_frame,
+    require_columns,
+    rolling_zscore,
+    sma,
+    validate_finite_config,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +55,7 @@ class MeanReversionZscoreConfig:
     stop_loss_pct: float = 0.03  # protective stop, 3% from entry (target is the mean)
 
     def __post_init__(self) -> None:
+        validate_finite_config(self)
         if int(self.lookback_period) <= 0:
             raise ValueError("lookback_period must be positive.")
         if float(self.entry_z) <= 0.0:
