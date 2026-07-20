@@ -281,6 +281,17 @@ def _describe_token_expiry(access_token: str) -> str:
     leaves a position open, intraday positions can be left un-squareable
     through the API.
 
+    A weekday expiry lands in one of three situations, each with its own
+    message (a weekend expiry needs none -- no session is at risk that day):
+
+    - BETWEEN 09:15 and 15:30 -> the real danger: the token dies mid-session,
+      so the loud DURING-market-hours warning fires.
+    - BEFORE 09:15            -> nothing can fail mid-session, but that day's
+      session is not covered at all; a calmer note says to re-mint before
+      trading that day.
+    - AFTER 15:30             -> the whole session of the expiry day is
+      covered; say so, so the operator knows this is the GOOD outcome.
+
     Returns:
         A human-readable line for the operator; never raises, because a
         cosmetic decode problem must not fail an otherwise good setup run.
@@ -298,13 +309,31 @@ def _describe_token_expiry(access_token: str) -> str:
 
     hours_left = (expires_at - datetime.now().astimezone()).total_seconds() / 3600
     line = f"Token expires {expires_at:%Y-%m-%d %H:%M:%S} (about {hours_left:.0f}h from now)."
-    # 09:15-15:30 IST is the NSE equity-derivatives session.
+    if expires_at.weekday() >= 5:
+        # Weekend expiry: no session is at risk that day, and main() already
+        # prints the generic "re-run whenever it expires" advice.
+        return line
+    # 09:15-15:30 IST is the NSE equity-derivatives session. See the
+    # docstring for the three weekday situations distinguished below.
+    session_open = expires_at.replace(hour=9, minute=15, second=0, microsecond=0)
     session_close = expires_at.replace(hour=15, minute=30, second=0, microsecond=0)
-    if expires_at < session_close and expires_at.weekday() < 5:
+    if session_open <= expires_at < session_close:
         line += (
             "\n  WARNING: that is DURING market hours. If it expires while positions"
             "\n  are open you may be unable to square off through the API. Re-run this"
             "\n  script outside market hours so the window covers a whole session."
+        )
+    elif expires_at < session_open:
+        line += (
+            "\n  NOTE: that is BEFORE that day's 09:15 open, so the token does NOT"
+            "\n  cover that day's trading session at all. Nothing can fail"
+            "\n  mid-session, but re-run this script before trading that day"
+            "\n  (outside market hours)."
+        )
+    else:
+        line += (
+            "\n  Good: that is after the 15:30 close, so the token covers that"
+            "\n  day's whole trading session."
         )
     return line
 
