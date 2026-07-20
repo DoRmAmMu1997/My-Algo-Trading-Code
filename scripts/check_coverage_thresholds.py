@@ -20,12 +20,20 @@ SAFETY_THRESHOLDS = {
     "Dependencies/market_data_health.py": 90.0,
     "Dependencies/next_open_entry.py": 90.0,
     "Dependencies/risk_sizing.py": 90.0,
+    # MAT-108's redaction layer is data-safety code: a regression here leaks
+    # credentials into logs, so it carries the same 90% budget.
+    "Dependencies/secret_redaction.py": 90.0,
 }
 
+# EVERY live execution adapter belongs in this dict. A broker added without a
+# row here silently escapes the "80% per broker adapter" policy that
+# CLAUDE.md/AGENTS.md promise (exactly what happened when the Dhan adapter
+# first landed), so treat this list as part of adding a broker.
 BROKER_THRESHOLDS = {
     "Dependencies/Kotak API/kotak_execution.py": 80.0,
     "Dependencies/Shoonya API/shoonya_execution.py": 80.0,
     "Dependencies/Flattrade API/flattrade_execution.py": 80.0,
+    "Dependencies/Dhan API/dhan_execution.py": 80.0,
 }
 
 
