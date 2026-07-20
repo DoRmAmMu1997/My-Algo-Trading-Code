@@ -147,6 +147,10 @@ class TradingLifecycle:
                 self._state = LifecycleState.FLAT
                 self._next_retry_at = None
             elif self._next_retry_at is None:
+                # Capped backoff: attempt 1 retries after 1s, attempt 2 after
+                # 2s, attempt 3 AND EVERY LATER attempt after 5s.  The cap is
+                # deliberate -- unlike a network backoff this loop is trying to
+                # CLOSE live exposure, so it must never back off into minutes.
                 delay_index = min(
                     self._flatten_attempts - 1,
                     len(_RETRY_DELAYS_SECONDS) - 1,

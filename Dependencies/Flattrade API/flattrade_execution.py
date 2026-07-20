@@ -463,6 +463,10 @@ class FlattradeExecutionClient:
             log.error("Flattrade login aborted: no request_code supplied.")
             return False
 
+        # Flattrade's documented recipe: the API secret is never sent raw.
+        # Instead sha256(api_key + request_code + api_secret) proves we hold
+        # the secret while binding this exchange to THIS request code -- a
+        # replayed digest is useless once the code expires.
         digest = hashlib.sha256(
             f"{api_key}{request_code}{raw_secret}".encode()
         ).hexdigest()
@@ -533,7 +537,15 @@ class FlattradeExecutionClient:
         return True
 
     def _validate_session_locked(self) -> bool:
-        """Validate the current token and remember Flattrade's account id."""
+        """Validate the current token and remember Flattrade's account id.
+
+        ``UserDetails`` is the cheapest authenticated read, so it doubles as
+        the token check.  Two extra facts are harvested while we are here:
+        the ``exarr`` exchange list (an account without NFO enabled could log
+        in fine and then have every option order rejected -- fail that at
+        startup instead) and ``actid`` (the account id later order payloads
+        must carry, which is not always identical to the login client id).
+        """
         try:
             payload = self._post_api("UserDetails", {"uid": self._client_id})
         except Exception as exc:
@@ -546,6 +558,8 @@ class FlattradeExecutionClient:
         enabled_exchanges = {
             str(value).upper() for value in (payload.get("exarr") or [])
         }
+        # An EMPTY exarr is tolerated (some responses omit it); only a present
+        # list that excludes NFO is proof the account cannot trade options.
         if enabled_exchanges and "NFO" not in enabled_exchanges:
             log.error("Flattrade account does not report NFO access; live trading disabled.")
             return False

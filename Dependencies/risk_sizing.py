@@ -5,6 +5,24 @@ lot.  Both behaviours can exceed the configured budget.  ``SizingDecision``
 is the single authority used by the master runner and the standalone SL
 Hunting executor: invalid inputs and one-lot-over-budget setups are explicit
 rejections, while accepted trades use ``floor`` with a configurable lot cap.
+
+Beginner's walkthrough of why floor-and-reject, with a worked example
+(budget Rs.2500, NIFTY lot 75, entry 24300, stop 24290 -> 10-point risk):
+
+- one lot risks 10 * 75 = Rs.750, so floor(2500 / 750) = **3 lots**
+  (Rs.2250 worst case, inside the budget).
+- the old ``ceil`` gave 4 lots = Rs.3000 worst case -- 20% OVER the budget
+  the operator configured, on every single trade with an awkward stop.
+- with a 40-point stop, one lot risks Rs.3000 > budget.  The old "minimum
+  one lot" still traded it; this module REJECTS it, because a budget that
+  silently stretches for wide stops is not a budget at all.  A skipped
+  setup costs an opportunity; an oversized one costs real money.
+
+The rupee-risk proxy is deliberately simple: ``|entry - stop| * lot_size``
+measures the UNDERLYING's move as if the option gained/lost point-for-point
+(delta ~= 1).  Real ATM option deltas are nearer 0.5, so this proxy usually
+OVERSTATES the risk -- conservative in exactly the direction a hard limit
+should be.
 """
 
 from __future__ import annotations
@@ -28,7 +46,13 @@ def _finite_number(value: Any) -> float | None:
 
 @dataclass(frozen=True, slots=True)
 class SizingDecision:
-    """Immutable explanation of an accepted or rejected position size."""
+    """Immutable explanation of an accepted or rejected position size.
+
+    Every field the sizing maths used is carried on the decision itself, so a
+    log line or Telegram alert can show WHY a trade was sized (or skipped)
+    without re-deriving anything.  ``accepted=False`` always comes with
+    ``lots=0``/``quantity=0`` -- callers never need to double-check.
+    """
 
     accepted: bool
     lots: int
@@ -106,6 +130,11 @@ class SizingDecision:
         The spot-distance proxy is conservative and intentionally unchanged:
         ``one_lot_risk = abs(entry - stop) * lot_size``.  What changes is the
         hard-limit policy—there is no fallback lot and no rounding upward.
+
+        The validation ladder below runs most-fundamental-first (budget, then
+        lot size, then cap, then prices, then stop distance) so the rejection
+        ``reason`` always names the FIRST thing the operator must fix, and
+        each rejection carries whatever figures were already validated.
         """
 
         normalized_budget = _finite_number(budget)

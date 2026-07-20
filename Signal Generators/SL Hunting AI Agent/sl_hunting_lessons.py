@@ -215,7 +215,21 @@ def _now() -> str:
 
 
 def lesson_content_digest(record: StoredLesson | dict[str, Any]) -> str:
-    """Return the canonical digest that binds operator approval to lesson content."""
+    """Return the canonical digest that binds operator approval to lesson content.
+
+    What the digest is FOR: the operator approves a lesson by reading its exact
+    text.  If the stored file were later edited (by a bug, a merge, or a
+    prompt-injection-shaped payload), the approved id would silently point at
+    words the operator never reviewed -- and those words are injected into the
+    live agent's prompt.  ``StoredLesson`` therefore recomputes this digest on
+    every load and rejects any approved record whose content no longer matches.
+
+    Only the reviewed CONTENT participates (id, scope, lesson, rationale,
+    evidence, confidence).  Timestamps and status are deliberately excluded so
+    a harmless metadata touch cannot invalidate a genuine approval.  The
+    canonical JSON form (sorted keys, fixed separators) makes the digest
+    stable regardless of dict ordering or formatting.
+    """
     source = record.model_dump(mode="json") if isinstance(record, StoredLesson) else record
     evidence = source.get("evidence") or {}
     content = {
@@ -296,6 +310,8 @@ def save_lessons(path: str, lessons: list[dict[str, Any]]) -> None:
     see either the previous complete store or the new complete store, never a partially
     written JSON document after a crash.
     """
+    # Validate BEFORE opening any file: a malformed record must fail loudly
+    # here rather than half-replace the store.
     validated = [
         StoredLesson.model_validate(record).model_dump(mode="json", exclude_none=True)
         for record in lessons
@@ -303,6 +319,9 @@ def save_lessons(path: str, lessons: list[dict[str, Any]]) -> None:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    # The temp file must live in the SAME directory as the target: os.replace
+    # is atomic only within one filesystem, and a cross-device rename would
+    # degrade to the copy-then-delete window this function exists to remove.
     directory = parent or "."
     descriptor, temporary_path = tempfile.mkstemp(
         prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory, text=True
@@ -311,10 +330,15 @@ def save_lessons(path: str, lessons: list[dict[str, Any]]) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8") as file_handle:
             json.dump(validated, file_handle, indent=2, ensure_ascii=False)
             file_handle.write("\n")
+            # flush() pushes Python's buffer to the OS; fsync() pushes the OS
+            # buffer to disk. Only after BOTH is the temp file guaranteed
+            # complete on disk, making the replace below crash-safe.
             file_handle.flush()
             os.fsync(file_handle.fileno())
         os.replace(temporary_path, path)
     finally:
+        # On success the temp path no longer exists (it BECAME the store); on
+        # any failure this removes the orphaned partial file.
         if os.path.exists(temporary_path):
             os.unlink(temporary_path)
 
@@ -328,14 +352,23 @@ def consolidate(lessons: list[dict[str, Any]], max_lessons: int = MAX_LIVE_LESSO
     """De-duplicate by id (keep the better-evidenced copy), rank by sample size then
     recency, and cap at `max_lessons` — so the store stays bounded and non-contradictory."""
     by_id: dict[str, dict[str, Any]] = {}
+    # Strict validation first: consolidation is a write-path chokepoint (both
+    # add_proposed and promote funnel through it), so a malformed record dies
+    # here instead of ever reaching the saved store.
     validated, _rejected = _validated_records(lessons)
     for lesson in validated:
         lid = lesson.get("id")
         if not lid:
             continue
+        # Same slug = same lesson text seen across coach runs.  Keep the copy
+        # backed by MORE trades: growing evidence should win, and a rerun on a
+        # shrunken journal must not downgrade a well-supported lesson.
         prev = by_id.get(lid)
         if prev is None or _sample(lesson) > _sample(prev):
             by_id[lid] = lesson
+    # Rank best-evidenced first (recency breaks ties), then cap: with a
+    # bounded list, a new well-supported lesson naturally evicts the weakest
+    # one, keeping the prompt block a stable size forever.
     ranked = sorted(
         by_id.values(),
         key=lambda rec: (_sample(rec), str(rec.get("updated_at", ""))),
