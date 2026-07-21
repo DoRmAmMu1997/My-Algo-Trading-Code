@@ -3578,6 +3578,12 @@ class WebSocketMarketDataFetcher(threading.Thread):
         )
         self.official_frame = official
         self._publish_frame_if_changed(force=True)
+        # Drop every tick bar the official history now covers. The merge would
+        # ignore them anyway (official wins), but keeping them makes the NEXT
+        # divergence report re-count this cycle's mismatches forever -- the
+        # stats above must describe only the minutes trued-up right now.
+        newest_official = pd.Timestamp(official["timestamp"].max())
+        self.aggregator.prune_older_than(newest_official + pd.Timedelta(minutes=1))
         log_fn = (
             self.log.warning
             if stats.mismatched and stats.max_abs_delta > self.TRUEUP_DIVERGENCE_WARN_POINTS

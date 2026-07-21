@@ -1525,6 +1525,28 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
         # ...while the forming minute keeps its tick-built values.
         self.assertEqual(by_ts.loc[forming]["close"], 100.6)
 
+    def test_true_up_prunes_trued_minutes_so_divergence_is_per_cycle(self):
+        """Once official candles cover a minute, its tick bar must leave the
+        aggregator -- otherwise every later true-up re-reports the same old
+        mismatches forever (observed in the 2026-07-21 paper session)."""
+        completed = pd.Timestamp("2026-05-15 10:16:00")
+        forming = pd.Timestamp("2026-05-15 10:17:00")
+        self.fetcher.aggregator.add_tick(completed, 100.2)
+        self.fetcher.aggregator.add_tick(forming, 100.6)
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-05-15 10:15:00"), completed],
+                "open": [99.8, 100.0], "high": [100.4, 101.0],
+                "low": [99.6, 99.5], "close": [100.1, 100.5],
+            }
+        )
+        self.fetcher._run_true_up("test", now_ist=datetime(2026, 5, 15, 10, 17, 40))
+        # Only the still-tick-owned forming minute survives in the aggregator.
+        remaining = self.fetcher.aggregator.tick_bars_frame()
+        self.assertEqual(list(remaining["timestamp"]), [forming])
+        # The published merge is unaffected: official rows + the forming bar.
+        self.assertEqual(len(self.store.get("1").frame), 3)
+
     def test_true_up_rest_failure_keeps_tick_bars(self):
         forming = pd.Timestamp("2026-05-15 10:17:00")
         self.fetcher.aggregator.add_tick(forming, 100.6)
