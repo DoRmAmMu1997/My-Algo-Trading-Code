@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+import warnings
 from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1634,6 +1635,82 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
             self.fetcher._close_feed()
         except RuntimeError:
             self.fail("_close_feed must swallow SDK shutdown errors")
+
+
+# =============================================================================
+# TEST SUITE: DHANHQ SDK DEPRECATION-WARNING FILTER
+# =============================================================================
+class TestDhanhqDeprecationWarningFilter(unittest.TestCase):
+    """Loading the master must silence dhanhq 2.2.0's per-tick
+    `utcfromtimestamp()` DeprecationWarning -- and ONLY that warning.
+
+    The filter is scoped by message AND module so a deprecation raised by our
+    own code (or any other dependency) still reaches the operator's console.
+    """
+
+    def test_scoped_ignore_filter_is_installed_at_import(self):
+        matching = [
+            entry
+            for entry in warnings.filters
+            if entry[0] == "ignore"
+            and entry[2] is DeprecationWarning
+            and entry[1] is not None
+            and "utcfromtimestamp" in entry[1].pattern
+        ]
+        self.assertTrue(
+            matching,
+            "master import must install the dhanhq marketfeed warning filter",
+        )
+        for entry in matching:
+            self.assertIsNotNone(entry[3], "filter must be module-scoped")
+            self.assertIn("dhanhq", entry[3].pattern)
+
+    def test_filter_suppresses_only_the_sdk_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            # `simplefilter` wipes the global list inside this context, so
+            # re-install the master's filter in front of an "always" baseline
+            # -- the same precedence it has in the real process.
+            warnings.simplefilter("always")
+            warnings.filterwarnings(
+                "ignore",
+                message=r"datetime\.datetime\.utcfromtimestamp\(\) is deprecated",
+                category=DeprecationWarning,
+                module=r"dhanhq\.marketfeed",
+            )
+            sdk_message = (
+                "datetime.datetime.utcfromtimestamp() is deprecated and "
+                "scheduled for removal in a future version. Use timezone-aware "
+                "objects to represent datetimes in UTC: "
+                "datetime.datetime.fromtimestamp(timestamp, datetime.UTC)."
+            )
+            # The exact warning the SDK's utc_time helper triggers ...
+            warnings.warn_explicit(
+                sdk_message,
+                DeprecationWarning,
+                filename="dhanhq/marketfeed.py",
+                lineno=523,
+                module="dhanhq.marketfeed",
+            )
+            # ... the same message from ANY other module must stay visible ...
+            warnings.warn_explicit(
+                sdk_message,
+                DeprecationWarning,
+                filename="somewhere/else.py",
+                lineno=1,
+                module="somewhere.else",
+            )
+            # ... and a different deprecation from the SDK module must too.
+            warnings.warn_explicit(
+                "some other deprecation",
+                DeprecationWarning,
+                filename="dhanhq/marketfeed.py",
+                lineno=1,
+                module="dhanhq.marketfeed",
+            )
+        messages = [str(item.message) for item in caught]
+        self.assertEqual(len(messages), 2, messages)
+        self.assertIn(sdk_message, messages)
+        self.assertIn("some other deprecation", messages)
 
 
 # =============================================================================

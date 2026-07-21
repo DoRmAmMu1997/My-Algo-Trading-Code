@@ -212,6 +212,7 @@ import sys
 import threading
 import time
 import uuid
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -275,6 +276,25 @@ try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional dependency
     load_dotenv = None
+
+# dhanhq 2.2.0's marketfeed formats every tick's exchange timestamp through
+# `datetime.utcfromtimestamp()` (its `utc_time` helper), which Python 3.12+
+# deprecated -- so a live websocket session sprays an unactionable
+# DeprecationWarning onto the operator's console for every feed connection.
+# The SDK version is policy-pinned (DEPS-001 in requirements.txt), so until a
+# deliberate bump moves past that call we silence EXACTLY that message from
+# EXACTLY that module: deprecation warnings raised by our own code, or by any
+# other library, still reach the console.  The warning fires per tick at
+# runtime (never at import), so installing the filter here -- at module load,
+# long before any feed thread starts -- covers every code path; and because
+# `filterwarnings` PREPENDS, it also wins over any blanket -W /
+# PYTHONWARNINGS setting on the host.
+warnings.filterwarnings(
+    "ignore",
+    message=r"datetime\.datetime\.utcfromtimestamp\(\) is deprecated",
+    category=DeprecationWarning,
+    module=r"dhanhq\.marketfeed",
+)
 
 
 # =============================================================================
