@@ -14,7 +14,11 @@ Running live since May 2026; daily per-strategy results are tracked in a Google 
 ## Architecture (runtime)
 One process, cooperating threads:
 - `CentralMarketDataFetcher` (one thread) polls DhanHQ and writes into a **lock-guarded
-  `SharedMarketDataStore`** (1-min OHLC + LTPs).
+  `SharedMarketDataStore`** (1-min OHLC + LTPs). Setting `MARKET_DATA_SOURCE=WEBSOCKET`
+  (fails closed to REST on any other value; needs the paid Dhan Data API subscription)
+  swaps in `WebSocketMarketDataFetcher`: Dhan marketfeed ticks build the bars/LTPs
+  (pure helpers in `Dependencies/tick_bar_builder.py`), with REST kept for warmup and a
+  once-per-minute true-up against official candles.
 - **~26 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
   family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / CPR Algo 3
   (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies), two

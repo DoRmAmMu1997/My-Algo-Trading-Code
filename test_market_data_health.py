@@ -227,7 +227,7 @@ class TestMarketDataHealth(unittest.TestCase):
     def test_stale_completed_bar_blocks_entry(self) -> None:
         self.health.record_refresh(
             ohlc_ok=True,
-            newest_completed_bar=self.now - timedelta(seconds=91),
+            newest_completed_bar=self.now - timedelta(seconds=151),
             ltp_fetched_at={self.key: self.now},
             required_ltp_keys={self.key},
             now=self.now,
@@ -235,6 +235,23 @@ class TestMarketDataHealth(unittest.TestCase):
         snapshot = self.health.snapshot(now=self.now)
         self.assertFalse(snapshot.entry_allowed)
         self.assertTrue(any("bar" in reason.lower() for reason in snapshot.reasons))
+
+    def test_healthy_minute_cycle_bar_ages_are_never_stale(self) -> None:
+        """Regression: bar ages are measured from the bar's START minute, so a
+        normally-advancing feed's newest completed bar cycles from 60s to just
+        under 120s old (plus publish latency) within EVERY minute.  The old 90s
+        threshold sat inside that cycle and false-alarmed from second :31 of
+        each minute; these exact in-cycle ages must always read as healthy."""
+        for bar_age_seconds in (91, 119, 125):
+            with self.subTest(bar_age_seconds=bar_age_seconds):
+                snapshot = self.health.record_refresh(
+                    ohlc_ok=True,
+                    newest_completed_bar=self.now - timedelta(seconds=bar_age_seconds),
+                    ltp_fetched_at={self.key: self.now},
+                    required_ltp_keys={self.key},
+                    now=self.now,
+                )
+                self.assertEqual(snapshot.reasons, ())
 
     def test_monitoring_is_disabled_by_default_for_offline_consumers(self) -> None:
         health = MarketDataHealth()

@@ -35,6 +35,10 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # broker-adapter coverage, so its import-time WebSocket dependency belongs
     # in the core test/runtime environment as well as the isolated broker set.
     assert "websocket-client==1.8.0" in core
+    # dhanhq.marketfeed (the websocket market data producer) hard-imports the
+    # async `websockets` library at package import time, so the exact version
+    # must be pinned in core rather than left to transitive resolution.
+    assert "websockets==16.0" in core
     assert "claude-agent-sdk==0.2.123" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)

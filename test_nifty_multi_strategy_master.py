@@ -5,7 +5,9 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
+import warnings
 from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1272,6 +1274,443 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
             self.fetcher.refresh_index_and_option_ltps()
         except RuntimeError:
             self.fail("refresh_index_and_option_ltps should swallow broker errors")
+
+
+# =============================================================================
+# TEST SUITE: MARKET DATA SOURCE SELECTOR
+# =============================================================================
+class TestMarketDataSourceSelector(unittest.TestCase):
+    """
+    The MARKET_DATA_SOURCE env flag picks the producer class. Anything that is
+    not exactly "WEBSOCKET" must FAIL CLOSED to the battle-tested REST poller.
+    """
+
+    def test_rest_selects_central_fetcher(self):
+        with patch.object(master_file, "MARKET_DATA_SOURCE", "REST"):
+            self.assertIs(
+                master_file._select_market_data_fetcher_class(),
+                master_file.CentralMarketDataFetcher,
+            )
+
+    def test_websocket_selects_ws_fetcher(self):
+        with patch.object(master_file, "MARKET_DATA_SOURCE", "WEBSOCKET"):
+            self.assertIs(
+                master_file._select_market_data_fetcher_class(),
+                master_file.WebSocketMarketDataFetcher,
+            )
+
+    def test_unknown_value_fails_closed_to_rest(self):
+        for bad_value in ("WEBSOKET", "ws", "", "TICKS"):
+            with patch.object(master_file, "MARKET_DATA_SOURCE", bad_value):
+                self.assertIs(
+                    master_file._select_market_data_fetcher_class(),
+                    master_file.CentralMarketDataFetcher,
+                    bad_value,
+                )
+
+
+# =============================================================================
+# TEST SUITE: STORE LTP FRESHNESS TOUCH (websocket health support)
+# =============================================================================
+class TestSharedMarketDataStoreLtpFreshnessTouch(unittest.TestCase):
+    """
+    `touch_ltp_freshness` re-stamps cached LTPs as fresh while the websocket
+    connection is alive. It must only ever touch keys that already hold a
+    positive price -- it can never invent a price for an unknown instrument.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+
+    def test_restamps_existing_positive_key(self):
+        key = ("NSE_FNO", 111)
+        self.store.update_ltp_map({key: 55.5})
+        stale = self.store._ltp_snapshots[key].fetched_at - timedelta(seconds=60)
+        self.store._ltp_snapshots[key].fetched_at = stale
+        self.store.touch_ltp_freshness({key})
+        self.assertGreater(self.store._ltp_snapshots[key].fetched_at, stale)
+        # The price itself must be untouched.
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 111), 55.5)
+
+    def test_never_creates_missing_keys(self):
+        self.store.touch_ltp_freshness({("NSE_FNO", 999)})
+        self.assertNotIn(("NSE_FNO", 999), self.store._ltp_snapshots)
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 999, fallback=0.0), 0.0)
+
+
+# =============================================================================
+# TEST SUITE: WEBSOCKET MARKET DATA FETCHER
+# =============================================================================
+class TestWebSocketMarketDataFetcher(unittest.TestCase):
+    """
+    Websocket producer tests drive the fetcher's internals directly with fake
+    marketfeed packets and a MagicMock broker -- no threads, no sockets. The
+    wall clock is injected (`now_ist=...`) so results do not depend on when
+    the suite runs.
+    """
+
+    # A mid-session instant matching the packets below (naive IST).
+    NOW = datetime(2026, 5, 15, 10, 17, 34)
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.broker = MagicMock()
+        self.stop_event = threading.Event()
+        self.fetcher = master_file.WebSocketMarketDataFetcher(
+            store=self.store, stop_event=self.stop_event, broker=self.broker
+        )
+        self.index_key = (
+            master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+            master_file.NIFTY_INDEX_SECURITY_ID,
+        )
+
+    def _index_tick(self, ltp="24238.50", ltt="10:17:33"):
+        """Ticker packet in the exact shape dhanhq 2.2.0 emits for NIFTY."""
+        return {
+            "type": "Ticker Data",
+            "exchange_segment": 0,
+            "security_id": master_file.NIFTY_INDEX_SECURITY_ID,
+            "LTP": ltp,
+            "LTT": ltt,
+        }
+
+    def _option_tick(self, security_id=49081, ltp="139.45", ltt="10:17:33"):
+        return {
+            "type": "Ticker Data",
+            "exchange_segment": 2,
+            "security_id": security_id,
+            "LTP": ltp,
+            "LTT": ltt,
+        }
+
+    def _register_option(self, security_id=49081):
+        self.store.register_option_subscription(
+            master_file.OptionSubscription(
+                security_id=security_id, exchange_segment="NSE_FNO",
+                trading_symbol="OPT_CE", right="CE", strike=22500.0,
+                expiry=date.today() + timedelta(days=7),
+            )
+        )
+
+    def test_thread_name_matches_rest_fetcher(self):
+        """Log/EOD tooling keys on the thread name; both producers share it."""
+        self.assertEqual(self.fetcher.name, "MarketDataFetcher")
+
+    def test_handle_packet_updates_ltp_cache_and_confirms(self):
+        self.fetcher._handle_packet(self._index_tick(), now_ist=self.NOW)
+        self.assertEqual(
+            self.store.get_ltp_by_secid(*self.index_key), 24238.50
+        )
+        self.assertIn(self.index_key, self.fetcher._confirmed_keys)
+        self.assertIsNotNone(self.fetcher._last_packet_monotonic)
+
+    def test_previous_close_confirms_without_price(self):
+        packet = {
+            "type": "Previous Close",
+            "exchange_segment": 2,
+            "security_id": 49081,
+            "prev_close": "216.95",
+            "prev_OI": 0,
+        }
+        self.fetcher._handle_packet(packet, now_ist=self.NOW)
+        self.assertIn(("NSE_FNO", 49081), self.fetcher._confirmed_keys)
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 49081), 0.0)
+
+    def test_index_ticks_build_bars_and_published_frame_validates(self):
+        self.fetcher._handle_packet(self._index_tick("24238.50", "10:17:33"), now_ist=self.NOW)
+        self.fetcher._publish_frame_if_changed()
+        snapshot = self.store.get("1")
+        self.assertIsNotNone(snapshot)
+        # The forming minute must be present as the last row.
+        self.assertEqual(
+            snapshot.frame.iloc[-1]["timestamp"], pd.Timestamp("2026-05-15 10:17:00")
+        )
+        self.assertEqual(snapshot.frame.iloc[-1]["close"], 24238.50)
+
+    def test_option_ticks_never_become_bars(self):
+        self.fetcher._handle_packet(self._option_tick(), now_ist=self.NOW)
+        self.assertTrue(self.fetcher.aggregator.tick_bars_frame().empty)
+        self.assertEqual(self.store.get_ltp_by_secid("NSE_FNO", 49081), 139.45)
+
+    def test_stale_snapshot_tick_feeds_ltp_but_not_bars(self):
+        """The subscribe-replay tick carries an old LTT; cache it, never bar it."""
+        self.fetcher._handle_packet(
+            self._index_tick(ltp="24334.30", ltt="15:29:59"), now_ist=self.NOW
+        )
+        self.assertEqual(self.store.get_ltp_by_secid(*self.index_key), 24334.30)
+        self.assertTrue(self.fetcher.aggregator.tick_bars_frame().empty)
+
+    def test_minute_rollover_publishes_through_throttle(self):
+        self.fetcher._handle_packet(self._index_tick("24238.50", "10:17:33"), now_ist=self.NOW)
+        self.fetcher._publish_frame_if_changed()
+        self.assertEqual(len(self.store.get("1").frame), 1)
+
+        # Same-minute update inside the throttle window: not republished.
+        self.fetcher._last_publish_monotonic = time.monotonic()
+        self.fetcher._handle_packet(self._index_tick("24240.00", "10:17:35"),
+                                    now_ist=datetime(2026, 5, 15, 10, 17, 36))
+        self.fetcher._publish_frame_if_changed()
+        self.assertEqual(self.store.get("1").frame.iloc[-1]["close"], 24238.50)
+
+        # A minute rollover must bypass the throttle and publish immediately.
+        self.fetcher._handle_packet(self._index_tick("24241.00", "10:18:01"),
+                                    now_ist=datetime(2026, 5, 15, 10, 18, 2))
+        self.fetcher._publish_frame_if_changed()
+        frame = self.store.get("1").frame
+        self.assertEqual(len(frame), 2)
+        self.assertEqual(frame.iloc[-1]["timestamp"], pd.Timestamp("2026-05-15 10:18:00"))
+
+    def test_desired_instruments_cover_index_and_subscriptions(self):
+        self._register_option(49081)
+        desired = self.fetcher._desired_instruments()
+        self.assertIn(self.index_key, desired)
+        self.assertIn(("NSE_FNO", 49081), desired)
+        # Feed tuples use marketfeed codes and STRING security ids.
+        self.assertEqual(desired[("NSE_FNO", 49081)][0], 2)
+        self.assertEqual(desired[("NSE_FNO", 49081)][1], "49081")
+
+    def test_sync_subscriptions_adds_removes_and_protects_index(self):
+        feed = MagicMock()
+        self.fetcher._feed = feed
+        self.fetcher._subscribed_keys = {self.index_key}
+
+        self._register_option(49081)
+        self.fetcher._sync_subscriptions()
+        feed.subscribe_symbols.assert_called_once()
+        added = feed.subscribe_symbols.call_args[0][0]
+        self.assertEqual([(t[0], t[1]) for t in added], [(2, "49081")])
+
+        self.store.unregister_option_subscription("NSE_FNO", 49081)
+        self.fetcher._sync_subscriptions()
+        feed.unsubscribe_symbols.assert_called_once()
+        removed = feed.unsubscribe_symbols.call_args[0][0]
+        self.assertEqual([(t[0], t[1]) for t in removed], [(2, "49081")])
+        # The index leg must never be unsubscribed.
+        for call in feed.unsubscribe_symbols.call_args_list:
+            for entry in call[0][0]:
+                self.assertNotEqual(entry[1], str(master_file.NIFTY_INDEX_SECURITY_ID))
+
+    def test_sync_subscriptions_skips_unknown_segment(self):
+        feed = MagicMock()
+        self.fetcher._feed = feed
+        self.fetcher._subscribed_keys = {self.index_key}
+        self.store.register_option_subscription(
+            master_file.OptionSubscription(
+                security_id=777, exchange_segment="MCX_WEIRD",
+                trading_symbol="ODD", right="CE", strike=1.0, expiry=None,
+            )
+        )
+        self.fetcher._sync_subscriptions()
+        feed.subscribe_symbols.assert_not_called()
+
+    def test_true_up_overwrites_completed_bar_keeps_forming(self):
+        completed = pd.Timestamp("2026-05-15 10:16:00")
+        forming = pd.Timestamp("2026-05-15 10:17:00")
+        self.fetcher.aggregator.add_tick(completed, 100.2)
+        self.fetcher.aggregator.add_tick(completed, 100.4)
+        self.fetcher.aggregator.add_tick(forming, 100.6)
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-05-15 10:15:00"), completed],
+                "open": [99.8, 100.0], "high": [100.4, 101.0],
+                "low": [99.6, 99.5], "close": [100.1, 100.5],
+            }
+        )
+        self.fetcher._run_true_up("test", now_ist=datetime(2026, 5, 15, 10, 17, 40))
+        frame = self.store.get("1").frame
+        self.assertEqual(len(frame), 3)
+        by_ts = frame.set_index("timestamp")
+        # Completed minute now carries the OFFICIAL candle...
+        self.assertEqual(by_ts.loc[completed]["open"], 100.0)
+        self.assertEqual(by_ts.loc[completed]["close"], 100.5)
+        # ...while the forming minute keeps its tick-built values.
+        self.assertEqual(by_ts.loc[forming]["close"], 100.6)
+
+    def test_true_up_prunes_trued_minutes_so_divergence_is_per_cycle(self):
+        """Once official candles cover a minute, its tick bar must leave the
+        aggregator -- otherwise every later true-up re-reports the same old
+        mismatches forever (observed in the 2026-07-21 paper session)."""
+        completed = pd.Timestamp("2026-05-15 10:16:00")
+        forming = pd.Timestamp("2026-05-15 10:17:00")
+        self.fetcher.aggregator.add_tick(completed, 100.2)
+        self.fetcher.aggregator.add_tick(forming, 100.6)
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-05-15 10:15:00"), completed],
+                "open": [99.8, 100.0], "high": [100.4, 101.0],
+                "low": [99.6, 99.5], "close": [100.1, 100.5],
+            }
+        )
+        self.fetcher._run_true_up("test", now_ist=datetime(2026, 5, 15, 10, 17, 40))
+        # Only the still-tick-owned forming minute survives in the aggregator.
+        remaining = self.fetcher.aggregator.tick_bars_frame()
+        self.assertEqual(list(remaining["timestamp"]), [forming])
+        # The published merge is unaffected: official rows + the forming bar.
+        self.assertEqual(len(self.store.get("1").frame), 3)
+
+    def test_true_up_rest_failure_keeps_tick_bars(self):
+        forming = pd.Timestamp("2026-05-15 10:17:00")
+        self.fetcher.aggregator.add_tick(forming, 100.6)
+        self.fetcher._publish_frame_if_changed()
+        self.broker.fetch_index_1m_ohlc.side_effect = RuntimeError("REST down")
+        try:
+            self.fetcher._run_true_up("test", now_ist=datetime(2026, 5, 15, 10, 17, 40))
+        except RuntimeError:
+            self.fail("_run_true_up must swallow REST errors and keep tick bars")
+        frame = self.store.get("1").frame
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame.iloc[0]["close"], 100.6)
+
+    def test_health_touches_only_confirmed_keys_while_alive(self):
+        self._register_option(49081)
+        self.store.touch_ltp_freshness = MagicMock()
+        self.fetcher._confirmed_keys = {self.index_key}
+        self.fetcher._last_packet_monotonic = time.monotonic()
+        self.fetcher._record_health_if_due()
+        self.store.touch_ltp_freshness.assert_called_once_with({self.index_key})
+
+    def test_health_never_touches_when_socket_silent(self):
+        self._register_option(49081)
+        self.store.touch_ltp_freshness = MagicMock()
+        self.fetcher._confirmed_keys = {self.index_key, ("NSE_FNO", 49081)}
+        self.fetcher._last_packet_monotonic = (
+            time.monotonic() - master_file.WS_CONN_LIVENESS_SECONDS - 5.0
+        )
+        self.fetcher._record_health_if_due()
+        self.store.touch_ltp_freshness.assert_not_called()
+
+    def test_health_publishes_required_keys_on_cadence(self):
+        self._register_option(49081)
+        self.store.record_market_data_refresh = MagicMock(
+            return_value=MagicMock(reasons=[])
+        )
+        self.fetcher._record_health_if_due()
+        self.fetcher._record_health_if_due()  # Inside the cadence window: skipped.
+        self.assertEqual(self.store.record_market_data_refresh.call_count, 1)
+        kwargs = self.store.record_market_data_refresh.call_args[1]
+        self.assertEqual(
+            kwargs["required_ltp_keys"], {self.index_key, ("NSE_FNO", 49081)}
+        )
+
+    def test_warmup_retries_until_success(self):
+        good = pd.DataFrame(
+            {"timestamp": [pd.Timestamp("2026-05-15 10:16:00")],
+             "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.5]}
+        )
+        self.broker.fetch_index_1m_ohlc.side_effect = [RuntimeError("boom"), good]
+        self.fetcher.WARMUP_RETRY_SECONDS = 0.01
+        self.assertTrue(self.fetcher._warmup_official_history())
+        self.assertEqual(len(self.fetcher.official_frame), 1)
+        self.assertIsNotNone(self.store.get("1"))
+
+    def test_pump_rebuilds_fresh_feed_with_full_desired_set(self):
+        self._register_option(49081)
+        feed_one = MagicMock()
+        feed_one.get_data.side_effect = RuntimeError("socket died")
+        feed_two = MagicMock()
+
+        def _stop_then_raise():
+            self.stop_event.set()
+            raise RuntimeError("shutdown")
+
+        feed_two.get_data.side_effect = _stop_then_raise
+        self.broker.make_market_feed.side_effect = [feed_one, feed_two]
+        self.fetcher.RECONNECT_BACKOFF_INITIAL_SECONDS = 0.01
+        self.fetcher._pump_main()
+
+        self.assertEqual(self.broker.make_market_feed.call_count, 2)
+        for call in self.broker.make_market_feed.call_args_list:
+            instruments = call[0][0]
+            ids = {entry[1] for entry in instruments}
+            self.assertIn(str(master_file.NIFTY_INDEX_SECURITY_ID), ids)
+            self.assertIn("49081", ids)
+        # A (re)connect requests an immediate true-up (the gap backfill).
+        self.assertIsNotNone(self.fetcher._trueup_reason)
+
+    def test_close_feed_swallows_sdk_errors(self):
+        feed = MagicMock()
+        feed.close_connection.side_effect = RuntimeError("loop not running")
+        self.fetcher._feed = feed
+        try:
+            self.fetcher._close_feed()
+        except RuntimeError:
+            self.fail("_close_feed must swallow SDK shutdown errors")
+
+
+# =============================================================================
+# TEST SUITE: DHANHQ SDK DEPRECATION-WARNING FILTER
+# =============================================================================
+class TestDhanhqDeprecationWarningFilter(unittest.TestCase):
+    """Loading the master must silence dhanhq 2.2.0's per-tick
+    `utcfromtimestamp()` DeprecationWarning -- and ONLY that warning.
+
+    The filter is scoped by message AND module so a deprecation raised by our
+    own code (or any other dependency) still reaches the operator's console.
+    """
+
+    def test_scoped_ignore_filter_is_installed_at_import(self):
+        matching = [
+            entry
+            for entry in warnings.filters
+            if entry[0] == "ignore"
+            and entry[2] is DeprecationWarning
+            and entry[1] is not None
+            and "utcfromtimestamp" in entry[1].pattern
+        ]
+        self.assertTrue(
+            matching,
+            "master import must install the dhanhq marketfeed warning filter",
+        )
+        for entry in matching:
+            self.assertIsNotNone(entry[3], "filter must be module-scoped")
+            self.assertIn("dhanhq", entry[3].pattern)
+
+    def test_filter_suppresses_only_the_sdk_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            # `simplefilter` wipes the global list inside this context, so
+            # re-install the master's filter in front of an "always" baseline
+            # -- the same precedence it has in the real process.
+            warnings.simplefilter("always")
+            warnings.filterwarnings(
+                "ignore",
+                message=r"datetime\.datetime\.utcfromtimestamp\(\) is deprecated",
+                category=DeprecationWarning,
+                module=r"dhanhq\.marketfeed",
+            )
+            sdk_message = (
+                "datetime.datetime.utcfromtimestamp() is deprecated and "
+                "scheduled for removal in a future version. Use timezone-aware "
+                "objects to represent datetimes in UTC: "
+                "datetime.datetime.fromtimestamp(timestamp, datetime.UTC)."
+            )
+            # The exact warning the SDK's utc_time helper triggers ...
+            warnings.warn_explicit(
+                sdk_message,
+                DeprecationWarning,
+                filename="dhanhq/marketfeed.py",
+                lineno=523,
+                module="dhanhq.marketfeed",
+            )
+            # ... the same message from ANY other module must stay visible ...
+            warnings.warn_explicit(
+                sdk_message,
+                DeprecationWarning,
+                filename="somewhere/else.py",
+                lineno=1,
+                module="somewhere.else",
+            )
+            # ... and a different deprecation from the SDK module must too.
+            warnings.warn_explicit(
+                "some other deprecation",
+                DeprecationWarning,
+                filename="dhanhq/marketfeed.py",
+                lineno=1,
+                module="dhanhq.marketfeed",
+            )
+        messages = [str(item.message) for item in caught]
+        self.assertEqual(len(messages), 2, messages)
+        self.assertIn(sdk_message, messages)
+        self.assertIn("some other deprecation", messages)
 
 
 # =============================================================================

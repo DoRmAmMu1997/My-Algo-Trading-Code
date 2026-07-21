@@ -1091,3 +1091,90 @@ overnight study — it is not actionable for it. (The reflection coach in
 - `RETAIL_POSITIONING`: momentum requirement added to the CLOSING-POINT HOLD TEST's
   "BROKE it and held beyond" arm (self-correction to v3l).
 - Test marker: `test_system_prompt_has_v3n_closed_chart_knowledge`.
+
+## Video addendum - 20-21 Jul flush-day follow + solo-leader veto (v3o)
+
+> Sources (Hindi auto-transcripts from the transcript panel):
+> - `IrOy9cExWd8` (19 Jul 2026 evening, "Prediction For 20 JULY 2026", full transcript)
+> - `9_eSvyc2VFE` (20 Jul 2026, "Live Bank Nifty Option Trading", full transcript)
+> - `0HnoI5CMaFE` (21 Jul 2026, "Live Bank Nifty Option Trading", full transcript)
+> - `xrficoYHDSE` (20 Jul 2026 evening, "Prediction For 21 JULY 2026") — the transcript
+>   panel NEVER populated on this one clip (hidden across a reload, a resize+reload,
+>   and a fresh tab, while the same recipe worked on the other three the same hour).
+>   Its plan is reconstructed from IH's own verbatim recap inside the 21 Jul live
+>   session ("we had kept a simple plan: gap-up → positive side, gap-down → negative
+>   side, flat → the market first adds buyers, then may fall") plus a viewer comment
+>   corroborating the flat/sell lean. Treated as secondary, clearly-flagged sourcing.
+>
+> Cross-checked against journal rows 23-24 (2026-07-20) and 25-27 (2026-07-21).
+
+Session summaries:
+- **20 Jul (WIN):** news-driven HUGE gap-down against the prior positive week. His
+  pre-open plan explicitly did NOT apply ("if it falls directly, no plan can be made")
+  — so he waited for the open, watched the first momentum, read the gap-down + negative
+  news as GREED recruiting fresh current-session sellers, and bought CALLs for the
+  seller-flush retracement near the closing-price/round-number confluence. Booked the
+  recovery. He named the alternative regime honestly: "when the market has to make a
+  1000-2000 point move it keeps falling without retracement — if that's this market,
+  we take the loss." Textbook EXISTING knowledge (current-session trap reset, AVERAGING
+  TRAP mechanism, huge-gap rule with strict loss limit).
+- **21 Jul (LOSS):** flat open after the both-ways 20 Jul. BankNIFTY started moving
+  first and he entered CALLs QUICKLY on the first push ("we made the trade a bit early
+  ... because BankNIFTY is where our position is biggest"). NIFTY/Sensex never crossed
+  their closing points; BNF retraced through 58,000; he cut at his limit. Self-diagnosis:
+  "the greed trap is exactly what caught US — I trusted BankNIFTY too much; I thought
+  NIFTY and Sensex would stay mildly negative while BNF gave the momentum, but BNF came
+  down too."
+
+**Agent vs IH (the first days the comparison flips):**
+
+| Day | IH | Agent |
+|---|---|---|
+| 20 Jul | WIN (call basket on the seller flush) | 2 trades, net **-Rs.946** |
+| 21 Jul | LOSS (early flat-open long) | 3 SHORTS, net **+Rs.5,090** |
+
+- 20 Jul row 23: the agent had the RIGHT direction (hammer-reversal LONG at 09:26) but
+  exited after 56 seconds with `exit_reason: "placeholder"` — un-auditable — then
+  2.5 minutes later FLIPPED short (row 24, basket -Rs.711). That flip is precisely the
+  v3m losing-side flip ban; the rule merged to main on 17 Jul but the running build
+  may not have carried it yet. Evidence FOR the rule, nothing new to encode.
+- 21 Jul: the agent was short all day and its row-25 premise — "the operator's
+  constructed trap catching the breakout-chasing longs recruited by the sharp recovery
+  leg" — is LITERALLY the trap IH fell into as one of those early longs. The BankNIFTY
+  mirror legs printed most of the basket profit as BNF broke 58,000. First clear
+  agent-beats-IH day; credit to existing trap-construction knowledge, not luck of
+  direction alone (all three entries had confirmed patterns + aligned cross-index).
+- **Journal-fidelity note:** rows 23 and 27 carry `exit_reason: "placeholder"` on real
+  closed trades — a SECOND variant of the journaling gap (the first was the timeout
+  placeholder on 2026-07-15 row 20). Already tracked as a spawned fix task; recorded
+  here for provenance.
+
+**Net-new method distilled:**
+- BOTH-WAYS FLUSH DAY → FOLLOW THE OPENING: a second, distinct way a day ends with
+  nobody seated. After a VIOLENT both-ways session (big gap + real momentum in both
+  directions) nobody holds overnight — but unlike the thin small-momentum day, there
+  is nothing to fade: no side is being "rewarded" against a held position. The plan
+  collapses to "as the opening, so the plan" (gap-up → buy-side, gap-down → sell-side,
+  flat → the market must RECRUIT a crowd before it can move against them, so the
+  flat-open first push is the recruitment bait — do not chase it). Distinguisher vs
+  GIFT-GAP: ask WHY nobody is seated — thin → fade the gap; flushed → follow the
+  opening type. (20 Jul evening prediction + IH's own 21 Jul recap; the flat-branch
+  bait is exactly what caught him on 21 Jul.)
+- SOLO-LEADER VETO (clause on the GAP-SIZE ASYMMETRY entry tell): "BankNIFTY moving
+  FIRST" is void as an entry tell when the other TWO indices sit capped below their
+  own closing points — a lone leader against a capped majority is suspect; the capped
+  indices are the honest read (divergence-fails, two holders vs one breaker). Wait for
+  at least one other index to reclaim its closing point. (IH's 21 Jul loss diagnosis.)
+
+**Confirmed but deliberately NOT re-encoded (already present):** the pre-open
+no-plan branch ("if it falls directly, no plan can be made" = DECISION_RULES #8);
+small-quantity/trickle buyers + holiday booking → not huntable (MULTI-DAY
+ACCUMULATION + WEEKEND/HOLIDAY CARRY-RISK); the current-session seller-flush call
+trade (CURRENT-SESSION TRAP RESET + AVERAGING TRAP + huge-gap loss-limit rule); and
+the 1000-2000-point one-way regime caveat (already inside the HUGE-gap rule).
+
+**Knowledge changes (v3o, all prose):**
+- `RETAIL_POSITIONING`: BOTH-WAYS FLUSH DAY → FOLLOW THE OPENING (after GIFT-GAP,
+  which it disambiguates).
+- `BNF_SPECIFIC`: SOLO-LEADER VETO clause on the leader-moves-first entry tell.
+- Test marker: `test_system_prompt_has_v3o_flush_day_and_solo_leader_knowledge`.

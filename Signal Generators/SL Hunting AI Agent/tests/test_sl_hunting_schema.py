@@ -330,3 +330,25 @@ def test_system_prompt_has_v3n_closed_chart_knowledge():
     assert "buyers are never" in prompt
     # The v3l correction: break-and-held only seats a crowd if momentum followed.
     assert "produced actual MOMENTUM" in prompt
+
+
+def test_system_prompt_has_v3o_flush_day_and_solo_leader_knowledge():
+    """v3o: 20-21 Jul sessions (IH won the news gap-down, lost the flat-open long).
+
+    - BOTH-WAYS FLUSH DAY: the second way a day ends with nobody seated — after a
+      violent both-ways session there is nothing to fade; follow the opening type,
+      and treat the flat-open first push as recruitment bait (it caught IH on 21 Jul).
+    - SOLO-LEADER VETO: BankNIFTY-moving-first is void as an entry tell when the other
+      two indices are capped below their closing points (IH: "I trusted BankNIFTY too
+      much").
+    """
+    prompt = build_system_prompt()
+    assert "BOTH-WAYS FLUSH DAY" in prompt
+    # The plan collapse and the flat-branch bait, wrap-independent.
+    assert "as the opening, so the plan" in prompt
+    assert "recruitment bait" in prompt
+    # The disambiguation question against GIFT-GAP.
+    assert "WHY nobody is seated" in prompt
+    assert "SOLO-LEADER VETO" in prompt
+    # The veto's release condition.
+    assert "reclaim its closing point" in prompt

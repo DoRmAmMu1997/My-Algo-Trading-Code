@@ -25,6 +25,9 @@ SAFETY_THRESHOLDS = {
     "Dependencies/startup_exposure.py": 90.0,
     "Dependencies/trading_lifecycle.py": 90.0,
     "Dependencies/market_data_health.py": 90.0,
+    # Websocket tick-to-bar helpers feed the same live frames/LTP cache as the
+    # REST producer, so they carry the same data-safety budget.
+    "Dependencies/tick_bar_builder.py": 90.0,
     "Dependencies/next_open_entry.py": 90.0,
     "Dependencies/risk_sizing.py": 90.0,
     # MAT-108's redaction layer is data-safety code: a regression here leaks

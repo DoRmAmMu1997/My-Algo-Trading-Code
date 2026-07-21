@@ -212,6 +212,7 @@ import sys
 import threading
 import time
 import uuid
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -231,7 +232,9 @@ import requests
 # share one authenticated session. `DhanLogin` is the auth helper class we
 # use only for `user_profile(...)` startup validation -- the OAuth dance
 # itself happens in `Dependencies/dhan_token_setup.py`, not here.
-from dhanhq import DhanContext, DhanLogin, dhanhq
+# `MarketFeed` is the SDK's websocket live-feed client; it is only exercised
+# when MARKET_DATA_SOURCE=WEBSOCKET selects the tick-driven producer below.
+from dhanhq import DhanContext, DhanLogin, MarketFeed, dhanhq
 
 from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
 from Dependencies.execution_ledger import (
@@ -255,6 +258,15 @@ from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
 )
+from Dependencies.tick_bar_builder import (
+    SEGMENT_NAME_TO_FEED_CODE,
+    TickBarAggregator,
+    divergence_stats,
+    merge_official_and_tick_frames,
+    packet_confirms_subscription,
+    parse_marketfeed_packet,
+    resolve_tick_minute,
+)
 from Dependencies.trading_lifecycle import LifecycleState, TradingLifecycle
 
 try:
@@ -264,6 +276,25 @@ try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional dependency
     load_dotenv = None
+
+# dhanhq 2.2.0's marketfeed formats every tick's exchange timestamp through
+# `datetime.utcfromtimestamp()` (its `utc_time` helper), which Python 3.12+
+# deprecated -- so a live websocket session sprays an unactionable
+# DeprecationWarning onto the operator's console for every feed connection.
+# The SDK version is policy-pinned (DEPS-001 in requirements.txt), so until a
+# deliberate bump moves past that call we silence EXACTLY that message from
+# EXACTLY that module: deprecation warnings raised by our own code, or by any
+# other library, still reach the console.  The warning fires per tick at
+# runtime (never at import), so installing the filter here -- at module load,
+# long before any feed thread starts -- covers every code path; and because
+# `filterwarnings` PREPENDS, it also wins over any blanket -W /
+# PYTHONWARNINGS setting on the host.
+warnings.filterwarnings(
+    "ignore",
+    message=r"datetime\.datetime\.utcfromtimestamp\(\) is deprecated",
+    category=DeprecationWarning,
+    module=r"dhanhq\.marketfeed",
+)
 
 
 # =============================================================================
@@ -420,7 +451,29 @@ UNDERLYING = _env_str("UNDERLYING", "NIFTY").upper().strip() or "NIFTY"
 MIN_BARS = _env_int("MIN_BARS", 120)
 
 # How often the fetcher re-polls 1-minute OHLC and the LTP batch (seconds).
+# In WEBSOCKET mode the same knob sets the health-publish cadence instead, so
+# the MarketDataHealth clocks behave identically under either producer.
 FETCH_POLL_SECONDS = _env_int("FETCH_POLL_SECONDS", 2)
+
+# Which producer feeds the shared market data store.
+#   REST      -> CentralMarketDataFetcher (poll intraday_minute_data + ticker_data).
+#   WEBSOCKET -> WebSocketMarketDataFetcher (Dhan marketfeed ticks build the bars
+#                and LTPs; REST is kept for warmup history and the per-minute
+#                true-up against Dhan's official candles).
+# Requires the paid Dhan Data API subscription in WEBSOCKET mode. Any value
+# other than exactly "WEBSOCKET" FAILS CLOSED to the battle-tested REST poller.
+MARKET_DATA_SOURCE = _env_str("MARKET_DATA_SOURCE", "REST").upper().strip() or "REST"
+
+# Seconds past each minute rollover before the websocket producer trues-up the
+# just-closed candle from REST (Dhan's official candle can lag a few seconds).
+WS_TRUEUP_DELAY_SECONDS = _env_float("WS_TRUEUP_DELAY_SECONDS", 5.0)
+
+# How recently (seconds) the websocket must have delivered ANY packet for the
+# connection to count as alive. While alive, confirmed-subscribed instruments
+# keep their cached LTPs fresh for the health gate even when they simply have
+# not traded (a quiet far-OTM leg is not a broken feed); once the socket goes
+# silent past this window the existing 10s/30s staleness policy takes over.
+WS_CONN_LIVENESS_SECONDS = _env_float("WS_CONN_LIVENESS_SECONDS", 5.0)
 
 # Bounded join timeout for each thread on shutdown.
 SHUTDOWN_JOIN_SECONDS = _env_float("SHUTDOWN_JOIN_SECONDS", 6.0)
@@ -1867,6 +1920,26 @@ class SharedMarketDataStore:
                     fetched_at=now,
                 )
 
+    def touch_ltp_freshness(self, keys: set[tuple[str, int]]) -> None:
+        """
+        Re-stamp already-cached LTPs as fresh (websocket health support).
+
+        A tick feed only delivers a price when an instrument TRADES, so a
+        quiet option leg would look "stale" to the health gate even though
+        the feed is fine. While the websocket connection is alive, the
+        producer touches every confirmed-subscribed key so its last trade
+        price keeps counting as current. Only keys that already hold a
+        positive price are touched -- this can never invent a price.
+        """
+        if not keys:
+            return
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        with self._lock:
+            for key in keys:
+                snapshot = self._ltp_snapshots.get(key)
+                if snapshot is not None and snapshot.ltp > 0:
+                    snapshot.fetched_at = now
+
     def get_ltp_by_secid(
         self,
         segment: str,
@@ -2305,6 +2378,19 @@ class DhanBrokerClient:
                 if price > 0:
                     result[(str(segment), int(sec_id))] = float(price)
         return result
+
+    def make_market_feed(self, instruments: list[tuple[int, str, int]]) -> MarketFeed:
+        """
+        Construct a FRESH marketfeed websocket client for the given
+        instruments (tuples of ``(segment_code, "security_id", request_code)``).
+
+        Must be called from the thread that will drive the feed: the SDK binds
+        a brand-new asyncio event loop to the CONSTRUCTING thread, so building
+        it elsewhere leaves `run_forever`/`get_data` pointed at the wrong loop.
+        A fresh instance per connection attempt also means a reconnect never
+        depends on SDK-internal state from the dead connection.
+        """
+        return MarketFeed(self._dhan_context, instruments, version="v2")
 
     def fetch_option_chain(
         self,
@@ -3188,6 +3274,492 @@ class CentralMarketDataFetcher(threading.Thread):
                 )
             self.stop_event.wait(FETCH_POLL_SECONDS)
         self.log.info("Central market data fetcher stopped.")
+
+
+class WebSocketMarketDataFetcher(threading.Thread):
+    """
+    Producer thread: builds the same 1-minute frames and LTP cache as
+    `CentralMarketDataFetcher`, but from Dhan marketfeed websocket ticks
+    (MARKET_DATA_SOURCE=WEBSOCKET; needs the paid Data API subscription).
+
+    Two threads cooperate inside this producer:
+
+    * The SUPERVISOR is this thread's own `run()` loop (wakes twice a second,
+      never blocks on the socket). It seeds warmup history from REST, keeps
+      the feed's subscriptions in sync with the workers' option legs,
+      publishes the merged frame into the store, trues-up completed candles
+      from REST once per minute, and records market-data health on the same
+      FETCH_POLL_SECONDS cadence as the REST producer.
+    * The PUMP is an inner daemon thread that owns the websocket: it builds a
+      FRESH `MarketFeed` per connection attempt (see `make_market_feed`),
+      then loops `get_data()`, feeding every price tick into the LTP cache
+      and every live NIFTY index tick into the `TickBarAggregator`. On any
+      socket error it reconnects with exponential backoff, re-subscribing
+      the full desired instrument set by construction.
+
+    Bar semantics: the published frame is always
+    ``merge_official_and_tick_frames(official REST history, tick bars)`` --
+    official candles win for completed minutes, the forming minute is always
+    tick-built, and every publish still goes through `store.update()` and its
+    `validate_ohlc_frame` net. Consumers are untouched: same store, same
+    snapshot shape, same health gates.
+    """
+
+    # Supervisor wake interval; also bounds shutdown latency.
+    SUPERVISOR_CYCLE_SECONDS = 0.5
+    # Throttle for intra-minute republishes (a rollover always publishes).
+    PUBLISH_MIN_INTERVAL_SECONDS = 1.0
+    # Warmup REST retry cadence (startup cannot proceed without history:
+    # MIN_BARS plus the prior-day candles the CPR strategies pivot on).
+    WARMUP_RETRY_SECONDS = 30.0
+    # Reconnect backoff bounds for the pump.
+    RECONNECT_BACKOFF_INITIAL_SECONDS = 1.0
+    RECONNECT_BACKOFF_MAX_SECONDS = 30.0
+    # True-up divergence above this many index points logs a WARNING.
+    TRUEUP_DIVERGENCE_WARN_POINTS = 1.0
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+    ):
+        # Same thread name as the REST producer so logs/joins stay uniform.
+        super().__init__(name="MarketDataFetcher", daemon=True)
+        self.store = store
+        self.stop_event = stop_event
+        self.broker = broker
+        self.log = logging.getLogger(f"{LOGGER_NAME}.ws_fetcher")
+
+        # Tick-built bars (pump writes, supervisor reads; internally locked).
+        self.aggregator = TickBarAggregator()
+        # Latest REST history: warmup seed, then refreshed by every true-up.
+        # Supervisor-owned; the pump never touches it.
+        self.official_frame: pd.DataFrame = pd.DataFrame()
+
+        # Connection state shared between pump and supervisor.
+        self._feed_lock = threading.Lock()
+        self._feed: MarketFeed | None = None
+        self._subscribed_keys: set[tuple[str, int]] = set()
+        self._confirmed_keys: set[tuple[str, int]] = set()
+        self._last_packet_monotonic: float | None = None
+
+        # Single-writer flags (GIL-atomic hand-offs between the two threads).
+        self._rollover_pending = False
+        self._trueup_reason: str | None = None
+
+        # Supervisor-local cadence/bookkeeping state.
+        self._ohlc_ok = True
+        self._last_published_signature: int | None = None
+        self._last_publish_monotonic = 0.0
+        self._last_health_monotonic: float | None = None
+        self._last_trueup_wall_minute: pd.Timestamp | None = None
+        self._signature_at_last_trueup: int | None = None
+        self._warned_unknown_segments: set[str] = set()
+        self.last_logged_candle_ts: pd.Timestamp | None = None
+
+    # ------------------------------------------------------------------
+    # Supervisor side
+    # ------------------------------------------------------------------
+    def run(self) -> None:
+        self.log.info("Starting websocket market data fetcher (dhanhq marketfeed backend).")
+        self.store.begin_market_data_monitoring()
+        if not self._warmup_official_history():
+            self.log.info("Websocket market data fetcher stopped before warmup completed.")
+            return
+        pump = threading.Thread(
+            target=self._pump_main, name="MarketDataFeedPump", daemon=True
+        )
+        pump.start()
+        while not self.stop_event.is_set():
+            try:
+                self._sync_subscriptions()
+                self._publish_frame_if_changed()
+                self._maybe_run_true_up()
+                self._record_health_if_due()
+            except Exception as exc:
+                # The supervisor must never die mid-session; log and continue.
+                self.log.exception("Websocket supervisor cycle error: %s", exc)
+            self.stop_event.wait(self.SUPERVISOR_CYCLE_SECONDS)
+        self._close_feed()
+        self.log.info("Websocket market data fetcher stopped.")
+
+    def _warmup_official_history(self) -> bool:
+        """
+        Seed the store with REST history before any tick arrives.
+
+        Strategies need MIN_BARS of 1-minute history plus the prior sessions
+        (CPR pivots), which ticks alone can never provide. Retries until it
+        succeeds; returns False only when shutdown interrupts the warmup.
+        """
+        index_key = (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
+        while not self.stop_event.is_set():
+            try:
+                frame = self.broker.fetch_index_1m_ohlc(
+                    security_id=NIFTY_INDEX_SECURITY_ID,
+                    exchange_segment=NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    instrument_type=NIFTY_INDEX_INSTRUMENT_TYPE,
+                )
+                self.store.update("1", frame)
+                self.official_frame = frame
+                self.log.info("Warmup history loaded | Rows=%s", len(frame))
+                return True
+            except Exception as exc:
+                self.log.warning(
+                    "Warmup history fetch failed (retry in %.0fs): %s",
+                    self.WARMUP_RETRY_SECONDS,
+                    exc,
+                )
+                # Keep the health clock honest while we cannot serve data.
+                self.store.record_market_data_refresh(
+                    ohlc_ok=False, required_ltp_keys={index_key}
+                )
+                self.stop_event.wait(self.WARMUP_RETRY_SECONDS)
+        return False
+
+    def _desired_instruments(self) -> dict[tuple[str, int], tuple[int, str, int]]:
+        """
+        The full instrument set the feed should carry right now:
+        the NIFTY spot index plus every worker-registered option leg, as
+        ``{(segment, sec_id): (feed_code, "sec_id", Ticker)}``. Legs on a
+        segment the marketfeed cannot carry are skipped (logged once); the
+        worker-side one-shot REST fallback still prices them.
+        """
+        desired: dict[tuple[str, int], tuple[int, str, int]] = {}
+        candidates: list[tuple[str, int]] = [
+            (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
+        ]
+        candidates.extend(
+            (str(sub.exchange_segment), int(sub.security_id))
+            for sub in self.store.snapshot_option_subscriptions()
+        )
+        for segment, security_id in candidates:
+            feed_code = SEGMENT_NAME_TO_FEED_CODE.get(segment)
+            if feed_code is None:
+                if segment not in self._warned_unknown_segments:
+                    self._warned_unknown_segments.add(segment)
+                    self.log.warning(
+                        "Segment %s has no marketfeed code; leg %s stays on the "
+                        "worker-side REST fallback.",
+                        segment,
+                        security_id,
+                    )
+                continue
+            desired[(segment, security_id)] = (
+                feed_code,
+                str(security_id),
+                MarketFeed.Ticker,
+            )
+        return desired
+
+    def _sync_subscriptions(self) -> None:
+        """Diff worker subscriptions against the live feed and add/remove legs."""
+        desired = self._desired_instruments()
+        with self._feed_lock:
+            feed = self._feed
+            subscribed = set(self._subscribed_keys)
+        if feed is None:
+            # Pump is (re)connecting; it will subscribe the full desired set.
+            return
+        index_key = (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
+        to_add_keys = set(desired) - subscribed
+        to_remove_keys = subscribed - set(desired) - {index_key}
+        if not to_add_keys and not to_remove_keys:
+            return
+        try:
+            if to_add_keys:
+                feed.subscribe_symbols([desired[key] for key in sorted(to_add_keys)])
+            if to_remove_keys:
+                feed.unsubscribe_symbols(
+                    [
+                        (SEGMENT_NAME_TO_FEED_CODE[segment], str(sec_id), MarketFeed.Ticker)
+                        for segment, sec_id in sorted(to_remove_keys)
+                        if segment in SEGMENT_NAME_TO_FEED_CODE
+                    ]
+                )
+        except Exception as exc:
+            # A failed sync self-heals: the next reconnect rebuilds the feed
+            # from the full desired set.
+            self.log.warning("Subscription sync failed (reconnect will heal): %s", exc)
+            return
+        with self._feed_lock:
+            if self._feed is feed:
+                self._subscribed_keys = (subscribed - to_remove_keys) | to_add_keys
+                self._confirmed_keys -= to_remove_keys
+        self.log.info(
+            "Feed subscriptions synced | added=%s | removed=%s | total=%s",
+            len(to_add_keys),
+            len(to_remove_keys),
+            len((subscribed - to_remove_keys) | to_add_keys),
+        )
+
+    def _publish_frame_if_changed(self, force: bool = False) -> None:
+        """
+        Publish official+tick merged bars into the store when they changed.
+
+        Intra-minute republishes are throttled to PUBLISH_MIN_INTERVAL_SECONDS
+        so `validate_ohlc_frame` does not re-walk the whole window on every
+        tick; a minute rollover always publishes immediately so workers see a
+        completed candle as fast as possible.
+        """
+        signature = self.aggregator.signature()
+        rollover = self._rollover_pending
+        if not force:
+            if signature == self._last_published_signature:
+                return
+            if (
+                not rollover
+                and time.monotonic() - self._last_publish_monotonic
+                < self.PUBLISH_MIN_INTERVAL_SECONDS
+            ):
+                return
+        self._rollover_pending = False
+        frame = merge_official_and_tick_frames(
+            self.official_frame, self.aggregator.tick_bars_frame()
+        )
+        if frame.empty:
+            return
+        try:
+            snapshot = self.store.update("1", frame)
+            self._ohlc_ok = True
+            if self.last_logged_candle_ts != snapshot.source_candle_ts:
+                self.last_logged_candle_ts = snapshot.source_candle_ts
+                self.log.info(
+                    "Published frame | Rows=%s | LastCandle=%s",
+                    len(frame),
+                    snapshot.source_candle_ts,
+                )
+        except Exception as exc:
+            # Invalid merge result: the last-good snapshot stays served.
+            self._ohlc_ok = False
+            self.log.exception("Failed to publish websocket frame: %s", exc)
+        self._last_published_signature = signature
+        self._last_publish_monotonic = time.monotonic()
+
+    def _request_true_up(self, reason: str) -> None:
+        """Ask the supervisor for an immediate true-up (connect/reconnect)."""
+        self._trueup_reason = reason
+
+    def _maybe_run_true_up(self, now_ist: datetime | None = None) -> None:
+        """
+        Run the per-minute REST true-up when due.
+
+        Scheduled once per wall minute, WS_TRUEUP_DELAY_SECONDS past the
+        rollover (Dhan's official candle for the just-closed minute lags a
+        few seconds), and only while ticks are actually arriving -- overnight
+        the aggregator is idle, so no REST calls are wasted. A requested
+        true-up (reconnect gap-backfill) bypasses the schedule.
+        """
+        if now_ist is None:
+            now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        reason = self._trueup_reason
+        signature = self.aggregator.signature()
+        if reason is None:
+            if signature == self._signature_at_last_trueup:
+                return
+            current_minute = pd.Timestamp(now_ist).floor("min")
+            if self._last_trueup_wall_minute == current_minute:
+                return
+            if float(now_ist.second) < WS_TRUEUP_DELAY_SECONDS:
+                return
+            reason = "minute-close"
+        self._trueup_reason = None
+        self._last_trueup_wall_minute = pd.Timestamp(now_ist).floor("min")
+        self._signature_at_last_trueup = signature
+        self._run_true_up(reason, now_ist=now_ist)
+
+    def _run_true_up(self, reason: str, now_ist: datetime | None = None) -> None:
+        """
+        Replace completed candles with Dhan's official ones (tick bars stay
+        for anything REST does not cover, most importantly the forming
+        minute). A REST failure keeps serving tick bars and retries on the
+        next minute -- the tick feed remains the live source of truth.
+        """
+        if now_ist is None:
+            now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        try:
+            official = self.broker.fetch_index_1m_ohlc(
+                security_id=NIFTY_INDEX_SECURITY_ID,
+                exchange_segment=NIFTY_INDEX_EXCHANGE_SEGMENT,
+                instrument_type=NIFTY_INDEX_INSTRUMENT_TYPE,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "True-up REST fetch failed (%s); keeping tick bars: %s", reason, exc
+            )
+            return
+        if official is None or official.empty:
+            self.log.warning("True-up (%s) returned no official candles.", reason)
+            return
+        stats = divergence_stats(
+            official,
+            self.aggregator.tick_bars_frame(),
+            forming_minute=pd.Timestamp(now_ist).floor("min"),
+        )
+        self.official_frame = official
+        self._publish_frame_if_changed(force=True)
+        # Drop every tick bar the official history now covers. The merge would
+        # ignore them anyway (official wins), but keeping them makes the NEXT
+        # divergence report re-count this cycle's mismatches forever -- the
+        # stats above must describe only the minutes trued-up right now.
+        newest_official = pd.Timestamp(official["timestamp"].max())
+        self.aggregator.prune_older_than(newest_official + pd.Timedelta(minutes=1))
+        log_fn = (
+            self.log.warning
+            if stats.mismatched and stats.max_abs_delta > self.TRUEUP_DIVERGENCE_WARN_POINTS
+            else self.log.info
+        )
+        log_fn(
+            "True-up (%s) | OfficialRows=%s | Overlap=%s | Mismatched=%s | MaxAbsDelta=%.2f",
+            reason,
+            len(official),
+            stats.overlapping,
+            stats.mismatched,
+            stats.max_abs_delta,
+        )
+
+    def _record_health_if_due(self) -> None:
+        """
+        Publish producer health on the FETCH_POLL_SECONDS cadence.
+
+        Payload semantics match the REST producer exactly, so every
+        MarketDataHealth clock (10s LTP, 150s bar, 30s liquidation, 3-refresh
+        recovery) behaves identically. The only websocket-specific twist:
+        while the connection is ALIVE, confirmed-subscribed keys get their
+        cached LTPs re-stamped first -- no trade does not mean no feed. A
+        silent socket stops the touching, so everything still goes stale on
+        the existing clocks (fail-closed).
+        """
+        now_monotonic = time.monotonic()
+        if (
+            self._last_health_monotonic is not None
+            and now_monotonic - self._last_health_monotonic < FETCH_POLL_SECONDS
+        ):
+            return
+        self._last_health_monotonic = now_monotonic
+        required_keys = {(NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)}
+        required_keys.update(
+            (str(sub.exchange_segment), int(sub.security_id))
+            for sub in self.store.snapshot_option_subscriptions()
+        )
+        with self._feed_lock:
+            alive = (
+                self._last_packet_monotonic is not None
+                and now_monotonic - self._last_packet_monotonic
+                <= WS_CONN_LIVENESS_SECONDS
+            )
+            confirmed = set(self._confirmed_keys)
+        if alive:
+            touchable = required_keys & confirmed
+            if touchable:
+                self.store.touch_ltp_freshness(touchable)
+        health = self.store.record_market_data_refresh(
+            ohlc_ok=self._ohlc_ok, required_ltp_keys=required_keys
+        )
+        if health.reasons:
+            self.log.warning(
+                "Market data unhealthy | unhealthy_for=%.1fs | %s",
+                health.unhealthy_seconds,
+                "; ".join(health.reasons),
+            )
+
+    def _close_feed(self) -> None:
+        """Best-effort websocket shutdown; daemon threads are the backstop."""
+        with self._feed_lock:
+            feed = self._feed
+        if feed is None:
+            return
+        try:
+            feed.close_connection()
+        except Exception as exc:
+            # Cross-thread asyncio teardown can race inside the SDK; the pump
+            # is a daemon thread and main() joins with a bounded timeout.
+            self.log.debug("close_connection failed during shutdown: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Pump side (runs in its own daemon thread)
+    # ------------------------------------------------------------------
+    def _pump_main(self) -> None:
+        """Own the websocket: connect, receive, reconnect with backoff."""
+        backoff = self.RECONNECT_BACKOFF_INITIAL_SECONDS
+        while not self.stop_event.is_set():
+            try:
+                desired = self._desired_instruments()
+                feed = self.broker.make_market_feed(list(desired.values()))
+                with self._feed_lock:
+                    self._feed = feed
+                    self._subscribed_keys = set(desired)
+                    self._confirmed_keys = set()
+                feed.run_forever()
+                self.log.info(
+                    "Websocket feed connected | Instruments=%s", len(desired)
+                )
+                backoff = self.RECONNECT_BACKOFF_INITIAL_SECONDS
+                # A (re)connect immediately trues-up from REST: that single
+                # full-window merge IS the gap backfill for missed ticks.
+                self._request_true_up("reconnect")
+                while not self.stop_event.is_set():
+                    self._handle_packet(feed.get_data())
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    self.log.warning(
+                        "Websocket feed error (reconnect in %.0fs): %s", backoff, exc
+                    )
+            finally:
+                with self._feed_lock:
+                    self._feed = None
+            if self.stop_event.is_set():
+                break
+            self.stop_event.wait(backoff)
+            backoff = min(backoff * 2.0, self.RECONNECT_BACKOFF_MAX_SECONDS)
+        self.log.info("Websocket pump stopped.")
+
+    def _handle_packet(self, packet: object, now_ist: datetime | None = None) -> None:
+        """
+        Process one raw `get_data()` payload.
+
+        Every price tick refreshes the LTP cache (index and option legs
+        alike). Only live, in-session NIFTY index ticks become bars -- the
+        stale snapshot Dhan replays on subscribe and after-hours index
+        recomputations are cached as LTPs but never turned into candles.
+        """
+        now_monotonic = time.monotonic()
+        if now_ist is None:
+            now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        with self._feed_lock:
+            self._last_packet_monotonic = now_monotonic
+            confirmed_key = packet_confirms_subscription(packet)
+            if confirmed_key is not None:
+                self._confirmed_keys.add(confirmed_key)
+        event = parse_marketfeed_packet(packet, now_ist)
+        if event is None:
+            return
+        self.store.update_ltp_map({(event.segment, event.security_id): event.ltp})
+        if (
+            event.segment == NIFTY_INDEX_EXCHANGE_SEGMENT
+            and event.security_id == NIFTY_INDEX_SECURITY_ID
+        ):
+            minute_ts = resolve_tick_minute(event.ltt_raw, now_ist)
+            if minute_ts is not None and self.aggregator.add_tick(minute_ts, event.ltp):
+                self._rollover_pending = True
+
+
+def _select_market_data_fetcher_class() -> type[threading.Thread]:
+    """
+    Pick the market data producer from MARKET_DATA_SOURCE.
+
+    Only the exact value "WEBSOCKET" selects the tick-driven producer; every
+    other value (including typos) FAILS CLOSED to the REST poller, mirroring
+    how LIVE_BROKER treats unknown values.
+    """
+    if MARKET_DATA_SOURCE == "WEBSOCKET":
+        return WebSocketMarketDataFetcher
+    if MARKET_DATA_SOURCE != "REST":
+        logging.getLogger(LOGGER_NAME).warning(
+            "Unknown MARKET_DATA_SOURCE=%r -- failing closed to REST polling.",
+            MARKET_DATA_SOURCE,
+        )
+    return CentralMarketDataFetcher
 
 
 # =============================================================================
@@ -13501,8 +14073,14 @@ def main() -> None:
 
     # One producer (fetcher) + 26 consumers (22 ATM single-leg + 2 Hedged +
     # 1 Delta-0.2 + 1 Long Strangle), plus the optional SL Hunting AI agent
-    # (appended below when SL_HUNTING_ENABLED).
-    fetcher = CentralMarketDataFetcher(store, stop_event, broker)
+    # (appended below when SL_HUNTING_ENABLED). The producer class comes from
+    # MARKET_DATA_SOURCE: REST polling (default) or the Dhan websocket feed;
+    # unknown values fail closed to REST inside the selector.
+    fetcher_cls = _select_market_data_fetcher_class()
+    logger.info(
+        "Market data source: %s -> %s", MARKET_DATA_SOURCE, fetcher_cls.__name__
+    )
+    fetcher = fetcher_cls(store, stop_event, broker)
 
     # ----- ATM single-leg family: each BUYS the ATM CE (LONG) / PE (SHORT) of the
     #       next-next expiry. All of these subclass AtmSingleLegStrategyWorker. -----

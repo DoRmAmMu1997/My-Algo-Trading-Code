@@ -14,11 +14,12 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - The backtest files I used to backtest
 - The signal generators I created to generate signals
 - The main front test file which uses miltithreading to execute all strategies together
-- Live order execution to a real broker — selectable among **Kotak Neo**, **Shoonya (Finvasia)**, and **Flattrade Pi v2** — gated by a global kill-switch and per-strategy paper/live toggles (everything defaults to paper)
+- Live order execution to a real broker — selectable among **Kotak Neo**, **Shoonya (Finvasia)**, **Flattrade Pi v2**, and **Dhan** — gated by a global kill-switch and per-strategy paper/live toggles (everything defaults to paper)
 - Live Telegram alerts: the front-test master file can post every entry/exit (option instrument, lot size, entry/exit price, and P&L) to a Telegram group/channel
 - An **optional, opt-in LLM trading agent** — the "SL Hunting AI Agent" — a Claude agent that trades a discretionary price-action method on NIFTY options; off by default, paper unless explicitly enabled, and fail-soft (see Recent additions)
 
 # Recent additions
+- **Optional websocket market data producer — `MARKET_DATA_SOURCE=WEBSOCKET`.** The runner can now source its market data from Dhan's marketfeed websocket instead of REST polling (requires Dhan's paid Data API subscription; any other value of the flag fails closed to the default REST poller). Ticks build the 1-minute candles live — the forming minute updates in real time — and once per minute the completed candles are trued-up against Dhan's official REST candles (official wins; divergence is logged), so strategy bars converge to exactly what the backtests used. All LTPs (NIFTY spot plus every subscribed option leg, including multi-leg baskets: hedged pairs, Delta-0.2's four legs, strangle legs, the SL Hunting BankNIFTY mirror) stream from ticks in real time, with legs subscribed/unsubscribed dynamically as workers enter and exit. REST stays for warmup history and reconnect gap-backfill; API load drops from one full-window pull every 2-5s to ~1/minute. The market-data health gates (10s LTP / 150s bar / 30s liquidation) behave identically, with one tick-feed-aware twist: quiet-but-subscribed legs stay fresh only while the socket is demonstrably alive. Rollback is `MARKET_DATA_SOURCE=REST` + restart; the tick logic lives in `Dependencies/tick_bar_builder.py`.
 - **Per-strategy "off" switch — `<PREFIX>_VIRTUAL_TRADING`.** Every strategy now has a virtual (paper) toggle that **defaults to true**. Set it false to stop that strategy's worker thread from starting at all — so it does no paper trading (and, since the thread never runs, no live trading either). Unlike live trading there is **no** global master switch: the default is that everything runs, and you silence individual strategies. Lets you run just the strategies you want on a given day instead of the whole roster.
 - **Quality gates & CI.** A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs the full gate on every push/PR across Python 3.12 + 3.13: all repository suites, branch-coverage budgets, `pip-audit`, `compileall`, **Ruff**, **mypy** (scoped in `pyproject.toml`), **Bandit**, and pre-commit validation. Exact tooling lives in `requirements-dev.txt`.
 - **SL Hunting AI Agent — BankNIFTY mirror basket + newer knowledge (v3c–v3e).** The agent now trades Intraday Hunter's multi-index style: every NIFTY entry is mirrored with an **equal-lot BankNIFTY ATM** leg (`SL_HUNTING_BNF_MIRROR`, default true). The two legs are **tied for hard risk** (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's **premise independently** and can cut one alone via the EXIT `exit_leg` selector (`NIFTY` | `BNF` | `BOTH`). Entry stays NIFTY-only (the mirror copies it). Its knowledge also grew several distilled-from-video layers — a scoped **gap-up opening-drive**, a **2-week verbatim transcript sweep**, and a **live-day match** against the agent's own journal (details in `Signal Generators/SL Hunting AI Agent/README.md`).
@@ -46,7 +47,8 @@ You might have to adjust the import addresses from which the files are to be imp
     ├── dhan_token_setup.py                            # one-time DhanHQ OAuth token setup
     ├── Kotak API/                                     # kotak_execution.py + diagnose_kotak_symbol.py
     ├── Shoonya API/                                   # NorenApi.py + shoonya_execution.py + diagnose_shoonya_symbol.py
-    └── Flattrade API/                                 # flattrade_execution.py + diagnose_flattrade_symbol.py
+    ├── Flattrade API/                                 # flattrade_execution.py + diagnose_flattrade_symbol.py
+    └── Dhan API/                                      # dhan_execution.py + diagnose_dhan_symbol.py
 ```
 Each subfolder has its own `Readme.md` with the details.
 
@@ -92,7 +94,7 @@ Each subfolder has its own `Readme.md` with the details.
 6. (Optional) Live broker execution. Everything is paper by default. To place REAL orders, set in `Dependencies/.env`:
    ```
    LIVE_TRADING_ENABLED=true        # global kill-switch (default false)
-   LIVE_BROKER=KOTAK                # KOTAK, SHOONYA, or FLATTRADE
+   LIVE_BROKER=KOTAK                # KOTAK, SHOONYA, FLATTRADE, or DHAN
    RENKO_LIVE_TRADING=true          # flip the specific strategies you want live
    ```
    Then fill the selected broker's credential block. Flattrade needs `FLATTRADE_CLIENT_ID`, `FLATTRADE_API_KEY`, and `FLATTRADE_API_SECRET`; its optional `FLATTRADE_ACCESS_TOKEN` is validated when supplied, otherwise startup opens browser authorization and asks for the returned `request_code`. A strategy trades live only when `LIVE_TRADING_ENABLED` **and** its own `<PREFIX>_LIVE_TRADING` are both true. An entry falls back to paper only after a typed zero-fill `REJECTED`; `PARTIAL` or `UNKNOWN` means exposure may exist, freezes new live entries, and starts reconciliation. Check connectivity first with the read-only diagnostics — they can place a confirmation-gated round-trip (buy + auto square-off) test order via `--place-order`:
@@ -100,6 +102,7 @@ Each subfolder has its own `Readme.md` with the details.
    python "Dependencies/Kotak API/diagnose_kotak_symbol.py" CE 23950 --place-order
    python "Dependencies/Shoonya API/diagnose_shoonya_symbol.py" CE 23950 26JUN25 --place-order
    python "Dependencies/Flattrade API/diagnose_flattrade_symbol.py" CE 24150 14JUL26 --place-order
+   python "Dependencies/Dhan API/diagnose_dhan_symbol.py" CE 24150 14JUL26 --place-order
    ```
 
 # Command-line interface
@@ -111,7 +114,7 @@ Each subfolder has its own `Readme.md` with the details.
 | `backtest --strategy {renko,ema,heikin,cpr,profit-shooter,goldmine,money-machine}` | Backtest one strategy against a CSV | `python algo.py backtest --strategy renko --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"` |
 | `run` | Start the front-test master (paper by default; live per `.env`) | `python algo.py run` |
 | `setup-token` | One-time DhanHQ token setup (writes `.env`) | `python algo.py setup-token` |
-| `diagnose --broker {kotak,shoonya,flattrade}` | Read-only broker/symbol check (add `--place-order` for a test order) | `python algo.py diagnose --broker flattrade CE 24150 14JUL26` |
+| `diagnose --broker {kotak,shoonya,flattrade,dhan}` | Read-only broker/symbol check (add `--place-order` for a test order) | `python algo.py diagnose --broker flattrade CE 24150 14JUL26` |
 
 Run `python algo.py --help`, or `python algo.py <command> --help`, for the details.
 
