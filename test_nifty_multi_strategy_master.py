@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -7057,6 +7058,204 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
             "resolved MONEY_MACHINE_MAX_LOTS must be a positive integer",
             errors,
         )
+
+    def test_malformed_size_multiplier_blocks_live_trading(self):
+        """The multiplier scales lots, budget, cap AND max-loss together, so a
+        malformed one must REFUSE live rather than fall back to 1 and trade a
+        size the operator did not configure. (Paper still falls back to 1.)"""
+        worker = self._Worker("Renko")
+        for raw in ("0", "-1", "2.5", "26", "two"):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ, {"RENKO_SIZE_MULTIPLIER": raw}
+            ):
+                errors = master_file._live_config_errors(worker, "RENKO")
+
+            self.assertTrue(
+                any("RENKO_SIZE_MULTIPLIER" in error for error in errors),
+                f"{raw!r} must block live trading, got {errors}",
+            )
+
+    def test_valid_and_absent_size_multipliers_are_accepted_for_live(self):
+        worker = self._Worker("Renko")
+        for raw in ("1", "2", "25"):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ, {"RENKO_SIZE_MULTIPLIER": raw}
+            ):
+                errors = master_file._live_config_errors(worker, "RENKO")
+
+            self.assertFalse(
+                any("SIZE_MULTIPLIER" in error for error in errors),
+                f"{raw!r} is valid but was rejected: {errors}",
+            )
+
+
+class TestStrategySizeMultiplier(unittest.TestCase):
+    """`<PREFIX>_SIZE_MULTIPLIER` scales one strategy's whole size/risk set.
+
+    The multiplier exists so position size can grow with the account by editing
+    ONE number per strategy. Because it moves real-money size in both
+    directions, the tests below pin three separate properties: the default is a
+    no-op, a valid multiplier scales every size-bearing knob exactly once, and
+    a malformed one can never quietly resize a live strategy.
+    """
+
+    @staticmethod
+    def _without(*names):
+        """Patch os.environ with the given keys guaranteed ABSENT."""
+        patcher = patch.dict(os.environ)
+        patcher.start()
+        for name in names:
+            os.environ.pop(name, None)
+        return patcher
+
+    def test_absent_multiplier_is_a_no_op(self):
+        """The safety-critical case: an unset multiplier must leave every knob
+        byte-identical to the pre-feature behaviour."""
+        patcher = self._without("RENKO_SIZE_MULTIPLIER", "GOLDMINE_SIZE_MULTIPLIER")
+        self.addCleanup(patcher.stop)
+
+        self.assertEqual(master_file._strategy_size_multiplier("RENKO"), 1)
+        self.assertEqual(
+            master_file._scaled_int("RENKO", "RENKO_LOTS", 1),
+            master_file._env_int("RENKO_LOTS", 1),
+        )
+        self.assertEqual(
+            master_file._scaled_float("GOLDMINE", "GOLDMINE_RISK_BUDGET", 2500.0),
+            master_file._env_float("GOLDMINE_RISK_BUDGET", 2500.0),
+        )
+
+    def test_whole_number_multiplier_scales_lots_budget_cap_and_max_loss(self):
+        """The operator's own figures: 5 lots -> 10, Rs.5,500 -> Rs.11,000."""
+        with patch.dict(
+            os.environ,
+            {
+                "GOLDMINE_SIZE_MULTIPLIER": "2",
+                "RENKO_SIZE_MULTIPLIER": "2",
+            },
+        ):
+            self.assertEqual(master_file._strategy_size_multiplier("GOLDMINE"), 2)
+            # Lot cap 5 -> 10.
+            self.assertEqual(
+                master_file._scaled_int("GOLDMINE", "GOLDMINE_MAX_LOTS", 5), 10
+            )
+            # Per-trade budget 2500 -> 5000.
+            self.assertEqual(
+                master_file._scaled_float("GOLDMINE", "GOLDMINE_RISK_BUDGET", 2500.0),
+                5000.0,
+            )
+            # Daily kill-switch 5500 -> 11000.
+            self.assertEqual(
+                master_file._scaled_float("RENKO", "RENKO_MAX_LOSS", 5500.0),
+                11000.0,
+            )
+
+    def test_multiplier_is_scoped_to_its_own_strategy(self):
+        """Per-strategy only: scaling one worker must not touch any other."""
+        with patch.dict(os.environ, {"RENKO_SIZE_MULTIPLIER": "3"}):
+            self.assertEqual(master_file._strategy_size_multiplier("RENKO"), 3)
+            self.assertEqual(master_file._strategy_size_multiplier("EMA"), 1)
+
+    def test_signal_gen_ops_scales_lots_and_daily_max_loss(self):
+        """One helper feeds 14 workers (13 ported + SL Hunting), so its two
+        size-bearing values must both scale -- and the max-loss must scale
+        exactly ONCE despite being a capital x percentage product."""
+        env = {
+            "SMA_CROSSOVER_LOTS": "2",
+            "SMA_CROSSOVER_STARTING_CAPITAL": "600000",
+            "SMA_CROSSOVER_DAILY_MAX_LOSS_PCT": "0.03",
+        }
+        with patch.dict(os.environ, {**env, "SMA_CROSSOVER_SIZE_MULTIPLIER": "1"}):
+            base = master_file._signal_gen_ops("SMA_CROSSOVER")
+        with patch.dict(os.environ, {**env, "SMA_CROSSOVER_SIZE_MULTIPLIER": "3"}):
+            scaled = master_file._signal_gen_ops("SMA_CROSSOVER")
+
+        self.assertEqual(base["lots"], 2)
+        self.assertEqual(scaled["lots"], 6)
+        self.assertAlmostEqual(base["max_loss"], 18000.0)
+        self.assertAlmostEqual(scaled["max_loss"], 54000.0)
+        # Non-size knobs are untouched.
+        self.assertEqual(base["poll_seconds"], scaled["poll_seconds"])
+        self.assertEqual(base["square_off_hour"], scaled["square_off_hour"])
+
+    def test_malformed_values_fall_back_to_one_for_paper(self):
+        """Forgiving like _env_int/_env_float: a typo must not crash a paper
+        run, and must never resolve to a SMALLER-or-larger surprise size."""
+        for raw in ("0", "-1", "2.5", "30", "two", "", "  "):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ, {"RENKO_SIZE_MULTIPLIER": raw}
+            ):
+                self.assertEqual(master_file._strategy_size_multiplier("RENKO"), 1)
+
+    def test_ceiling_is_twenty_five_inclusive(self):
+        """25 is accepted; 26 falls back to 1 rather than sizing at 26x."""
+        with patch.dict(os.environ, {"RENKO_SIZE_MULTIPLIER": "25"}):
+            self.assertEqual(master_file._strategy_size_multiplier("RENKO"), 25)
+        with patch.dict(os.environ, {"RENKO_SIZE_MULTIPLIER": "26"}):
+            self.assertEqual(master_file._strategy_size_multiplier("RENKO"), 1)
+        self.assertEqual(master_file.MAX_SIZE_MULTIPLIER, 25)
+
+    def test_delta20_absolute_cap_is_never_double_scaled(self):
+        """DELTA20_MAX_LOSS is PER_LOT x LOTS, so it inherits the multiplier
+        through LOTS. Scaling PER_LOT as well would square it (M^2)."""
+        self.assertAlmostEqual(
+            master_file.DELTA20_MAX_LOSS,
+            master_file.DELTA20_MAX_LOSS_PER_LOT * master_file.DELTA20_LOTS,
+        )
+
+    def test_every_size_knob_is_wired_through_the_scaled_helpers(self):
+        """Drift guard: a strategy added later must not read a size knob with
+        the raw _env_* helpers, or its multiplier would silently do nothing.
+
+        Deliberately excluded: *_MAX_LOSS_PER_LOT (a per-lot figure whose
+        absolute cap already scales via LOTS) and *_STARTING_CAPITAL /
+        *_DAILY_MAX_LOSS_PCT (their PRODUCT carries the multiplier instead).
+        """
+        source = file_path.read_text(encoding="utf-8")
+        unscaled = re.findall(
+            r"^[A-Z][A-Z0-9_]*_(?:LOTS|MAX_LOTS|RISK_BUDGET|MAX_LOSS) = _env_(?:int|float)\(.*$",
+            source,
+            flags=re.MULTILINE,
+        )
+        self.assertEqual(
+            unscaled,
+            [],
+            "these size knobs bypass the size multiplier: " + "; ".join(unscaled),
+        )
+
+    def test_risk_budget_sizing_doubles_the_accepted_lots(self):
+        """End-to-end through the real sizing authority: a setup that takes 3
+        lots unscaled takes 6 at 2x, and still respects the scaled budget."""
+        entry, stop, lot_size = 24300.0, 24290.0, 75  # one lot risks Rs.750
+
+        base = master_file.SizingDecision.from_risk_budget(
+            entry=entry, stop=stop, lot_size=lot_size, budget=2500.0, max_lots=5
+        )
+        scaled = master_file.SizingDecision.from_risk_budget(
+            entry=entry, stop=stop, lot_size=lot_size, budget=5000.0, max_lots=10
+        )
+
+        self.assertEqual(base.lots, 3)
+        self.assertEqual(scaled.lots, 6)
+        self.assertEqual(scaled.quantity, 2 * base.quantity)
+        self.assertLessEqual(scaled.total_risk, 5000.0)
+
+    def test_scaled_budget_may_exceed_a_pure_multiple_but_stays_inside_it(self):
+        """Documented consequence: floor(M*b/r) >= M*floor(b/r). A 2x of a
+        Rs.2,500 budget against a Rs.1,500 one-lot risk gives 3 lots, not 2 --
+        more than a pure doubling, yet still strictly within the scaled budget."""
+        entry, stop, lot_size = 24300.0, 24280.0, 75  # one lot risks Rs.1500
+
+        base = master_file.SizingDecision.from_risk_budget(
+            entry=entry, stop=stop, lot_size=lot_size, budget=2500.0, max_lots=5
+        )
+        scaled = master_file.SizingDecision.from_risk_budget(
+            entry=entry, stop=stop, lot_size=lot_size, budget=5000.0, max_lots=10
+        )
+
+        self.assertEqual(base.lots, 1)
+        self.assertEqual(scaled.lots, 3)
+        self.assertGreater(scaled.lots, 2 * base.lots)
+        self.assertLessEqual(scaled.total_risk, 5000.0)
 
 
 class TestCoordinatedShutdownSupervisor(unittest.TestCase):

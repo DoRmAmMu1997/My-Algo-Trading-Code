@@ -97,6 +97,18 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   Set it false to stop that strategy's worker thread from starting at all (so it does neither paper
   nor live). Unlike live trading there is **no** global master switch — default is everything runs.
   `main()` filters the `workers` list via `_strategy_virtual_trading_enabled` before starting threads.
+- **Per-strategy size multiplier:** `<PREFIX>_SIZE_MULTIPLIER` (default 1, whole numbers 1-25,
+  ceiling `MAX_SIZE_MULTIPLIER`) scales that strategy's whole size/risk set together — `_LOTS`,
+  `_MAX_LOTS`, `_RISK_BUDGET` and the absolute `_MAX_LOSS` — so size can grow with the account by
+  editing one number. Applied at env-read time via `_scaled_int` / `_scaled_float` /
+  `_strategy_size_multiplier` (master ~L409-465), so `Dependencies/risk_sizing.py` is untouched and
+  scaled values flow through sizing, the kill-switch, Telegram and the Sheet unchanged. Deliberately
+  **per-strategy only** (no global switch) and it applies to **paper and live alike**. Malformed
+  values fall back to 1 for paper but are **blocked from live** by `_live_config_errors`. Two things
+  are deliberately NOT scaled, because their totals already inherit the multiplier and scaling them
+  would square it: `<PREFIX>_MAX_LOSS_PER_LOT` (Delta20) and `<PREFIX>_STARTING_CAPITAL` /
+  `_DAILY_MAX_LOSS_PCT` (their product carries it). A drift-guard test fails if a new strategy reads
+  a size knob with the raw `_env_*` helpers.
 - **Broker layer:** the Kotak, Shoonya, Flattrade and Dhan clients expose the SAME surface —
   `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
   `get_order_status`, `cancel_order`, `list_open_orders`, `list_open_positions`,
