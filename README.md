@@ -116,6 +116,7 @@ Each subfolder has its own `Readme.md` with the details.
 | `run` | Start the front-test master (paper by default; live per `.env`) | `python algo.py run` |
 | `setup-token` | One-time DhanHQ token setup (writes `.env`) | `python algo.py setup-token` |
 | `diagnose --broker {kotak,shoonya,flattrade,dhan}` | Read-only broker/symbol check (add `--place-order` for a test order) | `python algo.py diagnose --broker flattrade CE 24150 14JUL26` |
+| `check-env` | Read-only audit of `.env` vs `env.example` vs the settings the code reads | `python algo.py check-env` |
 
 Run `python algo.py --help`, or `python algo.py <command> --help`, for the details.
 

@@ -6,13 +6,13 @@ do not contact package indexes or GitHub; they only validate committed policy.
 
 from __future__ import annotations
 
-import ast
 import importlib.util
 import sys
 import tomllib
 from pathlib import Path
 
 import yaml
+from check_env_config import audit, env_keys_read_by, source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -23,48 +23,6 @@ def _requirement_lines(name: str) -> list[str]:
         for line in (ROOT / name).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-
-
-# Helpers that read a setting out of the environment. The first string argument
-# of `_env_*` is the key; `_scaled_*` take (prefix, key, default), so the key is
-# their SECOND argument.
-_ENV_READERS = {"_env_str", "_env_float", "_env_int", "_env_bool"}
-_SCALED_READERS = {"_scaled_int", "_scaled_float"}
-
-
-def _documented_env_keys(path: Path) -> set[str]:
-    """Collect every KEY= entry from an env file, ignoring comments."""
-    keys: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            keys.add(stripped.partition("=")[0].strip())
-    return keys
-
-
-def _env_keys_read_by(path: Path) -> set[str]:
-    """Statically collect the env keys one module reads.
-
-    Parsed with `ast` rather than imported: the master runner has spaces in its
-    filename, loads strategy modules, and configures logging at import time.
-    Keys built from f-strings (the per-strategy `<PREFIX>_*` knobs assembled in
-    `_signal_gen_ops`) are not literals and are deliberately skipped -- they are
-    documented once per family rather than per strategy.
-    """
-    keys: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        name = node.func.id
-        if name in _ENV_READERS and node.args:
-            key_node = node.args[0]
-        elif name in _SCALED_READERS and len(node.args) > 1:
-            key_node = node.args[1]
-        else:
-            continue
-        if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
-            keys.add(key_node.value)
-    return keys
 
 
 def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
@@ -142,19 +100,18 @@ def test_every_env_setting_the_code_reads_is_documented_in_env_example():
     per-strategy `<PREFIX>_*` knobs that `_signal_gen_ops` builds from
     f-strings, which are real settings the AST cannot see.
     """
-    sources = [ROOT / "Nifty Multi Strategy Front Test - Master File.py"]
-    sources += sorted((ROOT / "Dependencies").glob("*.py"))
-
+    # Same helpers the `python algo.py check-env` diagnostic uses, so the gate
+    # and the operator-facing tool can never disagree about what "documented"
+    # means.
     read: set[str] = set()
-    for path in sources:
-        read |= _env_keys_read_by(path)
-    documented = _documented_env_keys(ROOT / "Dependencies" / "env.example")
+    for path in source_files(ROOT):
+        read |= env_keys_read_by(path)
 
     # Sanity check: if the AST walk silently stopped matching (a helper was
     # renamed, say), this test would "pass" while checking nothing at all.
     assert len(read) > 300, f"env-key extraction looks broken: found only {len(read)}"
 
-    undocumented = sorted(read - documented)
+    undocumented = audit(ROOT)["undocumented"]
     assert not undocumented, (
         "these env settings are read by the code but missing from "
         "Dependencies/env.example: " + ", ".join(undocumented)

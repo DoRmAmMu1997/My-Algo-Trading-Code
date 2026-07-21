@@ -50,7 +50,7 @@ One process, cooperating threads:
 ## Repository layout
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
-algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose
+algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
 test_nifty_multi_strategy_master.py                # unittest suite for the master
 requirements.txt                                   # exact core runtime dependencies
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
@@ -103,8 +103,14 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   `logging.getLogger(__name__)` logger, **not `print()`**. Strategy files have spaces in their names and
   are imported via `load_module()` (master ~L742), not regular imports.
 - **CLI:** prefer `python algo.py <command>` (`fetch-data` / `backtest` / `run` / `setup-token` /
-  `diagnose`); each underlying script still runs standalone, and any flag beyond the selector passes
-  straight through. A bare `python algo.py` prints help.
+  `diagnose` / `check-env`); each underlying script still runs standalone, and any flag beyond the
+  selector passes straight through. A bare `python algo.py` prints help.
+- **Config drift:** `python algo.py check-env` (`Dependencies/check_env_config.py`) audits
+  `Dependencies/.env` against `env.example` and against the keys the code's `_env_*` calls actually
+  read, reporting settings missing from `.env` (an unseen in-code default is in force), mistyped or
+  stale keys, and knobs missing from the template. Read-only, and it prints key NAMES only — never a
+  value out of `.env` — so its output is safe to share. `test_repository_policy.py` imports the same
+  helpers so CI fails when a new `_env_*` key lands without an `env.example` entry.
 - **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
   mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
   under `Signal Generators/`.
