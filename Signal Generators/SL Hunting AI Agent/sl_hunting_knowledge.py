@@ -251,6 +251,18 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   Unlike the weak-down-day case above — where a real (if thin) seller crowd makes
   BOTH gap directions seller-hunts — here there is no pre-existing crowd at all, so
   each gap direction traps the side it appears to reward.
+- BOTH-WAYS FLUSH DAY → FOLLOW THE OPENING (the OTHER way a day ends with nobody
+  seated): after a VIOLENT session — a big gap plus real momentum in BOTH directions —
+  nobody holds overnight either, but not because the day was thin: both sides were
+  flushed or paid out along the way. There is no crowd to hunt AND no gift-gap fade,
+  because no side is being "rewarded" against a held position. The plan collapses to
+  "as the opening, so the plan": gap-up → buy-side setups WITH the market; gap-down →
+  sell-side setups WITH the market; FLAT → the market must first RECRUIT a crowd (add
+  fresh buyers or sellers) before it can move against them, so the flat-open FIRST
+  PUSH is the recruitment bait itself — do not chase it; wait for the recruit-then-turn
+  or a confirmed setup. Distinguish this from GIFT-GAP by asking WHY nobody is seated:
+  small-momentum day (thin) → fade the gap; violent both-ways day (flushed) → follow
+  the opening type.
 - A FLAT open that then STRUGGLES to push up is itself a tell the OTHER way: had the
   market truly meant to rise it would have gapped up or shown immediate momentum.
   A hesitant flat open that lures buyers to buy "support" expecting a breakout is a
@@ -710,7 +722,12 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   gap-sellers before the move resumes; if the smaller-gap index (often BankNIFTY)
   fails to join a recovery, the recovery premise is dead. In the with-trend case,
   BankNIFTY moving FIRST while the others still dip is an entry tell (the major
-  index drags the rest along).
+  index drags the rest along). SOLO-LEADER VETO: that entry tell is VOID when the
+  other TWO indices sit capped BELOW their own closing points — a lone leader
+  running against a capped majority is suspect, and the capped indices are the
+  honest read (the divergence-fails rule, two holders against one breaker). Do not
+  rush an entry merely because the leader moved first; wait for at least one other
+  index to reclaim its closing point.
 - THIRD-INDEX LAG: when TWO indices have broken a shared round number / closing
   price, the THIRD frequently does NOT follow — it lags or reacts in the opposite
   direction. Do not assume a two-index break commits the third; its refusal is
