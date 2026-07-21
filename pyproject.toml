@@ -60,6 +60,7 @@ files = [
     "Dependencies/check_env_config.py",
     "Dependencies/diagnostic_preflight.py",
     "Dependencies/next_open_entry.py",
+    "Dependencies/order_splitting.py",
     "Dependencies/market_data_health.py",
     "Dependencies/tick_bar_builder.py",
     "Dependencies/risk_sizing.py",
