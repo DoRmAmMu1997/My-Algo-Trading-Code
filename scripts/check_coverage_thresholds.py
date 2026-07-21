@@ -30,6 +30,9 @@ SAFETY_THRESHOLDS = {
     "Dependencies/tick_bar_builder.py": 90.0,
     "Dependencies/next_open_entry.py": 90.0,
     "Dependencies/risk_sizing.py": 90.0,
+    # Exchange freeze-limit arithmetic: an off-by-one here means a live order
+    # the exchange rejects, which this runner would treat as a paper fallback.
+    "Dependencies/order_splitting.py": 90.0,
     # MAT-108's redaction layer is data-safety code: a regression here leaks
     # credentials into logs, so it carries the same 90% budget.
     "Dependencies/secret_redaction.py": 90.0,

@@ -2659,6 +2659,11 @@ class OptionsContractResolver:
         cs_col = _first_existing_col(df, ["DISPLAY_NAME"])
         exp_col = _first_existing_col(df, ["SM_EXPIRY_DATE"])
         lot_col = _first_existing_col(df, ["LOT_SIZE"])
+        # NSE's per-order freeze quantity for THIS contract. Optional in the
+        # same way LOT_SIZE is: an older CSV snapshot without the column leaves
+        # it blank, and the order path falls back to ORDER_FREEZE_QTY_FALLBACK
+        # rather than treating "unknown" as "unlimited".
+        freeze_col = _first_existing_col(df, ["SM_FREEZE_QTY"])
         sec_col = _first_existing_col(df, ["SECURITY_ID"])
         strike_col = _first_existing_col(df, ["STRIKE_PRICE"])
         opt_type_col = _first_existing_col(df, ["OPTION_TYPE"])
@@ -2682,6 +2687,7 @@ class OptionsContractResolver:
                 "option_type": df[opt_type_col].fillna("").astype(str).str.upper().str.strip(),
                 "expiry_raw": df[exp_col].fillna("").astype(str).str.strip(),
                 "lot_raw": (df[lot_col].fillna("").astype(str).str.strip() if lot_col else ""),
+                "freeze_raw": (df[freeze_col].fillna("").astype(str).str.strip() if freeze_col else ""),
                 "sm_symbol": (df[sm_col].fillna("").astype(str).str.upper().str.strip() if sm_col else ""),
             }
         )
@@ -2689,6 +2695,7 @@ class OptionsContractResolver:
         work["strike"] = pd.to_numeric(work["strike_raw"], errors="coerce")
         work["security_id"] = pd.to_numeric(work["security_id_raw"], errors="coerce")
         work["lot_size"] = pd.to_numeric(work["lot_raw"], errors="coerce")
+        work["freeze_qty"] = pd.to_numeric(work["freeze_raw"], errors="coerce")
 
         # Keep only NSE index-option rows for our underlying that expire today
         # or later. The extra string filters reject BANKNIFTY/FINNIFTY/etc.
@@ -2730,6 +2737,7 @@ class OptionsContractResolver:
                 "option_type",
                 "expiry",
                 "lot_size",
+                "freeze_qty",
             ],
         ].copy()
 
@@ -2886,6 +2894,7 @@ class OptionsContractResolver:
             "expiry_date": expiry_date,
             "days_to_expiry": days_to_expiry,
             "lot_size": _to_int_safe(row["lot_size"], 0),
+            "freeze_qty": _to_int_safe(row["freeze_qty"], 0),
             "spot_reference": float(spot),
             "atm_strike_rounded": float(atm_strike),
         }
@@ -2965,6 +2974,7 @@ class OptionsContractResolver:
             "expiry_date": expiry_date,
             "days_to_expiry": days_to_expiry,
             "lot_size": _to_int_safe(row["lot_size"], 0),
+            "freeze_qty": _to_int_safe(row["freeze_qty"], 0),
             "spot_reference": float(spot),
             "atm_strike_rounded": float(atm_strike),
             "target_strike": float(target_strike),
@@ -3041,6 +3051,7 @@ class OptionsContractResolver:
             "option_type": "PE",
             "expiry_date": best_row["expiry"],
             "lot_size": _to_int_safe(best_row["lot_size"], 0),
+            "freeze_qty": _to_int_safe(best_row["freeze_qty"], 0),
             "entry_ltp": float(best_ltp),
         }
 
@@ -3108,6 +3119,7 @@ class OptionsContractResolver:
             "option_type": "CE",
             "expiry_date": best_row["expiry"],
             "lot_size": _to_int_safe(best_row["lot_size"], 0),
+            "freeze_qty": _to_int_safe(best_row["freeze_qty"], 0),
             "entry_ltp": float(best_ltp),
         }
 
@@ -3185,6 +3197,7 @@ class OptionsContractResolver:
             "option_type": right_upper,
             "expiry_date": best["expiry"],
             "lot_size": _to_int_safe(best["lot_size"], 0),
+            "freeze_qty": _to_int_safe(best["freeze_qty"], 0),
         }
 
 
