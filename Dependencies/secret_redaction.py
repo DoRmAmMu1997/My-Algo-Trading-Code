@@ -82,6 +82,37 @@ def redact_text(value: object, secrets: Iterable[str] = ()) -> str:
     return _ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
 
 
+def environment_secrets(
+    environ: Mapping[str, str],
+    *,
+    min_length: int = 8,
+) -> tuple[str, ...]:
+    """Collect the credential VALUES currently set in the environment.
+
+    Intended for :func:`install_redaction_filter`, so the runner's log guard
+    knows every real secret without a hand-maintained list that a newly added
+    broker would silently fall off.  Selection is by KEY name using the same
+    ``_SENSITIVE_PARTS`` rule the payload redactor uses, so `DHAN_ACCESS_TOKEN`,
+    `TELEGRAM_BOT_TOKEN`, `SHOONYA_TOTP_SECRET` and friends are all picked up
+    automatically.
+
+    ``min_length`` exists to keep logs readable and is a genuine safety
+    trade-off: a 4-digit MPIN would otherwise blank every matching digit
+    sequence in the file, including strike prices and quantities, which makes
+    the log useless and can itself hide a problem.  Short values are therefore
+    left to the assignment-pattern pass in :func:`redact_text`, which still
+    catches them when they appear as ``mpin=1234``.
+    """
+    secrets: set[str] = set()
+    for key, value in environ.items():
+        if not _sensitive_key(key):
+            continue
+        text = str(value).strip()
+        if len(text) >= max(1, int(min_length)):
+            secrets.add(text)
+    return tuple(sorted(secrets, key=len, reverse=True))
+
+
 def redact_payload(value: Any, secrets: Iterable[str] = ()) -> Any:
     """Recursively return a log-safe copy without mutating the broker response.
 
@@ -103,6 +134,15 @@ def redact_payload(value: Any, secrets: Iterable[str] = ()) -> Any:
     if isinstance(value, set):
         return {redact_payload(item, secrets) for item in value}
     if isinstance(value, str):
+        return redact_text(value, secrets)
+    if isinstance(value, BaseException):
+        # An exception passed as a LAZY log argument (`log.warning("...: %s",
+        # exc)`) is the most common way this codebase surfaces failures, and
+        # its text is exactly where a credential-bearing URL shows up. Without
+        # this branch the object passed through untouched and logging rendered
+        # it with %s AFTER every filter had run -- leaking the secret the guard
+        # exists to stop. Return the redacted STRING: the only consumer of a
+        # redacted copy is a log line.
         return redact_text(value, secrets)
     return value
 

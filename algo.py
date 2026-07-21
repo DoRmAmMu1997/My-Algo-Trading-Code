@@ -47,6 +47,13 @@ The commands:
       python algo.py diagnose --broker shoonya CE 23950 26JUN25 --place-order
       python algo.py diagnose --broker flattrade CE 24150 14JUL26
 
+  check-env    Read-only audit of Dependencies/.env against env.example and the
+               settings the code actually reads. Reports settings missing from
+               your .env (so an unseen in-code default is in force), mistyped or
+               stale keys, and knobs missing from the template. Prints key names
+               only -- never a value from your .env -- and changes nothing.
+      python algo.py check-env
+
 Tips:
   - `python algo.py --help` lists the commands; `python algo.py <command> --help`
     shows that command's selector choices.
@@ -104,6 +111,7 @@ BROKER_DIAGNOSTICS = {
 # Commands that always map to exactly one script (no selector needed).
 MASTER_SCRIPT = "Nifty Multi Strategy Front Test - Master File.py"
 TOKEN_SETUP_SCRIPT = "Dependencies/dhan_token_setup.py"
+CHECK_ENV_SCRIPT = "Dependencies/check_env_config.py"
 
 
 def _run(relative_path: str, forwarded_args: list) -> int:
@@ -179,6 +187,12 @@ def build_parser() -> argparse.ArgumentParser:
              "through to the broker's diagnostic script.",
     )
 
+    sub.add_parser(
+        "check-env",
+        help="Read-only audit of Dependencies/.env against env.example and the code "
+             "(reports drift; prints key names only, never your values).",
+    )
+
     return parser
 
 
@@ -210,6 +224,8 @@ def main(argv=None) -> int:
         return _run(TOKEN_SETUP_SCRIPT, forwarded)
     if args.command == "diagnose":
         return _run(BROKER_DIAGNOSTICS[args.broker], forwarded)
+    if args.command == "check-env":
+        return _run(CHECK_ENV_SCRIPT, forwarded)
 
     # Unreachable: argparse rejects unknown commands before we get here.
     parser.error(f"unknown command: {args.command!r}")

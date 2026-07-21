@@ -12,6 +12,7 @@ import tomllib
 from pathlib import Path
 
 import yaml
+from check_env_config import audit, env_keys_read_by, source_files
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -84,6 +85,37 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
 
     assert config["tool"]["coverage"]["run"]["branch"] is True
     assert config["tool"]["coverage"]["report"]["fail_under"] == 54.7
+
+
+def test_every_env_setting_the_code_reads_is_documented_in_env_example():
+    """A new `.env` knob must ship with its `env.example` entry.
+
+    `env.example` is the ONLY discovery surface for configuration -- the real
+    `.env` is gitignored, so a key that never reaches the template is invisible
+    to the operator and silently runs on whatever in-code default it was born
+    with. This gate closes that gap at the point it opens: twelve keys had
+    already drifted out of the operator's file before it was added.
+
+    One direction only (code -> template). The reverse would flag the ~200
+    per-strategy `<PREFIX>_*` knobs that `_signal_gen_ops` builds from
+    f-strings, which are real settings the AST cannot see.
+    """
+    # Same helpers the `python algo.py check-env` diagnostic uses, so the gate
+    # and the operator-facing tool can never disagree about what "documented"
+    # means.
+    read: set[str] = set()
+    for path in source_files(ROOT):
+        read |= env_keys_read_by(path)
+
+    # Sanity check: if the AST walk silently stopped matching (a helper was
+    # renamed, say), this test would "pass" while checking nothing at all.
+    assert len(read) > 300, f"env-key extraction looks broken: found only {len(read)}"
+
+    undocumented = audit(ROOT)["undocumented"]
+    assert not undocumented, (
+        "these env settings are read by the code but missing from "
+        "Dependencies/env.example: " + ", ".join(undocumented)
+    )
 
 
 def test_coverage_threshold_checker_enforces_safety_and_broker_budgets():

@@ -54,8 +54,9 @@ One process, cooperating threads:
 ## Repository layout
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
-algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose
+algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
 test_nifty_multi_strategy_master.py                # unittest suite for the master
+test_market_data_health.py                         # unittest suite for the shared feed-health gates
 requirements.txt                                   # exact core runtime dependencies
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
 requirements-ai.txt                                # exact optional Claude Agent SDK stack
@@ -67,6 +68,7 @@ Signal Generators/                                 # strategy signal logic (+ CP
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
+  check_env_config.py                              # `algo.py check-env` config-drift audit (read-only)
   Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
   Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py,
@@ -80,8 +82,9 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
 
 ## Conventions
 - **Config:** one `.env` (gitignored) is the single source of truth, copied from `Dependencies/env.example`.
-  Read values through the `_env_str` / `_env_bool` / `_env_int` / `_env_float` helpers (master ~L253-292),
-  not ad-hoc `os.getenv`. Per-strategy knobs are namespaced `<PREFIX>_*` (e.g. `RENKO_*`, `CPR_*`); the
+  Read values through the `_env_str` / `_env_bool` / `_env_int` / `_env_float` helpers (master ~L352-406),
+  not ad-hoc `os.getenv`; size-bearing knobs go through `_scaled_int` / `_scaled_float` instead (see
+  size multiplier below). Per-strategy knobs are namespaced `<PREFIX>_*` (e.g. `RENKO_*`, `CPR_*`); the
   name→prefix map is `STRATEGY_ENV_PREFIX`. **Never commit secrets** — `env.example` holds blank placeholders.
 - **Live-trading safety (critical):** paper by default. A strategy trades live ONLY when the global
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
@@ -97,6 +100,18 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   Set it false to stop that strategy's worker thread from starting at all (so it does neither paper
   nor live). Unlike live trading there is **no** global master switch — default is everything runs.
   `main()` filters the `workers` list via `_strategy_virtual_trading_enabled` before starting threads.
+- **Per-strategy size multiplier:** `<PREFIX>_SIZE_MULTIPLIER` (default 1, whole numbers 1-25,
+  ceiling `MAX_SIZE_MULTIPLIER`) scales that strategy's whole size/risk set together — `_LOTS`,
+  `_MAX_LOTS`, `_RISK_BUDGET` and the absolute `_MAX_LOSS` — so size can grow with the account by
+  editing one number. Applied at env-read time via `_scaled_int` / `_scaled_float` /
+  `_strategy_size_multiplier` (master ~L409-467), so `Dependencies/risk_sizing.py` is untouched and
+  scaled values flow through sizing, the kill-switch, Telegram and the Sheet unchanged. Deliberately
+  **per-strategy only** (no global switch) and it applies to **paper and live alike**. Malformed
+  values fall back to 1 for paper but are **blocked from live** by `_live_config_errors`. Two things
+  are deliberately NOT scaled, because their totals already inherit the multiplier and scaling them
+  would square it: `<PREFIX>_MAX_LOSS_PER_LOT` (Delta20) and `<PREFIX>_STARTING_CAPITAL` /
+  `_DAILY_MAX_LOSS_PCT` (their product carries it). A drift-guard test fails if a new strategy reads
+  a size knob with the raw `_env_*` helpers.
 - **Broker layer:** the Kotak, Shoonya, Flattrade and Dhan clients expose the SAME surface —
   `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
   `get_order_status`, `cancel_order`, `list_open_orders`, `list_open_positions`,
@@ -113,14 +128,28 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   non-contract states are aliased adapter-locally (`EXPIRED`→`CANCELLED`,
   `PART_TRADED`→`PARTIAL`); `TRANSIT`/`PENDING` stay unmapped so they remain transient.
   Dhan resolves contracts from the local `Dependencies/all_instrument <date>.csv`, not a download.
+- **Credential-safe logging:** `setup_logging()` installs `install_redaction_filter` on the root
+  logger with `environment_secrets(os.environ)` (every `.env` value whose KEY looks sensitive, ≥8
+  chars), so **every** record — lazy `%s` args and exception tracebacks included — is scrubbed before
+  it reaches the console or the append-mode log. This matters concretely: dhanhq's marketfeed puts
+  the live access token in its websocket URL, so a connect error would otherwise write it verbatim
+  into a log operators routinely share. Do not hand-redact new call sites; the guard covers them.
+  Short values (a 4-digit MPIN) are deliberately excluded from exact-match replacement — they would
+  blank strike prices and quantities — and are caught by `redact_text`'s `name=value` pass instead.
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module
   `logging.getLogger(__name__)` logger, **not `print()`**. Strategy files have spaces in their names and
-  are imported via `load_module()` (master ~L742), not regular imports.
+  are imported via `load_module()` (master ~L1024), not regular imports.
 - **CLI:** prefer `python algo.py <command>` (`fetch-data` / `backtest` / `run` / `setup-token` /
-  `diagnose`); each underlying script still runs standalone, and any flag beyond the selector passes
-  straight through. A bare `python algo.py` prints help.
+  `diagnose` / `check-env`); each underlying script still runs standalone, and any flag beyond the
+  selector passes straight through. A bare `python algo.py` prints help.
+- **Config drift:** `python algo.py check-env` (`Dependencies/check_env_config.py`) audits
+  `Dependencies/.env` against `env.example` and against the keys the code's `_env_*` calls actually
+  read, reporting settings missing from `.env` (an unseen in-code default is in force), mistyped or
+  stale keys, and knobs missing from the template. Read-only, and it prints key NAMES only — never a
+  value out of `.env` — so its output is safe to share. `test_repository_policy.py` imports the same
+  helpers so CI fails when a new `_env_*` key lands without an `env.example` entry.
 - **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
   mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
   under `Signal Generators/`.

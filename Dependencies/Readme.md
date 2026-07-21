@@ -9,6 +9,7 @@ come into play when live trading is switched on.
 Dependencies/
 ├── env.example              # template; copy to .env (git-ignored) and fill in
 ├── dhan_token_setup.py      # one-time DhanHQ OAuth login; writes DHAN_ACCESS_TOKEN into .env
+├── check_env_config.py      # `python algo.py check-env` — read-only .env vs template vs code audit
 │
 │   # Shared runtime primitives (imported by the master on every run)
 ├── broker_contract.py       # OrderResult/OrderStatus types + the contract every broker adapter implements
@@ -50,6 +51,22 @@ Sheets OAuth token cache when the EOD sheet writer is enabled.
 
 (`test_market_data_health.py` lives at the repo root next to the master's own suite;
 everything else in this folder is tested right here.)
+
+## Keeping `.env` honest
+Configuration drifts in three directions at once: your `.env`, the committed
+`env.example`, and the in-code default behind every `_env_*` call. A key that is in
+the code and the template but missing from your `.env` is **not** an error — the
+runner silently uses the in-code default — which is exactly what makes it easy to
+miss. Audit all three at once with:
+```
+python algo.py check-env
+```
+It reports settings missing from your `.env`, mistyped or stale keys (a typo means
+the setting you intended is not being applied at all), and knobs missing from the
+template. It is read-only, exits non-zero on findings so it can gate a pre-flight
+script, and prints key NAMES only — never a value out of your `.env` — so its output
+is safe to paste when asking for help. `test_repository_policy.py` reuses the same
+helpers, so CI fails when a new `_env_*` key lands without an `env.example` entry.
 
 ## How live execution works
 The master file guarded-loads all four broker clients and then picks one with

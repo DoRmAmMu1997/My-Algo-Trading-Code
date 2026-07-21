@@ -253,7 +253,11 @@ from Dependencies.market_data_health import (
 )
 from Dependencies.next_open_entry import PendingNextOpenEntry
 from Dependencies.risk_sizing import SizingDecision
-from Dependencies.secret_redaction import redact_text
+from Dependencies.secret_redaction import (
+    environment_secrets,
+    install_redaction_filter,
+    redact_text,
+)
 from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
@@ -406,6 +410,67 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+# -----------------------------------------------------------------------------
+# Per-strategy SIZE MULTIPLIER
+# -----------------------------------------------------------------------------
+# One knob per strategy, `<PREFIX>_SIZE_MULTIPLIER` (default 1), that scales that
+# strategy's whole size/risk set together: its lot count, its risk budget, its
+# lot cap, and its daily max-loss kill-switch. It exists so the operator can grow
+# position size as the ACCOUNT grows without hand-editing (and keeping mutually
+# consistent) four separate numbers per strategy.
+#
+#   RENKO_SIZE_MULTIPLIER=2  ->  1 lot becomes 2, Rs.5500 max loss becomes Rs.11000
+#   GOLDMINE_SIZE_MULTIPLIER=2 -> 5-lot cap becomes 10, Rs.2500 budget becomes Rs.5000
+#
+# Deliberate design decisions (operator, 2026-07-21):
+#   * WHOLE NUMBERS ONLY. Lots are integers; a fractional multiplier would floor
+#     a 1-lot strategy straight back to 1 lot while still raising its max-loss,
+#     which is a silent mismatch between size and risk.
+#   * PER-STRATEGY ONLY -- there is deliberately NO global master multiplier
+#     (same shape as `<PREFIX>_VIRTUAL_TRADING`). Scaling must be an explicit,
+#     per-strategy opt-in so one mistyped global cannot enlarge all 27 workers.
+#   * APPLIES TO PAPER **AND** LIVE, so an enlarged size can be paper-validated
+#     first and the Sheet's paper rows stay predictive of live behaviour.
+#   * CEILING of 25 (`MAX_SIZE_MULTIPLIER`), so a fat-fingered "250" cannot size
+#     a position at 250x. Out-of-range values fall back to 1 here (fail-soft, so
+#     paper keeps running) and are BLOCKED from live by `_live_config_errors`.
+MAX_SIZE_MULTIPLIER = 25
+
+
+def _strategy_size_multiplier(prefix: str) -> int:
+    """
+    Return `<PREFIX>_SIZE_MULTIPLIER` as a whole number from 1 to 25.
+
+    Forgiving in exactly the same way as `_env_int`/`_env_float`: anything
+    unset, non-numeric, fractional, zero, negative or above the ceiling falls
+    back to 1 (i.e. "size exactly as before") rather than crashing a paper run.
+    Live trading does NOT rely on that leniency -- `_live_config_errors`
+    re-reads the same raw text strictly and refuses to enable live for a
+    malformed value, so a typo can never quietly halve or inflate real size.
+    """
+    raw = os.getenv(f"{str(prefix).upper().strip()}_SIZE_MULTIPLIER", "")
+    try:
+        value = float(str(raw).strip().strip('"').strip("'"))
+    except (TypeError, ValueError):
+        return 1
+    if not math.isfinite(value) or not value.is_integer():
+        return 1
+    multiplier = int(value)
+    if multiplier < 1 or multiplier > MAX_SIZE_MULTIPLIER:
+        return 1
+    return multiplier
+
+
+def _scaled_int(prefix: str, name: str, default: int) -> int:
+    """Read an int knob and scale it by its strategy's size multiplier."""
+    return _env_int(name, default) * _strategy_size_multiplier(prefix)
+
+
+def _scaled_float(prefix: str, name: str, default: float) -> float:
+    """Read a float knob and scale it by its strategy's size multiplier."""
+    return _env_float(name, default) * _strategy_size_multiplier(prefix)
+
+
 # =============================================================================
 # DHANHQ CREDENTIALS (read STRICTLY from .env; no in-code defaults)
 # =============================================================================
@@ -526,8 +591,8 @@ BANKNIFTY_STRIKE_STEP = _env_float("BANKNIFTY_STRIKE_STEP", 100.0)
 # =============================================================================
 # RENKO STRATEGY CONSTANTS (Tier 3)
 # =============================================================================
-RENKO_LOTS = _env_int("RENKO_LOTS", 1)
-RENKO_MAX_LOSS = _env_float("RENKO_MAX_LOSS", 5500.0)
+RENKO_LOTS = _scaled_int("RENKO", "RENKO_LOTS", 1)
+RENKO_MAX_LOSS = _scaled_float("RENKO", "RENKO_MAX_LOSS", 5500.0)
 RENKO_POLL_SECONDS = _env_int("RENKO_POLL_SECONDS", 2)
 
 # Trading window: entries before TRADING_START are ignored; positions are
@@ -551,8 +616,8 @@ RENKO_NO_TRADE_END_MINUTE = _env_int("RENKO_NO_TRADE_END_MINUTE", 30)
 # =============================================================================
 # Sizing/risk + trading window. Indicator periods are tuned in
 # `EMA_STRATEGY_CONFIG` further down (also env-driven).
-EMA_LOTS = _env_int("EMA_LOTS", 1)
-EMA_MAX_LOSS = _env_float("EMA_MAX_LOSS", 5500.0)
+EMA_LOTS = _scaled_int("EMA", "EMA_LOTS", 1)
+EMA_MAX_LOSS = _scaled_float("EMA", "EMA_MAX_LOSS", 5500.0)
 EMA_POLL_SECONDS = _env_int("EMA_POLL_SECONDS", 2)
 
 EMA_TRADING_START_HOUR = _env_int("EMA_TRADING_START_HOUR", 9)
@@ -568,8 +633,8 @@ EMA_DERIVED_TIMEFRAME_MINUTES = _env_int("EMA_DERIVED_TIMEFRAME_MINUTES", 5)
 # =============================================================================
 # HEIKIN ASHI STRATEGY CONSTANTS (Tier 3)
 # =============================================================================
-HEIKIN_LOTS = _env_int("HEIKIN_LOTS", 1)
-HEIKIN_MAX_LOSS = _env_float("HEIKIN_MAX_LOSS", 5500.0)
+HEIKIN_LOTS = _scaled_int("HEIKIN", "HEIKIN_LOTS", 1)
+HEIKIN_MAX_LOSS = _scaled_float("HEIKIN", "HEIKIN_MAX_LOSS", 5500.0)
 HEIKIN_POLL_SECONDS = _env_int("HEIKIN_POLL_SECONDS", 5)
 
 HEIKIN_TRADING_START_HOUR = _env_int("HEIKIN_TRADING_START_HOUR", 9)
@@ -585,8 +650,8 @@ HEIKIN_BOLL_STD = _env_float("HEIKIN_BOLL_STD", 2.0)
 # =============================================================================
 # CPR STRATEGY CONSTANTS (Central Pivot Range, 5-min via internal resample)
 # =============================================================================
-CPR_LOTS = _env_int("CPR_LOTS", 1)
-CPR_MAX_LOSS = _env_float("CPR_MAX_LOSS", 5500.0)
+CPR_LOTS = _scaled_int("CPR", "CPR_LOTS", 1)
+CPR_MAX_LOSS = _scaled_float("CPR", "CPR_MAX_LOSS", 5500.0)
 CPR_POLL_SECONDS = _env_int("CPR_POLL_SECONDS", 5)
 
 # CPR enters from 9:25 (after the opening range), squares off at 15:15.
@@ -602,8 +667,8 @@ CPR_SQUARE_OFF_MINUTE = _env_int("CPR_SQUARE_OFF_MINUTE", 15)
 # Algo 3 watches the spot AND a ~ITM CE + ~ITM PE of the CURRENT-week expiry
 # (observation only). A signal still BUYS the ATM CE/PE of the next-next expiry,
 # exactly like the other ATM workers, so it shares all of CPR's risk knobs.
-CPR_ALGO3_LOTS = _env_int("CPR_ALGO3_LOTS", 1)
-CPR_ALGO3_MAX_LOSS = _env_float("CPR_ALGO3_MAX_LOSS", 5500.0)
+CPR_ALGO3_LOTS = _scaled_int("CPR_ALGO3", "CPR_ALGO3_LOTS", 1)
+CPR_ALGO3_MAX_LOSS = _scaled_float("CPR_ALGO3", "CPR_ALGO3_MAX_LOSS", 5500.0)
 CPR_ALGO3_POLL_SECONDS = _env_int("CPR_ALGO3_POLL_SECONDS", 5)
 CPR_ALGO3_TRADING_START_HOUR = _env_int("CPR_ALGO3_TRADING_START_HOUR", 9)
 CPR_ALGO3_TRADING_START_MINUTE = _env_int("CPR_ALGO3_TRADING_START_MINUTE", 25)
@@ -675,8 +740,8 @@ MONEY_MACHINE_SQUARE_OFF_MINUTE = _env_int("MONEY_MACHINE_SQUARE_OFF_MINUTE", 15
 # =============================================================================
 # Sizing/risk + trading window. Indicator periods and PCR thresholds are
 # tuned in `OPENING_STRIKE_STRATEGY_CONFIG` further down (also env-driven).
-OPENING_STRIKE_LOTS = _env_int("OPENING_STRIKE_LOTS", 1)
-OPENING_STRIKE_MAX_LOSS = _env_float("OPENING_STRIKE_MAX_LOSS", 5500.0)
+OPENING_STRIKE_LOTS = _scaled_int("OPENING_STRIKE", "OPENING_STRIKE_LOTS", 1)
+OPENING_STRIKE_MAX_LOSS = _scaled_float("OPENING_STRIKE", "OPENING_STRIKE_MAX_LOSS", 5500.0)
 OPENING_STRIKE_POLL_SECONDS = _env_int("OPENING_STRIKE_POLL_SECONDS", 10)
 
 # The strategy uses VWAP/ATR on the latest closed candle of the chosen
@@ -735,8 +800,8 @@ SUPERTREND_POLL_SECONDS = _env_int("SUPERTREND_POLL_SECONDS", 2)
 POST_EXIT_COOLDOWN_MINUTES = _env_int("POST_EXIT_COOLDOWN_MINUTES", 5)
 
 # Sizing and risk for the bullish leg.
-BULLISH_LOTS = _env_int("BULLISH_LOTS", 1)
-BULLISH_MAX_LOSS = _env_float("BULLISH_MAX_LOSS", 5500.0)
+BULLISH_LOTS = _scaled_int("BULLISH", "BULLISH_LOTS", 1)
+BULLISH_MAX_LOSS = _scaled_float("BULLISH", "BULLISH_MAX_LOSS", 5500.0)
 
 
 # =============================================================================
@@ -770,8 +835,8 @@ BEARISH_SL_UP_PCT = _env_float("BEARISH_SL_UP_PCT", 0.0020)
 BEARISH_TARGET_DOWN_PCT = _env_float("BEARISH_TARGET_DOWN_PCT", 0.0040)
 
 # Sizing and risk for the bearish leg.
-BEARISH_LOTS = _env_int("BEARISH_LOTS", 1)
-BEARISH_MAX_LOSS = _env_float("BEARISH_MAX_LOSS", 5500.0)
+BEARISH_LOTS = _scaled_int("BEARISH", "BEARISH_LOTS", 1)
+BEARISH_MAX_LOSS = _scaled_float("BEARISH", "BEARISH_MAX_LOSS", 5500.0)
 
 
 # =============================================================================
@@ -828,9 +893,12 @@ BEARISH_MAX_LOSS = _env_float("BEARISH_MAX_LOSS", 5500.0)
 #   Once a side has exited it is NOT re-opened the same day. The
 #   monitor + hedge LTP subscriptions for that side are released so we
 #   stop spending API budget watching them.
-DELTA20_LOTS = _env_int("DELTA20_LOTS", 1)
+DELTA20_LOTS = _scaled_int("DELTA20", "DELTA20_LOTS", 1)
 # Per-lot stoploss as the user phrased it; the worker translates that into
 # an absolute INR cap by multiplying with DELTA20_LOTS at risk-check time.
+# NOTE: this one is deliberately NOT size-scaled. It is a PER-LOT figure, and
+# the absolute cap below already scales because DELTA20_LOTS does -- scaling
+# both would apply the multiplier twice (M^2) to this strategy's max loss.
 DELTA20_MAX_LOSS_PER_LOT = _env_float("DELTA20_MAX_LOSS_PER_LOT", 5000.0)
 DELTA20_MAX_LOSS = DELTA20_MAX_LOSS_PER_LOT * DELTA20_LOTS
 DELTA20_POLL_SECONDS = _env_int("DELTA20_POLL_SECONDS", 2)
@@ -874,12 +942,12 @@ DELTA20_CAPTURE_RETRY_SECONDS = _env_int("DELTA20_CAPTURE_RETRY_SECONDS", 5)
 #   Entry is purely time-based (no indicator / signal generator), so the worker
 #   holds the entire rule set itself - mirroring Delta20HedgedSpreadWorker.
 #   Phase 2 (not yet implemented) will add momentum re-entry after a stop-out.
-STRANGLE_LOTS = _env_int("STRANGLE_LOTS", 1)
+STRANGLE_LOTS = _scaled_int("STRANGLE", "STRANGLE_LOTS", 1)
 # Strategy-wide safety backstop in INR across BOTH legs. The AlgoTest config
 # had the overall stop-loss switched OFF, but the live runner always keeps a
 # hard cap so a pathological day cannot run unbounded. Set 0 to disable (the
 # per-leg stop and the time cutoff still apply).
-STRANGLE_MAX_LOSS = _env_float("STRANGLE_MAX_LOSS", 10000.0)
+STRANGLE_MAX_LOSS = _scaled_float("STRANGLE", "STRANGLE_MAX_LOSS", 10000.0)
 STRANGLE_POLL_SECONDS = _env_int("STRANGLE_POLL_SECONDS", 2)
 
 # Entry time (both legs open here, once) and the daily force-close cutoff.
@@ -951,6 +1019,20 @@ def setup_logging() -> logging.Logger:
 
     configured_logger.addHandler(file_handler)
     configured_logger.addHandler(stream_handler)
+
+    # Last-line credential guard, installed AFTER both handlers exist (the
+    # filter is attached to the handlers as well, and handlers added later are
+    # not covered). Every record -- including exception tracebacks, which
+    # logging would otherwise append after all filters have run -- is scrubbed
+    # on its way to the console and the append-mode log file.
+    #
+    # This is not belt-and-braces. dhanhq's marketfeed builds its websocket URL
+    # as `wss://api-feed.dhan.co?version=2&token=<ACCESS_TOKEN>&clientId=...`,
+    # so a connection exception can carry the LIVE trading token in its text,
+    # and this file's log is routinely shared when diagnosing a session. Rather
+    # than redact the handful of call sites that happen to log such an
+    # exception today, the guard covers every call site that will ever exist.
+    install_redaction_filter(configured_logger, environment_secrets(os.environ))
     return logging.getLogger(LOGGER_NAME)
 
 
@@ -1430,15 +1512,21 @@ PROFIT_SHOOTER_STRATEGY_CONFIG = PROFIT_SHOOTER_LOGIC.ProfitShooterConfig(
     pin_bar_end_zone_ratio=_env_float("PROFIT_SHOOTER_PIN_BAR_END_ZONE_RATIO", 0.40),
 )
 # Operational sizing/risk for Profit Shooter (separate from signal config).
-PROFIT_SHOOTER_LOTS = _env_int("PROFIT_SHOOTER_LOTS", 1)
+PROFIT_SHOOTER_LOTS = _scaled_int("PROFIT_SHOOTER", "PROFIT_SHOOTER_LOTS", 1)
 # Per-trade rupee risk budget used by Profit Shooter's dynamic position sizer.
 # The worker floors affordable whole lots, rejects a setup when even one lot
 # exceeds the budget, and never exceeds the namespaced maximum.
-PROFIT_SHOOTER_RISK_BUDGET = _env_float("PROFIT_SHOOTER_RISK_BUDGET", 2500.0)
-PROFIT_SHOOTER_MAX_LOTS = _env_int("PROFIT_SHOOTER_MAX_LOTS", 5)
+PROFIT_SHOOTER_RISK_BUDGET = _scaled_float("PROFIT_SHOOTER", "PROFIT_SHOOTER_RISK_BUDGET", 2500.0)
+PROFIT_SHOOTER_MAX_LOTS = _scaled_int("PROFIT_SHOOTER", "PROFIT_SHOOTER_MAX_LOTS", 5)
+# Capital and the loss PERCENTAGE stay unscaled; their PRODUCT (the absolute
+# daily cap) carries the multiplier, so the cap grows with size exactly once.
 PROFIT_SHOOTER_STARTING_CAPITAL = _env_float("PROFIT_SHOOTER_STARTING_CAPITAL", 600000.0)
 PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT = _env_float("PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT", 0.03)
-PROFIT_SHOOTER_MAX_LOSS = PROFIT_SHOOTER_STARTING_CAPITAL * PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT
+PROFIT_SHOOTER_MAX_LOSS = (
+    PROFIT_SHOOTER_STARTING_CAPITAL
+    * PROFIT_SHOOTER_DAILY_MAX_LOSS_PCT
+    * _strategy_size_multiplier("PROFIT_SHOOTER")
+)
 PROFIT_SHOOTER_MIN_BARS = (
     max(
         PROFIT_SHOOTER_STRATEGY_CONFIG.sma_fast_period,
@@ -1470,12 +1558,18 @@ GOLDMINE_STRATEGY_CONFIG = GOLDMINE_LOGIC.GoldmineStrategyConfig(
 # Operational sizing/risk for Goldmine (Profit-Shooter-style dynamic sizing).
 # GOLDMINE_LOTS is retained for compatibility and paper snapshots; normal
 # entries use the fail-closed per-trade budget and maximum below.
-GOLDMINE_LOTS = _env_int("GOLDMINE_LOTS", 1)
-GOLDMINE_RISK_BUDGET = _env_float("GOLDMINE_RISK_BUDGET", 2500.0)
-GOLDMINE_MAX_LOTS = _env_int("GOLDMINE_MAX_LOTS", 5)
+GOLDMINE_LOTS = _scaled_int("GOLDMINE", "GOLDMINE_LOTS", 1)
+GOLDMINE_RISK_BUDGET = _scaled_float("GOLDMINE", "GOLDMINE_RISK_BUDGET", 2500.0)
+GOLDMINE_MAX_LOTS = _scaled_int("GOLDMINE", "GOLDMINE_MAX_LOTS", 5)
+# Capital and the loss PERCENTAGE stay unscaled; their PRODUCT carries the
+# multiplier (see the PROFIT_SHOOTER block above for the reasoning).
 GOLDMINE_STARTING_CAPITAL = _env_float("GOLDMINE_STARTING_CAPITAL", 600000.0)
 GOLDMINE_DAILY_MAX_LOSS_PCT = _env_float("GOLDMINE_DAILY_MAX_LOSS_PCT", 0.03)
-GOLDMINE_MAX_LOSS = GOLDMINE_STARTING_CAPITAL * GOLDMINE_DAILY_MAX_LOSS_PCT
+GOLDMINE_MAX_LOSS = (
+    GOLDMINE_STARTING_CAPITAL
+    * GOLDMINE_DAILY_MAX_LOSS_PCT
+    * _strategy_size_multiplier("GOLDMINE")
+)
 
 # Money Machine config dataclass. Same env-driven approach as Goldmine.
 MONEY_MACHINE_STRATEGY_CONFIG = MONEY_MACHINE_LOGIC.MoneyMachineStrategyConfig(
@@ -1492,12 +1586,18 @@ MONEY_MACHINE_STRATEGY_CONFIG = MONEY_MACHINE_LOGIC.MoneyMachineStrategyConfig(
     target_atr_multiple=_env_float("MONEY_MACHINE_TARGET_ATR_MULT", 2.0),
 )
 # Operational sizing/risk for Money Machine (same dynamic sizing as Goldmine).
-MONEY_MACHINE_LOTS = _env_int("MONEY_MACHINE_LOTS", 1)
-MONEY_MACHINE_RISK_BUDGET = _env_float("MONEY_MACHINE_RISK_BUDGET", 2500.0)
-MONEY_MACHINE_MAX_LOTS = _env_int("MONEY_MACHINE_MAX_LOTS", 5)
+MONEY_MACHINE_LOTS = _scaled_int("MONEY_MACHINE", "MONEY_MACHINE_LOTS", 1)
+MONEY_MACHINE_RISK_BUDGET = _scaled_float("MONEY_MACHINE", "MONEY_MACHINE_RISK_BUDGET", 2500.0)
+MONEY_MACHINE_MAX_LOTS = _scaled_int("MONEY_MACHINE", "MONEY_MACHINE_MAX_LOTS", 5)
+# Capital and the loss PERCENTAGE stay unscaled; their PRODUCT carries the
+# multiplier (see the PROFIT_SHOOTER block above for the reasoning).
 MONEY_MACHINE_STARTING_CAPITAL = _env_float("MONEY_MACHINE_STARTING_CAPITAL", 600000.0)
 MONEY_MACHINE_DAILY_MAX_LOSS_PCT = _env_float("MONEY_MACHINE_DAILY_MAX_LOSS_PCT", 0.03)
-MONEY_MACHINE_MAX_LOSS = MONEY_MACHINE_STARTING_CAPITAL * MONEY_MACHINE_DAILY_MAX_LOSS_PCT
+MONEY_MACHINE_MAX_LOSS = (
+    MONEY_MACHINE_STARTING_CAPITAL
+    * MONEY_MACHINE_DAILY_MAX_LOSS_PCT
+    * _strategy_size_multiplier("MONEY_MACHINE")
+)
 
 # Settings objects for the two Hedged Puts strategies.
 SUPERTREND_SETTINGS = SUPERTREND_LOGIC.SupertrendSettings(
@@ -11483,6 +11583,12 @@ def _signal_gen_ops(prefix: str) -> dict:
     lot size, and daily max-loss cap. Every key is <PREFIX>_<NAME> in .env (e.g.
     SMA_CROSSOVER_POLL_SECONDS), so each strategy is tuned independently. The
     defaults are identical across all thirteen; only the prefix differs.
+
+    `<PREFIX>_SIZE_MULTIPLIER` scales both size-bearing values here -- the lot
+    count and the absolute daily max-loss cap. This single helper serves the 13
+    ported strategies AND the SL Hunting agent, so those 14 workers are scaled
+    by these two lines. Capital and the loss PERCENTAGE stay unscaled; only
+    their product carries the multiplier, so the cap grows exactly once.
     """
     starting_capital = _env_float(f"{prefix}_STARTING_CAPITAL", 600000.0)
     return {
@@ -11492,8 +11598,12 @@ def _signal_gen_ops(prefix: str) -> dict:
         "trading_start_minute": _env_int(f"{prefix}_TRADING_START_MINUTE", 25),
         "square_off_hour": _env_int(f"{prefix}_SQUARE_OFF_HOUR", 15),
         "square_off_minute": _env_int(f"{prefix}_SQUARE_OFF_MINUTE", 15),
-        "lots": _env_int(f"{prefix}_LOTS", 1),
-        "max_loss": starting_capital * _env_float(f"{prefix}_DAILY_MAX_LOSS_PCT", 0.03),
+        "lots": _scaled_int(prefix, f"{prefix}_LOTS", 1),
+        "max_loss": (
+            starting_capital
+            * _env_float(f"{prefix}_DAILY_MAX_LOSS_PCT", 0.03)
+            * _strategy_size_multiplier(prefix)
+        ),
     }
 
 
@@ -11688,8 +11798,12 @@ if SL_HUNTING_AVAILABLE:
     # Dynamic position sizing: the NIFTY leg never exceeds the configured risk
     # budget. The agent does NOT choose lots; the runner floors affordable lots
     # from the agent's underlying stop distance and caps them at MAX_LOTS.
-    SL_HUNTING_RISK_BUDGET = _env_float("SL_HUNTING_RISK_BUDGET", 2500.0)
-    SL_HUNTING_MAX_LOTS = _env_int("SL_HUNTING_MAX_LOTS", 5)
+    # Both scale with SL_HUNTING_SIZE_MULTIPLIER. NOTE: the BankNIFTY mirror
+    # below already roughly DOUBLES the basket's rupee risk beyond this budget,
+    # so a multiplier of M leaves the basket at roughly 2*M times the single-leg
+    # budget. The daily max-loss kill-switch (also scaled) still caps the day.
+    SL_HUNTING_RISK_BUDGET = _scaled_float("SL_HUNTING", "SL_HUNTING_RISK_BUDGET", 2500.0)
+    SL_HUNTING_MAX_LOTS = _scaled_int("SL_HUNTING", "SL_HUNTING_MAX_LOTS", 5)
     # BankNIFTY mirror (Intraday Hunter style): every NIFTY entry is mirrored
     # with the SAME lot count on the BankNIFTY ATM option of the CURRENT
     # BankNIFTY monthly expiry (rolling forward inside its final week -- see
@@ -13385,6 +13499,15 @@ def _live_config_errors(
         f"{normalized_prefix}_MAX_LOSS_PER_LOT": ("positive", None),
         f"{normalized_prefix}_DAILY_MAX_LOSS_PCT": ("positive", None),
         f"{normalized_prefix}_STARTING_CAPITAL": ("positive", None),
+        # The size multiplier scales lots, budget, lot cap AND the daily
+        # max-loss together, so a malformed one mis-sizes real money in both
+        # directions. `_strategy_size_multiplier` deliberately falls back to 1
+        # for paper; live must instead REFUSE to start rather than trade a
+        # size the operator did not actually configure.
+        f"{normalized_prefix}_SIZE_MULTIPLIER": (
+            "integer_range",
+            (1, MAX_SIZE_MULTIPLIER),
+        ),
     }
     if normalized_prefix in _RISK_BUDGET_PREFIXES:
         raw_rules[f"{normalized_prefix}_RISK_BUDGET"] = ("positive", None)
