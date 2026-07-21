@@ -1,14 +1,29 @@
 # Dependencies
 
-Shared configuration and the live-execution layer used by the front-test master file.
-Nothing here is needed for paper trading except `.env` (for tunable parameters); the
-broker subfolders only come into play when live trading is switched on.
+Shared configuration, the safety/data primitives the front-test master imports on
+every run (paper or live), and the live-execution layer. The broker subfolders only
+come into play when live trading is switched on.
 
 ## Contents
 ```
 Dependencies/
-├── env.example          # template; copy to .env (git-ignored) and fill in
-├── dhan_token_setup.py  # one-time DhanHQ OAuth login; writes DHAN_ACCESS_TOKEN into .env
+├── env.example              # template; copy to .env (git-ignored) and fill in
+├── dhan_token_setup.py      # one-time DhanHQ OAuth login; writes DHAN_ACCESS_TOKEN into .env
+│
+│   # Shared runtime primitives (imported by the master on every run)
+├── broker_contract.py       # OrderResult/OrderStatus types + the contract every broker adapter implements
+├── market_data_health.py    # OHLC validation + live feed-freshness gates (entry freeze / liquidation)
+├── tick_bar_builder.py      # pure websocket tick -> 1-min bar + official-candle true-up helpers
+├── execution_ledger.py      # per-leg live order ledger; exposure is never inferred from a boolean
+├── startup_exposure.py      # startup broker-book audit; live workers blocked until proven flat
+├── trading_lifecycle.py     # safe live-session stop/square-off state machine
+├── next_open_entry.py       # "enter at next candle open" pending-entry primitive (Goldmine/Money Machine)
+├── risk_sizing.py           # shared risk-budget position sizing (whole lots, skip-over-budget)
+├── secret_redaction.py      # strips credentials/tokens from anything headed to logs
+├── diagnostic_preflight.py  # safety checks before a diagnostic test order's typed-YES prompt
+├── test_*.py                # focused pytest suites for the modules above + repository policy
+│
+│   # Broker live-execution adapters (one folder each, same surface)
 ├── Kotak API/           # Kotak Neo live execution
 │   ├── kotak_execution.py        # KotakExecutionClient (shared singleton)
 │   └── diagnose_kotak_symbol.py  # read-only symbol check + optional test order
@@ -18,14 +33,23 @@ Dependencies/
 │   └── diagnose_shoonya_symbol.py# read-only symbol check + optional test order
 ├── Flattrade API/       # Flattrade Pi v2 REST live execution
 │   ├── flattrade_execution.py      # FlattradeExecutionClient (shared singleton)
-│   └── diagnose_flattrade_symbol.py# read-only symbol check + optional test order
+│   ├── diagnose_flattrade_symbol.py# read-only symbol check + optional test order
+│   └── test_flattrade_execution.py # offline unit tests for the adapter
 └── Dhan API/            # Dhan live execution (same SDK as market data, separate session)
     ├── dhan_execution.py           # DhanBrokerClient execution counterpart (shared singleton)
-    └── diagnose_dhan_symbol.py     # read-only symbol check + optional test order
+    ├── diagnose_dhan_symbol.py     # read-only symbol check + optional test order
+    └── test_dhan_execution.py      # offline unit tests for the adapter
 ```
 
 `.env` itself is git-ignored (it holds secrets); `env.example` is the committed template.
-All execution modules load `.env` from this `Dependencies/` folder.
+All execution modules load `.env` from this `Dependencies/` folder. A few files appear
+here only at runtime and stay untracked: `.env`, `log_files/` (the master's append-mode
+log), the nightly-refreshed `all_instrument <date>.csv` Dhan instrument master (used
+for option-contract resolution by the runner and the Dhan adapter), and the Google
+Sheets OAuth token cache when the EOD sheet writer is enabled.
+
+(`test_market_data_health.py` lives at the repo root next to the master's own suite;
+everything else in this folder is tested right here.)
 
 ## How live execution works
 The master file guarded-loads all four broker clients and then picks one with
