@@ -3603,7 +3603,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
         Publish producer health on the FETCH_POLL_SECONDS cadence.
 
         Payload semantics match the REST producer exactly, so every
-        MarketDataHealth clock (10s LTP, 90s bar, 30s liquidation, 3-refresh
+        MarketDataHealth clock (10s LTP, 150s bar, 30s liquidation, 3-refresh
         recovery) behaves identically. The only websocket-specific twist:
         while the connection is ALIVE, confirmed-subscribed keys get their
         cached LTPs re-stamped first -- no trade does not mean no feed. A

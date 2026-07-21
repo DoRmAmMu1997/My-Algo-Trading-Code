@@ -221,10 +221,15 @@ class MarketDataHealth:
     Beginner's map of the timing rules (all configurable via ``__init__``):
 
     - An LTP older than **10s** or a newest completed 1-minute bar older than
-      **90s** marks the whole feed unhealthy.  90s (not 60s) for the bar
-      because a candle stamped 09:20 only COMPLETES at 09:21, and the producer
-      then needs a poll cycle to fetch it -- 90s is "one full candle plus
-      slack", while 60s would false-alarm every minute boundary.
+      **150s** marks the whole feed unhealthy.  150s for the bar because ages
+      are measured from the bar's START minute: the candle stamped 09:20
+      completes at 09:21 but stays the newest COMPLETED bar until the 09:21
+      candle completes at 09:22 -- so on a perfectly healthy feed its age
+      cycles from 60s up to just under 120s, plus a producer poll cycle of
+      publish latency.  Only a feed that failed to deliver the NEXT bar on
+      time can exceed 150s ("two full candles plus slack"); the earlier 90s
+      default sat inside the healthy cycle and false-alarmed from second
+      :31 of every minute.
     - Unhealthy for **30s** continuously -> ``liquidation_required``: a blip
       should not dump positions, but half a minute without prices means live
       stops/targets are flying blind, so tracked exposure must come off.
@@ -244,7 +249,7 @@ class MarketDataHealth:
         self,
         *,
         ltp_max_age_seconds: float = 10.0,
-        completed_bar_max_age_seconds: float = 90.0,
+        completed_bar_max_age_seconds: float = 150.0,
         liquidation_after_seconds: float = 30.0,
         recovery_refreshes: int = 3,
     ) -> None:
