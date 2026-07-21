@@ -128,6 +128,14 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   non-contract states are aliased adapter-locally (`EXPIRED`→`CANCELLED`,
   `PART_TRADED`→`PARTIAL`); `TRANSIT`/`PENDING` stay unmapped so they remain transient.
   Dhan resolves contracts from the local `Dependencies/all_instrument <date>.csv`, not a download.
+- **Credential-safe logging:** `setup_logging()` installs `install_redaction_filter` on the root
+  logger with `environment_secrets(os.environ)` (every `.env` value whose KEY looks sensitive, ≥8
+  chars), so **every** record — lazy `%s` args and exception tracebacks included — is scrubbed before
+  it reaches the console or the append-mode log. This matters concretely: dhanhq's marketfeed puts
+  the live access token in its websocket URL, so a connect error would otherwise write it verbatim
+  into a log operators routinely share. Do not hand-redact new call sites; the guard covers them.
+  Short values (a 4-digit MPIN) are deliberately excluded from exact-match replacement — they would
+  blank strike prices and quantities — and are caught by `redact_text`'s `name=value` pass instead.
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module

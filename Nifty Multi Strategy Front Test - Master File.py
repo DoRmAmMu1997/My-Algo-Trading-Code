@@ -253,7 +253,11 @@ from Dependencies.market_data_health import (
 )
 from Dependencies.next_open_entry import PendingNextOpenEntry
 from Dependencies.risk_sizing import SizingDecision
-from Dependencies.secret_redaction import redact_text
+from Dependencies.secret_redaction import (
+    environment_secrets,
+    install_redaction_filter,
+    redact_text,
+)
 from Dependencies.startup_exposure import (
     StartupExposureAudit,
     audit_startup_exposure,
@@ -1015,6 +1019,20 @@ def setup_logging() -> logging.Logger:
 
     configured_logger.addHandler(file_handler)
     configured_logger.addHandler(stream_handler)
+
+    # Last-line credential guard, installed AFTER both handlers exist (the
+    # filter is attached to the handlers as well, and handlers added later are
+    # not covered). Every record -- including exception tracebacks, which
+    # logging would otherwise append after all filters have run -- is scrubbed
+    # on its way to the console and the append-mode log file.
+    #
+    # This is not belt-and-braces. dhanhq's marketfeed builds its websocket URL
+    # as `wss://api-feed.dhan.co?version=2&token=<ACCESS_TOKEN>&clientId=...`,
+    # so a connection exception can carry the LIVE trading token in its text,
+    # and this file's log is routinely shared when diagnosing a session. Rather
+    # than redact the handful of call sites that happen to log such an
+    # exception today, the guard covers every call site that will ever exist.
+    install_redaction_filter(configured_logger, environment_secrets(os.environ))
     return logging.getLogger(LOGGER_NAME)
 
 
