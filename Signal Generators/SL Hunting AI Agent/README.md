@@ -32,6 +32,14 @@ the lot count. Position size floors the affordable whole lots from the agent's
 stop distance, never exceeds `SL_HUNTING_RISK_BUDGET`, skips the setup when even
 one NIFTY lot is unaffordable, and caps at `SL_HUNTING_MAX_LOTS` (default 5).
 
+To scale this strategy as the account grows, set `SL_HUNTING_SIZE_MULTIPLIER`
+(default 1, whole numbers up to 25) rather than editing the knobs individually — it
+scales the risk budget, the lot cap, the fallback lots and the daily max-loss
+together. **Note it compounds with the BankNIFTY mirror:** the mirror already roughly
+doubles the basket's rupee risk beyond `SL_HUNTING_RISK_BUDGET`, so a multiplier of
+M leaves the basket near 2×M times the single-leg budget. The daily max-loss
+kill-switch (also scaled) still caps the day.
+
 ## Files
 | File | Purpose |
 |---|---|

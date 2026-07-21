@@ -56,6 +56,7 @@ One process, cooperating threads:
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
 test_nifty_multi_strategy_master.py                # unittest suite for the master
+test_market_data_health.py                         # unittest suite for the shared feed-health gates
 requirements.txt                                   # exact core runtime dependencies
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
 requirements-ai.txt                                # exact optional Claude Agent SDK stack
@@ -67,6 +68,7 @@ Signal Generators/                                 # strategy signal logic (+ CP
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
+  check_env_config.py                              # `algo.py check-env` config-drift audit (read-only)
   Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
   Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py,
@@ -80,8 +82,9 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
 
 ## Conventions
 - **Config:** one `.env` (gitignored) is the single source of truth, copied from `Dependencies/env.example`.
-  Read values through the `_env_str` / `_env_bool` / `_env_int` / `_env_float` helpers (master ~L253-292),
-  not ad-hoc `os.getenv`. Per-strategy knobs are namespaced `<PREFIX>_*` (e.g. `RENKO_*`, `CPR_*`); the
+  Read values through the `_env_str` / `_env_bool` / `_env_int` / `_env_float` helpers (master ~L352-406),
+  not ad-hoc `os.getenv`; size-bearing knobs go through `_scaled_int` / `_scaled_float` instead (see
+  size multiplier below). Per-strategy knobs are namespaced `<PREFIX>_*` (e.g. `RENKO_*`, `CPR_*`); the
   name→prefix map is `STRATEGY_ENV_PREFIX`. **Never commit secrets** — `env.example` holds blank placeholders.
 - **Live-trading safety (critical):** paper by default. A strategy trades live ONLY when the global
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
@@ -101,7 +104,7 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   ceiling `MAX_SIZE_MULTIPLIER`) scales that strategy's whole size/risk set together — `_LOTS`,
   `_MAX_LOTS`, `_RISK_BUDGET` and the absolute `_MAX_LOSS` — so size can grow with the account by
   editing one number. Applied at env-read time via `_scaled_int` / `_scaled_float` /
-  `_strategy_size_multiplier` (master ~L409-465), so `Dependencies/risk_sizing.py` is untouched and
+  `_strategy_size_multiplier` (master ~L409-467), so `Dependencies/risk_sizing.py` is untouched and
   scaled values flow through sizing, the kill-switch, Telegram and the Sheet unchanged. Deliberately
   **per-strategy only** (no global switch) and it applies to **paper and live alike**. Malformed
   values fall back to 1 for paper but are **blocked from live** by `_live_config_errors`. Two things
@@ -129,7 +132,7 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module
   `logging.getLogger(__name__)` logger, **not `print()`**. Strategy files have spaces in their names and
-  are imported via `load_module()` (master ~L742), not regular imports.
+  are imported via `load_module()` (master ~L1024), not regular imports.
 - **CLI:** prefer `python algo.py <command>` (`fetch-data` / `backtest` / `run` / `setup-token` /
   `diagnose` / `check-env`); each underlying script still runs standalone, and any flag beyond the
   selector passes straight through. A bare `python algo.py` prints help.
