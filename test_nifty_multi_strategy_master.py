@@ -1280,6 +1280,35 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
 # =============================================================================
 # TEST SUITE: MARKET DATA SOURCE SELECTOR
 # =============================================================================
+class TestMarketDataHttpTimeout(unittest.TestCase):
+    """
+    The dhanhq SDK ships a 60-second HTTP default. The execution adapter already
+    overrides it; the market-data client must too, so one slow Dhan response can
+    never park a producer thread for a full minute.
+    """
+
+    def test_broker_client_bounds_sdk_http_timeout(self):
+        http = MagicMock()
+        http.timeout = 60
+        with (
+            patch.object(master_file, "DhanContext") as ctx_cls,
+            patch.object(master_file, "dhanhq"),
+        ):
+            ctx_cls.return_value.get_dhan_http.return_value = http
+            master_file.DhanBrokerClient("client", "token")
+        self.assertEqual(http.timeout, master_file.MARKET_DATA_HTTP_TIMEOUT_SECONDS)
+        self.assertLessEqual(master_file.MARKET_DATA_HTTP_TIMEOUT_SECONDS, 15)
+
+    def test_missing_http_layer_does_not_crash_startup(self):
+        """DhanContext can hand back a half-built object; degrade, don't crash."""
+        with (
+            patch.object(master_file, "DhanContext") as ctx_cls,
+            patch.object(master_file, "dhanhq"),
+        ):
+            ctx_cls.return_value.get_dhan_http.return_value = None
+            master_file.DhanBrokerClient("client", "token")  # must not raise
+
+
 class TestMarketDataSourceSelector(unittest.TestCase):
     """
     The MARKET_DATA_SOURCE env flag picks the producer class. Anything that is
@@ -1627,6 +1656,82 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
             self.assertIn("49081", ids)
         # A (re)connect requests an immediate true-up (the gap backfill).
         self.assertIsNotNone(self.fetcher._trueup_reason)
+
+    def test_supervisor_cycle_never_calls_rest(self):
+        """
+        The supervisor publishes frames, syncs subscriptions and records health.
+        It must NEVER make a REST call: dhanhq's HTTP default is 60s, so one slow
+        true-up used to freeze the whole tick->store path (observed 2026-07-22:
+        13 of 16 stalls began at a true-up and lasted 59-73s).
+        """
+        self.fetcher._supervisor_cycle()
+        self.broker.fetch_index_1m_ohlc.assert_not_called()
+
+    def test_true_up_loop_runs_off_the_supervisor_thread(self):
+        """A slow true-up blocks only its own thread, never publishing."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def _slow_fetch(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return pd.DataFrame(
+                {"timestamp": [pd.Timestamp("2026-05-15 10:16:00")],
+                 "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.5]}
+            )
+
+        self.broker.fetch_index_1m_ohlc.side_effect = _slow_fetch
+        self.fetcher._trueup_reason = "test"
+        worker = threading.Thread(target=self.fetcher._run_true_up, args=("test",), daemon=True)
+        worker.start()
+        self.assertTrue(started.wait(2), "true-up did not start")
+
+        # While that REST call is in flight the supervisor must still publish.
+        self.fetcher._handle_packet(self._index_tick("24238.50", "10:17:33"), now_ist=self.NOW)
+        self.fetcher._publish_frame_if_changed()
+        self.assertIsNotNone(self.store.get("1"))
+        release.set()
+        worker.join(5)
+
+    def test_reconnect_closes_the_dead_feed(self):
+        """
+        Every reconnect builds a FRESH MarketFeed, and each one binds its own
+        asyncio event loop. Dropping the reference without closing leaks that
+        loop and its socket -- orphaned sockets accumulating in the kernel is
+        exactly what a flaky WiFi driver handles worst.
+        """
+        feed_one = MagicMock()
+        feed_one.get_data.side_effect = RuntimeError("socket died")
+        feed_two = MagicMock()
+
+        def _stop_then_raise():
+            self.stop_event.set()
+            raise RuntimeError("shutdown")
+
+        feed_two.get_data.side_effect = _stop_then_raise
+        self.broker.make_market_feed.side_effect = [feed_one, feed_two]
+        self.fetcher.RECONNECT_BACKOFF_INITIAL_SECONDS = 0.01
+        self.fetcher._pump_main()
+
+        feed_one.close_connection.assert_called_once()
+
+    def test_reconnect_close_failure_does_not_stop_reconnecting(self):
+        """A dead socket often refuses to close; that must not end the pump."""
+        feed_one = MagicMock()
+        feed_one.get_data.side_effect = RuntimeError("socket died")
+        feed_one.close_connection.side_effect = RuntimeError("already gone")
+        feed_two = MagicMock()
+
+        def _stop_then_raise():
+            self.stop_event.set()
+            raise RuntimeError("shutdown")
+
+        feed_two.get_data.side_effect = _stop_then_raise
+        self.broker.make_market_feed.side_effect = [feed_one, feed_two]
+        self.fetcher.RECONNECT_BACKOFF_INITIAL_SECONDS = 0.01
+        self.fetcher._pump_main()
+
+        self.assertEqual(self.broker.make_market_feed.call_count, 2)
 
     def test_close_feed_swallows_sdk_errors(self):
         feed = MagicMock()
@@ -3431,12 +3536,27 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         })
         return worker, store
 
+    def _expected_nifty_lots(self):
+        """Expected lots for this class's canonical 10-pt-stop entry.
+
+        Derived from the master's EFFECTIVE constants (already scaled by
+        SL_HUNTING_SIZE_MULTIPLIER at import), so these tests hold under
+        whatever multiplier the operator's .env sets, not just the default.
+        At defaults: min(floor(2500 / (10*75)), 5) = 3 NIFTY lots.
+        The sizing formula itself is covered by risk_sizing's own tests;
+        this class only checks the mirror's bookkeeping around it.
+        """
+        return min(
+            int(master_file.SL_HUNTING_RISK_BUDGET // (10 * 75)),
+            master_file.SL_HUNTING_MAX_LOTS,
+        )
+
     def test_mirror_opens_with_same_lot_count(self):
         worker, _ = self._make_worker()
-        # 10-pt stop -> floor(2500 / (10*75)) = 3 NIFTY lots.
+        # 10-pt stop -> floor(budget / (10*75)) lots (3 at the default 2500).
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         nifty_lots = worker.pos.quantity // 75
-        self.assertEqual(nifty_lots, 3)
+        self.assertEqual(nifty_lots, self._expected_nifty_lots())
         self.assertTrue(worker._mirror_pos.active)
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
@@ -3802,11 +3922,13 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
             self.assertTrue(worker.pos.active)
             self.assertTrue(worker._mirror_pos.active)
-            # MAT-104 floor sizing: 10-pt stop -> floor(2500 / (10*75)) = 3
-            # NIFTY lots, mirrored as 3 BNF lots x 35 = 105 units.
-            self.assertEqual(worker._mirror_pos.quantity, 105)
+            # MAT-104 floor sizing: same lot count as the NIFTY leg, in BNF
+            # units (3 lots x 35 = 105 at the default config); only the fake's
+            # single BNF lot (35) is confirmed live.
+            mirror_qty = self._expected_nifty_lots() * 35
+            self.assertEqual(worker._mirror_pos.quantity, mirror_qty)
             self.assertEqual(worker._mirror_pos.live_leg.confirmed_live_quantity, 35)
-            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 105)
+            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, mirror_qty)
 
             worker.exit_position("ASYMMETRIC_ENTRY_RECOVERY")
 
@@ -3815,8 +3937,8 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             for symbol, side, quantity in fake.calls
             if "BANKNIFTY" in symbol
         ]
-        self.assertEqual(bnf_orders, [("BUY", 105), ("SELL", 35)])
-        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 105)])
+        self.assertEqual(bnf_orders, [("BUY", mirror_qty), ("SELL", 35)])
+        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", mirror_qty)])
         self.assertFalse(worker._mirror_pos.active)
 
     def test_unknown_mirror_entry_uses_conservative_risk_quantity_for_mtm(self):
@@ -3866,18 +3988,21 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         mirror = worker._mirror_pos
         self.assertTrue(mirror.active)
         self.assertEqual(mirror.live_leg.confirmed_live_quantity, 0)
-        # MAT-104 floor sizing: 3 NIFTY lots -> 3 BNF lots x 35 = 105 units.
-        self.assertEqual(mirror.live_leg.risk_quantity, 105)
-        self.assertEqual(mirror.quantity, 105)
+        # MAT-104 floor sizing: same lot count as the NIFTY leg, in BNF units
+        # (3 lots x 35 = 105 at the default config).
+        mirror_qty = self._expected_nifty_lots() * 35
+        self.assertEqual(mirror.live_leg.risk_quantity, mirror_qty)
+        self.assertEqual(mirror.quantity, mirror_qty)
         store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 490.0})
-        self.assertEqual(worker._mirror_leg_pnl(), -1050.0)
+        # Adverse MTM counts the FULL intended quantity at -10/unit.
+        self.assertEqual(worker._mirror_leg_pnl(), -10.0 * mirror_qty)
         with (
             patch.object(master_file, "execution_client", fake),
             patch.object(worker, "_start_execution_reconciliation"),
         ):
             worker.exit_bnf_mirror_only("UNKNOWN_ENTRY_RECOVERY")
         self.assertTrue(worker._mirror_pos.active)
-        self.assertEqual(worker._mirror_pos.quantity, 105)
+        self.assertEqual(worker._mirror_pos.quantity, mirror_qty)
         self.assertFalse(
             any(
                 side == "SELL" and "BANKNIFTY" in symbol

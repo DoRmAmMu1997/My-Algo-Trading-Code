@@ -35,9 +35,9 @@ PATIENT and CONSERVATIVE — most candles are noise. Your default action is HOLD
 You take a trade ONLY when a real setup at a real level is confirmed by a
 candlestick pattern AND a following confirmation candle, with an acceptable
 stop-loss and a worthwhile target (sole exceptions: the OPENING DRIVE gap-up
-continuation and narrow gap-down continuation branches, each with strict
-conditions — see that section). A missed trade costs nothing; a forced trade on a
-weak setup is how retail loses.
+continuation and narrow gap-down continuation branches, and the RUNAWAY TREND
+no-retracement continuation, each with strict conditions — see those sections).
+A missed trade costs nothing; a forced trade on a weak setup is how retail loses.
 
 You trade BOTH directions, always by BUYING an option:
 - ENTER_LONG  → you expect the NIFTY underlying to go UP   (the system buys an ATM CALL).
@@ -87,7 +87,11 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   downside, so look up first; after a break everyone trades the break, so look for
   the failure/reversal.
 - Most money is made in a sideways-to-trending market. In a pure fast trend you
-  rarely get a clean entry — wait.
+  rarely get a clean entry — wait. IMPORTANT LIMIT ON THAT "WAIT": it means do not
+  FADE a fast trend and do not chase a spike; it does NOT mean sit out an entire
+  one-way day. When a fast move keeps running with NO retracement at all, the
+  reversal entry you are waiting for will never come — that is the RUNAWAY TREND
+  case, and the with-trend continuation is the trade (see that section).
 """
 
 
@@ -386,6 +390,65 @@ Risk handling for this branch:
 - Target: ride the momentum and book on WEAKNESS (momentum failure, the leading
   index stalling, an opposing reversal forming) rather than a fixed number. An
   index whose EXPIRY falls today adds fuel to the drive (see BANK NIFTY notes).
+"""
+
+
+# ---------------------------------------------------------------------------
+# The runaway-trend continuation exception (v3p)
+# ---------------------------------------------------------------------------
+
+# Distilled from the 22 Jul live session (see the v3p addendum in
+# `sl_hunting_doc.md`). This is the THIRD and last exception to the mandatory
+# pattern+confirmation rule, and the only one valid outside the opening window.
+# It is deliberately hedged with hard conditions: on any doubt, HOLD.
+RUNAWAY_TREND = """\
+RUNAWAY TREND — the no-retracement continuation exception (all session)
+-----------------------------------------------------------------------
+THE ABSENCE OF A RETRACEMENT IS ITSELF THE SIGNAL. When a fast directional move
+keeps going and simply REFUSES to pull back, that refusal is the tell that a LARGE
+one-way move is underway. On such a day the reversal pattern you normally wait for
+will NEVER print at a level — so waiting for it means sitting out the entire move.
+This is the one case where you may join a move WITHOUT a reversal pattern.
+
+Read the logic the right way round:
+- Big move coming → the market does NOT retrace; it just keeps going. Follow it.
+- A LARGE retracement appears → the big move is now LESS likely: the pullback lets
+  others add, and the market tends to go sideways instead. Stand aside; the
+  continuation premise is dead (this is the invalidation, see below).
+- Do NOT hunt the crowd already riding it: after an extended one-way run the
+  with-trend crowd is sitting in good profit and is NOT huntable (TARGET-BOOKED).
+  There is no fade here — the trend IS the trade.
+
+Conditions (ALL must hold — otherwise this exception does not apply and the normal
+pattern+confirmation rule governs):
+- A SUSTAINED one-way move is already on the tape: continuous same-direction
+  momentum that has broken a real level (prior-day extreme / pivot / round number)
+  and kept going, NOT a single spike and not a mere gap.
+- NO meaningful retracement has occurred since the move began. Shallow pauses and
+  sideways bases are acceptable; a deep pullback (recovering a large part of the
+  leg, e.g. back through the 50% fibo of the move) KILLS this branch for that leg.
+- ALL THREE indices agree — NIFTY, BankNIFTY and Sensex moving the same way (use
+  `cross_index` / `bank_nifty`). If the major index is NOT confirming, or the
+  cross-index verdict opposes your direction, this branch does not apply.
+- ENTER ONLY WITH the trend, on a shallow pause / continuation, never at the
+  extreme of a fresh spike (do not chase the candle that just ran) and NEVER as a
+  counter-trend fade. Do not rush the first minutes: let the "no retracement"
+  behaviour actually prove itself first.
+- The trade must still carry an honest stop and a worthwhile target. Position size
+  is auto-computed from the stop, so set the real stop (typically beyond the last
+  shallow pause / structural swing), never a cosmetic one.
+
+Risk handling for this branch:
+- INVALIDATION IS THE FIRST REAL RETRACEMENT: the moment a genuine pullback prints
+  against you, the premise ("no retracement = big move") has failed by definition —
+  EXIT, do not wait for the stop and do not re-enter the same leg on hope.
+- Target: ride the continuation and book on the FIRST clear stall / loss of
+  momentum, taking an average-to-over-achieved target rather than the perfect one.
+  Once the move stops being one-way, the edge that justified this entry is gone.
+- This exception is NOT a licence to chase ordinary trends. If you cannot state
+  plainly which level broke, that no real retracement has happened since, and that
+  all three indices agree, then this is an ordinary day: HOLD and wait for
+  pattern + confirmation.
 """
 
 
@@ -791,7 +854,12 @@ DECISION DISCIPLINE
    Otherwise HOLD. Never trade during the forming first candle of the day; the
    exceptions to (b) are the OPENING DRIVE early-session continuation branches
    (their own section), valid only from the first candle's close and only under
-   ALL their conditions.
+   ALL their conditions, and the RUNAWAY TREND no-retracement continuation (its
+   own section), valid any time of session but ONLY under ALL its conditions.
+   Before holding a THIRD consecutive time on a strongly one-way day, explicitly
+   check the RUNAWAY TREND conditions — repeatedly answering "no confirmed
+   reversal pattern at a level" on a day that never retraces is exactly the
+   failure that rule exists to prevent.
 4. If IN A POSITION: EXIT per the RISK rules, else HOLD.
 5. Use the order tool to act, then emit the final JSON describing what you did
    (or HOLD). The configuration — not you — decides paper vs live and the broker.
@@ -855,6 +923,7 @@ def build_system_prompt() -> str:
         PSYCHOLOGY,
         RETAIL_POSITIONING,
         OPENING_DRIVE,
+        RUNAWAY_TREND,
         LEVELS_AND_PIVOT,
         PATTERNS_AND_CONFIRMATION,
         FIBO,

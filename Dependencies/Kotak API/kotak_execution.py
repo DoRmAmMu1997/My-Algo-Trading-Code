@@ -222,6 +222,68 @@ def _response_rows(response: Any) -> list[Any] | None:
     return None
 
 
+def _kotak_net_quantity(row: dict[str, Any]) -> int | None:
+    """Return one position row's net size, or ``None`` when it cannot be read.
+
+    Kotak's position book carries NO net-quantity field.  It reports the four
+    component quantities and leaves the arithmetic to the caller::
+
+        net = (cfBuyQty + flBuyQty) - (cfSellQty + flSellQty)
+
+    ``cf*`` are carry-forward (overnight) legs and ``fl*`` are the day's filled
+    legs.  A BUY 65 / SELL 65 round trip therefore appears as ``flBuyQty 65``
+    and ``flSellQty 65`` -- net zero, i.e. flat.
+
+    Reading a missing ``netQty`` as "unparseable" is what made the startup audit
+    fail on 2026-07-22: a genuinely flat account was reported as indeterminate
+    and live trading stayed blocked.
+
+    ``None`` is returned only when the row truly cannot be trusted, because the
+    caller turns a number into a flatness claim -- and a wrong "flat" is what
+    would let live trading start against real exposure.  So a quantity that is
+    PRESENT but unparseable fails closed rather than defaulting to zero.
+    """
+
+    # Prefer an explicit net if a future master revision ever supplies one.
+    for key in ("netQty", "netqty"):
+        if key in row:
+            return _exact_int(row.get(key))
+
+    components: dict[str, int] = {}
+    for key in ("cfBuyQty", "flBuyQty", "cfSellQty", "flSellQty"):
+        if key not in row:
+            continue
+        value = _exact_int(row.get(key))
+        if value is None:
+            return None  # Present but unreadable: never guess at exposure.
+        components[key] = value
+    if not components:
+        return None  # No quantity information at all.
+
+    bought = components.get("cfBuyQty", 0) + components.get("flBuyQty", 0)
+    sold = components.get("cfSellQty", 0) + components.get("flSellQty", 0)
+    return bought - sold
+
+
+def _indeterminate_book(
+    kind: str,
+    reason: str,
+    *,
+    broker_state: str = "UNKNOWN",
+) -> BrokerQueryResult[Any]:
+    """Log why a reconciliation query failed, then return the typed result.
+
+    ``audit_startup_exposure`` deliberately keeps broker-provided text out of
+    its operator alert, so without this the startup log says only
+    "indeterminate" and the actual cause has to be reproduced by hand against a
+    live session.  The adapter's own logger is already scrubbed by the shared
+    redaction filter, so it is the right place to record the detail.
+    """
+
+    log.warning("Kotak %s query indeterminate: %s", kind, reason)
+    return BrokerQueryResult.indeterminate(reason, broker_state=broker_state)
+
+
 class KotakExecutionClient:
     """
     One shared "phone line" to Kotak that every live strategy uses.
@@ -1093,24 +1155,27 @@ class KotakExecutionClient:
         with self._lock:
             client = self.client
         if client is None:
-            return BrokerQueryResult.indeterminate("Kotak client not initialised.")
+            return _indeterminate_book("open-order", "Kotak client not initialised.")
         try:
             response = self._sdk_call("order_report", client.order_report)
         except Exception as exc:
-            return BrokerQueryResult.indeterminate(
+            return _indeterminate_book(
+                "open-order",
                 f"Kotak open-order query failed: {exc}",
                 broker_state="SESSION_POISONED" if self.session_poisoned else "UNKNOWN",
             )
         rows = _response_rows(response)
         if rows is None:
-            return BrokerQueryResult.indeterminate(
-                f"Kotak open-order query returned malformed data: {response!r}"
+            return _indeterminate_book(
+                "open-order",
+                f"Kotak open-order query returned malformed data: {response!r}",
             )
         orders: list[OpenOrder] = []
         for row in rows:
             if not isinstance(row, dict):
-                return BrokerQueryResult.indeterminate(
-                    "Kotak open-order query contained a malformed row."
+                return _indeterminate_book(
+                    "open-order",
+                    "Kotak open-order query contained a malformed row.",
                 )
             raw_state = str(row.get("ordSt") or "").strip().upper()
             snapshot = normalize_order_result(
@@ -1129,8 +1194,9 @@ class KotakExecutionClient:
                 or "malformed" in snapshot.reason.lower()
                 or snapshot.requested_quantity <= 0
             ):
-                return BrokerQueryResult.indeterminate(
-                    "Kotak open-order query contained incomplete order data."
+                return _indeterminate_book(
+                    "open-order",
+                    "Kotak open-order query contained incomplete order data.",
                 )
             if raw_state in {
                 "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
@@ -1162,33 +1228,36 @@ class KotakExecutionClient:
         with self._lock:
             client = self.client
         if client is None:
-            return BrokerQueryResult.indeterminate("Kotak client not initialised.")
+            return _indeterminate_book("open-position", "Kotak client not initialised.")
         try:
             response = self._sdk_call("positions", client.positions)
         except Exception as exc:
-            return BrokerQueryResult.indeterminate(
+            return _indeterminate_book(
+                "open-position",
                 f"Kotak open-position query failed: {exc}",
                 broker_state="SESSION_POISONED" if self.session_poisoned else "UNKNOWN",
             )
         rows = _response_rows(response)
         if rows is None:
-            return BrokerQueryResult.indeterminate(
-                f"Kotak open-position query returned malformed data: {response!r}"
+            return _indeterminate_book(
+                "open-position",
+                f"Kotak open-position query returned malformed data: {response!r}",
             )
         positions: list[OpenPosition] = []
         for row in rows:
             if not isinstance(row, dict):
-                return BrokerQueryResult.indeterminate(
-                    "Kotak open-position query contained a malformed row."
+                return _indeterminate_book(
+                    "open-position",
+                    "Kotak open-position query contained a malformed row.",
                 )
-            raw_quantity = row.get("netQty") if "netQty" in row else row.get("netqty")
-            quantity = _exact_int(raw_quantity)
+            quantity = _kotak_net_quantity(row)
             symbol = str(
                 row.get("trdSym") or row.get("tradingSymbol") or row.get("pTrdSymbol") or ""
             ).strip()
             if quantity is None or not symbol:
-                return BrokerQueryResult.indeterminate(
-                    "Kotak open-position query contained incomplete position data."
+                return _indeterminate_book(
+                    "open-position",
+                    "Kotak open-position query contained incomplete position data.",
                 )
             if quantity == 0:
                 continue

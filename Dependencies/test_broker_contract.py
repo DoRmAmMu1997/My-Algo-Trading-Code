@@ -1909,6 +1909,177 @@ def test_kotak_malformed_history_row_normalizes_unknown(
     assert "malformed" in result.reason.lower()
 
 
+# One real row captured from Kotak's live position book, immediately after a
+# BUY 65 / SELL 65 round trip on NIFTY26JUL24500CE. The point of keeping it
+# verbatim: it carries NO netQty/netqty key at all. Kotak reports the four
+# component quantities and expects the caller to compute the net, so an adapter
+# reading row["netQty"] sees None and calls a flat account "indeterminate" --
+# which blocked live trading at startup on 2026-07-22.
+_KOTAK_FLAT_ROUND_TRIP_POSITION = {
+    "actId": "YHRT0",
+    "brdLtQty": 65,
+    "cfBuyQty": "0",
+    "cfSellQty": "0",
+    "flBuyQty": "65",
+    "flSellQty": "65",
+    "buyAmt": "1972.75",
+    "sellAmt": "1982.50",
+    "exSeg": "nse_fo",
+    "prod": "MIS",
+    "trdSym": "NIFTY26JUL24500CE",
+    "optTp": "CE",
+    "sym": "NIFTY",
+    "lotSz": "65",
+}
+
+
+def _kotak_position(**overrides):
+    """Return the captured live row with specific quantities overridden."""
+
+    row = dict(_KOTAK_FLAT_ROUND_TRIP_POSITION)
+    row.update(overrides)
+    return row
+
+
+def test_kotak_completed_round_trip_position_reads_as_flat(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A bought-then-sold position is flat, not an unreadable row.
+
+    Kotak's book has no net-quantity field, so the net must be computed as
+    (cfBuy + flBuy) - (cfSell + flSell). Reading a missing netQty as "cannot
+    parse" made every startup audit fail once any position row existed.
+    """
+
+    client = _ready_kotak_client(
+        kotak_module,
+        monkeypatch,
+        _FakeKotakSdk(positions=[_kotak_position()]),
+    )
+
+    result = client.list_open_positions()
+
+    assert result.is_indeterminate is False, result.reason
+    # Flat legs are dropped, so a closed round trip leaves nothing open.
+    assert result.items == ()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_quantity"),
+    [
+        # Open long: bought today, nothing sold back.
+        ({"flBuyQty": "65", "flSellQty": "0"}, 65),
+        # Open short.
+        ({"flBuyQty": "0", "flSellQty": "65"}, -65),
+        # Carry-forward legs must count toward the net too.
+        ({"cfBuyQty": "130", "flBuyQty": "0", "flSellQty": "65"}, 65),
+        # Partially closed: 130 bought, 65 sold back.
+        ({"flBuyQty": "130", "flSellQty": "65"}, 65),
+    ],
+)
+def test_kotak_net_position_is_computed_from_its_components(
+    kotak_module: ModuleType,
+    monkeypatch,
+    overrides: dict,
+    expected_quantity: int,
+) -> None:
+    client = _ready_kotak_client(
+        kotak_module,
+        monkeypatch,
+        _FakeKotakSdk(positions=[_kotak_position(**overrides)]),
+    )
+
+    result = client.list_open_positions()
+
+    assert result.is_indeterminate is False, result.reason
+    assert len(result.items) == 1
+    assert result.items[0].quantity == expected_quantity
+    assert result.items[0].symbol == "NIFTY26JUL24500CE"
+
+
+def test_kotak_explicit_net_quantity_still_wins_when_present(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """If a future master revision supplies netQty, trust it over the parts."""
+
+    client = _ready_kotak_client(
+        kotak_module,
+        monkeypatch,
+        _FakeKotakSdk(positions=[_kotak_position(netQty="-65")]),
+    )
+
+    result = client.list_open_positions()
+
+    assert result.is_indeterminate is False, result.reason
+    assert result.items[0].quantity == -65
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # No quantity information of any kind.
+        {"cfBuyQty": None, "cfSellQty": None, "flBuyQty": None, "flSellQty": None},
+        # Present but unparseable: never silently treat this as zero.
+        {"flBuyQty": "abc"},
+        {"flSellQty": "6.5"},
+        {"netQty": "not-a-number"},
+    ],
+)
+def test_kotak_unreadable_position_quantity_fails_closed(
+    kotak_module: ModuleType,
+    monkeypatch,
+    overrides: dict,
+) -> None:
+    """An unreadable row must never be reported as flat.
+
+    "Flat" is what lets live trading start, so a quantity we cannot parse has
+    to stay indeterminate rather than default to zero.
+    """
+
+    row = _kotak_position()
+    for key, value in overrides.items():
+        if value is None:
+            row.pop(key, None)
+        else:
+            row[key] = value
+    client = _ready_kotak_client(
+        kotak_module,
+        monkeypatch,
+        _FakeKotakSdk(positions=[row]),
+    )
+
+    assert client.list_open_positions().is_indeterminate is True
+
+
+def test_kotak_indeterminate_book_queries_are_logged(
+    kotak_module: ModuleType,
+    monkeypatch,
+    caplog,
+) -> None:
+    """The reason must reach the log, not just the returned object.
+
+    ``audit_startup_exposure`` deliberately strips broker text from its alert,
+    so an unlogged reason is invisible: the 2026-07-22 startup block reported
+    only "indeterminate" and the cause had to be reproduced by hand.
+    """
+
+    client = _ready_kotak_client(
+        kotak_module,
+        monkeypatch,
+        _FakeKotakSdk(positions=[{"trdSym": "NIFTY26JUL24500CE"}]),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = client.list_open_positions()
+
+    assert result.is_indeterminate is True
+    assert any(
+        "indeterminate" in record.message.lower() for record in caplog.records
+    ), f"no warning logged; records={[r.message for r in caplog.records]}"
+
+
 def test_kotak_error_envelopes_cannot_masquerade_as_empty_books(
     kotak_module: ModuleType,
     monkeypatch,

@@ -352,3 +352,35 @@ def test_system_prompt_has_v3o_flush_day_and_solo_leader_knowledge():
     assert "SOLO-LEADER VETO" in prompt
     # The veto's release condition.
     assert "reclaim its closing point" in prompt
+
+
+def test_system_prompt_has_v3p_runaway_trend_knowledge():
+    """v3p: 22 Jul — the agent HELD 59/59 bars on a one-way breakdown IH traded well.
+
+    Every HOLD ended "no confirmed reversal pattern at a level", because the prompt
+    had no with-trend entry path outside OPENING_DRIVE's 15-minute window. RUNAWAY
+    TREND is the third (and last) exception to pattern+confirmation: the ABSENCE of a
+    retracement is the signal, and the first real retracement is the invalidation.
+    """
+    prompt = build_system_prompt()
+    assert "RUNAWAY TREND" in prompt
+    assert "THE ABSENCE OF A RETRACEMENT IS ITSELF THE SIGNAL" in prompt
+    # The invalidation must be explicit -- this branch has no reversal pattern to lean on.
+    assert "INVALIDATION IS THE FIRST REAL RETRACEMENT" in prompt
+    # It must be gated on all three indices agreeing, and never be a fade.
+    assert "ALL THREE indices agree" in prompt
+    assert "NEVER as a" in prompt and "counter-trend fade" in prompt
+    # The three entry gates must all advertise the new exception, or it is unreachable.
+    assert "RUNAWAY TREND no-retracement continuation" in prompt   # ROLE + DECISION_RULES
+    # PSYCHOLOGY's "wait in a fast trend" line must carry its limiting clause.
+    assert "IMPORTANT LIMIT ON THAT" in prompt
+
+
+def test_runaway_trend_section_is_composed_into_the_prompt():
+    """The section constant must actually be wired into build_system_prompt()."""
+    from sl_hunting_knowledge import RUNAWAY_TREND
+
+    prompt = build_system_prompt()
+    assert RUNAWAY_TREND.strip() in prompt
+    # It belongs with the other continuation exception, before the levels rules.
+    assert prompt.index("RUNAWAY TREND —") > prompt.index("OPENING DRIVE —")
