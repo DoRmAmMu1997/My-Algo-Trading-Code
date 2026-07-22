@@ -540,6 +540,12 @@ WS_TRUEUP_DELAY_SECONDS = _env_float("WS_TRUEUP_DELAY_SECONDS", 5.0)
 # silent past this window the existing 10s/30s staleness policy takes over.
 WS_CONN_LIVENESS_SECONDS = _env_float("WS_CONN_LIVENESS_SECONDS", 5.0)
 
+# Native HTTP deadline for the MARKET DATA session. The dhanhq SDK ships a
+# 60-second default (DhanHTTP.HTTP_DEFAULT_TIME_OUT); the execution adapter
+# already overrides it and the producer must too. On 2026-07-22 a slow Dhan
+# response parked the websocket producer for 59-73s at a time.
+MARKET_DATA_HTTP_TIMEOUT_SECONDS = _env_float("MARKET_DATA_HTTP_TIMEOUT_SECONDS", 10.0)
+
 # Bounded join timeout for each thread on shutdown.
 SHUTDOWN_JOIN_SECONDS = _env_float("SHUTDOWN_JOIN_SECONDS", 6.0)
 
@@ -2383,6 +2389,23 @@ class DhanBrokerClient:
         # session for every call (intraday OHLC, ticker LTPs, etc.).
         self._dhan_context = DhanContext(client_code, access_token)
         self.dhan = dhanhq(self._dhan_context)
+        # The SDK's native HTTP deadline is 60s. That is far too long for a
+        # producer thread: a single slow Dhan response parks the caller for a
+        # whole minute (seen 2026-07-22). DhanContext swallows its own errors
+        # and can hand back a half-built object, so verify rather than assume.
+        try:
+            http = self._dhan_context.get_dhan_http()
+            if http is not None:
+                http.timeout = MARKET_DATA_HTTP_TIMEOUT_SECONDS
+            else:
+                logging.getLogger(f"{LOGGER_NAME}.broker").warning(
+                    "DhanContext produced no HTTP layer; market-data calls keep "
+                    "the SDK's 60s default timeout."
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.getLogger(f"{LOGGER_NAME}.broker").warning(
+                "Could not bound the market-data HTTP timeout: %s", exc
+            )
 
     def fetch_index_1m_ohlc(
         self,
@@ -3421,7 +3444,10 @@ class WebSocketMarketDataFetcher(threading.Thread):
     # Supervisor wake interval; also bounds shutdown latency.
     SUPERVISOR_CYCLE_SECONDS = 0.5
     # Throttle for intra-minute republishes (a rollover always publishes).
-    PUBLISH_MIN_INTERVAL_SECONDS = 1.0
+    # Each publish re-validates the whole ~2,200-row window and every worker
+    # then copies it, so this is the producer's main CPU cost. 2s keeps the
+    # forming candle responsive while halving that load.
+    PUBLISH_MIN_INTERVAL_SECONDS = 2.0
     # Warmup REST retry cadence (startup cannot proceed without history:
     # MIN_BARS plus the prior-day candles the CPR strategies pivot on).
     WARMUP_RETRY_SECONDS = 30.0
@@ -3457,6 +3483,11 @@ class WebSocketMarketDataFetcher(threading.Thread):
         self._confirmed_keys: set[tuple[str, int]] = set()
         self._last_packet_monotonic: float | None = None
 
+        # Publishing is reachable from BOTH the supervisor and the true-up
+        # thread, so serialise it: two concurrent publishes could interleave
+        # the throttle/signature bookkeeping and strand an update.
+        self._publish_lock = threading.Lock()
+
         # Single-writer flags (GIL-atomic hand-offs between the two threads).
         self._rollover_pending = False
         self._trueup_reason: str | None = None
@@ -3484,18 +3515,44 @@ class WebSocketMarketDataFetcher(threading.Thread):
             target=self._pump_main, name="MarketDataFeedPump", daemon=True
         )
         pump.start()
+        # The true-up makes a BLOCKING REST call, so it gets its own thread.
+        # Keeping it on the supervisor meant one slow Dhan response stalled
+        # publishing, subscription syncing AND health recording together.
+        trueup = threading.Thread(
+            target=self._trueup_main, name="MarketDataTrueUp", daemon=True
+        )
+        trueup.start()
         while not self.stop_event.is_set():
-            try:
-                self._sync_subscriptions()
-                self._publish_frame_if_changed()
-                self._maybe_run_true_up()
-                self._record_health_if_due()
-            except Exception as exc:
-                # The supervisor must never die mid-session; log and continue.
-                self.log.exception("Websocket supervisor cycle error: %s", exc)
+            self._supervisor_cycle()
             self.stop_event.wait(self.SUPERVISOR_CYCLE_SECONDS)
         self._close_feed()
         self.log.info("Websocket market data fetcher stopped.")
+
+    def _supervisor_cycle(self) -> None:
+        """
+        One supervisor pass: publish, sync subscriptions, record health.
+
+        Deliberately free of network calls -- everything here reads in-memory
+        state, so this loop keeps running at its normal cadence no matter how
+        slow the broker's REST endpoint is.
+        """
+        try:
+            self._sync_subscriptions()
+            self._publish_frame_if_changed()
+            self._record_health_if_due()
+        except Exception as exc:
+            # The supervisor must never die mid-session; log and continue.
+            self.log.exception("Websocket supervisor cycle error: %s", exc)
+
+    def _trueup_main(self) -> None:
+        """Own the blocking per-minute REST true-up on a dedicated thread."""
+        while not self.stop_event.is_set():
+            try:
+                self._maybe_run_true_up()
+            except Exception as exc:
+                self.log.exception("True-up cycle error: %s", exc)
+            self.stop_event.wait(self.SUPERVISOR_CYCLE_SECONDS)
+        self.log.info("True-up loop stopped.")
 
     def _warmup_official_history(self) -> bool:
         """
@@ -3614,7 +3671,15 @@ class WebSocketMarketDataFetcher(threading.Thread):
         so `validate_ohlc_frame` does not re-walk the whole window on every
         tick; a minute rollover always publishes immediately so workers see a
         completed candle as fast as possible.
+
+        Reachable from the supervisor AND the true-up thread, so the whole body
+        runs under `_publish_lock`.
         """
+        with self._publish_lock:
+            self._publish_frame_locked(force)
+
+    def _publish_frame_locked(self, force: bool) -> None:
+        """Publish body; caller must hold `_publish_lock`."""
         signature = self.aggregator.signature()
         rollover = self._rollover_pending
         if not force:

@@ -1280,6 +1280,35 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
 # =============================================================================
 # TEST SUITE: MARKET DATA SOURCE SELECTOR
 # =============================================================================
+class TestMarketDataHttpTimeout(unittest.TestCase):
+    """
+    The dhanhq SDK ships a 60-second HTTP default. The execution adapter already
+    overrides it; the market-data client must too, so one slow Dhan response can
+    never park a producer thread for a full minute.
+    """
+
+    def test_broker_client_bounds_sdk_http_timeout(self):
+        http = MagicMock()
+        http.timeout = 60
+        with (
+            patch.object(master_file, "DhanContext") as ctx_cls,
+            patch.object(master_file, "dhanhq"),
+        ):
+            ctx_cls.return_value.get_dhan_http.return_value = http
+            master_file.DhanBrokerClient("client", "token")
+        self.assertEqual(http.timeout, master_file.MARKET_DATA_HTTP_TIMEOUT_SECONDS)
+        self.assertLessEqual(master_file.MARKET_DATA_HTTP_TIMEOUT_SECONDS, 15)
+
+    def test_missing_http_layer_does_not_crash_startup(self):
+        """DhanContext can hand back a half-built object; degrade, don't crash."""
+        with (
+            patch.object(master_file, "DhanContext") as ctx_cls,
+            patch.object(master_file, "dhanhq"),
+        ):
+            ctx_cls.return_value.get_dhan_http.return_value = None
+            master_file.DhanBrokerClient("client", "token")  # must not raise
+
+
 class TestMarketDataSourceSelector(unittest.TestCase):
     """
     The MARKET_DATA_SOURCE env flag picks the producer class. Anything that is
@@ -1627,6 +1656,42 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
             self.assertIn("49081", ids)
         # A (re)connect requests an immediate true-up (the gap backfill).
         self.assertIsNotNone(self.fetcher._trueup_reason)
+
+    def test_supervisor_cycle_never_calls_rest(self):
+        """
+        The supervisor publishes frames, syncs subscriptions and records health.
+        It must NEVER make a REST call: dhanhq's HTTP default is 60s, so one slow
+        true-up used to freeze the whole tick->store path (observed 2026-07-22:
+        13 of 16 stalls began at a true-up and lasted 59-73s).
+        """
+        self.fetcher._supervisor_cycle()
+        self.broker.fetch_index_1m_ohlc.assert_not_called()
+
+    def test_true_up_loop_runs_off_the_supervisor_thread(self):
+        """A slow true-up blocks only its own thread, never publishing."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def _slow_fetch(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return pd.DataFrame(
+                {"timestamp": [pd.Timestamp("2026-05-15 10:16:00")],
+                 "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.5]}
+            )
+
+        self.broker.fetch_index_1m_ohlc.side_effect = _slow_fetch
+        self.fetcher._trueup_reason = "test"
+        worker = threading.Thread(target=self.fetcher._run_true_up, args=("test",), daemon=True)
+        worker.start()
+        self.assertTrue(started.wait(2), "true-up did not start")
+
+        # While that REST call is in flight the supervisor must still publish.
+        self.fetcher._handle_packet(self._index_tick("24238.50", "10:17:33"), now_ist=self.NOW)
+        self.fetcher._publish_frame_if_changed()
+        self.assertIsNotNone(self.store.get("1"))
+        release.set()
+        worker.join(5)
 
     def test_close_feed_swallows_sdk_errors(self):
         feed = MagicMock()
