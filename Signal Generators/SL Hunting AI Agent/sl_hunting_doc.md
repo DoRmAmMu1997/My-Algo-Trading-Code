@@ -1178,3 +1178,86 @@ the 1000-2000-point one-way regime caveat (already inside the HUGE-gap rule).
   which it disambiguates).
 - `BNF_SPECIFIC`: SOLO-LEADER VETO clause on the leader-moves-first entry tell.
 - Test marker: `test_system_prompt_has_v3o_flush_day_and_solo_leader_knowledge`.
+
+## Video addendum - 22 Jul runaway trend + the all-HOLD day (v3p)
+
+> Source: `d-B4_cGK-ng` (22 Jul 2026, "Live Bank Nifty Option Trading", 7:26).
+> Full Hindi auto-transcript. (The transcript panel again refused on the FIRST tab
+> across reload and resize+reload; a FRESH TAB worked — same fix as 21 Jul.)
+>
+> Cross-checked against BOTH agent artefacts for the first time:
+> `Backtest Outputs/sl_hunting_decisions.jsonl` (every per-bar decision, incl. HOLDs)
+> and `Backtest Outputs/sl_hunting_journal.jsonl` (completed trades only).
+
+**The tally for 2026-07-22:**
+
+| Source | Result |
+|---|---|
+| decisions | **59 decisions, ALL HOLD** — zero entries (09:17:01 → 10:31:47) |
+| journal | **no rows at all** (file's last write is 21 Jul) |
+| breakdown | 51 genuine HOLDs (confidence 3/2) + **8 `agent_error`** |
+| IH | **WIN** — puts on the no-retracement breakdown, over-achieved target |
+
+The 8 error rows are operational, not analytical: 1 invalid output (10:03), **6
+consecutive "Agent usage-limited"** (10:12-10:16), 1 timeout (10:19). Worth
+tracking — a usage-limit burst silently costs six consecutive decision bars.
+
+Session summary (IH): the market opened straight into selling across all three
+indices. He deliberately did NOT rush ("a retracement here would be large, so no
+hurry"), then entered PUTs once continuous selling with no major retracement had
+proved itself, reasoning: **"if a big move is going to happen the market will NOT
+retrace — it just keeps falling; so follow that momentum"**, and its converse, "if a
+large retracement happens the big move probably won't come — others add and it goes
+sideways". He also noted the already-seated sellers were in good profit so
+"targeting them makes no sense at all" (TARGET-BOOKED, already encoded). He booked an
+over-achieved target on the first stall, and closed by contrasting with 21 Jul:
+"sit and watch in a CORRECT trade; there is no benefit sitting in a WRONG trade".
+
+**Agent vs IH — the agent's ANALYSIS was right and its ACTION was absent.** Its
+reasoning repeatedly and correctly applied the encoded knowledge — it named the
+averaging-trap setup and refused to enter at the gap extreme (v3j), called
+move-exhaustion on a spent bounce (v3j), identified "a genuine breakdown (evicts
+buyers, not a buyer-hunt)" (v3n's ONE BREAKDOWN, NOT TWO), and repeatedly discounted
+the stale mechanical cross-index verdict within the opening hour (v3l). But every
+one of the 51 genuine HOLDs terminates in the same clause: *"no confirmed reversal
+pattern at a level right now"*. The agent only ever evaluated REVERSAL entries. On a
+one-way day the reversal setup never prints, so it waited out the whole move.
+
+Root cause in the prompt (verified by grep before writing): there was **no with-trend
+entry path outside OPENING_DRIVE's first-15-minutes window**, and `PSYCHOLOGY`
+actively said *"In a pure fast trend you rarely get a clean entry — wait."* Nothing
+covered "no retracement" / "runaway" as a signal.
+
+**Net-new method distilled:**
+- RUNAWAY TREND — the no-retracement continuation. The ABSENCE of a retracement is
+  itself the signal of a large one-way move; on such a day the reversal pattern will
+  never print, so the with-trend continuation IS the trade. Its converse is equally
+  actionable: once a LARGE retracement appears, the big move is less likely (others
+  add, price goes sideways) — stand aside. Because this branch has no reversal
+  pattern to lean on, its invalidation is explicit: **the first real retracement**.
+
+**Scope decision (operator-approved).** This is the THIRD and final exception to the
+mandatory pattern+confirmation rule, and the only one valid outside the opening
+window — so it is hedged hard: a sustained one-way move that has broken a real level,
+NO meaningful retracement since (a pullback through the 50% fibo of the leg kills the
+branch), ALL THREE indices agreeing, entry only on a shallow pause and never at a
+fresh spike or as a counter-trend fade, an honest stop, exit on the first real
+retracement, and book the average-to-over-achieved target at the first stall. The
+operator explicitly chose the scoped entry exception over a knowledge-only guard,
+because the guard would not have changed this day at all.
+
+**Confirmed but deliberately NOT re-encoded (already present):** don't hunt the
+already-profitable with-trend crowd (TARGET-BOOKED); don't rush the opening minutes;
+book on the first stall rather than the perfect target (PREMIUM NON-CONFIRMATION /
+MOVE-EXHAUSTION); and "sit in a correct trade, not a wrong one" (PROFIT-HOLD + the
+v3m losing-side flip ban).
+
+**Knowledge changes (v3p, all prose):**
+- NEW section `RUNAWAY_TREND`, composed after `OPENING_DRIVE`.
+- `ROLE`: the exception list now names the runaway-trend continuation.
+- `PSYCHOLOGY`: limiting clause on "in a pure fast trend ... wait" (it means don't
+  FADE and don't chase a spike — not sit out a one-way day).
+- `DECISION_RULES` #3: names the new exception and adds a third-consecutive-HOLD
+  self-check on a strongly one-way day.
+- Test markers: `test_system_prompt_has_v3p_runaway_trend_knowledge`,
+  `test_runaway_trend_section_is_composed_into_the_prompt`.
