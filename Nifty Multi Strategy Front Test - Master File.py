@@ -3884,8 +3884,24 @@ class WebSocketMarketDataFetcher(threading.Thread):
                         "Websocket feed error (reconnect in %.0fs): %s", backoff, exc
                     )
             finally:
+                # Release the dead connection before building the next one.
+                # Each MarketFeed binds its OWN asyncio event loop, so simply
+                # dropping the reference orphans that loop and its socket; a
+                # long session of reconnects would accumulate kernel handles.
                 with self._feed_lock:
-                    self._feed = None
+                    dead, self._feed = self._feed, None
+                if dead is not None:
+                    try:
+                        dead.close_connection()
+                    except Exception as exc:
+                        # A socket that already died usually refuses to close.
+                        self.log.debug("Closing dead feed failed: %s", exc)
+                    loop = getattr(dead, "loop", None)
+                    try:
+                        if loop is not None and not loop.is_closed():
+                            loop.close()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        self.log.debug("Closing dead feed loop failed: %s", exc)
             if self.stop_event.is_set():
                 break
             self.stop_event.wait(backoff)

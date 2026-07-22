@@ -1693,6 +1693,46 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
         release.set()
         worker.join(5)
 
+    def test_reconnect_closes_the_dead_feed(self):
+        """
+        Every reconnect builds a FRESH MarketFeed, and each one binds its own
+        asyncio event loop. Dropping the reference without closing leaks that
+        loop and its socket -- orphaned sockets accumulating in the kernel is
+        exactly what a flaky WiFi driver handles worst.
+        """
+        feed_one = MagicMock()
+        feed_one.get_data.side_effect = RuntimeError("socket died")
+        feed_two = MagicMock()
+
+        def _stop_then_raise():
+            self.stop_event.set()
+            raise RuntimeError("shutdown")
+
+        feed_two.get_data.side_effect = _stop_then_raise
+        self.broker.make_market_feed.side_effect = [feed_one, feed_two]
+        self.fetcher.RECONNECT_BACKOFF_INITIAL_SECONDS = 0.01
+        self.fetcher._pump_main()
+
+        feed_one.close_connection.assert_called_once()
+
+    def test_reconnect_close_failure_does_not_stop_reconnecting(self):
+        """A dead socket often refuses to close; that must not end the pump."""
+        feed_one = MagicMock()
+        feed_one.get_data.side_effect = RuntimeError("socket died")
+        feed_one.close_connection.side_effect = RuntimeError("already gone")
+        feed_two = MagicMock()
+
+        def _stop_then_raise():
+            self.stop_event.set()
+            raise RuntimeError("shutdown")
+
+        feed_two.get_data.side_effect = _stop_then_raise
+        self.broker.make_market_feed.side_effect = [feed_one, feed_two]
+        self.fetcher.RECONNECT_BACKOFF_INITIAL_SECONDS = 0.01
+        self.fetcher._pump_main()
+
+        self.assertEqual(self.broker.make_market_feed.call_count, 2)
+
     def test_close_feed_swallows_sdk_errors(self):
         feed = MagicMock()
         feed.close_connection.side_effect = RuntimeError("loop not running")
