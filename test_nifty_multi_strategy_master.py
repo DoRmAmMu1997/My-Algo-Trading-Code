@@ -3431,12 +3431,27 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         })
         return worker, store
 
+    def _expected_nifty_lots(self):
+        """Expected lots for this class's canonical 10-pt-stop entry.
+
+        Derived from the master's EFFECTIVE constants (already scaled by
+        SL_HUNTING_SIZE_MULTIPLIER at import), so these tests hold under
+        whatever multiplier the operator's .env sets, not just the default.
+        At defaults: min(floor(2500 / (10*75)), 5) = 3 NIFTY lots.
+        The sizing formula itself is covered by risk_sizing's own tests;
+        this class only checks the mirror's bookkeeping around it.
+        """
+        return min(
+            int(master_file.SL_HUNTING_RISK_BUDGET // (10 * 75)),
+            master_file.SL_HUNTING_MAX_LOTS,
+        )
+
     def test_mirror_opens_with_same_lot_count(self):
         worker, _ = self._make_worker()
-        # 10-pt stop -> floor(2500 / (10*75)) = 3 NIFTY lots.
+        # 10-pt stop -> floor(budget / (10*75)) lots (3 at the default 2500).
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         nifty_lots = worker.pos.quantity // 75
-        self.assertEqual(nifty_lots, 3)
+        self.assertEqual(nifty_lots, self._expected_nifty_lots())
         self.assertTrue(worker._mirror_pos.active)
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
@@ -3802,11 +3817,13 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
             self.assertTrue(worker.pos.active)
             self.assertTrue(worker._mirror_pos.active)
-            # MAT-104 floor sizing: 10-pt stop -> floor(2500 / (10*75)) = 3
-            # NIFTY lots, mirrored as 3 BNF lots x 35 = 105 units.
-            self.assertEqual(worker._mirror_pos.quantity, 105)
+            # MAT-104 floor sizing: same lot count as the NIFTY leg, in BNF
+            # units (3 lots x 35 = 105 at the default config); only the fake's
+            # single BNF lot (35) is confirmed live.
+            mirror_qty = self._expected_nifty_lots() * 35
+            self.assertEqual(worker._mirror_pos.quantity, mirror_qty)
             self.assertEqual(worker._mirror_pos.live_leg.confirmed_live_quantity, 35)
-            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, 105)
+            self.assertEqual(worker._mirror_pos.live_leg.risk_quantity, mirror_qty)
 
             worker.exit_position("ASYMMETRIC_ENTRY_RECOVERY")
 
@@ -3815,8 +3832,8 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             for symbol, side, quantity in fake.calls
             if "BANKNIFTY" in symbol
         ]
-        self.assertEqual(bnf_orders, [("BUY", 105), ("SELL", 35)])
-        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", 105)])
+        self.assertEqual(bnf_orders, [("BUY", mirror_qty), ("SELL", 35)])
+        self.assertEqual(fake.status_queries, [("BNF-ENTRY-1", mirror_qty)])
         self.assertFalse(worker._mirror_pos.active)
 
     def test_unknown_mirror_entry_uses_conservative_risk_quantity_for_mtm(self):
@@ -3866,18 +3883,21 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         mirror = worker._mirror_pos
         self.assertTrue(mirror.active)
         self.assertEqual(mirror.live_leg.confirmed_live_quantity, 0)
-        # MAT-104 floor sizing: 3 NIFTY lots -> 3 BNF lots x 35 = 105 units.
-        self.assertEqual(mirror.live_leg.risk_quantity, 105)
-        self.assertEqual(mirror.quantity, 105)
+        # MAT-104 floor sizing: same lot count as the NIFTY leg, in BNF units
+        # (3 lots x 35 = 105 at the default config).
+        mirror_qty = self._expected_nifty_lots() * 35
+        self.assertEqual(mirror.live_leg.risk_quantity, mirror_qty)
+        self.assertEqual(mirror.quantity, mirror_qty)
         store.update_ltp_map({(master_file.OPTION_EXCHANGE_SEGMENT, 3003): 490.0})
-        self.assertEqual(worker._mirror_leg_pnl(), -1050.0)
+        # Adverse MTM counts the FULL intended quantity at -10/unit.
+        self.assertEqual(worker._mirror_leg_pnl(), -10.0 * mirror_qty)
         with (
             patch.object(master_file, "execution_client", fake),
             patch.object(worker, "_start_execution_reconciliation"),
         ):
             worker.exit_bnf_mirror_only("UNKNOWN_ENTRY_RECOVERY")
         self.assertTrue(worker._mirror_pos.active)
-        self.assertEqual(worker._mirror_pos.quantity, 105)
+        self.assertEqual(worker._mirror_pos.quantity, mirror_qty)
         self.assertFalse(
             any(
                 side == "SELL" and "BANKNIFTY" in symbol
