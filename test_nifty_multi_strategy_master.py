@@ -1037,31 +1037,76 @@ class TestOptionsContractResolverUnderlyings(unittest.TestCase):
         )
         return self._write_master(rows)
 
-    def test_rollover_keeps_current_expiry_when_far(self):
-        """>= min_days to the current expiry -> stay on the current expiry."""
+    def test_nearest_monthly_expiry_when_far(self):
+        """Plenty of time left -> the nearest expiry."""
         tmpdir = self._bnf_two_expiry_master(days_to_first=10)
         resolver = self._resolver(tmpdir, "BANKNIFTY")
-        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_near)
+        self.assertEqual(resolver.get_nearest_monthly_expiry(), self.exp_near)
 
-    def test_rollover_rolls_to_next_expiry_when_near(self):
-        """< min_days to the current expiry -> roll to the next expiry."""
+    def test_nearest_monthly_expiry_never_rolls_in_expiry_week(self):
+        """BNF-002: even deep inside expiry week the mirror must NOT roll to the
+        next month -- Kotak rejects MIS orders on next-month contracts, which
+        silently killed the live mirror leg. Expiry week is handled on the
+        strike axis instead (see the ITM tests below)."""
         tmpdir = self._bnf_two_expiry_master(days_to_first=3)
         resolver = self._resolver(tmpdir, "BANKNIFTY")
-        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_far)
+        self.assertEqual(resolver.get_nearest_monthly_expiry(), self.exp_near)
+        self.assertNotEqual(resolver.get_nearest_monthly_expiry(), self.exp_far)
 
-    def test_rollover_boundary_day_keeps_current_expiry(self):
-        """Exactly min_days away is NOT 'fewer than' -> keep the current expiry."""
-        tmpdir = self._bnf_two_expiry_master(days_to_first=7)
+    def test_nearest_monthly_expiry_on_expiry_day_itself(self):
+        """Expiry day (0 days left) still resolves to that same expiry."""
+        tmpdir = self._bnf_two_expiry_master(days_to_first=0)
         resolver = self._resolver(tmpdir, "BANKNIFTY")
-        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_near)
+        self.assertEqual(resolver.get_nearest_monthly_expiry(), self.exp_near)
 
-    def test_rollover_returns_only_expiry_when_single(self):
-        """With a single listed expiry there is nothing to roll to -> return it."""
+    def test_nearest_monthly_expiry_returns_only_expiry_when_single(self):
+        """With a single listed expiry, return it."""
         self.exp_only = date.today() + timedelta(days=3)
         rows = self._option_rows("BANKNIFTY", (self.exp_only.isoformat(),), (57900,), "35", 30000)
         tmpdir = self._write_master(rows)
         resolver = self._resolver(tmpdir, "BANKNIFTY")
-        self.assertEqual(resolver.get_monthly_rollover_expiry(7), self.exp_only)
+        self.assertEqual(resolver.get_nearest_monthly_expiry(), self.exp_only)
+
+    def test_itm_option_uses_banknifty_100_point_step_on_correct_side(self):
+        """BNF-002: 4-step ITM on BankNIFTY must move 400 points (100-pt grid),
+        and to the correct side -- CE below spot, PE above it.
+
+        Uses a WIDE strike ladder so the ITM strike is genuinely listed; a narrow
+        ladder would only exercise the closest-available fallback and hide a
+        wrong step size or a flipped sign.
+        """
+        self.exp_wide = date.today() + timedelta(days=20)
+        rows = self._option_rows(
+            "BANKNIFTY",
+            (self.exp_wide.isoformat(),),
+            tuple(range(57400, 58601, 100)),
+            "35",
+            30000,
+        )
+        tmpdir = self._write_master(rows)
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        # Spot 58000 is already on the grid: ATM 58000, 4 steps ITM CE -> 57600.
+        ce = resolver.get_itm_option(58000.0, "LONG", 4, expiry_date=self.exp_wide)
+        self.assertEqual(ce["option_type"], "CE")
+        self.assertEqual(ce["target_strike"], 57600.0)
+        self.assertEqual(ce["strike"], 57600.0)   # listed, so taken exactly
+        self.assertLess(ce["strike"], 58000.0)    # ITM calls sit below spot
+        # ...and for a PE it targets 58400 (above spot).
+        pe = resolver.get_itm_option(58000.0, "SHORT", 4, expiry_date=self.exp_wide)
+        self.assertEqual(pe["option_type"], "PE")
+        self.assertEqual(pe["target_strike"], 58400.0)
+        self.assertEqual(pe["strike"], 58400.0)
+        self.assertGreater(pe["strike"], 58000.0)  # ITM puts sit above spot
+
+    def test_itm_option_zero_steps_is_atm_and_negative_rejected(self):
+        """0 steps degenerates to ATM; a negative step count is a programming error."""
+        tmpdir = self._mixed_master()
+        resolver = self._resolver(tmpdir, "BANKNIFTY")
+        atm = resolver.get_atm_option(57960.0, "LONG", expiry_date=self.exp_first)
+        itm0 = resolver.get_itm_option(57960.0, "LONG", 0, expiry_date=self.exp_first)
+        self.assertEqual(itm0["strike"], atm["strike"])
+        with self.assertRaises(ValueError):
+            resolver.get_itm_option(57960.0, "LONG", -1, expiry_date=self.exp_first)
 
     def test_banknifty_atm_uses_100_point_strike_step(self):
         """BankNIFTY strikes are 100-point. A 57,960 spot must resolve to the
@@ -3528,6 +3573,13 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         worker.contract_resolver.get_atm_option.return_value = nifty_c
         worker._bnf_resolver = MagicMock()
         worker._bnf_resolver.get_atm_option.return_value = bnf_c
+        worker._bnf_resolver.get_itm_option.return_value = bnf_c
+        # A REAL date (not a MagicMock): the mirror subtracts today's date from
+        # it to decide ATM-vs-ITM, and a mock would make that comparison truthy
+        # and silently take the expiry-week branch in every test.
+        worker._bnf_resolver.get_nearest_monthly_expiry.return_value = (
+            date.today() + timedelta(days=20)
+        )
         worker._last_bnf_close = 57910.0
         store.update_ltp_map({
             (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 24300.0,
@@ -3561,11 +3613,45 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertEqual(worker._mirror_pos.quantity, nifty_lots * 35)
         self.assertEqual(worker._mirror_pos.option_right, "CE")
         # The mirror asked BankNIFTY's resolver with the BNF spot + direction,
-        # pinning the expiry to the monthly-rollover rule (BNF-001).
+        # pinning the expiry to the nearest monthly (BNF-001/BNF-002).
         worker._bnf_resolver.get_atm_option.assert_called_once_with(
             57910.0, "LONG",
-            expiry_date=worker._bnf_resolver.get_monthly_rollover_expiry.return_value,
+            expiry_date=worker._bnf_resolver.get_nearest_monthly_expiry.return_value,
         )
+        # Far from expiry -> ATM, never the expiry-week ITM branch.
+        worker._bnf_resolver.get_itm_option.assert_not_called()
+
+    def test_mirror_uses_itm_strike_inside_expiry_week(self):
+        """BNF-002: inside the near-expiry window the mirror buys a deep ITM
+        strike on the SAME (nearest) expiry -- it must never roll to next month,
+        because Kotak rejects MIS orders there and the live leg never fired."""
+        worker, _ = self._make_worker()
+        near = date.today() + timedelta(days=3)   # inside the default 7-day window
+        worker._bnf_resolver.get_nearest_monthly_expiry.return_value = near
+
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        self.assertTrue(worker._mirror_pos.active)
+        worker._bnf_resolver.get_itm_option.assert_called_once_with(
+            57910.0,
+            "LONG",
+            master_file.SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS,
+            expiry_date=near,
+        )
+        worker._bnf_resolver.get_atm_option.assert_not_called()
+
+    def test_mirror_boundary_day_still_uses_atm(self):
+        """Exactly the threshold is NOT 'fewer than' -> ATM, as before."""
+        worker, _ = self._make_worker()
+        boundary = date.today() + timedelta(
+            days=master_file.SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS
+        )
+        worker._bnf_resolver.get_nearest_monthly_expiry.return_value = boundary
+
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        worker._bnf_resolver.get_atm_option.assert_called_once()
+        worker._bnf_resolver.get_itm_option.assert_not_called()
 
     def test_hung_inference_cannot_delay_square_off_and_does_not_stack(self):
         """The LLM runs off-loop: cutoff closes exposure while one pass is hung."""
@@ -4135,12 +4221,15 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
                              if _is_mirror_exit(c.args[0])]
         self.assertEqual(mirror_exit_modes, ["PAPER_FALLBACK"])
 
-    # ----- BNF-001: the REAL resolver must be able to open the mirror -------
-    def test_mirror_opens_with_real_resolver_and_rollover_expiry(self):
-        """Integration lock for BNF-001: with a real OptionsContractResolver over
-        a synthetic instrument master, the mirror must open a BANKNIFTY contract
-        at the current monthly expiry -- rolled to the NEXT month here because
-        the near expiry is inside the SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS window.
+    # ----- BNF-001/002: the REAL resolver must be able to open the mirror ----
+    def test_mirror_opens_with_real_resolver_itm_on_nearest_expiry(self):
+        """Integration lock for BNF-001 + BNF-002: with a real
+        OptionsContractResolver over a synthetic instrument master, the mirror
+        must open a BANKNIFTY contract on the NEAREST monthly expiry and NEVER
+        roll to the next month (Kotak rejects MIS orders there, which killed the
+        live leg). Because that nearest expiry is inside the
+        SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS window here, the leg must also come
+        back deep ITM rather than ATM.
         (The other mirror tests mock `_bnf_resolver`, which is exactly how the
         original always-empty-chain bug slipped through.)"""
         import logging
@@ -4148,12 +4237,15 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         worker, store = self._make_worker()
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
-        near = date.today() + timedelta(days=3)    # < 7 days -> must roll
+        near = date.today() + timedelta(days=3)    # < 7 days -> expiry week
         far = date.today() + timedelta(days=40)
         rows = []
         sec = 30000
+        # A wide enough ladder that the 4-step ITM strike (57500 for a 57910
+        # spot) is genuinely LISTED -- otherwise the test would only prove the
+        # closest-available fallback, not the ITM arithmetic.
         for exp in (near.isoformat(), far.isoformat()):
-            for strike in (57800, 57900, 58000):
+            for strike in (57400, 57500, 57600, 57700, 57800, 57900, 58000):
                 for right in ("CE", "PE"):
                     rows.append({
                         "EXCH_ID": "NSE", "SEGMENT": "D", "INSTRUMENT": "OPTIDX",
@@ -4181,9 +4273,12 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         self.assertTrue(worker._mirror_pos.active)
         self.assertTrue(worker._mirror_pos.symbol.startswith("BANKNIFTY-"))
-        self.assertEqual(worker._mirror_pos.option_strike, 57900.0)  # ATM for 57910 spot
         self.assertEqual(worker._mirror_pos.option_right, "CE")
-        self.assertEqual(worker._mirror_pos.option_expiry, far)      # rolled past `near`
+        # NEVER rolled: the leg sits on the nearest expiry, not `far`.
+        self.assertEqual(worker._mirror_pos.option_expiry, near)
+        self.assertNotEqual(worker._mirror_pos.option_expiry, far)
+        # Expiry week -> 4 steps ITM on BankNIFTY's 100-pt grid: ATM 57900 - 400.
+        self.assertEqual(worker._mirror_pos.option_strike, 57500.0)
 
 
 class TestLiveOrderRouting(unittest.TestCase):

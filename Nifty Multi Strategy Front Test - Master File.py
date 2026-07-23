@@ -95,11 +95,17 @@ expiry rule it uses:
 observation legs use the current-week expiry.)
 
 One deliberate exception (BNF-001): the SL Hunting BankNIFTY MIRROR leg uses
-OptionsContractResolver.get_monthly_rollover_expiry() -- the CURRENT BankNIFTY
-monthly expiry, rolling to the next month once fewer than
-SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS days remain. BankNIFTY lists only monthly
+OptionsContractResolver.get_nearest_monthly_expiry() -- the NEAREST BankNIFTY
+monthly expiry, which it NEVER rolls forward. BankNIFTY lists only monthly
 series, so "next-next" would park an intraday mirror in the illiquid second
 month out.
+
+BNF-002 (2026-07-23): the mirror also never rolls to the NEXT month in expiry
+week, because Kotak rejects MIS (intraday) orders on next-month contracts and
+the live mirror leg kept failing to fire. Expiry week is handled on the STRIKE
+axis instead -- inside SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS the mirror buys a
+deep ITM strike (get_itm_option) whose value is mostly intrinsic, rather than a
+near-expiry ATM contract that is almost pure decaying time premium.
 
 Both methods live on the same resolver so the choice is one line at
 the call site. That keeps the rule visible in the code and easy to
@@ -2823,31 +2829,29 @@ class OptionsContractResolver:
             raise ValueError(f"No future {self.underlying} expiry found in instrument master.")
         return expiries[0]
 
-    def get_monthly_rollover_expiry(self, min_days_to_expiry: int) -> date:
+    def get_nearest_monthly_expiry(self) -> date:
         """
-        Return the FIRST expiry on or after today, rolling to the SECOND when
-        fewer than `min_days_to_expiry` days remain to the first.
+        Return the FIRST (nearest) expiry on or after today. It NEVER rolls to
+        a later month.
 
         Used by the SL Hunting BankNIFTY mirror leg (BNF-001). BankNIFTY lists
         only MONTHLY series, so the ATM family's "next-next" rule would park an
-        intraday mirror in the SECOND month out -- low gamma, wide spreads. The
-        operator's rule instead: trade the CURRENT monthly normally, and only
-        roll to the next month once the current contract is inside its final
-        week (threshold via SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS, default 7).
+        intraday mirror in the SECOND month out -- low gamma, wide spreads.
 
-        Boundary semantics: exactly `min_days_to_expiry` days away is NOT
-        "fewer than", so the current expiry is kept. With a single listed
-        expiry there is nothing to roll to, so it is returned even inside the
-        window -- the mirror is fail-soft and trading the only listed contract
-        beats silently skipping the leg.
+        Why never roll (BNF-002, operator finding 2026-07-23): an earlier rule
+        rolled to the NEXT month inside the current contract's final week. In
+        live trading Kotak REJECTED those orders outright -- it does not accept
+        MIS (intraday) orders on a next-month expiry -- so the mirror leg failed
+        to fire again and again. The near-expiry problem the roll was meant to
+        solve (an ATM contract decaying fast in its last days) is now handled by
+        moving the STRIKE deep in-the-money instead of moving the EXPIRY out;
+        see `get_itm_option` and the mirror's call site.
         """
         options = self._load_option_chain()
         today = datetime.now().date()
         expiries = sorted({exp for exp in options["expiry"].tolist() if exp is not None and exp >= today})
         if not expiries:
             raise ValueError(f"No future {self.underlying} expiry found in instrument master.")
-        if len(expiries) >= 2 and (expiries[0] - today).days < int(min_days_to_expiry):
-            return expiries[1]
         return expiries[0]
 
     # ------------------------------------------------------------------
@@ -2920,6 +2924,98 @@ class OptionsContractResolver:
             "freeze_qty": _to_int_safe(row["freeze_qty"], 0),
             "spot_reference": float(spot),
             "atm_strike_rounded": float(atm_strike),
+        }
+
+    def get_itm_option(
+        self,
+        spot_price: float,
+        direction: str,
+        itm_steps: int,
+        expiry_date: date | None = None,
+    ) -> dict:
+        """
+        Resolve an IN-THE-MONEY option row, `itm_steps` strikes inside the money.
+
+        Used by the SL Hunting BankNIFTY mirror in its expiry week (BNF-002).
+        A deep-ITM contract carries mostly INTRINSIC value, so it tracks the
+        underlying far more closely than a near-expiry ATM contract, whose
+        remaining premium is almost pure time value and bleeds fastest exactly
+        in those final days. Moving the strike is how the mirror survives expiry
+        week now that moving the EXPIRY (rolling to next month) is forbidden --
+        Kotak rejects MIS orders on next-month contracts.
+
+        Direction / ITM side (same mapping as `get_atm_option`, and the same
+        sign convention CPR Algo 3 uses for its ITM legs):
+        - "LONG"  -> CE, in the money BELOW spot: target = ATM - steps * step
+        - "SHORT" -> PE, in the money ABOVE spot: target = ATM + steps * step
+        `itm_steps=0` degenerates to the ATM strike for that right.
+
+        `step` is this resolver's own `self.strike_step` (100 for BankNIFTY,
+        50 for NIFTY) -- NOT the global NIFTY constant, so the BankNIFTY grid
+        is respected.
+
+        Expiry: defaults to `get_target_expiry()`; the mirror passes the nearest
+        monthly explicitly, keeping the expiry choice visible at the call site
+        like every other expiry rule in this file.
+
+        Strike pick: exact target if listed, else the closest available strike
+        (smallest absolute difference, lower strike breaking ties) -- identical
+        to `get_atm_option`.
+        """
+        direction_upper = str(direction).strip().upper()
+        if direction_upper == "LONG":
+            right = "CE"
+        elif direction_upper == "SHORT":
+            right = "PE"
+        else:
+            raise ValueError(f"Unsupported direction for ITM resolution: {direction!r}")
+
+        spot = _safe_float(spot_price, 0.0)
+        if spot <= 0:
+            raise ValueError(f"Invalid spot price for ITM resolution: {spot_price!r}")
+
+        steps = int(itm_steps)
+        if steps < 0:
+            raise ValueError(f"itm_steps must be >= 0, got {itm_steps!r}")
+
+        options = self._load_option_chain()
+        target_expiry = expiry_date if expiry_date is not None else self.get_target_expiry()
+
+        atm_strike = round(spot / self.strike_step) * self.strike_step
+        if right == "CE":
+            target_strike = atm_strike - steps * self.strike_step
+        else:
+            target_strike = atm_strike + steps * self.strike_step
+
+        subset = options[(options["expiry"] == target_expiry) & (options["option_type"] == right)].copy()
+        if subset.empty:
+            raise ValueError(
+                f"No {right} rows found for {self.underlying} expiry {target_expiry}."
+            )
+
+        subset["strike_diff"] = (subset["strike"] - target_strike).abs()
+        subset = subset.sort_values(["strike_diff", "strike"])
+        row = subset.iloc[0]
+
+        today = datetime.now().date()
+        resolved_expiry = row["expiry"]
+        days_to_expiry = (resolved_expiry - today).days if resolved_expiry is not None else None
+
+        return {
+            "security_id": int(row["security_id"]),
+            "exchange_segment": OPTION_EXCHANGE_SEGMENT,
+            "trading_symbol": str(row["trading_symbol"]).strip(),
+            "custom_symbol": str(row["custom_symbol"]).strip(),
+            "strike": float(row["strike"]),
+            "option_type": right,
+            "expiry_date": resolved_expiry,
+            "days_to_expiry": days_to_expiry,
+            "lot_size": _to_int_safe(row["lot_size"], 0),
+            "freeze_qty": _to_int_safe(row["freeze_qty"], 0),
+            "spot_reference": float(spot),
+            "atm_strike_rounded": float(atm_strike),
+            "itm_steps": steps,
+            "target_strike": float(target_strike),
         }
 
     def get_otm_option(
@@ -11907,11 +12003,26 @@ if SL_HUNTING_AVAILABLE:
     # the daily max-loss kill-switch still caps the day). Fail-soft: any mirror
     # problem only skips the mirror, never the NIFTY leg.
     SL_HUNTING_BNF_MIRROR = _env_bool("SL_HUNTING_BNF_MIRROR", True)
-    # Mirror expiry rule (BNF-001): BankNIFTY lists only MONTHLY series, so the
-    # ATM family's "next-next" rule would put an intraday mirror in the SECOND
-    # month out. Instead the mirror trades the CURRENT monthly expiry, rolling
-    # to the NEXT one once fewer than this many days remain to the current.
+    # Mirror expiry rule (BNF-001 + BNF-002): BankNIFTY lists only MONTHLY
+    # series, so the ATM family's "next-next" rule would put an intraday mirror
+    # in the SECOND month out. The mirror therefore ALWAYS trades the NEAREST
+    # monthly expiry and NEVER rolls to the next month -- Kotak rejects MIS
+    # (intraday) orders on next-month contracts, which silently killed the live
+    # mirror leg over and over (operator finding, 2026-07-23).
+    #
+    # Expiry week is instead handled on the STRIKE axis: once fewer than
+    # ..._ROLLOVER_DAYS remain to that nearest expiry, the mirror buys a
+    # ..._NEAR_EXPIRY_ITM_STEPS-deep IN-THE-MONEY strike instead of the ATM one.
+    # A deep-ITM contract is mostly intrinsic value, so it tracks BankNIFTY
+    # closely instead of bleeding the near-expiry ATM time premium.
+    #
+    # NOTE the retained key name: "_ROLLOVER_DAYS" no longer rolls anything, it
+    # is purely the days-to-expiry threshold at which the mirror switches to ITM
+    # strikes. The name is kept so existing .env files keep working.
     SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS = _env_int("SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS", 7)
+    SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS = _env_int(
+        "SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS", 4
+    )
     # Trade journal (v3): record each trade's entry context + exit outcome to a
     # gitignored JSONL the reflection coach reads. Best-effort; never blocks trading.
     SL_HUNTING_JOURNAL_ENABLED = _env_bool("SL_HUNTING_JOURNAL_ENABLED", True)
@@ -12100,9 +12211,15 @@ if SL_HUNTING_AVAILABLE:
             return ok
 
         def _open_bnf_mirror(self, direction: str) -> None:
-            """Buy the BankNIFTY ATM CE/PE at the same lot COUNT as the
-            just-opened NIFTY leg, on the CURRENT BankNIFTY monthly expiry
-            (rolled to the next month inside its final week -- BNF-001)."""
+            """Buy the BankNIFTY CE/PE at the same lot COUNT as the just-opened
+            NIFTY leg, ALWAYS on the NEAREST BankNIFTY monthly expiry.
+
+            Strike rule (BNF-002): normally ATM, but once fewer than
+            SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS remain to that expiry the leg
+            switches to a deep IN-THE-MONEY strike. The mirror never rolls to
+            the next month, because Kotak rejects MIS orders on next-month
+            contracts and the live leg simply never fired.
+            """
             if self._mirror_pos.active or self._bnf_resolver is None:
                 return
             nifty_lot_size = max(int(self.pos.option_lot_size), 1)
@@ -12113,11 +12230,29 @@ if SL_HUNTING_AVAILABLE:
                 self.log.warning("BNF mirror skipped: no BankNIFTY close seen yet this session.")
                 return
             # Explicit expiry at the call site, like every other expiry rule in
-            # this file: current monthly, rolling inside the last-week window.
-            mirror_expiry = self._bnf_resolver.get_monthly_rollover_expiry(
-                SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS
-            )
-            contract = self._bnf_resolver.get_atm_option(bnf_spot, direction, expiry_date=mirror_expiry)
+            # this file: the nearest monthly, never rolled forward.
+            mirror_expiry = self._bnf_resolver.get_nearest_monthly_expiry()
+            days_to_expiry = (mirror_expiry - datetime.now().date()).days
+            near_expiry = days_to_expiry < SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS
+            if near_expiry:
+                # Expiry week: buy intrinsic value instead of decaying premium.
+                contract = self._bnf_resolver.get_itm_option(
+                    bnf_spot,
+                    direction,
+                    SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS,
+                    expiry_date=mirror_expiry,
+                )
+                self.log.info(
+                    "BNF mirror in expiry week (%s day(s) to %s): using %s-step ITM strike "
+                    "instead of ATM (never rolls to next month -- Kotak rejects MIS there).",
+                    days_to_expiry,
+                    mirror_expiry.isoformat(),
+                    SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS,
+                )
+            else:
+                contract = self._bnf_resolver.get_atm_option(
+                    bnf_spot, direction, expiry_date=mirror_expiry
+                )
             sec_id = int(contract["security_id"])
             segment = str(contract["exchange_segment"])
             symbol = str(contract["trading_symbol"])
