@@ -376,6 +376,43 @@ def test_system_prompt_has_v3p_runaway_trend_knowledge():
     assert "IMPORTANT LIMIT ON THAT" in prompt
 
 
+def test_system_prompt_has_v3q_reentry_gate_and_expiry_pin_knowledge():
+    """v3q: 23 Jul — the agent's 3 re-entries all lost (net -Rs.7,055 on a +Rs.13,688 day).
+
+    MOVE-EXHAUSTION / NO INSTANT FLIP already banned those re-entries, but both are
+    judgement rules the agent satisfied rhetorically by naming a fresh setup each time.
+    The POST-EXIT RE-ENTRY GATE makes the same ban mechanically checkable. Plus IH's
+    expiry-pinning read: take the level-break trigger from a NON-expiring index.
+    """
+    prompt = build_system_prompt()
+    assert "POST-EXIT RE-ENTRY GATE" in prompt
+    # The gate must be checkable, not another judgement call.
+    assert "completed 1-minute bars have closed since your exit" in prompt
+    assert "NEW STRUCTURAL EVENT" in prompt
+    # The exact loophole that cost money today must be named.
+    assert "A DIFFERENT PATTERN NAME ON THE SAME STRUCTURE IS NOT A NEW PREMISE" in prompt
+    # Entries only -- exits must never be delayed by the gate.
+    assert "This gate governs ENTRIES ONLY" in prompt
+    # Expiry pinning: the expiring index is the wrong place to look for a clean break.
+    assert "EXPIRING INDEX RESISTS THE BREAK" in prompt
+    assert "Fuel yes, trigger no" in prompt
+    # Crowd-behaviour nuance: aligned crowds don't cascade.
+    assert "A CONFIDENT CROWD DOES NOT STAMPEDE" in prompt
+
+
+def test_reentry_gate_does_not_contradict_the_exit_rules():
+    """The re-entry gate must never be readable as a reason to delay an EXIT.
+
+    Regression guard: the gate sits inside RISK next to the exit rules, so it has to
+    state its entries-only scope in the same breath as the mechanical exit paths.
+    """
+    prompt = build_system_prompt()
+    gate = prompt[prompt.index("POST-EXIT RE-ENTRY GATE"):]
+    gate = gate[: gate.index("\n- ")] if "\n- " in gate else gate
+    assert "Exits are never delayed by it" in gate
+    assert "square-off" in gate
+
+
 def test_runaway_trend_section_is_composed_into_the_prompt():
     """The section constant must actually be wired into build_system_prompt()."""
     from sl_hunting_knowledge import RUNAWAY_TREND

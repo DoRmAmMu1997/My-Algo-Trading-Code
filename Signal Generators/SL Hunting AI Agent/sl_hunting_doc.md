@@ -1261,3 +1261,97 @@ v3m losing-side flip ban).
   self-check on a strongly one-way day.
 - Test markers: `test_system_prompt_has_v3p_runaway_trend_knowledge`,
   `test_runaway_trend_section_is_composed_into_the_prompt`.
+
+## Video addendum - 23 Jul re-entry gate + expiry pinning (v3q)
+
+> Source: `9Tzi96RY7Jc` (23 Jul 2026, "Live Bank Nifty Option Trading"). Full Hindi
+> auto-transcript (fresh-tab recipe, first try).
+> Tallied against BOTH artefacts for 2026-07-23.
+
+**The tally — the agent's most active day, and a losing one:**
+
+| Source | Result |
+|---|---|
+| decisions | 69 decisions: 60 HOLD, **5 entries** (3 SHORT / 2 LONG), 4 EXIT |
+| journal | **5 completed trades, net -Rs.7,054.75** |
+| `agent_error` | 3 rows, all "usage-limited" (10:27-10:29, end of session) |
+| IH | **WIN** — ONE put trade, booked on the BankNIFTY breakdown |
+
+| # | Entry | Direction / setup | Result |
+|---|---|---|---|
+| 1 | 09:32 | SHORT `gap_down_bounce_fail_bearish_engulfing` | **+Rs.7,281** (1.58R) |
+| 2 | 09:41 | SHORT `trendline_4th_touch_fib78_rejection` | **-Rs.6,921** (stop) |
+| 3 | 10:02 | LONG `gap_down_seller_hunt_trendline_reclaim` | **+Rs.6,408** (0.73R) |
+| 4 | 10:11 | LONG `gapdown_averaging_trap_reclaim` | **-Rs.1,296** |
+| 5 | 10:21 | SHORT `double_top_rejection_prev_low_resistance` | **-Rs.12,526** (AI_STOP) |
+
+**The pattern is unmistakable: the FIRST trade of each thesis WON; every RE-ENTRY
+LOST.** Winners +Rs.13,688; the three re-entries -Rs.20,743. Without them the day is
++Rs.13,688 instead of -Rs.7,055.
+
+Timing makes it worse: trade 2 opened **2.5 minutes** after booking trade 1 (same
+direction); trade 4 opened **2.5 minutes** after booking trade 3 (same direction);
+trade 5 opened **~4 minutes** after exiting the losing trade 4, reversing INTO the
+move that had just hurt it — and became the day's biggest loss.
+
+**These were already banned.** Trades 2 and 4 are textbook MOVE-EXHAUSTION ("do NOT
+re-enter the SAME direction on a later, smaller pattern chasing the tail of the move
+you just took"); trade 5 is the v3m losing-side NO INSTANT FLIP ban verbatim. So the
+gap is NOT missing knowledge — it is that **both rules are judgement calls, and the
+agent satisfied them rhetorically every time** by naming a genuinely different-sounding
+setup on the same price structure: "4th touch of the descending trendline + 78% fib",
+"averaging trap reclaim", "double top rejection". Each reads as a fresh premise; each
+was the same move wearing a new label. MOVE-EXHAUSTION even says a fresh trade "needs
+a NEW named crowd trapped by NEW price action" — and the agent believed it had one.
+
+Session summary (IH): a good gap-down after a weak prior day, so he planned to go WITH
+the selling. He predicted the shape — "it will come up once, then fall; finding that
+turning point is the only work today" — entered PUTs into the bounce rather than at
+the extreme, and read BOTH crowds as unavailable (yesterday's sellers already paid;
+today's would-be sellers never got their breakdown, so they did not hold). He then
+waited for ONE breakdown and booked it. Two of his asides drive this addendum: that
+Sensex, **the expiring index, would be least likely to break down**, so the trigger
+would come from BankNIFTY or NIFTY; and that no chain reaction was coming because
+"traders are sitting in confidence — if someone is short, they won't run quickly, they
+know the market is negative". His closing warning lands squarely on the agent's day:
+trade with understanding, "otherwise you enter randomly — now it's going selling, now
+buying — and what benefit will you get?"
+
+**Net-new method distilled:**
+- POST-EXIT RE-ENTRY GATE — the mechanical check that MOVE-EXHAUSTION and NO INSTANT
+  FLIP lacked. After ANY exit, the next entry in EITHER direction requires: ~15
+  completed 1-min bars since the exit; a NEW STRUCTURAL EVENT after it (a level really
+  broken/reclaimed, or a fresh swing formed — not continued drift inside the same
+  structure); and a nameable NEW crowd trapped since. Plus the explicit loophole
+  closure: **a different pattern name on the same structure is not a new premise.**
+  Entries only — exits and the mechanical stop/target/max-loss/square-off paths are
+  untouched.
+- EXPIRING INDEX RESISTS THE BREAK — the index expiring today gets pinned and is the
+  one LEAST likely to break a level cleanly, so take the breakdown/breakout trigger
+  from a NON-expiring index, and do not read the expiring index's refusal to follow as
+  the premise failing. Corollary: once the non-expiring index HAS broken while the
+  pinned one is still stuck, that is a booking signal. Deliberately scoped so it does
+  not contradict the existing "expiry = extra FUEL" note (fuel yes, trigger no).
+- A CONFIDENT CROWD DOES NOT STAMPEDE — a crowd positioned WITH the prevailing
+  multi-day direction does not panic out, so there is no cascade to harvest: expect a
+  normal move and take the ordinary target. The stampede needs a crowd positioned
+  AGAINST the trend, or freshly lured in at an extreme.
+
+**Confirmed but deliberately NOT re-encoded (already present and correctly applied
+today):** entering into the bounce rather than at the gap extreme (v3j AVERAGING TRAP
+— trade 1 and trade 3 both did this and both won); the dual crowd-availability tests
+(TARGET-BOOKED + CLOSING-POINT HOLD TEST); "few high-clarity trades" (UNIQUE-TRADE
+FILTER + NO DAILY-INCOME PRESSURE, which the day's five entries violated in spirit).
+
+**Operational note:** 3 `agent_error` rows, all "usage-limited", clustered at
+10:27-10:29 — the same subscription-capacity symptom as 22 Jul (which lost 6
+consecutive bars). No prompt change addresses it.
+
+**Knowledge changes (v3q, all prose):**
+- `RISK`: POST-EXIT RE-ENTRY GATE (immediately after MOVE-EXHAUSTION, which it
+  operationalizes).
+- `BNF_SPECIFIC`: EXPIRING INDEX RESISTS THE BREAK (after the expiry-priority note it
+  scopes).
+- `RETAIL_POSITIONING`: A CONFIDENT CROWD DOES NOT STAMPEDE (after TARGET-BOOKED).
+- Test markers: `test_system_prompt_has_v3q_reentry_gate_and_expiry_pin_knowledge`,
+  `test_reentry_gate_does_not_contradict_the_exit_rules`.
