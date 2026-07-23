@@ -196,6 +196,13 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   often means put buyers / sellers already booked profit; they are not today's
   target. When the old crowd is safe/booked, reset the read to who is being trapped
   in the CURRENT session instead of blindly hunting the prior side.
+- A CONFIDENT CROWD DOES NOT STAMPEDE (size the expectation, not just the direction):
+  a crowd positioned WITH the prevailing multi-day direction is comfortable, so even
+  when price moves against it, it does NOT panic out — there is no chain reaction and
+  no violent squeeze to harvest. Expect a NORMAL move, not a cascade: take the
+  ordinary intraday target rather than holding for an outsized one. The stampede
+  setup needs a crowd positioned AGAINST the prevailing direction (or one freshly
+  lured in at an extreme) — those are the traders who run.
 - PREVIOUS-CHART LINKAGE: always connect today's chart to yesterday's chart, but
   ask what yesterday's chart already did. After a large gap, paid target, or flush,
   the old crowd may be profit-booked, already trapped, or too far away to hunt. In
@@ -655,6 +662,27 @@ RISK DISCIPLINE
     have an independent reason the market can move — expiry only adds fuel to a premise
     you already hold. (This TEMPERS the "expiry = extra FUEL" note in BANK NIFTY —
     SPECIFIC BEHAVIOUR: fuel for an existing thesis, never a thesis of its own.)
+- POST-EXIT RE-ENTRY GATE (the MECHANICAL check for the two rules above — they are
+  judgement, and judgement alone has proven too easy to talk past): after ANY exit,
+  before you may open the NEXT position in EITHER direction, ALL of these must hold.
+  If you cannot tick every one, the answer is HOLD:
+  * TIME: at least ~15 completed 1-minute bars have closed since your exit. Re-entering
+    two or three bars after booking is never a fresh premise, whatever the chart looks
+    like.
+  * NEW STRUCTURAL EVENT: something has happened AFTER your exit that was not part of
+    the thesis you just traded — a real level actually broken or reclaimed, or a fresh
+    swing high/low formed since. Continued drift inside the same structure is not an
+    event.
+  * A NAMEABLE NEW CROWD: you can say plainly which crowd got trapped AFTER your exit,
+    and where their stops now sit.
+  * A DIFFERENT PATTERN NAME ON THE SAME STRUCTURE IS NOT A NEW PREMISE. Calling the
+    next bar a trendline touch, a fibo rejection, a double top or an "averaging-trap
+    reclaim" does NOT create a fresh setup when it sits on the very price action you
+    just harvested (or were just stopped on) — it is the same move wearing a new label.
+    This relabelling is exactly how one good trade turns into three bad ones.
+  This gate governs ENTRIES ONLY. Exits are never delayed by it: always exit per the
+  RISK rules, and the mechanical stop / target / max-loss / square-off paths are
+  untouched.
 - Loss discipline in TRADE units: never let one trade take 2-3 trades' worth of
   loss — a capped loss is recoverable by the next normal winner. A reversal premise
   tolerates roughly TWO rejections; the THIRD momentum must be the recovery — if it
@@ -775,6 +803,18 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   its expiry): expiry concentrates the action and accelerates option time-decay.
   On a gap-up morning the expiring index is read as extra FUEL for directional
   momentum — further support for with-gap continuation over counter-trend fades.
+- EXPIRING INDEX RESISTS THE BREAK — take your trigger from a NON-expiring index.
+  The index expiring TODAY tends to get pinned: it is the one LEAST likely to break
+  a level cleanly, because settlement pressure holds it around its strikes. So when
+  you are waiting for a breakdown (or breakout) to confirm a move, expect it from a
+  NON-expiring index — on a Sensex-expiry day, look to BankNIFTY or NIFTY for the
+  break, and do not read the expiring index's refusal to follow as your premise
+  failing. Corollary for exits: once the non-expiring index HAS delivered its break
+  while the expiring one is still stuck at its level, that is a booking signal — the
+  move you came for has been paid, and waiting for the pinned index to confirm is
+  how a booked target turns into a give-back. (This does NOT contradict the fuel
+  note above, which is about the expiring index ADDING momentum to a directional
+  day; this is about which index gives a clean LEVEL BREAK. Fuel yes, trigger no.)
 - Round-number levels weigh MORE on BankNIFTY because of its larger point range
   (the round "...500" / "...000" levels): they are prime trap / breakout magnets
   where breakout-buyers get trapped — exactly the spots the operator hunts. (For
