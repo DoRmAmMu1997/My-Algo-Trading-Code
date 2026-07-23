@@ -2080,6 +2080,132 @@ def test_kotak_indeterminate_book_queries_are_logged(
     ), f"no warning logged; records={[r.message for r in caplog.records]}"
 
 
+# Captured live on 2026-07-23 from BOTH Kotak books, before the day's first
+# order. It carries stat=Not_Ok, so the generic error-envelope check treated it
+# as a failed query and blocked live trading every morning until an order
+# existed.
+_KOTAK_EMPTY_BOOK_ENVELOPE = {
+    "stCode": 5203,
+    "errMsg": "No Data",
+    "desc": "data not found",
+    "stat": "Not_Ok",
+}
+
+
+def test_kotak_empty_books_are_determinate_not_indeterminate(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """A brand-new trading day has empty books; that is proof of flat, not doubt."""
+
+    class EmptyBookKotak(_FakeKotakSdk):
+        def order_report(self):
+            return dict(_KOTAK_EMPTY_BOOK_ENVELOPE)
+
+        def positions(self):
+            return dict(_KOTAK_EMPTY_BOOK_ENVELOPE)
+
+    client = _ready_kotak_client(kotak_module, monkeypatch, EmptyBookKotak())
+
+    orders = client.list_open_orders()
+    positions = client.list_open_positions()
+
+    assert orders.is_indeterminate is False, orders.reason
+    assert orders.items == ()
+    assert positions.is_indeterminate is False, positions.reason
+    assert positions.items == ()
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        # THE trap: a session failure whose text CONTAINS "no data". Matching by
+        # substring would report a flat account and enable live trading against
+        # exposure nobody can see.
+        {
+            "stCode": 5203,
+            "errMsg": "No data because session expired",
+            "desc": "data not found",
+            "stat": "Not_Ok",
+        },
+        {
+            "stCode": 5203,
+            "errMsg": "No Data",
+            "desc": "session expired",
+            "stat": "Not_Ok",
+        },
+        # Right words, different code.
+        {"stCode": 5001, "errMsg": "No Data", "desc": "data not found", "stat": "Not_Ok"},
+        # Code alone is not enough.
+        {"stCode": 5203, "errMsg": "Unauthorized", "desc": "data not found", "stat": "Not_Ok"},
+        {"stCode": 5203, "stat": "Not_Ok"},
+        # A plain error envelope must keep failing closed.
+        {"stat": "Not_Ok", "emsg": "session expired", "data": []},
+    ],
+)
+def test_kotak_only_the_exact_no_data_envelope_proves_an_empty_book(
+    kotak_module: ModuleType,
+    monkeypatch,
+    envelope: dict,
+) -> None:
+    class AmbiguousKotak(_FakeKotakSdk):
+        def order_report(self):
+            return dict(envelope)
+
+        def positions(self):
+            return dict(envelope)
+
+    client = _ready_kotak_client(kotak_module, monkeypatch, AmbiguousKotak())
+
+    assert client.list_open_orders().is_indeterminate is True
+    assert client.list_open_positions().is_indeterminate is True
+
+
+def test_kotak_empty_books_let_the_startup_audit_prove_flat(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """End to end: the real startup decision must allow live on a flat account."""
+
+    from Dependencies.startup_exposure import audit_startup_exposure
+
+    class EmptyBookKotak(_FakeKotakSdk):
+        def order_report(self):
+            return dict(_KOTAK_EMPTY_BOOK_ENVELOPE)
+
+        def positions(self):
+            return dict(_KOTAK_EMPTY_BOOK_ENVELOPE)
+
+    client = _ready_kotak_client(kotak_module, monkeypatch, EmptyBookKotak())
+
+    audit = audit_startup_exposure(client)
+
+    assert audit.safe_to_enable_live is True, audit.reasons
+    assert audit.evidence == ("open_orders=0", "relevant_positions=0")
+
+
+def test_kotak_no_data_does_not_leak_into_order_status(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """For ONE order, "no data" means not visible yet -- still indeterminate.
+
+    The empty-book rule is scoped to the two book queries on purpose: an order
+    we just placed and cannot find is exactly the ambiguity that must never be
+    reported as a clean zero-fill.
+    """
+
+    class NoHistoryKotak(_FakeKotakSdk):
+        def order_history(self, order_id):
+            return dict(_KOTAK_EMPTY_BOOK_ENVELOPE)
+
+    client = _ready_kotak_client(kotak_module, monkeypatch, NoHistoryKotak())
+
+    result = client.get_order_status("KT-1", 75)
+
+    assert result.status.name == "UNKNOWN"
+
+
 def test_kotak_error_envelopes_cannot_masquerade_as_empty_books(
     kotak_module: ModuleType,
     monkeypatch,

@@ -222,6 +222,49 @@ def _response_rows(response: Any) -> list[Any] | None:
     return None
 
 
+# Kotak's empty-book reply, captured live on 2026-07-23 from BOTH the order and
+# position books before the day's first order:
+#
+#   {'stCode': 5203, 'errMsg': 'No Data', 'desc': 'data not found',
+#    'stat': 'Not_Ok'}
+#
+# It arrives with stat=Not_Ok, so the generic error-envelope check treats it as a
+# failed query -- which is why a brand-new trading day (both books legitimately
+# empty) blocked live trading at startup until the first order existed.
+_KOTAK_NO_DATA_CODE = 5203
+
+
+def _is_kotak_no_data_envelope(value: Any) -> bool:
+    """Recognize ONLY Kotak's exact, determinate empty-book response.
+
+    Every field is matched exactly, and the message comparison is equality
+    rather than a substring test.  That strictness is the whole point: this
+    repo already learned with Shoonya that a session failure can *contain* the
+    words "no data" (``"No data because session expired"``), and accepting that
+    as an empty book would report a flat account and enable live trading
+    against exposure nobody can see.
+
+    A genuine session problem also looks different earlier in the call: the SDK
+    gates ``order_report``/``positions`` on ``edit_token``/``edit_sid`` and
+    returns ``{"Error Message": "Complete the 2fa process..."}`` when they are
+    missing, so reaching a structured ``stCode`` reply at all means the
+    authenticated request was made and the server answered on its merits.
+    """
+
+    if not isinstance(value, dict):
+        return False
+    if _exact_int(value.get("stCode")) != _KOTAK_NO_DATA_CODE:
+        return False
+    state = str(value.get("stat") or "").strip().lower().replace("_", "")
+    if state not in {"notok", "rejected"}:
+        return False
+    message = " ".join(
+        str(value.get("errMsg") or value.get("emsg") or "").strip().lower().split()
+    )
+    description = " ".join(str(value.get("desc") or "").strip().lower().split())
+    return message == "no data" and description == "data not found"
+
+
 def _kotak_net_quantity(row: dict[str, Any]) -> int | None:
     """Return one position row's net size, or ``None`` when it cannot be read.
 
@@ -1164,6 +1207,11 @@ class KotakExecutionClient:
                 f"Kotak open-order query failed: {exc}",
                 broker_state="SESSION_POISONED" if self.session_poisoned else "UNKNOWN",
             )
+        # Checked BEFORE the generic parser: the empty-book reply carries
+        # stat=Not_Ok, which _response_rows would otherwise read as a failure.
+        if _is_kotak_no_data_envelope(response):
+            log.info("Kotak order book is empty (broker reported no data).")
+            return BrokerQueryResult.success([])
         rows = _response_rows(response)
         if rows is None:
             return _indeterminate_book(
@@ -1237,6 +1285,10 @@ class KotakExecutionClient:
                 f"Kotak open-position query failed: {exc}",
                 broker_state="SESSION_POISONED" if self.session_poisoned else "UNKNOWN",
             )
+        # Checked BEFORE the generic parser: see list_open_orders above.
+        if _is_kotak_no_data_envelope(response):
+            log.info("Kotak position book is empty (broker reported no data).")
+            return BrokerQueryResult.success([])
         rows = _response_rows(response)
         if rows is None:
             return _indeterminate_book(
