@@ -1355,3 +1355,91 @@ consecutive bars). No prompt change addresses it.
 - `RETAIL_POSITIONING`: A CONFIDENT CROWD DOES NOT STAMPEDE (after TARGET-BOOKED).
 - Test markers: `test_system_prompt_has_v3q_reentry_gate_and_expiry_pin_knowledge`,
   `test_reentry_gate_does_not_contradict_the_exit_rules`.
+
+## Video addendum - 24 Jul profit-booking recovery + lagging-index entry (v3r)
+
+> Sources (full Hindi auto-transcripts from the YouTube transcript panel):
+> - `c6fC2LRkocE` (24 Jul 2026, "Live Bank Nifty Option Trading", 11:25) -
+>   primary live-session evidence.
+> - `ekVgnszh7tU` (23 Jul 2026, "Prediction For 24 JULY 2026", 2:17) -
+>   supporting premarket plan for the 24 Jul session.
+>
+> Cross-checked against BOTH agent artefacts for 2026-07-24:
+> `Backtest Outputs/sl_hunting_decisions.jsonl` and
+> `Backtest Outputs/sl_hunting_journal.jsonl`.
+
+The premarket thesis was sell-side under every opening type. The preceding market
+had already sold hard and given some retracement, so established sellers were in
+profit and were not the crowd to hunt. A gap-down was the cleanest continuation
+case; flat carried some support-trap risk, while a gap-up would first need to build
+its own negative-side trap.
+
+The live market gapped down and recovered. NIFTY and Sensex rose too quickly to show
+a controlled short entry, so IH watched the lagging BankNIFTY for the recovery to
+stall. When it did, he opened one PUT basket: BankNIFTY 56200 PUT (1,170 quantity),
+Sensex PUT (900), and NIFTY PUT (1,365). The failure case was explicit: if the
+recovery kept running, retraced, and then produced another strong upward impulse,
+the short direction was wrong. Instead, the recovery stalled and selling resumed.
+He booked the profitable basket after the sharp drop began attracting obvious new
+sellers and the intraday reward had paid the planned risk.
+
+**The tally for 2026-07-24:**
+
+| Source | Result |
+|---|---|
+| decisions | **72 decisions**: 64 HOLD, 4 entries, 4 EXIT |
+| decision errors | **1 `agent_error`** at 10:26 ("Previous agent call still running") |
+| journal | **4 completed trades**, net **+Rs.19,136.75** |
+| IH | **WIN** - one PUT basket after the gap-down recovery stalled |
+
+| # | Entry | Direction / setup | Result |
+|---|---|---|---|
+| 1 | 09:20 | LONG `gap_down_flush_hammer_reversal` | **-Rs.726.25** |
+| 2 | 09:27 | SHORT `gap_down_recovery_fail_bearish_engulfing` | **+Rs.11,951.25** |
+| 3 | 09:39 | SHORT `gap_down_recovery_fail_bearish_engulfing` | **+Rs.3,633.00** |
+| 4 | 10:01 | SHORT `gap_down_failed_recovery_short` | **+Rs.4,278.75** |
+
+The 09:27 short matched IH's direction and recovery-failure premise. The agent's
+preceding 09:20 long treated the first hammer recovery as a seller hunt, which was
+the method mismatch: paid multi-day sellers plus an expected profit-booking bounce
+did not establish a new long premise. The two later shorts repeated the same
+already-captured move. Short trades made **+Rs.19,863.00** in total, but their profit
+does not turn the repeated entries into new method evidence.
+
+**Net-new method distilled:**
+- PROFIT-BOOKING RECOVERY TEST: after an established multi-day selloff has paid the
+  seller crowd and the next session gaps down, the first green recovery can be
+  seller profit-booking rather than a seller-hunt reversal. A hammer / first bounce
+  is not enough for a long. Keep the continuation short conditional until the
+  recovery either stalls below the closing point / round number / opening range, or
+  invalidates it with a reclaim, held pullback, and second strong upward impulse.
+- LAGGING-INDEX ENTRY LOCATOR: when positioning and the triple-index read have
+  already fixed the day direction but the faster indices provide no clean entry,
+  use the lagging index's stall / rejection to locate timing. It is an entry cue,
+  not a standalone directional premise, and remains subordinate to MASKED BNF LAG,
+  GAP-SIZE ASYMMETRY, and SOLO-LEADER VETO.
+
+**Confirmed but deliberately NOT re-encoded (already present):** TARGET-BOOKED
+crowd filtering; the strict GAP-DOWN CONTINUATION SHORT; fast-spike profit booking;
+the fast-one-way / slow-other-way trap; MOVE-EXHAUSTION; and the POST-EXIT RE-ENTRY
+GATE.
+
+**Historical operational findings (documented, no runtime change in v3r):**
+- The first short's journal row says `placeholder - will not call, holding`, while
+  its 09:38 decision records that an erroneous order-tool invocation closed both
+  legs early. This is journal fidelity, not a new SL-hunting method.
+- Every entry after an exit occurred inside the existing ~15 completed-bar re-entry
+  gate: 09:27 after the long exit, 09:39 after the first short exit, and 10:01 after
+  the second short exit. The 09:38 decision even named the gate, but the next
+  independent per-bar call received only the current FLAT state and recent candles,
+  not the previous exit time / structure. Another prose rule cannot supply missing
+  cross-call state; runtime enforcement is a separate follow-up.
+- The single 10:26 `agent_error` was a still-running prior call. No prompt change
+  addresses inference concurrency in this knowledge-only version.
+
+**Knowledge changes (v3r, all prose):**
+- `RETAIL_POSITIONING`: PROFIT-BOOKING RECOVERY TEST, beside TARGET-BOOKED.
+- `BNF_SPECIFIC`: LAGGING-INDEX ENTRY LOCATOR, scoped against the existing lag and
+  divergence rules.
+- Test marker:
+  `test_system_prompt_has_v3r_profit_booking_recovery_and_lagging_index_knowledge`.
