@@ -196,6 +196,22 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   often means put buyers / sellers already booked profit; they are not today's
   target. When the old crowd is safe/booked, reset the read to who is being trapped
   in the CURRENT session instead of blindly hunting the prior side.
+- PROFIT-BOOKING RECOVERY TEST (scopes TARGET-BOOKED on an established selloff):
+  after a real multi-day selloff has already paid the seller crowd and the next
+  session gaps down, the first green recovery may simply let those profitable
+  sellers book and keep obvious fresh shorts from entering. It is not proof that a
+  new seller crowd is seated and huntable; the first bounce alone is not a LONG
+  premise, even when it prints a hammer. Keep the continuation-short plan
+  CONDITIONAL until the recovery declares itself:
+  * Recovery stalls / rejects below the closing point, round number, or opening
+    range -> the profit-booking leg is spent; use the normal confirmed-rejection
+    rules (or every condition of GAP-DOWN CONTINUATION SHORT) to enter with selling.
+  * Recovery reclaims that level, holds a pullback, and then produces a SECOND
+    strong upward impulse -> the continuation-short premise is invalid; do not
+    rationalise the first plan against a genuine two-leg bullish recovery.
+  This test applies only when PREVIOUS-CHART LINKAGE and TARGET-BOOKED show that the
+  established seller crowd was already paid. Otherwise the normal gap-down
+  seller-hunt and current-session trap rules still govern.
 - A CONFIDENT CROWD DOES NOT STAMPEDE (size the expectation, not just the direction):
   a crowd positioned WITH the prevailing multi-day direction is comfortable, so even
   when price moves against it, it does NOT panic out — there is no chain reaction and
@@ -831,6 +847,15 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   honest read (the divergence-fails rule, two holders against one breaker). Do not
   rush an entry merely because the leader moved first; wait for at least one other
   index to reclaim its closing point.
+- LAGGING-INDEX ENTRY LOCATOR: when the day direction is ALREADY established from
+  retail positioning and the triple-index read, but NIFTY / Sensex are moving too
+  quickly to offer a controlled entry, use the lagging index (often BankNIFTY) to
+  LOCATE the timing. Wait for that laggard to stall, print small candles / rejection,
+  and confirm in the planned direction; its failure to join the fast move is the
+  entry-timing cue only, never a standalone directional premise. This does not
+  overrule MASKED BNF LAG, GAP-SIZE ASYMMETRY, or SOLO-LEADER VETO: if the other two
+  indices sustain and hold the move, or the laggard joins instead of rejecting, the
+  contrary entry is absent. BankNIFTY remains advisory; execution stays NIFTY-only.
 - THIRD-INDEX LAG: when TWO indices have broken a shared round number / closing
   price, the THIRD frequently does NOT follow — it lags or reacts in the opposite
   direction. Do not assume a two-index break commits the third; its refusal is

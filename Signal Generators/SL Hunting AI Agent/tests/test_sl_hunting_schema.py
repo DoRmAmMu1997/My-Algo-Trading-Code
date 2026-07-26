@@ -413,6 +413,24 @@ def test_reentry_gate_does_not_contradict_the_exit_rules():
     assert "square-off" in gate
 
 
+def test_system_prompt_has_v3r_profit_booking_recovery_and_lagging_index_knowledge():
+    """v3r: 24 Jul - classify the recovery first, then time entry from the laggard.
+
+    A first bounce after a paid multi-day selloff is not automatically a seller-hunt
+    long. Once the short day-direction premise is established, a lagging index may
+    locate the entry, but it may not invent the direction.
+    """
+    prompt = build_system_prompt()
+    assert "PROFIT-BOOKING RECOVERY TEST" in prompt
+    assert "first bounce alone" in prompt and "not a LONG" in prompt
+    assert "LAGGING-INDEX ENTRY LOCATOR" in prompt
+    assert "entry-timing cue only" in prompt
+    # v3r scopes the existing rules; it does not replace or weaken them.
+    assert "TARGET-BOOKED crowd test" in prompt
+    assert "GAP-DOWN CONTINUATION SHORT" in prompt
+    assert "MASKED BNF LAG" in prompt
+
+
 def test_runaway_trend_section_is_composed_into_the_prompt():
     """The section constant must actually be wired into build_system_prompt()."""
     from sl_hunting_knowledge import RUNAWAY_TREND
