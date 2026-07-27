@@ -12023,8 +12023,10 @@ if SL_HUNTING_AVAILABLE:
     SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS = _env_int(
         "SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS", 4
     )
-    # Post-exit re-entry cooldown (SLH-005). After ANY close, the agent's order
-    # tool REFUSES a new entry for this many minutes. The prompt already carries
+    # Post-exit re-entry cooldown (SLH-005). Once a close leaves the WHOLE
+    # NIFTY/BankNIFTY basket flat, the agent's order tool REFUSES a new entry
+    # for this many minutes. A lone or partly closed leg does not start it.
+    # The prompt already carries
     # a judgement-based POST-EXIT RE-ENTRY GATE, but the live journal showed the
     # agent talking past it twice (23 and 27 Jul 2026) by relabelling the same
     # price structure as a fresh setup -- so the time arm is enforced in code,
@@ -12079,8 +12081,8 @@ if SL_HUNTING_AVAILABLE:
         # manual "no fresh trades after noon" rule. This does NOT square off open
         # positions -- only the existing square_off_* gate (15:15) force-closes; exits
         # (stop/target, AI exit, max-loss) keep working. See process_strategy_frame.
-        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10)
-        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 30)
+        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 12)
+        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 0)
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
@@ -13818,6 +13820,21 @@ def _live_config_errors(
             "positive_integer",
             None,
         )
+    if normalized_prefix == "SL_HUNTING":
+        raw_rules.update({
+            "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES": (
+                "nonnegative_integer",
+                None,
+            ),
+            "SL_HUNTING_NO_NEW_ENTRY_HOUR": (
+                "integer_range",
+                (0, 23),
+            ),
+            "SL_HUNTING_NO_NEW_ENTRY_MINUTE": (
+                "integer_range",
+                (0, 59),
+            ),
+        })
 
     for name, (rule, bounds) in raw_rules.items():
         raw = os.getenv(name)
@@ -13837,6 +13854,10 @@ def _live_config_errors(
             value <= 0 or not value.is_integer()
         ):
             errors.append(f"{name} must be a positive integer")
+        elif rule == "nonnegative_integer" and (
+            value < 0 or not value.is_integer()
+        ):
+            errors.append(f"{name} must be a non-negative integer")
         elif rule == "integer_range":
             low, high = bounds
             if not value.is_integer() or not low <= value <= high:
@@ -13892,6 +13913,32 @@ def _live_config_errors(
             or max_lots <= 0
         ):
             errors.append(f"resolved {max_lots_name} must be a positive integer")
+
+    if normalized_prefix == "SL_HUNTING":
+        cooldown = globals().get("SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES")
+        if (
+            isinstance(cooldown, bool)
+            or not isinstance(cooldown, int)
+            or cooldown < 0
+        ):
+            errors.append(
+                "resolved SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES must be a "
+                "non-negative integer"
+            )
+
+        no_new_entry_hour = getattr(worker, "no_new_entry_hour", None)
+        no_new_entry_minute = getattr(worker, "no_new_entry_minute", None)
+        valid_entry_cutoff_types = all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (no_new_entry_hour, no_new_entry_minute)
+        )
+        if not valid_entry_cutoff_types or not (
+            0 <= no_new_entry_hour <= 23
+            and 0 <= no_new_entry_minute <= 59
+        ):
+            errors.append(
+                "resolved SL Hunting no-new-entry cutoff must be a valid HH:MM value"
+            )
 
     return tuple(dict.fromkeys(errors))
 

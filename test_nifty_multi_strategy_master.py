@@ -3647,6 +3647,14 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
         self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
 
+    def test_no_new_entry_fallback_matches_documented_noon(self):
+        """A missing optional cutoff uses the documented 12:00 behavior."""
+        worker, _ = self._make_worker()
+        self.assertEqual(
+            (worker.no_new_entry_hour, worker.no_new_entry_minute),
+            (12, 0),
+        )
+
     def test_cooldown_arms_on_exit_and_expires(self):
         """A fully closed basket arms one monotonic interval, which then expires."""
         worker, _ = self._make_worker()
@@ -7348,6 +7356,48 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
             errors = master_file._live_config_errors(worker, "RENKO")
 
         self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
+
+    def test_sl_hunting_entry_controls_are_strictly_validated_for_live(self):
+        """Malformed cooldown/cutoff text cannot hide behind paper defaults."""
+        worker = self._Worker("SL Hunting AI")
+        worker.no_new_entry_hour = 12
+        worker.no_new_entry_minute = 0
+        cases = {
+            "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES": "-1",
+            "SL_HUNTING_NO_NEW_ENTRY_HOUR": "24",
+            "SL_HUNTING_NO_NEW_ENTRY_MINUTE": "60",
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name), patch.dict(os.environ, {name: raw}):
+                errors = master_file._live_config_errors(worker, "SL_HUNTING")
+
+            self.assertTrue(
+                any(name in error for error in errors),
+                f"{name}={raw!r} must block live trading, got {errors}",
+            )
+
+    def test_sl_hunting_resolved_entry_controls_fail_closed_for_live(self):
+        """Forgiving paper values cannot reach live mode after resolution."""
+        worker = self._Worker("SL Hunting AI")
+        worker.no_new_entry_hour = 24
+        worker.no_new_entry_minute = 0
+        with patch.object(
+            master_file,
+            "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES",
+            -1,
+            create=True,
+        ):
+            errors = master_file._live_config_errors(worker, "SL_HUNTING")
+
+        self.assertIn(
+            "resolved SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES must be a "
+            "non-negative integer",
+            errors,
+        )
+        self.assertIn(
+            "resolved SL Hunting no-new-entry cutoff must be a valid HH:MM value",
+            errors,
+        )
 
     def test_risk_budget_max_lots_must_be_a_positive_integer_for_live(self):
         worker = self._Worker("ProfitShooter")

@@ -1438,13 +1438,17 @@ corrected here.
 **Behaviour change (operator-approved): the re-entry gate's TIME arm is now enforced in
 CODE (SLH-005), not prose.** `MasterWorkerExecutor.enter` consults the worker's
 `post_exit_cooldown_remaining_seconds()` and REJECTS the entry with the remaining
-seconds in the reason, so the model sees a refusal instead of self-policing. State
-lives on `SLHuntingAIWorker` (`_last_exit_at`, armed in `after_exit` for EVERY close —
-a stop-out is when the reflex is most costly). Knob
+seconds in the reason, so the model sees a refusal instead of self-policing. Knob
 `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES` (default 5, `0` disables). This reuses the
 pattern `SupertrendBullishWorker` has always used (`POST_EXIT_COOLDOWN_MINUTES`, also
-5). ENTRIES ONLY: exits, stop/target, max-loss and square-off are untouched, and the
-guard fails OPEN (a raising hook never becomes a trading outage).
+5). ENTRIES ONLY: exits, stop/target, max-loss and square-off are untouched.
+
+**MAT-111 reliability follow-up.** A two-leg SL Hunting trade is not closed when its
+first leg exits. The timer now uses a monotonic deadline and starts exactly once when
+both NIFTY and BankNIFTY are confirmed flat. A lone surviving leg, or a partial /
+indeterminate broker close retained for reconciliation, cannot run the interval down.
+Unreadable, non-finite, or negative guard state rejects only new LIVE entries; paper
+use remains fail-open, and exits never consult the guard.
 
 **Confirmed but deliberately NOT re-encoded (already present, and correctly applied):**
 the weekend/holiday flattening of the prior crowd (WEEKEND / HOLIDAY CARRY-RISK — it
@@ -1461,12 +1465,13 @@ enter at the gap extreme, wait for the bounce.
 - `RISK`: the POST-EXIT RE-ENTRY GATE's TIME arm now states it is ENFORCED IN CODE, and
   its "~15 bars" figure is corrected (clearing the clock does not by itself authorise a
   trade).
-- Code: `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES`, `SLHuntingAIWorker._last_exit_at` +
-  `post_exit_cooldown_remaining_seconds()`, and the rejection in
+- Code: `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES`, the worker's basket-flat monotonic
+  deadline, `post_exit_cooldown_remaining_seconds()`, and the rejection in
   `MasterWorkerExecutor.enter`.
 - Test markers: `test_system_prompt_has_v3s_laggards_and_enforced_cooldown_knowledge`,
-  plus executor tests (reject / allow / never-blocks-exit / fail-open / duck-typed) and
-  worker tests (first entry free, arms on exit incl. stop-out, expires, disable).
+  plus executor tests (reject / allow / never-blocks-exit / live fail-closed /
+  paper fail-open / duck-typed) and worker tests (first entry free, waits for the
+  final leg, partial-close recovery, stop-out, monotonic expiry, disable).
 
 ## Video addendum - 24 Jul profit-booking recovery + lagging-index entry (v3r)
 
