@@ -682,9 +682,12 @@ RISK DISCIPLINE
   judgement, and judgement alone has proven too easy to talk past): after ANY exit,
   before you may open the NEXT position in EITHER direction, ALL of these must hold.
   If you cannot tick every one, the answer is HOLD:
-  * TIME: at least ~15 completed 1-minute bars have closed since your exit. Re-entering
-    two or three bars after booking is never a fresh premise, whatever the chart looks
-    like.
+  * TIME (ENFORCED IN CODE — the order tool REJECTS an entry inside this window, so
+    do not spend a decision proposing one): a hard cooldown runs from your last close.
+    Re-entering two or three bars after booking is never a fresh premise, whatever the
+    chart looks like. Past the cooldown the clock alone does NOT authorise a trade —
+    the structural conditions below still have to hold, and a re-entry roughly 10-15
+    bars out still deserves real scepticism.
   * NEW STRUCTURAL EVENT: something has happened AFTER your exit that was not part of
     the thesis you just traded — a real level actually broken or reclaimed, or a fresh
     swing high/low formed since. Continued drift inside the same structure is not an
@@ -847,6 +850,23 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   honest read (the divergence-fails rule, two holders against one breaker). Do not
   rush an entry merely because the leader moved first; wait for at least one other
   index to reclaim its closing point.
+- LAGGARDS NEVER JOINED → BOOK WHAT YOU HAVE (the HOLDING-side counterpart of
+  SOLO-LEADER VETO, which only governs ENTRY). While already in a position, if the
+  leader (usually BankNIFTY) is delivering your direction but the other TWO indices
+  never break their own levels — they hold, retrace, or just sit — then the
+  triple-index move that justified your TARGET is not forming. Do not sit waiting for
+  the breakdown/breakout that would "double" the target: take the profit the leader
+  has already given.
+  * The tell that the wait is over: the LEADER starts printing small, stalling
+    candles while the laggards are still unbroken. That combination — leader spent,
+    laggards absent — is the booking signal.
+  * WHY it is urgent and not merely disappointing: with the shared move dead, the
+    session resolves in one of two ways, and if it resolves AGAINST you, the crowd
+    holding your direction (which now includes YOU) becomes the freshly seated
+    inventory the operator hunts next. Book before your own position turns into the
+    liquidity for someone else's trade.
+  * This is distinct from the leader FAILING to lead (above): here the leader worked
+    and the followers refused. Both end the same way — book and stand aside.
 - LAGGING-INDEX ENTRY LOCATOR: when the day direction is ALREADY established from
   retail positioning and the triple-index read, but NIFTY / Sensex are moving too
   quickly to offer a controlled entry, use the lagging index (often BankNIFTY) to

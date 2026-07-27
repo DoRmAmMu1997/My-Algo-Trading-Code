@@ -386,8 +386,10 @@ def test_system_prompt_has_v3q_reentry_gate_and_expiry_pin_knowledge():
     """
     prompt = build_system_prompt()
     assert "POST-EXIT RE-ENTRY GATE" in prompt
-    # The gate must be checkable, not another judgement call.
-    assert "completed 1-minute bars have closed since your exit" in prompt
+    # The gate must be checkable, not another judgement call. v3s moved the TIME arm
+    # out of prose and into the order tool, so the wording here changed with it --
+    # what must survive is that a time floor exists and runs from the last close.
+    assert "a hard cooldown runs from your last close" in prompt
     assert "NEW STRUCTURAL EVENT" in prompt
     # The exact loophole that cost money today must be named.
     assert "A DIFFERENT PATTERN NAME ON THE SAME STRUCTURE IS NOT A NEW PREMISE" in prompt
@@ -398,6 +400,24 @@ def test_system_prompt_has_v3q_reentry_gate_and_expiry_pin_knowledge():
     assert "Fuel yes, trigger no" in prompt
     # Crowd-behaviour nuance: aligned crowds don't cascade.
     assert "A CONFIDENT CROWD DOES NOT STAMPEDE" in prompt
+
+
+def test_system_prompt_has_v3s_laggards_and_enforced_cooldown_knowledge():
+    """v3s: 27 Jul — IH booked without his breakdown because BankNIFTY delivered
+    alone while Sensex/NIFTY never broke; and the re-entry gate's TIME arm moved
+    into code after the prompt version was talked past twice."""
+    prompt = build_system_prompt()
+    assert "LAGGARDS NEVER JOINED" in prompt
+    # The booking trigger: leader spent while the followers are still unbroken.
+    # (Wrap-independent fragments only -- the phrase spans a line break.)
+    assert "leader spent" in prompt and "laggards absent" in prompt
+    assert "is the booking signal" in prompt
+    # The urgency: your own position becomes the next hunted inventory.
+    assert "liquidity for someone else's trade" in prompt
+    # The agent must know the time arm is now refused by the tool, not self-policed.
+    assert "ENFORCED IN CODE" in prompt
+    # ...and that clearing the clock is not by itself permission to trade.
+    assert "does NOT authorise a trade" in prompt
 
 
 def test_reentry_gate_does_not_contradict_the_exit_rules():

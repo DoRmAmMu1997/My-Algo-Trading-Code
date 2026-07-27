@@ -423,6 +423,59 @@ def test_master_worker_executor_delegates():
     assert ex.snapshot()["in_position"] is False
 
 
+class _CooldownWorker(_FakeWorker):
+    """Worker exposing the SLH-005 cooldown the real master worker provides."""
+
+    def __init__(self, remaining):
+        super().__init__()
+        self.remaining = remaining
+
+    def post_exit_cooldown_remaining_seconds(self):
+        return self.remaining
+
+
+def test_entry_rejected_while_post_exit_cooldown_runs():
+    """SLH-005: the prompt's re-entry gate is judgement and was talked past twice in
+    live trading (23 + 27 Jul 2026) by relabelling the same structure as a new setup.
+    The order tool must refuse the entry outright, with a reason the model can read."""
+    ex = MasterWorkerExecutor(_CooldownWorker(212.0))
+    r = ex.enter("SHORT", stop=24000, target=23900, reason="4th trendline touch", price=23950)
+    assert r["accepted"] is False
+    assert "cooldown" in r["reason"].lower()
+    assert "212" in r["reason"]          # tells the agent how long is left
+    assert ex._w.entries == []           # nothing reached the worker
+
+
+def test_entry_allowed_once_cooldown_has_elapsed():
+    ex = MasterWorkerExecutor(_CooldownWorker(0.0))
+    assert ex.enter("SHORT", stop=24000, target=23900, reason="ok", price=23950)["accepted"] is True
+
+
+def test_cooldown_never_blocks_an_exit():
+    """Entries only. A cooldown must never trap an open position."""
+    w = _CooldownWorker(999.0)
+    ex = MasterWorkerExecutor(w)
+    w.pos.active = True
+    assert ex.exit("premise dead", price=23950)["accepted"] is True
+
+
+def test_broken_cooldown_hook_cannot_block_trading():
+    """Fail-open: a raising guard must not become an outage that stops all entries."""
+
+    class _Boom(_FakeWorker):
+        def post_exit_cooldown_remaining_seconds(self):
+            raise RuntimeError("clock unavailable")
+
+    ex = MasterWorkerExecutor(_Boom())
+    assert ex.enter("LONG", stop=1, target=2, reason="x", price=25000)["accepted"] is True
+
+
+def test_worker_without_cooldown_hook_still_enters():
+    """Duck-typed: the standalone runner / older workers have no cooldown at all."""
+    ex = MasterWorkerExecutor(_FakeWorker())
+    assert ex.enter("LONG", stop=1, target=2, reason="x", price=25000)["accepted"] is True
+
+
 # --------------------------------------------------------------------------
 # SLH-002: agent-provided ENTRY stop/target must be sane at the order tool.
 # The mechanical per-poll exit uses these UNDERLYING levels verbatim, so a

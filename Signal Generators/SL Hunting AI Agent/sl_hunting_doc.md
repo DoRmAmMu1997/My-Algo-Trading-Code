@@ -1356,6 +1356,118 @@ consecutive bars). No prompt change addresses it.
 - Test markers: `test_system_prompt_has_v3q_reentry_gate_and_expiry_pin_knowledge`,
   `test_reentry_gate_does_not_contradict_the_exit_rules`.
 
+## Video addendum - 27 Jul laggards-must-join + the gate moves into code (v3s)
+
+> Source: `PezwEQ300lo` (27 Jul 2026, "Live Bank Nifty Option Trading"). Full Hindi
+> auto-transcript (fresh-tab recipe). No weekend lecture this cycle — the channel
+> went 24 Jul prediction straight to 27 Jul.
+> Tallied against BOTH artefacts for 2026-07-27.
+
+**The tally — a WINNING day whose shape still exposes the same defect:**
+
+| Source | Result |
+|---|---|
+| decisions | 73 (63 HOLD, **5 entries**, 5 EXIT) + 2 `agent_error` ("usage-limited", 09:17) |
+| journal | **5 trades, net +Rs.9,012.25** |
+| IH | **WIN** — one short basket into the gap-up, booked early without his breakdown |
+
+| # | Entry | Direction / setup | Result |
+|---|---|---|---|
+| 1 | 09:20 | SHORT `huge_gap_mindset_trap_fade` | **-Rs.2,703** (held 55 seconds) |
+| 2 | 09:23 | LONG `gapup_flush_hammer_reclaim` | -Rs.1,666 |
+| 3 | 10:02 | LONG `psych_support_hammer_reversal` | -Rs.1,679 |
+| 4 | 10:18 | SHORT `double_top_bearish_engulfing` | **+Rs.18,858** |
+| 5 | 10:22 | SHORT `trendline_continuation_fibo_rejection` | **-Rs.3,797** |
+
+Session summary (IH): a clear gap-up (big on Sensex). He SOLD immediately across all
+three. Premise: the prior session sold continuously then closed off a recovery, and
+**the two-day weekend made those short-holders book and leave** — so no seller SLs are
+seated, and the gap-up must therefore build a BUYER trap. He conceded his entry looked
+early ("the entry seems to have gone wrong, but we won't be wrong on DIRECTION") and
+held within a loss limit. BankNIFTY then fell hard — but Sensex and NIFTY refused to
+break down. He waited for that breakdown, never got it, and **booked anyway** once
+BankNIFTY started printing very small candles: "if Sensex and NIFTY had broken down the
+target could have DOUBLED, but they keep holding and retracing, so the risk has grown."
+His closing read is the sharp part: with the shared move dead the session can only
+resolve two ways, and "if it starts going up, good seller SLs will be available" — i.e.
+his own short would become the harvestable inventory.
+
+**Agent vs IH — same thesis, opposite conviction.** Trade 1 IS IH's trade: the agent
+named the huge-gap mindset trap and shorted the gap-up at 09:20. It then **abandoned it
+after 55 seconds** at -26.2 points, with an exit reason asserting the "SL-hunt leg ...
+captured" while the position was in fact at a loss. It spent the next hour fighting its
+own read with two LONGs (both losers) before returning to the identical short thesis at
+10:18 — which produced the day's entire profit. Direction agreement was never the
+problem; conviction and re-entry discipline were.
+
+**The defect this addendum exists for.** Trade 5 opened **89 seconds** after trade 4
+closed, in the SAME direction, and gave back Rs.3,797 of an Rs.18,858 winner. Its
+reasoning never mentions the POST-EXIT RE-ENTRY GATE at all — it simply named a new
+setup ("the 4th touch on a descending trendline"), which is precisely the relabelling
+loophole v3q was written to close. The gate has been in the prompt since 23 Jul, so
+this is the SECOND consecutive session in which a prose rule failed to bind.
+
+Replaying both journals against candidate cooldowns (approximate — blocking one entry
+shifts the clock for the next):
+
+| Cooldown | 23 Jul kept | 27 Jul kept |
+|---|---|---|
+| none (actual) | -Rs.7,055 | +Rs.9,012 |
+| 2 min | -Rs.7,055 | +Rs.12,810 |
+| **5 min** | **+Rs.1,163** | **+Rs.14,476** |
+| 10 min | +Rs.1,163 | +Rs.14,476 |
+| 15 min | +Rs.13,689 | **-Rs.8,179** |
+
+5 and 10 minutes are identical on this sample; **15 minutes is actively harmful** — it
+would have blocked 27 Jul's Rs.18,858 winner (entered 12.4 min after the prior exit).
+That is direct evidence AGAINST v3q's own "~15 completed bars" prose, which is
+corrected here.
+
+**Net-new method distilled:**
+- LAGGARDS NEVER JOINED → BOOK WHAT YOU HAVE: the HOLDING-side counterpart to
+  SOLO-LEADER VETO (entry-only). When the leader delivers your direction but the other
+  two indices never break their own levels, the triple-index move that justified your
+  TARGET is not forming — take what the leader gave instead of waiting for the
+  breakdown that would "double" it. Booking trigger: the leader starts stalling into
+  small candles while the laggards are still unbroken. Urgency: with the shared move
+  dead the session resolves binary, and if it resolves against you the crowd holding
+  your direction — now including YOU — is the freshly seated inventory the operator
+  hunts next. Distinct from the leader FAILING to lead (v3l): there the leader quit;
+  here the leader worked and the followers refused.
+
+**Behaviour change (operator-approved): the re-entry gate's TIME arm is now enforced in
+CODE (SLH-005), not prose.** `MasterWorkerExecutor.enter` consults the worker's
+`post_exit_cooldown_remaining_seconds()` and REJECTS the entry with the remaining
+seconds in the reason, so the model sees a refusal instead of self-policing. State
+lives on `SLHuntingAIWorker` (`_last_exit_at`, armed in `after_exit` for EVERY close —
+a stop-out is when the reflex is most costly). Knob
+`SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES` (default 5, `0` disables). This reuses the
+pattern `SupertrendBullishWorker` has always used (`POST_EXIT_COOLDOWN_MINUTES`, also
+5). ENTRIES ONLY: exits, stop/target, max-loss and square-off are untouched, and the
+guard fails OPEN (a raising hook never becomes a trading outage).
+
+**Confirmed but deliberately NOT re-encoded (already present, and correctly applied):**
+the weekend/holiday flattening of the prior crowd (WEEKEND / HOLIDAY CARRY-RISK — it
+was IH's whole premise today); the huge-gap mindset trap (the agent named it verbatim);
+booking on a stall rather than the perfect target; and holding within a loss limit.
+Deliberately NOT encoded: IH's "entry early but direction right, so hold through the
+drawdown". Encoding hold-through-drawdown into a live agent is how a capped loss becomes
+an uncapped one, and v3j already fixes the same problem from the safe side — do not
+enter at the gap extreme, wait for the bounce.
+
+**Knowledge changes (v3s, prose + code):**
+- `BNF_SPECIFIC`: LAGGARDS NEVER JOINED → BOOK WHAT YOU HAVE (before the v3r
+  LAGGING-INDEX ENTRY LOCATOR it complements).
+- `RISK`: the POST-EXIT RE-ENTRY GATE's TIME arm now states it is ENFORCED IN CODE, and
+  its "~15 bars" figure is corrected (clearing the clock does not by itself authorise a
+  trade).
+- Code: `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES`, `SLHuntingAIWorker._last_exit_at` +
+  `post_exit_cooldown_remaining_seconds()`, and the rejection in
+  `MasterWorkerExecutor.enter`.
+- Test markers: `test_system_prompt_has_v3s_laggards_and_enforced_cooldown_knowledge`,
+  plus executor tests (reject / allow / never-blocks-exit / fail-open / duck-typed) and
+  worker tests (first entry free, arms on exit incl. stop-out, expires, disable).
+
 ## Video addendum - 24 Jul profit-booking recovery + lagging-index entry (v3r)
 
 > Sources (full Hindi auto-transcripts from the YouTube transcript panel):

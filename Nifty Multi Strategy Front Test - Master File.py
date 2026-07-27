@@ -12023,6 +12023,21 @@ if SL_HUNTING_AVAILABLE:
     SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS = _env_int(
         "SL_HUNTING_BNF_MIRROR_NEAR_EXPIRY_ITM_STEPS", 4
     )
+    # Post-exit re-entry cooldown (SLH-005). After ANY close, the agent's order
+    # tool REFUSES a new entry for this many minutes. The prompt already carries
+    # a judgement-based POST-EXIT RE-ENTRY GATE, but the live journal showed the
+    # agent talking past it twice (23 and 27 Jul 2026) by relabelling the same
+    # price structure as a fresh setup -- so the time arm is enforced in code,
+    # where it cannot be reasoned away.
+    #
+    # Why 5 and not the prompt's older "~15 bars": replaying both journals, a
+    # 5-minute floor blocks exactly the losing snap-backs while a 15-minute one
+    # would ALSO have blocked 27 Jul's +Rs.18,858 winner (entered 12.4 min after
+    # the prior exit). 5 also matches POST_EXIT_COOLDOWN_MINUTES, the same guard
+    # the hedged-puts worker has always used. Set 0 to disable.
+    SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES = _env_int(
+        "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 5
+    )
     # Trade journal (v3): record each trade's entry context + exit outcome to a
     # gitignored JSONL the reflection coach reads. Best-effort; never blocks trading.
     SL_HUNTING_JOURNAL_ENABLED = _env_bool("SL_HUNTING_JOURNAL_ENABLED", True)
@@ -12145,6 +12160,10 @@ if SL_HUNTING_AVAILABLE:
             # exit path (SL/target, max-loss, square-off, EXIT BOTH) leaves it False, so
             # the mirror stays tied for hard risk exactly as before.
             self._suppress_mirror_close = False
+            # Wall-clock of this worker's most recent close, used by the
+            # post-exit re-entry cooldown (SLH-005). None until the first exit,
+            # so the day's FIRST entry is never delayed.
+            self._last_exit_at: datetime | None = None
             # Latest BankNIFTY close seen this session (refreshed each decision
             # bar from the same fetch that feeds cross-confirmation); used to
             # pick the mirror's ATM strike.
@@ -12627,6 +12646,11 @@ if SL_HUNTING_AVAILABLE:
             mirror stays open AND the journal close is DEFERRED so option_pnl still
             captures both legs -- finalized when the mirror closes."""
             super().after_exit(closed_position, reason)
+            # SLH-005: arm the post-exit re-entry cooldown. Deliberately set for
+            # EVERY close (agent EXIT, stop/target, max-loss, square-off): the
+            # failure this guards against is re-entering straight after ANY exit,
+            # and a stop-out is the case where that reflex is most costly.
+            self._last_exit_at = datetime.now()
             if not self._suppress_mirror_close:
                 try:
                     self._close_bnf_mirror(reason)
@@ -12647,6 +12671,27 @@ if SL_HUNTING_AVAILABLE:
                 self._pending_journal_exit = static
                 return
             self._finalize_journal(static)
+
+        def post_exit_cooldown_remaining_seconds(self) -> float:
+            """Seconds still to run on the post-exit re-entry cooldown (SLH-005).
+
+            0.0 means a new entry is allowed. Read by the agent's entry path
+            (`MasterWorkerExecutor.enter`) so a fresh ENTER inside the window is
+            REJECTED with a reason the model can see, rather than relying on the
+            prompt's judgement-based POST-EXIT RE-ENTRY GATE -- which the live
+            journal showed being talked past on 23 and 27 Jul 2026 by relabelling
+            the same price structure as a new setup.
+
+            Set `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES=0` to disable entirely.
+            EXITS are never affected: this is consulted on the entry path only.
+            """
+            if SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES <= 0:
+                return 0.0
+            if self._last_exit_at is None:
+                return 0.0
+            elapsed = (datetime.now() - self._last_exit_at).total_seconds()
+            remaining = SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0 - elapsed
+            return remaining if remaining > 0 else 0.0
 
         def minimum_strategy_rows(self) -> int:
             # Enough derived bars for swings / fibo / structure, with a margin.
