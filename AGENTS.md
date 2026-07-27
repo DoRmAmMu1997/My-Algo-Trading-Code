@@ -34,8 +34,8 @@ One process, cooperating threads:
   kill-switch still caps the day): the legs are TIED for hard risk
   (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's
   premise INDEPENDENTLY and can cut one alone via the EXIT `exit_leg` selector (NIFTY|BNF|BOTH).
-  Entry stays NIFTY-only (the mirror copies it). It stops opening NEW positions after noon
-  (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — not a square-off (exits + the 15:15 square-off
+  Entry stays NIFTY-only (the mirror copies it). It stops opening NEW positions after 10:30
+  (`SL_HUNTING_NO_NEW_ENTRY_HOUR`/`_MINUTE`, default 10:30) — not a square-off (exits + the 15:15 square-off
   still run; when flat past the cutoff it skips the LLM call entirely). After a target, stop, or
   premise-invalidating exit, `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES` blocks re-entry from the
   moment the WHOLE NIFTY/BankNIFTY basket is confirmed flat; a lone or partly closed leg does not

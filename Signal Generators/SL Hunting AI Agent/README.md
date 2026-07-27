@@ -105,8 +105,8 @@ master's one shared, lock-guarded broker session and its `enter_position` /
 `exit_position` (so max-loss, square-off and Telegram all apply). See the
 `SL_HUNTING_*` block in `Dependencies/env.example` for all knobs.
 
-By default the agent **stops opening new positions at 12:00** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`
-/ `_MINUTE`) — mirroring the "no fresh trades after noon" rule. This is **not** a square-off:
+By default the agent **stops opening new positions at 10:30** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`
+/ `_MINUTE`) — mirroring the operator's "no fresh trades after the opening window" rule. This is **not** a square-off:
 open positions keep running and are only force-closed by the existing `SQUARE_OFF_*` gate
 (15:15); stop/target, AI exits and max-loss all keep working. As a bonus, once flat past the
 cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of the day**.
