@@ -28,6 +28,7 @@ already in a position, and cannot EXIT while flat.
 from __future__ import annotations
 
 import contextlib
+import math
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -341,10 +342,23 @@ class MasterWorkerExecutor:
         # (or the standalone paper runner) simply have no cooldown.
         remaining_fn = getattr(self._w, "post_exit_cooldown_remaining_seconds", None)
         if callable(remaining_fn):
+            guard_failed = False
             try:
                 remaining = float(remaining_fn())
-            except Exception:  # noqa: BLE001 - a broken guard must never block trading outright
+            except Exception:  # noqa: BLE001 - live fails closed; paper remains available
+                guard_failed = True
                 remaining = 0.0
+            if not math.isfinite(remaining) or remaining < 0:
+                guard_failed = True
+                remaining = 0.0
+            if guard_failed and bool(getattr(self._w, "live_trading", False)):
+                return {
+                    "accepted": False,
+                    "reason": (
+                        "cooldown safety check unavailable; live entry rejected. "
+                        "Exits remain available."
+                    ),
+                }
             if remaining > 0:
                 return {
                     "accepted": False,

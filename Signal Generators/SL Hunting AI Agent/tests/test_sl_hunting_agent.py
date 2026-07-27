@@ -459,15 +459,47 @@ def test_cooldown_never_blocks_an_exit():
     assert ex.exit("premise dead", price=23950)["accepted"] is True
 
 
-def test_broken_cooldown_hook_cannot_block_trading():
-    """Fail-open: a raising guard must not become an outage that stops all entries."""
+def test_broken_cooldown_hook_blocks_live_entry():
+    """Live money must not enter when its post-exit safety state is unreadable."""
 
     class _Boom(_FakeWorker):
+        live_trading = True
+
+        def post_exit_cooldown_remaining_seconds(self):
+            raise RuntimeError("clock unavailable")
+
+    ex = MasterWorkerExecutor(_Boom())
+    result = ex.enter("LONG", stop=1, target=2, reason="x", price=25000)
+    assert result["accepted"] is False
+    assert "cooldown safety check unavailable" in result["reason"].lower()
+    assert ex._w.entries == []
+
+
+def test_broken_cooldown_hook_remains_fail_open_for_paper():
+    """Paper experiments stay available when the optional cooldown hook raises."""
+
+    class _Boom(_FakeWorker):
+        live_trading = False
+
         def post_exit_cooldown_remaining_seconds(self):
             raise RuntimeError("clock unavailable")
 
     ex = MasterWorkerExecutor(_Boom())
     assert ex.enter("LONG", stop=1, target=2, reason="x", price=25000)["accepted"] is True
+
+
+def test_invalid_cooldown_values_block_live_entry():
+    """NaN, infinity, negative, and non-numeric state cannot bypass live safety."""
+    for invalid in (float("nan"), float("inf"), float("-inf"), -1.0, "broken"):
+        worker = _CooldownWorker(invalid)
+        worker.live_trading = True
+        ex = MasterWorkerExecutor(worker)
+
+        result = ex.enter("LONG", stop=1, target=2, reason="x", price=25000)
+
+        assert result["accepted"] is False, invalid
+        assert "cooldown safety check unavailable" in result["reason"].lower()
+        assert worker.entries == []
 
 
 def test_worker_without_cooldown_hook_still_enters():
