@@ -3644,27 +3644,31 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     def test_cooldown_is_zero_before_any_exit(self):
         """The day's FIRST entry must never be delayed."""
         worker, _ = self._make_worker()
-        self.assertIsNone(worker._last_exit_at)
+        self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
         self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
 
     def test_cooldown_arms_on_exit_and_expires(self):
-        """Any close arms the window; it drains to 0 once the minutes elapse."""
+        """A fully closed basket arms one monotonic interval, which then expires."""
         worker, _ = self._make_worker()
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
-        worker.exit_position("AI_TARGET")
+        with patch.object(master_file.time, "monotonic", return_value=200.0):
+            worker.exit_position("AI_TARGET")
 
-        self.assertIsNotNone(worker._last_exit_at)
-        remaining = worker.post_exit_cooldown_remaining_seconds()
-        self.assertGreater(remaining, 0.0)
-        self.assertLessEqual(
-            remaining, master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
+        expected_deadline = (
+            200.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
         )
+        self.assertEqual(
+            worker._post_exit_cooldown_deadline_monotonic,
+            expected_deadline,
+        )
+        with patch.object(master_file.time, "monotonic", return_value=201.0):
+            self.assertEqual(
+                worker.post_exit_cooldown_remaining_seconds(),
+                master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0 - 1.0,
+            )
 
-        # Pretend the cooldown elapsed: it must stop blocking, not go negative.
-        worker._last_exit_at = datetime.now() - timedelta(
-            minutes=master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES + 1
-        )
-        self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+        with patch.object(master_file.time, "monotonic", return_value=expected_deadline + 1.0):
+            self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
 
     def test_cooldown_arms_on_a_stop_out_too(self):
         """A stop-out is exactly when the re-entry reflex is most expensive, so the
@@ -3677,9 +3681,45 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     def test_cooldown_can_be_disabled(self):
         """0 disables the guard outright (operator escape hatch)."""
         worker, _ = self._make_worker()
-        worker._last_exit_at = datetime.now()
+        worker._post_exit_cooldown_deadline_monotonic = time.monotonic() + 300.0
         with patch.object(master_file, "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 0):
             self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
+    def test_cooldown_waits_for_final_mirror_close(self):
+        """A NIFTY-only premise exit is not a closed trade while BNF still rides."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        with patch.object(master_file.time, "monotonic", return_value=100.0):
+            worker.exit_nifty_leg_only("NIFTY_PREMISE_INVALID")
+        self.assertFalse(worker.pos.active)
+        self.assertTrue(worker._mirror_pos.active)
+        self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
+
+        with patch.object(master_file.time, "monotonic", return_value=200.0):
+            worker.exit_bnf_mirror_only("BNF_PREMISE_INVALID")
+        self.assertEqual(
+            worker._post_exit_cooldown_deadline_monotonic,
+            200.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0,
+        )
+
+    def test_cooldown_waits_for_final_nifty_close(self):
+        """A BNF-only premise exit is not a closed trade while NIFTY still rides."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        with patch.object(master_file.time, "monotonic", return_value=100.0):
+            worker.exit_bnf_mirror_only("BNF_PREMISE_INVALID")
+        self.assertTrue(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
+
+        with patch.object(master_file.time, "monotonic", return_value=300.0):
+            worker.exit_position("NIFTY_PREMISE_INVALID")
+        self.assertEqual(
+            worker._post_exit_cooldown_deadline_monotonic,
+            300.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0,
+        )
 
     def test_mirror_boundary_day_still_uses_atm(self):
         """Exactly the threshold is NOT 'fewer than' -> ATM, as before."""
@@ -4215,6 +4255,7 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
             self.assertFalse(worker.pos.active)
             self.assertTrue(worker._mirror_pos.active)
+            self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
             self.assertEqual(worker._mirror_pos.quantity, original_quantity - 35)
             self.assertEqual(
                 worker._mirror_pos.live_leg.confirmed_live_quantity,
@@ -4223,8 +4264,11 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             worker._journal.close_trade.assert_not_called()
             self.assertIsNotNone(worker._pending_journal_exit)
 
-            worker.exit_bnf_mirror_only("RETRY_PARTIAL_CLOSE")
-            worker.exit_bnf_mirror_only("IDEMPOTENT_RETRY")
+            with patch.object(master_file.time, "monotonic", return_value=400.0):
+                worker.exit_bnf_mirror_only("RETRY_PARTIAL_CLOSE")
+            armed_deadline = worker._post_exit_cooldown_deadline_monotonic
+            with patch.object(master_file.time, "monotonic", return_value=450.0):
+                worker.exit_bnf_mirror_only("IDEMPOTENT_RETRY")
 
         bnf_sell_quantities = [
             quantity
@@ -4234,6 +4278,11 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertEqual(bnf_sell_quantities, [original_quantity, original_quantity - 35])
         self.assertEqual(fake.status_queries, [("BNF-EXIT-1", original_quantity)])
         self.assertFalse(worker._mirror_pos.active)
+        self.assertEqual(
+            armed_deadline,
+            400.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0,
+        )
+        self.assertEqual(worker._post_exit_cooldown_deadline_monotonic, armed_deadline)
         self.assertTrue(store.execution_ledger.get(exposure_id).broker_confirmed_flat)
         worker._journal.close_trade.assert_called_once()
         self.assertIsNone(worker._pending_journal_exit)

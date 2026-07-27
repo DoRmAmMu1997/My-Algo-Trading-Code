@@ -12160,10 +12160,11 @@ if SL_HUNTING_AVAILABLE:
             # exit path (SL/target, max-loss, square-off, EXIT BOTH) leaves it False, so
             # the mirror stays tied for hard risk exactly as before.
             self._suppress_mirror_close = False
-            # Wall-clock of this worker's most recent close, used by the
-            # post-exit re-entry cooldown (SLH-005). None until the first exit,
-            # so the day's FIRST entry is never delayed.
-            self._last_exit_at: datetime | None = None
+            # The cooldown belongs to a complete SL Hunting trade, not either
+            # individual basket leg. A successful NIFTY entry opens this small
+            # state machine; the final confirmed leg close consumes it once.
+            self._cooldown_trade_open = False
+            self._post_exit_cooldown_deadline_monotonic: float | None = None
             # Latest BankNIFTY close seen this session (refreshed each decision
             # bar from the same fetch that feeds cross-confirmation); used to
             # pick the mirror's ATM strike.
@@ -12213,6 +12214,8 @@ if SL_HUNTING_AVAILABLE:
                 direction, entry_underlying, stop_underlying, target_underlying,
                 trailing_active, pending_trailing_exit,
             )
+            if ok:
+                self._cooldown_trade_open = True
             mirror_safe = _should_open_bnf_mirror(
                 self.live_trading,
                 bool(ok and self.pos.live_legs_open),
@@ -12228,6 +12231,16 @@ if SL_HUNTING_AVAILABLE:
                     "broker-confirmed live fill."
                 )
             return ok
+
+        def exit_position(self, reason: str) -> None:
+            """Close NIFTY, then evaluate the basket after the base resets it.
+
+            The base worker intentionally calls ``after_exit`` before replacing
+            ``self.pos`` with its flat value. Waiting until the base method
+            returns keeps the cooldown tied to the real basket-flat transition.
+            """
+            super().exit_position(reason)
+            self._arm_post_exit_cooldown_if_flat()
 
         def _open_bnf_mirror(self, direction: str) -> None:
             """Buy the BankNIFTY CE/PE at the same lot COUNT as the just-opened
@@ -12509,6 +12522,7 @@ if SL_HUNTING_AVAILABLE:
                 }],
             })
             self._mirror_pos = PaperPosition()
+            self._arm_post_exit_cooldown_if_flat()
             # If the NIFTY leg was cut alone earlier, its journal row was held open so
             # option_pnl would include this mirror leg. Now that the mirror is realized
             # (folded into realized_pnl above), finalize that row with the basket P&L.
@@ -12646,11 +12660,6 @@ if SL_HUNTING_AVAILABLE:
             mirror stays open AND the journal close is DEFERRED so option_pnl still
             captures both legs -- finalized when the mirror closes."""
             super().after_exit(closed_position, reason)
-            # SLH-005: arm the post-exit re-entry cooldown. Deliberately set for
-            # EVERY close (agent EXIT, stop/target, max-loss, square-off): the
-            # failure this guards against is re-entering straight after ANY exit,
-            # and a stop-out is the case where that reflex is most costly.
-            self._last_exit_at = datetime.now()
             if not self._suppress_mirror_close:
                 try:
                     self._close_bnf_mirror(reason)
@@ -12672,6 +12681,26 @@ if SL_HUNTING_AVAILABLE:
                 return
             self._finalize_journal(static)
 
+        def _arm_post_exit_cooldown_if_flat(self) -> None:
+            """Start one full cooldown when this trade's final leg is flat.
+
+            A premise exit may close NIFTY or BankNIFTY first. Partial and
+            indeterminate broker exits deliberately retain an active position,
+            so they cannot consume this transition early.
+            """
+            if not self._cooldown_trade_open:
+                return
+            if self.pos.active or self._mirror_pos.active:
+                return
+            self._cooldown_trade_open = False
+            if SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES <= 0:
+                self._post_exit_cooldown_deadline_monotonic = None
+                return
+            self._post_exit_cooldown_deadline_monotonic = (
+                time.monotonic()
+                + SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
+            )
+
         def post_exit_cooldown_remaining_seconds(self) -> float:
             """Seconds still to run on the post-exit re-entry cooldown (SLH-005).
 
@@ -12685,13 +12714,13 @@ if SL_HUNTING_AVAILABLE:
             Set `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES=0` to disable entirely.
             EXITS are never affected: this is consulted on the entry path only.
             """
-            if SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES <= 0:
+            deadline = self._post_exit_cooldown_deadline_monotonic
+            if (
+                SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES <= 0
+                or deadline is None
+            ):
                 return 0.0
-            if self._last_exit_at is None:
-                return 0.0
-            elapsed = (datetime.now() - self._last_exit_at).total_seconds()
-            remaining = SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0 - elapsed
-            return remaining if remaining > 0 else 0.0
+            return max(deadline - time.monotonic(), 0.0)
 
         def minimum_strategy_rows(self) -> int:
             # Enough derived bars for swings / fibo / structure, with a margin.
