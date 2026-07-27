@@ -1,0 +1,29 @@
+{
+  "for_date": "2026-07-28",
+  "source": "Intraday Hunter, 'Prediction For 28 JULY 2026' (video L8t0iLNhq2o)",
+  "context": "27 Jul gapped up then gave the whole move back; only small breakdowns, with repeated recovery attempts, so buyers and sellers are seated around the SAME price level and neither side clearly held overnight.",
+  "plan": [
+    "Who actually held overnight is decided by the OPENING, not by yesterday's chart.",
+    "GAP-UP open: any seated buyers are already in profit and cannot be targeted, so the risk sits on the SELLERS - look for BUY-side setups and go with the market.",
+    "FLAT to GAP-DOWN open: the risk sits on the BUYERS (NIFTY and Sensex were trending up, BankNIFTY closed above 57000) - look for SELL-side setups targeting those buyers.",
+    "NIFTY reference: an open above roughly 24040 puts buyers in profit, which flips the plan to the buy side.",
+    "Both NIFTY (weekly) and BankNIFTY have expiry on 28 Jul - expect expiry-day range behaviour and treat expiry as context, not as a premise."
+  ],
+  "levels": [
+    {
+      "index": "NIFTY",
+      "resistance": [24110, 24200],
+      "support": [23940, 23860]
+    },
+    {
+      "index": "BANKNIFTY",
+      "resistance": [57500, 57832],
+      "support": [56750]
+    },
+    {
+      "index": "SENSEX",
+      "resistance": [77200, 77364],
+      "support": [76650]
+    }
+  ]
+}
