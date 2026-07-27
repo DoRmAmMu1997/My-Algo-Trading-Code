@@ -12057,6 +12057,19 @@ if SL_HUNTING_AVAILABLE:
     # lives in the agent folder so it ships with the strategy.
     SL_HUNTING_LESSONS_ENABLED = _env_bool("SL_HUNTING_LESSONS_ENABLED", False)
     SL_HUNTING_LESSONS_PATH = _env_str("SL_HUNTING_LESSONS_PATH", str(SL_HUNTING_DIR / "lessons.json"))
+    # Pre-open analyst note (SLH-006): a DATED, third-party read of today's session
+    # that the operator writes before the open. ADVISORY ONLY -- it never satisfies
+    # pattern+confirmation and never overrides a RISK rule (the injected block says
+    # so in its own text). The note declares the trading day it is for and is
+    # SILENTLY IGNORED unless that date is today, so a stale note can never steer a
+    # later session. Off by default, like lessons.
+    SL_HUNTING_PREMARKET_NOTE_ENABLED = _env_bool("SL_HUNTING_PREMARKET_NOTE_ENABLED", False)
+    SL_HUNTING_PREMARKET_NOTE_PATH = _env_str(
+        "SL_HUNTING_PREMARKET_NOTE_PATH", str(SL_HUNTING_DIR / "premarket_note.json")
+    )
+    SL_HUNTING_PREMARKET_MODULE = load_module(
+        "sl_hunting_premarket", SL_HUNTING_DIR / "sl_hunting_premarket.py"
+    )
 
     class SLHuntingAIWorker(AtmSingleLegStrategyWorker):
         """ATM single-leg worker whose entries/exits come from the SL Hunting agent."""
@@ -12101,11 +12114,35 @@ if SL_HUNTING_AVAILABLE:
                         self.log.info("SL Hunting: injected %d learned lesson chars.", len(lessons_block))
                 except Exception as exc:  # noqa: BLE001 - lessons are advisory, never fatal
                     self.log.warning("SL Hunting lessons load failed: %s", exc)
+            # Optional PRE-OPEN ANALYST NOTE for TODAY (SLH-006). Loaded once here for
+            # the same prompt-caching reason. The IST date is passed in explicitly so
+            # the note's own `for_date` decides whether it applies -- a note left over
+            # from a previous session renders to "" and is never injected.
+            premarket_block = ""
+            if SL_HUNTING_PREMARKET_NOTE_ENABLED:
+                try:
+                    premarket_block = SL_HUNTING_PREMARKET_MODULE.load_premarket_block(
+                        SL_HUNTING_PREMARKET_NOTE_PATH, _ist_now().date()
+                    )
+                    if premarket_block:
+                        self.log.info(
+                            "SL Hunting: injected %d pre-open note chars for %s (ADVISORY).",
+                            len(premarket_block),
+                            _ist_now().date().isoformat(),
+                        )
+                    else:
+                        self.log.info(
+                            "SL Hunting: no pre-open note applies today (absent, malformed, "
+                            "or dated for another session)."
+                        )
+                except Exception as exc:  # noqa: BLE001 - the note is advisory, never fatal
+                    self.log.warning("SL Hunting pre-open note load failed: %s", exc)
             self.agent = SL_HUNTING_AGENT_MODULE.SLHuntingAgent(
                 model=_env_str("SL_HUNTING_MODEL", "claude-opus-4-8"),
                 fast_mode=_env_bool("SL_HUNTING_FAST_MODE", False),
                 indicator_config=SL_HUNTING_INDICATOR_CONFIG,
                 lessons_block=lessons_block,
+                premarket_block=premarket_block,
                 # Bound the off-loop SDK call to 5-120 seconds (default 90).
                 # Mechanical stop/target, max-loss and square-off keep polling
                 # independently while this inference is running.

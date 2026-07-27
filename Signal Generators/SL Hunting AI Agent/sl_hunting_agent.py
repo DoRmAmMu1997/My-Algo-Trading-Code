@@ -309,6 +309,7 @@ class SLHuntingAgent:
         fast_mode: bool = False,
         indicator_config: SLHuntingIndicatorConfig | None = None,
         lessons_block: str = "",
+        premarket_block: str = "",
         sdk_timeout_seconds: float = 90.0,
     ) -> None:
         if not model:
@@ -331,7 +332,18 @@ class SLHuntingAgent:
         # SL_HUNTING_LESSONS_ENABLED). Injected ONCE here, before the output contract,
         # so the system prefix stays stable per session and prompt caching is preserved.
         learned = ("\n\n" + lessons_block.strip()) if lessons_block and lessons_block.strip() else ""
-        self._system_prompt = build_system_prompt() + learned + FINAL_OUTPUT_INSTRUCTION
+        # SLH-006: optional PRE-OPEN ANALYST NOTE for today only (loaded, date-gated
+        # and formatted by the caller). Deliberately placed AFTER the learned lessons
+        # and immediately before the output contract, so the day-specific, lowest-
+        # authority material sits last and the durable method above it is unchanged.
+        premarket = (
+            ("\n\n" + premarket_block.strip())
+            if premarket_block and premarket_block.strip()
+            else ""
+        )
+        self._system_prompt = (
+            build_system_prompt() + learned + premarket + FINAL_OUTPUT_INSTRUCTION
+        )
         # SLH-003: cache for the system-prompt temp FILE handed to the SDK by
         # `_default_run` (written once per unique text, reused every bar) — see
         # `_system_prompt_as_file` for why a string system prompt cannot be used.
