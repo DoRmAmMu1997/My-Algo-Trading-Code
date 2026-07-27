@@ -3640,6 +3640,47 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         )
         worker._bnf_resolver.get_atm_option.assert_not_called()
 
+    # ----- SLH-005: post-exit re-entry cooldown --------------------------
+    def test_cooldown_is_zero_before_any_exit(self):
+        """The day's FIRST entry must never be delayed."""
+        worker, _ = self._make_worker()
+        self.assertIsNone(worker._last_exit_at)
+        self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
+    def test_cooldown_arms_on_exit_and_expires(self):
+        """Any close arms the window; it drains to 0 once the minutes elapse."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        worker.exit_position("AI_TARGET")
+
+        self.assertIsNotNone(worker._last_exit_at)
+        remaining = worker.post_exit_cooldown_remaining_seconds()
+        self.assertGreater(remaining, 0.0)
+        self.assertLessEqual(
+            remaining, master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
+        )
+
+        # Pretend the cooldown elapsed: it must stop blocking, not go negative.
+        worker._last_exit_at = datetime.now() - timedelta(
+            minutes=master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES + 1
+        )
+        self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
+    def test_cooldown_arms_on_a_stop_out_too(self):
+        """A stop-out is exactly when the re-entry reflex is most expensive, so the
+        window must arm for mechanical exits as well as the agent's own EXIT."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        worker.exit_position("AI_STOP")
+        self.assertGreater(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
+    def test_cooldown_can_be_disabled(self):
+        """0 disables the guard outright (operator escape hatch)."""
+        worker, _ = self._make_worker()
+        worker._last_exit_at = datetime.now()
+        with patch.object(master_file, "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 0):
+            self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
     def test_mirror_boundary_day_still_uses_atm(self):
         """Exactly the threshold is NOT 'fewer than' -> ATM, as before."""
         worker, _ = self._make_worker()

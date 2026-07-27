@@ -334,6 +334,26 @@ class MasterWorkerExecutor:
                 "accepted": False,
                 "reason": "BankNIFTY mirror leg still open; EXIT it (exit_leg=BNF) before a new entry",
             }
+        # SLH-005: hard post-exit cooldown. The prompt's POST-EXIT RE-ENTRY GATE is
+        # judgement and was talked past twice in live trading by relabelling the same
+        # structure as a new setup, so the TIME arm is enforced here where the model
+        # cannot reason around it. Duck-typed: runners whose worker predates this
+        # (or the standalone paper runner) simply have no cooldown.
+        remaining_fn = getattr(self._w, "post_exit_cooldown_remaining_seconds", None)
+        if callable(remaining_fn):
+            try:
+                remaining = float(remaining_fn())
+            except Exception:  # noqa: BLE001 - a broken guard must never block trading outright
+                remaining = 0.0
+            if remaining > 0:
+                return {
+                    "accepted": False,
+                    "reason": (
+                        f"post-exit cooldown: {remaining:.0f}s still to run since the last close. "
+                        "Re-entering straight after an exit is the relabelling trap (the same price "
+                        "structure under a new setup name). Wait for genuinely new price action."
+                    ),
+                }
         ok = bool(self._w.enter_position(
             direction,
             float(price),
