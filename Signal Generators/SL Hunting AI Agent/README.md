@@ -116,6 +116,11 @@ cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of
   the env (`place_paper_order` / `place_kotak_order` / `place_shoonya_order` /
   `place_flattrade_order`) — it
   can never pick paper-vs-real or the broker.
+- The post-exit cooldown starts only after a target, stop, or premise exit leaves
+  the **whole NIFTY/BankNIFTY basket confirmed flat**. An independently surviving
+  or partly closed leg cannot run down the timer. The guard is entry-only; exits
+  never wait for it. If its state is unreadable, new live entries fail closed
+  while paper use remains available.
 - The agent **never raises** into the trading loop: any failure (SDK missing,
   malformed output, **auth 401 / usage-limit 429**, …) returns a safe `HOLD`, and the
   warning log names the cause (e.g. "authentication failed (HTTP 401) — run

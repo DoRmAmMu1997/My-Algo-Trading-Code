@@ -3644,27 +3644,62 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     def test_cooldown_is_zero_before_any_exit(self):
         """The day's FIRST entry must never be delayed."""
         worker, _ = self._make_worker()
-        self.assertIsNone(worker._last_exit_at)
+        self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
         self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
+    def test_no_new_entry_cutoff_fallback_is_not_masked_by_local_env(self):
+        """The cutoff FALLBACK must be asserted with its env vars UNSET.
+
+        The earlier version of this test read `worker.no_new_entry_hour`, which
+        is resolved from the environment at import time. That made it pass
+        wherever `Dependencies/.env` is absent -- CI and a fresh worktree -- and
+        FAIL on the operator's machine, whose .env sets 10:30. In other words it
+        was green everywhere except the one box that trades real money, so CI
+        could never catch it. Assert the fallback path directly instead.
+
+        Pre-existing drift, deliberately NOT settled here: the code fallback is
+        10:30 while env.example and CLAUDE.md document 12:00. That disagreement
+        predates MAT-111 and deserves its own decision; this test only pins the
+        code's own fallback so the gap cannot widen unnoticed.
+        """
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SL_HUNTING_NO_NEW_ENTRY_HOUR", None)
+            os.environ.pop("SL_HUNTING_NO_NEW_ENTRY_MINUTE", None)
+            hour = master_file._env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10)
+            minute = master_file._env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 30)
+            self.assertEqual((hour, minute), (10, 30))
+
+            # ...and a set value must still win, so the knob is not inert.
+            os.environ["SL_HUNTING_NO_NEW_ENTRY_HOUR"] = "11"
+            self.assertEqual(master_file._env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10), 11)
+
+        # Whatever the environment says, the resolved cutoff must be a real HH:MM.
+        worker, _ = self._make_worker()
+        self.assertTrue(0 <= worker.no_new_entry_hour <= 23)
+        self.assertTrue(0 <= worker.no_new_entry_minute <= 59)
 
     def test_cooldown_arms_on_exit_and_expires(self):
-        """Any close arms the window; it drains to 0 once the minutes elapse."""
+        """A fully closed basket arms one monotonic interval, which then expires."""
         worker, _ = self._make_worker()
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
-        worker.exit_position("AI_TARGET")
+        with patch.object(master_file.time, "monotonic", return_value=200.0):
+            worker.exit_position("AI_TARGET")
 
-        self.assertIsNotNone(worker._last_exit_at)
-        remaining = worker.post_exit_cooldown_remaining_seconds()
-        self.assertGreater(remaining, 0.0)
-        self.assertLessEqual(
-            remaining, master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
+        expected_deadline = (
+            200.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
         )
+        self.assertEqual(
+            worker._post_exit_cooldown_deadline_monotonic,
+            expected_deadline,
+        )
+        with patch.object(master_file.time, "monotonic", return_value=201.0):
+            self.assertEqual(
+                worker.post_exit_cooldown_remaining_seconds(),
+                master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0 - 1.0,
+            )
 
-        # Pretend the cooldown elapsed: it must stop blocking, not go negative.
-        worker._last_exit_at = datetime.now() - timedelta(
-            minutes=master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES + 1
-        )
-        self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+        with patch.object(master_file.time, "monotonic", return_value=expected_deadline + 1.0):
+            self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
 
     def test_cooldown_arms_on_a_stop_out_too(self):
         """A stop-out is exactly when the re-entry reflex is most expensive, so the
@@ -3677,9 +3712,45 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     def test_cooldown_can_be_disabled(self):
         """0 disables the guard outright (operator escape hatch)."""
         worker, _ = self._make_worker()
-        worker._last_exit_at = datetime.now()
+        worker._post_exit_cooldown_deadline_monotonic = time.monotonic() + 300.0
         with patch.object(master_file, "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 0):
             self.assertEqual(worker.post_exit_cooldown_remaining_seconds(), 0.0)
+
+    def test_cooldown_waits_for_final_mirror_close(self):
+        """A NIFTY-only premise exit is not a closed trade while BNF still rides."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        with patch.object(master_file.time, "monotonic", return_value=100.0):
+            worker.exit_nifty_leg_only("NIFTY_PREMISE_INVALID")
+        self.assertFalse(worker.pos.active)
+        self.assertTrue(worker._mirror_pos.active)
+        self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
+
+        with patch.object(master_file.time, "monotonic", return_value=200.0):
+            worker.exit_bnf_mirror_only("BNF_PREMISE_INVALID")
+        self.assertEqual(
+            worker._post_exit_cooldown_deadline_monotonic,
+            200.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0,
+        )
+
+    def test_cooldown_waits_for_final_nifty_close(self):
+        """A BNF-only premise exit is not a closed trade while NIFTY still rides."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        with patch.object(master_file.time, "monotonic", return_value=100.0):
+            worker.exit_bnf_mirror_only("BNF_PREMISE_INVALID")
+        self.assertTrue(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
+
+        with patch.object(master_file.time, "monotonic", return_value=300.0):
+            worker.exit_position("NIFTY_PREMISE_INVALID")
+        self.assertEqual(
+            worker._post_exit_cooldown_deadline_monotonic,
+            300.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0,
+        )
 
     def test_mirror_boundary_day_still_uses_atm(self):
         """Exactly the threshold is NOT 'fewer than' -> ATM, as before."""
@@ -4215,6 +4286,7 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
             self.assertFalse(worker.pos.active)
             self.assertTrue(worker._mirror_pos.active)
+            self.assertIsNone(worker._post_exit_cooldown_deadline_monotonic)
             self.assertEqual(worker._mirror_pos.quantity, original_quantity - 35)
             self.assertEqual(
                 worker._mirror_pos.live_leg.confirmed_live_quantity,
@@ -4223,8 +4295,11 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             worker._journal.close_trade.assert_not_called()
             self.assertIsNotNone(worker._pending_journal_exit)
 
-            worker.exit_bnf_mirror_only("RETRY_PARTIAL_CLOSE")
-            worker.exit_bnf_mirror_only("IDEMPOTENT_RETRY")
+            with patch.object(master_file.time, "monotonic", return_value=400.0):
+                worker.exit_bnf_mirror_only("RETRY_PARTIAL_CLOSE")
+            armed_deadline = worker._post_exit_cooldown_deadline_monotonic
+            with patch.object(master_file.time, "monotonic", return_value=450.0):
+                worker.exit_bnf_mirror_only("IDEMPOTENT_RETRY")
 
         bnf_sell_quantities = [
             quantity
@@ -4234,6 +4309,11 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertEqual(bnf_sell_quantities, [original_quantity, original_quantity - 35])
         self.assertEqual(fake.status_queries, [("BNF-EXIT-1", original_quantity)])
         self.assertFalse(worker._mirror_pos.active)
+        self.assertEqual(
+            armed_deadline,
+            400.0 + master_file.SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0,
+        )
+        self.assertEqual(worker._post_exit_cooldown_deadline_monotonic, armed_deadline)
         self.assertTrue(store.execution_ledger.get(exposure_id).broker_confirmed_flat)
         worker._journal.close_trade.assert_called_once()
         self.assertIsNone(worker._pending_journal_exit)
@@ -7299,6 +7379,48 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
             errors = master_file._live_config_errors(worker, "RENKO")
 
         self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
+
+    def test_sl_hunting_entry_controls_are_strictly_validated_for_live(self):
+        """Malformed cooldown/cutoff text cannot hide behind paper defaults."""
+        worker = self._Worker("SL Hunting AI")
+        worker.no_new_entry_hour = 12
+        worker.no_new_entry_minute = 0
+        cases = {
+            "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES": "-1",
+            "SL_HUNTING_NO_NEW_ENTRY_HOUR": "24",
+            "SL_HUNTING_NO_NEW_ENTRY_MINUTE": "60",
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name), patch.dict(os.environ, {name: raw}):
+                errors = master_file._live_config_errors(worker, "SL_HUNTING")
+
+            self.assertTrue(
+                any(name in error for error in errors),
+                f"{name}={raw!r} must block live trading, got {errors}",
+            )
+
+    def test_sl_hunting_resolved_entry_controls_fail_closed_for_live(self):
+        """Forgiving paper values cannot reach live mode after resolution."""
+        worker = self._Worker("SL Hunting AI")
+        worker.no_new_entry_hour = 24
+        worker.no_new_entry_minute = 0
+        with patch.object(
+            master_file,
+            "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES",
+            -1,
+            create=True,
+        ):
+            errors = master_file._live_config_errors(worker, "SL_HUNTING")
+
+        self.assertIn(
+            "resolved SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES must be a "
+            "non-negative integer",
+            errors,
+        )
+        self.assertIn(
+            "resolved SL Hunting no-new-entry cutoff must be a valid HH:MM value",
+            errors,
+        )
 
     def test_risk_budget_max_lots_must_be_a_positive_integer_for_live(self):
         worker = self._Worker("ProfitShooter")

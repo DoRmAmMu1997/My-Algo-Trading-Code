@@ -36,7 +36,11 @@ One process, cooperating threads:
   premise INDEPENDENTLY and can cut one alone via the EXIT `exit_leg` selector (NIFTY|BNF|BOTH).
   Entry stays NIFTY-only (the mirror copies it). It stops opening NEW positions after noon
   (`SL_HUNTING_NO_NEW_ENTRY_HOUR`, default 12:00) — not a square-off (exits + the 15:15 square-off
-  still run; when flat past the cutoff it skips the LLM call entirely). It can also **learn from its own trades** (v3): a per-trade journal
+  still run; when flat past the cutoff it skips the LLM call entirely). After a target, stop, or
+  premise-invalidating exit, `SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES` blocks re-entry from the
+  moment the WHOLE NIFTY/BankNIFTY basket is confirmed flat; a lone or partly closed leg does not
+  run the timer down, exits never wait for it, and corrupt guard state rejects new LIVE entries.
+  It can also **learn from its own trades** (v3): a per-trade journal
   feeds an off-loop reflection coach (`sl_hunting_coach.py`) that proposes lessons; the operator promotes
   approved ones into `lessons.json`, injected into the prompt only when `SL_HUNTING_LESSONS_ENABLED`
   (human-gated, paper-first, off by default). Its knowledge also carries a curated BankNIFTY
