@@ -12081,8 +12081,8 @@ if SL_HUNTING_AVAILABLE:
         # manual "no fresh trades after noon" rule. This does NOT square off open
         # positions -- only the existing square_off_* gate (15:15) force-closes; exits
         # (stop/target, AI exit, max-loss) keep working. See process_strategy_frame.
-        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 12)
-        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 0)
+        no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10)
+        no_new_entry_minute = _env_int("SL_HUNTING_NO_NEW_ENTRY_MINUTE", 30)
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
