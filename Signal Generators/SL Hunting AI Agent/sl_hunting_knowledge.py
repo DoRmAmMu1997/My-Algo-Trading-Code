@@ -643,6 +643,22 @@ RISK DISCIPLINE
   the move is approaching a round number after a good run, where one small
   rejection turns seen profit into giving-back. After watching a good profit,
   letting it become a loss while waiting for "more" is the retail mistake.
+- EXPIRY-DAY PREMIUM ASYMMETRY (the EXPIRY-day sibling of the rule above): on an
+  expiry day a bought option gives back an adverse move far faster than it pays a
+  favourable one — collapsing time value compounds delta against you, so ONE
+  opposing candle can erase most of a good unrealised profit. Measured on this
+  book (two SHORT trades the same morning, both indices expiring): the loser bled
+  roughly 1.6 premium points per ADVERSE point of spot, while the winner earned
+  only about 0.45 premium points per FAVOURABLE point — a ~3.5x asymmetry against
+  the position. So while HOLDING on an expiry day:
+  * BOOK INTO STRENGTH, while the move is still running in your favour. Do not wait
+    for a stall-and-pullback to "confirm" the turn — on expiry the confirmation
+    candle IS the give-back.
+  * Your booking threshold is TIGHTER than for the identical setup on a non-expiry
+    day: an unrealised profit is worth materially less the longer you sit on it,
+    and a position going nowhere costs you money even with the underlying flat.
+  This is an EXPIRY-DAY exception only. On a normal day PROFIT-HOLD still governs —
+  never cite this rule to justify cutting a valid winner early.
 - When already in a position, EXIT on: target reached, stop hit, an OPPOSING
   pattern + confirmation forming against you, or the move going slow/stalling at a
   level in your favour. Otherwise HOLD and let it run.
@@ -724,6 +740,18 @@ RISK DISCIPLINE
   a fresh, deliberate, high-quality setup with a named target crowd and clear
   invalidation before trading again; never use the next candle as a recovery
   attempt.
+- MORNING SPEED IS NOT INFORMATION: in the opening window momentum resolves within
+  a couple of bars in EITHER direction, so a morning trade stopped out within
+  minutes is ORDINARY morning behaviour. The SPEED of that stop-out tells you
+  nothing — not that you were "nearly right", and not that the opposite side is
+  now the trade. The pull to retry immediately ("I was wrong quickly, so let me
+  try again") peaks exactly there, and the opening window is where over-trading
+  actually happens. A fast morning stop-out therefore RAISES the bar for the next
+  entry rather than lowering it: the POST-EXIT RE-ENTRY GATE applies in full and
+  its enforced cooldown is a FLOOR, not the standard. This is NOT a ban on a
+  second trade of the morning — a genuinely fresh premise after a stop-out is
+  allowed and has paid. What is banned is the reflex retry whose only new evidence
+  is that the last one ended fast.
 - Loss recovery discipline: after a losing trade, do NOT take the next trade
   immediately (that reflex is where revenge trading starts); recover a BIG loss
   across MULTIPLE ordinary trades, never in one; and beware the "one last trade"
@@ -933,6 +961,14 @@ DECISION DISCIPLINE
 2. PLAN-OF-EXECUTION precheck: before ENTER, name the target crowd, why it exists,
    why the market can move, the invalidation, and the target. If you cannot state
    that plan in plain language, HOLD.
+   PRE-COMPUTE BOTH NUMBERS: in the same breath, work out the actual RUPEE loss at
+   your named invalidation and the actual rupee gain at your named target, at the
+   lot size you are about to send. The point is not the ratio (you already check
+   that) — it is that a loss accepted BEFORE entry is what lets you sit through
+   adverse movement that is still inside the plan, instead of panicking out of a
+   trade that has not actually broken. If the loss at invalidation is not one you
+   would take calmly, the size is wrong or the trade is wrong: fix that now, not
+   after the position is open.
 3. If FLAT: enter ONLY if (a) price is AT a real level (pivot / OHLC / fibo / psych
    / structure), (b) a reversal pattern + confirmation candle has ALREADY printed
    in your direction, (c) the stop is tight, and (d) the target is worthwhile.

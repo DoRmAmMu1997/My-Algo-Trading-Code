@@ -1560,3 +1560,82 @@ GATE.
   divergence rules.
 - Test marker:
   `test_system_prompt_has_v3r_profit_booking_recovery_and_lagging_index_knowledge`.
+
+## Video addendum - 28 Jul dual-expiry session + morning speed (v3t)
+
+**Source:** Intraday Hunter live session, 28 Jul 2026 (`-vNa6-t2SWw`), read alongside
+the agent's own `sl_hunting_decisions.jsonl` and `sl_hunting_journal.jsonl` for the
+same session. Both NIFTY and BankNIFTY expired that day.
+
+**What IH did:** the market gapped down and then pushed up. He read the gap-down as
+having let the SELLERS book, leaving BUYERS sitting - so he SOLD puts across all
+three indices (BNF 1170, Sensex 900, NIFTY 1430). NIFTY and Sensex did print a
+breakout against him, but it never crossed ~24040, the level from his own pre-open
+analysis; he named that level in advance as the point where "the problem increases
+for us", because past it the seated buyers move into profit. The breakout failed,
+BankNIFTY led the fall, and he booked into the move rather than waiting for a stall.
+
+**Agent tally for 28 Jul:** 72 decisions (68 HOLD, 2 ENTER_SHORT, 2 EXIT), zero
+`agent_error`, window 09:17:04-10:30:01. Two trades, net **-Rs.434.50**:
+- 09:27:04 -> 09:41:36 SHORT `double_top_shooting_star_rejection`, 10 lots,
+  -4.55 pts, **-Rs.5,387.50**, R -0.4 (exit: premise invalidated, price held above
+  pivot 23968.93 and prev close 24003.65).
+- 10:03:02 -> 10:07:35 SHORT `buyer_trap_evening_star_rejection`, 6 lots,
+  +24.35 pts, **+Rs.4,953.00**, R 1.28 (exit: stall at the pivot).
+
+**SLH-006 verified in production.** The runner logged
+`SL Hunting: injected 1916 pre-open note chars for 2026-07-28 (ADVISORY).` - the
+character count matches the end-to-end test exactly. 22 of the 72 decisions cited
+the note, and it behaved as designed rather than as an override: at 09:53:06 the
+agent noted the note and `cross_index` both favoured a sell bias and still HELD for
+want of a confirmed pattern; at the 10:03 entry it cited "below the 24040
+buyer-profit line, putting risk on trapped buyers per the pre-open plan" - and that
+trade won. **SLH-005 never fired**: the agent's own re-entry gap was ~21 minutes,
+well past the 5-minute cooldown.
+
+**Net-new method distilled:**
+- EXPIRY-DAY PREMIUM ASYMMETRY: on an expiry day a bought option gives back an
+  adverse move much faster than it pays a favourable one, so book INTO strength and
+  do not wait for a stall-and-pullback to confirm the turn. The agent's own book
+  measured this on 28 Jul: the loser bled ~1.58 premium points per ADVERSE spot
+  point, the winner earned ~0.45 per FAVOURABLE spot point - a ~3.5x asymmetry, and
+  the ratio is independent of lot size (both trades were NIFTY, so the lot size
+  cancels). *Caveat recorded honestly:* the loser was held 14m32s against the
+  winner's 4m33s, so decay over the longer hold is part of that gap - which is the
+  point of the rule, but it does mean 3.5x is the combined delta+theta effect, not a
+  pure per-candle measurement. Deliberately scoped as an EXPIRY-DAY exception so it
+  cannot be read as licence to cut winners early against PROFIT-HOLD.
+- MORNING SPEED IS NOT INFORMATION: IH's warning was "sometimes such a trade throws
+  you out in the next 5 minutes; then it feels like 'I was wrong quickly, let me try
+  again' - so if you have a habit of over-trading, avoid trading in the morning."
+  Opening-window momentum resolves within a couple of bars in either direction, so
+  the SPEED of a morning stop-out carries no information about the next trade. This
+  raises the bar for the next entry rather than lowering it, and the enforced
+  cooldown is a floor rather than the standard. **Deliberately NOT hardened into a
+  one-trade-per-morning ban:** both 28 Jul's winner and 27 Jul's winner were second
+  trades taken after an earlier exit, so a ban would have cost real money. The
+  banned thing is the reflex retry whose only new evidence is that the last one
+  ended fast.
+- PRE-COMPUTE BOTH NUMBERS: IH - "before making the trade I calculated how much loss
+  I'd have to take if a breakout happens and it goes against me, and I calculated my
+  profit too; only then can I handle the trade accordingly." The existing
+  PLAN-OF-EXECUTION precheck already required a named invalidation and target, but
+  only qualitatively. The addition is the rupee figure at each, computed at the lot
+  size about to be sent - because a pre-accepted loss is what makes adverse movement
+  that is still inside the plan survivable. This is what let IH sit through a real
+  breakout against his position on 28 Jul.
+
+**Confirmed but deliberately NOT re-encoded (already present):** the gap-down
+crowd read (sellers booked, buyers left sitting) is TARGET-BOOKED plus the
+trap-density test; using the pre-open level as the day's invalidation is what
+SLH-006 already provides; expiry-as-fuel-not-premise and the post-first-move expiry
+range are EXPIRY IS CONTEXT, NOT A PREMISE and EXPIRY-DAY RANGE.
+
+**Knowledge changes (v3t, all prose):**
+- `RISK`: EXPIRY-DAY PREMIUM ASYMMETRY, placed directly after PREMIUM
+  NON-CONFIRMATION (which is explicitly scoped to non-expiry days, so the two read
+  as siblings rather than rivals).
+- `RISK`: MORNING SPEED IS NOT INFORMATION, beside POST-LOSS SPEED LIMIT.
+- `DECISION_RULES`: PRE-COMPUTE BOTH NUMBERS, folded into the rule 2 precheck.
+- Test marker:
+  `test_system_prompt_has_v3t_expiry_asymmetry_and_morning_speed_knowledge`.

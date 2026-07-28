@@ -420,6 +420,34 @@ def test_system_prompt_has_v3s_laggards_and_enforced_cooldown_knowledge():
     assert "does NOT authorise a trade" in prompt
 
 
+def test_system_prompt_has_v3t_expiry_asymmetry_and_morning_speed_knowledge():
+    """v3t: 28 Jul — both indices expiring; IH booked into strength because expiry
+    premiums collapse on the first opposing candle, and warned that a fast morning
+    stop-out is normal variance rather than a reason to retry.
+
+    The agent's own book measured the same asymmetry that day: it bled ~1.6 premium
+    points per adverse spot point on the loser but earned only ~0.45 per favourable
+    point on the winner.
+    """
+    prompt = build_system_prompt()
+    # Expiry-day holding rule -- distinct from PREMIUM NON-CONFIRMATION, which is
+    # explicitly scoped to days with no expiry.
+    assert "EXPIRY-DAY PREMIUM ASYMMETRY" in prompt
+    assert "BOOK INTO STRENGTH" in prompt
+    # The mechanism, so the rule is not read as "cut winners early" in general.
+    assert "the confirmation" in prompt and "candle IS the give-back" in prompt
+    assert "This is an EXPIRY-DAY exception only" in prompt
+    # A fast morning stop-out must not be read as evidence about the next trade.
+    assert "MORNING SPEED IS NOT INFORMATION" in prompt
+    assert "is a FLOOR, not the standard" in prompt
+    # ...but the rule must NOT harden into a one-trade-per-morning ban: both of the
+    # agent's recorded morning winners were second trades after a stop-out.
+    assert "NOT a ban on a" in prompt and "second trade of the morning" in prompt
+    # Entry precheck: quantify the loss before entering, not after.
+    assert "PRE-COMPUTE BOTH NUMBERS" in prompt
+    assert "a loss accepted BEFORE entry" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
