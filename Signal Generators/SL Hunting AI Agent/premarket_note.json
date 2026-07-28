@@ -1,29 +1,30 @@
 {
-  "for_date": "2026-07-28",
-  "source": "Intraday Hunter, 'Prediction For 28 JULY 2026' (video L8t0iLNhq2o)",
-  "context": "27 Jul gapped up then gave the whole move back; only small breakdowns, with repeated recovery attempts, so buyers and sellers are seated around the SAME price level and neither side clearly held overnight.",
+  "for_date": "2026-07-29",
+  "source": "Intraday Hunter, 'Prediction For 29 JULY 2026' (video 3yhXRT6Sc5Y)",
+  "context": "27 Jul's gap-up was rejected and 28 Jul was rejected again, yet NIFTY and Sensex still closed holding above their own closing points - so BankNIFTY shows selling without real momentum and neither side is clearly trapped.",
   "plan": [
-    "Who actually held overnight is decided by the OPENING, not by yesterday's chart.",
-    "GAP-UP open: any seated buyers are already in profit and cannot be targeted, so the risk sits on the SELLERS - look for BUY-side setups and go with the market.",
-    "FLAT to GAP-DOWN open: the risk sits on the BUYERS (NIFTY and Sensex were trending up, BankNIFTY closed above 57000) - look for SELL-side setups targeting those buyers.",
-    "NIFTY reference: an open above roughly 24040 puts buyers in profit, which flips the plan to the buy side.",
-    "Both NIFTY (weekly) and BankNIFTY have expiry on 28 Jul - expect expiry-day range behaviour and treat expiry as context, not as a premise."
+    "Neither side is clearly positioned and the confusion is deliberate; few traders are carrying a trade into today, so there is no obvious trapped crowd to hunt.",
+    "When nothing is readable, do what the market is ALREADY doing - it has spent two to three days trying to cover and hold itself up.",
+    "GAP-UP or GAP-DOWN open: the plan is the same either way - look for BUY-side setups and go with the market.",
+    "FLAT open: the same buy-side plan can apply, but ONLY if momentum is genuinely good; flat is the riskier case.",
+    "The named risk is a SIDEWAYS range building here - if the market stalls and ranges instead of moving, the problem gets big.",
+    "All three indices read alike: little momentum, price staying and working in the same area it has been in."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24110, 24200],
-      "support": [23940, 23860]
+      "resistance": [24038, 24116],
+      "support": [23857, 23734]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57500, 57832],
-      "support": [56750]
+      "resistance": [56930, 57126],
+      "support": [56430, 56076]
     },
     {
       "index": "SENSEX",
-      "resistance": [77200, 77364],
-      "support": [76650]
+      "resistance": [76966, 77201],
+      "support": [76441, 76102]
     }
   ]
 }
