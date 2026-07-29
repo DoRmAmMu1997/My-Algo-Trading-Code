@@ -121,9 +121,11 @@ def test_tool_context_allows_only_one_accepted_side_effect_per_pass():
     ex = StandaloneExecutor()
     ctx = SLHuntingToolContext.build(_candles(), ex)
 
-    first = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="first")
-    second = ctx.do_order("EXIT", stop=0, target=0, reason="second")
-    third = ctx.do_order("ENTER_SHORT", stop=25060, target=24950, reason="third")
+    # Reasons are realistic because SLH-007 rejects placeholder justifications on
+    # entries; what this test exercises is the one-side-effect state machine.
+    first = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="first action of the pass")
+    second = ctx.do_order("EXIT", stop=0, target=0, reason="second action of the pass")
+    third = ctx.do_order("ENTER_SHORT", stop=25060, target=24950, reason="third action of the pass")
 
     assert first["accepted"] is True
     assert second["accepted"] is False
@@ -142,7 +144,7 @@ def test_tool_context_rechecks_generation_inside_execution_lock():
         generation_is_current=lambda generation: generation == current["generation"],
     )
 
-    result = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="stale")
+    result = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="stale generation probe")
 
     assert result["accepted"] is False
     assert "generation" in result["reason"]
@@ -580,6 +582,89 @@ def test_do_order_accepts_sane_entry_and_exit_ignores_levels():
 
 
 # --------------------------------------------------------------------------
+# SLH-007: the order tool's `reason` is the PERMANENT record of the trade.
+#
+# Root cause (2026-07-29, and 20/21/24 Jul before it): the string the model
+# passes here is what reaches `exit_position(reason)` -> the journal's
+# `outcome.exit_reason`, the log line and the Telegram alert. The model's own
+# final-JSON reasoning is written ~25s LATER and never reaches the journal, so
+# a throwaway `reason` here is lost information, not a cosmetic blemish. Four
+# of 46 journal rows carry "placeholder" / "placeholder - will not call,
+# holding" as their permanent exit reason.
+#
+# ENTRY may be rejected so the model corrects itself mid-loop (same mechanism
+# as the levels check). An EXIT must NEVER be rejected for this -- refusing an
+# exit would keep a live position open -- so it is accepted and the unusable
+# reason is replaced with an explicit sentinel.
+# --------------------------------------------------------------------------
+
+def test_do_order_rejects_placeholder_reason_on_entry():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    for junk in ("placeholder", "  ", "", "n/a", "TBD", "placeholder - will not call, holding"):
+        res = ctx.do_order("ENTER_LONG", stop=price - 30, target=price + 60, reason=junk)
+        assert res["accepted"] is False, junk
+        assert "reason" in res
+    # Nothing was opened by any of the rejected attempts.
+    assert ex.snapshot()["in_position"] is False
+    # A real justification still goes through on the SAME context (rejections
+    # leave the pass ACTIVE so the model can correct itself).
+    ok = ctx.do_order(
+        "ENTER_LONG", stop=price - 30, target=price + 60,
+        reason="double bottom at the pivot with a confirmed hammer",
+    )
+    assert ok["accepted"] is True
+    assert ex.snapshot()["in_position"] is True
+
+
+def test_do_order_never_rejects_an_exit_for_a_bad_reason():
+    """An exit must always be available -- blocking it would strand a position."""
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    assert ctx.do_order(
+        "ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce with confirmation",
+    )["accepted"] is True
+
+    exit_ctx = SLHuntingToolContext.build(_candles(), ex)
+    out = exit_ctx.do_order("EXIT", stop=0.0, target=0.0, reason="placeholder")
+    assert out["accepted"] is True
+    assert ex.snapshot()["in_position"] is False
+    # The junk never becomes the permanent record; it is replaced by a sentinel
+    # that says plainly that the model supplied nothing usable.
+    recorded = ex.closed_trades[-1]["exit_reason"]
+    assert "placeholder" not in recorded.lower()
+    assert "no reason supplied" in recorded.lower()
+
+
+def test_do_order_preserves_a_real_exit_reason_verbatim():
+    """Regression guard: normalisation must not touch genuine model reasoning."""
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    ctx.do_order("ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce confirmed")
+    real = (
+        "Long thesis stalling: price failed repeatedly to exceed the swing high and "
+        "market_structure flipped to a downtrend; booking before the give-back."
+    )
+    exit_ctx = SLHuntingToolContext.build(_candles(), ex)
+    out = exit_ctx.do_order("EXIT", stop=0.0, target=0.0, reason=real)
+    assert out["accepted"] is True
+    assert ex.closed_trades[-1]["exit_reason"] == real
+
+
+def test_order_tool_description_tells_the_model_the_reason_is_permanent():
+    """The root cause was the model not knowing this string is kept."""
+    from sl_hunting_tools import order_tool_description
+
+    text = order_tool_description("paper").lower()
+    assert "permanent" in text
+    assert "journal" in text
+    assert "placeholder" in text  # names the exact failure it is preventing
+
+
+# --------------------------------------------------------------------------
 # SLH-003: the system prompt must reach the SDK as a FILE, never a string.
 # The SDK passes a string system prompt to the spawned `claude` CLI as a
 # literal `--system-prompt` argv entry; Windows caps a child process command
@@ -707,7 +792,7 @@ def test_expired_tool_context_rejects_orders():
     ex = StandaloneExecutor()
     ctx = SLHuntingToolContext.build(_candles(), ex)
     ctx.expire("sdk_timeout")
-    res = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="late")
+    res = ctx.do_order("ENTER_LONG", stop=24990, target=25080, reason="late order after expiry")
     assert res["accepted"] is False
     assert "expired" in res["reason"]
     assert ex.snapshot()["in_position"] is False  # the executor was never touched
