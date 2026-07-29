@@ -1639,3 +1639,77 @@ range are EXPIRY IS CONTEXT, NOT A PREMISE and EXPIRY-DAY RANGE.
 - `DECISION_RULES`: PRE-COMPUTE BOTH NUMBERS, folded into the rule 2 precheck.
 - Test marker:
   `test_system_prompt_has_v3t_expiry_asymmetry_and_morning_speed_knowledge`.
+## Video addendum - 29 Jul big-gap follow day + the friction floor (v3u)
+
+**Source:** Intraday Hunter live session, 29 Jul 2026 (`e9qDdFfOVyk`, 5:52), read
+alongside the agent's own decisions/journal for the same session.
+
+**What IH did:** NIFTY and Sensex gapped up hard with a slight rejection after. He
+bought CALLs - the same side his own pre-open note had called - but was explicit that
+he was FOLLOWING the market rather than hunting anyone: "neither buyers nor sellers
+are seated, so we follow what is already running." Three things he said matter:
+- "If this gap-up had been a bit SMALLER there would have been no difficulty in
+  buying. We will buy here too, but the worry is that no rejection comes... the
+  gap-up is a bit too much, and because of this the market becomes risky."
+- "Directly, buyers' and sellers' SLs are not available here" - no stop cluster near
+  price, therefore no fuel.
+- "We will make a NORMAL profit and leave"; and at the exit, "we had reached close to
+  an AVERAGE target... this is a sideways market, it will not give us much momentum.
+  Today there is no momentum."
+
+**Agent tally for 29 Jul:** 65 decisions (60 HOLD, 3 ENTER_LONG, 2 EXIT), zero
+`agent_error`. Three trades, all LONG, net **+Rs.3,695.25**:
+- 09:22:02 -> 09:25:37 `opening_drive_gapup_continuation`, 2 lots, -7.45 pts,
+  **-Rs.1,339.00**, R -0.15, held 215s.
+- 09:32:01 -> 09:40:59 `gap_up_fibo50_continuation`, 6 lots, +37.30 pts,
+  **+Rs.10,335.00**, R 2.04, held 538s, exit `AI_TARGET`.
+- 10:02:00 -> 10:03:45 `fibo_50_inside_bar_reclaim`, 7 lots, +4.65 pts,
+  **-Rs.5,300.75**, R 0.31, held 105s.
+
+The agent independently reached IH's side of the market, and 17 of the 65 decisions
+cited the pre-open note. The winner was the one trade that actually ran (37 points
+over nine minutes); the two losers were both short holds.
+
+**The measurement that drove this version.** The third trade moved 4.65 points IN ITS
+FAVOUR and still lost Rs.5,300.75 - about 10 premium points per unit against a
+favourable move, over 105 seconds. This is not a modelled cost: the runner applies no
+slippage or spread modelling at all, so that is an observed option-LTP move. The most
+likely mechanism is gap premium bleeding out of the option faster than delta paid for
+the spot move, which is exactly the effect IH described as "after the rejection, when
+momentum started, we are not seeing much profit". *Recorded honestly:* the mechanism
+is inferred; only the numbers are measured. Worth an operator eye on whether the
+option LTP feed is jumpy on thin strikes, since that would change the reading.
+
+**Net-new method distilled:**
+- GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL: a bigger gap makes the with-gap
+  continuation WORSE, because price has jumped past the stop clusters that fuel a
+  move - slow momentum, and lots of room for a rejection to run back through you.
+  Trade an oversized gap as a smaller, normal-target trade or not at all. Explicitly
+  scoped against the existing GAP-SIZE ASYMMETRY, which compares gaps ACROSS indices;
+  this one is about the absolute size of the gap being traded.
+- NO NEARBY STOPS -> NORMAL TARGET, DECIDED AT ENTRY: when following the market
+  rather than hunting a named crowd, there is no fuel for a fast leg, so commit up
+  front to an average target instead of discovering mid-trade that the runner is not
+  coming. Guarded so it cannot justify a trade that is too small to be worth taking.
+- PREMIUM NON-CONFIRMATION CAN GO NEGATIVE, NOT MERELY WEAK: the existing rule only
+  covered P&L *lagging* the spot move. On a large-gap morning over a short hold it
+  can invert - spot in your favour, position in loss. Consequences encoded: read
+  `position_state` rather than assuming spot direction equals profit; check at entry
+  whether the target is big enough to pay in PREMIUM terms; and note that abandoning
+  a trade a bar or two after entry pays the round trip for no exposure to the move.
+
+**Confirmed but deliberately NOT re-encoded (already present):** following the market
+when nobody is trapped is the trap-density test plus the OPENING DRIVE branch; booking
+on momentum failure rather than a fixed number is already the branch's target rule;
+sideways = exit is TIME-DECAY discipline.
+
+**Operational finding (documented, no runtime change in v3u):** the first trade's
+journal row records `"exit_reason": "placeholder"`. The same journal-fidelity gap was
+noted on 24 Jul in the v3r addendum, so it has now recurred and is worth a fix
+independent of the knowledge layer.
+
+**Knowledge changes (v3u, all prose):**
+- `OPENING_DRIVE`: GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL.
+- `RISK`: NO NEARBY STOPS -> NORMAL TARGET, beside the worthwhile-target rule.
+- `RISK`: the IT CAN GO NEGATIVE sub-bullet under PREMIUM NON-CONFIRMATION.
+- Test marker: `test_system_prompt_has_v3u_gap_size_and_no_fuel_knowledge`.
