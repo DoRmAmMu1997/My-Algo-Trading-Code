@@ -421,22 +421,33 @@ def test_system_prompt_has_v3s_laggards_and_enforced_cooldown_knowledge():
 
 
 def test_system_prompt_has_v3t_expiry_asymmetry_and_morning_speed_knowledge():
-    """v3t: 28 Jul — both indices expiring; IH booked into strength because expiry
-    premiums collapse on the first opposing candle, and warned that a fast morning
-    stop-out is normal variance rather than a reason to retry.
+    """v3t: 28 Jul — IH booked into strength rather than waiting for confirmation,
+    and warned that a fast morning stop-out is normal variance, not a reason to retry.
 
-    The agent's own book measured the same asymmetry that day: it bled ~1.6 premium
-    points per adverse spot point on the loser but earned only ~0.45 per favourable
-    point on the winner.
+    CORRECTED 2026-07-29. The original rule was scoped to "expiry day" and quoted a
+    ~3.5x asymmetry. Both were wrong. The 3.5x came from BASKET option_pnl (a 7-DTE
+    NIFTY leg plus a 0-DTE BankNIFTY mirror) divided by NIFTY-ONLY spot points — two
+    underlyings and two expiries in one ratio. On the NIFTY leg alone the figures are
+    139.45->131.00 on 650 qty for 4.55 adverse points (1.86 per point) against
+    131.00->150.90 on 390 qty for 24.35 favourable points (0.82 per point): ~2.3x.
+    And IH was trading the EXPIRING series while the agent's NIFTY leg was 7 days
+    out, so "expiry-day time-value collapse" was never the mechanism for our leg.
+    The rule now keys off the held option's own days-to-expiry.
     """
     prompt = build_system_prompt()
-    # Expiry-day holding rule -- distinct from PREMIUM NON-CONFIRMATION, which is
-    # explicitly scoped to days with no expiry.
-    assert "EXPIRY-DAY PREMIUM ASYMMETRY" in prompt
+    # The holding rule -- distinct from PREMIUM NON-CONFIRMATION above it.
+    assert "PREMIUM ASYMMETRY" in prompt
     assert "BOOK INTO STRENGTH" in prompt
-    # The mechanism, so the rule is not read as "cut winners early" in general.
-    assert "the confirmation" in prompt and "candle IS the give-back" in prompt
-    assert "This is an EXPIRY-DAY exception only" in prompt
+    # The corrected, leg-level measurement must be what is quoted.
+    assert "2.3x asymmetry" in prompt
+    assert "3.5x" not in prompt          # the bad basket-derived figure is gone
+    # It must key off OUR contract, not the calendar -- the original scoping error.
+    assert "the days-to-expiry of the option you actually hold" in prompt
+    assert "NOT whether some index" in prompt
+    # Magnitude is situational, not a constant.
+    assert "situational, not a constant" in prompt
+    # ...and it still must not be read as licence to cut winners early.
+    assert "PROFIT-HOLD still governs" in prompt
     # A fast morning stop-out must not be read as evidence about the next trade.
     assert "MORNING SPEED IS NOT INFORMATION" in prompt
     assert "is a FLOOR, not the standard" in prompt
