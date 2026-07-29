@@ -3588,6 +3588,43 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         })
         return worker, store
 
+    def test_slh008_nifty_leg_uses_current_week_expiry(self):
+        """SLH-008: the NIFTY leg must resolve the CURRENT-WEEK contract.
+
+        Two failures on 2026-07-29 traced to the next-next default: Kotak's RMS
+        refuses MIS orders on it ("MIS ORDERS ALLOWED ONLY IN CURRENT WEEKY AND
+        MONTHLY EXPIRY CONTRACT"), so every live entry was rejected and fell back
+        to paper; and a 7-13 day contract is the wrong instrument for a strategy
+        that holds for minutes and whose knowledge is distilled from a trader
+        always in the near series.
+        """
+        worker, _store = self._make_worker()
+        current_week = date.today() + timedelta(days=3)
+        worker.contract_resolver.get_current_week_expiry.return_value = current_week
+        worker.contract_resolver.get_target_expiry.return_value = (
+            date.today() + timedelta(days=10)
+        )
+
+        self.assertEqual(worker._entry_expiry(), current_week)
+
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24330.0))
+        # The resolver was asked for that expiry EXPLICITLY -- not left to default.
+        _args, kwargs = worker.contract_resolver.get_atm_option.call_args
+        passed = kwargs.get("expiry_date", _args[2] if len(_args) > 2 else None)
+        self.assertEqual(passed, current_week)
+        worker.contract_resolver.get_target_expiry.assert_not_called()
+
+    def test_slh008_other_atm_workers_keep_the_next_next_default(self):
+        """The hook must not change the seven ATM workers it does not belong to."""
+        store = master_file.SharedMarketDataStore()
+        broker = MagicMock()
+        broker.fetch_ltp_map.return_value = {}
+        renko = master_file.RenkoStrategyWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        # None means "resolver default", i.e. get_target_expiry / next-next.
+        self.assertIsNone(renko._entry_expiry())
+
     def _expected_nifty_lots(self):
         """Expected lots for this class's canonical 10-pt-stop entry.
 
