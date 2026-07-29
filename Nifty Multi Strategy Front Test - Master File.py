@@ -84,12 +84,16 @@ Different strategies pick different expiries. Rather than burying this
 in a single overloaded method, every worker is explicit about which
 expiry rule it uses:
 
-    if strategy belongs to the "Hedged Puts" family, or is the Long Strangle
+    if strategy belongs to the "Hedged Puts" family, is the Long Strangle,
+    or is SL Hunting's NIFTY leg (SLH-008)
         -> use OptionsContractResolver.get_current_week_expiry()
            (the FIRST expiry on or after today)
     else
         -> use OptionsContractResolver.get_target_expiry()
            (the SECOND expiry on or after today, i.e. "next-next")
+
+ATM workers select this via the `_entry_expiry()` hook, which returns None
+(= the resolver's next-next default) unless a subclass overrides it.
 
 (CPR Algo 3 is "else" -- it TRADES the next-next ATM -- even though its read-only
 observation legs use the current-week expiry.)
@@ -106,6 +110,14 @@ the live mirror leg kept failing to fire. Expiry week is handled on the STRIKE
 axis instead -- inside SL_HUNTING_BNF_MIRROR_ROLLOVER_DAYS the mirror buys a
 deep ITM strike (get_itm_option) whose value is mostly intrinsic, rather than a
 near-expiry ATM contract that is almost pure decaying time premium.
+
+SLH-008 (2026-07-29): the same Kotak RMS rule reached the NIFTY leg -- MIS is
+allowed only on the current WEEKLY or the monthly contract, and "next-next"
+is neither in roughly three weeks out of four, so live entries were rejected
+and silently fell back to paper. The NIFTY leg therefore also trades the
+current-week expiry now. Beyond the broker, it is the right instrument: this
+strategy holds for minutes, and its whole knowledge base is distilled from a
+trader who is always in the near/expiring series.
 
 Both methods live on the same resolver so the choice is one line at
 the call site. That keeps the rule visible in the code and easy to
@@ -6155,6 +6167,20 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             lot_size,
         ).lots
 
+    def _entry_expiry(self) -> date | None:
+        """Which expiry this worker's ATM entry uses. None = the resolver default.
+
+        None means `get_target_expiry()` — the SECOND expiry on or after today
+        ("next-next"), the rule the ATM family was built and tuned on. Kept as the
+        default so this hook changes nothing for the seven workers that do not
+        override it.
+
+        SL Hunting overrides it (SLH-008): it holds positions for minutes, so a
+        next-next contract is the wrong instrument, and Kotak's RMS refuses MIS
+        orders on it outright.
+        """
+        return None
+
     def enter_position(
         self,
         direction: str,
@@ -6165,7 +6191,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         pending_trailing_exit: bool = False,
     ) -> bool:
         """
-        Open a new paper position on the ATM option of the next-next expiry.
+        Open a new paper position on the ATM option of this worker's entry expiry
+        (`_entry_expiry`; the next-next expiry unless a subclass overrides it).
 
         Steps:
         1. Read the latest NIFTY spot from the central LTP cache.
@@ -6183,7 +6210,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             return False
 
         try:
-            contract = self.contract_resolver.get_atm_option(spot, direction)
+            contract = self.contract_resolver.get_atm_option(spot, direction, self._entry_expiry())
         except Exception as exc:
             self.log.warning("Skipping %s entry because ATM option resolution failed: %s", direction, exc)
             return False
@@ -12239,6 +12266,34 @@ if SL_HUNTING_AVAILABLE:
                 # a later bar's journal row.
                 if getattr(self, "_executor", None) is not None:
                     self._executor.last_entry_order = None
+
+        def _entry_expiry(self):
+            """SLH-008: trade the CURRENT-WEEK NIFTY contract, not the next-next one.
+
+            Two independent reasons, found together on 2026-07-29:
+
+            1. Instrument. This strategy holds for two to ten minutes. The next-next
+               expiry is 7-13 days out — wide spreads, a thin book, and low gamma.
+               The method it is distilled from (Intraday Hunter) always trades the
+               near/expiring series; every expiry-aware rule in the knowledge base
+               was written from that reality, so the agent was reasoning about one
+               instrument while holding another.
+            2. Live orders. Kotak's RMS allows MIS (intraday) orders ONLY on the
+               current weekly or the monthly contract. `get_target_expiry()` lands on
+               neither in roughly three weeks out of four, so live entries were
+               rejected outright ("MIS ORDERS ALLOWED ONLY IN CURRENT WEEKY AND
+               MONTHLY EXPIRY CONTRACT") and silently fell back to paper. This is the
+               same failure BNF-002 fixed for the BankNIFTY mirror on 2026-07-23; the
+               fix simply was never extended to the NIFTY leg.
+
+            Deliberately NOT mirrored from BNF-002: the near-expiry deep-ITM strike
+            shift. That exists because the mirror is mechanical and has no judgement.
+            Here the agent decides, and PREMIUM ASYMMETRY in the knowledge base now
+            tells it to tighten its booking threshold as ITS OWN contract nears
+            expiry — so an expiry-day position is handled by the method, not by
+            moving the strike.
+            """
+            return self.contract_resolver.get_current_week_expiry()
 
         # --------------------------------------------------------------
         # BankNIFTY mirror leg (Intraday Hunter style)
