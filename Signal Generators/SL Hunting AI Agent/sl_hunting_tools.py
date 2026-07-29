@@ -85,6 +85,63 @@ def _entry_levels_error(direction: str, stop: float, target: float, price: float
         return f"target is more than {MAX_TARGET_DISTANCE_FRACTION:.0%} away from the current price"
     return None
 
+
+# SLH-007. The `reason` the model passes here is the PERMANENT record of the trade:
+# it flows to `exit_position(reason)` -> the journal's `outcome.exit_reason`, the log
+# line and the Telegram alert, and the reflection coach later reads it to propose
+# lessons. The model's own final-JSON reasoning is produced ~25s later and never
+# reaches the journal, so a throwaway here is information LOST, not a cosmetic
+# blemish. Four of the first 46 journal rows recorded "placeholder" (or "placeholder
+# - will not call, holding") as the permanent reason for a real trade.
+MIN_REASON_CHARS = 12
+_PLACEHOLDER_REASONS = frozenset(
+    {"placeholder", "n/a", "na", "tbd", "none", "-", "test", "todo", "reason", "exit", "entry"}
+)
+NO_REASON_SENTINEL = "AI_EXIT (no reason supplied by the model)"
+
+
+def order_tool_description(venue: str) -> str:
+    """The order tool's description, as a function so tests can assert on it.
+
+    Kept out of `build_sl_hunting_mcp_server` because that call needs the Claude
+    Agent SDK installed; the wording is the fix for SLH-007 and must be checkable
+    without it.
+    """
+    return (
+        f"Place an SL-Hunting order on NIFTY ATM options via the {venue} venue (the "
+        "configuration chose this venue; you cannot change it). action is ENTER_LONG "
+        "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
+        "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
+        "BRACKET the current price on the correct side (LONG: stop below, target "
+        "above; SHORT: reversed), with the stop within ~3% and the target within "
+        "~10% of the current price -- otherwise the order is rejected. "
+        "reason is the PERMANENT record of this trade: it is written verbatim to the "
+        "trade journal, the log and the operator's alert, and it is what the reflection "
+        "coach reads later to work out what worked. The reasoning in your final JSON is "
+        "NOT saved there, so this is your only chance to say why you acted. Give a real "
+        "one-line justification naming the setup and the trigger -- a placeholder or an "
+        "empty string is REJECTED on entries, and on an exit it is replaced by a sentinel "
+        "recording that you supplied nothing. exit_leg (EXIT only) is NIFTY, BNF or BOTH "
+        "(default BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, "
+        "and you may cut ONE leg on premise-invalidation while the other runs — but hard "
+        "risk (stop/target/max-loss/square-off) always closes both. Returns whether "
+        "the order was accepted or rejected."
+    )
+
+
+def _reason_problem(reason: str) -> str | None:
+    """Explain why this justification is unusable as a permanent record, else None."""
+    cleaned = str(reason or "").strip()
+    if not cleaned:
+        return "reason must not be blank"
+    if cleaned.lower().rstrip(".") in _PLACEHOLDER_REASONS:
+        return f"{cleaned!r} is a placeholder, not a justification"
+    if cleaned.lower().startswith("placeholder"):
+        return f"{cleaned!r} is a placeholder, not a justification"
+    if len(cleaned) < MIN_REASON_CHARS:
+        return f"reason is too short to be a justification (min {MIN_REASON_CHARS} characters)"
+    return None
+
 # Read-only context tools are always present; the action tool's name is decided at
 # build time by the environment, so it is appended in `build_sl_hunting_mcp_server`.
 CONTEXT_TOOL_NAMES = [
@@ -288,14 +345,32 @@ class SLHuntingToolContext:
             problem = _entry_levels_error(direction, stop, target, self.last_price)
             if problem:
                 return {"accepted": False, "reason": f"invalid entry levels: {problem}"}
+            # SLH-007: an ENTRY may be refused so the model rewrites its justification
+            # within the same pass -- exactly how the levels check above works. Nothing
+            # is at risk yet, because no position exists.
+            reason_problem = _reason_problem(reason)
+            if reason_problem:
+                return {
+                    "accepted": False,
+                    "reason": (
+                        f"unusable reason: {reason_problem}. This string is the PERMANENT "
+                        "record of the trade (journal, log and alert) -- resend the order "
+                        "with a one-line justification naming the setup and why you are acting."
+                    ),
+                }
             def executor_call() -> dict[str, Any]:
                 return self.executor.enter(direction, stop, target, reason, self.last_price)
         elif action == "EXIT":
             leg = (exit_leg or "BOTH").strip().upper()
             if leg not in ("NIFTY", "BNF", "BOTH"):
                 return {"accepted": False, "reason": f"invalid exit_leg {exit_leg!r}; expected NIFTY, BNF or BOTH"}
+            # SLH-007: an EXIT is NEVER refused over its wording. Blocking it would
+            # strand an open position -- the one thing the risk rules forbid. Record an
+            # explicit sentinel instead, so the journal and the coach are told plainly
+            # that no justification was given rather than being handed a lie.
+            exit_reason = NO_REASON_SENTINEL if _reason_problem(reason) else str(reason).strip()
             def executor_call() -> dict[str, Any]:
-                return self.executor.exit(reason, self.last_price, leg=leg)
+                return self.executor.exit(exit_reason, self.last_price, leg=leg)
         else:
             return {"accepted": False, "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT or EXIT"}
 
@@ -399,18 +474,7 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
 
     @tool(
         order_name,
-        f"Place an SL-Hunting order on NIFTY ATM options via the {venue} venue (the "
-        "configuration chose this venue; you cannot change it). action is ENTER_LONG "
-        "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
-        "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
-        "BRACKET the current price on the correct side (LONG: stop below, target "
-        "above; SHORT: reversed), with the stop within ~3% and the target within "
-        "~10% of the current price -- otherwise the order is rejected. reason is "
-        "a one-line justification. exit_leg (EXIT only) is NIFTY, BNF or BOTH (default "
-        "BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, and "
-        "you may cut ONE leg on premise-invalidation while the other runs — but hard "
-        "risk (stop/target/max-loss/square-off) always closes both. Returns whether "
-        "the order was accepted or rejected.",
+        order_tool_description(venue),
         {"action": str, "stop": float, "target": float, "reason": str, "exit_leg": str},
     )
     async def _order(args: dict[str, Any]) -> dict[str, Any]:
