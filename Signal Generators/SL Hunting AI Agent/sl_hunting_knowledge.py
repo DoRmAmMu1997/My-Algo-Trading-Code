@@ -380,6 +380,14 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   / opening range, and there must be no bullish rejection reclaiming those levels.
   Default gap-down logic still looks UP; use this short branch only when sellers
   are not huntable and buyer inventory / failed recovery is the active trap.
+- GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL. A BIGGER gap does NOT make this
+  branch stronger — it makes it worse. A modest gap leaves price near the stop
+  clusters that fuel a move; an oversized gap has jumped clean past everybody's
+  stops, so there is nothing nearby to hunt, momentum tends to be slow, and a
+  rejection has a lot of room to run back through you. Trade the oversized gap, if
+  at all, as a smaller / NORMAL-target trade with a rejection-triggered exit — never
+  as a high-conviction runner. (Distinct from GAP-SIZE ASYMMETRY, which compares the
+  gaps ACROSS indices; this is about the absolute size of the gap you are trading.)
 - Enter at the earliest AFTER the first 1-min candle CLOSES, never during it.
 - No MAJOR rejection so far: no full-body green-to-red reversal candle since the
   open for the long branch, and no full-body red-to-green reclaim for the short
@@ -624,6 +632,16 @@ RISK DISCIPLINE
   sit (the long-wicked candle / opposite side of the first candle / the trapped
   crowd's stops). If the nearest opposing level is too close, the target is too
   small — HOLD.
+- NO NEARBY STOPS → NORMAL TARGET, AND SAY SO BEFORE YOU ENTER: sometimes you are
+  FOLLOWING the market (nobody clearly trapped, so the with-trend continuation is
+  the trade) rather than HUNTING a named crowd. In that case there is no stop
+  cluster near price to be run, so there is no fuel for a fast leg: expect SLOW or
+  sideways momentum and decide AT ENTRY that this is a NORMAL / average-target
+  trade, not a runner. Book that average target when it comes instead of holding
+  out for the extended move — with no stops to hunt, the extended move has nothing
+  to pay for it, and the longer you sit the more likely a rejection takes back what
+  you had. This does NOT weaken the worthwhile-target rule above: if the average
+  target is itself too small to be worth the trade, the answer is still HOLD.
 - Stops are PREMISE-INVALIDATION first: beyond the tight pattern stop, treat the
   setup as dead the moment its thesis breaks — price reclaims the closing point, or
   the expected "trap" fails and price goes sideways / against you. Honour a pre-set
@@ -643,6 +661,16 @@ RISK DISCIPLINE
   the move is approaching a round number after a good run, where one small
   rejection turns seen profit into giving-back. After watching a good profit,
   letting it become a loss while waiting for "more" is the retail mistake.
+  * IT CAN GO NEGATIVE, NOT MERELY WEAK. On a LARGE-GAP morning the gap premium is
+    bleeding out of the option while you hold it, and over a SHORT hold that bleed
+    can outrun delta entirely: a move in YOUR FAVOUR can still show a LOSS. Measured
+    on this book — a LONG held 105 seconds on a big gap-up day gained 4.65 points of
+    spot and still lost Rs.5,300 (about 10 premium points per unit AGAINST a
+    favourable move). Consequences: (a) never read "spot went my way" as "I am in
+    profit" — read `position_state`; (b) before entering, ask whether the TARGET is
+    big enough to pay in PREMIUM terms, because a target only ~20 spot points away
+    can be worth nothing after the round trip; (c) a trade you abandon within a
+    bar or two of entry pays the round-trip cost for no exposure to the move.
 - EXPIRY-DAY PREMIUM ASYMMETRY (the EXPIRY-day sibling of the rule above): on an
   expiry day a bought option gives back an adverse move far faster than it pays a
   favourable one — collapsing time value compounds delta against you, so ONE

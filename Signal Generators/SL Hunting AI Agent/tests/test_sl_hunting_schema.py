@@ -448,6 +448,31 @@ def test_system_prompt_has_v3t_expiry_asymmetry_and_morning_speed_knowledge():
     assert "a loss accepted BEFORE entry" in prompt
 
 
+def test_system_prompt_has_v3u_gap_size_and_no_fuel_knowledge():
+    """v3u: 29 Jul — a large gap-up with nobody trapped.
+
+    IH bought WITH the gap but said plainly that the oversized gap made it riskier,
+    that buyers'/sellers' stops were not available nearby, and that he would take a
+    normal profit rather than a runner. The agent's own book supplied the sharp
+    edge: a LONG held 105 seconds gained 4.65 spot points and still lost Rs.5,300.
+    """
+    prompt = build_system_prompt()
+    # A bigger gap is a worse trade, not a better one.
+    assert "GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL" in prompt
+    # Must not be confused with the existing cross-index gap rule.
+    assert "GAP-SIZE ASYMMETRY, which compares the" in prompt
+    # Following the market (no trapped crowd) means a normal target, decided up front.
+    assert "NO NEARBY STOPS" in prompt
+    assert "NORMAL / average-target" in prompt
+    # ...but it must not become a licence to take trades that are too small.
+    assert "the answer is still HOLD" in prompt
+    # Premium can go NEGATIVE on a favourable spot move, not merely lag.
+    assert "IT CAN GO NEGATIVE, NOT MERELY WEAK" in prompt
+    assert "never read" in prompt and "as \"I am in" in prompt
+    # The round-trip cost of abandoning a trade immediately.
+    assert "pays the round-trip cost for no exposure" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
