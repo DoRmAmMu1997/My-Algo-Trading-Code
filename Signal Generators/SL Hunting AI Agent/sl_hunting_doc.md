@@ -1713,3 +1713,62 @@ independent of the knowledge layer.
 - `RISK`: NO NEARBY STOPS -> NORMAL TARGET, beside the worthwhile-target rule.
 - `RISK`: the IT CAN GO NEGATIVE sub-bullet under PREMIUM NON-CONFIRMATION.
 - Test marker: `test_system_prompt_has_v3u_gap_size_and_no_fuel_knowledge`.
+
+## ERRATUM to v3t - the expiry-asymmetry measurement was wrong (2026-07-29)
+
+Recorded as an erratum rather than an edit to the v3t section above, so the
+mistake and its correction both stay on the record.
+
+**What v3t claimed:** that on an expiry day a bought option gives back an adverse
+move ~3.5x faster than it pays a favourable one, measured on the agent's own book
+for 28 Jul, "both indices expiring".
+
+**What was actually true.** The agent's NIFTY leg on 28 Jul was
+`NIFTY-Aug2026-24000-PE`, `ExpiryDate=2026-08-04`, `DaysToExpiry=7`. It was NOT in
+the expiring series. Only the BankNIFTY mirror (`BANKNIFTY-Jul2026-57300-PE`, the
+July monthly) was 0 DTE. IH was trading the expiring contract; the agent was not.
+
+**Two errors followed from that:**
+
+1. *The number.* The 3.5x was computed from the journal's `option_pnl`, which is
+   BASKET P&L (`realized_pnl - _entry_realized_pnl`, both legs), divided by
+   NIFTY-ONLY spot points. That mixes two underlyings and two expiries in a single
+   ratio. Leg-level figures from the master log:
+   - loser: 139.45 -> 131.00 on qty 650 = -Rs.5,492.50, i.e. -8.45/unit for 4.55
+     ADVERSE spot points = **1.86** premium points per adverse point;
+   - winner: 131.00 -> 150.90 on qty 390 = +Rs.7,761.00, i.e. +19.90/unit for 24.35
+     FAVOURABLE spot points = **0.82** premium points per favourable point.
+   The asymmetry is **~2.3x**, not 3.5x. (The mirror leg moved the opposite way on
+   the winner - it LOST Rs.2,808 while the NIFTY leg made Rs.7,761 - which is what
+   dragged the basket ratio so far off.)
+2. *The mechanism and the scope.* "Collapsing time value on expiry day" cannot
+   explain a 7-DTE option. And because the rule was scoped "EXPIRY-DAY exception
+   only" while `get_target_expiry()` keeps the NIFTY leg 7-13 days out, the rule was
+   written for a situation the leg it governs essentially never occupies.
+
+**The correction.** The rule is renamed to PREMIUM ASYMMETRY, quotes the leg-level
+~2.3x, states that the magnitude is situational rather than constant, and keys the
+booking threshold to **the days-to-expiry of the option actually held** rather than
+to whether some index expires today. Marker test updated, including a guard that
+the discredited "3.5x" figure cannot reappear.
+
+**Method lesson for future versions:** `outcome.option_pnl` is BASKET P&L while
+`outcome.points` is NIFTY-ONLY. Never divide one by the other. Leg-level prices are
+in the master log (`EntryOptPx` / `ExitOptPx` per leg); use those.
+
+**v3u is unaffected** - 29 Jul fired no mirror legs at all, so its +4.65 spot /
+-Rs.5,300.75 figure is NIFTY-only and stands. Its contract was 13 DTE, where theta
+over 105 seconds is negligible, so the wide/thin far-dated book is now the leading
+explanation for that move rather than gap-premium bleed.
+
+**Root cause behind all of it:** the knowledge base is distilled from a trader who
+is always in the near or expiring contract, while the execution layer bought the
+SECOND expiry out. Fixed separately by SLH-008, which moves the NIFTY leg to the
+current-week contract; from that point the expiry-aware rules and the instrument
+actually held finally describe the same thing.
+
+**Also corrected here (2026-07-29):** an earlier note in this investigation claimed
+no live order had ever filled. That was wrong - a bad log query, since fills are
+recorded on their own `REAL ORDER FILLED` lines rather than on the `ENTRY` line.
+There were 74 real fills between 22 and 28 Jul, all on the 2026-08-04 contract; the
+rejections began on 29 Jul when the ladder rolled and next-next became 2026-08-11.

@@ -671,22 +671,26 @@ RISK DISCIPLINE
     big enough to pay in PREMIUM terms, because a target only ~20 spot points away
     can be worth nothing after the round trip; (c) a trade you abandon within a
     bar or two of entry pays the round-trip cost for no exposure to the move.
-- EXPIRY-DAY PREMIUM ASYMMETRY (the EXPIRY-day sibling of the rule above): on an
-  expiry day a bought option gives back an adverse move far faster than it pays a
-  favourable one — collapsing time value compounds delta against you, so ONE
-  opposing candle can erase most of a good unrealised profit. Measured on this
-  book (two SHORT trades the same morning, both indices expiring): the loser bled
-  roughly 1.6 premium points per ADVERSE point of spot, while the winner earned
-  only about 0.45 premium points per FAVOURABLE point — a ~3.5x asymmetry against
-  the position. So while HOLDING on an expiry day:
-  * BOOK INTO STRENGTH, while the move is still running in your favour. Do not wait
-    for a stall-and-pullback to "confirm" the turn — on expiry the confirmation
-    candle IS the give-back.
-  * Your booking threshold is TIGHTER than for the identical setup on a non-expiry
-    day: an unrealised profit is worth materially less the longer you sit on it,
-    and a position going nowhere costs you money even with the underlying flat.
-  This is an EXPIRY-DAY exception only. On a normal day PROFIT-HOLD still governs —
-  never cite this rule to justify cutting a valid winner early.
+- PREMIUM ASYMMETRY — ADVERSE MOVES COST MORE THAN FAVOURABLE ONES PAY (the
+  measured sibling of the rule above): a bought option tends to give back an
+  adverse move faster than it pays a favourable one, so ONE opposing candle can
+  erase much of a good unrealised profit. Measured on this book, on the NIFTY leg
+  ALONE (two SHORT trades the same morning, the option 7 days from expiry): the
+  loser bled about 1.86 premium points per ADVERSE point of spot, while the winner
+  earned about 0.82 premium points per FAVOURABLE point — a ~2.3x asymmetry against
+  the position. Treat the SIZE of that asymmetry as situational, not a constant: it
+  widens as your option approaches ITS OWN expiry (time value collapsing on top of
+  delta) and in thin, wide-spread contracts. So while HOLDING:
+  * BOOK INTO STRENGTH, while the move is still running in your favour, rather than
+    waiting for a stall-and-pullback to "confirm" the turn — the confirmation candle
+    is also the give-back candle.
+  * The closer YOUR CONTRACT is to expiry, the tighter your booking threshold should
+    be: an unrealised profit is worth materially less the longer you sit on it, and a
+    position going nowhere costs you money even with the underlying flat. What matters
+    is the days-to-expiry of the option you actually hold, NOT whether some index
+    happens to expire today.
+  This never licenses cutting a valid winner early: PROFIT-HOLD still governs while
+  the premise is intact and the move is still delivering.
 - When already in a position, EXIT on: target reached, stop hit, an OPPOSING
   pattern + confirmation forming against you, or the move going slow/stalling at a
   level in your favour. Otherwise HOLD and let it run.
