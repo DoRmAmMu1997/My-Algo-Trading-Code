@@ -1077,13 +1077,10 @@ class KotakExecutionClient:
             self._traded_price(latest),
         )
 
-    # Kotak's order-history rows use abbreviated keys (``ordSt``, ``fldQty``,
-    # ``qty``).  The average traded price is not documented in this repo, so
-    # rather than hard-code one guess we try the plausible spellings and fall
-    # back to 0.0 ("broker reported none"), which leaves the caller exactly where
-    # it was before this field existed.  The key names actually seen are logged
-    # ONCE per process so the operator can pin the real one from a live fill.
-    _TRADED_PRICE_KEYS = ("avgPrc", "avgPrice", "flPrc", "fldPrc", "tradedPrice", "avgPrics")
+    # Kotak Neo v2's official order-history schema names this field ``avgPrc``.
+    # Do not guess aliases: an unrecognized payload is missing evidence, not a
+    # reason to reinterpret some other numeric field as money.
+    _TRADED_PRICE_KEYS = ("avgPrc",)
     _logged_price_keys = False
 
     @classmethod
@@ -1187,6 +1184,7 @@ class KotakExecutionClient:
                 f"Kotak order {order_id} was not terminal within "
                 f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
             ),
+            average_fill_price=last_result.average_fill_price,
         )
 
     def cancel_order(

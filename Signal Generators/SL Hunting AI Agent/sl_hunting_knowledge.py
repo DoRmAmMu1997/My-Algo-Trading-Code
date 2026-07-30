@@ -1083,6 +1083,8 @@ keys:
 
 Emit ONLY this JSON object as your final answer."""
 
+MAX_SYSTEM_PROMPT_CHARS = 75_000
+
 
 def build_system_prompt() -> str:
     """Compose the full SL-Hunting system prompt from the sections above.
@@ -1109,4 +1111,9 @@ def build_system_prompt() -> str:
         DECISION_RULES,
     ]
     # A blank line between sections keeps the prompt readable for the model.
-    return "\n\n".join(section.strip() for section in sections)
+    prompt = "\n\n".join(section.strip() for section in sections)
+    if len(prompt) > MAX_SYSTEM_PROMPT_CHARS:
+        raise ValueError(
+            f"SL Hunting system prompt exceeds {MAX_SYSTEM_PROMPT_CHARS} characters"
+        )
+    return prompt

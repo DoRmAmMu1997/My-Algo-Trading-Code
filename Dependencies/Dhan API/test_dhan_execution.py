@@ -196,6 +196,59 @@ def test_first_present_tolerates_field_casing_differences() -> None:
     assert de._first_present({}, de._FILLED_QTY_KEYS) is None
 
 
+def test_order_status_exposes_documented_average_traded_price(monkeypatch) -> None:
+    client = de.DhanExecutionClient()
+    envelope = {
+        "status": "success",
+        "remarks": "",
+        "data": {
+            "orderStatus": "TRADED",
+            "filledQty": 65,
+            "quantity": 65,
+            "averageTradedPrice": 125.25,
+        },
+    }
+    monkeypatch.setattr(
+        client,
+        "_call_api",
+        lambda *_args, **_kwargs: envelope,
+    )
+
+    state, filled, quantity, reason, average = client._order_status("DH-1")
+    result = client.get_order_status("DH-1", requested_quantity=65)
+
+    assert (state, filled, quantity, reason, average) == (
+        "TRADED",
+        65,
+        65,
+        "",
+        125.25,
+    )
+    assert result.average_fill_price == 125.25
+
+
+def test_fill_timeout_preserves_last_known_average_price(monkeypatch) -> None:
+    client = de.DhanExecutionClient()
+    partial = de.OrderResult(
+        order_id="DH-1",
+        requested_quantity=65,
+        filled_quantity=20,
+        remaining_quantity=45,
+        status=de.OrderStatus.PARTIAL,
+        broker_state="PARTIAL",
+        reason="partial",
+        average_fill_price=101.5,
+    )
+    monkeypatch.setattr(client, "get_order_status", lambda *_args, **_kwargs: partial)
+    monkeypatch.setattr(de, "_FILL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(de, "_FILL_POLL_INTERVAL", 0.005)
+
+    result = client._confirm_fill("DH-1", 65)
+
+    assert result.filled_quantity == 20
+    assert result.average_fill_price == 101.5
+
+
 def test_extract_order_id_searches_nested_payloads() -> None:
     assert de.dhan_execution_client.extract_order_id({"orderId": " DH-1 "}) == "DH-1"
     assert de.dhan_execution_client.extract_order_id({"data": {"orderId": "DH-2"}}) == "DH-2"

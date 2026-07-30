@@ -618,6 +618,25 @@ def test_do_order_rejects_placeholder_reason_on_entry():
     assert ex.snapshot()["in_position"] is True
 
 
+def test_do_order_rejects_multiline_control_or_oversized_entry_reasons():
+    ex = StandaloneExecutor()
+    price = SLHuntingToolContext.build(_candles(), ex).last_price
+    for reason in (
+        "pivot bounce\nwith confirmation",
+        "pivot bounce\twith confirmation",
+        "x" * 121,
+    ):
+        ctx = SLHuntingToolContext.build(_candles(), ex)
+        result = ctx.do_order(
+            "ENTER_LONG",
+            stop=price - 30,
+            target=price + 60,
+            reason=reason,
+        )
+        assert result["accepted"] is False
+    assert ex.snapshot()["in_position"] is False
+
+
 def test_do_order_never_rejects_an_exit_for_a_bad_reason():
     """An exit must always be available -- blocking it would strand a position."""
     ex = StandaloneExecutor()
@@ -644,14 +663,33 @@ def test_do_order_preserves_a_real_exit_reason_verbatim():
     ctx = SLHuntingToolContext.build(_candles(), ex)
     price = ctx.last_price
     ctx.do_order("ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce confirmed")
-    real = (
-        "Long thesis stalling: price failed repeatedly to exceed the swing high and "
-        "market_structure flipped to a downtrend; booking before the give-back."
-    )
+    real = "Long thesis stalled below the swing high; market structure flipped down."
     exit_ctx = SLHuntingToolContext.build(_candles(), ex)
     out = exit_ctx.do_order("EXIT", stop=0.0, target=0.0, reason=real)
     assert out["accepted"] is True
     assert ex.closed_trades[-1]["exit_reason"] == real
+
+
+def test_do_order_sanitizes_and_truncates_exit_reason_without_blocking():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    assert ctx.do_order(
+        "ENTER_LONG",
+        stop=price - 30,
+        target=price + 60,
+        reason="pivot bounce with confirmation",
+    )["accepted"] is True
+
+    raw = "Premise failed\n" + ("x" * 200)
+    result = SLHuntingToolContext.build(_candles(), ex).do_order(
+        "EXIT", stop=0.0, target=0.0, reason=raw
+    )
+
+    assert result["accepted"] is True
+    recorded = ex.closed_trades[-1]["exit_reason"]
+    assert "\n" not in recorded
+    assert len(recorded) == 120
 
 
 def test_order_tool_description_tells_the_model_the_reason_is_permanent():

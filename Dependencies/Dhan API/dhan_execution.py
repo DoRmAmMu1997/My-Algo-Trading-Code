@@ -174,6 +174,7 @@ _ORDER_ID_KEYS = ("orderId", "order_id", "orderid")
 _ORDER_STATE_KEYS = ("orderStatus", "order_status", "status")
 _FILLED_QTY_KEYS = ("filledQty", "filled_qty", "filledQuantity", "tradedQty")
 _ORDER_QTY_KEYS = ("quantity", "orderQuantity", "qty")
+_AVERAGE_PRICE_KEYS = ("averageTradedPrice",)
 _SYMBOL_KEYS = ("tradingSymbol", "trading_symbol", "symbol")
 _SIDE_KEYS = ("transactionType", "transaction_type")
 _PRODUCT_KEYS = ("productType", "product_type")
@@ -193,6 +194,18 @@ def _exact_int(value: Any) -> int | None:
     if not math.isfinite(number) or not number.is_integer():
         return None
     return int(number)
+
+
+def _positive_price(value: Any) -> float:
+    """Return Dhan's documented average traded price, or zero when absent."""
+
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
 
 
 def _first_present(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -1093,8 +1106,8 @@ class DhanExecutionClient:
     def _order_status(
         self,
         order_id: str,
-    ) -> tuple[str | None, int | None, int | None, str]:
-        """Return normalized state, filled qty, order qty, and rejection reason."""
+    ) -> tuple[str | None, int | None, int | None, str, float]:
+        """Return state, quantities, reason, and documented average traded price."""
         envelope = self._call_api(
             "order status",
             lambda client: client.get_order_by_id(str(order_id)),
@@ -1102,7 +1115,7 @@ class DhanExecutionClient:
         )
         outcome, data, reason = _classify_envelope(envelope)
         if outcome != "ok":
-            return (None, None, None, reason)
+            return (None, None, None, reason, 0.0)
         rows = data if isinstance(data, list) else [data]
         for row in rows:
             if not isinstance(row, dict):
@@ -1112,8 +1125,15 @@ class DhanExecutionClient:
                 _exact_int(_first_present(row, _FILLED_QTY_KEYS)),
                 _exact_int(_first_present(row, _ORDER_QTY_KEYS)),
                 str(_first_present(row, _REASON_KEYS) or "").strip(),
+                _positive_price(_first_present(row, _AVERAGE_PRICE_KEYS)),
             )
-        return (None, None, None, f"Unrecognised Dhan order-status payload: {data!r}")
+        return (
+            None,
+            None,
+            None,
+            f"Unrecognised Dhan order-status payload: {data!r}",
+            0.0,
+        )
 
     def get_order_status(
         self,
@@ -1129,7 +1149,9 @@ class DhanExecutionClient:
         if requested is None or requested < 0:
             requested = 0
         try:
-            state, filled, broker_qty, reason = self._order_status(str(order_id))
+            state, filled, broker_qty, reason, average_fill_price = (
+                self._order_status(str(order_id))
+            )
         except Exception as exc:
             return normalize_order_result(
                 order_id=order_id,
@@ -1157,6 +1179,7 @@ class DhanExecutionClient:
             filled_quantity=filled,
             broker_state=state or "",
             reason=reason,
+            average_fill_price=average_fill_price,
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
@@ -1202,6 +1225,7 @@ class DhanExecutionClient:
                 f"Dhan order {order_id} was not terminal within "
                 f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
             ),
+            average_fill_price=last_result.average_fill_price,
         )
 
     def cancel_order(

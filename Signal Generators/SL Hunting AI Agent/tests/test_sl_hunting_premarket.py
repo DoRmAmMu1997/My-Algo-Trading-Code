@@ -11,6 +11,7 @@ import json
 from datetime import date
 
 from sl_hunting_premarket import (
+    MAX_PREMARKET_FILE_CHARS,
     PremarketNote,
     format_premarket_note,
     load_premarket_block,
@@ -141,6 +142,12 @@ def test_load_malformed_json_returns_none(tmp_path):
 def test_load_non_object_returns_none(tmp_path):
     path = tmp_path / "premarket_note.json"
     path.write_text("[1, 2, 3]", encoding="utf-8")
+    assert load_premarket_note(str(path)) is None
+
+
+def test_load_oversized_note_is_rejected_before_json_parsing(tmp_path):
+    path = tmp_path / "premarket_note.json"
+    path.write_text(" " * (MAX_PREMARKET_FILE_CHARS + 1), encoding="utf-8")
     assert load_premarket_note(str(path)) is None
 
 

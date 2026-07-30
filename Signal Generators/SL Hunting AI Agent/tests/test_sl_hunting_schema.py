@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import pytest
 from sl_hunting_agent import SLHuntingDecision
-from sl_hunting_knowledge import FINAL_OUTPUT_INSTRUCTION, build_system_prompt
+from sl_hunting_knowledge import (
+    FINAL_OUTPUT_INSTRUCTION,
+    MAX_SYSTEM_PROMPT_CHARS,
+    build_system_prompt,
+)
+
+
+def test_system_prompt_stays_inside_regression_budget():
+    prompt = build_system_prompt() + FINAL_OUTPUT_INSTRUCTION
+    assert len(prompt) <= MAX_SYSTEM_PROMPT_CHARS
 
 
 def _valid_payload(**overrides):

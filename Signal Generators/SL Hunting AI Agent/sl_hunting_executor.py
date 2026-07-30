@@ -60,6 +60,16 @@ VALID_DIRECTIONS = ("LONG", "SHORT")
 # does NOT choose the lot count — it is computed so the worst-case underlying-points
 # loss never exceeds this budget, exactly like the repo's Profit Shooter sizer.
 DEFAULT_RISK_BUDGET = 2500.0
+MAX_ORDER_REASON_CHARS = 120
+
+
+def _single_line_reason(value: object, fallback: str = "") -> str:
+    """Normalize an already-approved reason for logs and journal snapshots."""
+
+    cleaned = " ".join(
+        "".join(char if char.isprintable() else " " for char in str(value or "")).split()
+    )
+    return cleaned[:MAX_ORDER_REASON_CHARS] or fallback
 
 
 def risk_based_lots(
@@ -222,7 +232,7 @@ class StandaloneExecutor:
             stop=round(float(stop), 2),
             target=round(float(target), 2),
             entry_time=datetime.now().isoformat(timespec="seconds"),
-            reason=str(reason)[:300],
+            reason=_single_line_reason(reason),
             lots=lots,
         )
         return {
@@ -259,7 +269,7 @@ class StandaloneExecutor:
             "pnl_proxy": pnl,
             "entry_time": self.pos.entry_time,
             "exit_time": datetime.now().isoformat(timespec="seconds"),
-            "exit_reason": str(reason)[:300],
+            "exit_reason": _single_line_reason(reason, "AI_EXIT"),
         }
         self.closed_trades.append(trade)
         self.pos = _PaperPosition()
@@ -384,7 +394,7 @@ class MasterWorkerExecutor:
         # this ENTER has already fired. reason is dropped from enter_position (the safe
         # path takes only levels); this is the one place it survives for journaling.
         self.last_entry_order = {
-            "action": f"ENTER_{direction}", "reason": str(reason)[:300],
+            "action": f"ENTER_{direction}", "reason": _single_line_reason(reason),
             "stop": round(float(stop), 2), "target": round(float(target), 2),
         }
         return {
@@ -404,7 +414,7 @@ class MasterWorkerExecutor:
         closes both. Falls back gracefully when the worker has no mirror hooks.
         """
         leg = (leg or "BOTH").strip().upper()
-        reason_s = str(reason)[:300] or "AI_EXIT"
+        reason_s = _single_line_reason(reason, "AI_EXIT")
         pos = getattr(self._w, "pos", None)
         nifty_active = pos is not None and getattr(pos, "active", False)
         mirror = getattr(self._w, "_mirror_pos", None)

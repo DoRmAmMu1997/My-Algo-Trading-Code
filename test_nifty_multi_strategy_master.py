@@ -190,13 +190,17 @@ class TestSharedMarketDataStore(unittest.TestCase):
             security_id=123, exchange_segment="NSE_FNO", trading_symbol="OPT1",
             right="CE", strike=20000.0, expiry=date(2023, 1, 26)
         )
-        self.store.register_option_subscription(sub)
+        self.store.register_option_subscription(sub, owner_id="TEST")
 
         subs = self.store.snapshot_option_subscriptions()
         self.assertEqual(len(subs), 1)
         self.assertEqual(subs[0].security_id, 123)
 
-        self.store.unregister_option_subscription("NSE_FNO", 123)
+        self.store.unregister_option_subscription(
+            "NSE_FNO",
+            123,
+            owner_id="TEST",
+        )
         self.assertEqual(len(self.store.snapshot_option_subscriptions()), 0)
 
 
@@ -1293,8 +1297,8 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
             trading_symbol="OPT_PE", right="PE", strike=22500.0,
             expiry=date.today() + timedelta(days=7),
         )
-        self.store.register_option_subscription(sub_ce)
-        self.store.register_option_subscription(sub_pe)
+        self.store.register_option_subscription(sub_ce, owner_id="TEST")
+        self.store.register_option_subscription(sub_pe, owner_id="TEST")
         self.broker.fetch_ltp_map.return_value = {
             (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
              master_file.NIFTY_INDEX_SECURITY_ID): 22500.0,
@@ -1465,7 +1469,8 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
                 security_id=security_id, exchange_segment="NSE_FNO",
                 trading_symbol="OPT_CE", right="CE", strike=22500.0,
                 expiry=date.today() + timedelta(days=7),
-            )
+            ),
+            owner_id="TEST",
         )
 
     def test_thread_name_matches_rest_fetcher(self):
@@ -1556,7 +1561,11 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
         added = feed.subscribe_symbols.call_args[0][0]
         self.assertEqual([(t[0], t[1]) for t in added], [(2, "49081")])
 
-        self.store.unregister_option_subscription("NSE_FNO", 49081)
+        self.store.unregister_option_subscription(
+            "NSE_FNO",
+            49081,
+            owner_id="TEST",
+        )
         self.fetcher._sync_subscriptions()
         feed.unsubscribe_symbols.assert_called_once()
         removed = feed.unsubscribe_symbols.call_args[0][0]
@@ -1574,7 +1583,8 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
             master_file.OptionSubscription(
                 security_id=777, exchange_segment="MCX_WEIRD",
                 trading_symbol="ODD", right="CE", strike=1.0, expiry=None,
-            )
+            ),
+            owner_id="TEST",
         )
         self.fetcher._sync_subscriptions()
         feed.subscribe_symbols.assert_not_called()
@@ -2127,6 +2137,30 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
         subs = self.store.snapshot_option_subscriptions()
         self.assertTrue(any(s.security_id == 49081 for s in subs))
 
+    def test_live_atm_pnl_uses_broker_entry_and_exit_fill_prices(self):
+        """The ledger's broker fills, not local marks, drive live P&L."""
+        self.worker.live_trading = True
+        client = _FakeShoonya(fill_prices=[125.0, 115.0])
+        with patch.object(master_file, "execution_client", client):
+            self.assertTrue(
+                self.worker.enter_position(
+                    direction="LONG",
+                    entry_underlying=22500.0,
+                    stop_underlying=22400.0,
+                    target_underlying=22700.0,
+                )
+            )
+            self.assertEqual(self.worker.pos.entry_trade_price, 125.0)
+            self.assertEqual(
+                self.worker.pos.entry_price_quality,
+                master_file.PRICE_QUALITY_BROKER_FILL,
+            )
+            quantity = self.worker.pos.quantity
+            self.worker.exit_position("TEST")
+
+        self.assertAlmostEqual(self.worker.realized_pnl, -10.0 * quantity)
+        self.assertFalse(self.worker.pos.active)
+
     def test_enter_position_skips_when_spot_unavailable(self):
         """No spot LTP -> no entry. The broker fallback also returns 0."""
         self.broker.fetch_ltp_map.return_value = {}
@@ -2149,6 +2183,27 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
             direction="LONG", entry_underlying=22500.0,
         )
         self.assertFalse(result)
+
+    def test_live_entry_refuses_a_stale_option_mark(self):
+        self.worker.live_trading = True
+        snapshot = self.store._ltp_snapshots[
+            (master_file.OPTION_EXCHANGE_SEGMENT, 49081)
+        ]
+        snapshot.fetched_at -= timedelta(
+            seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+        )
+        self.broker.fetch_ltp_map.return_value = {}
+        client = _FakeShoonya()
+
+        with patch.object(master_file, "execution_client", client):
+            result = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+            )
+
+        self.assertFalse(result)
+        self.assertEqual(client.calls, [])
 
     def test_rejected_sizing_decision_skips_entry_before_order_routing(self):
         decision = master_file.SizingDecision.from_risk_budget(
@@ -2213,6 +2268,184 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
 # =============================================================================
 # TEST SUITE: PROFIT SHOOTER DYNAMIC LOT SIZING
 # =============================================================================
+class TestSpreadEntryPriceFreshness(unittest.TestCase):
+    """Every multi-leg entry family fails closed on an unbounded option mark."""
+
+    def _store_and_broker(self):
+        store = master_file.SharedMarketDataStore()
+        broker = MagicMock()
+        broker.fetch_ltp_map.return_value = {}
+        store.update_ltp_map(
+            {
+                (
+                    master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    master_file.NIFTY_INDEX_SECURITY_ID,
+                ): 22500.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 10.0,
+            }
+        )
+        for security_id in (1001, 2002):
+            store._ltp_snapshots[
+                (master_file.OPTION_EXCHANGE_SEGMENT, security_id)
+            ].fetched_at -= timedelta(
+                seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+            )
+        return store, broker
+
+    @staticmethod
+    def _leg(security_id, right, strike, entry_ltp):
+        return {
+            "security_id": security_id,
+            "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+            "trading_symbol": f"NIFTY-{strike}-{right}",
+            "strike": float(strike),
+            "option_type": right,
+            "expiry_date": date.today() + timedelta(days=3),
+            "lot_size": 50,
+            "entry_ltp": float(entry_ltp),
+        }
+
+    def test_bullish_hedged_entry_refuses_stale_leg_marks(self):
+        store, broker = self._store_and_broker()
+        worker = master_file.SupertrendBullishWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker.live_trading = True
+        picked = (
+            self._leg(1001, "PE", 22000, 100),
+            self._leg(2002, "PE", 21000, 10),
+            date.today() + timedelta(days=3),
+        )
+        with (
+            patch.object(worker, "_pick_hedged_puts", return_value=picked),
+            patch.object(worker, "_place_real_hedged_entry") as place,
+        ):
+            accepted = worker._enter_hedged_bullish_position(22500.0, None)
+        self.assertFalse(accepted)
+        place.assert_not_called()
+
+    def test_bearish_hedged_entry_refuses_stale_leg_marks(self):
+        store, broker = self._store_and_broker()
+        worker = master_file.DonchianBearishWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker.live_trading = True
+        picked = (
+            self._leg(1001, "CE", 23000, 100),
+            self._leg(2002, "CE", 24000, 10),
+            date.today() + timedelta(days=3),
+        )
+        with (
+            patch.object(worker, "_pick_hedged_calls", return_value=picked),
+            patch.object(worker, "_place_real_hedged_entry") as place,
+        ):
+            accepted = worker._enter_hedged_bearish_position(22500.0, None)
+        self.assertFalse(accepted)
+        place.assert_not_called()
+
+    def test_delta20_entry_refuses_stale_leg_marks(self):
+        store, broker = self._store_and_broker()
+        worker = master_file.Delta20HedgedSpreadWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker.live_trading = True
+        worker.ce_monitor_meta = self._leg(1001, "CE", 23000, 100)
+        worker.ce_hedge_meta = self._leg(2002, "CE", 23200, 10)
+        with patch.object(worker, "_place_real_hedged_entry") as place:
+            accepted = worker._enter_side("CE", 100.0, 95.0)
+        self.assertFalse(accepted)
+        place.assert_not_called()
+
+    def test_bullish_hedged_pnl_uses_each_broker_leg_fill(self):
+        store, broker = self._store_and_broker()
+        store.update_ltp_map(
+            {
+                (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 10.0,
+            }
+        )
+        worker = master_file.SupertrendBullishWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker.live_trading = True
+        picked = (
+            self._leg(1001, "PE", 22000, 100),
+            self._leg(2002, "PE", 21000, 10),
+            date.today() + timedelta(days=3),
+        )
+        client = _FakeShoonya(fill_prices=[8.0, 120.0, 110.0, 7.0])
+        with (
+            patch.object(worker, "_pick_hedged_puts", return_value=picked),
+            patch.object(master_file, "execution_client", client),
+        ):
+            self.assertTrue(
+                worker._enter_hedged_bullish_position(22500.0, None)
+            )
+            self.assertEqual(worker.pos.main_entry_price, 120.0)
+            self.assertEqual(worker.pos.hedge_entry_price, 8.0)
+            quantity = worker.pos.main_quantity
+            worker.exit_position("TEST")
+
+        self.assertAlmostEqual(worker.realized_pnl, 9.0 * quantity)
+
+    def test_delta20_pnl_uses_each_broker_leg_fill(self):
+        store, broker = self._store_and_broker()
+        store.update_ltp_map(
+            {
+                (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 10.0,
+            }
+        )
+        worker = master_file.Delta20HedgedSpreadWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker.live_trading = True
+        worker.ce_monitor_meta = self._leg(1001, "CE", 23000, 100)
+        worker.ce_hedge_meta = self._leg(2002, "CE", 23200, 10)
+        client = _FakeShoonya(fill_prices=[8.0, 120.0, 110.0, 7.0])
+        with patch.object(master_file, "execution_client", client):
+            self.assertTrue(worker._enter_side("CE", 100.0, 95.0))
+            self.assertEqual(worker.ce_pos.main_entry_price, 120.0)
+            self.assertEqual(worker.ce_pos.hedge_entry_price, 8.0)
+            quantity = worker.ce_pos.main_quantity
+            worker._exit_side("CE", "TEST")
+
+        self.assertAlmostEqual(worker.realized_pnl, 9.0 * quantity)
+
+    def test_bearish_hedged_pnl_uses_each_broker_leg_fill(self):
+        store, broker = self._store_and_broker()
+        store.update_ltp_map(
+            {
+                (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 10.0,
+            }
+        )
+        worker = master_file.DonchianBearishWorker(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        worker.live_trading = True
+        picked = (
+            self._leg(1001, "CE", 23000, 100),
+            self._leg(2002, "CE", 24000, 10),
+            date.today() + timedelta(days=3),
+        )
+        client = _FakeShoonya(fill_prices=[8.0, 120.0, 110.0, 7.0])
+        with (
+            patch.object(worker, "_pick_hedged_calls", return_value=picked),
+            patch.object(master_file, "execution_client", client),
+        ):
+            self.assertTrue(
+                worker._enter_hedged_bearish_position(22500.0, None)
+            )
+            self.assertEqual(worker.pos.main_entry_price, 120.0)
+            self.assertEqual(worker.pos.hedge_entry_price, 8.0)
+            quantity = worker.pos.main_quantity
+            worker.exit_position("TEST")
+
+        self.assertAlmostEqual(worker.realized_pnl, 9.0 * quantity)
+
+
 class TestProfitShooterStrategyWorker(unittest.TestCase):
     """
     Tests the Profit Shooter override that picks lots dynamically based on
@@ -2584,13 +2817,20 @@ class _FakeShoonya:
     - `resolve_returns` overrides the resolved Shoonya symbol; pass "" to simulate
       a symbol-master resolution miss."""
 
-    def __init__(self, fail_on=None, resolve_returns=None, result_status=OrderStatus.FILLED):
+    def __init__(
+        self,
+        fail_on=None,
+        resolve_returns=None,
+        result_status=OrderStatus.FILLED,
+        fill_prices=None,
+    ):
         self.calls = []      # (shoonya_symbol, side, quantity)
         self.order_tags = []
         self.resolved = []   # (underlying, option_type, strike)
         self._fail_on = fail_on or (lambda symbol, side: False)
         self._resolve_returns = resolve_returns
         self._result_status = result_status
+        self._fill_prices = list(fill_prices or [])
 
     def resolve_option_symbol(self, underlying, expiry, option_type, strike,
                               exchange_segment="NFO"):
@@ -2625,6 +2865,11 @@ class _FakeShoonya:
             status=status,
             broker_state=status.value,
             reason=f"simulated {status.value.lower()} outcome",
+            average_fill_price=(
+                float(self._fill_prices[len(self.calls) - 1])
+                if len(self._fill_prices) >= len(self.calls)
+                else 0.0
+            ),
         )
 
     def extract_order_id(self, resp):
@@ -3094,6 +3339,56 @@ class TestLongStrangleWorker(unittest.TestCase):
         self.assertEqual(worker.ce_pos.entry_trade_price, 100.0)
         self.assertEqual(worker.pe_pos.entry_trade_price, 90.0)
         self.assertEqual(worker.ce_pos.quantity, 75)  # 1 lot * 75
+
+    def test_live_strangle_entry_refuses_a_stale_leg_mark(self):
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map(
+            {
+                (
+                    master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    master_file.NIFTY_INDEX_SECURITY_ID,
+                ): 22510.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+            }
+        )
+        snapshot = store._ltp_snapshots[
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001)
+        ]
+        snapshot.fetched_at -= timedelta(
+            seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+        )
+        client = _FakeShoonya()
+
+        with patch.object(master_file, "execution_client", client):
+            worker._enter_both_legs()
+
+        self.assertFalse(worker.ce_pos.active)
+        self.assertEqual(client.calls, [])
+
+    def test_live_strangle_uses_broker_prices_for_each_leg(self):
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        store.update_ltp_map(
+            {
+                (
+                    master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    master_file.NIFTY_INDEX_SECURITY_ID,
+                ): 22510.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 100.0,
+                (master_file.OPTION_EXCHANGE_SEGMENT, 2002): 90.0,
+            }
+        )
+        client = _FakeShoonya(fill_prices=[125.0, 95.0, 115.0])
+
+        with patch.object(master_file, "execution_client", client):
+            worker._enter_both_legs()
+            self.assertEqual(worker.ce_pos.entry_trade_price, 125.0)
+            self.assertEqual(worker.pe_pos.entry_trade_price, 95.0)
+            quantity = worker.ce_pos.quantity
+            worker._exit_leg("CE", "TEST")
+
+        self.assertAlmostEqual(worker.realized_pnl, -10.0 * quantity)
 
     def test_stopping_ce_leaves_pe_active(self):
         """Independent legs: a CE stop-out must not disturb the PE leg."""
@@ -3633,17 +3928,54 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertEqual(price, 112.55)
         self.assertFalse(fresh)
 
-    def test_unsubscribing_a_leg_drops_its_cached_price(self):
-        """The residue that made a closed leg's last price look usable is gone."""
+    def test_live_mirror_entry_refuses_a_stale_mark(self):
+        worker, store = self._make_worker()
+        worker.live_trading = True
+        worker._mirror_enabled = False
+        client = _FakeShoonya(fill_prices=[100.0])
+        with patch.object(master_file, "execution_client", client):
+            self.assertTrue(
+                worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+            )
+        worker._mirror_enabled = True
+        snapshot = store._ltp_snapshots[
+            (master_file.OPTION_EXCHANGE_SEGMENT, 3003)
+        ]
+        snapshot.fetched_at -= timedelta(
+            seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+        )
+        worker.broker.fetch_ltp_map.return_value = {}
+
+        with patch.object(master_file, "execution_client", client):
+            worker._open_bnf_mirror("LONG")
+
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertEqual(len(client.calls), 1)
+
+    def test_last_subscription_owner_drops_the_cached_price(self):
+        """The physical feed leg and its cached price leave with the final owner."""
         _worker, store = self._make_worker()
         key_segment, key_secid = master_file.OPTION_EXCHANGE_SEGMENT, 1001
+        sub = master_file.OptionSubscription(
+            security_id=key_secid,
+            exchange_segment=key_segment,
+            trading_symbol="NIFTY-24300-CE",
+            right="CE",
+            strike=24300.0,
+            expiry=date.today(),
+        )
+        store.register_option_subscription(sub, owner_id="WORKER-A")
         store.update_ltp_map({(key_segment, key_secid): 112.55})
         self.assertEqual(store.get_ltp_by_secid(key_segment, key_secid, 0.0), 112.55)
-        store.unregister_option_subscription(key_segment, key_secid)
+        store.unregister_option_subscription(
+            key_segment,
+            key_secid,
+            owner_id="WORKER-A",
+        )
         self.assertEqual(store.get_ltp_by_secid(key_segment, key_secid, 0.0), 0.0)
 
-    def test_register_option_subscription_reports_first_owner_only(self):
-        """Only the caller that ADDED a shared leg may later withdraw it."""
+    def test_shared_subscription_survives_until_every_owner_releases_it(self):
+        """One worker's exit cannot cut market data for another open position."""
         _worker, store = self._make_worker()
         sub = master_file.OptionSubscription(
             security_id=1001,
@@ -3653,8 +3985,146 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             strike=24300.0,
             expiry=date.today(),
         )
-        self.assertTrue(store.register_option_subscription(sub))
-        self.assertFalse(store.register_option_subscription(sub))
+        self.assertTrue(store.register_option_subscription(sub, owner_id="WORKER-A"))
+        self.assertTrue(store.register_option_subscription(sub, owner_id="WORKER-B"))
+        self.assertFalse(store.register_option_subscription(sub, owner_id="WORKER-A"))
+        store.update_ltp_map(
+            {(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 112.55}
+        )
+
+        store.unregister_option_subscription(
+            master_file.OPTION_EXCHANGE_SEGMENT,
+            1001,
+            owner_id="WORKER-A",
+        )
+
+        self.assertEqual(len(store.snapshot_option_subscriptions()), 1)
+        self.assertEqual(
+            store.get_ltp_by_secid(
+                master_file.OPTION_EXCHANGE_SEGMENT,
+                1001,
+                0.0,
+            ),
+            112.55,
+        )
+
+    def test_invalid_or_future_freshness_evidence_fails_closed(self):
+        """A corrupt bound or timestamp must never make an old mark dealable."""
+        _worker, store = self._make_worker()
+        segment, security_id = master_file.OPTION_EXCHANGE_SEGMENT, 1001
+        store.update_ltp_map({(segment, security_id): 112.55})
+
+        for invalid_bound in (0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(bound=invalid_bound):
+                self.assertEqual(
+                    store.get_ltp_by_secid(
+                        segment,
+                        security_id,
+                        0.0,
+                        max_age_seconds=invalid_bound,
+                    ),
+                    0.0,
+                )
+
+        store._ltp_snapshots[(segment, security_id)].fetched_at += timedelta(
+            seconds=30
+        )
+        self.assertEqual(
+            store.get_ltp_by_secid(
+                segment,
+                security_id,
+                0.0,
+                max_age_seconds=60.0,
+            ),
+            0.0,
+        )
+
+    def test_confirmed_flat_orphan_releases_its_subscription(self):
+        """Recovery owns the early subscription when no PaperPosition was created."""
+        worker, store = self._make_worker()
+        sub = master_file.OptionSubscription(
+            security_id=1001,
+            exchange_segment=master_file.OPTION_EXCHANGE_SEGMENT,
+            trading_symbol="NIFTY-24300-CE",
+            right="CE",
+            strike=24300.0,
+            expiry=date.today(),
+        )
+        store.register_option_subscription(
+            sub,
+            owner_id=worker._execution_owner_id,
+        )
+        store.update_ltp_map(
+            {(master_file.OPTION_EXCHANGE_SEGMENT, 1001): 112.55}
+        )
+        spec = master_file.LegSpec(
+            strategy=worker.strategy_name,
+            correlation_id="ABC12345",
+            role="N",
+            underlying="NIFTY",
+            symbol=sub.trading_symbol,
+            option_type="CE",
+            strike=sub.strike,
+            expiry=sub.expiry,
+            opening_side="BUY",
+            target_quantity=75,
+            owner_id=worker._execution_owner_id,
+        )
+        state = store.execution_ledger.register(spec)
+        open_handle = store.execution_ledger.start_attempt(
+            state.exposure_id,
+            master_file.OrderIntent.OPEN,
+            75,
+        )
+        state = store.execution_ledger.apply_result(
+            open_handle,
+            master_file.OrderResult(
+                order_id="OPEN-1",
+                requested_quantity=75,
+                filled_quantity=75,
+                remaining_quantity=0,
+                status=master_file.OrderStatus.FILLED,
+                broker_state="COMPLETE",
+                reason="filled",
+            ),
+        )
+        close_handle = store.execution_ledger.start_attempt(
+            state.exposure_id,
+            master_file.OrderIntent.CLOSE,
+            75,
+        )
+        state = store.execution_ledger.apply_result(
+            close_handle,
+            master_file.OrderResult(
+                order_id="CLOSE-1",
+                requested_quantity=75,
+                filled_quantity=75,
+                remaining_quantity=0,
+                status=master_file.OrderStatus.FILLED,
+                broker_state="COMPLETE",
+                reason="filled",
+            ),
+        )
+        worker._orphan_live_legs = [
+            {
+                "live_leg": state,
+                "option_type": "CE",
+                "strike": sub.strike,
+                "option_subscription": sub,
+            }
+        ]
+
+        worker._sweep_orphan_live_legs(force=True)
+
+        self.assertEqual(store.snapshot_option_subscriptions(), [])
+        self.assertEqual(
+            store.get_ltp_by_secid(
+                master_file.OPTION_EXCHANGE_SEGMENT,
+                1001,
+                0.0,
+            ),
+            0.0,
+        )
 
     def test_live_fill_price_beats_a_stale_ltp(self):
         """MAT-112: a LIVE entry is recorded at the BROKER's price, not the LTP.
@@ -3748,6 +4218,23 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         )
         # Far from expiry -> ATM, never the expiry-week ITM branch.
         worker._bnf_resolver.get_itm_option.assert_not_called()
+
+    def test_live_basket_pnl_uses_nifty_and_bnf_broker_fills(self):
+        worker, _store = self._make_worker()
+        worker.live_trading = True
+        client = _FakeShoonya(fill_prices=[125.0, 510.0, 115.0, 520.0])
+        with patch.object(master_file, "execution_client", client):
+            self.assertTrue(
+                worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+            )
+            nifty_quantity = worker.pos.quantity
+            bnf_quantity = worker._mirror_pos.quantity
+            self.assertEqual(worker.pos.entry_trade_price, 125.0)
+            self.assertEqual(worker._mirror_pos.entry_trade_price, 510.0)
+            worker.exit_position("TEST")
+
+        expected = (-10.0 * nifty_quantity) + (10.0 * bnf_quantity)
+        self.assertAlmostEqual(worker.realized_pnl, expected)
 
     def test_mirror_uses_itm_strike_inside_expiry_week(self):
         """BNF-002: inside the near-expiry window the mirror buys a deep ITM
@@ -4117,8 +4604,32 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         _tid, payload = worker._journal.close_trade.call_args[0]
         self.assertEqual(_tid, "t1")
         self.assertGreater(payload["option_pnl"], 0.0)    # mirror P&L is captured
+        self.assertTrue(payload["pnl_evidence_eligible"])
         self.assertIsNone(worker._pending_journal_exit)
         self.assertIsNone(worker._open_trade_id)
+
+    def test_stale_paper_exit_stays_operational_but_is_not_coach_eligible(self):
+        worker, store = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        worker._journal = MagicMock()
+        worker._open_trade_id = "stale"
+        worker._entry_realized_pnl = 0.0
+        worker._journal_pnl_evidence_eligible = True
+        for security_id in (1001, 3003):
+            snapshot = store._ltp_snapshots[
+                (master_file.OPTION_EXCHANGE_SEGMENT, security_id)
+            ]
+            snapshot.fetched_at -= timedelta(
+                seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+            )
+        worker.broker.fetch_ltp_map.return_value = {}
+
+        worker.exit_position("stale paper mark test")
+
+        worker._journal.close_trade.assert_called_once()
+        _trade_id, payload = worker._journal.close_trade.call_args[0]
+        self.assertEqual(_trade_id, "stale")
+        self.assertFalse(payload["pnl_evidence_eligible"])
 
     # ----- P1: a paper-fallback mirror must not phantom-short (sibling of PR #42) --
     def test_mirror_paper_fallback_close_sends_no_real_order(self):
@@ -6418,14 +6929,28 @@ class TestShoonyaFillConfirmation(unittest.TestCase):
         return c
 
     @staticmethod
-    def _hist(state, fld=75, qty=75, rej="--"):
+    def _hist(state, fld=75, qty=75, rej="--", avgprc="0"):
         # single_order_history returns a LIST of rows (newest first).
-        return [{"status": state, "fillshares": fld, "qty": qty, "rejreason": rej}]
+        return [{
+            "status": state,
+            "fillshares": fld,
+            "qty": qty,
+            "rejreason": rej,
+            "avgprc": avgprc,
+        }]
 
     def test_order_status_parses_latest_row(self):
-        c = self._client(self._hist("COMPLETE", fld=50, qty=75))
-        state, filled, qty, _reason = c._order_status("ORD1")
+        c = self._client(self._hist("COMPLETE", fld=50, qty=75, avgprc="125.25"))
+        state, filled, qty, _reason, average = c._order_status("ORD1")
         self.assertEqual((state, filled, qty), ("complete", 50, 75))
+        self.assertEqual(average, 125.25)
+
+    def test_get_order_status_exposes_documented_average_price(self):
+        c = self._client(self._hist("COMPLETE", avgprc="125.25"))
+
+        result = c.get_order_status("ORD1", requested_quantity=75)
+
+        self.assertEqual(result.average_fill_price, 125.25)
 
     def test_confirm_fill_returns_on_complete(self):
         c = self._client(self._hist("COMPLETE", fld=75, qty=75))
@@ -6449,6 +6974,85 @@ class TestShoonyaFillConfirmation(unittest.TestCase):
             result = c._confirm_fill("ORD1", 75)
         self.assertEqual(result.status, OrderStatus.UNKNOWN)
         self.assertIn("indeterminate", result.reason.lower())
+
+    def test_confirm_fill_timeout_preserves_last_known_average_price(self):
+        c = self._client(
+            self._hist("OPEN", fld=25, qty=75, avgprc="101.50")
+        )
+        mod = type(c).__module__
+        smod = sys.modules[mod]
+        with patch.object(smod, "_FILL_TIMEOUT_SECONDS", 0.05), \
+             patch.object(smod, "_FILL_POLL_INTERVAL", 0.01):
+            result = c._confirm_fill("ORD1", 75)
+
+        self.assertEqual(result.filled_quantity, 25)
+        self.assertEqual(result.average_fill_price, 101.50)
+
+
+class _StubKotak:
+    """Official v2 order-history row wrapper used without a broker session."""
+
+    def __init__(self, row):
+        self._row = row
+
+    def order_history(self, order_id=None):
+        return {"data": {"stat": "Ok", "data": [self._row]}}
+
+
+class TestKotakFillPrice(unittest.TestCase):
+    """Kotak v2 documents the traded average as ``avgPrc``."""
+
+    def setUp(self):
+        if master_file.kotak_execution_client is None:
+            self.skipTest("Kotak execution layer not importable in this environment.")
+        self.client = type(master_file.kotak_execution_client)()
+        self.client.client = _StubKotak({
+            "ordSt": "complete",
+            "fldQty": "75",
+            "qty": "75",
+            "rejRsn": "--",
+            "avgPrc": "125.25",
+        })
+        self.client.is_logged_in = True
+
+    def test_order_status_exposes_documented_average_price(self):
+        with patch.object(
+            self.client,
+            "_sdk_call",
+            side_effect=lambda _name, call, **_kwargs: call(),
+        ):
+            result = self.client.get_order_status(
+                "KOTAK-1",
+                requested_quantity=75,
+            )
+
+        self.assertEqual(result.average_fill_price, 125.25)
+
+    def test_confirm_fill_timeout_preserves_last_known_average_price(self):
+        partial = OrderResult(
+            order_id="KOTAK-1",
+            requested_quantity=75,
+            filled_quantity=25,
+            remaining_quantity=50,
+            status=OrderStatus.PARTIAL,
+            broker_state="OPEN",
+            reason="partial",
+            average_fill_price=101.5,
+        )
+        module = sys.modules[type(self.client).__module__]
+        with patch.object(
+            self.client,
+            "get_order_status",
+            return_value=partial,
+        ), patch.object(module, "_FILL_TIMEOUT_SECONDS", 0.05), patch.object(
+            module,
+            "_FILL_POLL_INTERVAL",
+            0.01,
+        ):
+            result = self.client._confirm_fill("KOTAK-1", 75)
+
+        self.assertEqual(result.filled_quantity, 25)
+        self.assertEqual(result.average_fill_price, 101.5)
 
 
 class TestShoonyaSymbolResolution(unittest.TestCase):
@@ -6813,35 +7417,45 @@ class TestFlattradeOrders(unittest.TestCase):
                 "fillshares": "65",
                 "qty": "65",
                 "rejreason": "",
+                "avgprc": "125.25",
             }
         ]
         with patch.object(self.client, "_post_api", return_value=history):
             self.assertEqual(
                 self.client._order_status("ORD1"),
-                ("complete", 65, 65, ""),
+                ("complete", 65, 65, "", 125.25),
             )
+            result = self.client.get_order_status("ORD1", requested_quantity=65)
+        self.assertEqual(result.average_fill_price, 125.25)
 
     def test_fill_confirmation_handles_complete_rejected_and_timeout(self):
         with patch.object(
-            self.client, "_order_status", return_value=("complete", 65, 65, "")
+            self.client,
+            "_order_status",
+            return_value=("complete", 65, 65, "", 125.25),
         ):
             complete = self.client._confirm_fill("ORD1", 65)
         self.assertEqual(complete.status, OrderStatus.FILLED)
+        self.assertEqual(complete.average_fill_price, 125.25)
 
         with patch.object(
             self.client,
             "_order_status",
-            return_value=("rejected", 0, 65, "RMS: margin"),
+            return_value=("rejected", 0, 65, "RMS: margin", 0.0),
         ):
             rejected = self.client._confirm_fill("ORD2", 65)
         self.assertEqual(rejected.status, OrderStatus.REJECTED)
 
         with patch.object(
-            self.client, "_order_status", return_value=("open", 0, 65, "")
+            self.client,
+            "_order_status",
+            return_value=("open", 25, 65, "", 101.5),
         ), patch.object(flattrade_module, "_FILL_TIMEOUT_SECONDS", 0.02), \
              patch.object(flattrade_module, "_FILL_POLL_INTERVAL", 0.005):
             unknown = self.client._confirm_fill("ORD3", 65)
-        self.assertEqual(unknown.status, OrderStatus.UNKNOWN)
+        self.assertEqual(unknown.status, OrderStatus.PARTIAL)
+        self.assertEqual(unknown.filled_quantity, 25)
+        self.assertEqual(unknown.average_fill_price, 101.5)
         self.assertIn("indeterminate", unknown.reason.lower())
 
     def test_recursive_order_id_extraction_and_local_logout(self):
@@ -7507,6 +8121,36 @@ class TestStartupLiveExposureWiring(unittest.TestCase):
             errors = master_file._live_config_errors(worker, "RENKO")
 
         self.assertIn("RENKO_TRADING_START_HOUR is not numeric", errors)
+
+    def test_option_ltp_freshness_bound_is_strictly_validated_for_live(self):
+        """A non-finite or non-positive global bound cannot disable stale-price safety."""
+        worker = self._Worker("Renko")
+        for raw in ("0", "-1", "nan", "inf", "not-a-number"):
+            with self.subTest(raw=raw), patch.dict(
+                os.environ,
+                {"MARKET_DATA_MAX_LTP_AGE_SECONDS": raw},
+            ):
+                errors = master_file._live_config_errors(worker, "RENKO")
+
+            self.assertTrue(
+                any("MARKET_DATA_MAX_LTP_AGE_SECONDS" in error for error in errors),
+                f"{raw!r} must block live trading, got {errors}",
+            )
+
+    def test_resolved_option_ltp_freshness_bound_fails_closed_for_live(self):
+        worker = self._Worker("Renko")
+        for value in (0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(value=value), patch.object(
+                master_file,
+                "MARKET_DATA_MAX_LTP_AGE_SECONDS",
+                value,
+            ):
+                errors = master_file._live_config_errors(worker, "RENKO")
+
+            self.assertIn(
+                "resolved MARKET_DATA_MAX_LTP_AGE_SECONDS must be finite and positive",
+                errors,
+            )
 
     def test_sl_hunting_entry_controls_are_strictly_validated_for_live(self):
         """Malformed cooldown/cutoff text cannot hide behind paper defaults."""

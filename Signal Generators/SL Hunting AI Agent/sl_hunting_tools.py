@@ -94,6 +94,7 @@ def _entry_levels_error(direction: str, stop: float, target: float, price: float
 # blemish. Four of the first 46 journal rows recorded "placeholder" (or "placeholder
 # - will not call, holding") as the permanent reason for a real trade.
 MIN_REASON_CHARS = 12
+MAX_REASON_CHARS = 120
 _PLACEHOLDER_REASONS = frozenset(
     {"placeholder", "n/a", "na", "tbd", "none", "-", "test", "todo", "reason", "exit", "entry"}
 )
@@ -119,7 +120,8 @@ def order_tool_description(venue: str) -> str:
         "trade journal, the log and the operator's alert, and it is what the reflection "
         "coach reads later to work out what worked. The reasoning in your final JSON is "
         "NOT saved there, so this is your only chance to say why you acted. Give a real "
-        "one-line justification naming the setup and the trigger -- a placeholder or an "
+        f"one-line justification of at most {MAX_REASON_CHARS} printable characters naming "
+        "the setup and the trigger -- a placeholder or an "
         "empty string is REJECTED on entries, and on an exit it is replaced by a sentinel "
         "recording that you supplied nothing. exit_leg (EXIT only) is NIFTY, BNF or BOTH "
         "(default BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, "
@@ -140,7 +142,33 @@ def _reason_problem(reason: str) -> str | None:
         return f"{cleaned!r} is a placeholder, not a justification"
     if len(cleaned) < MIN_REASON_CHARS:
         return f"reason is too short to be a justification (min {MIN_REASON_CHARS} characters)"
+    if len(cleaned) > MAX_REASON_CHARS:
+        return f"reason must be at most {MAX_REASON_CHARS} characters"
+    if any(not char.isprintable() for char in cleaned):
+        return "reason must be one printable line"
     return None
+
+
+def _safe_exit_reason(reason: str) -> str:
+    """Return a bounded printable exit record without ever blocking the exit."""
+
+    if _reason_problem(reason) is None:
+        return str(reason).strip()
+    raw = str(reason or "")
+    cleaned = " ".join(
+        "".join(
+            char if char.isprintable() else " "
+            for char in raw
+        ).split()
+    )[:MAX_REASON_CHARS].strip()
+    if (
+        not cleaned
+        or cleaned.lower().rstrip(".") in _PLACEHOLDER_REASONS
+        or cleaned.lower().startswith("placeholder")
+        or len(cleaned) < MIN_REASON_CHARS
+    ):
+        return NO_REASON_SENTINEL
+    return cleaned
 
 # Read-only context tools are always present; the action tool's name is decided at
 # build time by the environment, so it is appended in `build_sl_hunting_mcp_server`.
@@ -368,7 +396,7 @@ class SLHuntingToolContext:
             # strand an open position -- the one thing the risk rules forbid. Record an
             # explicit sentinel instead, so the journal and the coach are told plainly
             # that no justification was given rather than being handed a lie.
-            exit_reason = NO_REASON_SENTINEL if _reason_problem(reason) else str(reason).strip()
+            exit_reason = _safe_exit_reason(reason)
             def executor_call() -> dict[str, Any]:
                 return self.executor.exit(exit_reason, self.last_price, leg=leg)
         else:

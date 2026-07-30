@@ -221,6 +221,15 @@ def load_journal(path: str, since: str | None = None) -> list[dict[str, Any]]:
                 if not isinstance(row, dict):
                     rejected += 1
                     continue
+                outcome = row.get("outcome")
+                if (
+                    isinstance(outcome, dict)
+                    and outcome.get("pnl_evidence_eligible") is False
+                ):
+                    # Approximate P&L stays in the operational journal but must
+                    # never teach the reflection coach. Historical rows omit
+                    # this field and remain compatible.
+                    continue
                 try:
                     projected = _project_journal_row(row)
                 except (TypeError, ValidationError, ValueError):
