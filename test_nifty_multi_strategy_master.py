@@ -3589,6 +3589,73 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         })
         return worker, store
 
+    def test_stale_cached_ltp_is_not_dealable(self):
+        """MAT-112: a mark older than the bound must not be usable to book a trade.
+
+        The 2026-07-30 case exactly: a snapshot left behind by an earlier trade on
+        the SAME strike was handed out ~24 minutes later.
+        """
+        worker, store = self._make_worker()
+        key_segment, key_secid = master_file.OPTION_EXCHANGE_SEGMENT, 1001
+        store.update_ltp_map({(key_segment, key_secid): 112.55})
+        # Age the snapshot past the bound, exactly as an unsubscribed leg would.
+        snapshot = store._ltp_snapshots[(key_segment, key_secid)]
+        snapshot.fetched_at = snapshot.fetched_at - timedelta(
+            seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+        )
+        # Unbounded read still sees it; a bounded read must not.
+        self.assertEqual(store.get_ltp_by_secid(key_segment, key_secid, 0.0), 112.55)
+        self.assertEqual(
+            store.get_ltp_by_secid(
+                key_segment,
+                key_secid,
+                0.0,
+                max_age_seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS,
+            ),
+            0.0,
+        )
+        # With the direct quote answering, the FRESH broker price wins.
+        worker.broker.fetch_ltp_map.return_value = {(key_segment, key_secid): 125.0}
+        price, fresh = worker._get_dealable_option_ltp(key_segment, key_secid)
+        self.assertEqual((price, fresh), (125.0, True))
+
+    def test_dealable_ltp_reports_stale_when_direct_quote_also_fails(self):
+        """Both sources failing surfaces the old price AND says it is not fresh."""
+        worker, store = self._make_worker()
+        key_segment, key_secid = master_file.OPTION_EXCHANGE_SEGMENT, 1001
+        store.update_ltp_map({(key_segment, key_secid): 112.55})
+        snapshot = store._ltp_snapshots[(key_segment, key_secid)]
+        snapshot.fetched_at = snapshot.fetched_at - timedelta(
+            seconds=master_file.MARKET_DATA_MAX_LTP_AGE_SECONDS + 30
+        )
+        worker.broker.fetch_ltp_map.side_effect = RuntimeError("feed down")
+        price, fresh = worker._get_dealable_option_ltp(key_segment, key_secid)
+        self.assertEqual(price, 112.55)
+        self.assertFalse(fresh)
+
+    def test_unsubscribing_a_leg_drops_its_cached_price(self):
+        """The residue that made a closed leg's last price look usable is gone."""
+        _worker, store = self._make_worker()
+        key_segment, key_secid = master_file.OPTION_EXCHANGE_SEGMENT, 1001
+        store.update_ltp_map({(key_segment, key_secid): 112.55})
+        self.assertEqual(store.get_ltp_by_secid(key_segment, key_secid, 0.0), 112.55)
+        store.unregister_option_subscription(key_segment, key_secid)
+        self.assertEqual(store.get_ltp_by_secid(key_segment, key_secid, 0.0), 0.0)
+
+    def test_register_option_subscription_reports_first_owner_only(self):
+        """Only the caller that ADDED a shared leg may later withdraw it."""
+        _worker, store = self._make_worker()
+        sub = master_file.OptionSubscription(
+            security_id=1001,
+            exchange_segment=master_file.OPTION_EXCHANGE_SEGMENT,
+            trading_symbol="NIFTY-24300-CE",
+            right="CE",
+            strike=24300.0,
+            expiry=date.today(),
+        )
+        self.assertTrue(store.register_option_subscription(sub))
+        self.assertFalse(store.register_option_subscription(sub))
+
     def test_live_fill_price_beats_a_stale_ltp(self):
         """MAT-112: a LIVE entry is recorded at the BROKER's price, not the LTP.
 

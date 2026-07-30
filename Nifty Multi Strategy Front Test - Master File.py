@@ -564,6 +564,14 @@ WS_CONN_LIVENESS_SECONDS = _env_float("WS_CONN_LIVENESS_SECONDS", 5.0)
 # response parked the websocket producer for 59-73s at a time.
 MARKET_DATA_HTTP_TIMEOUT_SECONDS = _env_float("MARKET_DATA_HTTP_TIMEOUT_SECONDS", 10.0)
 
+# How old a cached option LTP may be and still be used to BOOK a trade at.
+# Reads that only need a rough mark are unaffected; this bounds the price that
+# becomes the recorded entry. One minute: a leg that has not printed for longer
+# than that is not a price you can honestly enter on. (2026-07-30: a snapshot
+# left behind by an earlier trade on the same strike was reused ~24 minutes
+# later and recorded an entry at 112.55 against a real fill of 125.00.)
+MARKET_DATA_MAX_LTP_AGE_SECONDS = _env_float("MARKET_DATA_MAX_LTP_AGE_SECONDS", 60.0)
+
 # Bounded join timeout for each thread on shutdown.
 SHUTDOWN_JOIN_SECONDS = _env_float("SHUTDOWN_JOIN_SECONDS", 6.0)
 
@@ -2069,6 +2077,8 @@ class SharedMarketDataStore:
         segment: str,
         security_id: int,
         fallback: float = 0.0,
+        *,
+        max_age_seconds: float | None = None,
     ) -> float:
         """
         Read the newest cached LTP for one (segment, security_id) pair.
@@ -2076,28 +2086,57 @@ class SharedMarketDataStore:
         This method NEVER calls the broker; it just returns whatever the
         fetcher has already cached, falling back to `fallback` when nothing
         positive is available yet.
+
+        `max_age_seconds` bounds how old that cached price may be. The default
+        (None) keeps the historical behaviour -- any positive price, at any age.
+        Callers that are about to BOOK a trade at this price pass a bound,
+        because a mark is only worth what its age allows: on 2026-07-30 a
+        snapshot left behind by an earlier trade on the SAME strike was returned
+        ~24 minutes later and recorded a NIFTY entry at 112.55 against a real
+        fill of 125.00. A leg that is no longer subscribed stops being
+        re-stamped by `touch_ltp_freshness`, so age is a true signal here.
         """
         key = (str(segment), int(security_id))
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         with self._lock:
             snapshot = self._ltp_snapshots.get(key)
             if snapshot is not None and snapshot.ltp > 0:
-                return snapshot.ltp
+                if max_age_seconds is None:
+                    return snapshot.ltp
+                if (now - snapshot.fetched_at).total_seconds() <= float(max_age_seconds):
+                    return snapshot.ltp
         return float(fallback)
 
     # ------------------------------------------------------------------
     # Option-leg subscription pool
     # ------------------------------------------------------------------
-    def register_option_subscription(self, subscription: OptionSubscription) -> None:
-        """Tell the fetcher to keep polling LTP for this option leg."""
+    def register_option_subscription(self, subscription: OptionSubscription) -> bool:
+        """Tell the fetcher to keep polling LTP for this option leg.
+
+        Returns True when THIS call added the leg, False when it was already
+        subscribed (legs are shared: several workers can sit on one strike).
+        Callers use that to know whether they own the subscription and may
+        withdraw it if their own entry then falls through.
+        """
         key = (str(subscription.exchange_segment), int(subscription.security_id))
         with self._lock:
+            newly_added = key not in self._option_subscriptions
             self._option_subscriptions[key] = subscription
+            return newly_added
 
     def unregister_option_subscription(self, segment: str, security_id: int) -> None:
-        """Drop a leg once a paper trade has been closed."""
+        """Drop a leg once a paper trade has been closed.
+
+        The cached LTP goes with it. Leaving the snapshot behind is what made a
+        closed leg's last price look usable to the next trade on the same strike
+        (2026-07-30): the subscription stopped, so nothing refreshed it, but
+        `get_ltp_by_secid` still handed it out. Every caller already treats a
+        missing price as "fetch it directly", which is the correct behaviour.
+        """
         key = (str(segment), int(security_id))
         with self._lock:
             self._option_subscriptions.pop(key, None)
+            self._ltp_snapshots.pop(key, None)
 
     def snapshot_option_subscriptions(self) -> list[OptionSubscription]:
         """Return a list copy of all currently subscribed option legs."""
@@ -5526,6 +5565,50 @@ class BasePaperStrategyWorker(threading.Thread):
         self.paper_order_counter += 1
         return f"PAPER-{side}-{datetime.now():%Y%m%d%H%M%S}-{self.paper_order_counter:04d}"
 
+    def _get_dealable_option_ltp(
+        self, segment: str, security_id: int
+    ) -> tuple[float, bool]:
+        """Return ``(price, is_fresh)`` for a mark we are about to TRADE on.
+
+        Unlike `_get_option_ltp`, a cached price is only accepted while it is
+        within `MARKET_DATA_MAX_LTP_AGE_SECONDS`. Anything older is treated as no
+        price at all and the broker is asked directly -- that answer is current by
+        construction. Only if BOTH fail does this fall back to the stale cached
+        value, and it says so via ``is_fresh=False`` rather than passing an old
+        number off as a mark. The caller decides what that means: paper can live
+        with it, real money cannot.
+        """
+        fresh = self.store.get_ltp_by_secid(
+            segment,
+            security_id,
+            fallback=0.0,
+            max_age_seconds=MARKET_DATA_MAX_LTP_AGE_SECONDS,
+        )
+        if fresh > 0:
+            return fresh, True
+
+        try:
+            ltp_map = self.broker.fetch_ltp_map({segment: [security_id]})
+        except Exception as exc:
+            self.log.warning(
+                "Direct LTP fetch failed for segment=%s security_id=%s: %s",
+                segment,
+                security_id,
+                exc,
+            )
+            ltp_map = {}
+        try:
+            price = _safe_float(ltp_map.get((str(segment), int(security_id)), 0.0), 0.0)
+        except (AttributeError, TypeError):
+            price = 0.0
+        if price > 0:
+            self.store.update_ltp_map({(str(segment), int(security_id)): price})
+            return price, True
+
+        # Neither a recent tick nor a live quote. Surface whatever is cached so
+        # the caller can decide, but never call it fresh.
+        return self.store.get_ltp_by_secid(segment, security_id, fallback=0.0), False
+
     def _entry_fill_price(self, order_result: object, ltp_price: float) -> float:
         """Prefer the broker's ACTUAL traded price over the local LTP for a live fill.
 
@@ -6263,7 +6346,30 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
             return False
 
-        option_ltp = self._get_option_ltp(option_segment, option_sec_id, fallback=0.0)
+        # Subscribe BEFORE pricing, so the leg is in the feed from the moment we
+        # commit to it rather than only after the order goes out. `owns_feed_leg`
+        # is True only when THIS entry added it -- a strike shared with another
+        # worker must never be unsubscribed by our abort path.
+        owns_feed_leg = self.store.register_option_subscription(
+            OptionSubscription(
+                security_id=option_sec_id,
+                exchange_segment=option_segment,
+                trading_symbol=trading_symbol,
+                right=option_right,
+                strike=option_strike,
+                expiry=expiry_date,
+            )
+        )
+
+        def _abort_entry() -> bool:
+            """Withdraw a subscription this entry opened, then decline the trade."""
+            if owns_feed_leg:
+                self.store.unregister_option_subscription(option_segment, option_sec_id)
+            return False
+
+        option_ltp, mark_is_fresh = self._get_dealable_option_ltp(
+            option_segment, option_sec_id
+        )
         if option_ltp <= 0:
             self.log.warning(
                 "Skipping %s entry because option LTP was not available for %s (security_id=%s).",
@@ -6271,7 +6377,30 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 trading_symbol,
                 option_sec_id,
             )
-            return False
+            return _abort_entry()
+        if not mark_is_fresh:
+            if self.live_trading:
+                # Real money: a trade we cannot price is a trade we cannot risk
+                # manage, so decline it rather than book it at a guess.
+                self.log.error(
+                    "REFUSING LIVE %s ENTRY on %s: no mark newer than %.0fs and the "
+                    "direct quote failed; the only price available is stale.",
+                    direction,
+                    trading_symbol,
+                    MARKET_DATA_MAX_LTP_AGE_SECONDS,
+                )
+                return _abort_entry()
+            # Paper: keep the data point rather than losing the observation, but
+            # make the record say the mark was stale.
+            self.log.warning(
+                "PAPER %s entry on %s is marked at a STALE price %.2f (no tick "
+                "within %.0fs and the direct quote failed); P&L for this trade is "
+                "approximate.",
+                direction,
+                trading_symbol,
+                option_ltp,
+                MARKET_DATA_MAX_LTP_AGE_SECONDS,
+            )
 
         sizing = self._compute_entry_sizing(
             float(entry_underlying), float(stop_underlying), lot_size
@@ -6289,7 +6418,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 sizing.one_lot_risk,
                 sizing.reason,
             )
-            return False
+            return _abort_entry()
         lots_for_entry = sizing.lots
         quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
@@ -6313,25 +6442,18 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             if isinstance(live_leg, LiveLegState) and live_leg.exposure_possible:
                 # No PaperPosition will be created for an incomplete live entry,
                 # so the generic recovery sweep owns it until a later signal
-                # completes and adopts the same ledger state.
+                # completes and adopts the same ledger state. KEEP the feed leg
+                # subscribed: unresolved exposure still has to be marked.
                 self._track_orphan_live_leg(entry_leg)
-            return False
+                return False
+            return _abort_entry()
         self._untrack_orphan_live_leg(entry_leg)
         quantity = int(entry_leg["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
         option_ltp = self._entry_fill_price(order_result, option_ltp)
 
-        # Keep the fetcher refreshing this option's LTP for the trade lifetime.
-        self.store.register_option_subscription(
-            OptionSubscription(
-                security_id=option_sec_id,
-                exchange_segment=option_segment,
-                trading_symbol=trading_symbol,
-                right=option_right,
-                strike=option_strike,
-                expiry=expiry_date,
-            )
-        )
+        # The leg was subscribed before it was priced (above); the fetcher has been
+        # refreshing it since, and keeps doing so until exit_position drops it.
 
         self.pos = PaperPosition(
             active=True,
