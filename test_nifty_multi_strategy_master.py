@@ -3884,6 +3884,32 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         })
         return worker, store
 
+    def test_sl_hunting_worker_construction_cannot_kill_the_runner(self):
+        """The OPTIONAL agent must never take the other 26 strategies down with it.
+
+        Constructing SLHuntingAIWorker builds the agent, which validates its own
+        system-prompt size and reads the optional lessons / pre-open note. Any of
+        those can raise. Unguarded, that propagates out of main() and the whole
+        runner fails to start -- so a knowledge-only edit that pushed the prompt
+        past its cap would stop every strategy, not just this one.
+
+        Structural check because main() needs a full live environment to run.
+        """
+        source = file_path.read_text(encoding="utf-8")
+        marker = "workers.append(SLHuntingAIWorker(store, stop_event, broker))"
+        self.assertIn(marker, source)
+        window = "\n".join(source[: source.index(marker)].split("\n")[-6:])
+        self.assertIn("try:", window, "the optional agent's construction must be guarded")
+        following = source[source.index(marker):].split("\n")[:12]
+        self.assertTrue(
+            any("except" in line for line in following),
+            "a failed agent build must be caught and logged, not raised into main()",
+        )
+        self.assertTrue(
+            any("continuing WITHOUT it" in line for line in following),
+            "the operator must be told the agent was dropped",
+        )
+
     def test_stale_cached_ltp_is_not_dealable(self):
         """MAT-112: a mark older than the bound must not be usable to book a trade.
 

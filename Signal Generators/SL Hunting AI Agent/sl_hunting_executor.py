@@ -60,7 +60,16 @@ VALID_DIRECTIONS = ("LONG", "SHORT")
 # does NOT choose the lot count — it is computed so the worst-case underlying-points
 # loss never exceeds this budget, exactly like the repo's Profit Shooter sizer.
 DEFAULT_RISK_BUDGET = 2500.0
-MAX_ORDER_REASON_CHARS = 120
+
+# THE single bound on a model-written order reason. `sl_hunting_tools` imports this
+# rather than declaring its own, because two independent caps on the same string
+# drift apart and then silently disagree about what was recorded.
+#
+# 300 matches the width the journal keeps. Measured on the shipped journal the model
+# writes a median of 300 characters, so a tighter cap would amputate the sentence the
+# reflection coach later reads -- and, when it was enforced by REJECTING the order,
+# would have bounced 38 of 39 real entry reasons into a retry inside a 1-minute bar.
+MAX_ORDER_REASON_CHARS = 300
 
 
 def _single_line_reason(value: object, fallback: str = "") -> str:

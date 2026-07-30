@@ -15275,7 +15275,20 @@ def main() -> None:
     #       paper unless SL_HUNTING_LIVE_TRADING + LIVE_TRADING_ENABLED are both on
     #       (the live-wiring below applies the same double-gate as every strategy).
     if SLHuntingAIWorker is not None:
-        workers.append(SLHuntingAIWorker(store, stop_event, broker))
+        # Constructing this worker builds the agent, which validates its own
+        # system prompt (size cap) and reads the optional lessons / pre-open note.
+        # Any failure there must disable the OPTIONAL agent only -- never take the
+        # other strategies down with it. Without this guard an over-long prompt
+        # raises straight out of main() and the whole runner fails to start.
+        try:
+            workers.append(SLHuntingAIWorker(store, stop_event, broker))
+        except Exception as exc:  # noqa: BLE001 - optional strategy, never fatal
+            logging.getLogger(__name__).error(
+                "SL Hunting AI worker could not be created (%s); continuing WITHOUT it. "
+                "Every other strategy is unaffected.",
+                exc,
+                exc_info=True,
+            )
 
     # -------------------------------------------------------------------------
     # Per-strategy virtual (paper) trading gate.
