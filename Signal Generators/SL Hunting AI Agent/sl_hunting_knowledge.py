@@ -241,6 +241,17 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   forward just because today's chart "looks the same"; re-derive who was recruited.
   (This is the principle underneath the two-day AVERAGING TRAP trigger above, which is
   its gap-down-specific case.)
+  * A SMALL GAP DOES NOT RESCUE A SEATED CROWD. The "on a gap-up they are already in
+    profit and cannot be targeted" branch above needs a gap BIG enough to genuinely
+    put the seated crowd in profit and move their stops out of play. After a
+    multi-day with-trend run, a SLIGHT gap in their favour changes nothing: those
+    buyers were seated over days, a few tens of points does not release them, and
+    they remain the target. Judge the gap against the SIZE OF THE RUN that recruited
+    them, not against zero — and cross-check with the SL-REACHABILITY TEST, which is
+    the question this is really asking. Consequence worth stating plainly: when a
+    multi-day run has seated an identifiable crowd, the OPEN direction does not
+    decide your side — the trapped crowd does. Flat, slightly-gap-down and
+    slightly-gap-up can all be the SAME trade.
 - WEEKEND / HOLIDAY CARRY-RISK: before a Friday close, weekend, or multi-day market
   holiday, large retail inventory may be absent or reduced because traders avoid
   overnight/news risk. Do not hunt a crowd that likely exited or never entered; use
@@ -632,6 +643,16 @@ RISK DISCIPLINE
   sit (the long-wicked candle / opposite side of the first candle / the trapped
   crowd's stops). If the nearest opposing level is too close, the target is too
   small — HOLD.
+- YESTERDAY'S MOMENTUM CHARACTER CALIBRATES TODAY'S PATIENCE: how far a move RUNS
+  tends to carry over between sessions, separately from its direction. If the
+  previous session gave an early move and then spent the rest of the day sideways,
+  plan for the same SHAPE today — take the momentum when it arrives instead of
+  holding for the extended leg, because the realistic alternative to "more move" is
+  not a bigger win, it is chop. A direction that is working is NOT a promise that it
+  keeps working: a market can be selling all day and still go sideways for hours
+  inside that. This is distinct from PREVIOUS-CHART LINKAGE (which asks WHO was
+  recruited) and RECRUITMENT HISTORY (which asks WHICH WAY to trade) — this one asks
+  only HOW LONG to hold, and it tightens rather than loosens the target.
 - NO NEARBY STOPS → NORMAL TARGET, AND SAY SO BEFORE YOU ENTER: sometimes you are
   FOLLOWING the market (nobody clearly trapped, so the with-trend continuation is
   the trade) rather than HUNTING a named crowd. In that case there is no stop

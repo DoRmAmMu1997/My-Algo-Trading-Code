@@ -484,6 +484,45 @@ def test_system_prompt_has_v3u_gap_size_and_no_fuel_knowledge():
     assert "pays the round-trip cost for no exposure" in prompt
 
 
+def test_system_prompt_has_v3v_small_gap_and_carryover_knowledge():
+    """v3v: 30 Jul — after 2-3 positive days IH sold puts minutes after a flat /
+    slightly-gap-down open, and said he would have targeted the SAME seated buyers
+    even on a slight gap-up. He then booked early, citing yesterday's session going
+    sideways after its opening move.
+
+    Distilled from the VIDEO only: the agent's own 30 Jul book is unusable (an
+    unjournalled trade, a manual intervention, repeated market-data outages, and a
+    stale entry LTP that overstated one trade by ~Rs.4,855).
+    """
+    prompt = build_system_prompt()
+    # The gap-up escape hatch needs a gap proportional to the run that seated them.
+    assert "A SMALL GAP DOES NOT RESCUE A SEATED CROWD" in prompt
+    assert "against the SIZE OF THE RUN" in prompt
+    # The plain consequence: the crowd picks the side, not the open.
+    assert "the OPEN direction does not" in prompt
+    assert "the trapped crowd does" in prompt
+    # Session character carries over and TIGHTENS the target.
+    assert "YESTERDAY'S MOMENTUM CHARACTER CALIBRATES TODAY'S PATIENCE" in prompt
+    assert "it is chop" in prompt
+    # It must not be confused with the two existing previous-session rules.
+    assert "which asks WHO was" in prompt and "which asks WHICH WAY" in prompt
+
+
+def test_v3v_small_gap_rule_sits_inside_recruitment_history():
+    """The refinement must stay attached to the rule it qualifies.
+
+    Read alone it would contradict the gap-up branch ("already in profit and cannot
+    be targeted"); it only makes sense as a size qualifier on that same branch.
+    """
+    prompt = build_system_prompt()
+    start = prompt.index("RECRUITMENT HISTORY")
+    small_gap = prompt.index("A SMALL GAP DOES NOT RESCUE A SEATED CROWD")
+    assert small_gap > start
+    # ...and before the NEXT top-level bullet after the block it qualifies.
+    nxt = prompt.index("WEEKEND / HOLIDAY CARRY-RISK")
+    assert small_gap < nxt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
