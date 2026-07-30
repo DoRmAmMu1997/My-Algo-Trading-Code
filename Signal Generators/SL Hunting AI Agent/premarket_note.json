@@ -1,30 +1,29 @@
 {
-  "for_date": "2026-07-29",
-  "source": "Intraday Hunter, 'Prediction For 29 JULY 2026' (video 3yhXRT6Sc5Y)",
-  "context": "27 Jul's gap-up was rejected and 28 Jul was rejected again, yet NIFTY and Sensex still closed holding above their own closing points - so BankNIFTY shows selling without real momentum and neither side is clearly trapped.",
+  "for_date": "2026-07-31",
+  "source": "Intraday Hunter, 'Prediction For 31 JULY 2026' (video B0mG5R2JsFs)",
+  "context": "Momentum is shrinking across all three indices. Buyers have come in over the last two-three days but the market has repeatedly changed their mindset, so the crowd is not cleanly seated; NIFTY's advance came with retracements.",
   "plan": [
-    "Neither side is clearly positioned and the confusion is deliberate; few traders are carrying a trade into today, so there is no obvious trapped crowd to hunt.",
-    "When nothing is readable, do what the market is ALREADY doing - it has spent two to three days trying to cover and hold itself up.",
-    "GAP-UP or GAP-DOWN open: the plan is the same either way - look for BUY-side setups and go with the market.",
-    "FLAT open: the same buy-side plan can apply, but ONLY if momentum is genuinely good; flat is the riskier case.",
-    "The named risk is a SIDEWAYS range building here - if the market stalls and ranges instead of moving, the problem gets big.",
-    "All three indices read alike: little momentum, price staying and working in the same area it has been in."
+    "FLAT or GAP-UP open: follow the existing momentum - identify BUY-side setups and go with the market.",
+    "SMALL GAP-DOWN open: no plan can be made for this case. Abstain and let the market show its hand rather than forcing a trade.",
+    "BIG GAP-DOWN open: the buyers who stayed seated are the ones in trouble - identify SELL-side setups targeting them.",
+    "The distinction that matters is the SIZE of the gap-down, not merely its direction: a small one strands nobody, a large one leaves the seated buyers exposed.",
+    "When momentum does come it can look like a breakout, pull buyers in, and then have their mindset changed again - treat a first thrust with suspicion."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24038, 24116],
-      "support": [23857, 23734]
+      "resistance": [24400, 24482],
+      "support": [24207, 24140]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [56930, 57126],
-      "support": [56430, 56076]
+      "resistance": [57258, 57684],
+      "support": [56856, 56533]
     },
     {
       "index": "SENSEX",
-      "resistance": [76966, 77201],
-      "support": [76441, 76102]
+      "resistance": [78207, 78505],
+      "support": [77500, 77201]
     }
   ]
 }
