@@ -77,10 +77,12 @@ def test_build_entry_context_and_make_record():
     rec = make_entry_record(
         direction="LONG", setup="s", confidence=6, stop=24985, target=25060,
         reasoning="r", entry_underlying=25000, lots=2, nifty_df=df, bnf_df=None,
+        entry_price_quality="PAPER_FRESH_MARK",
     )
     assert rec["direction"] == "LONG" and rec["lots"] == 2
     assert "context" in rec and "followed_method" in rec
     assert rec["stop"] == 24985.0 and rec["target"] == 25060.0
+    assert rec["entry_price_quality"] == "PAPER_FRESH_MARK"
 
 
 def test_timeout_entry_journals_order_reason_not_placeholder(tmp_path):

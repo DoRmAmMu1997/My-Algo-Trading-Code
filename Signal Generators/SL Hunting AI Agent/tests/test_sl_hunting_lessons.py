@@ -18,6 +18,7 @@ from sl_hunting_coach import (
     summarize_journal,
 )
 from sl_hunting_lessons import (
+    MAX_LESSONS_FILE_CHARS,
     ProposedLesson,
     add_proposed,
     consolidate,
@@ -102,6 +103,12 @@ def test_malformed_stored_lesson_is_rejected(tmp_path):
     path = tmp_path / "lessons.json"
     path.write_text(json.dumps([{"id": "looks-valid", "status": "approved"}]), encoding="utf-8")
 
+    assert load_lessons(str(path)) == []
+
+
+def test_oversized_lessons_file_is_rejected_before_json_parsing(tmp_path):
+    path = tmp_path / "lessons.json"
+    path.write_text(" " * (MAX_LESSONS_FILE_CHARS + 1), encoding="utf-8")
     assert load_lessons(str(path)) == []
 
 
@@ -252,6 +259,33 @@ def test_load_journal_rejects_invalid_or_oversized_rows(tmp_path):
 
     assert len(rows) == 1
     assert rows[0]["setup"] == "pivot"
+
+
+def test_load_journal_skips_explicitly_ineligible_pnl_but_keeps_historical_rows(
+    tmp_path,
+):
+    historical = {
+        "opened_at": "2026-06-26T10:15:00",
+        "direction": "LONG",
+        "setup": "pivot",
+        "confidence": 7,
+        "context": {"cross_index": {"bias": "up"}},
+        "followed_method": True,
+        "outcome": {"points": 30.0, "exit_reason": "target", "r_multiple": 2.0},
+    }
+    approximate = json.loads(json.dumps(historical))
+    approximate["opened_at"] = "2026-06-27T10:15:00"
+    approximate["outcome"]["pnl_evidence_eligible"] = False
+    path = tmp_path / "journal.jsonl"
+    path.write_text(
+        json.dumps(historical) + "\n" + json.dumps(approximate) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = load_journal(str(path))
+
+    assert len(rows) == 1
+    assert rows[0]["opened_at"] == historical["opened_at"]
 
 
 # --------------------------------------------------------------------------

@@ -1772,3 +1772,84 @@ no live order had ever filled. That was wrong - a bad log query, since fills are
 recorded on their own `REAL ORDER FILLED` lines rather than on the `ENTRY` line.
 There were 74 real fills between 22 and 28 Jul, all on the 2026-08-04 contract; the
 rejections began on 29 Jul when the ladder rolled and next-next became 2026-08-11.
+
+## Video addendum - 30 Jul seated-crowd-over-gap + session-character carry-over (v3v)
+
+**Source:** Intraday Hunter live session, 30 Jul 2026 (`LvA_VPLdm6Q`, 7:37).
+
+**IMPORTANT - distilled from the VIDEO ONLY.** Unlike v3t and v3u, the agent's own
+30 Jul book supplied no usable measurement, and deliberately none is quoted here:
+- the 09:18 LONG has NO journal row (its live exit was rejected, then the runner was
+  interrupted and restarted, so `after_exit` never fired);
+- the operator exited that position MANUALLY, so its NIFTY P&L is in no log;
+- market data was unhealthy 09:05-09:18, again 09:30-09:49, and again around 10:25,
+  with option LTPs stale by up to 287s;
+- the 10:14 trade recorded a NIFTY entry of 112.55 while the broker-confirmed fill
+  was 125.00, which fabricated a +Rs.4,095 leg profit out of a -Rs.760.50 loss. The
+  journal row was corrected by hand (basket 3636.0 -> -1219.5); journalled net for
+  the day is -Rs.8,072.50, not -Rs.3,217.00.
+
+The last point is a standing defect rather than a one-off: `broker_contract.py` has
+no fill-price field at all, so LIVE P&L is always computed from the local LTP and
+never from the broker's actual fill.
+
+**What IH did:** open was almost FLAT to slightly GAP-DOWN, with Sensex and NIFTY
+mildly positive but BankNIFTY already selling. He bought PUTS across all three within
+minutes of the open (BNF 1170, Sensex 900, NIFTY), then booked on the first real
+momentum leg.
+
+His reasoning, close to verbatim:
+- "For two-three days the market had very good positive momentum, and today we are
+  directly selling, just minutes after the open... because of what happened over
+  those days, BUYERS are seated, and to target those buyers we are selling here."
+- "Even if it had opened slightly GAP-UP we would still have targeted the buyers.
+  Now we got a gap-down, and we are still targeting the buyers."
+- On booking: "It is not that they will just keep going down. They could still go
+  SIDEWAYS... **yesterday we did not make much profit, we took a small profit and
+  left, because yesterday too it looked sideways at the start.** So today it could
+  also happen that momentum comes and then the market stays sideways. So booking the
+  target was very necessary."
+- Also present, and already covered by existing rules: a pre-set loss limit
+  ("we will see what our limit is and handle the trade accordingly"), and expiry as
+  a trap-context caveat (Sensex expiry that day).
+
+**Net-new method distilled:**
+- A SMALL GAP DOES NOT RESCUE A SEATED CROWD. RECRUITMENT HISTORY already said that
+  on a gap-up the seated buyers "are already in profit and cannot be targeted, so go
+  WITH the market". IH's session qualifies that: the escape hatch needs a gap large
+  enough to genuinely release them. Judge the gap against the SIZE OF THE RUN that
+  recruited the crowd, not against zero; a few tens of points does not free buyers
+  seated over several days. Stated consequence: when a multi-day run has seated an
+  identifiable crowd, the OPEN direction does not pick your side - the trapped crowd
+  does, and flat / slightly-gap-down / slightly-gap-up can be the same trade.
+  Deliberately written as a sub-bullet INSIDE RECRUITMENT HISTORY, with a test
+  pinning it there, because read alone it would contradict the branch it qualifies.
+- YESTERDAY'S MOMENTUM CHARACTER CALIBRATES TODAY'S PATIENCE. How far a move RUNS
+  carries over between sessions, separately from direction. If the previous session
+  gave an early move then went sideways, plan for the same shape today and take the
+  momentum when it arrives. A direction that is working is not a promise that it
+  keeps working - a market can be selling all day and still chop for hours inside
+  that. Explicitly separated from PREVIOUS-CHART LINKAGE (who was recruited) and
+  RECRUITMENT HISTORY (which way to trade): this one governs only HOW LONG to hold,
+  and it tightens the target rather than loosening it.
+
+**Considered and deliberately NOT encoded:** IH said he expected to "take some loss
+in NIFTY and Sensex" while BankNIFTY carried the thesis. A "a red leg is not by
+itself premise-invalidation" rule would sit uncomfortably close to LAGGARDS NEVER
+JOINED (v3s), which tells the agent to BOOK when the leader is spent and the
+laggards never broke. Rather than risk muddling a rule that already governs the
+per-leg `exit_leg` decision, this is left out pending a session that separates the
+two cleanly.
+
+**Confirmed but already present:** pre-computing the loss limit before entry is v3t's
+PRE-COMPUTE BOTH NUMBERS; expiry-as-trap-context is EXPIRY IS CONTEXT, NOT A PREMISE;
+booking into an early move with no fuel behind it is v3u's NO NEARBY STOPS -> NORMAL
+TARGET.
+
+**Knowledge changes (v3v, all prose):**
+- `RETAIL_POSITIONING`: A SMALL GAP DOES NOT RESCUE A SEATED CROWD, as a sub-bullet
+  of RECRUITMENT HISTORY.
+- `RISK`: YESTERDAY'S MOMENTUM CHARACTER CALIBRATES TODAY'S PATIENCE, beside the
+  other booking rules.
+- Test markers: `test_system_prompt_has_v3v_small_gap_and_carryover_knowledge` and
+  `test_v3v_small_gap_rule_sits_inside_recruitment_history`.

@@ -1045,35 +1045,66 @@ class KotakExecutionClient:
         """
         Read the latest state of one order via order_history.
 
-        Returns (state, filled_qty, order_qty, reason). `state` is None when the
-        status cannot be read yet (a transient error, or the order not visible
-        yet), in which case the caller should simply keep polling.
+        Returns (state, filled_qty, order_qty, reason, avg_price). `state` is None
+        when the status cannot be read yet (a transient error, or the order not
+        visible yet), in which case the caller should simply keep polling.
+        `avg_price` is 0.0 whenever the broker did not report a traded price.
         """
         with self._lock:
             client = self.client
         if client is None:
-            return (None, None, None, "client not initialised")
+            return (None, None, None, "client not initialised", 0.0)
         try:
             resp = self._sdk_call(
                 "order_history",
                 lambda: client.order_history(order_id=order_id),
             )
         except Exception as exc:
-            return (None, None, None, f"order_history error: {exc}")
+            return (None, None, None, f"order_history error: {exc}", 0.0)
         # Kotak shape: {"data": {"stat": "Ok", "data": [ {rows, newest first} ]}}.
         rows = _response_rows(resp)
         if not isinstance(rows, list) or not rows:
-            return (None, None, None, f"unrecognised order_history: {resp}")
+            return (None, None, None, f"unrecognised order_history: {resp}", 0.0)
         latest = rows[0]  # history is newest-first; row 0 is the current state
         if not isinstance(latest, dict):
-            return (None, None, None, "malformed order_history row")
+            return (None, None, None, "malformed order_history row", 0.0)
 
         return (
             str(latest.get("ordSt", "")).strip().lower(),
             _exact_int(latest.get("fldQty")),
             _exact_int(latest.get("qty")),
             str(latest.get("rejRsn", "")).strip(),
+            self._traded_price(latest),
         )
+
+    # Kotak Neo v2's official order-history schema names this field ``avgPrc``.
+    # Do not guess aliases: an unrecognized payload is missing evidence, not a
+    # reason to reinterpret some other numeric field as money.
+    _TRADED_PRICE_KEYS = ("avgPrc",)
+    _logged_price_keys = False
+
+    @classmethod
+    def _traded_price(cls, row: dict) -> float:
+        """Best-effort average traded price from one order-history row."""
+
+        for key in cls._TRADED_PRICE_KEYS:
+            if key in row:
+                try:
+                    price = float(str(row[key]).strip())
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(price) and price > 0:
+                    return price
+        if not cls._logged_price_keys:
+            cls._logged_price_keys = True
+            # Keys only, never values: safe to share, and enough to identify the
+            # real field name so this guesswork can be replaced with a constant.
+            log.info(
+                "Kotak order-history row carried no recognised traded-price key; "
+                "available keys were: %s",
+                sorted(row.keys()),
+            )
+        return 0.0
 
     def get_order_status(
         self,
@@ -1085,7 +1116,7 @@ class KotakExecutionClient:
         requested = _exact_int(requested_quantity)
         if requested is None or requested < 0:
             requested = 0
-        state, filled, broker_qty, reason = self._order_status(str(order_id))
+        state, filled, broker_qty, reason, avg_price = self._order_status(str(order_id))
         effective_requested = requested or broker_qty or 0
         if requested and broker_qty not in {None, requested}:
             return normalize_order_result(
@@ -1104,6 +1135,7 @@ class KotakExecutionClient:
             filled_quantity=filled,
             broker_state=state or ("SESSION_POISONED" if self.session_poisoned else ""),
             reason=reason,
+            average_fill_price=avg_price,
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
@@ -1152,6 +1184,7 @@ class KotakExecutionClient:
                 f"Kotak order {order_id} was not terminal within "
                 f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
             ),
+            average_fill_price=last_result.average_fill_price,
         )
 
     def cancel_order(

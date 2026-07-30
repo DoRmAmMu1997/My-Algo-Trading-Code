@@ -168,6 +168,18 @@ def _exact_int(value: Any) -> int | None:
     return int(number)
 
 
+def _positive_price(value: Any) -> float:
+    """Return one documented traded price, or zero when it is absent/malformed."""
+
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
+
+
 def _is_no_data_envelope(value: Any) -> bool:
     """Return True only for Shoonya's explicit, determinate empty-book reply."""
 
@@ -791,14 +803,14 @@ class ShoonyaExecutionClient:
                 allow_after_poison=True,
             )
         except Exception as exc:
-            return (None, None, None, f"single_order_history error: {exc}")
+            return (None, None, None, f"single_order_history error: {exc}", 0.0)
         # Shoonya shape: a LIST of history rows (newest first). Prefer a terminal
         # row (complete/rejected/cancelled); otherwise fall back to the newest.
         if not isinstance(rows, list) or not rows:
-            return (None, None, None, f"unrecognised single_order_history: {rows}")
+            return (None, None, None, f"unrecognised single_order_history: {rows}", 0.0)
         valid_rows = [row for row in rows if isinstance(row, dict)]
         if not valid_rows:
-            return (None, None, None, "malformed single_order_history row")
+            return (None, None, None, "malformed single_order_history row", 0.0)
         chosen = None
         for row in valid_rows:
             st = str(row.get("status", "")).strip().lower()
@@ -813,6 +825,7 @@ class ShoonyaExecutionClient:
             _exact_int(chosen.get("fillshares")),
             _exact_int(chosen.get("qty")),
             str(chosen.get("rejreason", "")).strip(),
+            _positive_price(chosen.get("avgprc")),
         )
 
     def get_order_status(
@@ -825,7 +838,9 @@ class ShoonyaExecutionClient:
         requested = _exact_int(requested_quantity)
         if requested is None or requested < 0:
             requested = 0
-        state, filled, broker_qty, reason = self._order_status(str(order_id))
+        state, filled, broker_qty, reason, average_fill_price = self._order_status(
+            str(order_id)
+        )
         effective_requested = requested or broker_qty or 0
         if requested and broker_qty not in {None, requested}:
             return normalize_order_result(
@@ -844,6 +859,7 @@ class ShoonyaExecutionClient:
             filled_quantity=filled,
             broker_state=state or "",
             reason=reason,
+            average_fill_price=average_fill_price,
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
@@ -891,6 +907,7 @@ class ShoonyaExecutionClient:
                 f"Shoonya order {order_id} was not terminal within "
                 f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
             ),
+            average_fill_price=last_result.average_fill_price,
         )
 
     def cancel_order(

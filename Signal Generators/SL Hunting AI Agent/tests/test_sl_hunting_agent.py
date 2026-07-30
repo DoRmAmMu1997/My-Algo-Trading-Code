@@ -618,6 +618,54 @@ def test_do_order_rejects_placeholder_reason_on_entry():
     assert ex.snapshot()["in_position"] is True
 
 
+def test_do_order_sanitises_rather_than_rejects_verbose_entry_reasons():
+    """Length and control characters are TRIMMED on entry, never bounced.
+
+    Rejecting on length would cost an SDK round-trip inside a one-minute bar on
+    essentially every trade: measured on the shipped journal, 38 of 39
+    model-written reasons run past 120 characters (median 300). Only a reason
+    that says NOTHING is grounds for refusal -- see the placeholder test below.
+    """
+    from sl_hunting_tools import MAX_REASON_CHARS
+
+    ex = StandaloneExecutor()
+    price = SLHuntingToolContext.build(_candles(), ex).last_price
+    for reason, expected in (
+        ("pivot bounce\nwith confirmation", "pivot bounce with confirmation"),
+        ("pivot bounce\twith confirmation", "pivot bounce with confirmation"),
+        ("x" * (MAX_REASON_CHARS + 50), "x" * MAX_REASON_CHARS),
+    ):
+        ex = StandaloneExecutor()
+        ctx = SLHuntingToolContext.build(_candles(), ex)
+        result = ctx.do_order(
+            "ENTER_LONG",
+            stop=price - 30,
+            target=price + 60,
+            reason=reason,
+        )
+        assert result["accepted"] is True, reason
+        # What was RECORDED is the sanitised one-liner, not the raw input.
+        assert ex.pos.reason == expected
+
+
+def test_a_realistic_model_reason_is_accepted_unchanged():
+    """Regression guard for the 120-char cap that would have bounced real traffic."""
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    realistic = (
+        "NIFTY formed a double top at ~24039 after the opening gap-fill spike, with a "
+        "confirmed shooting star trapping breakout buyers; price then failed to reclaim "
+        "the 50% fibo and is rolling over, with BankNIFTY corroborating below its pivot."
+    )
+    assert len(realistic) > 120
+    result = ctx.do_order(
+        "ENTER_LONG", stop=price - 30, target=price + 60, reason=realistic
+    )
+    assert result["accepted"] is True
+    assert ex.pos.reason == realistic
+
+
 def test_do_order_never_rejects_an_exit_for_a_bad_reason():
     """An exit must always be available -- blocking it would strand a position."""
     ex = StandaloneExecutor()
@@ -644,14 +692,47 @@ def test_do_order_preserves_a_real_exit_reason_verbatim():
     ctx = SLHuntingToolContext.build(_candles(), ex)
     price = ctx.last_price
     ctx.do_order("ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce confirmed")
-    real = (
-        "Long thesis stalling: price failed repeatedly to exceed the swing high and "
-        "market_structure flipped to a downtrend; booking before the give-back."
-    )
+    real = "Long thesis stalled below the swing high; market structure flipped down."
     exit_ctx = SLHuntingToolContext.build(_candles(), ex)
     out = exit_ctx.do_order("EXIT", stop=0.0, target=0.0, reason=real)
     assert out["accepted"] is True
     assert ex.closed_trades[-1]["exit_reason"] == real
+
+
+def test_do_order_sanitizes_and_truncates_exit_reason_without_blocking():
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    price = ctx.last_price
+    assert ctx.do_order(
+        "ENTER_LONG",
+        stop=price - 30,
+        target=price + 60,
+        reason="pivot bounce with confirmation",
+    )["accepted"] is True
+
+    from sl_hunting_tools import MAX_REASON_CHARS
+
+    raw = "Premise failed\n" + ("x" * (MAX_REASON_CHARS + 100))
+    result = SLHuntingToolContext.build(_candles(), ex).do_order(
+        "EXIT", stop=0.0, target=0.0, reason=raw
+    )
+
+    assert result["accepted"] is True
+    recorded = ex.closed_trades[-1]["exit_reason"]
+    assert "\n" not in recorded
+    assert len(recorded) == MAX_REASON_CHARS
+
+
+def test_reason_bound_has_exactly_one_definition():
+    """The tool and the executor must never disagree about what was recorded.
+
+    They trim the same string in two places; if the two caps drift, the tool
+    reports one width while the journal keeps another.
+    """
+    from sl_hunting_executor import MAX_ORDER_REASON_CHARS
+    from sl_hunting_tools import MAX_REASON_CHARS
+
+    assert MAX_REASON_CHARS is MAX_ORDER_REASON_CHARS
 
 
 def test_order_tool_description_tells_the_model_the_reason_is_permanent():

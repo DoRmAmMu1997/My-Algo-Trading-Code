@@ -40,7 +40,11 @@ from enum import StrEnum
 from typing import Any
 
 import pandas as pd
-from sl_hunting_executor import TradeExecutor, execution_tool_name
+from sl_hunting_executor import (
+    MAX_ORDER_REASON_CHARS,
+    TradeExecutor,
+    execution_tool_name,
+)
 from sl_hunting_indicators import (
     SLHuntingIndicatorConfig,
     candle_patterns,
@@ -94,6 +98,10 @@ def _entry_levels_error(direction: str, stop: float, target: float, price: float
 # blemish. Four of the first 46 journal rows recorded "placeholder" (or "placeholder
 # - will not call, holding") as the permanent reason for a real trade.
 MIN_REASON_CHARS = 12
+# One bound, defined next to the executor that ultimately records the string.
+# Importing it (rather than repeating the number) keeps the tool's trimming and the
+# executor's trimming from ever disagreeing about what was written down.
+MAX_REASON_CHARS = MAX_ORDER_REASON_CHARS
 _PLACEHOLDER_REASONS = frozenset(
     {"placeholder", "n/a", "na", "tbd", "none", "-", "test", "todo", "reason", "exit", "entry"}
 )
@@ -119,9 +127,11 @@ def order_tool_description(venue: str) -> str:
         "trade journal, the log and the operator's alert, and it is what the reflection "
         "coach reads later to work out what worked. The reasoning in your final JSON is "
         "NOT saved there, so this is your only chance to say why you acted. Give a real "
-        "one-line justification naming the setup and the trigger -- a placeholder or an "
-        "empty string is REJECTED on entries, and on an exit it is replaced by a sentinel "
-        "recording that you supplied nothing. exit_leg (EXIT only) is NIFTY, BNF or BOTH "
+        f"one-line justification naming the setup and the trigger; it is trimmed to "
+        f"{MAX_REASON_CHARS} printable characters, so put the point FIRST. A placeholder "
+        "or an empty string is REJECTED on entries (resend a real one), and on an exit it "
+        "is replaced by a sentinel recording that you supplied nothing. "
+        "exit_leg (EXIT only) is NIFTY, BNF or BOTH "
         "(default BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, "
         "and you may cut ONE leg on premise-invalidation while the other runs — but hard "
         "risk (stop/target/max-loss/square-off) always closes both. Returns whether "
@@ -129,9 +139,30 @@ def order_tool_description(venue: str) -> str:
     )
 
 
-def _reason_problem(reason: str) -> str | None:
-    """Explain why this justification is unusable as a permanent record, else None."""
-    cleaned = str(reason or "").strip()
+def _printable_one_line(reason: str) -> str:
+    """Collapse any input to one printable, whitespace-normalised line.
+
+    Control characters become spaces rather than surviving into the journal, the
+    log or an operator's Telegram alert, where they could reflow or colour text.
+    """
+
+    raw = "".join(char if char.isprintable() else " " for char in str(reason or ""))
+    return " ".join(raw.split())
+
+
+def _reason_meaning_problem(reason: str) -> str | None:
+    """Explain why this justification says NOTHING, else None.
+
+    Deliberately separate from length. A blank, placeholder or two-word reason is
+    a defect the model must FIX, so entries are rejected and it gets to retry
+    within the same pass. Being verbose is not a defect of meaning -- it is
+    trimmed (see `bounded_reason`), never bounced. Measured on the shipped
+    journal, 38 of 39 model-written reasons ran past 120 characters, so rejecting
+    on length would have cost an extra SDK round-trip on essentially every entry
+    inside a one-minute bar.
+    """
+
+    cleaned = _printable_one_line(reason)
     if not cleaned:
         return "reason must not be blank"
     if cleaned.lower().rstrip(".") in _PLACEHOLDER_REASONS:
@@ -141,6 +172,40 @@ def _reason_problem(reason: str) -> str | None:
     if len(cleaned) < MIN_REASON_CHARS:
         return f"reason is too short to be a justification (min {MIN_REASON_CHARS} characters)"
     return None
+
+
+def bounded_reason(reason: str) -> str:
+    """The exact string that will be recorded: printable, one line, length-capped."""
+
+    return _printable_one_line(reason)[:MAX_REASON_CHARS].strip()
+
+
+def _reason_problem(reason: str) -> str | None:
+    """Every way a reason can be unusable, including length.
+
+    Retained for callers that want the strict question ("is this string already
+    fit to record verbatim?"). The order path does NOT gate entries on this --
+    see `_reason_meaning_problem`.
+    """
+
+    meaning = _reason_meaning_problem(reason)
+    if meaning is not None:
+        return meaning
+    cleaned = str(reason or "").strip()
+    if len(cleaned) > MAX_REASON_CHARS:
+        return f"reason must be at most {MAX_REASON_CHARS} characters"
+    if any(not char.isprintable() for char in cleaned):
+        return "reason must be one printable line"
+    return None
+
+
+def _safe_exit_reason(reason: str) -> str:
+    """Return a bounded printable exit record without ever blocking the exit."""
+
+    cleaned = bounded_reason(reason)
+    if _reason_meaning_problem(cleaned) is not None:
+        return NO_REASON_SENTINEL
+    return cleaned
 
 # Read-only context tools are always present; the action tool's name is decided at
 # build time by the environment, so it is appended in `build_sl_hunting_mcp_server`.
@@ -347,8 +412,11 @@ class SLHuntingToolContext:
                 return {"accepted": False, "reason": f"invalid entry levels: {problem}"}
             # SLH-007: an ENTRY may be refused so the model rewrites its justification
             # within the same pass -- exactly how the levels check above works. Nothing
-            # is at risk yet, because no position exists.
-            reason_problem = _reason_problem(reason)
+            # is at risk yet, because no position exists. Only MEANING is grounds for
+            # refusal; an over-long or non-printable reason is trimmed rather than
+            # bounced, because bouncing it would cost an SDK round-trip on nearly
+            # every entry without protecting anything.
+            reason_problem = _reason_meaning_problem(reason)
             if reason_problem:
                 return {
                     "accepted": False,
@@ -358,8 +426,11 @@ class SLHuntingToolContext:
                         "with a one-line justification naming the setup and why you are acting."
                     ),
                 }
+            entry_reason = bounded_reason(reason)
             def executor_call() -> dict[str, Any]:
-                return self.executor.enter(direction, stop, target, reason, self.last_price)
+                return self.executor.enter(
+                    direction, stop, target, entry_reason, self.last_price
+                )
         elif action == "EXIT":
             leg = (exit_leg or "BOTH").strip().upper()
             if leg not in ("NIFTY", "BNF", "BOTH"):
@@ -368,7 +439,7 @@ class SLHuntingToolContext:
             # strand an open position -- the one thing the risk rules forbid. Record an
             # explicit sentinel instead, so the journal and the coach are told plainly
             # that no justification was given rather than being handed a lie.
-            exit_reason = NO_REASON_SENTINEL if _reason_problem(reason) else str(reason).strip()
+            exit_reason = _safe_exit_reason(reason)
             def executor_call() -> dict[str, Any]:
                 return self.executor.exit(exit_reason, self.last_price, leg=leg)
         else:

@@ -91,10 +91,11 @@ def make_entry_record(
     nifty_df: pd.DataFrame,
     bnf_df: pd.DataFrame | None = None,
     cfg: SLHuntingIndicatorConfig | None = None,
+    entry_price_quality: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the ENTRY half of a journal row (shared by worker + runner)."""
     ctx = build_entry_context(nifty_df, bnf_df, cfg)
-    return {
+    record = {
         "direction": direction,
         "setup": setup,
         "confidence": confidence,
@@ -106,6 +107,9 @@ def make_entry_record(
         "context": ctx,
         "followed_method": followed_method(ctx, direction),
     }
+    if entry_price_quality is not None:
+        record["entry_price_quality"] = str(entry_price_quality)
+    return record
 
 
 def resolve_entry_narrative(

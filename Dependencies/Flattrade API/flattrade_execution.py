@@ -132,6 +132,18 @@ def _exact_int(value: Any) -> int | None:
     return int(number)
 
 
+def _positive_price(value: Any) -> float:
+    """Return Flattrade's documented ``avgprc`` value, or zero if unavailable."""
+
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
+
+
 def _is_no_data_envelope(value: Any) -> bool:
     """Recognize only Flattrade's exact, determinate empty-book response."""
 
@@ -978,8 +990,8 @@ class FlattradeExecutionClient:
     def _order_status(
         self,
         order_id: str,
-    ) -> tuple[str | None, int | None, int | None, str]:
-        """Return normalized state, filled qty, order qty, and rejection reason."""
+    ) -> tuple[str | None, int | None, int | None, str, float]:
+        """Return state, quantities, reason, and documented average traded price."""
         response = self._post_api(
             "SingleOrdHist",
             {"uid": self._client_id, "norenordno": str(order_id)},
@@ -998,12 +1010,13 @@ class FlattradeExecutionClient:
                 _exact_int(row.get("fillshares")),
                 _exact_int(row.get("qty")),
                 str(row.get("rejreason") or row.get("emsg") or "").strip(),
+                _positive_price(row.get("avgprc")),
             )
         reason = (
             response.get("emsg", "unrecognised response")
             if isinstance(response, dict) else "unrecognised response"
         )
-        return (None, None, None, str(reason))
+        return (None, None, None, str(reason), 0.0)
 
     def get_order_status(
         self,
@@ -1019,7 +1032,9 @@ class FlattradeExecutionClient:
         if requested is None or requested < 0:
             requested = 0
         try:
-            state, filled, broker_qty, reason = self._order_status(str(order_id))
+            state, filled, broker_qty, reason, average_fill_price = (
+                self._order_status(str(order_id))
+            )
         except Exception as exc:
             return normalize_order_result(
                 order_id=order_id,
@@ -1047,6 +1062,7 @@ class FlattradeExecutionClient:
             filled_quantity=filled,
             broker_state=state or "",
             reason=reason,
+            average_fill_price=average_fill_price,
         )
 
     def _confirm_fill(self, order_id: str, want_qty: int) -> OrderResult:
@@ -1092,6 +1108,7 @@ class FlattradeExecutionClient:
                 f"Flattrade order {order_id} was not terminal within "
                 f"{_FILL_TIMEOUT_SECONDS:.0f}s; exposure is indeterminate."
             ),
+            average_fill_price=last_result.average_fill_price,
         )
 
     def cancel_order(

@@ -44,7 +44,11 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from sl_hunting_ai_validation import StrictAIModel
 from sl_hunting_executor import TradeExecutor
 from sl_hunting_indicators import SLHuntingIndicatorConfig, prepare_candles
-from sl_hunting_knowledge import FINAL_OUTPUT_INSTRUCTION, build_system_prompt
+from sl_hunting_knowledge import (
+    FINAL_OUTPUT_INSTRUCTION,
+    MAX_SYSTEM_PROMPT_CHARS,
+    build_system_prompt,
+)
 from sl_hunting_tools import SLHuntingToolContext, build_sl_hunting_mcp_server
 
 logger = logging.getLogger(__name__)
@@ -344,6 +348,10 @@ class SLHuntingAgent:
         self._system_prompt = (
             build_system_prompt() + learned + premarket + FINAL_OUTPUT_INSTRUCTION
         )
+        if len(self._system_prompt) > MAX_SYSTEM_PROMPT_CHARS:
+            raise ValueError(
+                f"SL Hunting system prompt exceeds {MAX_SYSTEM_PROMPT_CHARS} characters"
+            )
         # SLH-003: cache for the system-prompt temp FILE handed to the SDK by
         # `_default_run` (written once per unique text, reused every bar) — see
         # `_system_prompt_as_file` for why a string system prompt cannot be used.

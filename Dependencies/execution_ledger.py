@@ -10,6 +10,7 @@ silently disappear or be counted twice.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import threading
 from dataclasses import dataclass
@@ -124,6 +125,7 @@ class OrderAttempt:
     broker_state: str = "SUBMITTING"
     reason: str = "Order submission has started; final outcome is unknown."
     terminal: bool = False
+    average_fill_price: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +177,33 @@ class LiveLegState:
     latest_attempt: OrderAttempt | None = None
     attempt_count: int = 0
     closing_started: bool = False
+    entry_priced_quantity: int = 0
+    entry_fill_notional: float = 0.0
+    close_priced_quantity: int = 0
+    close_fill_notional: float = 0.0
+
+    @property
+    def entry_average_fill_price(self) -> float:
+        """Weighted broker entry price, or zero until every entry fill is priced."""
+
+        if (
+            self.filled_quantity <= 0
+            or self.entry_priced_quantity != self.filled_quantity
+        ):
+            return 0.0
+        return self.entry_fill_notional / self.filled_quantity
+
+    @property
+    def close_average_fill_price(self) -> float:
+        """Weighted broker close price, or zero until every close fill is priced."""
+
+        closed_quantity = self.filled_quantity - self.confirmed_live_quantity
+        if (
+            closed_quantity <= 0
+            or self.close_priced_quantity != closed_quantity
+        ):
+            return 0.0
+        return self.close_fill_notional / closed_quantity
 
     @property
     def latest_attempt_handle(self) -> OrderAttemptHandle | None:
@@ -285,6 +314,9 @@ class _MutableOrderAttempt:
     broker_state: str = "SUBMITTING"
     reason: str = "Order submission has started; final outcome is unknown."
     terminal: bool = False
+    average_fill_price: float = 0.0
+    priced_quantity: int = 0
+    fill_notional: float = 0.0
 
 
 @dataclass(slots=True)
@@ -301,6 +333,10 @@ class _MutableLiveLeg:
     latest_attempt: _MutableOrderAttempt | None = None
     attempt_count: int = 0
     closing_started: bool = False
+    entry_priced_quantity: int = 0
+    entry_fill_notional: float = 0.0
+    close_priced_quantity: int = 0
+    close_fill_notional: float = 0.0
 
 
 def build_order_tag(
@@ -381,6 +417,7 @@ class ExecutionLedger:
             broker_state=attempt.broker_state,
             reason=attempt.reason,
             terminal=attempt.terminal,
+            average_fill_price=attempt.average_fill_price,
         )
 
     @classmethod
@@ -399,6 +436,10 @@ class ExecutionLedger:
             latest_attempt=(cls._snapshot_attempt(attempt) if attempt is not None else None),
             attempt_count=leg.attempt_count,
             closing_started=leg.closing_started,
+            entry_priced_quantity=leg.entry_priced_quantity,
+            entry_fill_notional=leg.entry_fill_notional,
+            close_priced_quantity=leg.close_priced_quantity,
+            close_fill_notional=leg.close_fill_notional,
         )
 
     @classmethod
@@ -557,15 +598,78 @@ class ExecutionLedger:
                 result.status is OrderStatus.PARTIAL
                 and broker_state in _TERMINAL_BROKER_STATES
             )
-            if (
+            weaker_than_terminal = (
                 attempt.terminal
                 and not terminal
                 and result.filled_quantity == attempt.filled_quantity
+            )
+
+            old_priced_quantity = attempt.priced_quantity
+            old_fill_notional = attempt.fill_notional
+            new_priced_quantity = old_priced_quantity
+            new_fill_notional = old_fill_notional
+            if result.filled_quantity > 0 and result.average_fill_price > 0:
+                new_priced_quantity = result.filled_quantity
+                new_fill_notional = (
+                    result.filled_quantity * result.average_fill_price
+                )
+                if not math.isfinite(new_fill_notional):
+                    raise ValueError("broker cumulative fill notional must be finite")
+                if (
+                    old_priced_quantity == attempt.filled_quantity
+                    and new_priced_quantity >= old_priced_quantity
+                    and new_fill_notional + 1e-9 < old_fill_notional
+                ):
+                    raise ValueError(
+                        "broker cumulative fill notional moved backwards"
+                    )
+
+            priced_quantity_delta = (
+                new_priced_quantity - old_priced_quantity
+            )
+            fill_notional_delta = new_fill_notional - old_fill_notional
+            if attempt.intent is OrderIntent.OPEN:
+                new_entry_priced_quantity = (
+                    leg.entry_priced_quantity + priced_quantity_delta
+                )
+                new_entry_fill_notional = (
+                    leg.entry_fill_notional + fill_notional_delta
+                )
+                new_close_priced_quantity = leg.close_priced_quantity
+                new_close_fill_notional = leg.close_fill_notional
+            else:
+                new_entry_priced_quantity = leg.entry_priced_quantity
+                new_entry_fill_notional = leg.entry_fill_notional
+                new_close_priced_quantity = (
+                    leg.close_priced_quantity + priced_quantity_delta
+                )
+                new_close_fill_notional = (
+                    leg.close_fill_notional + fill_notional_delta
+                )
+            if (
+                new_entry_priced_quantity < 0
+                or new_close_priced_quantity < 0
+                or new_entry_fill_notional < 0
+                or new_close_fill_notional < 0
             ):
-                # Broker/status probes can arrive out of order.  Equal-fill
-                # non-terminal evidence is strictly weaker than a terminal
-                # snapshot already applied to this attempt, so it cannot reopen
-                # uncertainty or undo an entry/flat decision.
+                raise ValueError("broker fill-price evidence became negative")
+
+            # Broker/status probes can arrive out of order. Equal-fill
+            # non-terminal evidence is weaker than a terminal snapshot, so it
+            # cannot reopen quantity uncertainty. It may still add a previously
+            # missing broker price for those already-confirmed fills.
+            if weaker_than_terminal:
+                attempt.priced_quantity = new_priced_quantity
+                attempt.fill_notional = new_fill_notional
+                if (
+                    result.average_fill_price > 0
+                    and new_priced_quantity == result.filled_quantity
+                ):
+                    attempt.average_fill_price = result.average_fill_price
+                leg.entry_priced_quantity = new_entry_priced_quantity
+                leg.entry_fill_notional = new_entry_fill_notional
+                leg.close_priced_quantity = new_close_priced_quantity
+                leg.close_fill_notional = new_close_fill_notional
                 return self._snapshot_leg(leg)
             # The DELTA is what this snapshot newly proves: cumulative report
             # minus what this attempt had already been credited.  Applying
@@ -596,6 +700,10 @@ class ExecutionLedger:
             leg.filled_quantity = new_entry_filled
             leg.remaining_quantity = new_entry_remaining
             leg.confirmed_live_quantity = new_live_quantity
+            leg.entry_priced_quantity = new_entry_priced_quantity
+            leg.entry_fill_notional = new_entry_fill_notional
+            leg.close_priced_quantity = new_close_priced_quantity
+            leg.close_fill_notional = new_close_fill_notional
             attempt.order_id = order_id
             attempt.filled_quantity = result.filled_quantity
             attempt.remaining_quantity = result.remaining_quantity
@@ -603,5 +711,12 @@ class ExecutionLedger:
             attempt.broker_state = broker_state
             attempt.reason = str(result.reason)
             attempt.terminal = terminal
+            attempt.priced_quantity = new_priced_quantity
+            attempt.fill_notional = new_fill_notional
+            if (
+                result.average_fill_price > 0
+                and new_priced_quantity == result.filled_quantity
+            ):
+                attempt.average_fill_price = result.average_fill_price
             leg.exposure_indeterminate = not terminal
             return self._snapshot_leg(leg)

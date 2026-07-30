@@ -27,6 +27,7 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from sl_hunting_ai_validation import StrictAIModel
 
 logger = logging.getLogger(__name__)
+MAX_LESSONS_FILE_CHARS = 256 * 1024
 
 # Cap how many APPROVED lessons are injected into the prompt (keep it bounded).
 MAX_LIVE_LESSONS = 12
@@ -289,7 +290,15 @@ def load_lessons(path: str) -> list[dict[str, Any]]:
         return []
     try:
         with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+            raw = f.read(MAX_LESSONS_FILE_CHARS + 1)
+        if len(raw) > MAX_LESSONS_FILE_CHARS:
+            logger.warning(
+                "Lessons file %s exceeds the %d-character input limit; ignoring it.",
+                path,
+                MAX_LESSONS_FILE_CHARS,
+            )
+            return []
+        data = json.loads(raw)
         if not isinstance(data, list):
             logger.warning("Lessons file %s must contain a JSON list; ignoring it.", path)
             return []

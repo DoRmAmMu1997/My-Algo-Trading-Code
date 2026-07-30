@@ -45,6 +45,7 @@ def _result(
     filled: int,
     status: OrderStatus,
     broker_state: str,
+    average_fill_price: float = 0.0,
 ) -> OrderResult:
     return OrderResult(
         order_id=order_id,
@@ -54,6 +55,7 @@ def _result(
         status=status,
         broker_state=broker_state,
         reason=f"test {broker_state.lower()}",
+        average_fill_price=average_fill_price,
     )
 
 
@@ -143,6 +145,184 @@ def test_partial_open_applies_only_fill_deltas_then_retries_unfinished_quantity(
     assert first_attempt.order_tag != retry_attempt.order_tag
     assert first_attempt.sequence == 1
     assert retry_attempt.sequence == 2
+
+
+def test_fill_notional_is_weighted_across_status_updates_and_retries() -> None:
+    """The leg price represents every confirmed unit, not only the last order."""
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    first = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    leg = ledger.apply_result(
+        first,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=20,
+            status=OrderStatus.PARTIAL,
+            broker_state="PARTIAL",
+            average_fill_price=100.0,
+        ),
+    )
+    assert leg.entry_priced_quantity == 20
+    assert leg.entry_fill_notional == 2_000.0
+    assert leg.entry_average_fill_price == 100.0
+
+    leg = ledger.apply_result(
+        first,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=30,
+            status=OrderStatus.PARTIAL,
+            broker_state="CANCELLED",
+            average_fill_price=110.0,
+        ),
+    )
+    retry = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 20)
+    leg = ledger.apply_result(
+        retry,
+        _result(
+            order_id="OPEN-2",
+            requested=20,
+            filled=20,
+            status=OrderStatus.FILLED,
+            broker_state="COMPLETE",
+            average_fill_price=130.0,
+        ),
+    )
+
+    assert leg.entry_priced_quantity == 50
+    assert leg.entry_fill_notional == 5_900.0
+    assert leg.entry_average_fill_price == 118.0
+    assert leg.latest_attempt is not None
+    assert leg.latest_attempt.average_fill_price == 130.0
+
+    close_first = ledger.start_attempt(leg.exposure_id, OrderIntent.CLOSE, 50)
+    leg = ledger.apply_result(
+        close_first,
+        _result(
+            order_id="CLOSE-1",
+            requested=50,
+            filled=10,
+            status=OrderStatus.PARTIAL,
+            broker_state="CANCELLED",
+            average_fill_price=150.0,
+        ),
+    )
+    close_retry = ledger.start_attempt(leg.exposure_id, OrderIntent.CLOSE, 40)
+    leg = ledger.apply_result(
+        close_retry,
+        _result(
+            order_id="CLOSE-2",
+            requested=40,
+            filled=40,
+            status=OrderStatus.FILLED,
+            broker_state="COMPLETE",
+            average_fill_price=140.0,
+        ),
+    )
+
+    assert leg.close_priced_quantity == 50
+    assert leg.close_fill_notional == 7_100.0
+    assert leg.close_average_fill_price == 142.0
+
+
+def test_later_cumulative_price_can_upgrade_previously_unpriced_fills() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    attempt = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    leg = ledger.apply_result(
+        attempt,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=20,
+            status=OrderStatus.PARTIAL,
+            broker_state="PARTIAL",
+        ),
+    )
+    assert leg.entry_priced_quantity == 0
+    assert leg.entry_average_fill_price == 0.0
+
+    leg = ledger.apply_result(
+        attempt,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=20,
+            status=OrderStatus.PARTIAL,
+            broker_state="CANCELLED",
+            average_fill_price=101.5,
+        ),
+    )
+    assert leg.entry_priced_quantity == 20
+    assert leg.entry_fill_notional == 2_030.0
+    assert leg.entry_average_fill_price == 101.5
+
+
+def test_impossible_cumulative_fill_notional_is_rejected_atomically() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    attempt = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    leg = ledger.apply_result(
+        attempt,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=20,
+            status=OrderStatus.PARTIAL,
+            broker_state="PARTIAL",
+            average_fill_price=200.0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cumulative fill notional moved backwards"):
+        ledger.apply_result(
+            attempt,
+            _result(
+                order_id="OPEN-1",
+                requested=50,
+                filled=30,
+                status=OrderStatus.PARTIAL,
+                broker_state="PARTIAL",
+                average_fill_price=100.0,
+            ),
+        )
+
+    unchanged = ledger.get(leg.exposure_id)
+    assert unchanged.confirmed_live_quantity == 20
+    assert unchanged.entry_fill_notional == 4_000.0
+    assert unchanged.entry_priced_quantity == 20
+
+
+def test_equal_quantity_cumulative_notional_cannot_regress() -> None:
+    ledger = ExecutionLedger()
+    leg = ledger.register(_spec())
+    attempt = ledger.start_attempt(leg.exposure_id, OrderIntent.OPEN, 50)
+    ledger.apply_result(
+        attempt,
+        _result(
+            order_id="OPEN-1",
+            requested=50,
+            filled=20,
+            status=OrderStatus.PARTIAL,
+            broker_state="PARTIAL",
+            average_fill_price=200.0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cumulative fill notional moved backwards"):
+        ledger.apply_result(
+            attempt,
+            _result(
+                order_id="OPEN-1",
+                requested=50,
+                filled=20,
+                status=OrderStatus.PARTIAL,
+                broker_state="CANCELLED",
+                average_fill_price=199.0,
+            ),
+        )
 
 
 def test_partial_close_never_resubmits_original_quantity() -> None:

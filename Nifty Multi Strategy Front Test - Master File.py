@@ -564,6 +564,14 @@ WS_CONN_LIVENESS_SECONDS = _env_float("WS_CONN_LIVENESS_SECONDS", 5.0)
 # response parked the websocket producer for 59-73s at a time.
 MARKET_DATA_HTTP_TIMEOUT_SECONDS = _env_float("MARKET_DATA_HTTP_TIMEOUT_SECONDS", 10.0)
 
+# How old a cached option LTP may be and still be used to BOOK a trade at.
+# Reads that only need a rough mark are unaffected; this bounds the price that
+# becomes the recorded entry. One minute: a leg that has not printed for longer
+# than that is not a price you can honestly enter on. (2026-07-30: a snapshot
+# left behind by an earlier trade on the same strike was reused ~24 minutes
+# later and recorded an entry at 112.55 against a real fill of 125.00.)
+MARKET_DATA_MAX_LTP_AGE_SECONDS = _env_float("MARKET_DATA_MAX_LTP_AGE_SECONDS", 60.0)
+
 # Bounded join timeout for each thread on shutdown.
 SHUTDOWN_JOIN_SECONDS = _env_float("SHUTDOWN_JOIN_SECONDS", 6.0)
 
@@ -1696,6 +1704,16 @@ class MarketSnapshot:
     fetched_at: datetime
 
 
+PRICE_QUALITY_BROKER_FILL = "BROKER_FILL"
+PRICE_QUALITY_PAPER_FRESH_MARK = "PAPER_FRESH_MARK"
+PRICE_QUALITY_MARK_FALLBACK = "MARK_FALLBACK"
+PRICE_QUALITY_STALE_MARK = "STALE_MARK"
+PRICE_QUALITY_UNKNOWN = "UNKNOWN"
+COACH_ELIGIBLE_PRICE_QUALITIES = frozenset(
+    {PRICE_QUALITY_BROKER_FILL, PRICE_QUALITY_PAPER_FRESH_MARK}
+)
+
+
 @dataclass
 class PaperPosition:
     """
@@ -1730,6 +1748,8 @@ class PaperPosition:
     bars_in_trade: int = 0
     # Actual paper-fill price on the option leg (used for PnL).
     entry_trade_price: float = 0.0
+    entry_price_quality: str = "UNKNOWN"
+    exit_price_quality: str = "UNKNOWN"
     # Option-leg metadata, locked at entry and reused on exit.
     option_security_id: int = 0
     option_exchange_segment: str = ""
@@ -1786,6 +1806,7 @@ class HedgedPaperPosition:
     main_lot_size: int = 0
     main_quantity: int = 0
     main_entry_price: float = 0.0
+    main_entry_price_quality: str = "UNKNOWN"
     main_entry_order_id: str = ""
 
     # -- Hedge leg (BUY PE for bullish, BUY CE for bearish) -----------------
@@ -1799,6 +1820,7 @@ class HedgedPaperPosition:
     hedge_lot_size: int = 0
     hedge_quantity: int = 0
     hedge_entry_price: float = 0.0
+    hedge_entry_price_quality: str = "UNKNOWN"
     hedge_entry_order_id: str = ""
 
     # Per-leg immutable snapshots.  One leg may be flat while the other still
@@ -1958,6 +1980,10 @@ class SharedMarketDataStore:
         self._snapshots: dict[str, MarketSnapshot] = {}
         self._ltp_snapshots: dict[tuple[str, int], LTPSnapshot] = {}
         self._option_subscriptions: dict[tuple[str, int], OptionSubscription] = {}
+        # A physical quote is shared by every worker holding the same contract.
+        # Track logical owners separately so one worker's exit cannot tear down
+        # another worker's still-open market-data leg.
+        self._option_subscription_owners: dict[tuple[str, int], set[str]] = {}
         self.market_data_health = MarketDataHealth()
         self.execution_safety = ExecutionSafetyCoordinator()
         # The execution ledger is separate from market-data snapshots because it
@@ -2069,6 +2095,8 @@ class SharedMarketDataStore:
         segment: str,
         security_id: int,
         fallback: float = 0.0,
+        *,
+        max_age_seconds: float | None = None,
     ) -> float:
         """
         Read the newest cached LTP for one (segment, security_id) pair.
@@ -2076,28 +2104,92 @@ class SharedMarketDataStore:
         This method NEVER calls the broker; it just returns whatever the
         fetcher has already cached, falling back to `fallback` when nothing
         positive is available yet.
+
+        `max_age_seconds` bounds how old that cached price may be. The default
+        (None) keeps the historical behaviour -- any positive price, at any age.
+        Callers that are about to BOOK a trade at this price pass a bound,
+        because a mark is only worth what its age allows: on 2026-07-30 a
+        snapshot left behind by an earlier trade on the SAME strike was returned
+        ~24 minutes later and recorded a NIFTY entry at 112.55 against a real
+        fill of 125.00. A leg that is no longer subscribed stops being
+        re-stamped by `touch_ltp_freshness`, so age is a true signal here.
         """
         key = (str(segment), int(security_id))
+        if max_age_seconds is not None:
+            try:
+                maximum_age = float(max_age_seconds)
+            except (TypeError, ValueError):
+                return float(fallback)
+            if not math.isfinite(maximum_age) or maximum_age <= 0:
+                return float(fallback)
+        else:
+            maximum_age = None
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         with self._lock:
             snapshot = self._ltp_snapshots.get(key)
             if snapshot is not None and snapshot.ltp > 0:
-                return snapshot.ltp
+                if maximum_age is None:
+                    return snapshot.ltp
+                age_seconds = (now - snapshot.fetched_at).total_seconds()
+                if 0 <= age_seconds <= maximum_age:
+                    return snapshot.ltp
         return float(fallback)
 
     # ------------------------------------------------------------------
     # Option-leg subscription pool
     # ------------------------------------------------------------------
-    def register_option_subscription(self, subscription: OptionSubscription) -> None:
-        """Tell the fetcher to keep polling LTP for this option leg."""
+    def register_option_subscription(
+        self,
+        subscription: OptionSubscription,
+        *,
+        owner_id: str,
+    ) -> bool:
+        """Tell the fetcher to keep polling LTP for this option leg.
+
+        Returns True when this owner acquired the leg, False when the same owner
+        already held it. Different workers may share one physical subscription;
+        releasing one owner never removes the feed or snapshot for the others.
+        """
+        normalized_owner = str(owner_id).strip()
+        if not normalized_owner:
+            raise ValueError("option subscription owner_id must not be blank")
         key = (str(subscription.exchange_segment), int(subscription.security_id))
         with self._lock:
+            owners = self._option_subscription_owners.setdefault(key, set())
+            newly_owned = normalized_owner not in owners
+            owners.add(normalized_owner)
             self._option_subscriptions[key] = subscription
+            return newly_owned
 
-    def unregister_option_subscription(self, segment: str, security_id: int) -> None:
-        """Drop a leg once a paper trade has been closed."""
+    def unregister_option_subscription(
+        self,
+        segment: str,
+        security_id: int,
+        *,
+        owner_id: str,
+    ) -> None:
+        """Release one owner's leg and evict it after the final owner leaves.
+
+        The cached LTP goes with it. Leaving the snapshot behind is what made a
+        closed leg's last price look usable to the next trade on the same strike
+        (2026-07-30): the subscription stopped, so nothing refreshed it, but
+        `get_ltp_by_secid` still handed it out. Every caller already treats a
+        missing price as "fetch it directly", which is the correct behaviour.
+        """
+        normalized_owner = str(owner_id).strip()
+        if not normalized_owner:
+            raise ValueError("option subscription owner_id must not be blank")
         key = (str(segment), int(security_id))
         with self._lock:
+            owners = self._option_subscription_owners.get(key)
+            if owners is None:
+                return
+            owners.discard(normalized_owner)
+            if owners:
+                return
+            self._option_subscription_owners.pop(key, None)
             self._option_subscriptions.pop(key, None)
+            self._ltp_snapshots.pop(key, None)
 
     def snapshot_option_subscriptions(self) -> list[OptionSubscription]:
         """Return a list copy of all currently subscribed option legs."""
@@ -4436,6 +4528,7 @@ class BasePaperStrategyWorker(threading.Thread):
             status=attempt.status,
             broker_state=attempt.broker_state,
             reason=reason,
+            average_fill_price=attempt.average_fill_price,
         )
 
     def _refresh_live_leg_attempt(self, leg: dict) -> OrderResult | None:
@@ -5403,6 +5496,13 @@ class BasePaperStrategyWorker(threading.Thread):
             state = self.store.execution_ledger.get(state.exposure_id)
             leg["live_leg"] = state
             if state.broker_confirmed_flat:
+                subscription = leg.get("option_subscription")
+                if isinstance(subscription, OptionSubscription):
+                    self.store.unregister_option_subscription(
+                        subscription.exchange_segment,
+                        subscription.security_id,
+                        owner_id=self._execution_owner_id,
+                    )
                 continue
             if state.spec.role == "H":
                 # A protective long hedge is the last leg of a short-option
@@ -5433,6 +5533,13 @@ class BasePaperStrategyWorker(threading.Thread):
                 self.log.error("Orphan unwind retry raised unexpectedly: %s", exc)
             state = leg.get("live_leg")
             if isinstance(state, LiveLegState) and state.broker_confirmed_flat:
+                subscription = leg.get("option_subscription")
+                if isinstance(subscription, OptionSubscription):
+                    self.store.unregister_option_subscription(
+                        subscription.exchange_segment,
+                        subscription.security_id,
+                        owner_id=self._execution_owner_id,
+                    )
                 self.log.warning(
                     "Orphaned live leg RECOVERED (%s to close) | %s strike=%s qty=%s",
                     close_side,
@@ -5525,6 +5632,118 @@ class BasePaperStrategyWorker(threading.Thread):
         """
         self.paper_order_counter += 1
         return f"PAPER-{side}-{datetime.now():%Y%m%d%H%M%S}-{self.paper_order_counter:04d}"
+
+    def _get_dealable_option_ltp(
+        self, segment: str, security_id: int
+    ) -> tuple[float, bool]:
+        """Return ``(price, is_fresh)`` for a mark we are about to TRADE on.
+
+        Unlike `_get_option_ltp`, a cached price is only accepted while it is
+        within `MARKET_DATA_MAX_LTP_AGE_SECONDS`. Anything older is treated as no
+        price at all and the broker is asked directly -- that answer is current by
+        construction. Only if BOTH fail does this fall back to the stale cached
+        value, and it says so via ``is_fresh=False`` rather than passing an old
+        number off as a mark. The caller decides what that means: paper can live
+        with it, real money cannot.
+        """
+        fresh = self.store.get_ltp_by_secid(
+            segment,
+            security_id,
+            fallback=0.0,
+            max_age_seconds=MARKET_DATA_MAX_LTP_AGE_SECONDS,
+        )
+        if fresh > 0:
+            return fresh, True
+
+        try:
+            ltp_map = self.broker.fetch_ltp_map({segment: [security_id]})
+        except Exception as exc:
+            self.log.warning(
+                "Direct LTP fetch failed for segment=%s security_id=%s: %s",
+                segment,
+                security_id,
+                exc,
+            )
+            ltp_map = {}
+        try:
+            price = _safe_float(ltp_map.get((str(segment), int(security_id)), 0.0), 0.0)
+        except (AttributeError, TypeError):
+            price = 0.0
+        if price > 0:
+            self.store.update_ltp_map({(str(segment), int(security_id)): price})
+            return price, True
+
+        # Neither a recent tick nor a live quote. Surface whatever is cached so
+        # the caller can decide, but never call it fresh.
+        return self.store.get_ltp_by_secid(segment, security_id, fallback=0.0), False
+
+    def _accounting_price(
+        self,
+        live_leg: LiveLegState | None,
+        mark_price: float,
+        *,
+        mark_is_fresh: bool,
+        phase: str,
+    ) -> tuple[float, str]:
+        """Choose a P&L price and expose the quality of its evidence.
+
+        Weighted broker fills are authoritative for live entry and close
+        accounting. If a broker omits the price, the best available mark keeps
+        risk-reducing exits operational but is explicitly approximate. Paper
+        trades retain fresh marks as coach-eligible evidence; stale paper marks
+        remain visible operationally but are excluded from learning.
+        """
+        mark = _safe_float(mark_price, 0.0)
+        if mark <= 0 or not math.isfinite(mark):
+            mark = 0.0
+
+        broker_price = 0.0
+        if isinstance(live_leg, LiveLegState):
+            if str(phase).upper() == "ENTRY":
+                broker_price = live_leg.entry_average_fill_price
+            elif str(phase).upper() == "EXIT":
+                broker_price = live_leg.close_average_fill_price
+            else:
+                raise ValueError("phase must be ENTRY or EXIT")
+        if broker_price > 0 and math.isfinite(broker_price):
+            if mark > 0 and abs(broker_price - mark) / mark > 0.02:
+                # Not an error -- just the divergence that makes the broker
+                # evidence necessary.
+                self.log.warning(
+                    "Live fill price %.2f differs from the local mark %.2f by %.1f%%; "
+                    "recording the BROKER price.",
+                    broker_price,
+                    mark,
+                    abs(broker_price - mark) / mark * 100.0,
+                )
+            return float(broker_price), PRICE_QUALITY_BROKER_FILL
+
+        if isinstance(live_leg, LiveLegState):
+            return mark, (
+                PRICE_QUALITY_MARK_FALLBACK if mark > 0 else PRICE_QUALITY_UNKNOWN
+            )
+        if mark <= 0:
+            return 0.0, PRICE_QUALITY_UNKNOWN
+        if mark_is_fresh:
+            return mark, PRICE_QUALITY_PAPER_FRESH_MARK
+        return mark, PRICE_QUALITY_STALE_MARK
+
+    def _entry_fill_price(self, order_result: object, ltp_price: float) -> float:
+        """Compatibility helper for older callers; prefer ledger evidence."""
+
+        broker_price = float(getattr(order_result, "average_fill_price", 0.0) or 0.0)
+        if broker_price <= 0 or not math.isfinite(broker_price):
+            return float(ltp_price)
+        if ltp_price > 0 and abs(broker_price - ltp_price) / ltp_price > 0.02:
+            # Not an error -- just the divergence that makes this fix necessary.
+            self.log.warning(
+                "Live fill price %.2f differs from the local LTP %.2f by %.1f%%; "
+                "recording the BROKER price.",
+                broker_price,
+                ltp_price,
+                abs(broker_price - ltp_price) / ltp_price * 100.0,
+            )
+        return broker_price
 
     def _get_option_ltp(self, segment: str, security_id: int, fallback: float) -> float:
         """
@@ -6236,7 +6455,36 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
             return False
 
-        option_ltp = self._get_option_ltp(option_segment, option_sec_id, fallback=0.0)
+        # Subscribe BEFORE pricing, so the leg is in the feed from the moment we
+        # commit to it rather than only after the order goes out. `owns_feed_leg`
+        # is True only when THIS entry added it -- a strike shared with another
+        # worker must never be unsubscribed by our abort path.
+        option_subscription = OptionSubscription(
+            security_id=option_sec_id,
+            exchange_segment=option_segment,
+            trading_symbol=trading_symbol,
+            right=option_right,
+            strike=option_strike,
+            expiry=expiry_date,
+        )
+        owns_feed_leg = self.store.register_option_subscription(
+            option_subscription,
+            owner_id=self._execution_owner_id,
+        )
+
+        def _abort_entry() -> bool:
+            """Withdraw a subscription this entry opened, then decline the trade."""
+            if owns_feed_leg:
+                self.store.unregister_option_subscription(
+                    option_segment,
+                    option_sec_id,
+                    owner_id=self._execution_owner_id,
+                )
+            return False
+
+        option_ltp, mark_is_fresh = self._get_dealable_option_ltp(
+            option_segment, option_sec_id
+        )
         if option_ltp <= 0:
             self.log.warning(
                 "Skipping %s entry because option LTP was not available for %s (security_id=%s).",
@@ -6244,7 +6492,30 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 trading_symbol,
                 option_sec_id,
             )
-            return False
+            return _abort_entry()
+        if not mark_is_fresh:
+            if self.live_trading:
+                # Real money: a trade we cannot price is a trade we cannot risk
+                # manage, so decline it rather than book it at a guess.
+                self.log.error(
+                    "REFUSING LIVE %s ENTRY on %s: no mark newer than %.0fs and the "
+                    "direct quote failed; the only price available is stale.",
+                    direction,
+                    trading_symbol,
+                    MARKET_DATA_MAX_LTP_AGE_SECONDS,
+                )
+                return _abort_entry()
+            # Paper: keep the data point rather than losing the observation, but
+            # make the record say the mark was stale.
+            self.log.warning(
+                "PAPER %s entry on %s is marked at a STALE price %.2f (no tick "
+                "within %.0fs and the direct quote failed); P&L for this trade is "
+                "approximate.",
+                direction,
+                trading_symbol,
+                option_ltp,
+                MARKET_DATA_MAX_LTP_AGE_SECONDS,
+            )
 
         sizing = self._compute_entry_sizing(
             float(entry_underlying), float(stop_underlying), lot_size
@@ -6262,7 +6533,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 sizing.one_lot_risk,
                 sizing.reason,
             )
-            return False
+            return _abort_entry()
         lots_for_entry = sizing.lots
         quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
@@ -6275,6 +6546,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             "option_type": option_right, "strike": option_strike,
             "expiry": expiry_date, "quantity": quantity, "dhan_symbol": trading_symbol,
             "role": "N",
+            "option_subscription": option_subscription,
         }
         order_result = self._place_real_leg(
             entry_side,
@@ -6286,33 +6558,33 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             if isinstance(live_leg, LiveLegState) and live_leg.exposure_possible:
                 # No PaperPosition will be created for an incomplete live entry,
                 # so the generic recovery sweep owns it until a later signal
-                # completes and adopts the same ledger state.
+                # completes and adopts the same ledger state. KEEP the feed leg
+                # subscribed: unresolved exposure still has to be marked.
                 self._track_orphan_live_leg(entry_leg)
-            return False
+                return False
+            return _abort_entry()
         self._untrack_orphan_live_leg(entry_leg)
         quantity = int(entry_leg["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
-
-        # Keep the fetcher refreshing this option's LTP for the trade lifetime.
-        self.store.register_option_subscription(
-            OptionSubscription(
-                security_id=option_sec_id,
-                exchange_segment=option_segment,
-                trading_symbol=trading_symbol,
-                right=option_right,
-                strike=option_strike,
-                expiry=expiry_date,
-            )
+        position_live_leg = (
+            live_leg
+            if isinstance(live_leg, LiveLegState) and live_leg.entry_complete
+            else None
         )
+        option_ltp, entry_price_quality = self._accounting_price(
+            position_live_leg,
+            option_ltp,
+            mark_is_fresh=mark_is_fresh,
+            phase="ENTRY",
+        )
+
+        # The leg was subscribed before it was priced (above); the fetcher has been
+        # refreshing it since, and keeps doing so until exit_position drops it.
 
         self.pos = PaperPosition(
             active=True,
             direction=direction,
-            live_leg=(
-                live_leg
-                if isinstance(live_leg, LiveLegState) and live_leg.entry_complete
-                else None
-            ),
+            live_leg=position_live_leg,
             symbol=trading_symbol,
             quantity=quantity,
             entry_order_id=str(order_id),
@@ -6323,6 +6595,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             trailing_active=bool(trailing_active),
             pending_trailing_exit=bool(pending_trailing_exit),
             entry_trade_price=float(option_ltp),
+            entry_price_quality=entry_price_quality,
             option_security_id=option_sec_id,
             option_exchange_segment=option_segment,
             option_right=option_right,
@@ -6368,6 +6641,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                         "right": option_right,
                         "strike": option_strike,
                         "entry_price": option_ltp,
+                        "entry_price_quality": entry_price_quality,
                     }
                 ],
             }
@@ -6392,11 +6666,13 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         closed_position = self.pos
         exit_side = "SELL"
         order_id = self._next_paper_order_id(exit_side)
-        exit_trade_price = self._get_option_ltp(
+        exit_trade_price, exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed_position.option_exchange_segment,
             closed_position.option_security_id,
-            fallback=closed_position.entry_trade_price,
         )
+        if exit_trade_price <= 0:
+            exit_trade_price = closed_position.entry_trade_price
+            exit_mark_is_fresh = False
 
         # Real execution -- but ONLY when this position actually opened a real leg
         # at the broker. A live entry that fell back to paper (rejected order or a
@@ -6462,6 +6738,14 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             })
             return
 
+        exit_trade_price, exit_price_quality = self._accounting_price(
+            closed_position.live_leg if had_live_leg else None,
+            exit_trade_price,
+            mark_is_fresh=exit_mark_is_fresh,
+            phase="EXIT",
+        )
+        closed_position.exit_price_quality = exit_price_quality
+
         pnl = (exit_trade_price - closed_position.entry_trade_price) * closed_position.quantity
 
         pnl_colored = self._color_pnl_text(pnl)
@@ -6500,6 +6784,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         self.store.unregister_option_subscription(
             closed_position.option_exchange_segment,
             closed_position.option_security_id,
+            owner_id=self._execution_owner_id,
         )
 
         self.publish_trade_event(
@@ -6525,7 +6810,9 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                         "right": closed_position.option_right,
                         "strike": closed_position.option_strike,
                         "entry_price": closed_position.entry_trade_price,
+                        "entry_price_quality": closed_position.entry_price_quality,
                         "exit_price": exit_trade_price,
+                        "exit_price_quality": exit_price_quality,
                     }
                 ],
             }
@@ -8633,6 +8920,18 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                 hedge_entry_price,
             )
             return False
+        main_entry_price, main_mark_is_fresh = self._get_dealable_option_ltp(
+            str(main["exchange_segment"]), int(main["security_id"])
+        )
+        hedge_entry_price, hedge_mark_is_fresh = self._get_dealable_option_ltp(
+            str(hedge["exchange_segment"]), int(hedge["security_id"])
+        )
+        if main_entry_price <= 0 or hedge_entry_price <= 0:
+            self.log.warning("Skipping bullish entry because a dealable leg price is unavailable.")
+            return False
+        if self.live_trading and not (main_mark_is_fresh and hedge_mark_is_fresh):
+            self.log.error("REFUSING LIVE bullish spread entry because a leg price is stale.")
+            return False
 
         main_live_order = {
             "option_type": str(main["option_type"]),
@@ -8657,6 +8956,30 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         main_qty = int(main_live_order["quantity"])
         hedge_qty = int(hedge_live_order["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
+        main_live_leg = (
+            main_live_order.get("live_leg")
+            if isinstance(main_live_order.get("live_leg"), LiveLegState)
+            and main_live_order["live_leg"].entry_complete
+            else None
+        )
+        hedge_live_leg = (
+            hedge_live_order.get("live_leg")
+            if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+            and hedge_live_order["live_leg"].entry_complete
+            else None
+        )
+        main_entry_price, main_entry_price_quality = self._accounting_price(
+            main_live_leg,
+            main_entry_price,
+            mark_is_fresh=main_mark_is_fresh,
+            phase="ENTRY",
+        )
+        hedge_entry_price, hedge_entry_price_quality = self._accounting_price(
+            hedge_live_leg,
+            hedge_entry_price,
+            mark_is_fresh=hedge_mark_is_fresh,
+            phase="ENTRY",
+        )
 
         # Subscribe both legs so the fetcher keeps refreshing their LTPs.
         self.store.register_option_subscription(
@@ -8667,7 +8990,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                 right=str(main["option_type"]),
                 strike=float(main["strike"]),
                 expiry=main["expiry_date"],
-            )
+            ),
+            owner_id=self._execution_owner_id,
         )
         self.store.register_option_subscription(
             OptionSubscription(
@@ -8677,7 +9001,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                 right=str(hedge["option_type"]),
                 strike=float(hedge["strike"]),
                 expiry=hedge["expiry_date"],
-            )
+            ),
+            owner_id=self._execution_owner_id,
         )
 
         main_order_id = self._next_paper_order_id("SELL")
@@ -8686,18 +9011,8 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="LONG",
-            main_live_leg=(
-                main_live_order.get("live_leg")
-                if isinstance(main_live_order.get("live_leg"), LiveLegState)
-                and main_live_order["live_leg"].entry_complete
-                else None
-            ),
-            hedge_live_leg=(
-                hedge_live_order.get("live_leg")
-                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
-                and hedge_live_order["live_leg"].entry_complete
-                else None
-            ),
+            main_live_leg=main_live_leg,
+            hedge_live_leg=hedge_live_leg,
             entry_underlying=float(entry_underlying),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -8710,6 +9025,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             main_lot_size=main_lot_size,
             main_quantity=main_qty,
             main_entry_price=main_entry_price,
+            main_entry_price_quality=main_entry_price_quality,
             main_entry_order_id=main_order_id,
             hedge_symbol=str(hedge["trading_symbol"]),
             hedge_side="BUY",
@@ -8721,6 +9037,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             hedge_lot_size=hedge_lot_size,
             hedge_quantity=hedge_qty,
             hedge_entry_price=hedge_entry_price,
+            hedge_entry_price_quality=hedge_entry_price_quality,
             hedge_entry_order_id=hedge_order_id,
         )
 
@@ -8744,6 +9061,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                         "right": self.pos.main_right,
                         "strike": self.pos.main_strike,
                         "entry_price": self.pos.main_entry_price,
+                        "entry_price_quality": self.pos.main_entry_price_quality,
                     },
                     {
                         "symbol": self.pos.hedge_symbol,
@@ -8751,6 +9069,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                         "right": self.pos.hedge_right,
                         "strike": self.pos.hedge_strike,
                         "entry_price": self.pos.hedge_entry_price,
+                        "entry_price_quality": self.pos.hedge_entry_price_quality,
                     },
                 ],
             }
@@ -8812,16 +9131,20 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             return
 
         closed = self.pos
-        main_exit_price = self._get_option_ltp(
+        main_exit_price, main_exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.main_exchange_segment,
             closed.main_security_id,
-            fallback=closed.main_entry_price,
         )
-        hedge_exit_price = self._get_option_ltp(
+        hedge_exit_price, hedge_exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
-            fallback=closed.hedge_entry_price,
         )
+        if main_exit_price <= 0:
+            main_exit_price = closed.main_entry_price
+            main_exit_mark_is_fresh = False
+        if hedge_exit_price <= 0:
+            hedge_exit_price = closed.hedge_entry_price
+            hedge_exit_mark_is_fresh = False
 
         had_live_exposure = closed.live_legs_open
         main_live_order = {
@@ -8878,6 +9201,19 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             })
             return
 
+        main_exit_price, main_exit_price_quality = self._accounting_price(
+            closed.main_live_leg if had_live_exposure else None,
+            main_exit_price,
+            mark_is_fresh=main_exit_mark_is_fresh,
+            phase="EXIT",
+        )
+        hedge_exit_price, hedge_exit_price_quality = self._accounting_price(
+            closed.hedge_live_leg if had_live_exposure else None,
+            hedge_exit_price,
+            mark_is_fresh=hedge_exit_mark_is_fresh,
+            phase="EXIT",
+        )
+
         main_pnl = (closed.main_entry_price - main_exit_price) * closed.main_quantity
         hedge_pnl = (hedge_exit_price - closed.hedge_entry_price) * closed.hedge_quantity
         total_pnl = main_pnl + hedge_pnl
@@ -8928,10 +9264,12 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.store.unregister_option_subscription(
             closed.main_exchange_segment,
             closed.main_security_id,
+            owner_id=self._execution_owner_id,
         )
         self.store.unregister_option_subscription(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
+            owner_id=self._execution_owner_id,
         )
 
         self.publish_trade_event(
@@ -8955,7 +9293,9 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                         "right": closed.main_right,
                         "strike": closed.main_strike,
                         "entry_price": closed.main_entry_price,
+                        "entry_price_quality": closed.main_entry_price_quality,
                         "exit_price": main_exit_price,
+                        "exit_price_quality": main_exit_price_quality,
                     },
                     {
                         "symbol": closed.hedge_symbol,
@@ -8963,7 +9303,9 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                         "right": closed.hedge_right,
                         "strike": closed.hedge_strike,
                         "entry_price": closed.hedge_entry_price,
+                        "entry_price_quality": closed.hedge_entry_price_quality,
                         "exit_price": hedge_exit_price,
+                        "exit_price_quality": hedge_exit_price_quality,
                     },
                 ],
             }
@@ -9226,6 +9568,18 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                 hedge_entry_price,
             )
             return False
+        main_entry_price, main_mark_is_fresh = self._get_dealable_option_ltp(
+            str(main["exchange_segment"]), int(main["security_id"])
+        )
+        hedge_entry_price, hedge_mark_is_fresh = self._get_dealable_option_ltp(
+            str(hedge["exchange_segment"]), int(hedge["security_id"])
+        )
+        if main_entry_price <= 0 or hedge_entry_price <= 0:
+            self.log.warning("Skipping bearish entry because a dealable leg price is unavailable.")
+            return False
+        if self.live_trading and not (main_mark_is_fresh and hedge_mark_is_fresh):
+            self.log.error("REFUSING LIVE bearish spread entry because a leg price is stale.")
+            return False
 
         main_live_order = {
             "option_type": str(main["option_type"]),
@@ -9250,6 +9604,30 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         main_qty = int(main_live_order["quantity"])
         hedge_qty = int(hedge_live_order["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
+        main_live_leg = (
+            main_live_order.get("live_leg")
+            if isinstance(main_live_order.get("live_leg"), LiveLegState)
+            and main_live_order["live_leg"].entry_complete
+            else None
+        )
+        hedge_live_leg = (
+            hedge_live_order.get("live_leg")
+            if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+            and hedge_live_order["live_leg"].entry_complete
+            else None
+        )
+        main_entry_price, main_entry_price_quality = self._accounting_price(
+            main_live_leg,
+            main_entry_price,
+            mark_is_fresh=main_mark_is_fresh,
+            phase="ENTRY",
+        )
+        hedge_entry_price, hedge_entry_price_quality = self._accounting_price(
+            hedge_live_leg,
+            hedge_entry_price,
+            mark_is_fresh=hedge_mark_is_fresh,
+            phase="ENTRY",
+        )
 
         self.store.register_option_subscription(
             OptionSubscription(
@@ -9259,7 +9637,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                 right=str(main["option_type"]),
                 strike=float(main["strike"]),
                 expiry=main["expiry_date"],
-            )
+            ),
+            owner_id=self._execution_owner_id,
         )
         self.store.register_option_subscription(
             OptionSubscription(
@@ -9269,7 +9648,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                 right=str(hedge["option_type"]),
                 strike=float(hedge["strike"]),
                 expiry=hedge["expiry_date"],
-            )
+            ),
+            owner_id=self._execution_owner_id,
         )
 
         main_order_id = self._next_paper_order_id("SELL")
@@ -9279,18 +9659,8 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         self.pos = HedgedPaperPosition(
             active=True,
             direction="SHORT",
-            main_live_leg=(
-                main_live_order.get("live_leg")
-                if isinstance(main_live_order.get("live_leg"), LiveLegState)
-                and main_live_order["live_leg"].entry_complete
-                else None
-            ),
-            hedge_live_leg=(
-                hedge_live_order.get("live_leg")
-                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
-                and hedge_live_order["live_leg"].entry_complete
-                else None
-            ),
+            main_live_leg=main_live_leg,
+            hedge_live_leg=hedge_live_leg,
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(main["trading_symbol"]),
@@ -9303,6 +9673,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             main_lot_size=main_lot_size,
             main_quantity=main_qty,
             main_entry_price=main_entry_price,
+            main_entry_price_quality=main_entry_price_quality,
             main_entry_order_id=main_order_id,
             hedge_symbol=str(hedge["trading_symbol"]),
             hedge_side="BUY",
@@ -9314,6 +9685,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             hedge_lot_size=hedge_lot_size,
             hedge_quantity=hedge_qty,
             hedge_entry_price=hedge_entry_price,
+            hedge_entry_price_quality=hedge_entry_price_quality,
             hedge_entry_order_id=hedge_order_id,
         )
 
@@ -9337,6 +9709,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                         "right": self.pos.main_right,
                         "strike": self.pos.main_strike,
                         "entry_price": self.pos.main_entry_price,
+                        "entry_price_quality": self.pos.main_entry_price_quality,
                     },
                     {
                         "symbol": self.pos.hedge_symbol,
@@ -9344,6 +9717,7 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                         "right": self.pos.hedge_right,
                         "strike": self.pos.hedge_strike,
                         "entry_price": self.pos.hedge_entry_price,
+                        "entry_price_quality": self.pos.hedge_entry_price_quality,
                     },
                 ],
             }
@@ -9532,16 +9906,20 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             return
 
         closed = self.pos
-        main_exit_price = self._get_option_ltp(
+        main_exit_price, main_exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.main_exchange_segment,
             closed.main_security_id,
-            fallback=closed.main_entry_price,
         )
-        hedge_exit_price = self._get_option_ltp(
+        hedge_exit_price, hedge_exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
-            fallback=closed.hedge_entry_price,
         )
+        if main_exit_price <= 0:
+            main_exit_price = closed.main_entry_price
+            main_exit_mark_is_fresh = False
+        if hedge_exit_price <= 0:
+            hedge_exit_price = closed.hedge_entry_price
+            hedge_exit_mark_is_fresh = False
 
         had_live_exposure = closed.live_legs_open
         main_live_order = {
@@ -9598,6 +9976,19 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             })
             return
 
+        main_exit_price, main_exit_price_quality = self._accounting_price(
+            closed.main_live_leg if had_live_exposure else None,
+            main_exit_price,
+            mark_is_fresh=main_exit_mark_is_fresh,
+            phase="EXIT",
+        )
+        hedge_exit_price, hedge_exit_price_quality = self._accounting_price(
+            closed.hedge_live_leg if had_live_exposure else None,
+            hedge_exit_price,
+            mark_is_fresh=hedge_exit_mark_is_fresh,
+            phase="EXIT",
+        )
+
         main_pnl = (closed.main_entry_price - main_exit_price) * closed.main_quantity
         hedge_pnl = (hedge_exit_price - closed.hedge_entry_price) * closed.hedge_quantity
         total_pnl = main_pnl + hedge_pnl
@@ -9646,10 +10037,12 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         self.store.unregister_option_subscription(
             closed.main_exchange_segment,
             closed.main_security_id,
+            owner_id=self._execution_owner_id,
         )
         self.store.unregister_option_subscription(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
+            owner_id=self._execution_owner_id,
         )
 
         self.publish_trade_event(
@@ -9673,7 +10066,9 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                         "right": closed.main_right,
                         "strike": closed.main_strike,
                         "entry_price": closed.main_entry_price,
+                        "entry_price_quality": closed.main_entry_price_quality,
                         "exit_price": main_exit_price,
+                        "exit_price_quality": main_exit_price_quality,
                     },
                     {
                         "symbol": closed.hedge_symbol,
@@ -9681,7 +10076,9 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                         "right": closed.hedge_right,
                         "strike": closed.hedge_strike,
                         "entry_price": closed.hedge_entry_price,
+                        "entry_price_quality": closed.hedge_entry_price_quality,
                         "exit_price": hedge_exit_price,
+                        "exit_price_quality": hedge_exit_price_quality,
                     },
                 ],
             }
@@ -10204,7 +10601,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                     right=str(meta["option_type"]),
                     strike=float(meta["strike"]),
                     expiry=meta["expiry_date"],
-                )
+                ),
+                owner_id=self._execution_owner_id,
             )
 
         self.reference_captured = True
@@ -10534,20 +10932,28 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         if monitor_meta is None or hedge_meta is None:
             return False
 
-        # The hedge leg's LTP is needed to record a realistic paper fill
-        # price. If it isn't available yet we skip the entry rather than
-        # entering with stale / synthetic data.
-        hedge_live = self._get_option_ltp(
+        monitor_live, monitor_mark_is_fresh = self._get_dealable_option_ltp(
+            str(monitor_meta["exchange_segment"]),
+            int(monitor_meta["security_id"]),
+        )
+        hedge_live, hedge_mark_is_fresh = self._get_dealable_option_ltp(
             str(hedge_meta["exchange_segment"]),
             int(hedge_meta["security_id"]),
-            fallback=0.0,
         )
-        if hedge_live <= 0:
+        if monitor_live <= 0 or hedge_live <= 0:
             self.log.warning(
-                "Skipping %s entry: hedge LTP unavailable (sym=%s sec=%s).",
+                "Skipping %s entry: a dealable leg LTP is unavailable (hedge=%s sec=%s).",
                 side,
                 hedge_meta.get("trading_symbol"),
                 hedge_meta.get("security_id"),
+            )
+            return False
+        if self.live_trading and not (
+            monitor_mark_is_fresh and hedge_mark_is_fresh
+        ):
+            self.log.error(
+                "REFUSING LIVE %s spread entry because a leg price is stale.",
+                side,
             )
             return False
 
@@ -10591,6 +10997,30 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         monitor_qty = int(main_live_order["quantity"])
         hedge_qty = int(hedge_live_order["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
+        main_live_leg = (
+            main_live_order.get("live_leg")
+            if isinstance(main_live_order.get("live_leg"), LiveLegState)
+            and main_live_order["live_leg"].entry_complete
+            else None
+        )
+        hedge_live_leg = (
+            hedge_live_order.get("live_leg")
+            if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
+            and hedge_live_order["live_leg"].entry_complete
+            else None
+        )
+        monitor_live, main_entry_price_quality = self._accounting_price(
+            main_live_leg,
+            monitor_live,
+            mark_is_fresh=monitor_mark_is_fresh,
+            phase="ENTRY",
+        )
+        hedge_live, hedge_entry_price_quality = self._accounting_price(
+            hedge_live_leg,
+            hedge_live,
+            mark_is_fresh=hedge_mark_is_fresh,
+            phase="ENTRY",
+        )
         # Synthetic order ids for paper-trade audit trail. These are
         # unique within the worker and timestamp-encoded so a human
         # scanning the log can correlate ENTRY and EXIT lines easily.
@@ -10604,18 +11034,8 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         new_pos = HedgedPaperPosition(
             active=True,
             direction=side,  # "CE" or "PE" (used purely for log labelling)
-            main_live_leg=(
-                main_live_order.get("live_leg")
-                if isinstance(main_live_order.get("live_leg"), LiveLegState)
-                and main_live_order["live_leg"].entry_complete
-                else None
-            ),
-            hedge_live_leg=(
-                hedge_live_order.get("live_leg")
-                if isinstance(hedge_live_order.get("live_leg"), LiveLegState)
-                and hedge_live_order["live_leg"].entry_complete
-                else None
-            ),
+            main_live_leg=main_live_leg,
+            hedge_live_leg=hedge_live_leg,
             entry_underlying=float(spot),
             entry_timestamp=datetime.now(),
             main_symbol=str(monitor_meta["trading_symbol"]),
@@ -10628,6 +11048,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             main_lot_size=monitor_lot_size,
             main_quantity=monitor_qty,
             main_entry_price=float(monitor_live),
+            main_entry_price_quality=main_entry_price_quality,
             main_entry_order_id=main_order_id,
             hedge_symbol=str(hedge_meta["trading_symbol"]),
             hedge_side="BUY",
@@ -10639,6 +11060,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             hedge_lot_size=hedge_lot_size,
             hedge_quantity=hedge_qty,
             hedge_entry_price=float(hedge_live),
+            hedge_entry_price_quality=hedge_entry_price_quality,
             hedge_entry_order_id=hedge_order_id,
         )
         if side == "CE":
@@ -10667,6 +11089,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                         "right": new_pos.main_right,
                         "strike": new_pos.main_strike,
                         "entry_price": new_pos.main_entry_price,
+                        "entry_price_quality": new_pos.main_entry_price_quality,
                     },
                     {
                         "symbol": new_pos.hedge_symbol,
@@ -10674,6 +11097,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                         "right": new_pos.hedge_right,
                         "strike": new_pos.hedge_strike,
                         "entry_price": new_pos.hedge_entry_price,
+                        "entry_price_quality": new_pos.hedge_entry_price_quality,
                     },
                 ],
             }
@@ -10740,16 +11164,20 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         # price keeps the math defined even on the rare poll where the
         # LTP cache is briefly empty - a no-op PnL for that leg, which
         # an operator can easily spot in the log.
-        main_exit_price = self._get_option_ltp(
+        main_exit_price, main_exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.main_exchange_segment,
             closed.main_security_id,
-            fallback=closed.main_entry_price,
         )
-        hedge_exit_price = self._get_option_ltp(
+        hedge_exit_price, hedge_exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
-            fallback=closed.hedge_entry_price,
         )
+        if main_exit_price <= 0:
+            main_exit_price = closed.main_entry_price
+            main_exit_mark_is_fresh = False
+        if hedge_exit_price <= 0:
+            hedge_exit_price = closed.hedge_entry_price
+            hedge_exit_mark_is_fresh = False
 
         had_live_exposure = closed.live_legs_open
         main_live_order = {
@@ -10805,6 +11233,18 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                 ],
             })
             return
+        main_exit_price, main_exit_price_quality = self._accounting_price(
+            closed.main_live_leg if had_live_exposure else None,
+            main_exit_price,
+            mark_is_fresh=main_exit_mark_is_fresh,
+            phase="EXIT",
+        )
+        hedge_exit_price, hedge_exit_price_quality = self._accounting_price(
+            closed.hedge_live_leg if had_live_exposure else None,
+            hedge_exit_price,
+            mark_is_fresh=hedge_exit_mark_is_fresh,
+            phase="EXIT",
+        )
         # Main was SOLD -> profit if exit < entry  ->  (entry - exit) * qty
         # Hedge was BOUGHT -> profit if exit > entry -> (exit - entry) * qty
         main_pnl = (closed.main_entry_price - main_exit_price) * closed.main_quantity
@@ -10856,10 +11296,12 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
         self.store.unregister_option_subscription(
             closed.main_exchange_segment,
             closed.main_security_id,
+            owner_id=self._execution_owner_id,
         )
         self.store.unregister_option_subscription(
             closed.hedge_exchange_segment,
             closed.hedge_security_id,
+            owner_id=self._execution_owner_id,
         )
         self.publish_trade_event(
             {
@@ -10882,7 +11324,9 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                         "right": closed.main_right,
                         "strike": closed.main_strike,
                         "entry_price": closed.main_entry_price,
+                        "entry_price_quality": closed.main_entry_price_quality,
                         "exit_price": main_exit_price,
+                        "exit_price_quality": main_exit_price_quality,
                     },
                     {
                         "symbol": closed.hedge_symbol,
@@ -10890,7 +11334,9 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                         "right": closed.hedge_right,
                         "strike": closed.hedge_strike,
                         "entry_price": closed.hedge_entry_price,
+                        "entry_price_quality": closed.hedge_entry_price_quality,
                         "exit_price": hedge_exit_price,
+                        "exit_price_quality": hedge_exit_price_quality,
                     },
                 ],
             }
@@ -10971,6 +11417,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                     self.store.unregister_option_subscription(
                         str(meta["exchange_segment"]),
                         int(meta["security_id"]),
+                        owner_id=self._execution_owner_id,
                     )
         if not self.pe_pos.active and not self.pe_side_done:
             for meta in (self.pe_monitor_meta, self.pe_hedge_meta):
@@ -10978,6 +11425,7 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
                     self.store.unregister_option_subscription(
                         str(meta["exchange_segment"]),
                         int(meta["security_id"]),
+                        owner_id=self._execution_owner_id,
                     )
 
 
@@ -11356,11 +11804,19 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             )
             return False
 
-        option_ltp = self._get_option_ltp(option_segment, option_sec_id, fallback=0.0)
+        option_ltp, mark_is_fresh = self._get_dealable_option_ltp(
+            option_segment, option_sec_id
+        )
         if option_ltp <= 0:
             self.log.warning(
                 "Strangle %s entry skipped: option LTP unavailable for %s (security_id=%s).",
                 side, trading_symbol, option_sec_id,
+            )
+            return False
+        if self.live_trading and not mark_is_fresh:
+            self.log.error(
+                "REFUSING LIVE strangle %s entry because the option mark is stale.",
+                side,
             )
             return False
 
@@ -11395,8 +11851,14 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         # must not make a later paper exit submit a naked SELL.
         position_live_leg = (
             live_leg
-            if live_leg is not None and not live_leg.broker_confirmed_flat
+            if live_leg is not None and live_leg.entry_complete
             else None
+        )
+        option_ltp, entry_price_quality = self._accounting_price(
+            position_live_leg,
+            option_ltp,
+            mark_is_fresh=mark_is_fresh,
+            phase="ENTRY",
         )
 
         # Keep the fetcher refreshing this leg's LTP for its whole lifetime. On a
@@ -11410,7 +11872,8 @@ class LongStrangleWorker(BasePaperStrategyWorker):
                 right=option_right,
                 strike=option_strike,
                 expiry=expiry_date,
-            )
+            ),
+            owner_id=self._execution_owner_id,
         )
 
         new_pos = PaperPosition(
@@ -11421,6 +11884,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             quantity=quantity,
             entry_order_id=str(order_id),
             entry_trade_price=float(option_ltp),
+            entry_price_quality=entry_price_quality,
             option_security_id=option_sec_id,
             option_exchange_segment=option_segment,
             option_right=option_right,
@@ -11479,6 +11943,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
                 "symbol": trading_symbol, "side": "BUY",
                 "right": option_right, "strike": option_strike,
                 "entry_price": option_ltp,
+                "entry_price_quality": entry_price_quality,
             }],
         })
         return True
@@ -11540,7 +12005,9 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             awaiting, _, contract, _ = self._reentry_state(side)
             if not leg_pos.active and awaiting and contract is not None:
                 self.store.unregister_option_subscription(
-                    str(contract["exchange_segment"]), int(contract["security_id"])
+                    str(contract["exchange_segment"]),
+                    int(contract["security_id"]),
+                    owner_id=self._execution_owner_id,
                 )
 
     # ------------------------------------------------------------------
@@ -11639,11 +12106,13 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
         closed = leg_pos
         order_id = self._next_paper_order_id("SELL")
-        exit_price = self._get_option_ltp(
+        exit_price, exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed.option_exchange_segment,
             closed.option_security_id,
-            fallback=closed.entry_trade_price,
         )
+        if exit_price <= 0:
+            exit_price = closed.entry_trade_price
+            exit_mark_is_fresh = False
 
         # Real execution -- but ONLY when this leg actually opened a real leg at the
         # broker. A live entry that fell back to paper (rejected order or symbol-master
@@ -11716,6 +12185,13 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             })
             return
 
+        exit_price, exit_price_quality = self._accounting_price(
+            closed.live_leg if had_live_leg else None,
+            exit_price,
+            mark_is_fresh=exit_mark_is_fresh,
+            phase="EXIT",
+        )
+        closed.exit_price_quality = exit_price_quality
         pnl = (exit_price - closed.entry_trade_price) * closed.quantity
         self.completed_trades += 1
         self.exit_count += 1
@@ -11744,7 +12220,10 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             "pnl": pnl, "expiry": expiry_txt,
             "legs": [{"symbol": closed.symbol, "side": "SELL",
                       "right": closed.option_right, "strike": closed.option_strike,
-                      "entry_price": closed.entry_trade_price, "exit_price": exit_price}],
+                      "entry_price": closed.entry_trade_price,
+                      "entry_price_quality": closed.entry_price_quality,
+                      "exit_price": exit_price,
+                      "exit_price_quality": exit_price_quality}],
         })
 
         # Decide whether to ARM this leg for a momentum re-entry. Only per-leg
@@ -11767,7 +12246,9 @@ class LongStrangleWorker(BasePaperStrategyWorker):
         else:
             # No re-entry: stop watching this strike.
             self.store.unregister_option_subscription(
-                closed.option_exchange_segment, closed.option_security_id,
+                closed.option_exchange_segment,
+                closed.option_security_id,
+                owner_id=self._execution_owner_id,
             )
 
         if side == "CE":
@@ -12196,6 +12677,7 @@ if SL_HUNTING_AVAILABLE:
             )
             self._open_trade_id = None
             self._entry_realized_pnl = 0.0
+            self._journal_pnl_evidence_eligible = True
             # When the NIFTY leg is cut alone (exit_leg=NIFTY) but the mirror survives,
             # we DEFER the journal close so option_pnl captures BOTH legs. This holds the
             # NIFTY-leg exit context until the mirror finally closes (BNF exit / square-off
@@ -12256,6 +12738,16 @@ if SL_HUNTING_AVAILABLE:
                     entry_underlying=float(getattr(self.pos, "entry_underlying", 0.0)),
                     lots=int(getattr(self.pos, "quantity", 0)) // lot_size,
                     nifty_df=nifty_df, bnf_df=bnf_df,
+                    entry_price_quality=str(
+                        getattr(self.pos, "entry_price_quality", PRICE_QUALITY_UNKNOWN)
+                    ),
+                )
+                entry_qualities = [self.pos.entry_price_quality]
+                if self._mirror_pos.active:
+                    entry_qualities.append(self._mirror_pos.entry_price_quality)
+                self._journal_pnl_evidence_eligible = all(
+                    quality in COACH_ELIGIBLE_PRICE_QUALITIES
+                    for quality in entry_qualities
                 )
                 self._open_trade_id = self._journal.open_trade(entry)
                 self._entry_realized_pnl = self.realized_pnl
@@ -12386,9 +12878,14 @@ if SL_HUNTING_AVAILABLE:
             if not symbol or sec_id <= 0 or lot_size <= 0:
                 self.log.warning("BNF mirror skipped: unusable contract %r.", symbol)
                 return
-            option_ltp = self._get_option_ltp(segment, sec_id, fallback=0.0)
+            option_ltp, mark_is_fresh = self._get_dealable_option_ltp(segment, sec_id)
             if option_ltp <= 0:
                 self.log.warning("BNF mirror skipped: no LTP for %s (security_id=%s).", symbol, sec_id)
+                return
+            if self.live_trading and not mark_is_fresh:
+                self.log.error(
+                    "BNF mirror skipped: refusing a LIVE entry on a stale option mark."
+                )
                 return
 
             quantity = lot_size * lots
@@ -12421,6 +12918,17 @@ if SL_HUNTING_AVAILABLE:
             )
             if not entry_bookkeeping_allowed and recovery_live_leg is None:
                 return
+            position_live_leg = (
+                live_leg
+                if isinstance(live_leg, LiveLegState) and live_leg.entry_complete
+                else None
+            )
+            option_ltp, entry_price_quality = self._accounting_price(
+                position_live_leg or recovery_live_leg,
+                option_ltp,
+                mark_is_fresh=mark_is_fresh,
+                phase="ENTRY",
+            )
             tracked_quantity = quantity
             if not entry_bookkeeping_allowed:
                 # The guard above proves this is a quantity-bearing recovery
@@ -12430,11 +12938,17 @@ if SL_HUNTING_AVAILABLE:
                 # may still fill.  MTM/max-loss must use the conservative risk
                 # quantity so indeterminate BankNIFTY exposure never looks flat.
                 tracked_quantity = recovery_live_leg.risk_quantity
-            self.store.register_option_subscription(OptionSubscription(
-                security_id=sec_id, exchange_segment=segment, trading_symbol=symbol,
-                right=str(contract["option_type"]), strike=float(contract["strike"]),
-                expiry=contract["expiry_date"],
-            ))
+            self.store.register_option_subscription(
+                OptionSubscription(
+                    security_id=sec_id,
+                    exchange_segment=segment,
+                    trading_symbol=symbol,
+                    right=str(contract["option_type"]),
+                    strike=float(contract["strike"]),
+                    expiry=contract["expiry_date"],
+                ),
+                owner_id=self._execution_owner_id,
+            )
             self._mirror_pos = PaperPosition(
                 active=True,
                 direction=direction,
@@ -12450,7 +12964,9 @@ if SL_HUNTING_AVAILABLE:
                     else None
                 ),
                 entry_order_id=str(order_id), entry_underlying=bnf_spot,
-                entry_trade_price=float(option_ltp), option_security_id=sec_id,
+                entry_trade_price=float(option_ltp),
+                entry_price_quality=entry_price_quality,
+                option_security_id=sec_id,
                 option_exchange_segment=segment, option_right=str(contract["option_type"]),
                 option_strike=float(contract["strike"]), option_expiry=contract["expiry_date"],
                 option_lot_size=lot_size,
@@ -12485,6 +13001,7 @@ if SL_HUNTING_AVAILABLE:
                 "legs": [{
                     "symbol": symbol, "side": "BUY", "right": str(contract["option_type"]),
                     "strike": float(contract["strike"]), "entry_price": option_ltp,
+                    "entry_price_quality": entry_price_quality,
                 }],
             })
 
@@ -12498,10 +13015,12 @@ if SL_HUNTING_AVAILABLE:
             if not self._mirror_pos.active:
                 return
             mirror = self._mirror_pos
-            exit_ltp = self._get_option_ltp(
-                mirror.option_exchange_segment, mirror.option_security_id,
-                fallback=mirror.entry_trade_price,
+            exit_ltp, exit_mark_is_fresh = self._get_dealable_option_ltp(
+                mirror.option_exchange_segment, mirror.option_security_id
             )
+            if exit_ltp <= 0:
+                exit_ltp = mirror.entry_trade_price
+                exit_mark_is_fresh = False
             # Only close a REAL mirror leg. A live mirror BUY that fell back to
             # paper (rejected / symbol-master miss) opened nothing at the broker,
             # so a SELL now would be a phantom BankNIFTY short. A live position,
@@ -12568,10 +13087,6 @@ if SL_HUNTING_AVAILABLE:
                 )
                 closed_quantity = mirror.quantity
 
-            # Book only the quantity the ledger proves was reduced. This avoids
-            # both losing a partial fill and double-counting it on the retry.
-            pnl = (exit_ltp - mirror.entry_trade_price) * closed_quantity
-            self.realized_pnl += pnl
             if had_live_leg and (
                 mirror.live_leg is None or not mirror.live_leg.broker_confirmed_flat
             ):
@@ -12592,8 +13107,41 @@ if SL_HUNTING_AVAILABLE:
                     "legs": [{"symbol": mirror.symbol, "side": "SELL"}],
                 })
                 return
+            if had_live_leg and mirror.live_leg is not None:
+                closed_quantity = mirror.live_leg.filled_quantity
+                (
+                    mirror.entry_trade_price,
+                    mirror.entry_price_quality,
+                ) = self._accounting_price(
+                    mirror.live_leg,
+                    mirror.entry_trade_price,
+                    mark_is_fresh=(
+                        mirror.entry_price_quality
+                        == PRICE_QUALITY_PAPER_FRESH_MARK
+                    ),
+                    phase="ENTRY",
+                )
+            exit_ltp, exit_price_quality = self._accounting_price(
+                mirror.live_leg if had_live_leg else None,
+                exit_ltp,
+                mark_is_fresh=exit_mark_is_fresh,
+                phase="EXIT",
+            )
+            mirror.exit_price_quality = exit_price_quality
+            self._journal_pnl_evidence_eligible = (
+                self._journal_pnl_evidence_eligible
+                and mirror.entry_price_quality in COACH_ELIGIBLE_PRICE_QUALITIES
+                and exit_price_quality in COACH_ELIGIBLE_PRICE_QUALITIES
+            )
+            # Wait for broker-confirmed flat before booking the live leg. This
+            # lets the ledger's cumulative weighted close price account for
+            # every partial/retry exactly once.
+            pnl = (exit_ltp - mirror.entry_trade_price) * closed_quantity
+            self.realized_pnl += pnl
             self.store.unregister_option_subscription(
-                mirror.option_exchange_segment, mirror.option_security_id,
+                mirror.option_exchange_segment,
+                mirror.option_security_id,
+                owner_id=self._execution_owner_id,
             )
             self.log.info(
                 "MIRROR EXIT %s | OptionSymbol=%s | Qty=%s | Reason=%s | EntryOptPx=%.2f | "
@@ -12612,7 +13160,11 @@ if SL_HUNTING_AVAILABLE:
                 "quantity": closed_quantity,
                 "legs": [{
                     "symbol": mirror.symbol, "side": "SELL", "right": mirror.option_right,
-                    "strike": mirror.option_strike, "exit_price": exit_ltp,
+                    "strike": mirror.option_strike,
+                    "entry_price": mirror.entry_trade_price,
+                    "entry_price_quality": mirror.entry_price_quality,
+                    "exit_price": exit_ltp,
+                    "exit_price_quality": exit_price_quality,
                 }],
             })
             self._mirror_pos = PaperPosition()
@@ -12727,6 +13279,20 @@ if SL_HUNTING_AVAILABLE:
                 "exit_reason": reason,
                 "points": round(points, 2),
                 "lots": int(getattr(closed_position, "quantity", 0)) // lot_size,
+                "entry_price_quality": str(
+                    getattr(
+                        closed_position,
+                        "entry_price_quality",
+                        PRICE_QUALITY_UNKNOWN,
+                    )
+                ),
+                "exit_price_quality": str(
+                    getattr(
+                        closed_position,
+                        "exit_price_quality",
+                        PRICE_QUALITY_UNKNOWN,
+                    )
+                ),
             }
 
         def _finalize_journal(self, static: dict) -> None:
@@ -12736,15 +13302,24 @@ if SL_HUNTING_AVAILABLE:
                 self._pending_journal_exit = None
                 return
             try:
+                self._journal_pnl_evidence_eligible = (
+                    self._journal_pnl_evidence_eligible
+                    and static.get("entry_price_quality")
+                    in COACH_ELIGIBLE_PRICE_QUALITIES
+                    and static.get("exit_price_quality")
+                    in COACH_ELIGIBLE_PRICE_QUALITIES
+                )
                 self._journal.close_trade(self._open_trade_id, {
                     **static,
                     "option_pnl": round(self.realized_pnl - self._entry_realized_pnl, 2),
+                    "pnl_evidence_eligible": self._journal_pnl_evidence_eligible,
                 })
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("SL Hunting journal close failed: %s", exc)
             finally:
                 self._open_trade_id = None
                 self._pending_journal_exit = None
+                self._journal_pnl_evidence_eligible = True
 
         def after_exit(self, closed_position, reason: str) -> None:
             """Universal post-close hook for the NIFTY leg (fires for stop/target,
@@ -13875,6 +14450,7 @@ def _live_config_errors(
     )
 
     raw_rules = {
+        "MARKET_DATA_MAX_LTP_AGE_SECONDS": ("positive", None),
         f"{normalized_prefix}_LOTS": ("positive_integer", None),
         f"{start_clock_prefix}_TRADING_START_HOUR": (
             "integer_range",
@@ -13967,6 +14543,17 @@ def _live_config_errors(
         or float(max_loss) <= 0
     ):
         errors.append("resolved max-loss must be finite and positive")
+
+    ltp_age_bound = globals().get("MARKET_DATA_MAX_LTP_AGE_SECONDS")
+    if (
+        isinstance(ltp_age_bound, bool)
+        or not isinstance(ltp_age_bound, (int, float))
+        or not math.isfinite(float(ltp_age_bound))
+        or float(ltp_age_bound) <= 0
+    ):
+        errors.append(
+            "resolved MARKET_DATA_MAX_LTP_AGE_SECONDS must be finite and positive"
+        )
 
     start_hour = getattr(worker, "trading_start_hour", None)
     start_minute = getattr(worker, "trading_start_minute", None)
@@ -14688,7 +15275,20 @@ def main() -> None:
     #       paper unless SL_HUNTING_LIVE_TRADING + LIVE_TRADING_ENABLED are both on
     #       (the live-wiring below applies the same double-gate as every strategy).
     if SLHuntingAIWorker is not None:
-        workers.append(SLHuntingAIWorker(store, stop_event, broker))
+        # Constructing this worker builds the agent, which validates its own
+        # system prompt (size cap) and reads the optional lessons / pre-open note.
+        # Any failure there must disable the OPTIONAL agent only -- never take the
+        # other strategies down with it. Without this guard an over-long prompt
+        # raises straight out of main() and the whole runner fails to start.
+        try:
+            workers.append(SLHuntingAIWorker(store, stop_event, broker))
+        except Exception as exc:  # noqa: BLE001 - optional strategy, never fatal
+            logging.getLogger(__name__).error(
+                "SL Hunting AI worker could not be created (%s); continuing WITHOUT it. "
+                "Every other strategy is unaffected.",
+                exc,
+                exc_info=True,
+            )
 
     # -------------------------------------------------------------------------
     # Per-strategy virtual (paper) trading gate.

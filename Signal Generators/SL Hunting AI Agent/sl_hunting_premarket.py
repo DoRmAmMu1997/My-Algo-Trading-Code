@@ -43,6 +43,7 @@ from pydantic import Field, ValidationError, field_validator
 from sl_hunting_ai_validation import StrictAIModel
 
 logger = logging.getLogger(__name__)
+MAX_PREMARKET_FILE_CHARS = 64 * 1024
 
 # Keep the injected block small and predictable.
 MAX_PLAN_ITEMS = 8
@@ -147,7 +148,15 @@ def load_premarket_note(path: str) -> PremarketNote | None:
         return None
     try:
         with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
+            raw = handle.read(MAX_PREMARKET_FILE_CHARS + 1)
+        if len(raw) > MAX_PREMARKET_FILE_CHARS:
+            logger.warning(
+                "Pre-open note %s exceeds the %d-character input limit; ignoring it.",
+                path,
+                MAX_PREMARKET_FILE_CHARS,
+            )
+            return None
+        data = json.loads(raw)
     except (OSError, UnicodeError, json.JSONDecodeError):
         logger.warning("Could not read pre-open note %s", path, exc_info=True)
         return None

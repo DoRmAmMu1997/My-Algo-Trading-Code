@@ -147,10 +147,24 @@ def test_order_status_parses_the_latest_ok_row(monkeypatch):
     monkeypatch.setattr(
         client,
         "_post_api",
-        lambda *a, **k: [{"stat": "Ok", "status": "COMPLETE", "fillshares": "75", "qty": "75"}],
+        lambda *a, **k: [
+            {
+                "stat": "Ok",
+                "status": "COMPLETE",
+                "fillshares": "75",
+                "qty": "75",
+                "avgprc": "123.45",
+            }
+        ],
     )
-    state, filled, qty, reason = client._order_status("ORD1")
-    assert (state, filled, qty, reason) == ("complete", 75, 75, "")
+    state, filled, qty, reason, average = client._order_status("ORD1")
+    assert (state, filled, qty, reason, average) == (
+        "complete",
+        75,
+        75,
+        "",
+        123.45,
+    )
 
 
 def test_order_status_surfaces_rejection_reason(monkeypatch):
@@ -160,7 +174,7 @@ def test_order_status_surfaces_rejection_reason(monkeypatch):
         "_post_api",
         lambda *a, **k: [{"stat": "Ok", "status": "REJECTED", "rejreason": "RMS limit"}],
     )
-    state, _filled, _qty, reason = client._order_status("ORD1")
+    state, _filled, _qty, reason, _average = client._order_status("ORD1")
     assert state == "rejected" and reason == "RMS limit"
 
 
