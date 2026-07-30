@@ -12,6 +12,7 @@ import warnings
 from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
 
@@ -3587,6 +3588,29 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 500.0,
         })
         return worker, store
+
+    def test_live_fill_price_beats_a_stale_ltp(self):
+        """MAT-112: a LIVE entry is recorded at the BROKER's price, not the LTP.
+
+        On 2026-07-30 a cached LTP recorded a NIFTY entry at 112.55 against a real
+        fill of 125.00, turning a Rs.760.50 loss into a Rs.4,095 "profit" in the
+        journal, the Sheet and the coach's training data.
+        """
+        worker, _store = self._make_worker()
+        filled = SimpleNamespace(average_fill_price=125.0)
+        self.assertEqual(worker._entry_fill_price(filled, 112.55), 125.0)
+
+    def test_paper_and_priceless_fills_keep_the_ltp(self):
+        """Fail-soft: no broker price (paper, or a broker that reports none) keeps
+        today's behaviour exactly, so this can never block or distort a trade."""
+        worker, _store = self._make_worker()
+        for result in (
+            SimpleNamespace(average_fill_price=0.0),      # broker reported none
+            SimpleNamespace(average_fill_price=float("nan")),
+            SimpleNamespace(),                            # paper: no attribute at all
+            None,
+        ):
+            self.assertEqual(worker._entry_fill_price(result, 112.55), 112.55)
 
     def test_slh008_nifty_leg_uses_current_week_expiry(self):
         """SLH-008: the NIFTY leg must resolve the CURRENT-WEEK contract.

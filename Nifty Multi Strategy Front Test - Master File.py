@@ -5526,6 +5526,33 @@ class BasePaperStrategyWorker(threading.Thread):
         self.paper_order_counter += 1
         return f"PAPER-{side}-{datetime.now():%Y%m%d%H%M%S}-{self.paper_order_counter:04d}"
 
+    def _entry_fill_price(self, order_result: object, ltp_price: float) -> float:
+        """Prefer the broker's ACTUAL traded price over the local LTP for a live fill.
+
+        A paper fill has no broker price, so it keeps the LTP. A LIVE fill does have
+        one, and it is the only honest cost of the trade: the LTP cache can be stale,
+        and a stale mark writes a fiction into the position, the journal, the Sheet
+        and the coach's training data. On 2026-07-30 a cached LTP recorded a NIFTY
+        entry at 112.55 against a broker fill of 125.00, turning a Rs.760.50 loss into
+        a Rs.4,095 "profit".
+
+        Fail-soft by design: brokers that do not report a price return 0.0 and the
+        LTP is kept, so this can only ever improve accuracy, never block a trade.
+        """
+        broker_price = float(getattr(order_result, "average_fill_price", 0.0) or 0.0)
+        if broker_price <= 0 or not math.isfinite(broker_price):
+            return float(ltp_price)
+        if ltp_price > 0 and abs(broker_price - ltp_price) / ltp_price > 0.02:
+            # Not an error -- just the divergence that makes this fix necessary.
+            self.log.warning(
+                "Live fill price %.2f differs from the local LTP %.2f by %.1f%%; "
+                "recording the BROKER price.",
+                broker_price,
+                ltp_price,
+                abs(broker_price - ltp_price) / ltp_price * 100.0,
+            )
+        return broker_price
+
     def _get_option_ltp(self, segment: str, security_id: int, fallback: float) -> float:
         """
         Latest option LTP, with a 3-step preference:
@@ -6292,6 +6319,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         self._untrack_orphan_live_leg(entry_leg)
         quantity = int(entry_leg["quantity"])
         exec_mode = self._exec_mode_tag(order_result)
+        option_ltp = self._entry_fill_price(order_result, option_ltp)
 
         # Keep the fetcher refreshing this option's LTP for the trade lifetime.
         self.store.register_option_subscription(

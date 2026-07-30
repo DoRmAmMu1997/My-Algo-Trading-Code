@@ -47,9 +47,24 @@ class OrderResult:
     status: OrderStatus
     broker_state: str
     reason: str
+    # Volume-weighted price the broker actually traded at, or 0.0 when the broker
+    # did not report one.  0.0 means UNKNOWN, never "free": callers must treat it
+    # as absent and fall back to their own mark.  It exists because a live fill's
+    # true cost is the broker's price, not whatever the local LTP cache happened
+    # to hold -- on 2026-07-30 a stale cached LTP recorded an entry at 112.55
+    # against a real fill of 125.00, turning a Rs.760 loss into a Rs.4,095
+    # "profit" in the journal.
+    average_fill_price: float = 0.0
 
     def __post_init__(self) -> None:
         """Reject impossible or internally inconsistent quantity snapshots."""
+
+        if isinstance(self.average_fill_price, bool) or not isinstance(
+            self.average_fill_price, (int, float)
+        ):
+            raise ValueError("average_fill_price must be a number")
+        if not math.isfinite(self.average_fill_price) or self.average_fill_price < 0:
+            raise ValueError("average_fill_price must be finite and non-negative")
 
         quantities = {
             "requested_quantity": self.requested_quantity,
@@ -114,6 +129,25 @@ def _non_negative_int(value: Any) -> int | None:
     return int(numeric)
 
 
+def _non_negative_price(value: Any) -> float:
+    """Return a usable traded price, or 0.0 meaning "the broker reported none".
+
+    Deliberately lenient: an unparsable or absent price is not an error, it just
+    means the caller must fall back to its own mark.  Only a finite, strictly
+    positive number counts as a real price.
+    """
+
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(numeric) or numeric <= 0:
+        return 0.0
+    return numeric
+
+
 def normalize_order_result(
     *,
     order_id: object,
@@ -121,6 +155,7 @@ def normalize_order_result(
     filled_quantity: object,
     broker_state: object,
     reason: object = "",
+    average_fill_price: object = 0.0,
 ) -> OrderResult:
     """Normalize broker evidence without guessing that ambiguity is rejection.
 
@@ -197,6 +232,11 @@ def normalize_order_result(
         status=status,
         broker_state=state,
         reason=reason_text,
+        # A price only means something alongside a fill; a rejected order that
+        # somehow carries one must not hand callers a price to trade off.
+        average_fill_price=(
+            _non_negative_price(average_fill_price) if filled > 0 else 0.0
+        ),
     )
 
 

@@ -236,6 +236,92 @@ def test_normalization_is_conservative_and_preserves_acknowledgement(
     assert result.remaining_quantity == 75 - filled
 
 
+def test_average_fill_price_defaults_to_zero_meaning_unknown() -> None:
+    """Brokers that report no price must not look like a free fill.
+
+    Every existing call site omits the argument, so the default has to be the
+    "unknown" sentinel that makes callers keep their own mark.
+    """
+
+    contract = _contract_module()
+    result = contract.normalize_order_result(
+        order_id="ACK-NOPRICE",
+        requested_quantity=75,
+        filled_quantity=75,
+        broker_state="COMPLETE",
+    )
+
+    assert result.average_fill_price == 0.0
+
+
+@pytest.mark.parametrize(
+    "supplied,expected",
+    [
+        (125.0, 125.0),
+        ("125.00", 125.0),   # brokers commonly return numbers as strings
+        (0, 0.0),            # explicit zero stays "unknown"
+        (-5.0, 0.0),         # nonsense is discarded, not propagated
+        ("", 0.0),
+        ("n/a", 0.0),
+        (None, 0.0),
+        (float("nan"), 0.0),
+        (float("inf"), 0.0),
+        (True, 0.0),         # bool is not a price
+    ],
+)
+def test_average_fill_price_is_parsed_leniently(supplied, expected) -> None:
+    """An unusable price degrades to 0.0 rather than raising into a live order."""
+
+    contract = _contract_module()
+    result = contract.normalize_order_result(
+        order_id="ACK-PRICE",
+        requested_quantity=75,
+        filled_quantity=75,
+        broker_state="COMPLETE",
+        average_fill_price=supplied,
+    )
+
+    assert result.average_fill_price == expected
+
+
+def test_average_fill_price_is_dropped_when_nothing_filled() -> None:
+    """A price only means something beside a fill.
+
+    A rejected order that somehow carries a price must not hand the caller a
+    number to book a trade at.
+    """
+
+    contract = _contract_module()
+    result = contract.normalize_order_result(
+        order_id="ACK-REJ",
+        requested_quantity=75,
+        filled_quantity=0,
+        broker_state="REJECTED",
+        average_fill_price=125.0,
+    )
+
+    assert result.status.name == "REJECTED"
+    assert result.average_fill_price == 0.0
+
+
+def test_order_result_rejects_impossible_average_fill_price() -> None:
+    """The dataclass itself refuses a non-finite or negative price."""
+
+    contract = _contract_module()
+    for bad in (-1.0, float("nan"), float("inf"), "125.0", True):
+        with pytest.raises(ValueError, match="average_fill_price"):
+            contract.OrderResult(
+                order_id="BAD-PRICE",
+                requested_quantity=75,
+                filled_quantity=75,
+                remaining_quantity=0,
+                status=contract.OrderStatus.FILLED,
+                broker_state="COMPLETE",
+                reason="",
+                average_fill_price=bad,
+            )
+
+
 def test_malformed_quantity_normalizes_to_unknown_instead_of_rejected() -> None:
     """Bad broker data must not manufacture a harmless zero-fill rejection."""
 
