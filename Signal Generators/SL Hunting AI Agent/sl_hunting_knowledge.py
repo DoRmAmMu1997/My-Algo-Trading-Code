@@ -663,6 +663,21 @@ RISK DISCIPLINE
   to pay for it, and the longer you sit the more likely a rejection takes back what
   you had. This does NOT weaken the worthwhile-target rule above: if the average
   target is itself too small to be worth the trade, the answer is still HOLD.
+- THE ENTRY POINT IS PART OF THE PREMISE — a right read entered in the wrong place
+  is a wrong trade. The direction can still look correct while the LOCATION you
+  took it from has already made the position unholdable: your stop sits where the
+  ordinary noise of the day reaches it, so the market does not have to disprove
+  you in order to take you out. When that is what has happened, CUT — do not sit
+  waiting for the read to be vindicated, because being eventually right does not
+  pay a position you were forced out of. The tell is being able to say "the idea
+  still looks fine, it is the entry that is the problem": that sentence is an exit
+  instruction, not a reason for patience.
+  * WHY WAITING FEELS REASONABLE AND IS NOT: once a trade is going against you,
+    further analysis stops being analysis. You cannot think your way out of a
+    position that is already wrong — every extra minute spent reasoning about it
+    is you looking for permission to keep it. While the premise held, sitting was
+    correct; once it stopped holding, sitting is just hope wearing the clothes of
+    patience.
 - Stops are PREMISE-INVALIDATION first: beyond the tight pattern stop, treat the
   setup as dead the moment its thesis breaks — price reclaims the closing point, or
   the expected "trap" fails and price goes sideways / against you. Honour a pre-set
@@ -777,6 +792,16 @@ RISK DISCIPLINE
   is not, exit without waiting for the stop. On days expected to be ONE-directional
   (especially expiry), meaningful EARLY adverse movement on a directional trade
   means the DIRECTION itself is wrong — exit early.
+- COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT: when price is working inside a small
+  range and you are positioned for it to leave, the SIZE of the first move against
+  you is the read. A SMALL adverse move alongside a break is ordinary — the level
+  is being cleared and the trade is developing. A SUDDEN LARGE adverse move is a
+  different message: it says the market intends to STAY in the range, and a range
+  pays no directional trade. So do not treat a big counter-move as merely a deeper
+  pullback to sit through; treat it as evidence against the breakout premise
+  itself. (Distinct from momentum quality below, which reads the WITH-trend move;
+  this reads the move AGAINST you, and it is a premise test rather than a
+  profit-taking cue.)
 - Momentum quality while holding: SLOW-but-CONTINUOUS with-trend momentum (small
   candles) is the sustainable kind — let it run; a FAST spike invites a retracement
   — book into strength or tighten. After consecutive losing days, deliberately
@@ -1083,7 +1108,21 @@ keys:
 
 Emit ONLY this JSON object as your final answer."""
 
-MAX_SYSTEM_PROMPT_CHARS = 75_000
+# Ceiling on the whole assembled system prompt: durable knowledge + the output
+# contract + any approved lessons + an optional pre-open note.
+#
+# This is a SANITY bound, not a budget to trade against. It exists so a runaway
+# lessons file or a malformed note cannot quietly inflate what is sent every bar;
+# it is not meant to throttle ordinary knowledge growth, and it must never be the
+# thing that stops a session. (Since 2026-07-30 a build failure disables the
+# optional agent and logs, rather than raising into the runner's startup.)
+#
+# Raised from 75,000 on 2026-07-31: knowledge alone had reached ~68,000, leaving
+# roughly 7,000 for lessons (up to 12 x 280) plus a ~2,000-character note -- so
+# the next ordinary addendum would have tripped it. At ~4 characters per token
+# 120,000 is on the order of 30k tokens, comfortably inside the model's context
+# while still catching anything pathological.
+MAX_SYSTEM_PROMPT_CHARS = 120_000
 
 
 def build_system_prompt() -> str:
