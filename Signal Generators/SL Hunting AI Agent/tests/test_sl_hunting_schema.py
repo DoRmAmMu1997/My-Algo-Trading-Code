@@ -532,6 +532,44 @@ def test_v3v_small_gap_rule_sits_inside_recruitment_history():
     assert small_gap < nxt
 
 
+def test_system_prompt_has_v3w_entry_point_and_counter_move_knowledge():
+    """v3w: 31 Jul — IH's LOSING session, which is rarer material than the wins.
+
+    He went with a flat open on the buy side, then cut: "the trade still looks
+    okay, but because of the ENTRY POINT a problem is being created", and "in a
+    trade that is going wrong you cannot apply your mind". Before entering he had
+    also named the range test: a sudden BIG adverse move means the market wants to
+    stay in the range, while small selling alongside a breakout is fine.
+    """
+    prompt = build_system_prompt()
+    # A right read taken from the wrong place is a wrong trade.
+    assert "THE ENTRY POINT IS PART OF THE PREMISE" in prompt
+    assert "being eventually right does not" in prompt
+    # The self-deception this rule exists to name.
+    assert "You cannot think your way out of a" in prompt
+    assert "hope wearing the clothes of" in prompt
+    # The size of the move AGAINST you is a premise test, not a pullback.
+    assert "COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT" in prompt
+    assert "intends to STAY in the range" in prompt
+    # ...and must not be confused with the with-trend momentum-quality rule.
+    assert "which reads the WITH-trend move" in prompt
+
+
+def test_prompt_cap_leaves_room_for_lessons_and_a_note():
+    """The cap is a sanity bound, not a budget knowledge must squeeze into.
+
+    It was raised on 2026-07-31 because knowledge alone had reached ~68k against a
+    75k cap, leaving too little for lessons plus a pre-open note. Keep provable
+    headroom so an ordinary addendum cannot silently disable the agent.
+    """
+    from sl_hunting_knowledge import MAX_SYSTEM_PROMPT_CHARS
+
+    assembled = len(build_system_prompt() + FINAL_OUTPUT_INSTRUCTION)
+    # Worst case the runtime can add: 12 lessons at their own cap, plus a note.
+    worst_case_runtime_additions = 12 * 280 + 2_500
+    assert assembled + worst_case_runtime_additions < MAX_SYSTEM_PROMPT_CHARS
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 

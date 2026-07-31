@@ -572,6 +572,16 @@ MARKET_DATA_HTTP_TIMEOUT_SECONDS = _env_float("MARKET_DATA_HTTP_TIMEOUT_SECONDS"
 # later and recorded an entry at 112.55 against a real fill of 125.00.)
 MARKET_DATA_MAX_LTP_AGE_SECONDS = _env_float("MARKET_DATA_MAX_LTP_AGE_SECONDS", 60.0)
 
+# How long a caller may wait for a JUST-SUBSCRIBED leg's first tick before giving
+# up on pricing it, and how often to re-ask while waiting. A tick feed cannot quote
+# an instrument until that instrument trades, so a leg subscribed moments ago has
+# no price through no fault of the feed. Only callers that can afford to block ask
+# for this (the BankNIFTY mirror does; the NIFTY leg does not).
+MARKET_DATA_LTP_WAIT_SECONDS = _env_float("MARKET_DATA_LTP_WAIT_SECONDS", 5.0)
+MARKET_DATA_LTP_RETRY_INTERVAL_SECONDS = _env_float(
+    "MARKET_DATA_LTP_RETRY_INTERVAL_SECONDS", 0.5
+)
+
 # Bounded join timeout for each thread on shutdown.
 SHUTDOWN_JOIN_SECONDS = _env_float("SHUTDOWN_JOIN_SECONDS", 6.0)
 
@@ -5634,7 +5644,7 @@ class BasePaperStrategyWorker(threading.Thread):
         return f"PAPER-{side}-{datetime.now():%Y%m%d%H%M%S}-{self.paper_order_counter:04d}"
 
     def _get_dealable_option_ltp(
-        self, segment: str, security_id: int
+        self, segment: str, security_id: int, *, wait_seconds: float = 0.0
     ) -> tuple[float, bool]:
         """Return ``(price, is_fresh)`` for a mark we are about to TRADE on.
 
@@ -5645,33 +5655,57 @@ class BasePaperStrategyWorker(threading.Thread):
         value, and it says so via ``is_fresh=False`` rather than passing an old
         number off as a mark. The caller decides what that means: paper can live
         with it, real money cannot.
-        """
-        fresh = self.store.get_ltp_by_secid(
-            segment,
-            security_id,
-            fallback=0.0,
-            max_age_seconds=MARKET_DATA_MAX_LTP_AGE_SECONDS,
-        )
-        if fresh > 0:
-            return fresh, True
 
-        try:
-            ltp_map = self.broker.fetch_ltp_map({segment: [security_id]})
-        except Exception as exc:
-            self.log.warning(
-                "Direct LTP fetch failed for segment=%s security_id=%s: %s",
+        `wait_seconds` handles a leg that was JUST subscribed. A tick feed cannot
+        quote an instrument until it delivers that instrument's first tick, and the
+        REST fallback has been observed returning a map that simply omits a
+        freshly-requested contract (2026-07-31: three BankNIFTY mirror legs skipped
+        with "no LTP", zero fetch errors). Waiting briefly turns "no price yet"
+        into "no price", which are not the same thing. Pass 0.0 -- the default --
+        wherever the caller cannot afford to block.
+        """
+        deadline = time.monotonic() + max(float(wait_seconds or 0.0), 0.0)
+        attempt = 0
+        while True:
+            attempt += 1
+            fresh = self.store.get_ltp_by_secid(
                 segment,
                 security_id,
-                exc,
+                fallback=0.0,
+                max_age_seconds=MARKET_DATA_MAX_LTP_AGE_SECONDS,
             )
-            ltp_map = {}
-        try:
-            price = _safe_float(ltp_map.get((str(segment), int(security_id)), 0.0), 0.0)
-        except (AttributeError, TypeError):
-            price = 0.0
-        if price > 0:
-            self.store.update_ltp_map({(str(segment), int(security_id)): price})
-            return price, True
+            if fresh > 0:
+                return fresh, True
+
+            try:
+                ltp_map = self.broker.fetch_ltp_map({segment: [security_id]})
+            except Exception as exc:
+                self.log.warning(
+                    "Direct LTP fetch failed for segment=%s security_id=%s: %s",
+                    segment,
+                    security_id,
+                    exc,
+                )
+                ltp_map = {}
+            try:
+                price = _safe_float(ltp_map.get((str(segment), int(security_id)), 0.0), 0.0)
+            except (AttributeError, TypeError):
+                price = 0.0
+            if price > 0:
+                self.store.update_ltp_map({(str(segment), int(security_id)): price})
+                if attempt > 1:
+                    self.log.info(
+                        "Option LTP for security_id=%s arrived on attempt %s.",
+                        security_id,
+                        attempt,
+                    )
+                return price, True
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # Give the feed a moment to deliver this leg's first tick, then re-ask.
+            time.sleep(min(MARKET_DATA_LTP_RETRY_INTERVAL_SECONDS, remaining))
 
         # Neither a recent tick nor a live quote. Surface whatever is cached so
         # the caller can decide, but never call it fresh.
@@ -12878,14 +12912,49 @@ if SL_HUNTING_AVAILABLE:
             if not symbol or sec_id <= 0 or lot_size <= 0:
                 self.log.warning("BNF mirror skipped: unusable contract %r.", symbol)
                 return
-            option_ltp, mark_is_fresh = self._get_dealable_option_ltp(segment, sec_id)
+            # Subscribe BEFORE pricing. The mirror used to ask for a price first and
+            # only subscribe on success, so a strike the feed had never carried --
+            # or one whose snapshot was evicted when a previous mirror closed -- had
+            # no price and no way to get one. On 2026-07-31 that skipped three
+            # mirrors, one of them on a strike traded ten minutes earlier.
+            mirror_subscription = OptionSubscription(
+                security_id=sec_id,
+                exchange_segment=segment,
+                trading_symbol=symbol,
+                right=str(contract["option_type"]),
+                strike=float(contract["strike"]),
+                expiry=contract["expiry_date"],
+            )
+            owns_mirror_feed_leg = self.store.register_option_subscription(
+                mirror_subscription, owner_id=self._execution_owner_id
+            )
+
+            def _release_mirror_feed_leg() -> None:
+                """Withdraw a subscription this mirror opened and never used."""
+                if owns_mirror_feed_leg:
+                    self.store.unregister_option_subscription(
+                        segment, sec_id, owner_id=self._execution_owner_id
+                    )
+
+            # The NIFTY leg is already open, so a couple of seconds spent waiting for
+            # this leg's first tick costs far less than dropping the mirror entirely.
+            option_ltp, mark_is_fresh = self._get_dealable_option_ltp(
+                segment, sec_id, wait_seconds=MARKET_DATA_LTP_WAIT_SECONDS
+            )
             if option_ltp <= 0:
-                self.log.warning("BNF mirror skipped: no LTP for %s (security_id=%s).", symbol, sec_id)
+                self.log.warning(
+                    "BNF mirror skipped: no LTP for %s (security_id=%s) after waiting %.1fs.",
+                    symbol,
+                    sec_id,
+                    MARKET_DATA_LTP_WAIT_SECONDS,
+                )
+                _release_mirror_feed_leg()
                 return
             if self.live_trading and not mark_is_fresh:
                 self.log.error(
                     "BNF mirror skipped: refusing a LIVE entry on a stale option mark."
                 )
+                _release_mirror_feed_leg()
                 return
 
             quantity = lot_size * lots
@@ -12938,16 +13007,10 @@ if SL_HUNTING_AVAILABLE:
                 # may still fill.  MTM/max-loss must use the conservative risk
                 # quantity so indeterminate BankNIFTY exposure never looks flat.
                 tracked_quantity = recovery_live_leg.risk_quantity
+            # Already subscribed above, before this leg was priced; re-registering
+            # is a no-op that keeps ownership correct if the call site ever moves.
             self.store.register_option_subscription(
-                OptionSubscription(
-                    security_id=sec_id,
-                    exchange_segment=segment,
-                    trading_symbol=symbol,
-                    right=str(contract["option_type"]),
-                    strike=float(contract["strike"]),
-                    expiry=contract["expiry_date"],
-                ),
-                owner_id=self._execution_owner_id,
+                mirror_subscription, owner_id=self._execution_owner_id
             )
             self._mirror_pos = PaperPosition(
                 active=True,

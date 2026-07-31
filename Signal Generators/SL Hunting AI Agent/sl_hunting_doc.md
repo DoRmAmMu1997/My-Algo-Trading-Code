@@ -1853,3 +1853,87 @@ TARGET.
   other booking rules.
 - Test markers: `test_system_prompt_has_v3v_small_gap_and_carryover_knowledge` and
   `test_v3v_small_gap_rule_sits_inside_recruitment_history`.
+## Video addendum - 31 Jul losing session + entry-point discipline (v3w)
+
+**Source:** Intraday Hunter live session, 31 Jul 2026 (`RpK2h9xsrXk`, 9:01). Notable
+because IH LOST on it - most sessions distilled here are wins, and a trader
+explaining why he cut is better material than one explaining why he was right.
+
+**What IH did:** flat pre-market open, plan for the positive side. He noted the
+charts were "not making good shapes" - rejection, up, rejection, up - and that the
+market had built a small RANGE. His pre-trade test was explicit: a breakout with
+positive momentum at the open is best; a sudden BIG selling move would signal the
+market wants to stay in the range, while small selling alongside a breakout is
+fine. Crowd read: earlier momentum-buyers were rejected and ran, and few
+participated at the second rejection, so there were no buyers left to target
+either - which is why he FOLLOWED the market up rather than hunting anyone, and
+took the call side.
+
+It then broke out and fell straight back. He cut, and said why:
+- "The trade still looks okay, but because of the ENTRY POINT a problem is being
+  created. We will not see more loss than this."
+- "In a trade that is going wrong you cannot apply your mind. While it was right we
+  sat; but if the market is now continuously falling, and selling has started in
+  Sensex and NIFTY too, we cannot wait."
+- Throughout, he sized the wait against a pre-set number: "we know our loss and our
+  target; we can wait accordingly" (already encoded as v3t's PRE-COMPUTE BOTH
+  NUMBERS).
+
+**Agent tally for 31 Jul:** 74 decisions (64 HOLD, 3 ENTER_SHORT, 2 ENTER_LONG,
+5 EXIT), window 09:16:04-10:30:07, 19 decisions citing the pre-open note. Five
+trades, net **+Rs.6,178.75** (PAPER: the operator had `LIVE_TRADING_ENABLED=false`
+after the 30 Jul incident). Leg-level prices reconcile with every journal row.
+
+**SLH-006 verified again:** `injected 1946 pre-open note chars for 2026-07-31
+(ADVISORY)` - exactly the figure the note was validated to produce.
+
+**Still unproven:** because the session was paper-only, the Kotak `avgPrc` key and
+the live-refusal branch of the staleness gate were never exercised.
+
+**A methodological correction worth recording.** Trade 1 looked corrupt - a LONG
+whose `points` were -20.45 while the CE rose 99.60 -> 100.30 - and it was nearly
+reported as a pricing bug. It is not. The journal's `entry_underlying` is the level
+the AGENT declared (24364.55); the actual spot at fill was 24346.05. The real move
+was -1.95 points, and a 0.70 rise on a ~100-point option is ordinary noise.
+
+So: `points` and `option_pnl` are measured against DIFFERENT references, and their
+disagreement can never by itself evidence a pricing fault. This is the third time
+this class of confound has bitten (the v3t basket ratio, 30 Jul, and now this).
+Only leg-level prices from the master log, or a broker fill, can settle it.
+
+**Net-new method distilled:**
+- THE ENTRY POINT IS PART OF THE PREMISE: a right read entered in the wrong place
+  is a wrong trade. The direction can still look correct while the location has
+  made the position unholdable - the stop sits where ordinary noise reaches it, so
+  the market need not disprove you to remove you. "The idea still looks fine, it is
+  the entry that is the problem" is an exit instruction, not a reason for patience,
+  because being eventually right does not pay a position you were forced out of.
+  Sub-bullet names the self-deception: once a trade is going against you, further
+  analysis stops being analysis - you cannot think your way out of a position that
+  is already wrong.
+- COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT: positioned for a small range to break,
+  the SIZE of the first move against you is the read. Small adverse movement
+  alongside a break is the level being cleared; a sudden LARGE adverse move says
+  the market intends to stay in the range, and a range pays no directional trade.
+  Scoped explicitly against the existing momentum-quality rule, which reads the
+  WITH-trend move and is a profit-taking cue; this reads the move AGAINST you and
+  is a premise test.
+
+**Confirmed but already present:** no crowd left to target on either side -> follow
+rather than hunt is the trap-density test plus v3u's NO NEARBY STOPS; waiting
+against a pre-set loss figure is v3t's PRE-COMPUTE BOTH NUMBERS; a full give-back
+of the covering move is the existing full-body-reversal invalidation.
+
+**Also in this version:** `MAX_SYSTEM_PROMPT_CHARS` raised 75,000 -> 120,000.
+Knowledge alone had reached ~68,000, leaving roughly 7,000 for lessons (up to
+12 x 280) plus a ~2,000-character note, so the next ordinary addendum would have
+tripped it. The cap is a sanity bound against a runaway lessons file or malformed
+note, not a budget for knowledge growth. A new test asserts provable headroom for
+the worst-case runtime additions rather than trusting the raw number.
+
+**Knowledge changes (v3w, all prose):**
+- `RISK`: THE ENTRY POINT IS PART OF THE PREMISE, before the premise-invalidation
+  stop rule it qualifies.
+- `RISK`: COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT, beside momentum quality.
+- Test markers: `test_system_prompt_has_v3w_entry_point_and_counter_move_knowledge`
+  and `test_prompt_cap_leaves_room_for_lessons_and_a_note`.
