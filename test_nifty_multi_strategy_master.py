@@ -3836,6 +3836,18 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     basket). The mirror is fail-soft and must never disturb the NIFTY leg.
     """
 
+    def setUp(self):
+        """Collapse the first-tick wait so a no-LTP path costs microseconds.
+
+        In production the mirror waits MARKET_DATA_LTP_WAIT_SECONDS for a
+        just-subscribed leg's first tick. Tests that exercise the give-up branch
+        would otherwise sit through that wait for real; the wait's own behaviour
+        is covered explicitly by test_mirror_waits_for_a_late_first_tick.
+        """
+        patcher = patch.object(master_file, "MARKET_DATA_LTP_WAIT_SECONDS", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     NIFTY_CONTRACT = {
         "security_id": 1001, "exchange_segment": None,  # segment filled in setUp
         "trading_symbol": "NIFTY-24300-CE", "custom_symbol": "NIFTY CE",
@@ -3883,6 +3895,74 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 500.0,
         })
         return worker, store
+
+    def test_mirror_subscribes_before_it_prices_the_leg(self):
+        """MAT-113: the mirror used to ask for a price before joining the feed.
+
+        A tick feed cannot quote an instrument it does not carry, so a strike the
+        feed had never seen -- or one whose snapshot was evicted when a previous
+        mirror closed -- had no price and no way to obtain one. On 2026-07-31 that
+        skipped three mirrors, one on a strike traded ten minutes earlier.
+        """
+        worker, store = self._make_worker()
+        subscribed_when_priced = {}
+        real_getter = worker._get_dealable_option_ltp
+
+        def _spy(segment, security_id, **kwargs):
+            subscribed_when_priced[int(security_id)] = any(
+                sub.security_id == int(security_id)
+                for sub in store.snapshot_option_subscriptions()
+            )
+            return real_getter(segment, security_id, **kwargs)
+
+        worker._get_dealable_option_ltp = _spy
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24330.0))
+        # 3003 is the canned BankNIFTY mirror contract from _make_worker.
+        self.assertTrue(
+            subscribed_when_priced.get(3003),
+            "the mirror leg must be in the feed before it is priced",
+        )
+
+    def test_mirror_waits_for_a_late_first_tick(self):
+        """A leg priced moments after subscribing gets a second chance."""
+        worker, store = self._make_worker()
+        segment = master_file.OPTION_EXCHANGE_SEGMENT
+        # The fixture pre-seeds a price for this leg; drop it so the first read
+        # misses exactly as it would for a strike the feed has never carried.
+        store._ltp_snapshots.pop((segment, 3003), None)
+        calls = {"n": 0}
+
+        def _late(_request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {}          # first ask: the feed has not delivered a tick yet
+            return {(segment, 3003): 512.0}
+
+        worker.broker.fetch_ltp_map.side_effect = _late
+        with patch.object(master_file, "MARKET_DATA_LTP_RETRY_INTERVAL_SECONDS", 0.01):
+            price, fresh = worker._get_dealable_option_ltp(
+                segment, 3003, wait_seconds=1.0
+            )
+        self.assertEqual((price, fresh), (512.0, True))
+        self.assertGreaterEqual(calls["n"], 2)
+
+    def test_mirror_releases_its_feed_leg_when_no_price_ever_arrives(self):
+        """Giving up must not leave a subscription behind for a trade never opened."""
+        worker, store = self._make_worker()
+        worker.broker.fetch_ltp_map.return_value = {}
+        # No cached price for the mirror leg, and the broker never supplies one.
+        store._ltp_snapshots.pop((master_file.OPTION_EXCHANGE_SEGMENT, 3003), None)
+        with patch.object(master_file, "MARKET_DATA_LTP_WAIT_SECONDS", 0.02), \
+             patch.object(master_file, "MARKET_DATA_LTP_RETRY_INTERVAL_SECONDS", 0.01):
+            worker._open_bnf_mirror("LONG")
+        self.assertFalse(worker._mirror_pos.active)
+        self.assertFalse(
+            any(
+                sub.security_id == 3003
+                for sub in store.snapshot_option_subscriptions()
+            ),
+            "an unused mirror subscription must be withdrawn",
+        )
 
     def test_sl_hunting_worker_construction_cannot_kill_the_runner(self):
         """The OPTIONAL agent must never take the other 26 strategies down with it.
