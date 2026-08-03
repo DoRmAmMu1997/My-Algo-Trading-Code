@@ -75,3 +75,29 @@ the expected LF-to-CRLF working-copy warnings.
 
 No authenticated smoke, Codex/model call, broker call, real order, network
 call, or decision-log write was performed during this correction.
+
+## Fix round 2
+
+- Correction commit: `539d3dae20df7ded30b66659aed717a4bfdbb27e`
+- Replaced current-architecture fixed roster counts in the master module
+  introduction, thread/tree/logging/size/assembly comments, root and signal
+  READMEs, and synchronized `AGENTS.md`/`CLAUDE.md` guidance with core-roster
+  plus independently opt-in-agent wording.
+- Preserved the root README's historical nine-worker statement while removing
+  its dangling pointer to a fixed current total.
+- Strengthened the policy guard across only the five current architecture
+  documents. Its case-insensitive bounded pattern catches `26`, `27`, `27th`,
+  and `twenty-six` roster claims through Markdown punctuation or one wrapped
+  line, while alphanumeric boundaries exclude dates such as `2026` and symbols
+  such as `26JUN`. Historical reports are not scanned.
+
+The first red run identified 11 stale roster claims. A second red run proved
+the strengthened Markdown-aware pattern caught two additional master claims.
+The green correction verification reported 30 policy/config tests passed, 53
+CPR AI tests passed (with the existing third-party `dateutil` warning), fake
+smoke `HOLD validation=accepted_hold NO ORDER`, Ruff passed, mypy passed across
+51 source files, compileall exited 0, and `git diff --check` exited 0 with only
+the expected LF-to-CRLF working-copy warnings.
+
+No authenticated smoke, Codex/model call, broker call, real order, network
+call, or decision-log write was performed during this correction.
