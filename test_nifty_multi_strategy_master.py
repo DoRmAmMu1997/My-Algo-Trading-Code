@@ -49,6 +49,30 @@ with (
         print(f"Failed to load master_file for testing: {e}")
 
 
+_LTP_WAIT_PATCHER = None
+
+
+def setUpModule():
+    """Collapse the first-tick wait for the whole suite.
+
+    MAT-113 makes every worker subscribe a leg and then wait up to
+    MARKET_DATA_LTP_WAIT_SECONDS for the feed's first tick. Tests drive fake
+    brokers that never tick, so each entry that legitimately fails to find a price
+    would sit through that wait for real -- it took the suite from 7s to 54s. The
+    wait's own behaviour is covered directly by
+    TestSLHuntingBnfMirror.test_mirror_waits_for_a_late_first_tick, which passes
+    an explicit wait_seconds and is therefore unaffected by this patch.
+    """
+    global _LTP_WAIT_PATCHER
+    _LTP_WAIT_PATCHER = patch.object(master_file, "MARKET_DATA_LTP_WAIT_SECONDS", 0.0)
+    _LTP_WAIT_PATCHER.start()
+
+
+def tearDownModule():
+    if _LTP_WAIT_PATCHER is not None:
+        _LTP_WAIT_PATCHER.stop()
+
+
 # The Flattrade helper is loaded separately so its low-level REST behaviour can
 # be tested without starting the master runner or making any network requests.
 flattrade_file_path = Path(__file__).parent / "Dependencies" / "Flattrade API" / "flattrade_execution.py"
@@ -3942,18 +3966,6 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     basket). The mirror is fail-soft and must never disturb the NIFTY leg.
     """
 
-    def setUp(self):
-        """Collapse the first-tick wait so a no-LTP path costs microseconds.
-
-        In production the mirror waits MARKET_DATA_LTP_WAIT_SECONDS for a
-        just-subscribed leg's first tick. Tests that exercise the give-up branch
-        would otherwise sit through that wait for real; the wait's own behaviour
-        is covered explicitly by test_mirror_waits_for_a_late_first_tick.
-        """
-        patcher = patch.object(master_file, "MARKET_DATA_LTP_WAIT_SECONDS", 0.0)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
     NIFTY_CONTRACT = {
         "security_id": 1001, "exchange_segment": None,  # segment filled in setUp
         "trading_symbol": "NIFTY-24300-CE", "custom_symbol": "NIFTY CE",
@@ -4001,6 +4013,49 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
             (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 500.0,
         })
         return worker, store
+
+    def test_subscribe_then_price_joins_the_feed_first(self):
+        """MAT-113 generalised: the shared helper every worker now uses.
+
+        The leg must be in the subscription pool at the moment it is priced, and
+        the caller must learn whether IT added the leg so a fallen-through entry
+        withdraws only what it opened.
+        """
+        worker, store = self._make_worker()
+        contract = dict(
+            self.BNF_CONTRACT,
+            exchange_segment=master_file.OPTION_EXCHANGE_SEGMENT,
+            expiry_date=date.today() + timedelta(days=20),
+        )
+        subscribed_at_pricing = {}
+        real_getter = worker._get_dealable_option_ltp
+
+        def _spy(segment, security_id, **kwargs):
+            subscribed_at_pricing["seen"] = any(
+                sub.security_id == int(security_id)
+                for sub in store.snapshot_option_subscriptions()
+            )
+            return real_getter(segment, security_id, **kwargs)
+
+        worker._get_dealable_option_ltp = _spy
+        price, _fresh, owned = worker._subscribe_then_price(contract)
+        self.assertTrue(subscribed_at_pricing["seen"], "must subscribe before pricing")
+        self.assertEqual(price, 500.0)
+        self.assertEqual(owned, (master_file.OPTION_EXCHANGE_SEGMENT, 3003))
+
+        # A second call by the SAME owner is not a new acquisition, so an abort
+        # there must not tear down the leg the first call is still using.
+        _p2, _f2, owned_again = worker._subscribe_then_price(contract)
+        self.assertIsNone(owned_again)
+        worker._release_feed_legs(owned_again)
+        self.assertTrue(
+            any(s.security_id == 3003 for s in store.snapshot_option_subscriptions())
+        )
+        # Releasing the key this worker really owns does remove it.
+        worker._release_feed_legs(owned)
+        self.assertFalse(
+            any(s.security_id == 3003 for s in store.snapshot_option_subscriptions())
+        )
 
     def test_mirror_subscribes_before_it_prices_the_leg(self):
         """MAT-113: the mirror used to ask for a price before joining the feed.

@@ -172,11 +172,17 @@ def test_shipped_note_file_is_valid():
     assert format_premarket_note(note, date.fromisoformat(note.for_date)) != ""
 
 
-def test_shipped_note_matches_august_3_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 2 Aug transcript.
+def test_shipped_note_matches_august_4_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 3 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
+
+    Worth knowing when re-reading this: 4 Aug is NOT a repeat of 3 Aug. On 3 Aug
+    the plan forked on the opening type (gap-up -> buy side, flat/gap-down ->
+    sell side). Here every opening type points the SAME way -- sell side --
+    with a big gap-down as the only stand-aside. An assertion that still fork on
+    the gap direction would mean the note was copied, not re-transcribed.
     """
     import os
 
@@ -185,29 +191,35 @@ def test_shipped_note_matches_august_3_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-03"
-    assert "yHEfrMUrmKk" in note.source
+    assert note.for_date == "2026-08-04"
+    assert "IHjbAmtdLro" in note.source
     assert note.plan == [
-        "MEANINGFUL GAP-UP: buyers are not the target; follow the market and "
-        "identify BUY-side setups.",
-        "FLAT or GAP-DOWN: target the seated buyers and identify SELL-side setups.",
-        "Treat a mild GAP-UP as FLAT rather than assuming it released the buyers; "
-        "wait for the sell-side setup to confirm.",
+        "Every opening type points the same way today: GAP-UP, FLAT and GAP-DOWN "
+        "all mean identify SELL-side setups against the seated buyers.",
+        "BIG GAP-DOWN is the single exception -- he ignores it rather than "
+        "hunting into it.",
+        "On a mild GAP-DOWN expect retracement chop first; the setup still has to "
+        "confirm before entry.",
+        "His premise is explicitly conditional: he targets buyers only because "
+        "this is NOT an all-time-high or runaway-momentum tape. Strong trend "
+        "momentum would weaken it.",
+        "BANKNIFTY sits on round-number support with more round numbers nearby -- "
+        "he flags retracement risk there specifically.",
     ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24400.0, 24480.0],
-            "support": [24300.0, 24220.0],
+            "resistance": [24610.0, 24700.0],
+            "support": [24500.0, 24400.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57680.0, 57820.0],
-            "support": [57154.0, 56850.0],
+            "resistance": [57820.0, 58100.0],
+            "support": [57500.0, 57154.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78500.0, 78850.0],
-            "support": [77840.0, 77500.0],
+            "resistance": [78850.0, 79100.0],
+            "support": [78500.0, 78300.0],
         },
     ]
