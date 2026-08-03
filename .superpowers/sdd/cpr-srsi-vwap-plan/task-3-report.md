@@ -115,3 +115,46 @@ reproductions:
 
 No real Codex SDK, broker, order, or network call was made; the apparent live
 order text in the master suite comes from fully mocked diagnostic tests.
+
+## Fix round 2
+
+Commit `872da09ad71e924aa4896ab8ad05d2b505d67d2a` corrects the
+time-dependent test defect and adds the missing safety characterizations. No
+production file changed in this round, and the Task 4 files remained untouched.
+
+### RED evidence
+
+At the actual after-15:00 IST wall clock, the unpinned 20-test CPR AI worker
+class reproduced **8 failures and 2 errors**. The real cutoff short-circuited
+ordinary cadence, accepted-entry, scale-in, and shutdown-race tests before
+their intended behavior could run.
+
+### Test corrections and added coverage
+
+- `TestCPRAIWorkerFoundation.setUp` now pins `_ist_now` to 10:00 IST and
+  restores it with `addCleanup`, so every ordinary test is deterministic.
+- The 15:15 test locally advances that pinned clock during the agent turn;
+  existing 15:00 tests retain their explicit cutoff overrides.
+- New post-inference tests prove market-data-unhealthy and 15:15 square-off
+  transitions reject the late entry and audit their exact blocked reasons.
+- A two-live-ledger retry test proves one unconfirmed role-`A` leg retains the
+  primary position, CPR state, and option subscription. A later retry with
+  both legs confirmed flat performs one cleanup and books the hand-checked
+  primary `50@10` plus add `25@12` exit at `8` as `-200`.
+
+The three new tests characterized already-correct production behavior and did
+not require a production edit.
+
+### GREEN evidence
+
+- At actual wall time `2026-08-03T15:12:26+05:30`, the deterministic CPR AI
+  worker class completed **23 passed**.
+- `python -m pytest "Signal Generators/CPR AI Agent/tests" -q`: **53 passed**.
+- `python -m pytest "Signal Generators/CPR Strategy" -q`: **17 passed**.
+- `python -m unittest test_nifty_multi_strategy_master`: **438 passed, 51 skipped**.
+- Targeted Ruff for `test_nifty_multi_strategy_master.py`: **All checks passed**.
+- `python -m py_compile test_nifty_multi_strategy_master.py`: **passed**.
+- `git diff --check -- test_nifty_multi_strategy_master.py`: **passed**.
+
+No real Codex SDK, broker, order, or network call was made. Live-order-looking
+master-suite output came only from the repository's mocked diagnostic tests.
