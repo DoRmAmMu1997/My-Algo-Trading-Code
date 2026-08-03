@@ -95,7 +95,7 @@ def _usage_mapping(usage: Any) -> dict[str, int]:
 def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
     """Start one fresh ephemeral thread with only four frozen MCP reads enabled."""
 
-    from openai_codex import ApprovalMode, Codex, Sandbox  # type: ignore[import-not-found]
+    from openai_codex import ApprovalMode, Codex, Sandbox
 
     snapshot_path = str(request["snapshot_path"])
     runtime_directory = str(Path(snapshot_path).parent)

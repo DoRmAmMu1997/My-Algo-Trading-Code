@@ -8,7 +8,7 @@ math, and exposes facts rather than choosing an agent regime or trade.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -216,12 +216,18 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
         _as_float(d.iloc[-2]),
     )
     cross_up = (
-        all(value is not None for value in (current_k, previous_k, current_d, previous_d))
+        current_k is not None
+        and previous_k is not None
+        and current_d is not None
+        and previous_d is not None
         and current_k > current_d
         and previous_k <= previous_d
     )
     cross_down = (
-        all(value is not None for value in (current_k, previous_k, current_d, previous_d))
+        current_k is not None
+        and previous_k is not None
+        and current_d is not None
+        and previous_d is not None
         and current_k < current_d
         and previous_k >= previous_d
     )
@@ -269,8 +275,18 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
             "previous_d": previous_d,
             "cross_up": bool(cross_up),
             "cross_down": bool(cross_down),
-            "cross_up_in_oversold": bool(cross_up and max(current_k, previous_k) <= 20.0),
-            "cross_down_in_overbought": bool(cross_down and min(current_k, previous_k) >= 80.0),
+            "cross_up_in_oversold": bool(
+                cross_up
+                and current_k is not None
+                and previous_k is not None
+                and max(current_k, previous_k) <= 20.0
+            ),
+            "cross_down_in_overbought": bool(
+                cross_down
+                and current_k is not None
+                and previous_k is not None
+                and min(current_k, previous_k) >= 80.0
+            ),
         },
         "vwap": {
             "method": vwap_method,
@@ -315,10 +331,13 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
         "recent_candles": [
             {
                 "timestamp": str(row.timestamp),
-                "open": float(row.open),
-                "high": float(row.high),
-                "low": float(row.low),
-                "close": float(row.close),
+                # pandas-stubs gives named-tuple cells a deliberately broad
+                # scalar union; preparation above has already made these four
+                # columns numeric, so the casts document that proven boundary.
+                "open": float(cast(Any, row.open)),
+                "high": float(cast(Any, row.high)),
+                "low": float(cast(Any, row.low)),
+                "close": float(cast(Any, row.close)),
             }
             for row in bars.tail(5).itertuples(index=False)
         ],

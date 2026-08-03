@@ -420,7 +420,8 @@ class CPRAgent:
             return "unexpected_agent_action", "An unallowlisted tool was attempted."
         if len(names) != len(set(names)):
             return "unexpected_agent_action", "A tool was called more than once."
-        missing = set(EXPECTED_TOOL_NAMES) - set(names)
+        expected_names: set[str] = set(EXPECTED_TOOL_NAMES)
+        missing = expected_names - set(names)
         if missing:
             return "missing_tool_call", "One or more required frozen tools were not called."
         if any(record.status != "completed" for record in result.tool_calls):

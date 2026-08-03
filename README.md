@@ -18,7 +18,10 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - Live Telegram alerts: the front-test master file can post every entry/exit (option instrument, lot size, entry/exit price, and P&L) to a Telegram group/channel
 - An **optional, opt-in LLM trading agent** — the "SL Hunting AI Agent" — a Claude agent that trades a discretionary price-action method on NIFTY options; off by default, paper unless explicitly enabled, and fail-soft (see Recent additions)
 
+- An optional **CPR Codex AI Agent**: an independent five-minute SRSI/VWAP strategy with four frozen read-only MCP tools, deterministic host-owned execution/risk gates, safe disabled defaults, and the standard live double gate
+
 # Recent additions
+- **CPR Codex AI Agent (independent, opt-in).** `CPRAIWorker` freezes session levels, momentum/VWAP, market structure, and position state once per completed five-minute bar. Codex makes a dynamic regime/setup or premise-exit judgment, while the host alone validates entry geometry, stop distance, levels, sizing, time cutoffs, lifecycle state, and execution. The worker is disabled by default and live-disabled by default; real orders require both `LIVE_TRADING_ENABLED=true` and `CPR_AI_LIVE_TRADING=true`, plus normal startup exposure audit/config validation. CPR, CPR Algo 3, and CPR AI are independent strategies that may run together with independent positions and independent P&L. Install the exact optional set from `requirements-codex-ai.txt`; see the [focused CPR AI README](Signal%20Generators/CPR%20AI%20Agent/README.md) for the strategy, isolation boundary, and zero-order smoke commands.
 - **Config-drift audit — `python algo.py check-env`.** Settings live in three places that drift apart silently: your gitignored `.env`, the committed `env.example` template, and the in-code default behind every `_env_*` call. A key present in the code and the template but missing from `.env` is **not** an error — the runner just uses the in-code default — which is what makes it easy to miss: an unseen default ends up governing a live-money run. This read-only command reports settings missing from your `.env`, mistyped or stale keys (a typo means the setting you intended is not being applied at all), and knobs missing from the template. It exits non-zero on findings so it can gate a pre-flight script, and prints key **names only** — never a value out of your `.env` — so its output is safe to share. CI enforces the same rule in the other direction: a new `_env_*` key cannot land without its `env.example` entry.
 - **Per-strategy size multiplier — `<PREFIX>_SIZE_MULTIPLIER`.** One knob per strategy (default **1**, whole numbers up to **25**) that scales that strategy's entire size/risk set together: its lot count, its per-trade risk budget, its hard lot cap, and its daily max-loss kill-switch. At `2` a 5-lot cap becomes 10, a Rs.2,500 budget becomes Rs.5,000, a Rs.5,500 daily cap becomes Rs.11,000, and a setup that would have taken 4 lots takes 8 — so position size can grow with the **account** by editing one number instead of four that must be kept consistent by hand. Deliberately **per-strategy only** (no global switch, so one typo cannot enlarge all 27 workers) and it applies to **paper and live alike**, so an enlarged size can be paper-validated first. Anything malformed (`0`, `2.5`, `30`, `"two"`) falls back to 1 for paper and **blocks that strategy from live trading** rather than guessing a size. Leave every multiplier unset to trade exactly as before. Two consequences worth knowing: the scaled budget also loosens the "one lot exceeds the budget" skip, and because lots are floored a 2x can land slightly above a pure doubling (still strictly inside the scaled budget). For SL Hunting, note its BankNIFTY mirror already roughly doubles basket risk, so a multiplier of M leaves the basket near 2xM times the single-leg budget.
 - **Optional websocket market data producer — `MARKET_DATA_SOURCE=WEBSOCKET`.** The runner can now source its market data from Dhan's marketfeed websocket instead of REST polling (requires Dhan's paid Data API subscription; any other value of the flag fails closed to the default REST poller). Ticks build the 1-minute candles live — the forming minute updates in real time — and once per minute the completed candles are trued-up against Dhan's official REST candles (official wins; divergence is logged), so strategy bars converge to exactly what the backtests used. All LTPs (NIFTY spot plus every subscribed option leg, including multi-leg baskets: hedged pairs, Delta-0.2's four legs, strangle legs, the SL Hunting BankNIFTY mirror) stream from ticks in real time, with legs subscribed/unsubscribed dynamically as workers enter and exit. REST stays for warmup history and reconnect gap-backfill; API load drops from one full-window pull every 2-5s to ~1/minute. The market-data health gates (10s LTP / 150s bar / 30s liquidation) behave identically, with one tick-feed-aware twist: quiet-but-subscribed legs stay fresh only while the socket is demonstrably alive. Rollback is `MARKET_DATA_SOURCE=REST` + restart; the tick logic lives in `Dependencies/tick_bar_builder.py`.
@@ -63,6 +66,7 @@ Each subfolder has its own `Readme.md` with the details.
    That covers the core (data fetch, backtests, runner). Install exact optional sets only when needed:
    ```
    pip install -r requirements-ai.txt        # SL Hunting Claude SDK stack
+   pip install -r requirements-codex-ai.txt  # CPR Codex SDK + local MCP stack
    pip install -r requirements-dev.txt       # local quality/security gates
    pip install pyotp==2.9.0 websocket-client==1.8.0  # Shoonya runtime
    pip install --no-deps "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1#egg=neo_api_client"
@@ -142,6 +146,7 @@ A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs on
 ```
 pip install -r requirements-dev.txt
 pip install -r requirements-ai.txt
+pip install -r requirements-codex-ai.txt
 python -m unittest test_nifty_multi_strategy_master
 python -m unittest test_market_data_health
 python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
@@ -153,12 +158,13 @@ python -m coverage json -o coverage.json
 python scripts/check_coverage_thresholds.py coverage.json
 python -m pip_audit -r requirements.txt --no-deps --progress-spinner off
 python -m pip_audit -r requirements-ai.txt --no-deps --progress-spinner off
+python -m pip_audit -r requirements-codex-ai.txt --no-deps --progress-spinner off
 python -m pip_audit -r requirements-dev.txt --no-deps --progress-spinner off
 python -m compileall -q .
 python -m ruff check .
 python -m mypy
 ```
-Coverage is branch-enabled: overall runtime coverage may not fall below 54.7%, new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The three local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
+Coverage is branch-enabled: overall runtime coverage may not fall below 54.7%, new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The four local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
 
 # License
 Released under the MIT License — see [LICENSE](LICENSE).
