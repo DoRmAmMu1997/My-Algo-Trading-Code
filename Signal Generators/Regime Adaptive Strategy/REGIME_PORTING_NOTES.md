@@ -62,8 +62,8 @@ reads as protection that is not there.
 
 | Source gate | Where the SOURCE gets it | Status here |
 |---|---|---|
-| Max 2% bid/ask spread | The **option-chain response**, not the tick feed. Dhan's `/optionchain` returns `top_bid_price` / `top_ask_price` / `top_bid_quantity` / `top_ask_quantity` per CE/PE node; their `normalize_quote_depth()` reads those with a `depth.buy[0]`/`depth.sell[0]` fallback. | **Buildable today.** `DhanBrokerClient.fetch_option_chain()` already returns this payload and we simply discard those fields. Needs a chain call for the expiry being traded (3s-per-combination rate limit), not a new capability. |
-| Chain liquidity score | Same chain response — top-of-book quantities plus OI/volume. | Buildable, same call. |
+| Max 2% bid/ask spread | The **option-chain response**, not the tick feed. Dhan's `/optionchain` returns `top_bid_price` / `top_ask_price` / `top_bid_quantity` / `top_ask_quantity` per CE/PE node; their `normalize_quote_depth()` reads those with a `depth.buy[0]`/`depth.sell[0]` fallback. | **IMPLEMENTED** — see "The spread gate" below. `REGIME_ADAPTIVE_MAX_SPREAD_PCT=2.0`. |
+| Chain liquidity score | Same chain response — top-of-book quantities plus OI/volume. | Buildable, same call, not built. The quantities are in the payload the spread gate already fetches. |
 | India VIX filter | Dhan quote on **security id 21, segment `IDX_I`** — an ordinary `quote_data`/`ticker_data` call. | Buildable, cheap. We already batch index LTP calls; this is one more id. |
 | Market-breadth filter | Dhan `quote_data` batched over the **NIFTY-50 constituents on `NSE_EQ`**, counting advances by `net_change`. Ships a `fixtures/nifty50_symbols.json`. | Buildable, but ~50 quotes per refresh — a real API-budget decision, and we have no constituent fixture. |
 | Futures-basis filter | Spot vs NIFTY future LTP via `NSE_FNO` batch quote. | Buildable, cheap. |
@@ -74,13 +74,51 @@ only and `Dependencies/tick_bar_builder.py` drops depth packets, so there is no
 bid/ask *in the tick path*. That part stands. The error was concluding the runner
 therefore has no access to bid/ask at all — the source never used ticks for it.
 
-**What this means operationally:** nothing stops this strategy from entering into
-a wide or thin option. The existing runner-level protections still apply (the
-per-strategy daily max-loss cap, the 15:15 square-off, the `_get_dealable_option_ltp`
-freshness/refusal path on live), but there is no spread or liquidity veto at the
-signal layer. That is a **gap left open by choice, not by the platform** — and the
-cheapest one to close first is the spread gate, because the data is already in a
-response we parse.
+**What this means operationally:** the VIX, breadth and basis filters are still
+absent, so this strategy will trade a session the source would have stood out of.
+The existing runner-level protections apply (per-strategy daily max-loss cap,
+15:15 square-off, the `_get_dealable_option_ltp` freshness/refusal path on live),
+and as of the spread gate below, entries into a wide book are now refused too.
+
+---
+
+## The spread gate (implemented)
+
+Every strategy in this runner BUYS options, so a 2%-of-mid spread is a 2% loss
+booked at entry, before the thesis has done anything. This was the cheapest gap
+to close because the data was already arriving and being thrown away.
+
+- **Quote source:** `top_bid_price` / `top_ask_price` out of the `/optionchain`
+  response for the strike and expiry actually being bought, parsed by
+  `_parse_option_chain_quote`. Falls back through the alternate key spellings and
+  then the depth ladder, because the SDK has shifted casing between releases.
+- **Metric:** `(ask - bid) / mid * 100`. Mid is the reference because that is what
+  a marketable order is measured against, and it keeps the number symmetric.
+  A crossed or half-empty book returns `None` — **unknown, never 0.0** — so a
+  broken quote can never read as a tight one.
+- **Where it runs:** last check in `enter_position`, *after* sizing. Sizing is
+  local and free; the chain call is rate-limited, so a trade sizing would have
+  rejected never spends one.
+- **Rate limit:** Dhan allows one `/optionchain` per 3s per (underlying, expiry),
+  so all workers share one short TTL cache (`OPTION_CHAIN_QUOTE_CACHE_SECONDS`).
+
+**The paper/live split, which mirrors `_get_dealable_option_ltp`:**
+
+| Situation | Paper | Live |
+|---|---|---|
+| Spread known, wider than the cap | **Refuse** | **Refuse** |
+| Spread unknown (chain failed, or no quote for that strike) | Proceed, warn | **Refuse** |
+
+A too-wide spread is a deterministic property of the market, so refusing in paper
+too keeps the Sheet's paper rows predictive of live. An *unreadable* quote is an
+infrastructure failure, not a market fact: real money is not spent on a check that
+did not run, but paper keeps the observation rather than losing a data point to a
+transient API error.
+
+**Off by default everywhere else.** `<PREFIX>_MAX_SPREAD_PCT` defaults to 0 for
+every strategy except Regime Adaptive (`_DEFAULT_MAX_SPREAD_PCT`), so no existing
+worker's behaviour changed. The default lives in code, not only in `env.example`,
+so deleting the `.env` line cannot silently disarm it.
 
 ---
 

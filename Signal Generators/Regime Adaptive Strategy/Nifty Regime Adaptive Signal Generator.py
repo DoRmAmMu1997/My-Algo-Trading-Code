@@ -26,12 +26,12 @@ DELIBERATE DEVIATIONS FROM THE UPSTREAM PROJECT
 - The upstream router has a third branch (OI/liquidity momentum). It is not
   ported: it needs the option chain, which this factory contract cannot pass to
   an engine, and the chain endpoint is already rate-budgeted elsewhere.
-- The upstream liquidity, bid/ask-spread, India VIX and breadth vetoes are NOT
-  implemented here. They are absent by CHOICE, not for want of data: the source
-  runs on Dhan too and reads them from ordinary REST calls (the spread comes from
-  the option-chain response we already fetch and discard). Nothing at the signal
-  layer stops this strategy entering a wide or thin option. See
-  REGIME_PORTING_NOTES.md for exactly where each one comes from.
+- The upstream bid/ask-spread veto IS implemented, but in the WORKER, not here:
+  it needs the option chain, and this contract only ever receives a DataFrame.
+  See `_spread_gate_allows_entry` in the master file.
+- The upstream liquidity, India VIX and breadth vetoes are still absent — by
+  CHOICE, not for want of data: the source runs on Dhan too and reads them from
+  ordinary REST calls. See REGIME_PORTING_NOTES.md for where each one comes from.
 - VWAP is an equal-weight session proxy in live/paper sessions, because the live
   feed carries no volume. `vwap_is_proxy` records this per bar.
 

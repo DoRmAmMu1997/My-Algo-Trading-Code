@@ -6393,6 +6393,161 @@ class BasePaperStrategyWorker(threading.Thread):
 
 
 # =============================================================================
+# BID/ASK SPREAD GATE (shared; opt-in per strategy)
+# =============================================================================
+# A wide or thin option is a trade you cannot get out of at the price your stop
+# assumes. Every strategy here BUYS options, so a 2%-of-mid spread is a 2% loss
+# taken at the moment of entry before the thesis has done anything.
+#
+# WHERE THE QUOTE COMES FROM. Not the tick feed -- we subscribe
+# `MarketFeed.Ticker` only and `tick_bar_builder.py` drops depth packets, so
+# there is no bid/ask in the tick path. It comes from the `/optionchain` REST
+# response, which carries `top_bid_price` / `top_ask_price` (plus quantities)
+# per CE/PE node. `DhanBrokerClient.fetch_option_chain` has always returned that
+# payload; until now the runner parsed only OI and Greeks out of it and dropped
+# the rest.
+#
+# Default OFF for every strategy (`<PREFIX>_MAX_SPREAD_PCT=0`), so adding this
+# changes NO existing strategy's behaviour. Only prefixes listed below ship with
+# it on.
+_DEFAULT_MAX_SPREAD_PCT = {
+    # Regime Adaptive is the first user: it is a new, unproven port and the
+    # source project it came from gated on spread, so shipping it without one
+    # would be strictly weaker than the strategy we copied.
+    "REGIME_ADAPTIVE": 2.0,
+}
+
+# Dhan allows one unique /optionchain request per 3 seconds per
+# (underlying, expiry). Entries are rare, but two workers deciding in the same
+# second on the same expiry would collide, so one short shared cache serves
+# them all. This is a rate-limit guard, not a performance cache -- the TTL is
+# deliberately the smallest value the API permits.
+OPTION_CHAIN_QUOTE_CACHE_SECONDS = _env_float("OPTION_CHAIN_QUOTE_CACHE_SECONDS", 3.0)
+_option_chain_quote_cache: dict[tuple[int, str], tuple[float, dict]] = {}
+_option_chain_quote_lock = threading.Lock()
+
+
+def _extract_quote_from_chain_node(node: object) -> tuple[float, float]:
+    """Pull ``(bid, ask)`` out of ONE CE/PE node of a `/optionchain` response.
+
+    Dhan documents `top_bid_price` / `top_ask_price`, but the SDK has shifted
+    key casing between minor releases before (see `_parse_option_chain_for_oi`),
+    so this accepts the same alternates the upstream project accepts and falls
+    back to the first level of the depth ladder. Anything unusable returns
+    ``(0.0, 0.0)`` rather than raising -- the caller treats that as "no quote",
+    which is a different thing from "a bad quote".
+    """
+    if not isinstance(node, dict):
+        return 0.0, 0.0
+
+    def _first_present(names: tuple[str, ...]) -> float:
+        for name in names:
+            if name in node:
+                value = _safe_float(node.get(name), 0.0)
+                if value > 0:
+                    return value
+        return 0.0
+
+    bid = _first_present(("top_bid_price", "best_bid", "bid", "buy_price"))
+    ask = _first_present(("top_ask_price", "best_ask", "ask", "sell_price"))
+    if bid > 0 and ask > 0:
+        return bid, ask
+
+    # Depth-ladder fallback: {"depth": {"buy": [{"price": ...}], "sell": [...]}}
+    depth = node.get("depth")
+    if isinstance(depth, dict):
+        for side_keys, current in ((("buy", "bids"), "bid"), (("sell", "asks"), "ask")):
+            if (bid if current == "bid" else ask) > 0:
+                continue
+            for key in side_keys:
+                ladder = depth.get(key)
+                if isinstance(ladder, list) and ladder and isinstance(ladder[0], dict):
+                    price = _safe_float(ladder[0].get("price"), 0.0)
+                    if price > 0:
+                        if current == "bid":
+                            bid = price
+                        else:
+                            ask = price
+                        break
+    return bid, ask
+
+
+def _parse_option_chain_quote(resp: object, strike: float, right: str) -> tuple[float, float]:
+    """Find ONE strike's CE or PE quote in a `/optionchain` response.
+
+    Defensive in the same way as `_parse_option_chain_for_oi`: any level that is
+    not the expected shape yields ``(0.0, 0.0)`` instead of raising, because a
+    malformed payload must degrade to "no quote", never to an exception inside
+    the entry path.
+
+    Dhan keys the strike map by a stringified float ("22000.000000"), so the
+    lookup compares numerically rather than by string equality.
+    """
+    if not isinstance(resp, dict):
+        return 0.0, 0.0
+    status = str(resp.get("status", "")).strip().lower()
+    if status and status != "success":
+        return 0.0, 0.0
+    payload = resp.get("data")
+    if not isinstance(payload, dict):
+        return 0.0, 0.0
+    oc = payload.get("oc") or payload.get("OC") or {}
+    if not isinstance(oc, dict):
+        return 0.0, 0.0
+
+    side = "ce" if str(right).strip().upper() == "CE" else "pe"
+    target = _safe_float(strike, 0.0)
+    if target <= 0:
+        return 0.0, 0.0
+
+    for raw_strike, legs in oc.items():
+        if abs(_safe_float(raw_strike, -1.0) - target) > 0.001:
+            continue
+        if not isinstance(legs, dict):
+            return 0.0, 0.0
+        node = legs.get(side) or legs.get(side.upper())
+        return _extract_quote_from_chain_node(node)
+    return 0.0, 0.0
+
+
+def _relative_spread_pct(bid: float, ask: float) -> float | None:
+    """Spread as a percentage OF THE MID, or None when the book is unusable.
+
+    Mid is the reference (not the bid, not the ask) because it is the price a
+    marketable order is measured against and it makes the number symmetric for
+    buyers and sellers. Returns None -- explicitly "unknown", never 0.0 -- when
+    either side is missing or the book is crossed (ask < bid), so a broken quote
+    can never read as a tight one.
+    """
+    bid_value = _safe_float(bid, 0.0)
+    ask_value = _safe_float(ask, 0.0)
+    if bid_value <= 0 or ask_value <= 0 or ask_value < bid_value:
+        return None
+    mid = (bid_value + ask_value) / 2.0
+    if mid <= 0:
+        return None
+    return (ask_value - bid_value) / mid * 100.0
+
+
+def _fetch_option_chain_cached(broker, under_security_id: int, under_segment: str, expiry) -> dict:
+    """`fetch_option_chain` behind a short shared TTL, keyed by (underlying, expiry).
+
+    Raises whatever the broker raises -- the caller decides what a failed chain
+    fetch means, and that decision differs for paper and live.
+    """
+    key = (int(under_security_id), str(expiry))
+    now = time.monotonic()
+    with _option_chain_quote_lock:
+        cached = _option_chain_quote_cache.get(key)
+        if cached is not None and (now - cached[0]) < max(OPTION_CHAIN_QUOTE_CACHE_SECONDS, 0.0):
+            return cached[1]
+    resp = broker.fetch_option_chain(int(under_security_id), str(under_segment), expiry)
+    with _option_chain_quote_lock:
+        _option_chain_quote_cache[key] = (time.monotonic(), resp)
+    return resp
+
+
+# =============================================================================
 # ATM SINGLE-LEG STRATEGY WORKER (concrete intermediate class)
 # =============================================================================
 class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
@@ -6411,6 +6566,11 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
       different math, so single-leg ATM behaviour is shared only among
       strategies that actually use it.
     """
+
+    #: Reject an entry whose option is quoted wider than this percentage of mid.
+    #: 0 disables the check, which is the default for every worker that predates
+    #: it -- see `_spread_gate_allows_entry` and `_DEFAULT_MAX_SPREAD_PCT`.
+    max_spread_pct: float = 0.0
 
     def _get_open_position_pnl(self) -> float:
         """
@@ -6456,6 +6616,93 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             stop_underlying,
             lot_size,
         ).lots
+
+    def _spread_gate_allows_entry(
+        self,
+        direction: str,
+        trading_symbol: str,
+        option_strike: float,
+        option_right: str,
+        expiry_date,
+    ) -> bool:
+        """Veto an entry whose option is quoted too wide. True = proceed.
+
+        Off unless `<PREFIX>_MAX_SPREAD_PCT` > 0, and off for every strategy that
+        does not opt in, so this is a no-op for the workers that predate it.
+
+        The paper/live split mirrors `_get_dealable_option_ltp`, deliberately:
+
+        - Spread KNOWN and too wide -> refuse in BOTH paper and live. It is a
+          deterministic property of the market, so refusing in paper too keeps
+          the Sheet's paper rows predictive of live behaviour.
+        - Spread UNKNOWN (chain call failed, or the payload carried no quote for
+          this strike) -> LIVE refuses, PAPER proceeds with a warning. Real money
+          does not get spent on a check we could not run; paper keeps the
+          observation rather than losing a data point to a transient API error.
+        """
+        max_spread = _safe_float(getattr(self, "max_spread_pct", 0.0), 0.0)
+        if max_spread <= 0:
+            return True
+
+        try:
+            resp = _fetch_option_chain_cached(
+                self.broker,
+                NIFTY_INDEX_SECURITY_ID,
+                NIFTY_INDEX_EXCHANGE_SEGMENT,
+                expiry_date,
+            )
+            bid, ask = _parse_option_chain_quote(resp, option_strike, option_right)
+        except Exception as exc:
+            self.log.warning(
+                "Spread gate could not fetch the option chain for %s: %s",
+                trading_symbol,
+                exc,
+            )
+            bid, ask = 0.0, 0.0
+
+        spread_pct = _relative_spread_pct(bid, ask)
+        if spread_pct is None:
+            if self.live_trading:
+                self.log.error(
+                    "REFUSING LIVE %s ENTRY on %s: no usable bid/ask from the option "
+                    "chain, so the %.2f%% spread cap could not be checked.",
+                    direction,
+                    trading_symbol,
+                    max_spread,
+                )
+                return False
+            self.log.warning(
+                "PAPER %s entry on %s proceeding UNGATED: no usable bid/ask from the "
+                "option chain (cap %.2f%% not checked).",
+                direction,
+                trading_symbol,
+                max_spread,
+            )
+            return True
+
+        if spread_pct > max_spread:
+            self.log.warning(
+                "ENTRY SKIPPED BY SPREAD GATE | %s %s | %s | bid=%.2f ask=%.2f "
+                "spread=%.2f%% of mid > cap %.2f%%",
+                self.strategy_name,
+                direction,
+                trading_symbol,
+                bid,
+                ask,
+                spread_pct,
+                max_spread,
+            )
+            return False
+
+        self.log.info(
+            "Spread gate OK | %s | bid=%.2f ask=%.2f spread=%.2f%% (cap %.2f%%)",
+            trading_symbol,
+            bid,
+            ask,
+            spread_pct,
+            max_spread,
+        )
+        return True
 
     def _entry_expiry(self) -> date | None:
         """Which expiry this worker's ATM entry uses. None = the resolver default.
@@ -6605,6 +6852,14 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 sizing.reason,
             )
             return _abort_entry()
+        # Last gate before the order. Deliberately AFTER sizing: sizing is local
+        # and free, the chain call is rate-limited, so a trade sizing would have
+        # rejected never spends one.
+        if not self._spread_gate_allows_entry(
+            direction, trading_symbol, option_strike, option_right, expiry_date
+        ):
+            return _abort_entry()
+
         lots_for_entry = sizing.lots
         quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
@@ -12374,6 +12629,14 @@ def _signal_gen_ops(prefix: str) -> dict:
             * _env_float(f"{prefix}_DAILY_MAX_LOSS_PCT", 0.03)
             * _strategy_size_multiplier(prefix)
         ),
+        # Bid/ask spread cap. NOT a size knob (it caps a market property, not our
+        # exposure), so it reads through plain `_env_float` rather than
+        # `_scaled_float`. The in-code default comes from `_DEFAULT_MAX_SPREAD_PCT`
+        # so deleting the .env line cannot silently disarm the gate for a strategy
+        # that ships with it on.
+        "max_spread_pct": _env_float(
+            f"{prefix}_MAX_SPREAD_PCT", _DEFAULT_MAX_SPREAD_PCT.get(prefix, 0.0)
+        ),
     }
 
 
@@ -12420,6 +12683,7 @@ def _build_signal_gen_worker_class(
         square_off_hour = ops["square_off_hour"]
         square_off_minute = ops["square_off_minute"]
         derived_timeframe_minutes = ops["derived_timeframe_minutes"]
+        max_spread_pct = ops["max_spread_pct"]
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
