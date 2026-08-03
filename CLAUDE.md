@@ -30,8 +30,10 @@ One process, cooperating threads:
   candidate rules live in `Signal Generators/Regime Adaptive Strategy/regime_candidates.py` as library
   code with NO worker of their own — deliberately, so the router and a candidate can never take the
   same signal twice. Read that folder's `REGIME_PORTING_NOTES.md` before enabling it live: the feed
-  carries no volume so its VWAP is an equal-weight proxy, and the source's spread/VIX/breadth/event
-  vetoes were dropped (no data source) rather than faked.
+  carries no volume so its VWAP is an equal-weight proxy, and the source's
+  spread/VIX/breadth vetoes are NOT implemented — absent by choice, not for want of data (the
+  source runs on Dhan too; the spread comes from the option-chain response we already fetch and
+  discard), so nothing at the signal layer stops it entering a wide or thin option.
   One **optional, opt-in** 28th worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
   `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based

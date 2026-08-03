@@ -47,25 +47,40 @@ This is the single biggest reason the strategy ships paper-only.
 
 ---
 
-## Dropped: gates with no data behind them
+## Dropped: gates this port does not implement
 
 The operator's decision was **drop and document**, not proxy and not fail-closed —
 a fabricated proxy for a risk gate is worse than a documented absence, because it
 reads as protection that is not there.
 
-| Source gate | Why it is not here |
-|---|---|
-| Max 2% bid/ask spread | **Structurally unavailable.** The feed subscribes `MarketFeed.Ticker` only, and `Dependencies/tick_bar_builder.py` explicitly drops depth packets. There is no bid and no ask anywhere in this runner. |
-| Chain liquidity score | Same: needs depth, plus a chain snapshot per evaluation. |
-| India VIX filter | No data source in this repo. |
-| Market-breadth filter | No data source in this repo. |
-| Event-risk / news blackout | No data source in this repo. |
+> **Correction (2026-08-03).** An earlier revision of this file called these gates
+> "structurally unavailable" and said the data had "no source in this repo". That
+> was WRONG, and wrong in the direction that discourages work: it would tell you
+> not to bother trying. The source project runs on **Dhan — the same broker this
+> runner uses** — and gets nearly all of it from ordinary REST calls we already
+> make or easily could. What follows is what it actually does.
+
+| Source gate | Where the SOURCE gets it | Status here |
+|---|---|---|
+| Max 2% bid/ask spread | The **option-chain response**, not the tick feed. Dhan's `/optionchain` returns `top_bid_price` / `top_ask_price` / `top_bid_quantity` / `top_ask_quantity` per CE/PE node; their `normalize_quote_depth()` reads those with a `depth.buy[0]`/`depth.sell[0]` fallback. | **Buildable today.** `DhanBrokerClient.fetch_option_chain()` already returns this payload and we simply discard those fields. Needs a chain call for the expiry being traded (3s-per-combination rate limit), not a new capability. |
+| Chain liquidity score | Same chain response — top-of-book quantities plus OI/volume. | Buildable, same call. |
+| India VIX filter | Dhan quote on **security id 21, segment `IDX_I`** — an ordinary `quote_data`/`ticker_data` call. | Buildable, cheap. We already batch index LTP calls; this is one more id. |
+| Market-breadth filter | Dhan `quote_data` batched over the **NIFTY-50 constituents on `NSE_EQ`**, counting advances by `net_change`. Ships a `fixtures/nifty50_symbols.json`. | Buildable, but ~50 quotes per refresh — a real API-budget decision, and we have no constituent fixture. |
+| Futures-basis filter | Spot vs NIFTY future LTP via `NSE_FNO` batch quote. | Buildable, cheap. |
+| Event-risk / news blackout | **Does not exist in the source either.** Its `global_context.py` pulls *global market proxies* (USDINR, crude, gold, SPX, Nasdaq, Dow, Nikkei, Hang Seng, VIX) from **yfinance**, 5-day historical closes, self-described as "research proxies only". No news feed, no economic calendar. | Not ported. Would add a new unpinned dependency with Yahoo ToS caveats for last-close proxies. |
+
+**What is genuinely true about the tick feed:** we subscribe `MarketFeed.Ticker`
+only and `Dependencies/tick_bar_builder.py` drops depth packets, so there is no
+bid/ask *in the tick path*. That part stands. The error was concluding the runner
+therefore has no access to bid/ask at all — the source never used ticks for it.
 
 **What this means operationally:** nothing stops this strategy from entering into
 a wide or thin option. The existing runner-level protections still apply (the
 per-strategy daily max-loss cap, the 15:15 square-off, the `_get_dealable_option_ltp`
 freshness/refusal path on live), but there is no spread or liquidity veto at the
-signal layer. Treat that as a live-trading precondition to solve, not a footnote.
+signal layer. That is a **gap left open by choice, not by the platform** — and the
+cheapest one to close first is the spread gate, because the data is already in a
+response we parse.
 
 ---
 
