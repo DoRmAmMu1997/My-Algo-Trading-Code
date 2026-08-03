@@ -592,6 +592,33 @@ def test_prompt_cap_leaves_room_for_lessons_and_a_note():
     assert assembled + worst_case_runtime_additions < MAX_SYSTEM_PROMPT_CHARS
 
 
+def test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge():
+    """v3x (3 Aug live session): IH held a gap-up long and booked it while it was
+    still working, because the move had narrowed to BankNIFTY alone.
+
+    "More momentum could come, but this is not one of the setups that work for us...
+    we waited as far as we knew the road. Now we do not know the road." He also
+    split "the buyers" by profit depth: the Friday cohort was shaken out by the
+    gap-up, while traders positioned from far below never moved -- and the tell was
+    that no big, quick selling appeared.
+    """
+    prompt = build_system_prompt()
+    # One side is two cohorts, and only the marginal one is huntable.
+    assert "PROFIT DEPTH SPLITS ONE SIDE INTO TWO COHORTS" in prompt
+    # Wrap-independent: this phrase spans a line break in the source.
+    assert "NOT weak" in prompt and "riding the move" in prompt
+    # Character of the counter-move identifies who is leaving.
+    assert "THE COUNTER-MOVE'S SIZE AND SPEED SAY WHICH COHORT IS LEAVING" in prompt
+    assert "BIG, QUICK selling" in prompt
+    # Exit when the read runs out, not only when the thesis breaks.
+    assert "ONLY RIDE AS FAR AS YOU KNOW THE ROAD" in prompt
+    # Wrap-independent fragment: the sentence spans a line break in the source.
+    assert "paying to find out" in prompt
+    # It must be distinguished from the two exits it is NOT.
+    assert "NOT the same as premise-invalidation" in prompt
+    assert "no read, no position" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
