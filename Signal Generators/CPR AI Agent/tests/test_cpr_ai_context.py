@@ -320,6 +320,33 @@ def test_position_state_rejects_every_falsey_non_mapping_before_coercion(falsey_
         load_snapshot_payload(str(snapshot_path))
 
 
+def test_position_state_allows_only_typed_host_judgment_facts():
+    """Task 3 gets risk-management facts, never broker, contract, or size data."""
+
+    validated = validate_position_state(
+        {
+            "is_flat": False,
+            "direction": "LONG",
+            "original_entry_price": 100.0,
+            "original_risk_points": 5.0,
+            "original_protective_stop": 95.0,
+            "current_protective_stop": 97.0,
+            "trailing_stage": "R1_LOCKED",
+            "milestone_price": 108.0,
+            "final_target_price": 118.0,
+            "premise": "TRENDING_VWAP_CONTINUATION",
+            "setup": "R1_SCALE_IN",
+            "scale_in_eligible": True,
+            "scale_in_count": 0,
+        }
+    )
+
+    assert validated["original_risk_points"] == 5.0
+    assert validated["scale_in_eligible"] is True
+    with pytest.raises(ValidationError):
+        validate_position_state({"is_flat": True, "quantity": 1})
+
+
 def test_mcp_server_exposes_exactly_four_no_argument_frozen_context_tools(tmp_path):
     """The real FastMCP registration surface must match the prompt contract."""
 

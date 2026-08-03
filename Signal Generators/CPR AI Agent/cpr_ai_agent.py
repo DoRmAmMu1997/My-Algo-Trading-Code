@@ -103,8 +103,12 @@ class CPRHostPolicy:
                 if proposal.setup != "PREMISE_EXIT":
                     return _hold("exit_setup_rejected", "EXIT requires PREMISE_EXIT.", proposal)
                 return CPRAgentOutcome(
-                    action="EXIT", proposal=proposal, accepted=True, accepted_regime=proposal.regime,
-                    validation_code="accepted_exit", validation_reason="Open-position premise exit is host permitted."
+                    action="EXIT",
+                    proposal=proposal,
+                    accepted=True,
+                    accepted_regime=proposal.regime,
+                    validation_code="accepted_exit",
+                    validation_reason="Open-position premise exit is host permitted.",
                 )
             if proposal.action == "SCALE_IN":
                 return self._scale_in(context, proposal, position)
@@ -160,9 +164,13 @@ class CPRHostPolicy:
         body = self._mapping(vwap, "entry_candle")
         long = direction == "LONG"
         sequence_key = (
-            "all_recent_above" if proposal.setup == "TRENDING_VWAP_CONTINUATION" and long
-            else "all_recent_below" if proposal.setup == "TRENDING_VWAP_CONTINUATION"
-            else "reclaimed" if long else "lost"
+            "all_recent_above"
+            if proposal.setup == "TRENDING_VWAP_CONTINUATION" and long
+            else "all_recent_below"
+            if proposal.setup == "TRENDING_VWAP_CONTINUATION"
+            else "reclaimed"
+            if long
+            else "lost"
         )
         if sequence.get(sequence_key) is not True:
             return _hold("vwap_sequence_rejected", "The documented directional VWAP sequence is absent.", proposal)
@@ -206,7 +214,9 @@ class CPRHostPolicy:
             return _hold("invalid_stop_geometry", "Protective stop is on the wrong side of entry.", proposal)
         if risk > self.max_risk_points:
             return _hold("risk_wider_than_30", "Risk exceeds the 30 NIFTY-point hard limit.", proposal)
-        raw_milestone = level_map.get("r1" if direction == "LONG" else "s1")
+        next_levels = self._mapping(levels, "next_levels")
+        next_level = next_levels.get("upside" if direction == "LONG" else "downside")
+        raw_milestone = next_level.get("price") if isinstance(next_level, Mapping) else None
         final_raw = level_map.get("r2" if direction == "LONG" else "s2")
         if not isinstance(raw_milestone, (int, float)) or not isinstance(final_raw, (int, float)):
             return _hold("missing_cpr_levels", "Required CPR milestone or final target is missing.", proposal)
@@ -246,6 +256,8 @@ class CPRHostPolicy:
         if (
             proposal.regime != "TRENDING"
             or position.get("direction") != "LONG"
+            or position.get("premise") not in {"TRENDING_VWAP_CONTINUATION", "TRENDING_VWAP_REVERSAL"}
+            or position.get("scale_in_eligible") is not True
             or position.get("scale_in_count") not in {None, 0}
             or candidate.get("eligible") is not True
             or candidate.get("direction") != "LONG"
@@ -348,8 +360,12 @@ class CPRAgent:
         from cpr_ai_schema import CPRAgentDecision
 
         return self.runner(
-            prompt=build_system_prompt(), context=context, bar_signature=bar_signature, model=self.model,
-            reasoning_effort=self.reasoning_effort, prompt_version=self.prompt_version or CPR_AI_PROMPT_VERSION,
+            prompt=build_system_prompt(),
+            context=context,
+            bar_signature=bar_signature,
+            model=self.model,
+            reasoning_effort=self.reasoning_effort,
+            prompt_version=self.prompt_version or CPR_AI_PROMPT_VERSION,
             output_schema=CPRAgentDecision.model_json_schema(),
         )
 
@@ -382,7 +398,16 @@ class CPRAgent:
             expected_prompt = CPR_AI_PROMPT_VERSION
         if proposal.prompt_version != expected_prompt:
             return _hold("prompt_version_mismatch", "Prompt-version echo does not match the host prompt.", proposal)
-        return self.policy.validate(context, proposal)
+        outcome = self.policy.validate(context, proposal)
+        # The SDK boundary has proved that this was a contemporaneous, pinned
+        # regime classification.  Preserve it even when hard execution gates
+        # reject the proposed entry or scale-in.
+        if outcome.accepted_regime is None and outcome.validation_code not in {
+            "invalid_position_state",
+            "invalid_frozen_context",
+        }:
+            outcome.accepted_regime = proposal.regime
+        return outcome
 
     @staticmethod
     def _tool_evidence_error(result: CPRAgentRunResult) -> tuple[str, str] | None:

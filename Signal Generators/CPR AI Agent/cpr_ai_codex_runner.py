@@ -17,9 +17,24 @@ from pathlib import Path
 from typing import Any
 
 from cpr_ai_agent import CPRAgentRunResult, CPRToolCallRecord
-from cpr_ai_tools import EXPECTED_TOOL_NAMES
+from cpr_ai_codex_subprocess import build_isolated_thread_config
 
-_SAFE_ENVIRONMENT_KEYS = frozenset({"PATH", "SYSTEMROOT", "WINDIR", "PYTHONHOME", "PYTHONPATH"})
+_SAFE_ENVIRONMENT_KEYS = frozenset(
+    {
+        "PATH",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "CODEX_HOME",
+    }
+)
 _SENSITIVE_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL", "TRADING", "BROKER", "DHAN", "TELEGRAM")
 
 
@@ -39,24 +54,10 @@ def safe_subprocess_environment(source: Mapping[str, str] | None = None) -> dict
     }
 
 
-def build_codex_thread_config(snapshot_path: str, python_executable: str, agent_directory: str) -> dict[str, Any]:
-    """Return a strict SDK configuration for one ephemeral, read-only turn."""
+def build_codex_thread_config(snapshot_path: str, python_executable: str, _agent_directory: str) -> dict[str, Any]:
+    """Compatibility wrapper around the child's single authoritative builder."""
 
-    return {
-        "features": {"shell_tool": False, "unified_exec": False, "multi_agent": False, "workspace_write": False},
-        "web_search": "disabled",
-        "shell_environment_policy": {"inherit": "none"},
-        "mcp_servers": {
-            "cpr_ai": {
-                "command": python_executable,
-                "args": ["-m", "cpr_ai_mcp_server", "--snapshot", snapshot_path],
-                "required": True,
-                "enabled_tools": list(EXPECTED_TOOL_NAMES),
-                "default_tools_approval_mode": "approve",
-            }
-        },
-        "agent_directory": agent_directory,
-    }
+    return build_isolated_thread_config(snapshot_path, python_executable)
 
 
 def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:

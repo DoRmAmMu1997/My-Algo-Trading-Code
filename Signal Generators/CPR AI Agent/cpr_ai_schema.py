@@ -99,7 +99,16 @@ class CPRPositionState(BaseModel):
     entry_timestamp: str | None = None
     unrealized_pnl: float | None = None
     bars_held: int | None = None
-    premise: str | None = None
+    original_entry_price: float | None = None
+    original_risk_points: float | None = None
+    original_protective_stop: float | None = None
+    current_protective_stop: float | None = None
+    trailing_stage: Literal["NONE", "BREAKEVEN", "R1_LOCKED", "TRAILING"] | None = None
+    milestone_price: float | None = None
+    final_target_price: float | None = None
+    premise: CPRSetup | None = None
+    setup: CPRSetup | None = None
+    scale_in_eligible: bool | None = None
     scale_in_count: int | None = None
 
     @classmethod

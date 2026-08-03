@@ -9,15 +9,19 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 import time
+from types import SimpleNamespace
 
-import pytest
 import cpr_ai_codex_runner as codex_runner
+import cpr_ai_codex_subprocess as codex_child
+import pytest
 from cpr_ai_agent import CPRAgent, CPRAgentRunResult, CPRHostPolicy, CPRToolCallRecord
 from cpr_ai_codex_runner import build_codex_thread_config, safe_subprocess_environment
 from cpr_ai_decision_log import CPRDecisionLogger
 from cpr_ai_prompt import CPR_AI_PROMPT_VERSION
+from cpr_ai_runner import _fake_runner as smoke_fake_runner
 from cpr_ai_runner import main as runner_main
 from cpr_ai_schema import CPRAgentDecision
 from cpr_ai_tools import EXPECTED_TOOL_NAMES
@@ -62,7 +66,13 @@ def _context(*, is_flat: bool = True, direction: str | None = None) -> dict[str,
             "swings": {"lows": [{"price": 94.0}], "highs": [{"price": 106.0}]},
             "r1_scale_in_candidate": {"eligible": True, "direction": "LONG"},
         },
-        "position_state": {"is_flat": is_flat, "direction": direction, "scale_in_count": 0},
+        "position_state": {
+            "is_flat": is_flat,
+            "direction": direction,
+            "premise": "TRENDING_VWAP_CONTINUATION",
+            "scale_in_eligible": True,
+            "scale_in_count": 0,
+        },
     }
 
 
@@ -119,9 +129,11 @@ def _runner(proposal: CPRAgentDecision, *, calls=None, delay: float = 0.0):
 def test_agent_rejects_incomplete_or_unexpected_four_tool_evidence(missing, failed, unexpected, code):
     """The host accepts exactly four successful read-only MCP calls, nothing else."""
 
-    agent = CPRAgent(runner=_runner(_proposal("HOLD", "UNDECIDED", "NONE"), calls=_calls(
-        missing=missing, failed=failed, unexpected=unexpected
-    )))
+    agent = CPRAgent(
+        runner=_runner(
+            _proposal("HOLD", "UNDECIDED", "NONE"), calls=_calls(missing=missing, failed=failed, unexpected=unexpected)
+        )
+    )
 
     outcome = agent.decide(_context(), bar_signature="bar-1")
 
@@ -134,7 +146,13 @@ def test_runtime_configuration_is_read_only_and_sanitizes_credentials(tmp_path):
     """A child gets no execution surface or trading/API credentials."""
 
     safe = safe_subprocess_environment(
-        {"PATH": "safe", "SYSTEMROOT": "windows", "DHAN_ACCESS_TOKEN": "secret", "OPENAI_API_KEY": "key", "LIVE_TRADING_ENABLED": "true"}
+        {
+            "PATH": "safe",
+            "SYSTEMROOT": "windows",
+            "DHAN_ACCESS_TOKEN": "secret",
+            "OPENAI_API_KEY": "key",
+            "LIVE_TRADING_ENABLED": "true",
+        }
     )
     config = build_codex_thread_config(str(tmp_path / "snapshot.json"), "python.exe", str(tmp_path))
 
@@ -304,5 +322,124 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
     assert row["validation"]["code"] == "accepted_hold"
     assert row["execution"] == {"mode": "ORDER_FREE", "submitted": False}
     assert runner_main(["--synthetic", "--fake"]) == 0
-    assert runner_main(["--synthetic", "--authenticated-fake"]) == 0
+    assert runner_main(["--synthetic", "--authenticated"], authenticated_runner=smoke_fake_runner) == 0
     assert capsys.readouterr().out.count("NO ORDER") == 2
+
+
+def test_geometry_uses_next_directional_level_not_hard_coded_r1_s1():
+    """Already beyond R1/S1, the next frozen milestone must be used instead."""
+
+    long_context = _context()
+    long_context["session_levels"]["levels"].update({"r1": 90.0, "r2": 120.0})
+    long_context["session_levels"]["next_levels"]["upside"] = {"name": "r2", "price": 120.0}
+    short_context = _context()
+    short_context["session_levels"]["current_close"] = 85.0
+    short_context["session_levels"]["levels"].update({"s1": 90.0, "s2": 70.0})
+    short_context["session_levels"]["next_levels"]["downside"] = {"name": "s2", "price": 70.0}
+    short_context["momentum_vwap"].update(
+        {
+            "rsi14": 60.0,
+            "ema": {"order": "EMA5_BELOW_EMA20", "ema5_slope": -1.0, "ema20_slope": -1.0},
+            "candle": {"high": 90.0},
+        }
+    )
+    short_context["momentum_vwap"]["vwap"] = {
+        "sequence_evidence": {"all_recent_below": True},
+        "entry_candle": {"body_fraction_below": 0.5},
+    }
+
+    long = CPRHostPolicy().validate(long_context, _proposal("ENTER_LONG", "TRENDING", "TRENDING_VWAP_CONTINUATION"))
+    short = CPRHostPolicy().validate(short_context, _proposal("ENTER_SHORT", "TRENDING", "TRENDING_VWAP_CONTINUATION"))
+
+    assert long.milestone_price == 118.0
+    assert short.milestone_price == 72.0
+
+
+def test_valid_boundary_persists_regime_even_when_host_rejects_entry_and_boundary_failure_does_not():
+    """Regime is advisory state, independent from deterministic execution permission."""
+
+    rejected_context = _context()
+    rejected_context["momentum_vwap"]["vwap"]["entry_candle"]["body_fraction_above"] = 0.0
+    decision = _proposal("ENTER_LONG", "TRENDING", "TRENDING_VWAP_CONTINUATION")
+    persisted = CPRAgent(runner=_runner(decision)).decide(rejected_context, bar_signature="valid-boundary")
+    malformed = CPRAgent(runner=lambda **_kwargs: CPRAgentRunResult("{", _calls())).decide(
+        _context(), bar_signature="bad"
+    )
+    broken_context = _context()
+    broken_context["position_state"] = {"is_flat": "unknown"}
+    context_failure = CPRAgent(runner=_runner(decision)).decide(broken_context, bar_signature="bad-context")
+
+    assert persisted.validation_code == "vwap_body_fraction_rejected"
+    assert persisted.accepted_regime == "TRENDING"
+    assert malformed.accepted_regime is None
+    assert context_failure.validation_code == "invalid_position_state"
+    assert context_failure.accepted_regime is None
+
+
+def test_agent_rejects_malformed_schema_and_prompt_version_mismatch():
+    """A syntactically valid response must still be schema and prompt pinned."""
+
+    malformed_schema = CPRAgent(runner=lambda **_kwargs: CPRAgentRunResult('{"action":"HOLD"}', _calls())).decide(
+        _context(), bar_signature="schema"
+    )
+    wrong_prompt = _proposal("HOLD", "UNDECIDED", "NONE").model_copy(update={"prompt_version": "old"})
+    mismatch = CPRAgent(runner=_runner(wrong_prompt)).decide(_context(), bar_signature="prompt")
+
+    assert malformed_schema.validation_code == "malformed_output"
+    assert mismatch.validation_code == "prompt_version_mismatch"
+
+
+def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkeypatch, tmp_path):
+    """The child passes the pure isolation config and exact public turn arguments."""
+
+    observed = {}
+
+    class Thread:
+        def run(self, prompt, **kwargs):
+            observed["run"] = (prompt, kwargs)
+            items = [
+                SimpleNamespace(root=SimpleNamespace(type="agentMessage")),
+                SimpleNamespace(root=SimpleNamespace(type="reasoning")),
+                *[
+                    SimpleNamespace(root=SimpleNamespace(type="mcpToolCall", tool=name, status="completed"))
+                    for name in EXPECTED_TOOL_NAMES
+                ],
+            ]
+            return SimpleNamespace(
+                final_response="{}", items=items, usage=SimpleNamespace(input_tokens=3, output_tokens=2, total_tokens=5)
+            )
+
+    class Codex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def thread_start(self, **kwargs):
+            observed["start"] = kwargs
+            return Thread()
+
+    sdk = SimpleNamespace(
+        Codex=Codex, Sandbox=SimpleNamespace(read_only="read"), ApprovalMode=SimpleNamespace(deny_all="deny")
+    )
+    monkeypatch.setitem(sys.modules, "openai_codex", sdk)
+    request = {
+        "snapshot_path": str(tmp_path / "snapshot.json"),
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "medium",
+        "prompt": "prompt",
+        "output_schema": {"type": "object"},
+    }
+
+    response = codex_child._run_request(request)
+
+    assert observed["start"]["config"] == codex_child.build_isolated_thread_config(str(tmp_path / "snapshot.json"))
+    assert observed["start"]["approval_mode"] == "deny"
+    assert observed["run"][1] == {
+        "approval_mode": "deny",
+        "output_schema": {"type": "object"},
+        "model_reasoning_effort": "medium",
+    }
+    assert [call["tool"] for call in response["tool_calls"]] == list(EXPECTED_TOOL_NAMES)
+    assert response["token_usage"] == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
