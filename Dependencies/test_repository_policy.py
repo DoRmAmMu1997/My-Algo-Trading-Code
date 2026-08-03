@@ -39,8 +39,16 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # dhanhq.marketfeed (the websocket market data producer) hard-imports the
     # async `websockets` library at package import time, so the exact version
     # must be pinned in core rather than left to transitive resolution.
-    assert "websockets==16.0" in core
-    assert "claude-agent-sdk==0.2.123" in ai
+    # Bumping this assertion is deliberate: dhanhq only declares
+    # websockets>=12.0.1, so the pin is the only thing standing between a feed
+    # regression and a live session. Move it together with requirements.txt, and
+    # only once a PAPER session has confirmed the feed still ticks on the new
+    # version -- CI never opens a real socket, so a green build proves nothing
+    # about the transport. Note this is a MAJOR (16 -> 17): dhanhq.marketfeed
+    # hard-imports websockets at package import time, so an incompatible API
+    # would surface as the RUNNER FAILING TO START, not merely a quiet feed.
+    assert "websockets==17.0" in core
+    assert "claude-agent-sdk==0.2.128" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     assert "pyotp==2.9.0" in brokers
