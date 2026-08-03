@@ -106,8 +106,9 @@ python -m pip install -r requirements-codex-ai.txt
 Use the operator's existing subscription-backed Codex/ChatGPT authentication.
 Do not put an OpenAI API key, broker credential, or trading credential in the
 CPR subprocess. The parent passes only a frozen public snapshot into a temporary
-directory, and the child inherits no environment variables. It runs read-only
-with deny-all approvals; shell, unified exec, web search, collaboration,
+directory. The child receives a strict allowlist of OS plumbing, profile, and
+Codex-discovery variables; trading and API secrets are excluded. It runs
+read-only with deny-all approvals; shell, unified exec, web search, collaboration,
 multi-agent actions, and workspace writes are disabled. Its only enabled tools
 are the four local read-only MCP tools above.
 

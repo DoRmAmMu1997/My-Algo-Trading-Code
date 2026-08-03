@@ -103,21 +103,19 @@ def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
 
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     mypy = config["tool"]["mypy"]
-    cpr_ai_files = {
-        "Signal Generators/CPR AI Agent/cpr_ai_agent.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_codex_runner.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_codex_subprocess.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_context.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_decision_log.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_mcp_server.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_prompt.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_runner.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_schema.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_signals.py",
-        "Signal Generators/CPR AI Agent/cpr_ai_tools.py",
+    agent_dir = ROOT / "Signal Generators/CPR AI Agent"
+    runtime_files = {
+        path.relative_to(ROOT).as_posix()
+        for path in agent_dir.glob("cpr_ai_*.py")
+        if path.is_file()
+    }
+    configured_files = {
+        path
+        for path in mypy["files"]
+        if path.startswith("Signal Generators/CPR AI Agent/cpr_ai_")
     }
 
-    assert cpr_ai_files <= set(mypy["files"])
+    assert configured_files == runtime_files
     assert "Signal Generators/CPR AI Agent" in mypy["mypy_path"]
     assert "Nifty Multi Strategy Front Test - Master File.py" not in mypy["files"]
     assert any(
@@ -228,6 +226,30 @@ def test_cpr_ai_documentation_rejects_obsolete_arbiter_and_worker_disable_guidan
     )
     assert "automated verification" in lower
     assert "no billed/model/broker call" in lower
+    assert "inherits no environment variables" not in focused_readme
+    assert "strict allowlist" in focused_readme
+    assert "trading and api secrets" in focused_readme.lower()
+
+    master = (ROOT / "Nifty Multi Strategy Front Test - Master File.py").read_text(
+        encoding="utf-8"
+    )
+    assert "optional CPR arbiter" not in master
+
+
+def test_repository_readme_does_not_reintroduce_stale_current_worker_counts():
+    """Current enabled-worker totals depend on optional and virtual gates."""
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    stale_current_roster_claims = (
+        "all 27 workers",
+        "opt-in 27th worker",
+        "optional **27th** worker",
+        "This brings the runner to **26 workers**.",
+        "~26 + optional LLM worker",
+    )
+
+    for stale_claim in stale_current_roster_claims:
+        assert stale_claim not in readme
 
 
 def test_agent_architecture_docs_stay_in_sync_and_cover_the_optional_cpr_agent():

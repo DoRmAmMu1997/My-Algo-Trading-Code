@@ -15426,7 +15426,7 @@ def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
 
 
 def _cpr_ai_startup_errors() -> tuple[str, ...]:
-    """Return every reason the optional CPR arbiter must be omitted at startup.
+    """Return every reason the optional CPR AI worker must be omitted at startup.
 
     The function collects all problems in one pass so the operator can fix the
     complete configuration instead of discovering one error per restart. An
