@@ -47,28 +47,34 @@ This is the single biggest reason the strategy ships paper-only.
 
 ---
 
-## Second fidelity gap: the fade distance does not match the source
+## Fade distance: diverged, then corrected
 
-Found on a later line-by-line re-read of the source, not at porting time.
+Found on a later line-by-line re-read of the source, not at porting time, and
+recorded here because the first paper sessions ran against neither value.
 
-| | Source (`vwap_mean_reversion.py`) | This port |
-|---|---|---|
-| Fade trigger | `max(atr * 0.6, 15.0)` | `atr * 1.5`, **no floor** |
+| | Source (`vwap_mean_reversion.py`) | Port, as first written | Port now |
+|---|---|---|---|
+| Fade trigger | `max(atr * 0.6, 15.0)` | `atr * 1.5`, **no floor** | `max(atr * 0.6, 15.0)` |
 
-Ours demands the price stretch **2.5x further** from VWAP before it fades, and
-has no absolute-points floor for a very low-ATR session. The practical effect is
-that the mean-reversion branch fires **far less often** here than in the project
-it was copied from — so paper results are not directly comparable to the source's,
-and a quiet day could see the fade branch never trigger at all.
+The original port demanded the price stretch **2.5x further** from VWAP before
+fading, and had no absolute floor, so the mean-reversion branch would have fired
+far less often here than in the project it came from — on a quiet day, possibly
+never. Corrected to match: `meanrev_atr_mult=0.6` plus a new
+`meanrev_min_points=15.0` (`REGIME_ADAPTIVE_MEANREV_MIN_POINTS`), mirroring the
+multiplier-plus-floor shape the breakout buffer already had.
 
-It is tunable without a code change (`REGIME_ADAPTIVE_MEANREV_ATR_MULT`), but the
-missing 15-point floor is not — matching the source exactly would need a
-`_MEANREV_MIN_POINTS` knob alongside it, mirroring how the breakout buffer already
-carries both a multiplier and a floor.
+The floor earns its place independently of fidelity: on a very quiet session
+`atr * 0.6` shrinks to a couple of points, at which point ordinary noise around
+VWAP reads as an "extension" worth fading. Two tests pin both halves — one where
+the multiple dominates, one where the floor does.
 
-The breakout side, for contrast, **does** match: source `max(atr * 0.05, 2.0)`
-against our `breakout_buffer_atr_mult=0.05` + `breakout_buffer_min_points=2.0`.
-And the fade's ADX stand-down (`adx >= 25`) matches too.
+**Expect this branch to trade noticeably more than it did.** That is the intended
+effect, but it means the fade side is effectively untested in paper until it has
+run at these values.
+
+Everything else numeric matches the source: the breakout buffer
+(`max(atr * 0.05, 2.0)`), the fade's ADX stand-down (`adx >= 25`), and the
+router's own trend threshold (`adx >= 20`).
 
 ---
 

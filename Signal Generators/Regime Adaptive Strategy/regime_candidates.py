@@ -79,14 +79,22 @@ def attach_mean_reversion_columns(
     frame: pd.DataFrame,
     *,
     atr_mult: float,
+    min_points: float,
     adx_ceiling: float,
     stop_loss_pct: float,
     target_pct: float,
 ) -> pd.DataFrame:
     """Fade an extension away from VWAP, range regimes only. Prefix: `mr_`.
 
-    Price stretched BELOW VWAP by `atr_mult * ATR` is faded LONG (expecting a
-    pull back up to VWAP); stretched above is faded SHORT.
+    Price stretched away from VWAP by `max(atr * atr_mult, min_points)` is faded
+    back towards it: stretched BELOW goes LONG, stretched ABOVE goes SHORT.
+
+    The threshold takes the SAME shape as the breakout buffer -- a multiple of
+    ATR with an absolute floor -- and for the same reason. On a very quiet
+    session `atr * mult` can shrink to a couple of points, at which point ordinary
+    noise around VWAP would read as an "extension" worth fading. The floor is what
+    stops the rule firing on nothing. This mirrors the upstream
+    `max(ctx.atr * 0.6, 15.0)` exactly.
 
     FAIL CLOSED twice over, exactly as upstream: ATR and ADX are both mandatory,
     and the rule stands down entirely once `adx >= adx_ceiling`, because fading
@@ -99,7 +107,7 @@ def attach_mean_reversion_columns(
     vwap = result["vwap"].astype(float)
 
     distance = close - vwap
-    threshold = atr * float(atr_mult)
+    threshold = np.maximum(atr * float(atr_mult), float(min_points))
     # ADX must be PRESENT and below the ceiling. `adx.notna()` is what makes a
     # missing ADX a no-trade rather than a silently permissive comparison.
     range_regime = adx.notna() & (adx < float(adx_ceiling))

@@ -170,23 +170,69 @@ def test_mean_reversion_stands_down_in_a_trend_and_without_adx():
     trending = frame.copy()
     trending["adx"] = 40.0
     blocked = attach_mean_reversion_columns(
-        trending, atr_mult=1.5, adx_ceiling=25.0, stop_loss_pct=0.015, target_pct=0.03
+        trending, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
     )
     assert not blocked["mr_long_setup"].any(), "faded a trending market"
 
     missing = frame.copy()
     missing["adx"] = np.nan
     unknown = attach_mean_reversion_columns(
-        missing, atr_mult=1.5, adx_ceiling=25.0, stop_loss_pct=0.015, target_pct=0.03
+        missing, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
     )
     assert not unknown["mr_long_setup"].any(), "traded without knowing the regime"
 
     ranging = frame.copy()
     ranging["adx"] = 10.0
     allowed = attach_mean_reversion_columns(
-        ranging, atr_mult=1.5, adx_ceiling=25.0, stop_loss_pct=0.015, target_pct=0.03
+        ranging, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
     )
     assert allowed["mr_long_setup"].any(), "fade never fires even in a clear range"
+
+
+def test_fade_threshold_matches_the_source_formula():
+    """Pins `max(atr * mult, min_points)` -- the upstream max(atr*0.6, 15.0).
+
+    An earlier revision shipped `atr * 1.5` with NO floor, which demanded a 2.5x
+    larger stretch and let a quiet session fade on noise. Both halves are asserted
+    so neither can silently drift back.
+    """
+    frame = regime_common.prepare_session_frame(_session("2026-08-03", 40), 15)
+    frame["adx"] = 10.0  # range regime, so only the distance rule can block
+
+    # ATR high enough that the MULTIPLE dominates: 100 * 0.6 = 60 > 15.
+    frame["atr"] = 100.0
+    frame["vwap"] = frame["close"] + 50.0          # 50 below VWAP: inside 60
+    assert not attach_mean_reversion_columns(
+        frame, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_long_setup"].any()
+    frame["vwap"] = frame["close"] + 70.0          # 70 below VWAP: beyond 60
+    assert attach_mean_reversion_columns(
+        frame, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_long_setup"].any()
+
+    # ATR tiny, so the FLOOR must dominate: 1 * 0.6 = 0.6, floored to 15.
+    frame["atr"] = 1.0
+    frame["vwap"] = frame["close"] + 10.0          # 10 away: noise, under the floor
+    assert not attach_mean_reversion_columns(
+        frame, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_long_setup"].any(), "quiet session faded on noise -- the floor is missing"
+    frame["vwap"] = frame["close"] + 20.0          # 20 away: clears the floor
+    assert attach_mean_reversion_columns(
+        frame, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_long_setup"].any()
+
+
+def test_config_defaults_match_the_source_fade_distance():
+    config = ROUTER.RegimeAdaptiveConfig()
+    assert config.meanrev_atr_mult == pytest.approx(0.6)
+    assert config.meanrev_min_points == pytest.approx(15.0)
 
 
 # ---------------------------------------------------------------------------

@@ -70,7 +70,11 @@ class RegimeAdaptiveConfig:
     adx_meanrev_ceiling: float = 25.0       # at/above this the fade stands down entirely
     breakout_buffer_atr_mult: float = 0.05  # break buffer as a multiple of ATR
     breakout_buffer_min_points: float = 2.0 # ...with this floor in index points
-    meanrev_atr_mult: float = 1.5           # how far from VWAP counts as "extended"
+    # Fade distance: max(atr * mult, min_points). Both values match the upstream
+    # `max(ctx.atr * 0.6, 15.0)` -- see REGIME_PORTING_NOTES.md, which records the
+    # earlier 1.5-with-no-floor divergence and why it was corrected.
+    meanrev_atr_mult: float = 0.6           # how far from VWAP counts as "extended"
+    meanrev_min_points: float = 15.0        # ...with this floor in index points
     stop_loss_pct: float = 0.015            # protective stop, 1.5% from entry
     target_pct: float = 0.03                # profit target, 3% from entry
 
@@ -92,6 +96,8 @@ class RegimeAdaptiveConfig:
             raise ValueError("ADX thresholds must be greater than zero.")
         if float(self.breakout_buffer_min_points) <= 0.0 or float(self.meanrev_atr_mult) <= 0.0:
             raise ValueError("Breakout buffer floor and fade distance must be greater than zero.")
+        if float(self.meanrev_min_points) <= 0.0:
+            raise ValueError("Fade distance floor must be greater than zero.")
 
 
 @dataclass
@@ -147,6 +153,7 @@ def build_regime_adaptive_with_indicators(
     frame = attach_mean_reversion_columns(
         frame,
         atr_mult=config.meanrev_atr_mult,
+        min_points=config.meanrev_min_points,
         adx_ceiling=config.adx_meanrev_ceiling,
         stop_loss_pct=config.stop_loss_pct,
         target_pct=config.target_pct,

@@ -1536,7 +1536,8 @@ REGIME_ADAPTIVE_CONFIG = REGIME_ADAPTIVE_LOGIC.RegimeAdaptiveConfig(
     adx_meanrev_ceiling=_env_float("REGIME_ADAPTIVE_ADX_MEANREV_CEILING", 25.0),
     breakout_buffer_atr_mult=_env_float("REGIME_ADAPTIVE_BREAKOUT_BUFFER_ATR_MULT", 0.05),
     breakout_buffer_min_points=_env_float("REGIME_ADAPTIVE_BREAKOUT_BUFFER_MIN_POINTS", 2.0),
-    meanrev_atr_mult=_env_float("REGIME_ADAPTIVE_MEANREV_ATR_MULT", 1.5),
+    meanrev_atr_mult=_env_float("REGIME_ADAPTIVE_MEANREV_ATR_MULT", 0.6),
+    meanrev_min_points=_env_float("REGIME_ADAPTIVE_MEANREV_MIN_POINTS", 15.0),
     stop_loss_pct=_env_float("REGIME_ADAPTIVE_STOP_LOSS_PCT", 0.015),
     target_pct=_env_float("REGIME_ADAPTIVE_TARGET_PCT", 0.03),
 )
