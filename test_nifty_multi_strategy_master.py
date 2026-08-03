@@ -3088,9 +3088,115 @@ class TestExecutionModeResults(unittest.TestCase):
 
             parsed = master_file._parse_eod_pnl_by_day(path)
 
-        self.assertEqual(parsed["2026-07-16"]["Renko"], {"pnl": 100.0, "mode": "LIVE"})
-        self.assertEqual(parsed["2026-07-16"]["EMA"], {"pnl": -25.0, "mode": "MIXED"})
-        self.assertEqual(parsed["2026-07-15"]["Renko"], {"pnl": 50.0, "mode": "PAPER"})
+        # `trades` rides along so a restarted runner's empty summary cannot erase
+        # a finished session; only pnl/mode reach the sheet.
+        self.assertEqual(
+            parsed["2026-07-16"]["Renko"], {"pnl": 100.0, "mode": "LIVE", "trades": 1}
+        )
+        self.assertEqual(
+            parsed["2026-07-16"]["EMA"], {"pnl": -25.0, "mode": "MIXED", "trades": 2}
+        )
+        self.assertEqual(
+            parsed["2026-07-15"]["Renko"], {"pnl": 50.0, "mode": "PAPER", "trades": 1}
+        )
+
+    def test_pnl_window_reaches_the_market_close(self):
+        """2026-08-03: the window ended at 15:21 and shutdown ran late.
+
+        Summaries normally land at 15:20, so the old cutoff left ONE MINUTE of
+        margin. That day 53 of 54 lines fell outside it and were discarded; the
+        only cell that reached the Sheet was the one strategy whose summary
+        happened to be logged at 11:00. The end is now the market close.
+        """
+        self.assertEqual(master_file._PNL_LOG_WINDOW_END, (15, 30))
+        # The exact times seen on 2026-08-03 must now be accepted...
+        for stamp in ("2026-08-03 15:28:04,444", "2026-08-03 15:30:59,000"):
+            self.assertTrue(master_file._asctime_in_pnl_window(stamp), stamp)
+        # ...while an after-market run still cannot overwrite a real session.
+        for stamp in ("2026-08-03 15:31:00,000", "2026-08-03 17:02:11,000",
+                      "2026-08-03 09:14:59,000"):
+            self.assertFalse(master_file._asctime_in_pnl_window(stamp), stamp)
+
+    def test_discarded_summaries_for_today_are_reported(self):
+        """The old failure was SILENT: a clean-looking run and a blank Sheet."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                # Inside the window -> parsed.
+                "2026-08-03 15:20:00,000 | INFO | RenkoThread | "
+                "Result summary | Mode=PAPER | Trades=1 | RealizedPnL=100.00\n"
+                # Today but too late -> dropped, and must be announced.
+                "2026-08-03 15:44:00,000 | INFO | EMAThread | "
+                "Result summary | Mode=PAPER | Trades=1 | RealizedPnL=-25.00\n"
+                # A different day outside the window must NOT be reported today.
+                "2026-07-16 18:00:00,000 | INFO | GoldmineThread | "
+                "Result summary | Mode=PAPER | Trades=1 | RealizedPnL=5.00\n",
+                encoding="utf-8",
+            )
+            with self.assertLogs(master_file.logger, level="WARNING") as captured:
+                parsed = master_file._parse_eod_pnl_by_day(path, today_str="2026-08-03")
+
+        self.assertEqual(parsed["2026-08-03"]["Renko"]["pnl"], 100.0)
+        self.assertNotIn("EMA", parsed.get("2026-08-03", {}))
+        warning = "\n".join(captured.output)
+        self.assertIn("P&L SHEET", warning)
+        self.assertIn("1 of today", warning)          # only today's line counted
+        self.assertNotIn("2 of today", warning)
+
+    def test_a_restarted_runner_cannot_erase_a_finished_session(self):
+        """2026-08-03: the runner was restarted at ~15:29.
+
+        Every worker in the fresh process logged "Trades=0 | RealizedPnL=0.00" as
+        soon as it reached square-off -- seven minutes after the real figures.
+        Under plain last-write-wins, widening the window to catch the real 15:28
+        lines would have let those zeros overwrite a whole trading day, writing 27
+        cells of 0.00. A later summary may only win if it saw at least as many
+        trades.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-08-03 15:28:05,033 | INFO | RenkoThread | "
+                "Result summary | Mode=PAPER | Trades=2 | RealizedPnL=3165.50\n"
+                "2026-08-03 15:30:22,528 | INFO | RenkoThread | "
+                "Result summary | Mode=PAPER | Trades=0 | RealizedPnL=0.00\n"
+                # A strategy that genuinely did nothing all day still records 0.00.
+                "2026-08-03 15:30:22,530 | INFO | MoneyMachineThread | "
+                "Result summary | Mode=PAPER | Trades=0 | RealizedPnL=0.00\n",
+                encoding="utf-8",
+            )
+            parsed = master_file._parse_eod_pnl_by_day(path, today_str="2026-08-03")
+
+        self.assertEqual(parsed["2026-08-03"]["Renko"]["pnl"], 3165.50)
+        self.assertEqual(parsed["2026-08-03"]["MoneyMachine"]["pnl"], 0.00)
+
+    def test_a_later_summary_with_more_trades_still_wins(self):
+        """Last-write-wins must survive for the ordinary re-entry case."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-08-03 11:00:00,000 | INFO | LongStrangleThread | "
+                "Result summary | Mode=PAPER | Trades=4 | RealizedPnL=100.00\n"
+                "2026-08-03 15:20:00,000 | INFO | LongStrangleThread | "
+                "Result summary | Mode=PAPER | Trades=12 | RealizedPnL=-760.50\n",
+                encoding="utf-8",
+            )
+            parsed = master_file._parse_eod_pnl_by_day(path, today_str="2026-08-03")
+
+        self.assertEqual(parsed["2026-08-03"]["LongStrangle"]["pnl"], -760.50)
+
+    def test_no_warning_when_every_summary_is_inside_the_window(self):
+        """A normal day must stay quiet -- this warning has to mean something."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-08-03 15:20:00,000 | INFO | RenkoThread | "
+                "Result summary | Mode=PAPER | Trades=1 | RealizedPnL=100.00\n",
+                encoding="utf-8",
+            )
+            with patch.object(master_file.logger, "warning") as warn:
+                master_file._parse_eod_pnl_by_day(path, today_str="2026-08-03")
+        warn.assert_not_called()
 
     def test_sheet_uses_mode_specific_labels_without_turning_pnl_into_text(self):
         values = [

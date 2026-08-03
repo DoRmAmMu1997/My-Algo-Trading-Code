@@ -14146,11 +14146,25 @@ _PNL_SHEET_ROW_LABELS = {
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
 _PNL_MODE_RE = re.compile(r"\bMode=(PAPER|LIVE|MIXED)\b")
+# Trade count from the same summary line. Used to stop a RESTARTED runner erasing
+# a finished session: on 2026-08-03 the process was restarted at ~15:29 and every
+# worker immediately logged "Trades=0 | RealizedPnL=0.00" at square-off, seven
+# minutes after the real figures. Under plain last-write-wins those zeros would
+# overwrite a full trading day.
+_PNL_TRADES_RE = re.compile(r"\bTrades=(\d+)\b")
 # Only result-summary lines inside this window are used for the sheet. Covers
-# max-loss during the session (from 9:15) through the last square-off (15:20)
-# while ignoring after-market test runs that log fresh summaries at 17:00+.
+# max-loss during the session (from 9:15) through shutdown, while ignoring
+# after-market test runs that log fresh summaries at 17:00+.
+#
+# The end is the market close. It was 15:21 until 2026-08-03, which left only
+# ONE MINUTE of margin after the 15:20 the summaries normally land at -- and that
+# day shutdown ran a little late, so 53 of the 54 summary lines fell outside the
+# window and were silently discarded. Exactly one cell reached the Sheet (SL
+# Hunting AI's, whose summary happened to be logged at 11:00). The guard itself
+# is worth keeping: without it an evening test run would overwrite a real
+# session's P&L. What was wrong was the margin, not the idea.
 _PNL_LOG_WINDOW_START = (9, 15)
-_PNL_LOG_WINDOW_END = (15, 21)
+_PNL_LOG_WINDOW_END = (15, 30)
 
 
 def _normalize_pnl_strategy_name(name: str) -> str:
@@ -14180,7 +14194,7 @@ def _asctime_in_pnl_window(asctime: str) -> bool:
     return start_minutes <= current_minutes <= end_minutes
 
 
-def _parse_eod_pnl_by_day(log_path) -> dict:
+def _parse_eod_pnl_by_day(log_path, today_str: str | None = None) -> dict:
     """
     Parse the runner's log for each strategy's end-of-day realised P&L per day.
 
@@ -14198,6 +14212,12 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
     "Misc " are normalized before lookup in _PNL_SHEET_ROW_LABELS.
     """
     result: dict[str, dict[str, float]] = {}
+    # Summary lines for TODAY that the window threw away. Counted so the drop can
+    # announce itself: on 2026-08-03 a late shutdown put 53 of 54 summaries past
+    # the cutoff and the only symptom was a Google Sheet that quietly stayed blank.
+    skipped_today = 0
+    if today_str is None:
+        today_str = datetime.now().date().isoformat()
     try:
         # A missing log (e.g. a brand-new machine) just means "no figures yet".
         if not Path(log_path).exists():
@@ -14220,6 +14240,8 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                 # Ignore lines logged outside trading hours (e.g. an after-market
                 # test run) so they can't overwrite the real session's figures.
                 if not _asctime_in_pnl_window(asctime):
+                    if asctime.strip()[:10] == today_str:
+                        skipped_today += 1
                     continue
                 # The date is the first 10 chars of asctime: "YYYY-MM-DD".
                 date_str = asctime.strip()[:10]
@@ -14243,17 +14265,44 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                     if not mode_match:
                         continue
                     mode = mode_match.group(1)
+                trades_match = _PNL_TRADES_RE.search(message)
+                trades = int(trades_match.group(1)) if trades_match else 0
                 try:
                     # Last write wins: a later summary for the same strategy/day
-                    # (e.g. a re-entry's final line) overwrites the earlier one.
-                    result.setdefault(date_str, {})[strategy] = {
+                    # (e.g. a re-entry's final line) overwrites the earlier one --
+                    # EXCEPT when the later line reports FEWER trades. A restarted
+                    # runner logs "Trades=0" for every worker as soon as it reaches
+                    # square-off, and those empty summaries must never erase the
+                    # session that already happened. Equal counts still overwrite,
+                    # so a genuine final line for the same run wins as before, and
+                    # a strategy that really did nothing still records 0.00.
+                    previous = result.setdefault(date_str, {}).get(strategy)
+                    if previous is not None and trades < previous.get("trades", 0):
+                        continue
+                    result[date_str][strategy] = {
                         "pnl": float(match.group(1)),
                         "mode": mode,
+                        "trades": trades,
                     }
                 except ValueError:
                     continue
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Could not parse P&L from the log file: %s", exc)
+    if skipped_today:
+        # Loud on purpose. The failure mode this replaces was invisible: the run
+        # looked clean and the Sheet simply did not fill in.
+        logger.warning(
+            "P&L SHEET: %d of today's result-summary lines fell OUTSIDE the "
+            "%02d:%02d-%02d:%02d window and were IGNORED, so those strategies will "
+            "not reach the Google Sheet. The figures are still in the log. This "
+            "usually means shutdown ran late; re-running the summary writer inside "
+            "the window will backfill them.",
+            skipped_today,
+            _PNL_LOG_WINDOW_START[0],
+            _PNL_LOG_WINDOW_START[1],
+            _PNL_LOG_WINDOW_END[0],
+            _PNL_LOG_WINDOW_END[1],
+        )
     return result
 
 
