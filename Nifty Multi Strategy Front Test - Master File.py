@@ -57,11 +57,21 @@ worker: it watches the spot PLUS a ~ITM CE and a ~ITM PE of the current-week exp
 and only fires when VWAP and the CPR band align across all three, but it still
 trades the ATM CE/PE of the next-next expiry like the rest of the ATM family. The
 Long Strangle worker is a time-based two-leg BUY of the OTM1 weekly CE+PE, with
-independent per-leg trailing stops and momentum re-entry. Together they bring the
-runner to TWENTY-SIX strategies total: 22 ATM single-leg + 2 Hedged Puts +
-1 Delta-0.2 + 1 Long Strangle.
+independent per-leg trailing stops and momentum re-entry.
 
-One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
+Newest is Regime Adaptive, a port from a DIFFERENT public project
+(workratananmol-hub/nifty-options-paper-trading-bot, MIT). It is one ATM
+single-leg worker that switches RULE on ADX: an opening-range breakout when the
+market trends, a fade back to VWAP when it ranges, and no trade at all when ADX
+is missing. Its two candidate rules live in "Signal Generators/regime_candidates.py"
+as library code with no worker of their own, so the router can never double up on
+a candidate's signal. Read Signal Generators/REGIME_PORTING_NOTES.md before
+enabling it live: this runner has no volume, so its VWAP is an equal-weight proxy.
+
+Together they bring the runner to TWENTY-SEVEN strategies total: 23 ATM
+single-leg + 2 Hedged Puts + 1 Delta-0.2 + 1 Long Strangle.
+
+One OPTIONAL, opt-in 28th worker can also be loaded: the SL Hunting AI Agent
 (under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
@@ -197,7 +207,9 @@ CLASS HIERARCHY OVERVIEW
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
         |             Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic,
         |             Supertrend, Volatility Breakout)
-        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in 27th: LLM/Claude-agent driven)
+        |       +-- (+ Regime Adaptive, same factory, different source project:
+        |             an ADX router over an opening-range breakout and a VWAP fade)
+        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in 28th: LLM/Claude-agent driven)
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
@@ -446,7 +458,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 #     which is a silent mismatch between size and risk.
 #   * PER-STRATEGY ONLY -- there is deliberately NO global master multiplier
 #     (same shape as `<PREFIX>_VIRTUAL_TRADING`). Scaling must be an explicit,
-#     per-strategy opt-in so one mistyped global cannot enlarge all 27 workers.
+#     per-strategy opt-in so one mistyped global cannot enlarge all 28 workers.
 #   * APPLIES TO PAPER **AND** LIVE, so an enlarged size can be paper-validated
 #     first and the Sheet's paper rows stay predictive of live behaviour.
 #   * CEILING of 25 (`MAX_SIZE_MULTIPLIER`), so a fat-fingered "250" cannot size
@@ -1286,10 +1298,12 @@ execution_client, LIVE_EXCHANGE_SEGMENT, LIVE_PRODUCT_TYPE = _select_execution_c
 )
 
 # =============================================================================
-# SIGNAL GENERATOR PORTS (ATM single-leg strategies from the TradingBot repo)
+# SIGNAL GENERATOR PORTS (ATM single-leg strategies ported from public repos)
 # =============================================================================
-# Thirteen extra ATM single-leg strategies re-implemented from the public
-# TradingBot project, kept alongside the other strategies under Signal Generators/.
+# Fourteen extra ATM single-leg strategies re-implemented from public projects,
+# kept alongside the other strategies under Signal Generators/: thirteen from the
+# TradingBot project, plus the Regime Adaptive router from
+# workratananmol-hub/nifty-options-paper-trading-bot (MIT).
 # They are the SAME execution family as Renko/Goldmine/CPR (a LONG buys the ATM
 # CE, a SHORT the ATM PE of the next-next expiry); each is namespaced by its own
 # name so every knob is independently tunable from .env, exactly like the
@@ -1335,6 +1349,15 @@ SUPERTREND_PORT_LOGIC = load_module(
 )
 VOLATILITY_BREAKOUT_LOGIC = load_module(
     "master_volatility_breakout", SIGNAL_GEN_DIR / "Nifty Volatility Breakout Signal Generator.py"
+)
+# Regime-adaptive router (ported from the MIT-licensed
+# workratananmol-hub/nifty-options-paper-trading-bot). It dispatches between an
+# opening-range breakout and a VWAP fade on ADX. Its two candidate rules live in
+# `regime_candidates.py` as library code with NO worker of their own, so the
+# router can never double up on a candidate's signal -- see
+# Signal Generators/REGIME_PORTING_NOTES.md.
+REGIME_ADAPTIVE_LOGIC = load_module(
+    "master_regime_adaptive", SIGNAL_GEN_DIR / "Nifty Regime Adaptive Signal Generator.py"
 )
 
 # =============================================================================
@@ -1502,6 +1525,18 @@ VOLATILITY_BREAKOUT_CONFIG = VOLATILITY_BREAKOUT_LOGIC.VolatilityBreakoutConfig(
     k_factor=_env_float("VOLATILITY_BREAKOUT_K_FACTOR", 0.5),
     stop_loss_pct=_env_float("VOLATILITY_BREAKOUT_STOP_LOSS_PCT", 0.02),
     target_pct=_env_float("VOLATILITY_BREAKOUT_TARGET_PCT", 0.04),
+)
+REGIME_ADAPTIVE_CONFIG = REGIME_ADAPTIVE_LOGIC.RegimeAdaptiveConfig(
+    adx_period=_env_int("REGIME_ADAPTIVE_ADX_PERIOD", 14),
+    atr_period=_env_int("REGIME_ADAPTIVE_ATR_PERIOD", 14),
+    opening_range_minutes=_env_int("REGIME_ADAPTIVE_OPENING_RANGE_MINUTES", 15),
+    adx_trend_threshold=_env_float("REGIME_ADAPTIVE_ADX_TREND_THRESHOLD", 20.0),
+    adx_meanrev_ceiling=_env_float("REGIME_ADAPTIVE_ADX_MEANREV_CEILING", 25.0),
+    breakout_buffer_atr_mult=_env_float("REGIME_ADAPTIVE_BREAKOUT_BUFFER_ATR_MULT", 0.05),
+    breakout_buffer_min_points=_env_float("REGIME_ADAPTIVE_BREAKOUT_BUFFER_MIN_POINTS", 2.0),
+    meanrev_atr_mult=_env_float("REGIME_ADAPTIVE_MEANREV_ATR_MULT", 1.5),
+    stop_loss_pct=_env_float("REGIME_ADAPTIVE_STOP_LOSS_PCT", 0.015),
+    target_pct=_env_float("REGIME_ADAPTIVE_TARGET_PCT", 0.03),
 )
 
 
@@ -12298,14 +12333,14 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
 
 # =============================================================================
-# SIGNAL GENERATOR PORT WORKERS (ATM single-leg; TradingBot ports)
+# SIGNAL GENERATOR PORT WORKERS (ATM single-leg; ports from public repos)
 # =============================================================================
-# The thirteen ported strategies share one identical worker lifecycle: resample
+# The fourteen ported strategies share one identical worker lifecycle: resample
 # the shared 1-min OHLC to the strategy's derived timeframe, build the strategy
 # frame, evaluate the latest candle, and translate ENTER_LONG / ENTER_SHORT /
 # EXIT into ATM CE/PE paper trades. Because they differ only by which logic module
 # + config + env prefix they use, we build them from a single factory + table
-# instead of thirteen copy-pasted classes. Each is fully namespaced by its own env
+# instead of fourteen copy-pasted classes. Each is fully namespaced by its own env
 # prefix (like Goldmine), so every operational knob is independently tunable.
 def _signal_gen_ops(prefix: str) -> dict:
     """
@@ -12314,13 +12349,14 @@ def _signal_gen_ops(prefix: str) -> dict:
     Returns the per-strategy poll cadence, resample timeframe, trading window,
     lot size, and daily max-loss cap. Every key is <PREFIX>_<NAME> in .env (e.g.
     SMA_CROSSOVER_POLL_SECONDS), so each strategy is tuned independently. The
-    defaults are identical across all thirteen; only the prefix differs.
+    defaults are identical across all fourteen; only the prefix differs.
 
     `<PREFIX>_SIZE_MULTIPLIER` scales both size-bearing values here -- the lot
-    count and the absolute daily max-loss cap. This single helper serves the 13
-    ported strategies AND the SL Hunting agent, so those 14 workers are scaled
-    by these two lines. Capital and the loss PERCENTAGE stay unscaled; only
-    their product carries the multiplier, so the cap grows exactly once.
+    count and the absolute daily max-loss cap. This single helper serves the 14
+    ported strategies (the 13 TradingBot ports plus Regime Adaptive) AND the SL
+    Hunting agent, so those 15 workers are scaled by these two lines. Capital
+    and the loss PERCENTAGE stay unscaled; only their product carries the
+    multiplier, so the cap grows exactly once.
     """
     starting_capital = _env_float(f"{prefix}_STARTING_CAPITAL", 600000.0)
     return {
@@ -12355,9 +12391,9 @@ def _build_signal_gen_worker_class(
     A "worker" is one trading thread. Every poll it does the same four steps via
     the base class: read the shared 1-min candles, build this strategy's frame,
     ask the strategy engine for a decision, and act on it (buy/sell an ATM option).
-    All thirteen do those steps identically and differ only by which logic
+    All fourteen do those steps identically and differ only by which logic
     module/config/env-prefix they plug in - which is what this factory captures,
-    so we avoid thirteen near-identical copy-pasted classes.
+    so we avoid fourteen near-identical copy-pasted classes.
 
     Parameters:
     - class_name / display_name: the worker's Python class name and its log/UI name
@@ -12479,6 +12515,9 @@ _SIGNAL_GEN_WORKER_SPECS = [
     ("VolatilityBreakoutWorker", "Volatility Breakout", VOLATILITY_BREAKOUT_LOGIC,
      "VolatilityBreakoutSignalEngine", "build_volatility_breakout_with_indicators",
      "VolatilityBreakoutPositionContext", VOLATILITY_BREAKOUT_CONFIG, "VOLATILITY_BREAKOUT"),
+    ("RegimeAdaptiveWorker", "Regime Adaptive", REGIME_ADAPTIVE_LOGIC,
+     "RegimeAdaptiveSignalEngine", "build_regime_adaptive_with_indicators",
+     "RegimeAdaptivePositionContext", REGIME_ADAPTIVE_CONFIG, "REGIME_ADAPTIVE"),
 ]
 
 # Concrete worker classes, ready to instantiate in main().
@@ -12493,7 +12532,7 @@ SIGNAL_GEN_WORKERS = [_build_signal_gen_worker_class(*spec) for spec in _SIGNAL_
 # right <PREFIX>_LIVE_TRADING flag for it. Key = the worker's strategy_name.
 #
 # The first 11 entries are typed out by hand (their strategy_name is set on the
-# class); the 13 ported strategies are added automatically from their build
+# class); the 14 ported strategies are added automatically from their build
 # specs (spec[1] is the name, spec[7] is the prefix) so the two lists can never
 # drift out of sync.
 STRATEGY_ENV_PREFIX = {
@@ -14136,6 +14175,7 @@ _PNL_SHEET_ROW_LABELS = {
     "Stochastic Oscillator": "Stochastic Oscillator Strategy",
     "Supertrend": "Supertrend Strategy",
     "Volatility Breakout": "Volatility Breakout Strategy",
+    "Regime Adaptive": "Regime Adaptive Strategy",
     "SupertrendBullish": "Supertrend Bullish Strategy",
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
@@ -15319,12 +15359,13 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM single-leg family (22): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
+        "ATM single-leg family (23): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
         "ProfitShooter 5m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
         "PCR/VWAP/ATR, CPR 5m, CPR Algo 3 5m (multi-instrument); + 13 TradingBot ports (%dm) - SMA Crossover, "
         "Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, "
         "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
-        "RSI Reversal, Stochastic, Supertrend, Volatility Breakout. "
+        "RSI Reversal, Stochastic, Supertrend, Volatility Breakout; "
+        "+ Regime Adaptive (ADX router: opening-range breakout / VWAP fade). "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
         "Delta-0.2 family (1): Delta20 09:20 reference, dual-side. "
         "Long Strangle family (1): 09:30 OTM1 CE+PE, two independent legs.",
@@ -15335,7 +15376,7 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + 26 consumers (22 ATM single-leg + 2 Hedged +
+    # One producer (fetcher) + 27 consumers (23 ATM single-leg + 2 Hedged +
     # 1 Delta-0.2 + 1 Long Strangle), plus the optional SL Hunting AI agent
     # (appended below when SL_HUNTING_ENABLED). The producer class comes from
     # MARKET_DATA_SOURCE: REST polling (default) or the Dhan websocket feed;
@@ -15367,9 +15408,10 @@ def main() -> None:
         # the ATM CE/PE next-next expiry like the rest of this family.
         CPRAlgo3StrategyWorker(store, stop_event, broker),
     ]
-    # Same family, different source: the 13 TradingBot ports are ALSO
-    # AtmSingleLegStrategyWorker subclasses (built from a shared factory), so they
-    # belong here next to the core ATM strategies rather than in a family of their own.
+    # Same family, different sources: the 13 TradingBot ports and the Regime
+    # Adaptive router are ALSO AtmSingleLegStrategyWorker subclasses (built from a
+    # shared factory), so they belong here next to the core ATM strategies rather
+    # than in a family of their own.
     workers.extend(worker_cls(store, stop_event, broker) for worker_cls in SIGNAL_GEN_WORKERS)
 
     workers += [

@@ -3224,7 +3224,9 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
     """Every worker's `strategy_name` must map to an env prefix, or it can never
     be switched live (it would silently stay paper)."""
 
-    def test_all_worker_strategy_names_are_mapped(self):
+    #: The workers whose P&L is expected to reach the tracker Sheet. Kept as one
+    #: list because both tests below need exactly the same set.
+    def _tracked_workers(self):
         core = [
             master_file.RenkoStrategyWorker, master_file.EMATrendStrategyWorker,
             master_file.HeikinAshiStrategyWorker, master_file.ProfitShooterStrategyWorker,
@@ -3234,10 +3236,24 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master_file.SupertrendBullishWorker, master_file.DonchianBearishWorker,
             master_file.Delta20HedgedSpreadWorker, master_file.LongStrangleWorker,
         ]
-        for cls in core + list(master_file.SIGNAL_GEN_WORKERS):
+        return core + list(master_file.SIGNAL_GEN_WORKERS)
+
+    def test_all_worker_strategy_names_are_mapped(self):
+        for cls in self._tracked_workers():
             self.assertIn(
                 cls.strategy_name, master_file.STRATEGY_ENV_PREFIX,
                 f"{cls.__name__} ({cls.strategy_name}) missing from STRATEGY_ENV_PREFIX",
+            )
+
+    def test_all_worker_strategy_names_have_a_sheet_row_label(self):
+        """A worker missing from `_PNL_SHEET_ROW_LABELS` trades normally and is
+        never written to the Google Sheet -- silent, permanent P&L loss with no
+        error anywhere. Nothing else enforces this mapping, so this test does."""
+        for cls in self._tracked_workers():
+            self.assertIn(
+                cls.strategy_name, master_file._PNL_SHEET_ROW_LABELS,
+                f"{cls.__name__} ({cls.strategy_name}) missing from "
+                "_PNL_SHEET_ROW_LABELS -- its P&L would never reach the Sheet",
             )
 
     def test_no_empty_prefixes(self):

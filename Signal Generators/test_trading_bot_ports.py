@@ -47,6 +47,7 @@ PORTS = [
     ("Nifty Stochastic Oscillator Signal Generator.py", "StochasticOscillator", "stochastic_oscillator", None),
     ("Nifty Supertrend Signal Generator.py", "Supertrend", "supertrend", None),
     ("Nifty Volatility Breakout Signal Generator.py", "VolatilityBreakout", "volatility_breakout", None),
+    ("Nifty Regime Adaptive Signal Generator.py", "RegimeAdaptive", "regime_adaptive", None),
 ]
 PORT_IDS = [prefix for (_f, prefix, _b, _d) in PORTS]
 

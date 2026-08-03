@@ -7,7 +7,7 @@
 
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
-the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~26
+the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~27
 strategies together — on paper by default, and live through a real broker when explicitly enabled.
 Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
 
@@ -19,12 +19,20 @@ One process, cooperating threads:
   swaps in `WebSocketMarketDataFetcher`: Dhan marketfeed ticks build the bars/LTPs
   (pure helpers in `Dependencies/tick_bar_builder.py`), with REST kept for warmup and a
   once-per-minute true-up against official candles.
-- **~26 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
+- **~27 strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
   family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / CPR Algo 3
-  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies), two
-  **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
+  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies + the
+  **Regime Adaptive** router), two **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
   and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
-  One **optional, opt-in** 27th worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
+  **Regime Adaptive** (ported from the MIT-licensed
+  `workratananmol-hub/nifty-options-paper-trading-bot`) is one worker that switches RULE on ADX:
+  opening-range breakout when trending, VWAP fade when ranging, no trade when ADX is missing. Its two
+  candidate rules live in `Signal Generators/regime_candidates.py` as library code with NO worker of
+  their own — deliberately, so the router and a candidate can never take the same signal twice. Read
+  `Signal Generators/REGIME_PORTING_NOTES.md` before enabling it live: the feed carries no volume so
+  its VWAP is an equal-weight proxy, and the source's spread/VIX/breadth/event vetoes were dropped
+  (no data source) rather than faked.
+  One **optional, opt-in** 28th worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
   `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
   sizing) and acts through the same ATM `enter_position`/`exit_position`; its deps are lazily imported
@@ -68,7 +76,9 @@ requirements-dev.txt                               # exact local/CI quality tool
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
 Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/,
-                                                   #   SL Hunting AI Agent/ — optional Claude-agent strategy)
+                                                   #   SL Hunting AI Agent/ — optional Claude-agent strategy;
+                                                   #   regime_common.py + regime_candidates.py — router library code,
+                                                   #   deliberately worker-less, see REGIME_PORTING_NOTES.md)
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
