@@ -9105,7 +9105,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         return is_after_time(CPR_AI_ENTRY_CUTOFF_HOUR, CPR_AI_ENTRY_CUTOFF_MINUTE)
 
     def _get_open_position_pnl(self) -> float:
-        """Aggregate primary and confirmed/paper add-on option MTM."""
+        """Aggregate primary and conservative ledger/paper add-on MTM."""
 
         if not self.pos.active:
             return 0.0
@@ -9116,9 +9116,44 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         )
         primary = (live - self.pos.entry_trade_price) * self.pos.quantity
         state = self._cpr_state
-        if state is None or state.add_quantity <= 0:
+        if state is None:
             return primary
-        return primary + (live - state.add_entry_trade_price) * state.add_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            # ``risk_quantity`` deliberately rounds indeterminate opening
+            # exposure up. Max-loss must assume the ambiguous remainder filled,
+            # never omit it merely because the broker response was incomplete.
+            add_quantity = int(state.add_live_leg.risk_quantity)
+        else:
+            add_quantity = int(state.add_quantity)
+        if add_quantity <= 0:
+            return primary
+        add_entry = self._add_entry_accounting_price(state)
+        return primary + (live - add_entry) * add_quantity
+
+    def _add_entry_accounting_price(self, state: CPRAITradeState) -> float:
+        """Return a nonzero add basis, preferring the execution ledger fill."""
+
+        if isinstance(state.add_live_leg, LiveLegState):
+            ledger_price = float(state.add_live_leg.entry_average_fill_price)
+            if ledger_price > 0:
+                return ledger_price
+        if state.add_entry_trade_price > 0:
+            return float(state.add_entry_trade_price)
+        # Unknown exposure without a priced broker fill still needs a
+        # conservative, nonzero basis for MTM. The primary is the same locked
+        # option contract, so its actual fill is the safest available fallback.
+        return float(self.pos.entry_trade_price)
+
+    def _position_execution_mode(self) -> str:
+        """Classify the active basket from actual broker-backed leg state."""
+
+        state = self._cpr_state
+        return (
+            "LIVE"
+            if self.pos.live_leg is not None
+            or (state is not None and state.add_live_leg is not None)
+            else "PAPER"
+        )
 
     def _execute_scale_in(self) -> bool:
         """Submit the one equal-size R1 add using the locked primary contract."""
@@ -9138,11 +9173,14 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             self.pos.option_exchange_segment,
             self.pos.option_security_id,
         )
-        if mark <= 0 or (self.live_trading and not mark_is_fresh):
+        primary_is_live = isinstance(self.pos.live_leg, LiveLegState)
+        if mark <= 0 or (primary_is_live and not mark_is_fresh):
             return False
-        if not self.live_trading:
+        if not primary_is_live:
             # Paper has no ambiguous submission. Consume the one add only when
-            # a real mark exists and the bookkeeping can be completed.
+            # a real mark exists and the bookkeeping can be completed. This
+            # includes a live-enabled worker whose primary explicitly rejected
+            # with zero fill and therefore fell back to paper.
             state.scale_in_used = True
             state.set_primary_entry_trade_price(self.pos.entry_trade_price)
             state.add_quantity = quantity
@@ -9166,6 +9204,11 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         # PARTIAL/UNKNOWN responses may already represent real exposure, so the
         # same scale-in can never be retried as though nothing happened.
         state.scale_in_used = True
+        # Preserve the submission-time mark as a nonzero accounting fallback.
+        # A partial/unknown ledger result will replace it with its broker entry
+        # average as soon as the broker reports priced fills.
+        state.add_entry_trade_price = float(mark)
+        state.add_entry_price_quality = PRICE_QUALITY_MARK_FALLBACK
         result = self._place_real_leg("BUY", leg, opens_exposure=True)
         live_state = leg.get("live_leg")
         if isinstance(live_state, LiveLegState):
@@ -9283,11 +9326,16 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             "role": "N",
             "live_leg": closed.live_leg,
         }
+        add_close_quantity = state.initial_filled_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_close_quantity = max(1, int(state.add_live_leg.risk_quantity))
+        elif state.add_quantity > 0:
+            add_close_quantity = int(state.add_quantity)
         add_leg = {
             "option_type": closed.option_right,
             "strike": closed.option_strike,
             "expiry": closed.option_expiry,
-            "quantity": max(state.initial_filled_quantity, state.add_quantity),
+            "quantity": add_close_quantity,
             "dhan_symbol": closed.symbol,
             "role": "A",
             "live_leg": state.add_live_leg,
@@ -9333,6 +9381,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         add_pnl = 0.0
         add_exit = primary_exit
         add_quality = primary_quality
+        add_entry = self._add_entry_accounting_price(state)
         if add_quantity > 0:
             add_exit, add_quality = self._accounting_price(
                 state.add_live_leg,
@@ -9340,7 +9389,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 mark_is_fresh=mark_is_fresh,
                 phase="EXIT",
             )
-            add_pnl = (add_exit - state.add_entry_trade_price) * add_quantity
+            add_pnl = (add_exit - add_entry) * add_quantity
         pnl = primary_pnl + add_pnl
         self.realized_pnl += pnl
         self.completed_trades += 1
@@ -9375,7 +9424,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                         "side": "SELL",
                         "right": closed.option_right,
                         "strike": closed.option_strike,
-                        "entry_price": state.add_entry_trade_price,
+                        "entry_price": add_entry,
                         "exit_price": add_exit,
                         "exit_price_quality": add_quality,
                         "quantity": add_quantity,
@@ -9419,6 +9468,25 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             self.log.error(
                 "CPR AI final execution audit failed (%s).", type(exc).__name__
             )
+
+    def _post_inference_entry_block_reason(self) -> str:
+        """Recheck every mutable host gate after a potentially slow agent turn."""
+
+        if self.stop_event.is_set():
+            return "stop_event"
+        lifecycle = self.lifecycle.snapshot()
+        if (
+            lifecycle.state is not LifecycleState.RUNNING
+            or not lifecycle.entry_allowed
+        ):
+            return "worker_not_running"
+        if not self._market_data_entries_allowed():
+            return "market_data_unhealthy"
+        if is_after_time(self.square_off_hour, self.square_off_minute):
+            return "square_off_cutoff"
+        if self._at_or_after_entry_cutoff():
+            return "entry_cutoff"
+        return ""
 
     def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
         """Ask at most once per completed bar and persist valid regime memory."""
@@ -9483,7 +9551,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     frozen_context,
                     outcome,
                     {
-                        "mode": "LIVE" if self.live_trading else "PAPER",
+                        "mode": self._position_execution_mode(),
                         "submitted": bool(
                             self._cpr_state and self._cpr_state.scale_in_used
                         ),
@@ -9492,6 +9560,19 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 )
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
+            return
+        blocked_reason = self._post_inference_entry_block_reason()
+        if blocked_reason:
+            self._write_final_execution(
+                frozen_context,
+                outcome,
+                {
+                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "submitted": False,
+                    "status": "ENTRY_BLOCKED",
+                    "blocked_reason": blocked_reason,
+                },
+            )
             return
         direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
         submitted = self.enter_position(

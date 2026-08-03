@@ -19,6 +19,7 @@ from urllib.parse import parse_qs
 import pandas as pd
 
 from Dependencies.broker_contract import BrokerQueryResult, OrderResult, OrderStatus
+from Dependencies.execution_ledger import OrderAttempt
 
 # =============================================================================
 # DYNAMIC MODULE IMPORT
@@ -8919,6 +8920,52 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         )
         return worker, agent, logger
 
+    @staticmethod
+    def _live_state(
+        role,
+        *,
+        filled=50,
+        confirmed=None,
+        indeterminate=False,
+        entry_price=10.0,
+        latest_attempt=None,
+        closing_started=False,
+        close_price=0.0,
+    ):
+        """Build one immutable execution-ledger snapshot for CPR AI tests."""
+
+        target = 50
+        confirmed_quantity = filled if confirmed is None else confirmed
+        spec = master_file.LegSpec(
+            strategy="CPR AI",
+            correlation_id=f"ABCD123{role}",
+            role=role,
+            underlying="NIFTY",
+            symbol="NIFTY-LOCKED",
+            option_type="CE",
+            strike=25000.0,
+            expiry=date(2026, 8, 13),
+            opening_side="BUY",
+            target_quantity=target,
+            owner_id="EFGH5678",
+        )
+        closed_quantity = filled - confirmed_quantity
+        return master_file.LiveLegState(
+            exposure_id=f"test-{role}",
+            spec=spec,
+            requested_quantity=target,
+            filled_quantity=filled,
+            remaining_quantity=target - filled,
+            confirmed_live_quantity=confirmed_quantity,
+            exposure_indeterminate=indeterminate,
+            latest_attempt=latest_attempt,
+            closing_started=closing_started,
+            entry_priced_quantity=filled if entry_price > 0 else 0,
+            entry_fill_notional=filled * entry_price,
+            close_priced_quantity=closed_quantity if close_price > 0 else 0,
+            close_fill_notional=closed_quantity * close_price,
+        )
+
     def test_worker_inherits_directly_and_has_no_legacy_cpr_decision_dependency(self):
         """The replacement must not retain the old Algo arbiter through inheritance."""
 
@@ -9264,6 +9311,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             with self.subTest(status=status):
                 worker, _agent, _logger = self._worker()
                 worker.live_trading = True
+                primary_state = self._live_state("N", entry_price=10.0)
                 worker.pos = master_file.PaperPosition(
                     active=True,
                     direction="LONG",
@@ -9275,6 +9323,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                     option_right="CE",
                     option_strike=25000.0,
                     option_expiry=date(2026, 8, 13),
+                    live_leg=primary_state,
                 )
                 worker._cpr_state = master_file.CPRAITradeState(
                     original_entry_price=100.0,
@@ -9358,6 +9407,46 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                     50 if status is master_file.OrderStatus.FILLED else 0,
                 )
 
+    def test_live_enabled_paper_fallback_primary_gets_only_a_paper_add(self):
+        """Execution provenance, not the worker flag, classifies the add mode."""
+
+        worker, _agent, _logger = self._worker()
+        worker.live_trading = True
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-LOCKED",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 13),
+            live_leg=None,
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=100.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        worker._get_dealable_option_ltp = MagicMock(return_value=(14.0, True))
+        worker._place_real_leg = MagicMock()
+
+        self.assertTrue(worker._execute_scale_in())
+
+        worker._place_real_leg.assert_not_called()
+        self.assertEqual(worker._cpr_state.add_quantity, 50)
+        self.assertEqual(worker._cpr_state.add_entry_trade_price, 14.0)
+        self.assertIsNone(worker._cpr_state.add_live_leg)
+
     def test_exit_books_weighted_primary_and_add_on_pnl_then_unsubscribes_once(self):
         """A scaled paper trade realizes both locked-contract entry marks."""
 
@@ -9399,6 +9488,187 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(worker.realized_pnl, 300.0)
         self.assertEqual(worker.completed_trades, 1)
         worker.store.unregister_option_subscription.assert_called_once()
+
+    def test_partial_live_add_uses_ledger_fill_for_mtm_and_realized_pnl(self):
+        """Primary 50@10 plus partial add 25@12 at 8 equals minus 200."""
+
+        worker, _agent, _logger = self._worker()
+        worker.live_trading = True
+        primary_open = self._live_state("N", entry_price=10.0)
+        partial_attempt = OrderAttempt(
+            intent=master_file.OrderIntent.OPEN,
+            sequence=1,
+            order_tag="PARTIAL-A",
+            requested_quantity=50,
+            filled_quantity=25,
+            remaining_quantity=25,
+            order_id="ADD-PARTIAL",
+            status=master_file.OrderStatus.PARTIAL,
+            broker_state="CANCELLED",
+            reason="terminal partial",
+            terminal=True,
+            average_fill_price=12.0,
+        )
+        add_open = self._live_state(
+            "A",
+            filled=25,
+            confirmed=25,
+            entry_price=12.0,
+            latest_attempt=partial_attempt,
+        )
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-LOCKED",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 13),
+            live_leg=primary_open,
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=100.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+            scale_in_used=True,
+            add_entry_trade_price=0.0,
+            add_live_leg=add_open,
+        )
+        worker._get_option_ltp = MagicMock(return_value=8.0)
+
+        self.assertEqual(worker._get_open_position_pnl(), -200.0)
+
+        primary_close_attempt = OrderAttempt(
+            intent=master_file.OrderIntent.CLOSE,
+            sequence=2,
+            order_tag="CLOSE-N",
+            requested_quantity=50,
+            filled_quantity=50,
+            remaining_quantity=0,
+            order_id="PRIMARY-CLOSE",
+            status=master_file.OrderStatus.FILLED,
+            broker_state="COMPLETE",
+            reason="flat",
+            terminal=True,
+            average_fill_price=8.0,
+        )
+        add_close_attempt = OrderAttempt(
+            intent=master_file.OrderIntent.CLOSE,
+            sequence=2,
+            order_tag="CLOSE-A",
+            requested_quantity=25,
+            filled_quantity=25,
+            remaining_quantity=0,
+            order_id="ADD-CLOSE",
+            status=master_file.OrderStatus.FILLED,
+            broker_state="COMPLETE",
+            reason="flat",
+            terminal=True,
+            average_fill_price=8.0,
+        )
+        flat_states = {
+            "N": self._live_state(
+                "N",
+                confirmed=0,
+                entry_price=10.0,
+                latest_attempt=primary_close_attempt,
+                closing_started=True,
+                close_price=8.0,
+            ),
+            "A": self._live_state(
+                "A",
+                filled=25,
+                confirmed=0,
+                entry_price=12.0,
+                latest_attempt=add_close_attempt,
+                closing_started=True,
+                close_price=8.0,
+            ),
+        }
+
+        def close_leg(_side, leg, *, opens_exposure):
+            self.assertFalse(opens_exposure)
+            leg["live_leg"] = flat_states[leg["role"]]
+            return worker._synthetic_order_result(
+                int(leg["quantity"]),
+                master_file.OrderStatus.FILLED,
+                "synthetic close",
+                filled_quantity=int(leg["quantity"]),
+            )
+
+        worker._place_real_leg = MagicMock(side_effect=close_leg)
+        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
+
+        worker.exit_position("PARTIAL_ADD_EXIT")
+
+        self.assertFalse(worker.pos.active)
+        self.assertEqual(worker.realized_pnl, -200.0)
+
+    def test_unknown_live_add_counts_full_risk_quantity_with_nonzero_fallback_basis(self):
+        """Indeterminate exposure is never omitted or priced from a zero basis."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+        )
+        unknown_attempt = OrderAttempt(
+            intent=master_file.OrderIntent.OPEN,
+            sequence=1,
+            order_tag="UNKNOWN-A",
+            requested_quantity=50,
+            filled_quantity=0,
+            remaining_quantity=50,
+            order_id="ADD-UNKNOWN",
+            status=master_file.OrderStatus.UNKNOWN,
+            broker_state="PENDING",
+            reason="response lost",
+            terminal=False,
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=100.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+            scale_in_used=True,
+            add_entry_trade_price=0.0,
+            add_live_leg=self._live_state(
+                "A",
+                filled=0,
+                confirmed=0,
+                indeterminate=True,
+                entry_price=0.0,
+                latest_attempt=unknown_attempt,
+            ),
+        )
+        worker._get_option_ltp = MagicMock(return_value=8.0)
+        worker.max_loss = 150.0
+
+        self.assertEqual(worker._cpr_state.add_live_leg.risk_quantity, 50)
+        self.assertEqual(worker._get_open_position_pnl(), -200.0)
+        breached, total, open_pnl = worker.is_max_loss_breached()
+        self.assertTrue(breached)
+        self.assertEqual((total, open_pnl), (-200.0, -200.0))
 
     def test_audit_failure_blocks_entries_but_does_not_block_an_open_position_exit(self):
         """An audit outage fails closed for exposure and fail-open for reduction."""
@@ -9466,6 +9736,87 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             logger.write.call_args.kwargs["execution"],
             {"mode": "PAPER", "submitted": True, "status": "ENTRY_SUBMITTED"},
         )
+
+    def test_entry_cutoff_is_rechecked_after_inference_before_submission(self):
+        """A turn accepted before 15:00 cannot enter after the clock crosses it."""
+
+        worker, agent, logger = self._worker()
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {}, "momentum_vwap": {}, "market_structure": {}, "position_state": {"is_flat": True}
+        }
+        worker._completed_bar_signature = lambda _frame: "late-cutoff"
+        worker._current_completed_spot_signature = lambda: "late-cutoff"
+        worker._at_or_after_entry_cutoff = MagicMock(side_effect=[False, True])
+        outcome = agent.decide.return_value
+        outcome.action = "ENTER_LONG"
+        outcome.accepted = True
+        outcome.entry_price = 100.0
+        outcome.stop_price = 95.0
+        outcome.milestone_price = 108.0
+        outcome.final_target_price = 118.0
+        outcome.risk_points = 5.0
+        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        worker.enter_position = MagicMock(return_value=True)
+
+        worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
+
+        worker.enter_position.assert_not_called()
+        self.assertEqual(
+            logger.write.call_args.kwargs["execution"]["blocked_reason"],
+            "entry_cutoff",
+        )
+
+    def test_stop_and_lifecycle_are_rechecked_after_inference(self):
+        """A shutdown transition during a slow turn blocks the late entry."""
+
+        for transition, expected_reason in (
+            ("stop_event", "stop_event"),
+            ("lifecycle", "worker_not_running"),
+        ):
+            with self.subTest(transition=transition):
+                worker, agent, logger = self._worker()
+                worker._latest_frozen_context = lambda: {
+                    "session_levels": {},
+                    "momentum_vwap": {},
+                    "market_structure": {},
+                    "position_state": {"is_flat": True},
+                }
+                signature = f"late-{transition}"
+                worker._completed_bar_signature = lambda _frame, value=signature: value
+                worker._current_completed_spot_signature = lambda value=signature: value
+                outcome = agent.decide.return_value
+                outcome.action = "ENTER_LONG"
+                outcome.accepted = True
+                outcome.entry_price = 100.0
+                outcome.stop_price = 95.0
+                outcome.milestone_price = 108.0
+                outcome.final_target_price = 118.0
+                outcome.risk_points = 5.0
+                outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+
+                def decide(
+                    *_args,
+                    transition_name=transition,
+                    active_worker=worker,
+                    accepted_outcome=outcome,
+                    **_kwargs,
+                ):
+                    if transition_name == "stop_event":
+                        active_worker.stop_event.set()
+                    else:
+                        active_worker.lifecycle.request_shutdown("TEST_TRANSITION")
+                    return accepted_outcome
+
+                agent.decide.side_effect = decide
+                worker.enter_position = MagicMock(return_value=True)
+
+                worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
+
+                worker.enter_position.assert_not_called()
+                self.assertEqual(
+                    logger.write.call_args.kwargs["execution"]["blocked_reason"],
+                    expected_reason,
+                )
 
 
 if __name__ == "__main__":
