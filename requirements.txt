@@ -6,7 +6,7 @@
 # dependency-maintenance PR and re-run the full gate suite (CI installs this
 # file, so the gates always test the pinned set).
 dhanhq==2.2.0
-pandas==3.0.3
+pandas==3.0.5
 numpy==2.4.6
 backtesting==0.6.6
 python-dotenv==1.2.2
@@ -27,7 +27,7 @@ websocket-client==1.8.0
 # `websockets` library at package import time. It already arrives transitively
 # with dhanhq, but per DEPS-001 the exact version the live runner was verified
 # with must be pinned here rather than left to transitive resolution.
-websockets==16.0
+websockets==16.1.1
 TA-Lib==0.6.8
 
 # ---- Exact optional dependency sets -----------------------------------------
