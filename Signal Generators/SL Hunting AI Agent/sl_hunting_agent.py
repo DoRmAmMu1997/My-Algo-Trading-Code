@@ -345,6 +345,10 @@ class SLHuntingAgent:
             if premarket_block and premarket_block.strip()
             else ""
         )
+        # SLH-009: `premarket_block` is already date-gated by the caller (it renders
+        # empty unless the note is for today), so a non-empty block is exactly the
+        # condition under which the order tool demands a note_check on entries.
+        self._premarket_note_active = bool(premarket_block and premarket_block.strip())
         self._system_prompt = (
             build_system_prompt() + learned + premarket + FINAL_OUTPUT_INSTRUCTION
         )
@@ -642,6 +646,9 @@ class SLHuntingAgent:
             generation_is_current=generation_is_current,
             deadline_seconds=self._sdk_timeout_seconds,
             execution_lock=execution_lock,
+            # SLH-009: the note was already date-gated when the block was built, so a
+            # non-empty block means one applies TODAY.
+            premarket_note_active=bool(self._premarket_note_active),
         )
         position = executor.snapshot()
         prompt = self._build_user_prompt(prepared, position)

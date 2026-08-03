@@ -5643,6 +5643,52 @@ class BasePaperStrategyWorker(threading.Thread):
         self.paper_order_counter += 1
         return f"PAPER-{side}-{datetime.now():%Y%m%d%H%M%S}-{self.paper_order_counter:04d}"
 
+    def _subscribe_then_price(
+        self, contract: dict
+    ) -> tuple[float, bool, tuple[str, int] | None]:
+        """Join the feed FIRST, then price the leg. Returns (price, fresh, owned_key).
+
+        MAT-113, generalised to every worker. A tick feed cannot quote an instrument
+        it does not carry, so asking for a price before subscribing can only ever
+        succeed by accident -- via a REST fallback that has been observed returning a
+        map without the requested contract, or via a cached price left behind by an
+        earlier trade. Subscribing first makes the feed start work immediately; the
+        bounded wait then returns the moment the first tick lands, so an entry is
+        taken as soon as a price exists rather than after a fixed delay.
+
+        `owned_key` is the (segment, security_id) this call ADDED to the pool, or
+        None when the leg was already subscribed by someone else. Callers pass it to
+        `_release_feed_legs` so a fallen-through entry withdraws only what it opened
+        and never a leg shared with another worker.
+        """
+        segment = str(contract["exchange_segment"])
+        security_id = int(contract["security_id"])
+        owned = self.store.register_option_subscription(
+            OptionSubscription(
+                security_id=security_id,
+                exchange_segment=segment,
+                trading_symbol=str(contract["trading_symbol"]),
+                right=str(contract["option_type"]),
+                strike=float(contract["strike"]),
+                expiry=contract["expiry_date"],
+            ),
+            owner_id=self._execution_owner_id,
+        )
+        price, is_fresh = self._get_dealable_option_ltp(
+            segment, security_id, wait_seconds=MARKET_DATA_LTP_WAIT_SECONDS
+        )
+        return price, is_fresh, ((segment, security_id) if owned else None)
+
+    def _release_feed_legs(self, *owned_keys: tuple[str, int] | None) -> None:
+        """Withdraw feed legs this entry opened but never used."""
+        for key in owned_keys:
+            if key is None:
+                continue
+            segment, security_id = key
+            self.store.unregister_option_subscription(
+                segment, security_id, owner_id=self._execution_owner_id
+            )
+
     def _get_dealable_option_ltp(
         self, segment: str, security_id: int, *, wait_seconds: float = 0.0
     ) -> tuple[float, bool]:
@@ -8954,17 +9000,17 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                 hedge_entry_price,
             )
             return False
-        main_entry_price, main_mark_is_fresh = self._get_dealable_option_ltp(
-            str(main["exchange_segment"]), int(main["security_id"])
-        )
-        hedge_entry_price, hedge_mark_is_fresh = self._get_dealable_option_ltp(
-            str(hedge["exchange_segment"]), int(hedge["security_id"])
-        )
+        # MAT-113: subscribe both legs before pricing them, then take the entry as
+        # soon as the feed quotes them rather than after a fixed delay.
+        main_entry_price, main_mark_is_fresh, main_feed_key = self._subscribe_then_price(main)
+        hedge_entry_price, hedge_mark_is_fresh, hedge_feed_key = self._subscribe_then_price(hedge)
         if main_entry_price <= 0 or hedge_entry_price <= 0:
             self.log.warning("Skipping bullish entry because a dealable leg price is unavailable.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
         if self.live_trading and not (main_mark_is_fresh and hedge_mark_is_fresh):
             self.log.error("REFUSING LIVE bullish spread entry because a leg price is stale.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
 
         main_live_order = {
@@ -9602,17 +9648,17 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                 hedge_entry_price,
             )
             return False
-        main_entry_price, main_mark_is_fresh = self._get_dealable_option_ltp(
-            str(main["exchange_segment"]), int(main["security_id"])
-        )
-        hedge_entry_price, hedge_mark_is_fresh = self._get_dealable_option_ltp(
-            str(hedge["exchange_segment"]), int(hedge["security_id"])
-        )
+        # MAT-113: subscribe both legs before pricing them, then take the entry as
+        # soon as the feed quotes them rather than after a fixed delay.
+        main_entry_price, main_mark_is_fresh, main_feed_key = self._subscribe_then_price(main)
+        hedge_entry_price, hedge_mark_is_fresh, hedge_feed_key = self._subscribe_then_price(hedge)
         if main_entry_price <= 0 or hedge_entry_price <= 0:
             self.log.warning("Skipping bearish entry because a dealable leg price is unavailable.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
         if self.live_trading and not (main_mark_is_fresh and hedge_mark_is_fresh):
             self.log.error("REFUSING LIVE bearish spread entry because a leg price is stale.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
 
         main_live_order = {
@@ -11838,20 +11884,21 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             )
             return False
 
-        option_ltp, mark_is_fresh = self._get_dealable_option_ltp(
-            option_segment, option_sec_id
-        )
+        # MAT-113: join the feed before pricing, then enter as soon as it quotes.
+        option_ltp, mark_is_fresh, feed_key = self._subscribe_then_price(contract)
         if option_ltp <= 0:
             self.log.warning(
                 "Strangle %s entry skipped: option LTP unavailable for %s (security_id=%s).",
                 side, trading_symbol, option_sec_id,
             )
+            self._release_feed_legs(feed_key)
             return False
         if self.live_trading and not mark_is_fresh:
             self.log.error(
                 "REFUSING LIVE strangle %s entry because the option mark is stale.",
                 side,
             )
+            self._release_feed_legs(feed_key)
             return False
 
         quantity = lot_size * self.lots
