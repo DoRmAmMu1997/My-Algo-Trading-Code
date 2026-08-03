@@ -1937,3 +1937,56 @@ the worst-case runtime additions rather than trusting the raw number.
 - `RISK`: COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT, beside momentum quality.
 - Test markers: `test_system_prompt_has_v3w_entry_point_and_counter_move_knowledge`
   and `test_prompt_cap_leaves_room_for_lessons_and_a_note`.
+
+## Video addendum - 2 Aug premarket + weekly root-value review (v3x)
+
+**Sources (direct YouTube transcripts):**
+- Intraday Hunter premarket analysis, `Nifty & Bank nifty | SENSEX Analysis |
+  Prediction For 03 AUG 2026` (`yHEfrMUrmKk`, 1:59, uploaded 2 Aug 2026).
+- Intraday Hunter, `Weekly Market Analysis: The Biggest Opportunities`
+  (`iDV1obD78-c`, 17:16, uploaded 2 Aug 2026).
+
+The premarket clip is dated by its target session, so the committed advisory is for
+3 Aug. All three indices had closed with positive momentum and likely seated buyers.
+A meaningful gap-up protects that crowd and calls for buy-side setups with the
+market; a flat or gap-down open exposes them and calls for sell-side setups. IH also
+said a mild gap-up is treated as flat. Spoken rounded levels were checked against the
+visible charts before updating `premarket_note.json`; no false decimal precision is
+stored.
+
+The weekly lecture reviews five recent directional reads. Its recurring method is to
+infer the buyer/seller "root value" from the crowd likely carrying the most quantity,
+not from one hypothetical participant. A repeated breakdown followed by recovery
+does not leave a durable seller crowd: repeated failure pushes sellers out, and if
+the other indices remain positive, buyers may become the seated side instead. The
+lecture also states that option-buying targets must fit the available time: IH uses
+roughly 1:1 when his crowd read is exceptionally clear because a distant target can
+be less realistic than the stop.
+
+**Net-new method distilled:**
+- AGGREGATE-INVENTORY TEST: hunt the dominant aggregate cohort, not an anecdote. If
+  neither side likely has meaningful size, follow current momentum or hold.
+- REPEATED-FAILURE INVENTORY RESET: repeated breakdown-and-recovery cycles evict
+  sellers; require fresh participation before treating their stops as available.
+- OPTION-TIME-ADJUSTED REWARD/RISK: normally prefer an attainable approximately 1:2.
+  Approximately 1:1 is a narrow exception requiring the unique-trade filter, a
+  direct aggregate crowd read, real stop/target levels, a pre-accepted rupee loss,
+  and an option-time reason the farther target is unrealistic. Less than 1:1 is HOLD.
+
+**Confirmed but deliberately not duplicated:** horizon selection is TIMEFRAME FIT;
+already-paid crowds are TARGET-BOOKED; gap-size and cross-index asymmetry already
+govern who remains huntable; direction can survive a bad entry only through THE
+ENTRY POINT IS PART OF THE PREMISE plus the POST-EXIT RE-ENTRY GATE; a quiet week is
+already covered by NO DAILY-INCOME PRESSURE.
+
+**Not encoded:** the lecture mentions that a first directional entry may fail and a
+second or third may work with lower quantity. The agent cannot choose a reduced order
+quantity, and reflex retries would contradict the enforced cooldown and fresh-crowd
+gate. Those existing safeguards remain authoritative.
+
+**Knowledge changes (v3x, all prose):**
+- `RETAIL_POSITIONING`: AGGREGATE-INVENTORY TEST and REPEATED-FAILURE INVENTORY RESET.
+- `RISK`: OPTION-TIME-ADJUSTED REWARD/RISK replaces the absolute approximately 1:2
+  wording without permitting sub-1:1 or manufactured targets.
+- Tests pin all three markers, the retained safeguards, and the complete dated
+  premarket payload.
