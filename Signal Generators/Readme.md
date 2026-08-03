@@ -58,7 +58,7 @@ independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 | `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
 | `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
 
-# Regime Adaptive port (1, ATM single-leg) — different source project
+# Regime Adaptive port (`Regime Adaptive Strategy/`) — different source project
 One more ATM single-leg worker, adapted from the MIT-licensed
 [`workratananmol-hub/nifty-options-paper-trading-bot`](https://github.com/workratananmol-hub/nifty-options-paper-trading-bot).
 Same factory, same `.env` prefix convention (`REGIME_ADAPTIVE_*`), same execution
@@ -69,11 +69,14 @@ switches which rule applies:
 - ADX ≥ `REGIME_ADAPTIVE_ADX_TREND_THRESHOLD` → opening-range breakout, confirmed by VWAP
 - ADX below it → fade an extension away from VWAP
 
+Everything for it lives in its own folder, `Regime Adaptive Strategy/`:
+
 | File | Role |
 |---|---|
 | `Nifty Regime Adaptive Signal Generator.py` | the router — the only worker of the three |
 | `regime_candidates.py` | the two candidate rules, as pure column-producing functions |
-| `regime_common.py` | session date, session VWAP, session opening range |
+| `regime_common.py` | session date, session VWAP, session opening range — and this folder's **only** `sys.path` bootstrap, which is why it re-exports the shared indicators from `misc_strategy_common` one level up |
+| `conftest.py` | the pytest equivalent of that bootstrap (same pattern as `SL Hunting AI Agent/`) |
 | `REGIME_PORTING_NOTES.md` | **read before enabling live** — what was dropped and why |
 
 Two things to know before touching it:

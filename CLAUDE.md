@@ -27,11 +27,11 @@ One process, cooperating threads:
   **Regime Adaptive** (ported from the MIT-licensed
   `workratananmol-hub/nifty-options-paper-trading-bot`) is one worker that switches RULE on ADX:
   opening-range breakout when trending, VWAP fade when ranging, no trade when ADX is missing. Its two
-  candidate rules live in `Signal Generators/regime_candidates.py` as library code with NO worker of
-  their own — deliberately, so the router and a candidate can never take the same signal twice. Read
-  `Signal Generators/REGIME_PORTING_NOTES.md` before enabling it live: the feed carries no volume so
-  its VWAP is an equal-weight proxy, and the source's spread/VIX/breadth/event vetoes were dropped
-  (no data source) rather than faked.
+  candidate rules live in `Signal Generators/Regime Adaptive Strategy/regime_candidates.py` as library
+  code with NO worker of their own — deliberately, so the router and a candidate can never take the
+  same signal twice. Read that folder's `REGIME_PORTING_NOTES.md` before enabling it live: the feed
+  carries no volume so its VWAP is an equal-weight proxy, and the source's spread/VIX/breadth/event
+  vetoes were dropped (no data source) rather than faked.
   One **optional, opt-in** 28th worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
   `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
@@ -77,8 +77,9 @@ Data Extractors/                                   # DhanHQ 1-min OHLC downloade
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
 Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/,
                                                    #   SL Hunting AI Agent/ — optional Claude-agent strategy;
-                                                   #   regime_common.py + regime_candidates.py — router library code,
-                                                   #   deliberately worker-less, see REGIME_PORTING_NOTES.md)
+                                                   #   Regime Adaptive Strategy/ — the ADX router plus its two
+                                                   #   deliberately worker-less candidate rules; read its
+                                                   #   REGIME_PORTING_NOTES.md before enabling it live)
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup

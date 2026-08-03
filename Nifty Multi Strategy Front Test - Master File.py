@@ -63,9 +63,10 @@ Newest is Regime Adaptive, a port from a DIFFERENT public project
 (workratananmol-hub/nifty-options-paper-trading-bot, MIT). It is one ATM
 single-leg worker that switches RULE on ADX: an opening-range breakout when the
 market trends, a fade back to VWAP when it ranges, and no trade at all when ADX
-is missing. Its two candidate rules live in "Signal Generators/regime_candidates.py"
+is missing. Everything for it lives in "Signal Generators/Regime Adaptive Strategy/";
+its two candidate rules sit there in "regime_candidates.py"
 as library code with no worker of their own, so the router can never double up on
-a candidate's signal. Read Signal Generators/REGIME_PORTING_NOTES.md before
+a candidate's signal. Read that folder's REGIME_PORTING_NOTES.md before
 enabling it live: this runner has no volume, so its VWAP is an equal-weight proxy.
 
 Together they bring the runner to TWENTY-SEVEN strategies total: 23 ATM
@@ -1352,12 +1353,13 @@ VOLATILITY_BREAKOUT_LOGIC = load_module(
 )
 # Regime-adaptive router (ported from the MIT-licensed
 # workratananmol-hub/nifty-options-paper-trading-bot). It dispatches between an
-# opening-range breakout and a VWAP fade on ADX. Its two candidate rules live in
-# `regime_candidates.py` as library code with NO worker of their own, so the
-# router can never double up on a candidate's signal -- see
-# Signal Generators/REGIME_PORTING_NOTES.md.
+# opening-range breakout and a VWAP fade on ADX. It lives in its own subfolder
+# with its two candidate rules, which are library code with NO worker of their
+# own, so the router can never double up on a candidate's signal -- see
+# Signal Generators/Regime Adaptive Strategy/REGIME_PORTING_NOTES.md.
 REGIME_ADAPTIVE_LOGIC = load_module(
-    "master_regime_adaptive", SIGNAL_GEN_DIR / "Nifty Regime Adaptive Signal Generator.py"
+    "master_regime_adaptive",
+    SIGNAL_GEN_DIR / "Regime Adaptive Strategy" / "Nifty Regime Adaptive Signal Generator.py",
 )
 
 # =============================================================================

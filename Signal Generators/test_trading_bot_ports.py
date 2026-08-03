@@ -32,7 +32,17 @@ import pytest
 
 GEN_DIR = Path(__file__).resolve().parent
 
-# (file name, attr prefix, build-function name, optional import the port needs)
+# Ports that live in a subfolder import their siblings by bare name, so that
+# folder has to be importable before `_load_port` executes them. (The master's
+# `load_module` does the same thing at runtime.)
+for _sub in ("Regime Adaptive Strategy",):
+    _sub_dir = str(GEN_DIR / _sub)
+    if _sub_dir not in sys.path:
+        sys.path.insert(0, _sub_dir)
+if str(GEN_DIR) not in sys.path:
+    sys.path.insert(0, str(GEN_DIR))
+
+# (path relative to this folder, attr prefix, build-function name, optional import the port needs)
 PORTS = [
     ("Nifty SMA Crossover Signal Generator.py", "SMACrossover", "sma_crossover", None),
     ("Nifty Bollinger Bands Signal Generator.py", "BollingerBands", "bollinger_bands", None),
@@ -47,7 +57,8 @@ PORTS = [
     ("Nifty Stochastic Oscillator Signal Generator.py", "StochasticOscillator", "stochastic_oscillator", None),
     ("Nifty Supertrend Signal Generator.py", "Supertrend", "supertrend", None),
     ("Nifty Volatility Breakout Signal Generator.py", "VolatilityBreakout", "volatility_breakout", None),
-    ("Nifty Regime Adaptive Signal Generator.py", "RegimeAdaptive", "regime_adaptive", None),
+    ("Regime Adaptive Strategy/Nifty Regime Adaptive Signal Generator.py",
+     "RegimeAdaptive", "regime_adaptive", None),
 ]
 PORT_IDS = [prefix for (_f, prefix, _b, _d) in PORTS]
 
@@ -56,10 +67,15 @@ VALID_ACTIONS = {"ENTER_LONG", "ENTER_SHORT", "EXIT", "HOLD"}
 
 @cache
 def _load_port(filename: str):
-    """Load one spaced-name generator module (same mechanism as the master)."""
+    """Load one spaced-name generator module (same mechanism as the master).
+
+    `filename` may include a subfolder ("Regime Adaptive Strategy/..."), so the
+    derived module name flattens both spaces and separators.
+    """
     path = GEN_DIR / filename
     assert path.exists(), f"Expected generator at {path}"
-    name = "test_port_" + filename.replace(" ", "_").removesuffix(".py").lower()
+    stem = filename.replace("\\", "/").replace("/", "__").replace(" ", "_")
+    name = "test_port_" + stem.removesuffix(".py").lower()
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

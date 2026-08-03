@@ -10,6 +10,19 @@ needs (ATR, ADX, EMA, frame normalisation, config validation) already lives in
 Kept in an underscore-named module (not a spaced "... Signal Generator.py" file)
 so it can be imported normally and type-checked by mypy.
 
+WHY THIS MODULE OWNS THE sys.path BOOTSTRAP
+-------------------------------------------
+This folder's modules are loaded by the master's `load_module()`, which puts
+only the loaded file's OWN directory on `sys.path`. `misc_strategy_common.py`
+lives one level up in "Signal Generators/", so a bare `from misc_strategy_common
+import ...` from inside this folder would not resolve at runtime.
+
+Rather than repeat a path bootstrap in every module here, exactly ONE module
+does it -- this one -- and re-exports the handful of shared indicators the rest
+of the folder needs. So `Nifty Regime Adaptive Signal Generator.py` and
+`regime_candidates.py` import only from their own siblings, with no path magic
+of their own. (`conftest.py` does the equivalent for pytest.)
+
 A NOTE ON VWAP THAT MATTERS FOR ANYONE READING THE SIGNALS
 ----------------------------------------------------------
 The live runner never sees volume. `normalize_dhan_intraday_response` in the
@@ -26,15 +39,38 @@ This mirrors the existing precedent in `CPR Strategy/cpr_strategy_logic.py`
 
 from __future__ import annotations
 
+import os
+import sys
+
 import numpy as np
 import pandas as pd
-from misc_strategy_common import normalize_ohlc_frame, require_columns
+
+# Put "Signal Generators/" (this folder's parent) on the path before importing
+# the shared indicators -- see "WHY THIS MODULE OWNS THE sys.path BOOTSTRAP".
+_SIGNAL_GEN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SIGNAL_GEN_DIR not in sys.path:
+    sys.path.insert(0, _SIGNAL_GEN_DIR)
+
+from misc_strategy_common import (  # noqa: E402  (must follow the path bootstrap above)
+    adx,
+    atr,
+    normalize_ohlc_frame,
+    require_columns,
+    validate_finite_config,
+)
 
 __all__ = [
+    # Re-exported from misc_strategy_common so the rest of this folder never has
+    # to reach past its own directory. Not reimplementations -- the same objects.
+    "adx",
+    "atr",
     "attach_opening_range",
     "attach_session_date",
     "attach_session_vwap",
+    "normalize_ohlc_frame",
     "prepare_session_frame",
+    "require_columns",
+    "validate_finite_config",
 ]
 
 

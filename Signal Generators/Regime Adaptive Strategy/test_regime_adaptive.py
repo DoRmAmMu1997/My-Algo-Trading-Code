@@ -18,9 +18,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-SIGNAL_DIR = Path(__file__).resolve().parent
-if str(SIGNAL_DIR) not in sys.path:
-    sys.path.insert(0, str(SIGNAL_DIR))
+STRATEGY_DIR = Path(__file__).resolve().parent
+# conftest.py already does this for a normal pytest run; repeated here so the
+# file also works when run directly (python -m pytest on this one path).
+for _path in (str(STRATEGY_DIR.parent), str(STRATEGY_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 import regime_common  # noqa: E402
 from regime_candidates import (  # noqa: E402
@@ -31,7 +34,7 @@ from regime_candidates import (  # noqa: E402
 
 def _load_router():
     """Load the spaced-filename generator the way the master file does."""
-    path = SIGNAL_DIR / "Nifty Regime Adaptive Signal Generator.py"
+    path = STRATEGY_DIR / "Nifty Regime Adaptive Signal Generator.py"
     spec = importlib.util.spec_from_file_location("regime_adaptive_under_test", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

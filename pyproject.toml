@@ -80,6 +80,8 @@ files = [
     "Signal Generators/renko_strategy_logic_9_21.py",
     "Signal Generators/misc_strategy_common.py",
     "Signal Generators/CPR Strategy/cpr_strategy_logic.py",
+    "Signal Generators/Regime Adaptive Strategy/regime_common.py",
+    "Signal Generators/Regime Adaptive Strategy/regime_candidates.py",
     "Signal Generators/Subhamoy Strategies/goldmine_strategy_logic.py",
     "Signal Generators/Subhamoy Strategies/money_machine_strategy_logic.py",
     "Signal Generators/Subhamoy Strategies/profit_shooter_strategy_logic.py",

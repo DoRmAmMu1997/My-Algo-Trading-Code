@@ -42,11 +42,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from misc_strategy_common import adx as adx_indicator
-from misc_strategy_common import atr as atr_indicator
-from misc_strategy_common import require_columns, validate_finite_config
 from regime_candidates import attach_breakout_columns, attach_mean_reversion_columns
-from regime_common import prepare_session_frame
+
+# Every shared indicator comes through `regime_common`, which owns this folder's
+# single sys.path bootstrap -- see its module docstring. These are the same
+# objects as `misc_strategy_common.adx` / `.atr`, not local reimplementations.
+from regime_common import adx as adx_indicator
+from regime_common import atr as atr_indicator
+from regime_common import prepare_session_frame, require_columns, validate_finite_config
 
 BREAKOUT_BRANCH = "BREAKOUT"
 MEAN_REVERSION_BRANCH = "MEANREV"

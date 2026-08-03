@@ -5,14 +5,24 @@
 reimplemented in this repo's idiom rather than copied file-for-file; the origin is
 attributed in each new module's docstring.
 
-**Files added by this port**
+**Files added by this port** — all of them in this folder,
+`Signal Generators/Regime Adaptive Strategy/`:
 
 | File | Role |
 |---|---|
 | `regime_common.py` | Session date, session VWAP, session opening range |
 | `regime_candidates.py` | The two candidate rules, as pure column-producing functions |
 | `Nifty Regime Adaptive Signal Generator.py` | The router — the only new worker |
+| `conftest.py` | pytest `sys.path` bootstrap for this folder |
 | `test_regime_adaptive.py` | Behaviour tests for the above |
+
+**One note on imports.** The master's `load_module()` puts only the loaded file's
+own directory on `sys.path`, so a module in here cannot see
+`misc_strategy_common.py` one level up. Exactly one module — `regime_common.py` —
+does the path bootstrap and re-exports the shared indicators; everything else here
+imports only from its own siblings, and `conftest.py` does the same for pytest. If
+you add a file to this folder, import through `regime_common` rather than adding a
+second bootstrap.
 
 ---
 
@@ -91,7 +101,7 @@ no bid/ask to gate on. The port buys the ATM CE/PE like every other member of th
 ### Router-only topology
 
 In the source, the two candidates are standalone strategies **and** router inputs.
-Here `regime_adaptive` is the **only** worker; `regime_candidates.py` exposes no
+Here `regime_adaptive` is the **only** worker; `Regime Adaptive Strategy/regime_candidates.py` exposes no
 `Config`, no `Engine`, no `PositionContext`, has no env prefix and no P&L row, and
 is absent from `test_trading_bot_ports.py`'s `PORTS` table.
 
