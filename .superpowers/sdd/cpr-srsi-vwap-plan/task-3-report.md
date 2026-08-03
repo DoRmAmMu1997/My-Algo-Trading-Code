@@ -158,3 +158,44 @@ not require a production edit.
 
 No real Codex SDK, broker, order, or network call was made. Live-order-looking
 master-suite output came only from the repository's mocked diagnostic tests.
+
+## Fix round 3
+
+Commit `26e8cf82a727010fdaaa0666a3065b6865a1330c` closes the
+post-inference scale-in race without changing EXIT's fail-open path.
+
+### RED evidence
+
+The focused live-scale-in test transitioned the worker during the agent turn.
+Before the production patch, stop-event, lifecycle-shutdown, and unhealthy
+market-data cases all reached real scale-in bookkeeping, set
+`scale_in_used=True`, and reached the mocked broker boundary. Each subtest
+failed on the hand-checked expectation that add state remain untouched.
+
+The EXIT control passed during RED, proving the test isolated only the
+exposure-increasing branch.
+
+### Fix and coverage
+
+- The post-inference entry helper is now a shared exposure-increase gate used
+  by both flat entry and scale-in.
+- A blocked accepted scale-in records `SCALE_IN_BLOCKED`, `submitted=False`,
+  and the exact host reason. It is never reported submitted or confirmed.
+- Tests cover `stop_event`, `worker_not_running`, `market_data_unhealthy`, and
+  the preserved 15:00 `entry_cutoff`, with no add state or broker call.
+- Accepted EXIT remains outside that gate and still executes after stop/feed
+  transitions because reducing risk must remain fail-open.
+
+### GREEN evidence
+
+- At actual wall time `2026-08-03T15:23:29+05:30`, the deterministic CPR AI
+  worker class completed **25 passed**.
+- `python -m pytest "Signal Generators/CPR AI Agent/tests" -q`: **53 passed**.
+- `python -m pytest "Signal Generators/CPR Strategy" -q`: **17 passed**.
+- `python -m unittest test_nifty_multi_strategy_master`: **440 passed, 51 skipped**.
+- Targeted Ruff for the master and master-test files: **All checks passed**.
+- `python -m py_compile` for the master and master-test files: **passed**.
+- `git diff --check`: **passed**.
+
+The Task 4 files remained untouched. No real Codex SDK, broker, order, or
+network call was made; live-order-looking suite output came from mocks.
