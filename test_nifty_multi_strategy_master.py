@@ -2161,6 +2161,56 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
         subs = self.store.snapshot_option_subscriptions()
         self.assertTrue(any(s.security_id == 49081 for s in subs))
 
+    def test_spread_gate_blocks_a_real_entry_and_withdraws_its_subscription(self):
+        """End-to-end: a wide book must stop `enter_position` AND leave no trace.
+
+        The gate runs after the leg is already subscribed, so a refusal that
+        forgot to unwind would leak a feed subscription on every skipped entry.
+        """
+        master_file._option_chain_quote_cache.clear()
+        self.addCleanup(master_file._option_chain_quote_cache.clear)
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.return_value = {
+            "status": "success",
+            "data": {"oc": {"22500.000000": {"ce": {"top_bid_price": 90.0,
+                                                    "top_ask_price": 110.0}}}},
+        }
+
+        result = self.worker.enter_position(
+            direction="LONG",
+            entry_underlying=22500.0,
+            stop_underlying=22400.0,
+            target_underlying=22700.0,
+        )
+
+        self.assertFalse(result)
+        self.assertFalse(self.worker.pos.active)
+        subs = self.store.snapshot_option_subscriptions()
+        self.assertFalse(
+            any(s.security_id == 49081 for s in subs),
+            "a refused entry must not leave its option subscribed",
+        )
+
+    def test_spread_gate_lets_a_tight_book_trade_normally(self):
+        master_file._option_chain_quote_cache.clear()
+        self.addCleanup(master_file._option_chain_quote_cache.clear)
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.return_value = {
+            "status": "success",
+            "data": {"oc": {"22500.000000": {"ce": {"top_bid_price": 100.0,
+                                                    "top_ask_price": 100.5}}}},
+        }
+
+        self.assertTrue(
+            self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+                target_underlying=22700.0,
+            )
+        )
+        self.assertTrue(self.worker.pos.active)
+
     def test_live_atm_pnl_uses_broker_entry_and_exit_fill_prices(self):
         """The ledger's broker fills, not local marks, drive live P&L."""
         self.worker.live_trading = True
@@ -3244,11 +3294,300 @@ class TestExecutionModeResults(unittest.TestCase):
         self.assertEqual(unmatched, [])
 
 
+class TestOptionChainQuoteParsing(unittest.TestCase):
+    """The pure half of the spread gate: getting a bid/ask out of the payload."""
+
+    def test_reads_the_documented_dhan_fields(self):
+        bid, ask = master_file._extract_quote_from_chain_node(
+            {"top_bid_price": 100.0, "top_ask_price": 101.0}
+        )
+        self.assertEqual((bid, ask), (100.0, 101.0))
+
+    def test_accepts_alternate_key_spellings(self):
+        """The SDK has shifted key casing between minor releases before."""
+        bid, ask = master_file._extract_quote_from_chain_node(
+            {"best_bid": 10.0, "best_ask": 10.5}
+        )
+        self.assertEqual((bid, ask), (10.0, 10.5))
+
+    def test_falls_back_to_the_depth_ladder(self):
+        bid, ask = master_file._extract_quote_from_chain_node(
+            {"depth": {"buy": [{"price": 20.0}], "sell": [{"price": 21.0}]}}
+        )
+        self.assertEqual((bid, ask), (20.0, 21.0))
+
+    def test_malformed_nodes_are_no_quote_not_an_exception(self):
+        for node in (None, "nonsense", {}, {"top_bid_price": "abc"}, {"depth": {"buy": []}}):
+            self.assertEqual(master_file._extract_quote_from_chain_node(node), (0.0, 0.0))
+
+    def test_finds_the_right_strike_and_side(self):
+        resp = {
+            "status": "success",
+            "data": {"oc": {
+                "22500.000000": {
+                    "ce": {"top_bid_price": 100.0, "top_ask_price": 101.0},
+                    "pe": {"top_bid_price": 50.0, "top_ask_price": 52.0},
+                },
+                "22600.000000": {"ce": {"top_bid_price": 1.0, "top_ask_price": 9.0}},
+            }},
+        }
+        self.assertEqual(master_file._parse_option_chain_quote(resp, 22500.0, "CE"), (100.0, 101.0))
+        self.assertEqual(master_file._parse_option_chain_quote(resp, 22500.0, "PE"), (50.0, 52.0))
+        # Strike keys are stringified floats, so the match must be numeric.
+        self.assertEqual(master_file._parse_option_chain_quote(resp, 22600, "CE"), (1.0, 9.0))
+
+    def test_absent_strike_or_failed_status_is_no_quote(self):
+        ok = {"status": "success", "data": {"oc": {"1.0": {"ce": {"top_bid_price": 1.0,
+                                                                 "top_ask_price": 2.0}}}}}
+        self.assertEqual(master_file._parse_option_chain_quote(ok, 99999.0, "CE"), (0.0, 0.0))
+        failed = {"status": "failure", "data": {"oc": {"1.0": {"ce": {"top_bid_price": 1.0,
+                                                                     "top_ask_price": 2.0}}}}}
+        self.assertEqual(master_file._parse_option_chain_quote(failed, 1.0, "CE"), (0.0, 0.0))
+        self.assertEqual(master_file._parse_option_chain_quote(None, 1.0, "CE"), (0.0, 0.0))
+
+
+class TestRelativeSpreadPct(unittest.TestCase):
+    def test_spread_is_measured_against_the_mid(self):
+        # bid 99 / ask 101 -> mid 100 -> 2 wide -> 2%.
+        self.assertAlmostEqual(master_file._relative_spread_pct(99.0, 101.0), 2.0)
+
+    def test_a_broken_book_is_unknown_never_tight(self):
+        """None, not 0.0 -- a crossed or empty book must never read as a tight one."""
+        for bid, ask in ((0.0, 10.0), (10.0, 0.0), (11.0, 10.0), (-1.0, 5.0)):
+            self.assertIsNone(master_file._relative_spread_pct(bid, ask))
+
+
+class TestSpreadGate(unittest.TestCase):
+    """The decision half: who gets refused, and what happens when it cannot check."""
+
+    def setUp(self):
+        master_file._option_chain_quote_cache.clear()
+        self.store = master_file.SharedMarketDataStore()
+        self.broker = MagicMock()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=self.broker
+        )
+        self.expiry = date.today() + timedelta(days=7)
+
+    def tearDown(self):
+        master_file._option_chain_quote_cache.clear()
+
+    def _chain(self, bid, ask):
+        return {"status": "success",
+                "data": {"oc": {"22500.000000": {"ce": {"top_bid_price": bid,
+                                                        "top_ask_price": ask}}}}}
+
+    def _gate(self):
+        return self.worker._spread_gate_allows_entry(
+            "LONG", "NIFTY-22500-CE", 22500.0, "CE", self.expiry
+        )
+
+    def test_disabled_gate_never_calls_the_rate_limited_endpoint(self):
+        self.worker.max_spread_pct = 0.0
+        self.assertTrue(self._gate())
+        self.broker.fetch_option_chain.assert_not_called()
+
+    def test_tight_spread_passes(self):
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.return_value = self._chain(100.0, 100.5)
+        self.assertTrue(self._gate())
+
+    def test_wide_spread_is_refused_in_paper_AND_live(self):
+        """Deterministic market property -> same answer both ways, so the Sheet's
+        paper rows stay predictive of live behaviour."""
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.return_value = self._chain(90.0, 110.0)  # 20%
+        self.worker.live_trading = False
+        self.assertFalse(self._gate())
+        master_file._option_chain_quote_cache.clear()
+        self.worker.live_trading = True
+        self.assertFalse(self._gate())
+
+    def test_unknown_quote_refuses_live_but_lets_paper_through(self):
+        """Mirrors `_get_dealable_option_ltp`: real money is not spent on a check
+        we could not run, but paper keeps the observation."""
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.return_value = self._chain(0.0, 0.0)
+        self.worker.live_trading = True
+        self.assertFalse(self._gate())
+        self.worker.live_trading = False
+        self.assertTrue(self._gate())
+
+    def test_chain_exception_is_treated_as_unknown_not_as_a_pass(self):
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.side_effect = RuntimeError("rate limited")
+        self.worker.live_trading = True
+        self.assertFalse(self._gate())
+
+    def test_chain_response_is_shared_within_the_rate_limit_window(self):
+        """Dhan allows one /optionchain per 3s per (underlying, expiry)."""
+        self.worker.max_spread_pct = 2.0
+        self.broker.fetch_option_chain.return_value = self._chain(100.0, 100.5)
+        self.assertTrue(self._gate())
+        self.assertTrue(self._gate())
+        self.assertEqual(self.broker.fetch_option_chain.call_count, 1)
+
+
+class TestChainLiquidityScore(unittest.TestCase):
+    """Reproduces the upstream compute_chain_metrics arithmetic."""
+
+    @staticmethod
+    def _chain(nodes):
+        return {"status": "success", "data": {"oc": nodes}}
+
+    def test_matches_the_upstream_formula(self):
+        # One strike, CE only: bid 99 / ask 101 -> spread 2%, oi 5000.
+        # spread_score = 100 - 2*8 = 84 ; oi_score = 5000/100 = 50
+        # liquidity = 84*0.6 + 50*0.4 = 50.4 + 20 = 70.4
+        score, parts = master_file._chain_liquidity_score(self._chain({
+            "22500.000000": {"ce": {"top_bid_price": 99.0, "top_ask_price": 101.0, "oi": 5000}},
+        }))
+        self.assertAlmostEqual(score, 70.4, places=6)
+        self.assertAlmostEqual(parts["spread_score"], 84.0)
+        self.assertAlmostEqual(parts["oi_score"], 50.0)
+
+    def test_scores_are_clamped_at_both_ends(self):
+        # Spread 20% -> 100-160 = -60, clamped to 0. OI 2,000,000 -> clamped to 100.
+        score, parts = master_file._chain_liquidity_score(self._chain({
+            "1.0": {"ce": {"top_bid_price": 90.0, "top_ask_price": 110.0, "oi": 2000000}},
+        }))
+        self.assertEqual(parts["spread_score"], 0.0)
+        self.assertEqual(parts["oi_score"], 100.0)
+        self.assertAlmostEqual(score, 40.0)
+
+    def test_uses_the_upper_median_like_upstream(self):
+        """`sorted(x)[len(x)//2]`, NOT the mean of the two middle values."""
+        # Four quoted legs with spreads 0%, 2%, 4%, 20%; upper median = 4%.
+        _score, parts = master_file._chain_liquidity_score(self._chain({
+            "1.0": {"ce": {"top_bid_price": 100.0, "top_ask_price": 100.0, "oi": 100},
+                    "pe": {"top_bid_price": 99.0, "top_ask_price": 101.0, "oi": 100}},
+            "2.0": {"ce": {"top_bid_price": 98.0, "top_ask_price": 102.0, "oi": 100},
+                    "pe": {"top_bid_price": 90.0, "top_ask_price": 110.0, "oi": 100}},
+        }))
+        self.assertAlmostEqual(parts["median_spread_pct"], 4.0)
+        self.assertEqual(parts["strikes"], 4)
+
+    def test_both_ce_and_pe_legs_count(self):
+        _score, parts = master_file._chain_liquidity_score(self._chain({
+            "1.0": {"ce": {"top_bid_price": 1.0, "top_ask_price": 1.0, "oi": 10},
+                    "pe": {"top_bid_price": 1.0, "top_ask_price": 1.0, "oi": 10}},
+        }))
+        self.assertEqual(parts["strikes"], 2)
+
+    def test_missing_components_fall_back_to_fifty_like_upstream(self):
+        """A chain with strikes but no usable quotes/OI scores 50, not 0."""
+        score, _parts = master_file._chain_liquidity_score(self._chain({
+            "1.0": {"ce": {"last_price": 5.0}},
+        }))
+        self.assertAlmostEqual(score, 50.0)
+
+    def test_an_empty_or_broken_chain_is_unknown_not_liquid(self):
+        """Deliberate deviation: upstream scores an EMPTY chain 50 and lets it
+        through. Here it is None, so live fails closed."""
+        for resp in (None, {}, {"status": "failure", "data": {"oc": {"1.0": {}}}},
+                     self._chain({})):
+            score, _ = master_file._chain_liquidity_score(resp)
+            self.assertIsNone(score)
+
+
+class TestLiquidityGate(unittest.TestCase):
+    def setUp(self):
+        master_file._option_chain_quote_cache.clear()
+        self.addCleanup(master_file._option_chain_quote_cache.clear)
+        self.broker = MagicMock()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(),
+            broker=self.broker,
+        )
+        self.expiry = date.today() + timedelta(days=7)
+
+    def _gate(self):
+        return self.worker._liquidity_gate_allows_entry("LONG", "NIFTY-22500-CE", self.expiry)
+
+    def _chain(self, bid, ask, oi):
+        return {"status": "success",
+                "data": {"oc": {"22500.000000": {"ce": {"top_bid_price": bid,
+                                                        "top_ask_price": ask,
+                                                        "oi": oi}}}}}
+
+    def test_disabled_gate_never_calls_the_endpoint(self):
+        self.worker.min_liquidity_score = 0.0
+        self.assertTrue(self._gate())
+        self.broker.fetch_option_chain.assert_not_called()
+
+    def test_liquid_chain_passes(self):
+        self.worker.min_liquidity_score = 30.0
+        self.broker.fetch_option_chain.return_value = self._chain(99.0, 101.0, 5000)
+        self.assertTrue(self._gate())
+
+    def test_illiquid_chain_is_refused_in_paper_and_live(self):
+        self.worker.min_liquidity_score = 30.0
+        # 20% spread -> spread_score 0 ; OI 100 -> oi_score 1 -> score 0.4
+        self.broker.fetch_option_chain.return_value = self._chain(90.0, 110.0, 100)
+        self.worker.live_trading = False
+        self.assertFalse(self._gate())
+        master_file._option_chain_quote_cache.clear()
+        self.worker.live_trading = True
+        self.assertFalse(self._gate())
+
+    def test_unscorable_chain_refuses_live_but_lets_paper_through(self):
+        self.worker.min_liquidity_score = 30.0
+        self.broker.fetch_option_chain.side_effect = RuntimeError("rate limited")
+        self.worker.live_trading = True
+        self.assertFalse(self._gate())
+        self.worker.live_trading = False
+        self.assertTrue(self._gate())
+
+    def test_both_gates_share_one_chain_fetch(self):
+        """The whole point of the shared cache: two gates, one rate-limited call."""
+        self.worker.max_spread_pct = 2.0
+        self.worker.min_liquidity_score = 30.0
+        self.broker.fetch_option_chain.return_value = self._chain(99.0, 101.0, 5000)
+        self.assertTrue(
+            self.worker._spread_gate_allows_entry(
+                "LONG", "NIFTY-22500-CE", 22500.0, "CE", self.expiry
+            )
+        )
+        self.assertTrue(self._gate())
+        self.assertEqual(self.broker.fetch_option_chain.call_count, 1)
+
+
+class TestSpreadGateDefaults(unittest.TestCase):
+    def test_regime_adaptive_ships_with_the_gate_armed(self):
+        """A deleted .env line must not silently disarm it."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("REGIME_ADAPTIVE_MAX_SPREAD_PCT", None)
+            self.assertEqual(
+                master_file._signal_gen_ops("REGIME_ADAPTIVE")["max_spread_pct"], 2.0
+            )
+
+    def test_regime_adaptive_ships_with_the_liquidity_floor_armed(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("REGIME_ADAPTIVE_MIN_LIQUIDITY_SCORE", None)
+            self.assertEqual(
+                master_file._signal_gen_ops("REGIME_ADAPTIVE")["min_liquidity_score"], 30.0
+            )
+
+    def test_every_other_strategy_defaults_to_off(self):
+        for prefix in ("SMA_CROSSOVER", "RENKO", "SUPERTREND_PORT", "SL_HUNTING"):
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop(f"{prefix}_MAX_SPREAD_PCT", None)
+                os.environ.pop(f"{prefix}_MIN_LIQUIDITY_SCORE", None)
+                ops = master_file._signal_gen_ops(prefix)
+                self.assertEqual(ops["max_spread_pct"], 0.0,
+                                 f"{prefix} must be unaffected by the spread gate")
+                self.assertEqual(ops["min_liquidity_score"], 0.0,
+                                 f"{prefix} must be unaffected by the liquidity gate")
+
+
 class TestStrategyEnvPrefixMap(unittest.TestCase):
     """Every worker's `strategy_name` must map to an env prefix, or it can never
     be switched live (it would silently stay paper)."""
 
-    def test_all_worker_strategy_names_are_mapped(self):
+    #: The workers whose P&L is expected to reach the tracker Sheet. Kept as one
+    #: list because both tests below need exactly the same set.
+    def _tracked_workers(self):
         core = [
             master_file.RenkoStrategyWorker, master_file.EMATrendStrategyWorker,
             master_file.HeikinAshiStrategyWorker, master_file.ProfitShooterStrategyWorker,
@@ -3258,10 +3597,24 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master_file.SupertrendBullishWorker, master_file.DonchianBearishWorker,
             master_file.Delta20HedgedSpreadWorker, master_file.LongStrangleWorker,
         ]
-        for cls in core + list(master_file.SIGNAL_GEN_WORKERS):
+        return core + list(master_file.SIGNAL_GEN_WORKERS)
+
+    def test_all_worker_strategy_names_are_mapped(self):
+        for cls in self._tracked_workers():
             self.assertIn(
                 cls.strategy_name, master_file.STRATEGY_ENV_PREFIX,
                 f"{cls.__name__} ({cls.strategy_name}) missing from STRATEGY_ENV_PREFIX",
+            )
+
+    def test_all_worker_strategy_names_have_a_sheet_row_label(self):
+        """A worker missing from `_PNL_SHEET_ROW_LABELS` trades normally and is
+        never written to the Google Sheet -- silent, permanent P&L loss with no
+        error anywhere. Nothing else enforces this mapping, so this test does."""
+        for cls in self._tracked_workers():
+            self.assertIn(
+                cls.strategy_name, master_file._PNL_SHEET_ROW_LABELS,
+                f"{cls.__name__} ({cls.strategy_name}) missing from "
+                "_PNL_SHEET_ROW_LABELS -- its P&L would never reach the Sheet",
             )
 
     def test_no_empty_prefixes(self):

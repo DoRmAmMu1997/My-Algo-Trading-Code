@@ -58,6 +58,40 @@ independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 | `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
 | `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
 
+# Regime Adaptive port (`Regime Adaptive Strategy/`) — different source project
+One more ATM single-leg worker, adapted from the MIT-licensed
+[`workratananmol-hub/nifty-options-paper-trading-bot`](https://github.com/workratananmol-hub/nifty-options-paper-trading-bot).
+Same factory, same `.env` prefix convention (`REGIME_ADAPTIVE_*`), same execution
+family — but it is a **router**, not a single rule. It reads ADX each bar and
+switches which rule applies:
+
+- ADX missing → **no trade** (it refuses to guess the regime)
+- ADX ≥ `REGIME_ADAPTIVE_ADX_TREND_THRESHOLD` → opening-range breakout, confirmed by VWAP
+- ADX below it → fade an extension away from VWAP
+
+Everything for it lives in its own folder, `Regime Adaptive Strategy/`:
+
+| File | Role |
+|---|---|
+| `Nifty Regime Adaptive Signal Generator.py` | the router — the only worker of the three |
+| `regime_candidates.py` | the two candidate rules, as pure column-producing functions |
+| `regime_common.py` | session date, session VWAP, session opening range — and this folder's **only** `sys.path` bootstrap, which is why it re-exports the shared indicators from `misc_strategy_common` one level up |
+| `conftest.py` | the pytest equivalent of that bootstrap (same pattern as `SL Hunting AI Agent/`) |
+| `REGIME_PORTING_NOTES.md` | **read before enabling live** — what was dropped and why |
+
+Two things to know before touching it:
+
+1. **The candidates are library code, deliberately.** They expose no
+   `Config`/`Engine`/`PositionContext`, have no env prefix and no P&L row, and are
+   absent from `test_trading_bot_ports.py`'s `PORTS` table. If either were also a
+   worker, it and the router could take the *same signal in the same session* —
+   real double size that the Google Sheet would not reveal.
+2. **VWAP here is a proxy.** The live feed carries no volume, so `vwap` is an
+   equal-weight session mean unless a `volume` column is present (backtests). Both
+   rules are VWAP-centric, so this is a genuine fidelity gap that no test catches;
+   every bar carries `vwap_is_proxy` to record which was used. Paper only until it
+   has several clean sessions.
+
 # SL Hunting AI Agent (`SL Hunting AI Agent/`) — LLM-driven, a different kind
 Unlike everything else in this folder (deterministic "DataFrame in → signal out" transforms,
 or stateful engines that compute a signal from a formula), the **SL Hunting AI Agent** is an
@@ -68,7 +102,7 @@ discretionary *SL Hunting* price-action method on NIFTY ATM options, with **Bank
 cross-confirmation** and dynamic **~₹2,500 risk-per-trade** sizing. Every NIFTY entry is also
 mirrored with an **equal-lot BankNIFTY ATM** leg (`SL_HUNTING_BNF_MIRROR`) — tied for hard risk,
 but cut per-leg on premise-invalidation (see its README). It is wired into the
-front-test master as the **optional, opt-in 27th worker** (`SL_HUNTING_ENABLED`, off by default;
+front-test master as the **optional, opt-in 28th worker** (`SL_HUNTING_ENABLED`, off by default;
 paper unless explicitly enabled; **fail-soft** — a safe HOLD on any error). It also **learns
 from its own trades** (a per-trade journal → an off-loop reflection coach → human-gated lessons
 injected into its prompt) and writes a **per-bar decision log**. The agent has its own subfolder
