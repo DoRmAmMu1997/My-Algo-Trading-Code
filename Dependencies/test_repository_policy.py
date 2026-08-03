@@ -44,8 +44,10 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # regression and a live session. Move it together with requirements.txt, and
     # only once a PAPER session has confirmed the feed still ticks on the new
     # version -- CI never opens a real socket, so a green build proves nothing
-    # about the transport.
-    assert "websockets==16.1.1" in core
+    # about the transport. Note this is a MAJOR (16 -> 17): dhanhq.marketfeed
+    # hard-imports websockets at package import time, so an incompatible API
+    # would surface as the RUNNER FAILING TO START, not merely a quiet feed.
+    assert "websockets==17.0" in core
     assert "claude-agent-sdk==0.2.128" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
