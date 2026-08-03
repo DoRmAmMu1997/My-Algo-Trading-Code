@@ -5,8 +5,8 @@ Nifty Multi Strategy Front Test - Master File
 
 WHAT THIS FILE IS (read this first if you have never seen this code base)
 ------------------------------------------------------------------------
-This is a single multi-threaded paper-trading runner that combines TWENTY-SIX
-NIFTY strategies behind ONE shared market-data fetcher. It started as
+This is a single multi-threaded paper-trading runner that combines a core roster
+plus independently opt-in NIFTY agents behind ONE shared market-data fetcher. It started as
 the union of two earlier files plus one Greeks-driven addition:
 
   1. "Nifty Multi Strategy Front Test - DhanHQ ATM Options.py"
@@ -57,11 +57,11 @@ worker: it watches the spot PLUS a ~ITM CE and a ~ITM PE of the current-week exp
 and only fires when VWAP and the CPR band align across all three, but it still
 trades the ATM CE/PE of the next-next expiry like the rest of the ATM family. The
 Long Strangle worker is a time-based two-leg BUY of the OTM1 weekly CE+PE, with
-independent per-leg trailing stops and momentum re-entry. Together they bring the
-runner to TWENTY-SIX strategies total: 22 ATM single-leg + 2 Hedged Puts +
-1 Delta-0.2 + 1 Long Strangle.
+independent per-leg trailing stops and momentum re-entry. Together they complete
+the core roster; per-strategy gates decide its enabled subset at runtime.
 
-One OPTIONAL, opt-in 27th worker can also be loaded: the SL Hunting AI Agent
+Optional agents can be independently opted in alongside that core roster. One is
+the SL Hunting AI Agent
 (under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
@@ -77,6 +77,8 @@ dep simply disables it without touching the rest of the runner. It can also lear
 its own trades (v3): a per-trade journal feeds an off-loop reflection coach that
 proposes lessons, which the operator promotes into lessons.json and the agent injects
 only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
+The other is the CPR Codex AI Agent, an independent five-minute SRSI/VWAP worker
+whose model judgment remains behind deterministic host risk and execution gates.
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -157,7 +159,7 @@ THREAD ARCHITECTURE
       ANY worker (single batched ticker_data call).
     * Publishes everything into a thread-safe `SharedMarketDataStore`.
 
-- Twenty-six `*StrategyWorker` threads:
+- Configured `*StrategyWorker` threads:
     * Read the 1-minute OHLC from the shared store.
     * Resample locally if their strategy timeframe is higher than 1m.
     * Run their own signal generator (the Delta-0.2 worker is the
@@ -167,13 +169,13 @@ THREAD ARCHITECTURE
       direct LTP fallback fetches when the cache is cold.
 
 This central-fetcher design keeps API usage low and makes the data
-deterministic across all twenty-six strategies.
+deterministic across every enabled strategy.
 
 WHY ONE FILE INSTEAD OF SEPARATE FILES
 --------------------------------------
 - Single fetch budget. One DhanHQ ticker_data call covers spot plus
   every active option leg from every worker simultaneously.
-- One log destination. All twenty-six strategies share LOG_FILE so a single
+- One log destination. Every enabled strategy shares LOG_FILE so a single
   audit trail captures the day.
 - One process to start, one Ctrl+C to stop everything cleanly.
 
@@ -197,15 +199,16 @@ CLASS HIERARCHY OVERVIEW
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
         |             Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic,
         |             Supertrend, Volatility Breakout)
-        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in 27th: LLM/Claude-agent driven)
+        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in: LLM/Claude-agent driven)
+        |       +-- CPRAIWorker               (OPTIONAL opt-in: Codex SRSI/VWAP agent)
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
         +-- Delta20HedgedSpreadWorker  (dual-side hedged spread, Greeks-driven)
         +-- LongStrangleWorker         (time-based two-leg BUY OTM1 CE+PE, momentum re-entry)
 
-The split is intentional: only the ATM workers (the 9 core + 13 ports) share an
-`enter_position` / `exit_position` flow, so it is hosted on
+The split is intentional: the core ATM workers, TradingBot ports, and optional
+ATM agents share an `enter_position` / `exit_position` flow, so it is hosted on
 `AtmSingleLegStrategyWorker`. The hedged workers each implement
 their own enter / exit because the position shape, leg count, and
 PnL math differ - and the Delta-0.2 worker further differs in that
@@ -446,7 +449,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 #     which is a silent mismatch between size and risk.
 #   * PER-STRATEGY ONLY -- there is deliberately NO global master multiplier
 #     (same shape as `<PREFIX>_VIRTUAL_TRADING`). Scaling must be an explicit,
-#     per-strategy opt-in so one mistyped global cannot enlarge all 27 workers.
+#     per-strategy opt-in so one mistyped global cannot enlarge every enabled strategy.
 #   * APPLIES TO PAPER **AND** LIVE, so an enlarged size can be paper-validated
 #     first and the Sheet's paper rows stay predictive of live behaviour.
 #   * CEILING of 25 (`MAX_SIZE_MULTIPLIER`), so a fat-fingered "250" cannot size
@@ -1068,7 +1071,7 @@ def setup_logging() -> logging.Logger:
     Configure the shared root logger for the whole runner.
 
     Why we configure the *root* logger (not just our named logger):
-    - This file starts a fetcher thread plus six worker threads.
+    - This file starts one fetcher thread plus the configured strategy workers.
     - Every thread creates a child logger like
       `nifty_multi_strategy_master_front_test_dhanhq.renko`.
     - Attaching handlers once at the root makes every child's output flow
@@ -15084,7 +15087,7 @@ _PNL_SHEET_ROW_LABELS = {
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
     "LongStrangle": "Long Strangle Strategy",
-    # Optional opt-in 27th worker (SL_HUNTING_ENABLED); maps only when it runs.
+    # Optional SL Hunting agent; this label is mapped only when the agent runs.
     "SL Hunting AI": "SL Hunting AI Agent Strategy",
 }
 
@@ -16263,9 +16266,9 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + 26 consumers (22 ATM single-leg + 2 Hedged +
-    # 1 Delta-0.2 + 1 Long Strangle), plus the optional SL Hunting AI agent
-    # (appended below when SL_HUNTING_ENABLED). The producer class comes from
+    # One producer (fetcher) serves the core roster plus independently opt-in
+    # agents. Per-strategy virtual gates determine the final consumer set. The
+    # producer class comes from
     # MARKET_DATA_SOURCE: REST polling (default) or the Dhan websocket feed;
     # unknown values fail closed to REST inside the selector.
     fetcher_cls = _select_market_data_fetcher_class()

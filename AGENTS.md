@@ -7,8 +7,8 @@
 
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
-the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" that executes ~26
-strategies together — on paper by default, and live through a real broker when explicitly enabled.
+the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" whose core roster
+and independently opt-in agents execute together — on paper by default, and live through a real broker when explicitly enabled.
 Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
 
 ## Architecture (runtime)

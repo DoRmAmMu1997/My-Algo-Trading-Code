@@ -7,6 +7,7 @@ do not contact package indexes or GitHub; they only validate committed policy.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -236,20 +237,32 @@ def test_cpr_ai_documentation_rejects_obsolete_arbiter_and_worker_disable_guidan
     assert "optional CPR arbiter" not in master
 
 
-def test_repository_readme_does_not_reintroduce_stale_current_worker_counts():
-    """Current enabled-worker totals depend on optional and virtual gates."""
+def test_current_architecture_docs_do_not_freeze_the_enabled_worker_roster():
+    """Enabled totals depend on virtual gates and independently opt-in agents."""
 
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    stale_current_roster_claims = (
-        "all 27 workers",
-        "opt-in 27th worker",
-        "optional **27th** worker",
-        "This brings the runner to **26 workers**.",
-        "~26 + optional LLM worker",
+    architecture_files = (
+        ROOT / "README.md",
+        ROOT / "Signal Generators/Readme.md",
+        ROOT / "AGENTS.md",
+        ROOT / "CLAUDE.md",
+        ROOT / "Nifty Multi Strategy Front Test - Master File.py",
     )
+    stale_roster = re.compile(
+        r"(?<![\dA-Za-z])(?:~?26|27(?:th)?|twenty[- ]six)(?![\dA-Za-z])"
+        r"(?:(?:[^\n]{0,60}\n)?[^\n]{0,60}"
+        r"\b(?:strategyworker|workers?|consumers?|strateg(?:y|ies))\b|\s*:)",
+        flags=re.IGNORECASE,
+    )
+    failures: list[str] = []
+    for path in architecture_files:
+        text = path.read_text(encoding="utf-8")
+        for match in stale_roster.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            failures.append(f"{path.relative_to(ROOT).as_posix()}:{line}: {match.group(0)}")
 
-    for stale_claim in stale_current_roster_claims:
-        assert stale_claim not in readme
+    assert not failures, "stale current worker-roster claims:\n" + "\n".join(failures)
+    root_readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
+    assert "see the latest addition at the top of this list for the current total" not in root_readme
 
 
 def test_agent_architecture_docs_stay_in_sync_and_cover_the_optional_cpr_agent():
