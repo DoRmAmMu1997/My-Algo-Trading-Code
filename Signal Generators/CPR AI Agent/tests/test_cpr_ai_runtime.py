@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from enum import Enum
 from types import SimpleNamespace
 
 import cpr_ai_codex_runner as codex_runner
@@ -394,19 +395,49 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
 
     observed = {}
 
+    class McpToolCallStatus(Enum):
+        """Mirror the public SDK enum whose printable form is not its value."""
+
+        completed = "completed"
+
+    class TokenUsageBreakdown:
+        """Mirror the nested public per-turn token object."""
+
+        def model_dump(self):
+            return {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+
+    class ThreadTokenUsage:
+        """Mirror the public SDK aggregate usage shape."""
+
+        def model_dump(self):
+            return {
+                "last": TokenUsageBreakdown(),
+                "total": TokenUsageBreakdown(),
+                "model_context_window": 128000,
+            }
+
     class Thread:
-        def run(self, prompt, **kwargs):
-            observed["run"] = (prompt, kwargs)
+        def run(self, prompt, *, approval_mode, output_schema, effort):
+            """Accept only current public SDK turn parameters."""
+
+            observed["run"] = (
+                prompt,
+                {"approval_mode": approval_mode, "output_schema": output_schema, "effort": effort},
+            )
             items = [
                 SimpleNamespace(root=SimpleNamespace(type="agentMessage")),
                 SimpleNamespace(root=SimpleNamespace(type="reasoning")),
                 *[
-                    SimpleNamespace(root=SimpleNamespace(type="mcpToolCall", tool=name, status="completed"))
+                    SimpleNamespace(
+                        root=SimpleNamespace(type="mcpToolCall", tool=name, status=McpToolCallStatus.completed)
+                    )
                     for name in EXPECTED_TOOL_NAMES
                 ],
             ]
             return SimpleNamespace(
-                final_response="{}", items=items, usage=SimpleNamespace(input_tokens=3, output_tokens=2, total_tokens=5)
+                final_response=_proposal("HOLD", "UNDECIDED", "NONE").model_dump_json(),
+                items=items,
+                usage=ThreadTokenUsage(),
             )
 
     class Codex:
@@ -436,10 +467,27 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
 
     assert observed["start"]["config"] == codex_child.build_isolated_thread_config(str(tmp_path / "snapshot.json"))
     assert observed["start"]["approval_mode"] == "deny"
-    assert observed["run"][1] == {
-        "approval_mode": "deny",
-        "output_schema": {"type": "object"},
-        "model_reasoning_effort": "medium",
-    }
+    assert observed["run"][1] == {"approval_mode": "deny", "output_schema": {"type": "object"}, "effort": "medium"}
     assert [call["tool"] for call in response["tool_calls"]] == list(EXPECTED_TOOL_NAMES)
-    assert response["token_usage"] == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+    assert [call["status"] for call in response["tool_calls"]] == ["completed"] * 4
+    assert response["token_usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 2,
+        "total_tokens": 5,
+        "model_context_window": 128000,
+    }
+    assert observed["start"]["config"]["features"] == {
+        "shell_tool": False,
+        "unified_exec": False,
+        "collab": False,
+        "multi_agent": False,
+    }
+    assert "workspace_write" not in observed["start"]["config"]["features"]
+    host = CPRAgent(
+        runner=lambda **_kwargs: CPRAgentRunResult(
+            final_response=response["final_response"],
+            tool_calls=tuple(CPRToolCallRecord(**call) for call in response["tool_calls"]),
+            token_usage=response["token_usage"],
+        )
+    )
+    assert host.decide(_context(), bar_signature="enum-status").validation_code == "accepted_hold"

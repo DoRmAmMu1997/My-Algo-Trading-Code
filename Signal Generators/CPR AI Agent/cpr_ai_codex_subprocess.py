@@ -27,7 +27,7 @@ def build_isolated_thread_config(snapshot_path: str, python_executable: str = sy
     """
 
     return {
-        "features": {"shell_tool": False, "unified_exec": False, "multi_agent": False, "workspace_write": False},
+        "features": {"shell_tool": False, "unified_exec": False, "collab": False, "multi_agent": False},
         "web_search": "disabled",
         "shell_environment_policy": {"inherit": "none"},
         "mcp_servers": {
@@ -64,6 +64,7 @@ def _tool_evidence(items: Any) -> list[dict[str, str]]:
             continue
         tool_name = _item_value(item, "tool", "")
         status = _item_value(item, "status", "failed")
+        status = getattr(status, "value", status)
         evidence.append({"tool": str(tool_name), "status": str(status)})
     return evidence
 
@@ -77,7 +78,18 @@ def _usage_mapping(usage: Any) -> dict[str, int]:
         usage = vars(usage)
     if not isinstance(usage, Mapping):
         return {}
-    return {str(key): int(value) for key, value in usage.items() if isinstance(value, int) and "token" in str(key)}
+    breakdown = usage.get("last") or usage.get("total") or {}
+    if hasattr(breakdown, "model_dump"):
+        breakdown = breakdown.model_dump()
+    if not isinstance(breakdown, Mapping):
+        breakdown = {}
+    flattened = {
+        str(key): int(value) for key, value in breakdown.items() if isinstance(value, int) and "token" in str(key)
+    }
+    context_window = usage.get("model_context_window")
+    if isinstance(context_window, int):
+        flattened["model_context_window"] = context_window
+    return flattened
 
 
 def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
@@ -101,7 +113,7 @@ def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
             str(request["prompt"]),
             approval_mode=ApprovalMode.deny_all,
             output_schema=request["output_schema"],
-            model_reasoning_effort=request["reasoning_effort"],
+            effort=request["reasoning_effort"],
         )
     return {
         "ok": True,
