@@ -8,10 +8,13 @@
 dhanhq==2.2.0
 pandas==3.0.3
 numpy==2.4.6
-backtesting==0.6.5
+backtesting==0.6.6
 python-dotenv==1.2.2
 gspread==6.2.1
-pytz==2026.2
+# Timezone data. Bumping this is desirable in its own right: every trading-day
+# boundary, the 15:15 square-off and the pre-open note's date gate are computed
+# in Asia/Kolkata, so stale tz data is a correctness risk rather than a chore.
+pytz==2026.3.post1
 # The broker, symbol-master and Telegram HTTP paths all use requests. Keep this
 # at the newest release that clears the repository audit (2.33.0 was the first
 # past PYSEC-2026-2275; 2.34.2 is the current audited pin).
