@@ -230,6 +230,24 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
     )
     body = abs(float(current["close"] - current["open"]))
     candle_range = float(current["high"] - current["low"])
+    current_vwap = float(vwap.iloc[-1])
+
+    def side_fraction(lower: float, upper: float, boundary: float, *, above: bool) -> float:
+        """Return the fraction of a price segment strictly on one VWAP side.
+
+        The host uses the completed entry candle rather than a session-wide
+        close count.  A zero-length doji body deliberately yields zero on both
+        sides, preventing it from satisfying a directional 40% body gate.
+        """
+
+        width = upper - lower
+        if width <= 0.0:
+            return 0.0
+        portion = upper - max(lower, boundary) if above else min(upper, boundary) - lower
+        return float(max(0.0, min(width, portion)) / width)
+
+    body_lower, body_upper = sorted((float(current["open"]), float(current["close"])))
+    range_lower, range_upper = float(current["low"]), float(current["high"])
     return {
         "rsi14": _as_float(rsi.iloc[-1]),
         "stochastic_rsi": {
@@ -250,10 +268,16 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
         },
         "vwap": {
             "method": vwap_method,
-            "value": _as_float(vwap.iloc[-1]),
-            "distance_from_close": _as_float(float(vwap.iloc[-1] - current["close"])),
+            "value": _as_float(current_vwap),
+            "distance_from_close": _as_float(float(current_vwap - current["close"])),
             "fraction_above": float((bars["close"] > vwap).mean()),
             "fraction_below": float((bars["close"] < vwap).mean()),
+            "entry_candle": {
+                "body_fraction_above": side_fraction(body_lower, body_upper, current_vwap, above=True),
+                "body_fraction_below": side_fraction(body_lower, body_upper, current_vwap, above=False),
+                "range_fraction_above": side_fraction(range_lower, range_upper, current_vwap, above=True),
+                "range_fraction_below": side_fraction(range_lower, range_upper, current_vwap, above=False),
+            },
             "sequence_evidence": {
                 "relations": last_relations,
                 "all_recent_above": all(value == "ABOVE" for value in last_relations),
@@ -277,6 +301,10 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
             else "DOJI",
             "range": candle_range,
             "body": body,
+            "open": _as_float(current["open"]),
+            "high": _as_float(current["high"]),
+            "low": _as_float(current["low"]),
+            "close": _as_float(current["close"]),
         },
         "recent_candles": [
             {

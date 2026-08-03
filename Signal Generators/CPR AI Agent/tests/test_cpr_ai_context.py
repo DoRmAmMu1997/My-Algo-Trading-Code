@@ -171,6 +171,25 @@ def test_momentum_exposes_rsi_ema_candle_and_deterministic_vwap_sequence_evidenc
     assert len(momentum["vwap"]["sequence_evidence"]["relations"]) == 3
 
 
+def test_momentum_exposes_current_candle_body_fractions_on_each_vwap_side():
+    """The host needs a completed candle's own VWAP evidence, not a session average.
+
+    The fixture makes the final five-minute candle open at 110 and close at
+    114 while its final VWAP is below 110.  Its full four-point body therefore
+    belongs above VWAP, which is a hand-derived 1.0 fraction.
+    """
+
+    previous = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30, volume=10.0)
+    current = _minute_rows(datetime(2026, 8, 2, 9, 15), [100.0] * 175 + [114.0] * 5, volume=10.0)
+    for row in current[-5:]:
+        row.update({"open": 110.0, "low": 109.0, "high": 115.0, "close": 114.0})
+
+    entry_candle = build_cpr_context(pd.DataFrame(previous + current))["momentum_vwap"]["vwap"]["entry_candle"]
+
+    assert entry_candle["body_fraction_above"] == pytest.approx(1.0)
+    assert entry_candle["body_fraction_below"] == pytest.approx(0.0)
+
+
 def test_market_structure_reports_confirmed_swings_and_objective_hh_hl_comparisons():
     """Two candles on each side are required before a swing can be advertised."""
 
