@@ -9469,8 +9469,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 "CPR AI final execution audit failed (%s).", type(exc).__name__
             )
 
-    def _post_inference_entry_block_reason(self) -> str:
-        """Recheck every mutable host gate after a potentially slow agent turn."""
+    def _post_inference_exposure_block_reason(self) -> str:
+        """Recheck every mutable host gate before increasing exposure."""
 
         if self.stop_event.is_set():
             return "stop_event"
@@ -9546,22 +9546,39 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     },
                 )
             elif outcome.action == "SCALE_IN" and audit_ok:
-                confirmed = self._execute_scale_in()
-                self._write_final_execution(
-                    frozen_context,
-                    outcome,
-                    {
-                        "mode": self._position_execution_mode(),
-                        "submitted": bool(
-                            self._cpr_state and self._cpr_state.scale_in_used
-                        ),
-                        "status": "SCALE_IN_CONFIRMED" if confirmed else "SCALE_IN_UNCONFIRMED",
-                    },
-                )
+                blocked_reason = self._post_inference_exposure_block_reason()
+                if blocked_reason:
+                    self._write_final_execution(
+                        frozen_context,
+                        outcome,
+                        {
+                            "mode": self._position_execution_mode(),
+                            "submitted": False,
+                            "status": "SCALE_IN_BLOCKED",
+                            "blocked_reason": blocked_reason,
+                        },
+                    )
+                else:
+                    confirmed = self._execute_scale_in()
+                    self._write_final_execution(
+                        frozen_context,
+                        outcome,
+                        {
+                            "mode": self._position_execution_mode(),
+                            "submitted": bool(
+                                self._cpr_state and self._cpr_state.scale_in_used
+                            ),
+                            "status": (
+                                "SCALE_IN_CONFIRMED"
+                                if confirmed
+                                else "SCALE_IN_UNCONFIRMED"
+                            ),
+                        },
+                    )
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
             return
-        blocked_reason = self._post_inference_entry_block_reason()
+        blocked_reason = self._post_inference_exposure_block_reason()
         if blocked_reason:
             self._write_final_execution(
                 frozen_context,

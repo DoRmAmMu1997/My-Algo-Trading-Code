@@ -8978,6 +8978,55 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             close_fill_notional=closed_quantity * close_price,
         )
 
+    def _scale_in_race_worker(self, signature):
+        """Build one open live position ready for an accepted scale-in turn."""
+
+        worker, agent, logger = self._worker()
+        worker.live_trading = True
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-LOCKED",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 13),
+            live_leg=self._live_state("N", entry_price=10.0),
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {},
+            "momentum_vwap": {
+                "stochastic_rsi": {"cross_down": False, "cross_up": False},
+                "candle": {"close": 101.0},
+            },
+            "market_structure": {},
+            "position_state": {"is_flat": False, "direction": "LONG"},
+        }
+        worker._completed_bar_signature = lambda _frame: signature
+        worker._current_completed_spot_signature = lambda: signature
+        worker._get_dealable_option_ltp = MagicMock(return_value=(11.0, True))
+        worker._place_real_leg = MagicMock()
+        outcome = agent.decide.return_value
+        outcome.action = "SCALE_IN"
+        outcome.accepted = True
+        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        return worker, agent, logger, outcome
+
     def test_worker_inherits_directly_and_has_no_legacy_cpr_decision_dependency(self):
         """The replacement must not retain the old Algo arbiter through inheritance."""
 
@@ -10054,6 +10103,94 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                     logger.write.call_args.kwargs["execution"]["blocked_reason"],
                     expected_reason,
                 )
+
+    def test_scale_in_rechecks_exposure_gates_after_inference(self):
+        """A late host-gate transition cannot submit an add."""
+
+        for transition, expected_reason in (
+            ("stop_event", "stop_event"),
+            ("lifecycle", "worker_not_running"),
+            ("market_data", "market_data_unhealthy"),
+            ("entry_cutoff", "entry_cutoff"),
+        ):
+            with self.subTest(transition=transition):
+                worker, agent, logger, outcome = self._scale_in_race_worker(
+                    f"scale-in-{transition}"
+                )
+                market_state = {"healthy": True}
+                worker._market_data_entries_allowed = (
+                    lambda state=market_state: state["healthy"]
+                )
+
+                def decide(
+                    *_args,
+                    transition_name=transition,
+                    active_worker=worker,
+                    accepted_outcome=outcome,
+                    market_state_ref=market_state,
+                    **_kwargs,
+                ):
+                    if transition_name == "stop_event":
+                        active_worker.stop_event.set()
+                    elif transition_name == "lifecycle":
+                        active_worker.lifecycle.request_shutdown("TEST_TRANSITION")
+                    elif transition_name == "market_data":
+                        market_state_ref["healthy"] = False
+                    else:
+                        self._ist_now.return_value = datetime(
+                            2026,
+                            8,
+                            3,
+                            15,
+                            0,
+                            tzinfo=master_file.IST_TIMEZONE,
+                        )
+                    return accepted_outcome
+
+                agent.decide.side_effect = decide
+
+                worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
+
+                self.assertTrue(worker.pos.active)
+                self.assertFalse(worker._cpr_state.scale_in_used)
+                self.assertEqual(worker._cpr_state.add_quantity, 0)
+                self.assertIsNone(worker._cpr_state.add_live_leg)
+                worker._place_real_leg.assert_not_called()
+                self.assertEqual(
+                    logger.write.call_args.kwargs["execution"],
+                    {
+                        "mode": "LIVE",
+                        "submitted": False,
+                        "status": "SCALE_IN_BLOCKED",
+                        "blocked_reason": expected_reason,
+                    },
+                )
+
+    def test_post_inference_exposure_gate_does_not_block_exit(self):
+        """Risk-reducing EXIT remains fail-open when entry gates close."""
+
+        worker, agent, logger, outcome = self._scale_in_race_worker("exit-race")
+        outcome.action = "EXIT"
+
+        def decide(*_args, **_kwargs):
+            worker.stop_event.set()
+            worker._market_data_entries_allowed = lambda: False
+            return outcome
+
+        def exit_position(_reason):
+            worker.pos.active = False
+
+        agent.decide.side_effect = decide
+        worker.exit_position = MagicMock(side_effect=exit_position)
+
+        worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
+
+        worker.exit_position.assert_called_once_with("CPR_AI_PREMISE_EXIT")
+        self.assertFalse(worker.pos.active)
+        self.assertEqual(
+            logger.write.call_args.kwargs["execution"]["status"],
+            "EXIT_CONFIRMED",
+        )
 
 
 if __name__ == "__main__":
