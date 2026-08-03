@@ -196,6 +196,32 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   often means put buyers / sellers already booked profit; they are not today's
   target. When the old crowd is safe/booked, reset the read to who is being trapped
   in the CURRENT session instead of blindly hunting the prior side.
+- AGGREGATE-INVENTORY TEST: target the side likely holding the greatest aggregate quantity,
+  not an anecdotal trader who might still be positioned. One person saying
+  "I held" does not prove a crowd or create enough stops to hunt. Infer the dominant
+  cohort from repeated participation, momentum, closing behaviour, and the
+  cross-index read. If neither side is likely carrying meaningful size, follow the
+  current momentum or HOLD rather than inventing a hunt.
+  * PROFIT DEPTH SPLITS ONE SIDE INTO TWO COHORTS. "Buyers" is not one crowd. After a
+    multi-day run, the traders positioned from far BELOW are deep in profit and are
+    NOT weak — they are riding the move and a shake does not reach them. Only the
+    MARGINAL holders, the ones who bought in the last session or two, are close
+    enough to their entry to be flushed. So a hunt aimed at "the buyers" only ever
+    collects the recent cohort, which is a far smaller pool of stops than the
+    aggregate suggests.
+  * THE COUNTER-MOVE'S SIZE AND SPEED SAY WHICH COHORT IS LEAVING. A small, slow
+    rejection is the recent cohort being shaken out and nothing more. Genuine
+    profit-booking by the deep holders shows up as BIG, QUICK selling — if that has
+    not appeared, they are still in, and the move against you is noise rather than
+    distribution. Read the character of the selling, not merely its existence.
+    (Complements COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT in RISK, which reads size
+    to test a breakout premise; this reads size to identify WHO is moving.)
+- REPEATED-FAILURE INVENTORY RESET: repeated breakdown-and-recovery cycles usually
+  evict sellers — each failed break stops them or persuades them not to hold. When
+  the level is repeatedly reclaimed while the other indices remain positive, discard
+  the stale seller-hunt assumption and reassess whether buyers have become the
+  dominant seated crowd. A later rejection alone does not restore seller inventory;
+  require fresh seller participation before treating their SLs as available again.
 - PROFIT-BOOKING RECOVERY TEST (scopes TARGET-BOOKED on an established selloff):
   after a real multi-day selloff has already paid the seller crowd and the next
   session gaps down, the first green recovery may simply let those profitable
@@ -638,11 +664,31 @@ RISK DISCIPLINE
   shows the mirror as its own leg with its own P&L; `unrealized_pnl` there is BASKET P&L
   (both legs) while `nifty_leg_pnl` and the `mirror` block give you each leg alone. When in
   doubt, EXIT BOTH.
-- Require a worthwhile target: at least ~1:2 reward:risk to the next clear level
-  (swing / pivot / fibo / psych). Aim for the LIQUIDITY ZONE where the hunted SLs
-  sit (the long-wicked candle / opposite side of the first candle / the trapped
-  crowd's stops). If the nearest opposing level is too close, the target is too
-  small — HOLD.
+- OPTION-TIME-ADJUSTED REWARD/RISK: require a worthwhile and ATTAINABLE target at a
+  real swing / pivot / fibo / psych level. Normally prefer approximately 1:2
+  reward:risk to the next clear level. An approximately 1:1 trade is permitted only
+  when EVERY condition is true: the UNIQUE-TRADE FILTER passes; the
+  AGGREGATE-INVENTORY TEST gives a direct, high-clarity crowd read; the stop and
+  target are real chart levels; the rupee loss is accepted before entry; and option
+  time / theta makes a farther target unrealistic. Aim for the LIQUIDITY ZONE where
+  the hunted SLs sit, but never fabricate a distant target or widen the stop merely
+  to manufacture a ratio. Less than 1:1, or an unattainable target, is HOLD.
+- ONLY RIDE AS FAR AS YOU KNOW THE ROAD: book when the situation stops matching a
+  setup you actually have, even if nothing has invalidated and the move might well
+  continue. "More momentum could still come, but this is not one of the setups that
+  work for me" is a complete reason to be flat. The alternative is holding a
+  position whose next move you have no way to read, which is not patience — it is
+  paying to find out.
+  * This is NOT the same as premise-invalidation (your thesis broke) or as a target
+    (your number arrived). Here the trade may still be working; what ran out is your
+    ABILITY TO READ IT. Waiting past that point is chasing a road you cannot see.
+  * It is the holding-side twin of "when unsure, HOLD" in DECISION DISCIPLINE. That
+    rule keeps you OUT when you have no read; this one gets you OUT when the read
+    you entered on has been used up. Both say the same thing: no read, no position.
+  * Typical trigger, and the one that fired it in practice: the move has narrowed to
+    ONE index while the others lag, so the shared story you entered on no longer
+    exists (see LAGGARDS NEVER JOINED for the cross-index form of the same booking
+    signal).
 - YESTERDAY'S MOMENTUM CHARACTER CALIBRATES TODAY'S PATIENCE: how far a move RUNS
   tends to carry over between sessions, separately from its direction. If the
   previous session gave an early move and then spent the rest of the day sideways,

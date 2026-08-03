@@ -170,3 +170,44 @@ def test_shipped_note_file_is_valid():
     assert note is not None, "shipped premarket_note.json must be schema-valid"
     # It must render on its own declared day (proves the file is self-consistent).
     assert format_premarket_note(note, date.fromisoformat(note.for_date)) != ""
+
+
+def test_shipped_note_matches_august_3_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 2 Aug transcript.
+
+    This catches a stale prior-session note, an inverted gap plan, or a mistyped
+    chart level before the dated note is injected into the live prompt.
+    """
+    import os
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    shipped = os.path.join(here, "premarket_note.json")
+    note = load_premarket_note(shipped)
+
+    assert note is not None
+    assert note.for_date == "2026-08-03"
+    assert "yHEfrMUrmKk" in note.source
+    assert note.plan == [
+        "MEANINGFUL GAP-UP: buyers are not the target; follow the market and "
+        "identify BUY-side setups.",
+        "FLAT or GAP-DOWN: target the seated buyers and identify SELL-side setups.",
+        "Treat a mild GAP-UP as FLAT rather than assuming it released the buyers; "
+        "wait for the sell-side setup to confirm.",
+    ]
+    assert [level.model_dump() for level in note.levels] == [
+        {
+            "index": "NIFTY",
+            "resistance": [24400.0, 24480.0],
+            "support": [24300.0, 24220.0],
+        },
+        {
+            "index": "BANKNIFTY",
+            "resistance": [57680.0, 57820.0],
+            "support": [57154.0, 56850.0],
+        },
+        {
+            "index": "SENSEX",
+            "resistance": [78500.0, 78850.0],
+            "support": [77840.0, 77500.0],
+        },
+    ]

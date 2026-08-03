@@ -1937,3 +1937,133 @@ the worst-case runtime additions rather than trusting the raw number.
 - `RISK`: COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT, beside momentum quality.
 - Test markers: `test_system_prompt_has_v3w_entry_point_and_counter_move_knowledge`
   and `test_prompt_cap_leaves_room_for_lessons_and_a_note`.
+
+## Video addendum - 2 Aug premarket + weekly root-value review (v3x)
+
+**Sources (direct YouTube transcripts):**
+- Intraday Hunter premarket analysis, `Nifty & Bank nifty | SENSEX Analysis |
+  Prediction For 03 AUG 2026` (`yHEfrMUrmKk`, 1:59, uploaded 2 Aug 2026).
+- Intraday Hunter, `Weekly Market Analysis: The Biggest Opportunities`
+  (`iDV1obD78-c`, 17:16, uploaded 2 Aug 2026).
+
+The premarket clip is dated by its target session, so the committed advisory is for
+3 Aug. All three indices had closed with positive momentum and likely seated buyers.
+A meaningful gap-up protects that crowd and calls for buy-side setups with the
+market; a flat or gap-down open exposes them and calls for sell-side setups. IH also
+said a mild gap-up is treated as flat. Spoken rounded levels were checked against the
+visible charts before updating `premarket_note.json`; no false decimal precision is
+stored.
+
+The weekly lecture reviews five recent directional reads. Its recurring method is to
+infer the buyer/seller "root value" from the crowd likely carrying the most quantity,
+not from one hypothetical participant. A repeated breakdown followed by recovery
+does not leave a durable seller crowd: repeated failure pushes sellers out, and if
+the other indices remain positive, buyers may become the seated side instead. The
+lecture also states that option-buying targets must fit the available time: IH uses
+roughly 1:1 when his crowd read is exceptionally clear because a distant target can
+be less realistic than the stop.
+
+**Net-new method distilled:**
+- AGGREGATE-INVENTORY TEST: hunt the dominant aggregate cohort, not an anecdote. If
+  neither side likely has meaningful size, follow current momentum or hold.
+- REPEATED-FAILURE INVENTORY RESET: repeated breakdown-and-recovery cycles evict
+  sellers; require fresh participation before treating their stops as available.
+- OPTION-TIME-ADJUSTED REWARD/RISK: normally prefer an attainable approximately 1:2.
+  Approximately 1:1 is a narrow exception requiring the unique-trade filter, a
+  direct aggregate crowd read, real stop/target levels, a pre-accepted rupee loss,
+  and an option-time reason the farther target is unrealistic. Less than 1:1 is HOLD.
+
+**Confirmed but deliberately not duplicated:** horizon selection is TIMEFRAME FIT;
+already-paid crowds are TARGET-BOOKED; gap-size and cross-index asymmetry already
+govern who remains huntable; direction can survive a bad entry only through THE
+ENTRY POINT IS PART OF THE PREMISE plus the POST-EXIT RE-ENTRY GATE; a quiet week is
+already covered by NO DAILY-INCOME PRESSURE.
+
+**Not encoded:** the lecture mentions that a first directional entry may fail and a
+second or third may work with lower quantity. The agent cannot choose a reduced order
+quantity, and reflex retries would contradict the enforced cooldown and fresh-crowd
+gate. Those existing safeguards remain authoritative.
+
+**Knowledge changes (v3x, all prose):**
+- `RETAIL_POSITIONING`: AGGREGATE-INVENTORY TEST and REPEATED-FAILURE INVENTORY RESET.
+- `RISK`: OPTION-TIME-ADJUSTED REWARD/RISK replaces the absolute approximately 1:2
+  wording without permitting sub-1:1 or manufactured targets.
+- Tests pin all three markers, the retained safeguards, and the complete dated
+  premarket payload.
+
+### v3x continued - the 3 Aug LIVE SESSION (appended to the same version)
+
+**Source:** Intraday Hunter live session, 3 Aug 2026 (`cwgFEpiTwgE`, 9:23). The v3x
+section above was distilled from his 2 Aug *analysis*; this is the session that
+followed it, so both belong to the same version.
+
+**What IH did:** gap-up open with a slight rejection, and he bought CALLs on the
+dip. His pre-trade read, close to verbatim:
+- "When such a gap-up opens you must look at what is happening OVERALL: buying has
+  been continuous for many days, and then a gap-up. Sometimes profit-booking comes."
+- "Those sitting from BELOW are not booking - **if theirs were coming you would see
+  bigger selling, quick sharp selling.** Nothing like that is happening. This is
+  just the market shaking out whoever bought on FRIDAY and got a sudden gap-up."
+- "If they had exited here we would assume the trader is weak. He is not weak - he
+  is riding the market long term."
+- Per his own analysis: on a gap-up the buyers are NOT the target, so go with the
+  market (this is the note channel and the plan agreeing, not new method).
+
+**Why he booked - the strongest part of the session:**
+- "The momentum that is happening is only in BankNIFTY. Sensex and NIFTY have lagged."
+- "It is not that more momentum cannot come. **But the setups that work for us -
+  this is not one of them.**"
+- "The market can do anything on any day, but will we chase it when we do not even
+  know where the road is going? **We waited as far as we knew the road. Now we do
+  not know the road.**"
+
+**Agent tally for 3 Aug:** 73 decisions (69 HOLD, 1 ENTER_SHORT, 1 ENTER_LONG,
+2 EXIT), window 09:16:01-10:30:07, 14 decisions citing the pre-open note. Two
+trades, both losers, net **-Rs.1,379.25** (PAPER):
+- 09:25:06 -> 09:25:33 SHORT `huge_gap_mindset_trap_fade`, 3 lots, -6.4 pts,
+  **-Rs.950.25** (NIFTY -243.75 + mirror -706.50), held 27 SECONDS.
+- 09:31:06 -> 09:32:30 LONG `gapup_followthrough_fibo61_hammer`, 2 lots, -2.8 pts,
+  **-Rs.429.00** (NIFTY -351.00 + mirror -78.00), held 84 seconds.
+
+**MAT-113 verified in production:** both BankNIFTY mirrors fired (09:24:16 and
+09:30:52), with ZERO "no LTP" skips and no wait needed - against three skips on
+31 Jul. Subscribing the leg before pricing it was the fix.
+
+**Behaviour worth recording, not encoded as a rule.** The agent FADED the gap-up
+(a short at 09:25) on a day its own pre-open note said gap-up means do not target
+buyers, was stopped in 27 seconds, then FLIPPED to long 5m33s later - clearing the
+five-minute mechanical cooldown by 33 seconds. Both lost. That is exactly the
+pattern MORNING SPEED IS NOT INFORMATION and NO INSTANT FLIP already describe, so
+this is evidence those rules are not yet binding rather than a gap in them. Worth
+watching before adding more prose about it.
+
+**Net-new method distilled:**
+- PROFIT DEPTH SPLITS ONE SIDE INTO TWO COHORTS (sub-bullet of AGGREGATE-INVENTORY
+  TEST): "buyers" is not one crowd. After a multi-day run, traders positioned from
+  far below are deep in profit and are not weak; only the MARGINAL holders from the
+  last session or two are close enough to their entry to be flushed. A hunt aimed at
+  "the buyers" therefore collects a far smaller pool of stops than the aggregate
+  suggests.
+- THE COUNTER-MOVE'S SIZE AND SPEED SAY WHICH COHORT IS LEAVING: a small, slow
+  rejection is the recent cohort being shaken and nothing more; genuine
+  profit-booking by deep holders shows up as BIG, QUICK selling. If that has not
+  appeared, they are still in and the move against you is noise, not distribution.
+  Complements v3w's COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT, which reads size to
+  test a breakout premise; this reads size to identify WHO is moving.
+- ONLY RIDE AS FAR AS YOU KNOW THE ROAD (RISK): book when the situation stops
+  matching a setup you actually have, even though nothing has invalidated and the
+  move may well continue. Explicitly separated from premise-invalidation (thesis
+  broke) and from a target (number arrived): here the trade may still be working and
+  what ran out is the ability to READ it. Framed as the holding-side twin of "when
+  unsure, HOLD" - that rule keeps you out with no read, this one gets you out when
+  the read you entered on is used up. Its typical trigger is the move narrowing to
+  one index, which is LAGGARDS NEVER JOINED's cross-index form of the same signal.
+
+**Confirmed but already present:** gap-up means follow rather than hunt is
+RECRUITMENT HISTORY plus v3v's small-gap qualifier; booking when the leader runs
+alone is LAGGARDS NEVER JOINED (v3s).
+
+**Knowledge changes (v3x continued, all prose):**
+- `RETAIL_POSITIONING`: two sub-bullets under AGGREGATE-INVENTORY TEST.
+- `RISK`: ONLY RIDE AS FAR AS YOU KNOW THE ROAD.
+- Test marker: `test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge`.

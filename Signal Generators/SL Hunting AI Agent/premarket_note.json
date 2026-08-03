@@ -1,29 +1,27 @@
 {
-  "for_date": "2026-07-31",
-  "source": "Intraday Hunter, 'Prediction For 31 JULY 2026' (video B0mG5R2JsFs)",
-  "context": "Momentum is shrinking across all three indices. Buyers have come in over the last two-three days but the market has repeatedly changed their mindset, so the crowd is not cleanly seated; NIFTY's advance came with retracements.",
+  "for_date": "2026-08-03",
+  "source": "Intraday Hunter, 'Prediction For 03 AUG 2026' (yHEfrMUrmKk, uploaded 2026-08-02)",
+  "context": "All three indices closed with positive momentum after sideways or recovery action, so buyers may be seated. The opening type decides whether those buyers are safe or huntable.",
   "plan": [
-    "FLAT or GAP-UP open: follow the existing momentum - identify BUY-side setups and go with the market.",
-    "SMALL GAP-DOWN open: no plan can be made for this case. Abstain and let the market show its hand rather than forcing a trade.",
-    "BIG GAP-DOWN open: the buyers who stayed seated are the ones in trouble - identify SELL-side setups targeting them.",
-    "The distinction that matters is the SIZE of the gap-down, not merely its direction: a small one strands nobody, a large one leaves the seated buyers exposed.",
-    "When momentum does come it can look like a breakout, pull buyers in, and then have their mindset changed again - treat a first thrust with suspicion."
+    "MEANINGFUL GAP-UP: buyers are not the target; follow the market and identify BUY-side setups.",
+    "FLAT or GAP-DOWN: target the seated buyers and identify SELL-side setups.",
+    "Treat a mild GAP-UP as FLAT rather than assuming it released the buyers; wait for the sell-side setup to confirm."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24400, 24482],
-      "support": [24207, 24140]
+      "resistance": [24400, 24480],
+      "support": [24300, 24220]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57258, 57684],
-      "support": [56856, 56533]
+      "resistance": [57680, 57820],
+      "support": [57154, 56850]
     },
     {
       "index": "SENSEX",
-      "resistance": [78207, 78505],
-      "support": [77500, 77201]
+      "resistance": [78500, 78850],
+      "support": [77840, 77500]
     }
   ]
 }

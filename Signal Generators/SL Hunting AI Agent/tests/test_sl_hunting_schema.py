@@ -555,6 +555,28 @@ def test_system_prompt_has_v3w_entry_point_and_counter_move_knowledge():
     assert "which reads the WITH-trend move" in prompt
 
 
+def test_system_prompt_has_v3x_aggregate_inventory_and_option_rr_knowledge():
+    """v3x: the 2 Aug weekly lecture scopes the crowd and the achievable target.
+
+    The agent must reason about the dominant aggregate inventory rather than one
+    hypothetical trader, reset a stale seller read after repeated failed breaks,
+    and permit 1:1 only for an unusually clear, time-constrained option trade.
+    """
+    prompt = build_system_prompt()
+    assert "AGGREGATE-INVENTORY TEST" in prompt
+    assert "greatest aggregate quantity" in prompt
+    assert "REPEATED-FAILURE INVENTORY RESET" in prompt
+    assert "repeated breakdown-and-recovery" in prompt
+    assert "OPTION-TIME-ADJUSTED REWARD/RISK" in prompt
+    assert "approximately 1:1" in prompt
+    assert "Less than 1:1" in prompt and "HOLD" in prompt
+    # The refinement must not erase the guardrails it relies on.
+    assert "UNIQUE-TRADE FILTER" in prompt
+    assert "TARGET-BOOKED crowd test" in prompt
+    assert "TIMEFRAME FIT" in prompt
+    assert "POST-EXIT RE-ENTRY GATE" in prompt
+
+
 def test_prompt_cap_leaves_room_for_lessons_and_a_note():
     """The cap is a sanity bound, not a budget knowledge must squeeze into.
 
@@ -568,6 +590,33 @@ def test_prompt_cap_leaves_room_for_lessons_and_a_note():
     # Worst case the runtime can add: 12 lessons at their own cap, plus a note.
     worst_case_runtime_additions = 12 * 280 + 2_500
     assert assembled + worst_case_runtime_additions < MAX_SYSTEM_PROMPT_CHARS
+
+
+def test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge():
+    """v3x (3 Aug live session): IH held a gap-up long and booked it while it was
+    still working, because the move had narrowed to BankNIFTY alone.
+
+    "More momentum could come, but this is not one of the setups that work for us...
+    we waited as far as we knew the road. Now we do not know the road." He also
+    split "the buyers" by profit depth: the Friday cohort was shaken out by the
+    gap-up, while traders positioned from far below never moved -- and the tell was
+    that no big, quick selling appeared.
+    """
+    prompt = build_system_prompt()
+    # One side is two cohorts, and only the marginal one is huntable.
+    assert "PROFIT DEPTH SPLITS ONE SIDE INTO TWO COHORTS" in prompt
+    # Wrap-independent: this phrase spans a line break in the source.
+    assert "NOT weak" in prompt and "riding the move" in prompt
+    # Character of the counter-move identifies who is leaving.
+    assert "THE COUNTER-MOVE'S SIZE AND SPEED SAY WHICH COHORT IS LEAVING" in prompt
+    assert "BIG, QUICK selling" in prompt
+    # Exit when the read runs out, not only when the thesis breaks.
+    assert "ONLY RIDE AS FAR AS YOU KNOW THE ROAD" in prompt
+    # Wrap-independent fragment: the sentence spans a line break in the source.
+    assert "paying to find out" in prompt
+    # It must be distinguished from the two exits it is NOT.
+    assert "NOT the same as premise-invalidation" in prompt
+    assert "no read, no position" in prompt
 
 
 def test_reentry_gate_does_not_contradict_the_exit_rules():
