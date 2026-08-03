@@ -1,27 +1,29 @@
 {
-  "for_date": "2026-08-03",
-  "source": "Intraday Hunter, 'Prediction For 03 AUG 2026' (yHEfrMUrmKk, uploaded 2026-08-02)",
-  "context": "All three indices closed with positive momentum after sideways or recovery action, so buyers may be seated. The opening type decides whether those buyers are safe or huntable.",
+  "for_date": "2026-08-04",
+  "source": "Intraday Hunter, 'Prediction For 04 AUG 2026' (IHjbAmtdLro, uploaded 2026-08-03)",
+  "context": "All three indices closed higher, NIFTY continuing up and BANKNIFTY/SENSEX sitting on round-number support, so buyers are seated across the board. NIFTY expiry falls on this session.",
   "plan": [
-    "MEANINGFUL GAP-UP: buyers are not the target; follow the market and identify BUY-side setups.",
-    "FLAT or GAP-DOWN: target the seated buyers and identify SELL-side setups.",
-    "Treat a mild GAP-UP as FLAT rather than assuming it released the buyers; wait for the sell-side setup to confirm."
+    "Every opening type points the same way today: GAP-UP, FLAT and GAP-DOWN all mean identify SELL-side setups against the seated buyers.",
+    "BIG GAP-DOWN is the single exception -- he ignores it rather than hunting into it.",
+    "On a mild GAP-DOWN expect retracement chop first; the setup still has to confirm before entry.",
+    "His premise is explicitly conditional: he targets buyers only because this is NOT an all-time-high or runaway-momentum tape. Strong trend momentum would weaken it.",
+    "BANKNIFTY sits on round-number support with more round numbers nearby -- he flags retracement risk there specifically."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24400, 24480],
-      "support": [24300, 24220]
+      "resistance": [24610, 24700],
+      "support": [24500, 24400]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57680, 57820],
-      "support": [57154, 56850]
+      "resistance": [57820, 58100],
+      "support": [57500, 57154]
     },
     {
       "index": "SENSEX",
-      "resistance": [78500, 78850],
-      "support": [77840, 77500]
+      "resistance": [78850, 79100],
+      "support": [78500, 78300]
     }
   ]
 }
