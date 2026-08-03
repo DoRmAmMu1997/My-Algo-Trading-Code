@@ -317,29 +317,75 @@ def test_unknown_direction_holds_rather_than_guessing():
 
 def test_entries_read_the_collapsed_columns_for_both_sides():
     """Both ENTER paths must carry real levels through to the master's
-    enter_position -- a zero stop would size the trade off nothing."""
+    enter_position -- a zero stop would size the trade off nothing.
+
+    Each side gets levels ordered the way that side actually trades: a short's
+    stop sits ABOVE its entry and its target BELOW. (This test used to feed the
+    short side the long ordering, which the sanity gate now rejects outright.)
+    """
     config = ROUTER.RegimeAdaptiveConfig()
     engine = ROUTER.RegimeAdaptiveSignalEngine(config)
     frame = ROUTER.build_regime_adaptive_with_indicators(_session("2026-08-03", 80), config)
     index = frame.index[-1]
     frame.loc[index, "regime"] = ROUTER.MEAN_REVERSION_BRANCH
 
+    levels = {"long": (25000.0, 24800.0, 25300.0), "short": (25000.0, 25200.0, 24700.0)}
     for side, action in (("long", "ENTER_LONG"), ("short", "ENTER_SHORT")):
+        entry, stop, target = levels[side]
         other = "short" if side == "long" else "long"
         frame.loc[index, f"{side}_setup"] = True
         frame.loc[index, f"{other}_setup"] = False
-        frame.loc[index, f"{side}_entry_price"] = 25000.0
-        frame.loc[index, f"{side}_stop_from_setup"] = 24800.0
-        frame.loc[index, f"{side}_target_from_setup"] = 25300.0
+        frame.loc[index, f"{side}_entry_price"] = entry
+        frame.loc[index, f"{side}_stop_from_setup"] = stop
+        frame.loc[index, f"{side}_target_from_setup"] = target
 
         decision = engine.evaluate_candle(frame)
         assert decision.action == action
         assert decision.signal_triggered
-        assert decision.entry_underlying == pytest.approx(25000.0)
-        assert decision.stop_underlying == pytest.approx(24800.0)
-        assert decision.target_underlying == pytest.approx(25300.0)
+        assert decision.entry_underlying == pytest.approx(entry)
+        assert decision.stop_underlying == pytest.approx(stop)
+        assert decision.target_underlying == pytest.approx(target)
         assert decision.reason == f"{ROUTER.MEAN_REVERSION_BRANCH}_{side}"
         assert decision.debug["regime"] == ROUTER.MEAN_REVERSION_BRANCH
+
+
+@pytest.mark.parametrize(
+    ("side", "entry", "stop", "target", "why"),
+    [
+        ("long", 25000.0, float("nan"), 25300.0, "stop is not a number"),
+        ("long", 25000.0, 25200.0, 25300.0, "stop above entry"),
+        ("long", 25000.0, 24800.0, 25000.0, "zero-width target (VWAP on the close)"),
+        ("long", 1.0, 1.0, 1.0, "the collapse bug: every level a cast bool"),
+        ("short", 25000.0, 25200.0, float("inf"), "target is not finite"),
+        ("short", 25000.0, 24800.0, 24700.0, "stop below entry"),
+        ("short", 25000.0, 25200.0, 25000.0, "zero-width target"),
+    ],
+)
+def test_entry_refuses_levels_it_cannot_size_a_trade_from(side, entry, stop, target, why):
+    """A setup alone is not enough: the levels have to be tradeable.
+
+    The master sizes the position off the entry-to-stop distance, so a NaN or a
+    mis-ordered level would size off nonsense -- or, at `stop == entry`, off
+    nothing at all. The signal is reported as fired so the refusal is visible in
+    the logs rather than looking like a bar with no setup.
+    """
+    config = ROUTER.RegimeAdaptiveConfig()
+    engine = ROUTER.RegimeAdaptiveSignalEngine(config)
+    frame = ROUTER.build_regime_adaptive_with_indicators(_session("2026-08-03", 80), config)
+    index = frame.index[-1]
+    other = "short" if side == "long" else "long"
+    frame.loc[index, "regime"] = ROUTER.MEAN_REVERSION_BRANCH
+    frame.loc[index, f"{side}_setup"] = True
+    frame.loc[index, f"{other}_setup"] = False
+    frame.loc[index, f"{side}_entry_price"] = entry
+    frame.loc[index, f"{side}_stop_from_setup"] = stop
+    frame.loc[index, f"{side}_target_from_setup"] = target
+
+    decision = engine.evaluate_candle(frame)
+
+    assert decision.action == "HOLD", f"entered on {why}"
+    assert decision.signal_triggered, "a refused setup still fired"
+    assert decision.debug["reason"] == f"{ROUTER.MEAN_REVERSION_BRANCH}_{side}_invalid_levels"
 
 
 def test_collapsed_levels_stay_numeric_not_boolean():

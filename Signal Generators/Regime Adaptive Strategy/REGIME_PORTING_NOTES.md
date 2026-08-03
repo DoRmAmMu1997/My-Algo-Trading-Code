@@ -146,6 +146,14 @@ engine at all.
 - **Opening range is `NaN` until its window closes.** A half-formed range is
   never publishable — you cannot break a level that is still being formed — and
   it never leaks across a session boundary.
+- **Unusable entry levels → `HOLD`** (this repo's convention rather than the
+  source's). A setup whose entry/stop/target is non-finite or mis-ordered is
+  refused with reason `<REGIME>_<side>_invalid_levels` and `signal_triggered`
+  still `True`, so the refusal is visible in the log instead of looking like a
+  bar with no setup. This matches the other 13 ported strategies. It matters
+  because the master sizes the position off the entry-to-stop distance: at
+  `stop == entry` it would size off nothing, and a fade whose VWAP has converged
+  onto the close produces exactly that (`target == entry`).
 
 ---
 

@@ -49,7 +49,7 @@ from regime_candidates import attach_breakout_columns, attach_mean_reversion_col
 # objects as `misc_strategy_common.adx` / `.atr`, not local reimplementations.
 from regime_common import adx as adx_indicator
 from regime_common import atr as atr_indicator
-from regime_common import prepare_session_frame, require_columns, validate_finite_config
+from regime_common import finite, prepare_session_frame, require_columns, validate_finite_config
 
 BREAKOUT_BRANCH = "BREAKOUT"
 MEAN_REVERSION_BRANCH = "MEANREV"
@@ -276,23 +276,41 @@ class RegimeAdaptiveSignalEngine:
         }
 
         if bool(current.get("long_setup", False)):
-            return RegimeAdaptiveDecision(
-                action="ENTER_LONG",
-                entry_underlying=float(current["long_entry_price"]),
-                stop_underlying=float(current["long_stop_from_setup"]),
-                target_underlying=float(current["long_target_from_setup"]),
-                reason=f"{regime}_long",
-                signal_triggered=True,
-                debug=debug,
-            )
+            entry = float(current["long_entry_price"])
+            stop = float(current["long_stop_from_setup"])
+            target = float(current["long_target_from_setup"])
+            # Same gate the other ported strategies apply: the master sizes the
+            # trade off the entry-to-stop distance, so a NaN or a mis-ordered
+            # level must refuse the trade rather than reach `enter_position`.
+            # It is not merely defensive -- a fade whose VWAP has converged onto
+            # the close produces target == entry, a zero-width trade.
+            if all(finite(value) for value in (entry, stop, target)) and stop < entry < target:
+                return RegimeAdaptiveDecision(
+                    action="ENTER_LONG",
+                    entry_underlying=entry,
+                    stop_underlying=stop,
+                    target_underlying=target,
+                    reason=f"{regime}_long",
+                    signal_triggered=True,
+                    debug=debug,
+                )
+            # The signal DID fire; only execution was refused. Saying so keeps a
+            # rejected level visible in the logs instead of looking like no setup.
+            return self._hold(f"{regime}_long_invalid_levels", signal_triggered=True)
         if bool(current.get("short_setup", False)):
-            return RegimeAdaptiveDecision(
-                action="ENTER_SHORT",
-                entry_underlying=float(current["short_entry_price"]),
-                stop_underlying=float(current["short_stop_from_setup"]),
-                target_underlying=float(current["short_target_from_setup"]),
-                reason=f"{regime}_short",
-                signal_triggered=True,
-                debug=debug,
-            )
+            entry = float(current["short_entry_price"])
+            stop = float(current["short_stop_from_setup"])
+            target = float(current["short_target_from_setup"])
+            # Mirrored: a short's stop sits ABOVE entry and its target BELOW.
+            if all(finite(value) for value in (entry, stop, target)) and target < entry < stop:
+                return RegimeAdaptiveDecision(
+                    action="ENTER_SHORT",
+                    entry_underlying=entry,
+                    stop_underlying=stop,
+                    target_underlying=target,
+                    reason=f"{regime}_short",
+                    signal_triggered=True,
+                    debug=debug,
+                )
+            return self._hold(f"{regime}_short_invalid_levels", signal_triggered=True)
         return self._hold(f"{regime}_no_setup")

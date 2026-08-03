@@ -54,6 +54,7 @@ if _SIGNAL_GEN_DIR not in sys.path:
 from misc_strategy_common import (  # noqa: E402  (must follow the path bootstrap above)
     adx,
     atr,
+    finite,
     normalize_ohlc_frame,
     require_columns,
     validate_finite_config,
@@ -67,6 +68,7 @@ __all__ = [
     "attach_opening_range",
     "attach_session_date",
     "attach_session_vwap",
+    "finite",
     "normalize_ohlc_frame",
     "prepare_session_frame",
     "require_columns",
