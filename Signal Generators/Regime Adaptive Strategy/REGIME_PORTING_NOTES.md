@@ -47,6 +47,31 @@ This is the single biggest reason the strategy ships paper-only.
 
 ---
 
+## Second fidelity gap: the fade distance does not match the source
+
+Found on a later line-by-line re-read of the source, not at porting time.
+
+| | Source (`vwap_mean_reversion.py`) | This port |
+|---|---|---|
+| Fade trigger | `max(atr * 0.6, 15.0)` | `atr * 1.5`, **no floor** |
+
+Ours demands the price stretch **2.5x further** from VWAP before it fades, and
+has no absolute-points floor for a very low-ATR session. The practical effect is
+that the mean-reversion branch fires **far less often** here than in the project
+it was copied from — so paper results are not directly comparable to the source's,
+and a quiet day could see the fade branch never trigger at all.
+
+It is tunable without a code change (`REGIME_ADAPTIVE_MEANREV_ATR_MULT`), but the
+missing 15-point floor is not — matching the source exactly would need a
+`_MEANREV_MIN_POINTS` knob alongside it, mirroring how the breakout buffer already
+carries both a multiplier and a floor.
+
+The breakout side, for contrast, **does** match: source `max(atr * 0.05, 2.0)`
+against our `breakout_buffer_atr_mult=0.05` + `breakout_buffer_min_points=2.0`.
+And the fade's ADX stand-down (`adx >= 25`) matches too.
+
+---
+
 ## Dropped: gates this port does not implement
 
 The operator's decision was **drop and document**, not proxy and not fail-closed —
@@ -64,9 +89,10 @@ reads as protection that is not there.
 |---|---|---|
 | Max 2% bid/ask spread | The **option-chain response**, not the tick feed. Dhan's `/optionchain` returns `top_bid_price` / `top_ask_price` / `top_bid_quantity` / `top_ask_quantity` per CE/PE node; their `normalize_quote_depth()` reads those with a `depth.buy[0]`/`depth.sell[0]` fallback. | **IMPLEMENTED** — see "The spread gate" below. `REGIME_ADAPTIVE_MAX_SPREAD_PCT=2.0`. |
 | Chain liquidity score | Same chain response — top-of-book quantities plus OI/volume. | Buildable, same call, not built. The quantities are in the payload the spread gate already fetches. |
-| India VIX filter | Dhan quote on **security id 21, segment `IDX_I`** — an ordinary `quote_data`/`ticker_data` call. | Buildable, cheap. We already batch index LTP calls; this is one more id. |
-| Market-breadth filter | Dhan `quote_data` batched over the **NIFTY-50 constituents on `NSE_EQ`**, counting advances by `net_change`. Ships a `fixtures/nifty50_symbols.json`. | Buildable, but ~50 quotes per refresh — a real API-budget decision, and we have no constituent fixture. |
-| Futures-basis filter | Spot vs NIFTY future LTP via `NSE_FNO` batch quote. | Buildable, cheap. |
+| India VIX "filter" | Dhan quote on **security id 21, segment `IDX_I`**. | **Not a filter in the source either.** `build_market_context` fetches it onto `ctx.india_vix` and **no strategy ever reads it** — it is telemetry. The router's only volatility veto is on `global_context["US_VIX"] >= 30`, a *different* instrument from *yfinance*. |
+| Market-breadth "filter" | Dhan `quote_data` batched over the **NIFTY-50 constituents on `NSE_EQ`**, counting advances by `net_change`, off a shipped `fixtures/nifty50_symbols.json`. | **Never gates a trade.** In `opening_range.py` breadth only adds `+0.1` to `conf`, the uncalibrated heuristic score. The entry condition is purely OR-break + VWAP. `vwap_mean_reversion.py` ignores breadth entirely. Our contract has no score field, so this would cost ~50 quotes/refresh to compute a number with nowhere to go. |
+| Liquidity score (`< 30` veto) | `compute_chain_metrics`: median `spread_pct` → `100 - med*8`, median OI → `oi/100`, blended `0.6/0.4`. | **This is the one real veto still missing**, and it gates the router itself. Built from the same chain payload the spread gate already fetches. The best next target — better than VIX or breadth. |
+| Futures-basis filter | Spot vs NIFTY future LTP via `NSE_FNO` batch quote. | Recorded on the context; not read by either ported branch. |
 | Event-risk / news blackout | **Does not exist in the source either.** Its `global_context.py` pulls *global market proxies* (USDINR, crude, gold, SPX, Nasdaq, Dow, Nikkei, Hang Seng, VIX) from **yfinance**, 5-day historical closes, self-described as "research proxies only". No news feed, no economic calendar. | Not ported. Would add a new unpinned dependency with Yahoo ToS caveats for last-close proxies. |
 
 **What is genuinely true about the tick feed:** we subscribe `MarketFeed.Ticker`
@@ -74,8 +100,11 @@ only and `Dependencies/tick_bar_builder.py` drops depth packets, so there is no
 bid/ask *in the tick path*. That part stands. The error was concluding the runner
 therefore has no access to bid/ask at all — the source never used ticks for it.
 
-**What this means operationally:** the VIX, breadth and basis filters are still
-absent, so this strategy will trade a session the source would have stood out of.
+**What this means operationally:** less than the earlier wording implied. Reading
+the source's two candidate strategies line by line, **neither VIX nor breadth
+gates an entry** — breadth only moves a heuristic score, and India VIX is fetched
+but never read. Porting them would not change a single trade decision here. The
+genuinely missing veto is `liquidity_score < 30`, which does gate the router.
 The existing runner-level protections apply (per-strategy daily max-loss cap,
 15:15 square-off, the `_get_dealable_option_ltp` freshness/refusal path on live),
 and as of the spread gate below, entries into a wide book are now refused too.
