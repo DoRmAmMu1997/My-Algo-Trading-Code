@@ -51,3 +51,27 @@ reported `10 passed`.
 
 No authenticated smoke, Codex/model call, broker call, real order, network
 call, or actual decision-log write was performed.
+
+## Fix round 1
+
+- Correction commit: `74dffcefc6efea6eac612d47d2ba861347743b3d`
+- Replaced README current-roster totals with configuration-dependent wording;
+  both optional agents can raise the roster to 28, while virtual gates can
+  reduce the enabled total. The policy guard bans only the five stale current
+  claims and preserves legitimate historical counts.
+- Changed the mypy policy test to derive every top-level `cpr_ai_*.py` runtime
+  module from the filesystem and compare that inventory exactly with the CPR AI
+  entries in `pyproject.toml`.
+- Replaced the startup helper's obsolete "arbiter" label and corrected the
+  subprocess documentation: the child receives a strict OS/profile/Codex
+  discovery allowlist, while trading and API secrets are excluded.
+
+The focused red run reported two expected documentation-policy failures. The
+green correction verification reported 53 CPR AI tests passed (with the same
+third-party `dateutil` warning), 30 policy/config tests passed, fake smoke
+`HOLD validation=accepted_hold NO ORDER`, Ruff passed, mypy passed across 51
+source files, compileall exited 0, and `git diff --check` exited 0 with only
+the expected LF-to-CRLF working-copy warnings.
+
+No authenticated smoke, Codex/model call, broker call, real order, network
+call, or decision-log write was performed during this correction.
