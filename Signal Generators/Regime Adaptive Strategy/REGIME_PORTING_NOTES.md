@@ -97,7 +97,7 @@ reads as protection that is not there.
 | Chain liquidity score | Same chain response — top-of-book quantities plus OI/volume. | Buildable, same call, not built. The quantities are in the payload the spread gate already fetches. |
 | India VIX "filter" | Dhan quote on **security id 21, segment `IDX_I`**. | **Not a filter in the source either.** `build_market_context` fetches it onto `ctx.india_vix` and **no strategy ever reads it** — it is telemetry. The router's only volatility veto is on `global_context["US_VIX"] >= 30`, a *different* instrument from *yfinance*. |
 | Market-breadth "filter" | Dhan `quote_data` batched over the **NIFTY-50 constituents on `NSE_EQ`**, counting advances by `net_change`, off a shipped `fixtures/nifty50_symbols.json`. | **Never gates a trade.** In `opening_range.py` breadth only adds `+0.1` to `conf`, the uncalibrated heuristic score. The entry condition is purely OR-break + VWAP. `vwap_mean_reversion.py` ignores breadth entirely. Our contract has no score field, so this would cost ~50 quotes/refresh to compute a number with nowhere to go. |
-| Liquidity score (`< 30` veto) | `compute_chain_metrics`: median `spread_pct` → `100 - med*8`, median OI → `oi/100`, blended `0.6/0.4`. | **This is the one real veto still missing**, and it gates the router itself. Built from the same chain payload the spread gate already fetches. The best next target — better than VIX or breadth. |
+| Liquidity score (`< 30` veto) | `compute_chain_metrics`: median `spread_pct` → `100 - med*8`, median OI → `oi/100`, blended `0.6/0.4`. | **IMPLEMENTED** — see "The liquidity gate" below. `REGIME_ADAPTIVE_MIN_LIQUIDITY_SCORE=30.0`. |
 | Futures-basis filter | Spot vs NIFTY future LTP via `NSE_FNO` batch quote. | Recorded on the context; not read by either ported branch. |
 | Event-risk / news blackout | **Does not exist in the source either.** Its `global_context.py` pulls *global market proxies* (USDINR, crude, gold, SPX, Nasdaq, Dow, Nikkei, Hang Seng, VIX) from **yfinance**, 5-day historical closes, self-described as "research proxies only". No news feed, no economic calendar. | Not ported. Would add a new unpinned dependency with Yahoo ToS caveats for last-close proxies. |
 
@@ -154,6 +154,54 @@ transient API error.
 every strategy except Regime Adaptive (`_DEFAULT_MAX_SPREAD_PCT`), so no existing
 worker's behaviour changed. The default lives in code, not only in `env.example`,
 so deleting the `.env` line cannot silently disarm it.
+
+---
+
+## The liquidity gate (implemented)
+
+The one veto the source applies that this port was genuinely missing — and unlike
+VIX and breadth, this one really does gate the router:
+
+```python
+if ctx.liquidity_score is not None and ctx.liquidity_score < 30:
+    return NO_TRADE  # liquidity_veto
+```
+
+It asks a **different question from the spread gate**: that one asks "is the
+contract I am buying quoted tightly", this asks "is this chain tradeable at all".
+
+Reproduces `compute_chain_metrics` exactly, including its upper-median convention
+(`sorted(x)[len(x)//2]`, not the mean of the two middles) and its habit of
+substituting 50.0 for a component whose input list is empty:
+
+```
+spread_score = clamp(100 - median(spread_pct) * 8, 0, 100)
+oi_score     = clamp(median(oi) / 100,             0, 100)
+score        = spread_score * 0.6 + oi_score * 0.4      ->  veto below 30
+```
+
+Costs **no extra API call** — it reads the same cached `/optionchain` response the
+spread gate just fetched for that expiry. One fetch, two gates.
+
+**One deliberate deviation.** Upstream, a chain with *no strikes at all* scores
+`50*0.6 + 50*0.4 = 50` and sails through the veto. Here that returns `None`
+instead: receiving no strikes is not evidence of a liquid market. The usual
+paper/live split then applies — live refuses, paper proceeds with a warning.
+
+### Watch this on the first paper day
+
+The medians run over **every listed strike in the expiry**, both CE and PE. NSE
+lists a long tail of far-OTM strikes that barely trade, so the median spread can
+be dominated by contracts nobody would ever buy, and the score can sit low even
+when the ATM options are perfectly liquid. In that case the gate is measuring
+NSE's strike listing rather than the market, and it would quietly stop the
+strategy trading at all.
+
+That is why a veto logs at WARNING with **every component** — strike count, quoted
+count, median spread, median OI, and both sub-scores. One session's logs should be
+enough to tell "genuinely illiquid" from "arithmetic dominated by dead strikes".
+`REGIME_ADAPTIVE_MIN_LIQUIDITY_SCORE=0` disables it if the latter turns out to be
+the case.
 
 ---
 

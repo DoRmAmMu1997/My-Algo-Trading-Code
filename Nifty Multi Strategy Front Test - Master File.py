@@ -6418,6 +6418,11 @@ _DEFAULT_MAX_SPREAD_PCT = {
     "REGIME_ADAPTIVE": 2.0,
 }
 
+# Same shape for the whole-chain liquidity floor (upstream vetoes below 30).
+_DEFAULT_MIN_LIQUIDITY_SCORE = {
+    "REGIME_ADAPTIVE": 30.0,
+}
+
 # Dhan allows one unique /optionchain request per 3 seconds per
 # (underlying, expiry). Entries are rare, but two workers deciding in the same
 # second on the same expiry would collide, so one short shared cache serves
@@ -6530,6 +6535,81 @@ def _relative_spread_pct(bid: float, ask: float) -> float | None:
     return (ask_value - bid_value) / mid * 100.0
 
 
+def _chain_liquidity_score(resp: object) -> tuple[float | None, dict]:
+    """Score the WHOLE chain's tradeability 0-100, or None when unknowable.
+
+    Reproduces the upstream `compute_chain_metrics` exactly:
+
+        spread_score = clamp(100 - median(spread_pct) * 8, 0, 100)
+        oi_score     = clamp(median(oi) / 100,             0, 100)
+        liquidity    = spread_score * 0.6 + oi_score * 0.4
+
+    including its median convention (`sorted(x)[len(x)//2]` -- the UPPER middle
+    for an even count, not the mean of the two) and its habit of substituting
+    50.0 for a component whose input list is empty.
+
+    ONE DELIBERATE DEVIATION. Upstream, a chain with no strikes at all scores
+    50*0.6 + 50*0.4 = 50 and sails through the veto. Here that returns None
+    instead: "we received no strikes" is not evidence of a liquid market, and this
+    runner's convention is that an unanswerable safety question fails closed on
+    live. The caller applies the usual paper/live split to None.
+
+    Returns ``(score, components)``; the components are logged so a veto is
+    diagnosable from the session log without a re-run.
+    """
+    empty: dict = {"strikes": 0}
+    if not isinstance(resp, dict):
+        return None, empty
+    status = str(resp.get("status", "")).strip().lower()
+    if status and status != "success":
+        return None, empty
+    payload = resp.get("data")
+    if not isinstance(payload, dict):
+        return None, empty
+    oc = payload.get("oc") or payload.get("OC") or {}
+    if not isinstance(oc, dict) or not oc:
+        return None, empty
+
+    spreads: list[float] = []
+    ois: list[float] = []
+    strikes = 0
+    for legs in oc.values():
+        if not isinstance(legs, dict):
+            continue
+        for side in ("ce", "pe"):
+            node = legs.get(side) or legs.get(side.upper())
+            if not isinstance(node, dict):
+                continue
+            strikes += 1
+            bid, ask = _extract_quote_from_chain_node(node)
+            spread = _relative_spread_pct(bid, ask)
+            if spread is not None:
+                spreads.append(spread)
+            open_interest = _safe_float(node.get("oi"), 0.0)
+            if open_interest > 0:  # upstream filters falsy OI out of the median
+                ois.append(open_interest)
+
+    if strikes == 0:
+        return None, empty
+
+    def _upper_median(values: list[float]) -> float:
+        return sorted(values)[len(values) // 2]
+
+    median_spread = _upper_median(spreads) if spreads else None
+    median_oi = _upper_median(ois) if ois else None
+    spread_score = 50.0 if median_spread is None else max(0.0, min(100.0, 100.0 - median_spread * 8))
+    oi_score = 50.0 if median_oi is None else max(0.0, min(100.0, median_oi / 100.0))
+    score = spread_score * 0.6 + oi_score * 0.4
+    return score, {
+        "strikes": strikes,
+        "quoted": len(spreads),
+        "median_spread_pct": median_spread,
+        "median_oi": median_oi,
+        "spread_score": spread_score,
+        "oi_score": oi_score,
+    }
+
+
 def _fetch_option_chain_cached(broker, under_security_id: int, under_segment: str, expiry) -> dict:
     """`fetch_option_chain` behind a short shared TTL, keyed by (underlying, expiry).
 
@@ -6572,6 +6652,10 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
     #: 0 disables the check, which is the default for every worker that predates
     #: it -- see `_spread_gate_allows_entry` and `_DEFAULT_MAX_SPREAD_PCT`.
     max_spread_pct: float = 0.0
+
+    #: Reject an entry when the whole chain scores below this on 0-100.
+    #: 0 disables it; see `_liquidity_gate_allows_entry`.
+    min_liquidity_score: float = 0.0
 
     def _get_open_position_pnl(self) -> float:
         """
@@ -6702,6 +6786,90 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             ask,
             spread_pct,
             max_spread,
+        )
+        return True
+
+    def _liquidity_gate_allows_entry(self, direction: str, trading_symbol: str, expiry_date) -> bool:
+        """Veto an entry when the whole option chain is too illiquid. True = proceed.
+
+        Distinct from the spread gate: that one asks "is the contract I am buying
+        quoted tightly", this asks "is this chain tradeable at all right now". The
+        upstream router applies the second as a hard `liquidity_score < 30` veto.
+
+        Costs NO extra API call -- it reads the same cached `/optionchain`
+        response the spread gate just fetched for this expiry.
+
+        Same paper/live split as everywhere else in this entry path: a score below
+        the floor refuses in both modes (a market fact), an unknowable score
+        refuses live only (an infrastructure failure).
+        """
+        floor = _safe_float(getattr(self, "min_liquidity_score", 0.0), 0.0)
+        if floor <= 0:
+            return True
+
+        try:
+            resp = _fetch_option_chain_cached(
+                self.broker,
+                NIFTY_INDEX_SECURITY_ID,
+                NIFTY_INDEX_EXCHANGE_SEGMENT,
+                expiry_date,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "Liquidity gate could not fetch the option chain for %s: %s", trading_symbol, exc
+            )
+            resp = None
+
+        score, parts = _chain_liquidity_score(resp)
+        if score is None:
+            if self.live_trading:
+                self.log.error(
+                    "REFUSING LIVE %s ENTRY on %s: the option chain gave no usable "
+                    "strikes, so liquidity (floor %.1f) could not be scored.",
+                    direction,
+                    trading_symbol,
+                    floor,
+                )
+                return False
+            self.log.warning(
+                "PAPER %s entry on %s proceeding UNGATED: chain liquidity could not "
+                "be scored (floor %.1f not checked).",
+                direction,
+                trading_symbol,
+                floor,
+            )
+            return True
+
+        if score < floor:
+            # WARNING, with every component, because the most likely way this gate
+            # misbehaves is vetoing a perfectly tradeable session -- the median runs
+            # over EVERY listed strike, and a chain padded with dead far-OTM strikes
+            # drags it down regardless of how liquid the ATM contracts are. One
+            # session's logs should be enough to tell those two cases apart.
+            self.log.warning(
+                "ENTRY SKIPPED BY LIQUIDITY GATE | %s %s | %s | score=%.1f < floor %.1f "
+                "| strikes=%s quoted=%s median_spread=%s%% median_oi=%s "
+                "(spread_score=%.1f oi_score=%.1f)",
+                self.strategy_name,
+                direction,
+                trading_symbol,
+                score,
+                floor,
+                parts.get("strikes"),
+                parts.get("quoted"),
+                parts.get("median_spread_pct"),
+                parts.get("median_oi"),
+                parts.get("spread_score", 0.0),
+                parts.get("oi_score", 0.0),
+            )
+            return False
+
+        self.log.info(
+            "Liquidity gate OK | %s | score=%.1f (floor %.1f, strikes=%s)",
+            trading_symbol,
+            score,
+            floor,
+            parts.get("strikes"),
         )
         return True
 
@@ -6859,6 +7027,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         if not self._spread_gate_allows_entry(
             direction, trading_symbol, option_strike, option_right, expiry_date
         ):
+            return _abort_entry()
+        if not self._liquidity_gate_allows_entry(direction, trading_symbol, expiry_date):
             return _abort_entry()
 
         lots_for_entry = sizing.lots
@@ -12638,6 +12808,9 @@ def _signal_gen_ops(prefix: str) -> dict:
         "max_spread_pct": _env_float(
             f"{prefix}_MAX_SPREAD_PCT", _DEFAULT_MAX_SPREAD_PCT.get(prefix, 0.0)
         ),
+        "min_liquidity_score": _env_float(
+            f"{prefix}_MIN_LIQUIDITY_SCORE", _DEFAULT_MIN_LIQUIDITY_SCORE.get(prefix, 0.0)
+        ),
     }
 
 
@@ -12685,6 +12858,7 @@ def _build_signal_gen_worker_class(
         square_off_minute = ops["square_off_minute"]
         derived_timeframe_minutes = ops["derived_timeframe_minutes"]
         max_spread_pct = ops["max_spread_pct"]
+        min_liquidity_score = ops["min_liquidity_score"]
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
