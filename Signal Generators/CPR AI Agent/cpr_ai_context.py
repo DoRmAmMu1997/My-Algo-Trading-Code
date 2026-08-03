@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from cpr_ai_schema import validate_position_state
 
 _REQUIRED_COLUMNS = ("timestamp", "open", "high", "low", "close")
 _LEVEL_BUFFER_POINTS = 2.0
@@ -358,6 +359,11 @@ def build_cpr_context(
     if bars.empty:
         raise ValueError("CPR context needs at least one complete five-minute bar.")
     current_day = bars.iloc[-1]["timestamp"].date()
+    latest_input_day = minutes.iloc[-1]["timestamp"].date()
+    if current_day != latest_input_day:
+        # A newly opened session can have only one to four observations.  Do
+        # not quietly offer the prior session's frozen context for that bar.
+        raise ValueError("CPR context needs a completed five-minute bar in the latest input session.")
     session_bars = bars.loc[bars["timestamp"].dt.date == current_day].reset_index(drop=True)
     if len(session_bars) < 2:
         raise ValueError("CPR context needs two complete current-session bars for pattern evidence.")
@@ -366,7 +372,7 @@ def build_cpr_context(
         "session_levels": levels,
         "momentum_vwap": _momentum_vwap(session_bars),
         "market_structure": _market_structure(session_bars, levels, swing_window=swing_window),
-        "position_state": dict(position_state or {}),
+        "position_state": validate_position_state(position_state),
     }
 
 

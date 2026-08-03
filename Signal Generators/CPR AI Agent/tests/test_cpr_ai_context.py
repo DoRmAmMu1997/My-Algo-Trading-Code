@@ -7,10 +7,12 @@ Strategy helper, which proves this replacement layer owns its own calculations.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from math import sin
 
 import pandas as pd
 import pytest
 from cpr_ai_context import build_completed_five_minute_bars, build_cpr_context
+from cpr_ai_mcp_server import build_mcp_server, load_snapshot_payload
 from cpr_ai_prompt import CPR_AI_PROMPT_VERSION, build_system_prompt
 from cpr_ai_schema import CPRAgentDecision
 from cpr_ai_tools import EXPECTED_TOOL_NAMES, FrozenCPRContextRegistry
@@ -65,6 +67,15 @@ def test_completed_five_minute_bars_drop_a_partial_bucket_and_preserve_ohlc():
     }
 
 
+def test_context_rejects_a_newest_session_without_a_completed_five_minute_bar():
+    """One to four newest-session minutes must not reuse yesterday's context."""
+
+    newest_partial_session = _minute_rows(datetime(2026, 8, 3, 9, 15), [200.0, 201.0, 202.0, 203.0])
+
+    with pytest.raises(ValueError, match="latest input session"):
+        build_cpr_context(pd.concat([_two_session_frame(), pd.DataFrame(newest_partial_session)], ignore_index=True))
+
+
 def test_context_uses_hand_derived_previous_day_levels_and_opening_facts():
     """A wrong CPR formula or session boundary must change these literal facts."""
 
@@ -108,6 +119,40 @@ def test_momentum_contains_tradingview_srsi_and_equal_weight_vwap_fallback():
     assert {"current_k", "previous_k", "current_d", "previous_d", "cross_up", "cross_down"} <= set(
         momentum["stochastic_rsi"]
     )
+
+
+def test_srsi_literal_crosses_report_their_direction_and_matching_zone_flags():
+    """Known 14/14/3/3 outputs must preserve cross and zone semantics."""
+
+    previous = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30)
+
+    def srsi_for_completed_bars(count: int) -> dict[str, object]:
+        """Build a repeatable five-minute close fixture without reusing production helpers."""
+
+        five_minute_closes = [100.0 + 10.0 * sin(index * 0.65) for index in range(count)]
+        current_minutes = _minute_rows(
+            datetime(2026, 8, 2, 9, 15),
+            [close for close in five_minute_closes for _ in range(5)],
+        )
+        return build_cpr_context(pd.DataFrame(previous + current_minutes))["momentum_vwap"]["stochastic_rsi"]
+
+    # These values are literal results from the standard Wilder RSI(14),
+    # Stoch(14), K SMA(3), D SMA(3) equations for the listed sine closes.
+    oversold_cross = srsi_for_completed_bars(39)
+    assert oversold_cross["current_k"] == pytest.approx(11.0362255097)
+    assert oversold_cross["current_d"] == pytest.approx(5.5542834290)
+    assert oversold_cross["cross_up"] is True
+    assert oversold_cross["cross_down"] is False
+    assert oversold_cross["cross_up_in_oversold"] is True
+    assert oversold_cross["cross_down_in_overbought"] is False
+
+    overbought_cross = srsi_for_completed_bars(73)
+    assert overbought_cross["current_k"] == pytest.approx(82.6066025590)
+    assert overbought_cross["current_d"] == pytest.approx(86.6324134948)
+    assert overbought_cross["cross_up"] is False
+    assert overbought_cross["cross_down"] is True
+    assert overbought_cross["cross_up_in_oversold"] is False
+    assert overbought_cross["cross_down_in_overbought"] is True
 
 
 def test_momentum_exposes_rsi_ema_candle_and_deterministic_vwap_sequence_evidence():
@@ -218,6 +263,45 @@ def test_frozen_context_registry_has_exact_no_argument_tools_and_returns_deep_co
     assert first["levels"] is not second["levels"]
     assert registry.read("position_state") == {"is_flat": True, "entry_price": None}
     assert context["session_levels"]["levels"]["pivot"] > 0
+
+
+def test_position_state_rejects_venue_credential_and_execution_fields_before_and_after_freezing(tmp_path):
+    """Only validated market/position facts may cross either context boundary."""
+
+    with pytest.raises(ValidationError):
+        build_cpr_context(_two_session_frame(), position_state={"is_flat": True, "broker": "DHAN"})
+
+    context = build_cpr_context(_two_session_frame(), position_state={"is_flat": True, "entry_price": None})
+    context["position_state"] = {"is_flat": True, "api_key": "secret"}
+    with pytest.raises(ValidationError):
+        FrozenCPRContextRegistry(context)
+
+    snapshot_path = tmp_path / "forbidden-position-state.json"
+    snapshot_path.write_text(
+        '{"session_levels":{},"momentum_vwap":{},"market_structure":{},"position_state":{"is_flat":true,"venue":"X"}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        load_snapshot_payload(str(snapshot_path))
+
+
+def test_mcp_server_exposes_exactly_four_no_argument_frozen_context_tools(tmp_path):
+    """The real FastMCP registration surface must match the prompt contract."""
+
+    registry = FrozenCPRContextRegistry(
+        build_cpr_context(_two_session_frame(), position_state={"is_flat": True, "entry_price": None})
+    )
+    snapshot_path = tmp_path / "cpr-context.json"
+    registry.write_snapshot_file(str(snapshot_path))
+
+    server = build_mcp_server(str(snapshot_path))
+
+    assert tuple(server._tool_manager._tools) == EXPECTED_TOOL_NAMES
+    for name in EXPECTED_TOOL_NAMES:
+        tool = server._tool_manager.get_tool(name)
+        assert tool is not None
+        assert tool.parameters["properties"] == {}
+        assert tool.fn() == registry.read(name)
 
 
 def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam():

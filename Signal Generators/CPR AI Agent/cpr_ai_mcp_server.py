@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from cpr_ai_schema import validate_position_state
 from cpr_ai_tools import FrozenCPRContextRegistry
 
 
@@ -16,6 +17,9 @@ def load_snapshot_payload(path: str) -> dict[str, dict[str, Any]]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("CPR MCP snapshot must be an object.")
+    # Validate immediately after untrusted JSON parsing, before it is handed
+    # to the registry.  The registry repeats this check at its freeze boundary.
+    raw["position_state"] = validate_position_state(raw.get("position_state"))
     return FrozenCPRContextRegistry(raw).snapshot_payload()
 
 

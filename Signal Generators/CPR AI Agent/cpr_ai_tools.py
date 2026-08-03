@@ -6,6 +6,8 @@ import json
 from collections.abc import Mapping
 from typing import Any, Literal
 
+from cpr_ai_schema import validate_position_state
+
 CPRContextToolName = Literal["session_levels", "momentum_vwap", "market_structure", "position_state"]
 EXPECTED_TOOL_NAMES: tuple[CPRContextToolName, ...] = (
     "session_levels",
@@ -27,8 +29,12 @@ class FrozenCPRContextRegistry:
 
         if set(context) != set(EXPECTED_TOOL_NAMES):
             raise ValueError("CPR context must contain exactly the four approved tool payloads.")
+        validated_context = dict(context)
+        # Revalidate at the freeze boundary as well as during context building.
+        # This protects both direct registry callers and JSON loaded by MCP.
+        validated_context["position_state"] = validate_position_state(context["position_state"])
         self._serialized = {
-            name: json.dumps(context[name], allow_nan=False, sort_keys=True, separators=(",", ":"))
+            name: json.dumps(validated_context[name], allow_nan=False, sort_keys=True, separators=(",", ":"))
             for name in EXPECTED_TOOL_NAMES
         }
 

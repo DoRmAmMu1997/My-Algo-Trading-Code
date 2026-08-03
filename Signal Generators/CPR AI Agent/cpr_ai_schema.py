@@ -6,7 +6,8 @@ quantity, a price, or risk geometry: those decisions remain with the host.
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -82,4 +83,39 @@ class CPRAgentDecision(BaseModel):
         return self
 
 
-__all__ = ["CPRAction", "CPRAgentDecision", "CPRRegime", "CPRSetup"]
+class CPRPositionState(BaseModel):
+    """Allowlisted host facts about an existing market position.
+
+    This deliberately has no broker, venue, credential, order, quantity, or
+    execution field.  ``extra='forbid'`` makes an accidental host hand-off of
+    any such data fail before the frozen MCP snapshot is created or served.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    is_flat: bool | None = None
+    direction: Literal["LONG", "SHORT"] | None = None
+    entry_price: float | None = None
+    entry_timestamp: str | None = None
+    unrealized_pnl: float | None = None
+    bars_held: int | None = None
+    premise: str | None = None
+    scale_in_count: int | None = None
+
+
+def validate_position_state(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Validate and copy only explicit host-provided market/position facts."""
+
+    # ``exclude_unset`` preserves the host's concise payload while still
+    # validating a supplied ``None`` such as ``entry_price=None``.
+    return CPRPositionState.model_validate(dict(payload or {})).model_dump(exclude_unset=True)
+
+
+__all__ = [
+    "CPRAction",
+    "CPRAgentDecision",
+    "CPRPositionState",
+    "CPRRegime",
+    "CPRSetup",
+    "validate_position_state",
+]
