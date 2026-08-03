@@ -14,7 +14,7 @@ import pytest
 from cpr_ai_context import build_completed_five_minute_bars, build_cpr_context
 from cpr_ai_mcp_server import build_mcp_server, load_snapshot_payload
 from cpr_ai_prompt import CPR_AI_PROMPT_VERSION, build_system_prompt
-from cpr_ai_schema import CPRAgentDecision
+from cpr_ai_schema import CPRAgentDecision, validate_position_state
 from cpr_ai_tools import EXPECTED_TOOL_NAMES, FrozenCPRContextRegistry
 from pydantic import ValidationError
 
@@ -282,6 +282,22 @@ def test_position_state_rejects_venue_credential_and_execution_fields_before_and
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
+        load_snapshot_payload(str(snapshot_path))
+
+
+@pytest.mark.parametrize("falsey_payload", [[], "", 0, False])
+def test_position_state_rejects_every_falsey_non_mapping_before_coercion(falsey_payload, tmp_path):
+    """Falsey JSON values must not silently become an empty position payload."""
+
+    with pytest.raises(TypeError, match="mapping or None"):
+        validate_position_state(falsey_payload)
+
+    snapshot_path = tmp_path / "falsey-position-state.json"
+    snapshot_path.write_text(
+        '{"session_levels":{},"momentum_vwap":{},"market_structure":{},"position_state":[]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(TypeError, match="mapping or None"):
         load_snapshot_payload(str(snapshot_path))
 
 

@@ -102,13 +102,27 @@ class CPRPositionState(BaseModel):
     premise: str | None = None
     scale_in_count: int | None = None
 
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any] | None) -> CPRPositionState:
+        """Build position state from a mapping, accepting only ``None`` as empty.
+
+        A falsey list, string, number, or boolean is still malformed input.  It
+        must not be silently coerced into an empty payload at a trust boundary.
+        """
+
+        if payload is None:
+            return cls()
+        if not isinstance(payload, Mapping):
+            raise TypeError("CPR position state payload must be a mapping or None.")
+        return cls.model_validate(dict(payload))
+
 
 def validate_position_state(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     """Validate and copy only explicit host-provided market/position facts."""
 
     # ``exclude_unset`` preserves the host's concise payload while still
     # validating a supplied ``None`` such as ``entry_price=None``.
-    return CPRPositionState.model_validate(dict(payload or {})).model_dump(exclude_unset=True)
+    return CPRPositionState.from_payload(payload).model_dump(exclude_unset=True)
 
 
 __all__ = [
