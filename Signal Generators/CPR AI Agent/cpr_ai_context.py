@@ -134,7 +134,12 @@ def _level_view(name: str, price: float, current_close: float) -> dict[str, Any]
     }
 
 
-def _session_levels(minutes: pd.DataFrame, session_bars: pd.DataFrame) -> dict[str, Any]:
+def _session_levels(
+    minutes: pd.DataFrame,
+    session_bars: pd.DataFrame,
+    *,
+    prior_accepted_regime: str | None,
+) -> dict[str, Any]:
     """Calculate prior-day CPR, support/resistance, opening, and next-level facts."""
 
     sessions = sorted(minutes["timestamp"].dt.date.unique())
@@ -170,6 +175,7 @@ def _session_levels(minutes: pd.DataFrame, session_bars: pd.DataFrame) -> dict[s
     below = [item for item in ordered if item["price"] < current_close - _LEVEL_BUFFER_POINTS]
     return {
         "session_date": str(current_session),
+        "prior_accepted_regime": prior_accepted_regime,
         "current_close": current_close,
         "previous_day": {"high": prior_high, "low": prior_low, "close": prior_close},
         "levels": levels,
@@ -372,7 +378,11 @@ def _market_structure(session_bars: pd.DataFrame, levels: Mapping[str, Any], *, 
 
 
 def build_cpr_context(
-    one_minute_candles: pd.DataFrame, *, position_state: Mapping[str, Any] | None = None, swing_window: int = 2
+    one_minute_candles: pd.DataFrame,
+    *,
+    position_state: Mapping[str, Any] | None = None,
+    prior_accepted_regime: str | None = None,
+    swing_window: int = 2,
 ) -> dict[str, dict[str, Any]]:
     """Freeze-ready CPR context for the latest session's last complete five-minute bar.
 
@@ -382,6 +392,10 @@ def build_cpr_context(
 
     if swing_window < 1:
         raise ValueError("swing_window must be at least one bar on each side.")
+    if prior_accepted_regime not in {None, "SIDEWAYS", "TRENDING", "UNDECIDED"}:
+        raise ValueError(
+            "prior_accepted_regime must be SIDEWAYS, TRENDING, UNDECIDED, or None."
+        )
     minutes = _prepared_minutes(one_minute_candles)
     bars = build_completed_five_minute_bars(minutes)
     if bars.empty:
@@ -395,7 +409,11 @@ def build_cpr_context(
     session_bars = bars.loc[bars["timestamp"].dt.date == current_day].reset_index(drop=True)
     if len(session_bars) < 2:
         raise ValueError("CPR context needs two complete current-session bars for pattern evidence.")
-    levels = _session_levels(minutes, session_bars)
+    levels = _session_levels(
+        minutes,
+        session_bars,
+        prior_accepted_regime=prior_accepted_regime,
+    )
     return {
         "session_levels": levels,
         "momentum_vwap": _momentum_vwap(session_bars),

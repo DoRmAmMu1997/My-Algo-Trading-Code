@@ -8885,6 +8885,89 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
         refresh.assert_called_once_with()
 
 
+class TestCPRAIWorkerFoundation(unittest.TestCase):
+    """Specify the independent CPR AI worker before trade-management details."""
+
+    def _worker(self):
+        """Build a network-free worker with injected agent and audit logger."""
+
+        agent = MagicMock()
+        agent.decide.return_value = SimpleNamespace(
+            action="HOLD",
+            accepted=False,
+            accepted_regime="SIDEWAYS",
+            validation_code="accepted_hold",
+            validation_reason="Synthetic hold.",
+            proposal=None,
+            latency_ms=3,
+            token_usage={"total_tokens": 1},
+            tool_evidence=(),
+            entry_price=None,
+            stop_price=None,
+            milestone_price=None,
+            final_target_price=None,
+            risk_points=None,
+            scale_in_permitted=False,
+        )
+        logger = MagicMock()
+        worker = master_file.CPRAIWorker(
+            master_file.SharedMarketDataStore(),
+            threading.Event(),
+            MagicMock(),
+            agent=agent,
+            decision_logger=logger,
+        )
+        return worker, agent, logger
+
+    def test_worker_inherits_directly_and_has_no_legacy_cpr_decision_dependency(self):
+        """The replacement must not retain the old Algo arbiter through inheritance."""
+
+        import inspect
+
+        source = inspect.getsource(master_file.CPRAIWorker)
+
+        self.assertEqual(
+            master_file.CPRAIWorker.__bases__,
+            (master_file.AtmSingleLegStrategyWorker,),
+        )
+        for forbidden in (
+            "CPR_LOGIC",
+            "CPR_ALGO3_LOGIC",
+            "algo1_generator",
+            "algo2_generator",
+            "algo3_generator",
+            "_fetch_option_1m",
+            "paper_only",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_worker_runs_one_agent_turn_per_completed_five_minute_signature(self):
+        """Repeated polls of one completed bar cannot repeat inference."""
+
+        worker, agent, logger = self._worker()
+        frozen = {
+            "session_levels": {"prior_accepted_regime": None},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        worker._latest_frozen_context = lambda: frozen
+        worker._completed_bar_signature = lambda _frame: "bar-0930"
+        worker._current_completed_spot_signature = lambda: "bar-0930"
+        completed = pd.DataFrame(
+            [{"timestamp": pd.Timestamp("2026-08-03 09:30"), "open": 100, "high": 102, "low": 99, "close": 101}]
+        )
+
+        worker.process_strategy_frame(completed)
+        worker.process_strategy_frame(completed.copy())
+
+        agent.decide.assert_called_once()
+        self.assertEqual(agent.decide.call_args.kwargs["bar_signature"], "bar-0930")
+        self.assertEqual(agent.decide.call_args.kwargs["current_signature"](), "bar-0930")
+        self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
+        logger.write.assert_called_once()
+
+
 if __name__ == "__main__":
     # Use the custom runner so both `python file.py` and any other direct
     # invocation produce verbose per-test output PLUS the final summary.

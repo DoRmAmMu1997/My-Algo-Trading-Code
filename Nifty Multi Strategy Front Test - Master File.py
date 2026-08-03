@@ -723,6 +723,39 @@ CPR_ALGO3_ITM_OFFSET = _env_float("CPR_ALGO3_ITM_OFFSET", 100.0)
 
 
 # =============================================================================
+# CPR CODEX AI AGENT CONSTANTS (optional independent five-minute worker)
+# =============================================================================
+# Configuration is read through the same helpers as every other strategy. Lot
+# count and daily max loss use the size-multiplier helpers so ``CPR_AI`` follows
+# the repository-wide scaling and normal paper/live double-gate rules.
+CPR_AI_ENABLED = _env_bool("CPR_AI_ENABLED", False)
+CPR_AI_MODEL = _env_str("CPR_AI_MODEL", "gpt-5.6-terra")
+CPR_AI_REASONING_EFFORT = _env_str("CPR_AI_REASONING_EFFORT", "medium").lower()
+CPR_AI_SDK_TIMEOUT_SECONDS = _env_int("CPR_AI_SDK_TIMEOUT_SECONDS", 90)
+CPR_AI_LOTS = _scaled_int("CPR_AI", "CPR_AI_LOTS", 1)
+CPR_AI_MAX_LOSS = _scaled_float("CPR_AI", "CPR_AI_MAX_LOSS", 5500.0)
+CPR_AI_POLL_SECONDS = _env_int("CPR_AI_POLL_SECONDS", 5)
+CPR_AI_TRADING_START_HOUR = _env_int("CPR_AI_TRADING_START_HOUR", 9)
+CPR_AI_TRADING_START_MINUTE = _env_int("CPR_AI_TRADING_START_MINUTE", 30)
+CPR_AI_ENTRY_CUTOFF_HOUR = _env_int("CPR_AI_ENTRY_CUTOFF_HOUR", 15)
+CPR_AI_ENTRY_CUTOFF_MINUTE = _env_int("CPR_AI_ENTRY_CUTOFF_MINUTE", 0)
+CPR_AI_SQUARE_OFF_HOUR = _env_int("CPR_AI_SQUARE_OFF_HOUR", 15)
+CPR_AI_SQUARE_OFF_MINUTE = _env_int("CPR_AI_SQUARE_OFF_MINUTE", 15)
+CPR_AI_BAR_MINUTES = 5
+CPR_AI_MAX_STOP_POINTS = 30.0
+CPR_AI_LEVEL_BUFFER_POINTS = 2.0
+CPR_AI_MIN_BODY_FRACTION = 0.40
+CPR_AI_MAX_SCALE_INS = 1
+CPR_AI_DECISION_LOGGING_ENABLED = _env_bool(
+    "CPR_AI_DECISION_LOGGING_ENABLED", True
+)
+CPR_AI_DECISION_LOG_PATH = _env_str(
+    "CPR_AI_DECISION_LOG_PATH",
+    str(ROOT_DIR / "Backtest Outputs" / "cpr_ai_decisions.jsonl"),
+)
+
+
+# =============================================================================
 # PROFIT SHOOTER STRATEGY CONSTANTS (Tier 3)
 # =============================================================================
 # Sizing/risk + trading window. Indicator/pin-bar tuning lives further down
@@ -1180,6 +1213,39 @@ CPR_ALGO3_LOGIC = load_module(
     "master_cpr_algo3_signal_generator",
     ROOT_DIR / "Signal Generators" / "CPR Strategy" / "Nifty CPR Algo 3 Signal Generator.py",
 )
+
+# CPR Codex AI groundwork. These three modules contain host-side policy, signal
+# normalization, and logging only.  They import the Codex SDK inside a sanitized
+# inference subprocess, so a normal master import remains cheap.  Any missing
+# optional dependency disables this one worker and leaves all deterministic
+# workers untouched.
+CPR_AI_AVAILABLE = False
+CPR_AI_IMPORT_ERROR = ""
+try:
+    _cpr_ai_dir = ROOT_DIR / "Signal Generators" / "CPR AI Agent"
+    CPR_AI_AGENT_LOGIC = load_module(
+        "master_cpr_ai_agent", _cpr_ai_dir / "cpr_ai_agent.py"
+    )
+    CPR_AI_SIGNALS_LOGIC = load_module(
+        "master_cpr_ai_signals", _cpr_ai_dir / "cpr_ai_signals.py"
+    )
+    CPR_AI_CONTEXT_LOGIC = load_module(
+        "master_cpr_ai_context", _cpr_ai_dir / "cpr_ai_context.py"
+    )
+    CPR_AI_DECISION_LOGIC = load_module(
+        "master_cpr_ai_decision_log", _cpr_ai_dir / "cpr_ai_decision_log.py"
+    )
+    CPR_AI_AVAILABLE = True
+except Exception as _cpr_ai_import_exc:  # optional strategy, never fatal
+    CPR_AI_AGENT_LOGIC = None
+    CPR_AI_SIGNALS_LOGIC = None
+    CPR_AI_CONTEXT_LOGIC = None
+    CPR_AI_DECISION_LOGIC = None
+    CPR_AI_IMPORT_ERROR = type(_cpr_ai_import_exc).__name__
+    logging.getLogger(LOGGER_NAME).warning(
+        "CPR AI agent modules unavailable (%s); optional worker disabled.",
+        CPR_AI_IMPORT_ERROR,
+    )
 
 # -----------------------------------------------------------------------------
 # Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
@@ -8699,6 +8765,427 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# CPR CODEX AI WORKER (optional arbiter over Algo 1, Algo 2, and Algo 3)
+# =============================================================================
+CPRAIWorker = None
+if CPR_AI_AVAILABLE:
+
+    class _CPRAIArbiterGroundwork(CPRAlgo3StrategyWorker):
+        """Paper-only Codex arbiter over three frozen deterministic CPR results.
+
+        Beginner-level flow for a flat position:
+
+        1. Reuse the existing CPR code to calculate Algo 1, Algo 2, and Algo 3.
+        2. Freeze those three results so Python and MCP see identical facts.
+        3. Ask Codex to select one genuine signal or return ``HOLD``.
+        4. Revalidate the proposal, market-data signature, and worker lifecycle.
+        5. Copy entry/stop/target from the selected deterministic result into the
+           inherited ATM *paper* entry path.
+
+        Codex has no execution tool and never receives an open position.  Once a
+        position exists, stop/target, max-loss, stale-data shutdown, and daily
+        square-off remain entirely mechanical in the existing worker framework.
+        """
+
+        strategy_name = "CPR AI"
+        poll_seconds = CPR_AI_POLL_SECONDS
+        lots = CPR_AI_LOTS
+        max_loss = CPR_AI_MAX_LOSS
+        trading_start_hour = CPR_AI_TRADING_START_HOUR
+        trading_start_minute = CPR_AI_TRADING_START_MINUTE
+        square_off_hour = CPR_AI_SQUARE_OFF_HOUR
+        square_off_minute = CPR_AI_SQUARE_OFF_MINUTE
+        paper_only = True
+
+        def __init__(
+            self,
+            store: SharedMarketDataStore,
+            stop_event: threading.Event,
+            broker: DhanBrokerClient,
+            *,
+            agent=None,
+            decision_logger=None,
+            algo1_generator=None,
+            algo2_generator=None,
+            algo3_generator=None,
+        ):
+            """Create the paper worker and allow dependency injection in tests.
+
+            Production leaves the optional keyword arguments unset and receives
+            the repository's real deterministic generators, Codex policy layer,
+            and JSONL logger.  Tests inject small fakes so they can prove the
+            safety contract without network access or a broker SDK.
+            """
+
+            super().__init__(store, stop_event, broker)
+            # A normal CPR engine is retained only for mechanical stop/target
+            # evaluation after an entry.  It does not ask Codex to manage exits.
+            self.exit_engine = CPR_LOGIC.CPRSignalEngine(CPR_STRATEGY_CONFIG)
+            # Split the existing combined CPR generator into the requested Algo
+            # 1 and Algo 2 tool views without altering either calculation.
+            self.algo1_generator = algo1_generator or CPR_LOGIC.CPRSignalGenerator(
+                CPR_STRATEGY_CONFIG, enabled_algorithms=("ALGO1",)
+            )
+            self.algo2_generator = algo2_generator or CPR_LOGIC.CPRSignalGenerator(
+                CPR_STRATEGY_CONFIG,
+                enabled_algorithms=("ALGO2_ZONE", "RSI_DIVERGENCE"),
+            )
+            self.algo3_generator = algo3_generator or CPR_ALGO3_LOGIC.NiftyCPRAlgo3SignalGenerator(
+                CPR_ALGO3_CONFIG
+            )
+            # The policy object imports the real SDK runner lazily on its first
+            # call.  Merely constructing the master does not authenticate Codex.
+            self.agent = agent or CPR_AI_AGENT_LOGIC.CPRAgent(
+                model=CPR_AI_MODEL,
+                reasoning_effort=CPR_AI_REASONING_EFFORT,
+                timeout_seconds=CPR_AI_SDK_TIMEOUT_SECONDS,
+            )
+            self.decision_logger = decision_logger or CPR_AI_DECISION_LOGIC.CPRDecisionLogger(
+                CPR_AI_DECISION_LOG_PATH,
+                enabled=CPR_AI_DECISION_LOGGING_ENABLED,
+            )
+            # Marking a signature before inference enforces one attempt per
+            # completed five-minute candle, including failures and timeouts.
+            self._last_agent_bar_signature = None
+            self._paper_only_warning_logged = False
+
+        def _enforce_paper_only(self) -> None:
+            """Neutralize even an accidental runtime mutation of live_trading."""
+
+            if self.live_trading and not self._paper_only_warning_logged:
+                self.log.error(
+                    "CPR AI is PAPER-ONLY; ignoring an attempted live-mode mutation."
+                )
+                self._paper_only_warning_logged = True
+            self.live_trading = False
+
+        def _ensure_observation_strikes(self) -> bool:
+            """Resolve and retain Algo 3's fixed current-week observation legs.
+
+            Algo 3 reads an ITM call and put in addition to NIFTY spot.  The
+            strikes are chosen once per worker session so their VWAP/CPR history
+            stays continuous.  These contracts are observations only; accepted
+            entries still use the inherited ATM next-next-expiry instrument.
+            """
+
+            if self.itm_ce is not None and self.itm_pe is not None:
+                return True
+            spot = self._get_underlying_spot(fallback=0.0)
+            if spot <= 0:
+                return False
+            # A call becomes ITM below ATM, while a put becomes ITM above ATM.
+            atm = round(spot / ATM_STRIKE_STEP) * ATM_STRIKE_STEP
+            ce_strike = atm - CPR_AI_ITM_OFFSET
+            pe_strike = atm + CPR_AI_ITM_OFFSET
+            try:
+                expiry = self.contract_resolver.get_current_week_expiry()
+                ce = self.contract_resolver.get_option_for_strike(
+                    expiry, ce_strike, "CE"
+                )
+                pe = self.contract_resolver.get_option_for_strike(
+                    expiry, pe_strike, "PE"
+                )
+            except Exception as exc:
+                self.log.warning(
+                    "CPR AI Algo 3 observation-strike resolution failed: %s", exc
+                )
+                return False
+            if not ce or not pe:
+                return False
+            # Store the pair only after both contracts resolve successfully; a
+            # half-populated pair would make synchronized Algo 3 evidence unsafe.
+            self.itm_ce, self.itm_pe, self.observation_expiry = ce, pe, expiry
+            self.log.info(
+                "CPR AI observation legs fixed | Expiry=%s | CE=%s | PE=%s",
+                expiry.isoformat(),
+                ce["trading_symbol"],
+                pe["trading_symbol"],
+            )
+            return True
+
+        def _current_completed_spot_signature(self) -> str:
+            """Re-read and sign the latest completed spot bar after inference.
+
+            Codex can take many seconds.  Comparing this value with the original
+            signature prevents a decision about bar N from entering on bar N+1.
+            """
+
+            snapshot = self.store.get(self.timeframe)
+            if snapshot is None or snapshot.frame.empty:
+                return ""
+            frame = self.build_strategy_frame(snapshot.frame)
+            return str(build_last_row_signature(frame))
+
+        def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+            """Exit mechanically when open; otherwise arbitrate one frozen bar.
+
+            The base loop already supplies a completed, indicator-enriched CPR
+            frame and gates repeated frame signatures.  This method adds a local
+            no-retry signature because SDK failures must also consume the bar.
+            """
+
+            # Enforce paper mode on every pass, not just during startup, so an
+            # accidental runtime attribute mutation cannot reach live execution.
+            self._enforce_paper_only()
+            if self.pos.active:
+                # Recreate the ordinary CPR position context from persisted
+                # levels.  Codex is neither called nor shown this open position.
+                position = CPR_LOGIC.CPRPositionContext(
+                    direction=self.pos.direction,
+                    entry_underlying=self.pos.entry_underlying,
+                    stop_underlying=self.pos.stop_underlying,
+                    target_underlying=self.pos.target_underlying,
+                    strategy_name=self.strategy_name,
+                )
+                decision = self.exit_engine.evaluate_candle(
+                    strategy_frame, position=position
+                )
+                if decision.action == "EXIT":
+                    self.exit_position(decision.exit_reason)
+                return
+
+            bar_signature = str(build_last_row_signature(strategy_frame))
+            if not bar_signature or bar_signature == "None":
+                return
+            if self._last_agent_bar_signature == bar_signature:
+                return
+            # Mark before inference: failures/timeouts are never retried on the
+            # same completed candle.
+            self._last_agent_bar_signature = bar_signature
+
+            spot_snapshot = self.store.get(self.timeframe)
+            if spot_snapshot is None or spot_snapshot.frame.empty:
+                return
+            ce_ohlc = None
+            pe_ohlc = None
+            if self._ensure_observation_strikes():
+                try:
+                    ce_ohlc = self._fetch_option_1m(self.itm_ce)
+                    pe_ohlc = self._fetch_option_1m(self.itm_pe)
+                except Exception as exc:
+                    # Algo 3 becomes unavailable; Algo 1/2 are still valid inputs.
+                    self.log.warning(
+                        "CPR AI Algo 3 observation fetch failed (%s).",
+                        type(exc).__name__,
+                    )
+                    ce_ohlc = None
+                    pe_ohlc = None
+
+            tool_results = CPR_AI_SIGNALS_LOGIC.compute_cpr_tool_results(
+                spot_snapshot.frame,
+                ce_candles=ce_ohlc,
+                pe_candles=pe_ohlc,
+                algo1_generator=self.algo1_generator,
+                algo2_generator=self.algo2_generator,
+                algo3_generator=self.algo3_generator,
+            )
+            outcome = self.agent.decide(
+                tool_results,
+                bar_signature=bar_signature,
+                current_signature=self._current_completed_spot_signature,
+            )
+            submitted = False
+            blocked_reason = ""
+            try:
+                if outcome.accepted:
+                    # Inference may finish after shutdown or the 15:15 cutoff.
+                    # Recheck lifecycle state immediately before any entry call.
+                    if self.stop_event.is_set():
+                        blocked_reason = "stop_event"
+                    elif self.lifecycle.snapshot().state is not LifecycleState.RUNNING:
+                        blocked_reason = "worker_not_running"
+                    elif is_after_time(self.square_off_hour, self.square_off_minute):
+                        blocked_reason = "time_cutoff"
+                    else:
+                        self.signal_count += 1
+                        # Direction is the only translation performed here.  All
+                        # three levels came from the selected frozen tool result.
+                        direction = (
+                            "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
+                        )
+                        submitted = self.enter_position(
+                            direction,
+                            outcome.entry_underlying,
+                            outcome.stop_underlying,
+                            outcome.target_underlying,
+                        )
+                        if submitted:
+                            self.entry_submit_count += 1
+            except Exception as exc:
+                # The worker loop owns exception handling, but the proposal must
+                # still leave an audit record before control returns to it.
+                self.decision_logger.write(
+                    bar_signature=bar_signature,
+                    tool_results=tool_results,
+                    outcome=outcome,
+                    execution={
+                        "submitted": False,
+                        "mode": "PAPER",
+                        "error": type(exc).__name__,
+                    },
+                )
+                raise
+            execution = {"submitted": bool(submitted), "mode": "PAPER"}
+            if blocked_reason:
+                execution["blocked_reason"] = blocked_reason
+            self.decision_logger.write(
+                bar_signature=bar_signature,
+                tool_results=tool_results,
+                outcome=outcome,
+                execution=execution,
+            )
+
+
+class CPRAIWorker(AtmSingleLegStrategyWorker):
+    """Run the independent five-minute CPR context through one optional agent.
+
+    The worker deliberately starts from the generic ATM execution base. Market
+    evidence comes only from the self-contained CPR/SRSI/VWAP context modules,
+    while this host remains responsible for cadence, lifecycle checks, audit,
+    and every eventual execution decision.
+    """
+
+    strategy_name = "CPR AI"
+    timeframe = "1"
+    poll_seconds = CPR_AI_POLL_SECONDS
+    lots = CPR_AI_LOTS
+    max_loss = CPR_AI_MAX_LOSS
+    trading_start_hour = CPR_AI_TRADING_START_HOUR
+    trading_start_minute = CPR_AI_TRADING_START_MINUTE
+    square_off_hour = CPR_AI_SQUARE_OFF_HOUR
+    square_off_minute = CPR_AI_SQUARE_OFF_MINUTE
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+        *,
+        agent=None,
+        decision_logger=None,
+    ) -> None:
+        """Create a dependency-injectable worker without authenticating an SDK."""
+
+        super().__init__(store, stop_event, broker)
+        if agent is None:
+            if not CPR_AI_AVAILABLE:
+                raise RuntimeError("The optional CPR AI runtime is unavailable.")
+            agent = CPR_AI_AGENT_LOGIC.CPRAgent(
+                model=CPR_AI_MODEL,
+                reasoning_effort=CPR_AI_REASONING_EFFORT,
+                timeout_seconds=CPR_AI_SDK_TIMEOUT_SECONDS,
+            )
+        if decision_logger is None:
+            if not CPR_AI_AVAILABLE:
+                raise RuntimeError("The optional CPR AI audit logger is unavailable.")
+            decision_logger = CPR_AI_DECISION_LOGIC.CPRDecisionLogger(
+                CPR_AI_DECISION_LOG_PATH,
+                enabled=CPR_AI_DECISION_LOGGING_ENABLED,
+            )
+        self.agent = agent
+        self.decision_logger = decision_logger
+        self._latest_one_minute_frame = pd.DataFrame()
+        self._last_agent_bar_signature: str | None = None
+        self._prior_accepted_regime: str | None = None
+
+    def minimum_source_rows(self) -> int:
+        """Let the independent context decide when its own history is sufficient."""
+
+        return 1
+
+    def minimum_strategy_rows(self) -> int:
+        """One completed five-minute bar is enough for the cadence gate."""
+
+        return 1
+
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """Cache raw minutes and return only complete five-minute NIFTY bars."""
+
+        self._latest_one_minute_frame = ohlc.copy(deep=True)
+        return CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(ohlc)
+
+    @staticmethod
+    def _completed_bar_signature(strategy_frame: pd.DataFrame) -> str:
+        """Return a stable signature for the newest completed five-minute bar."""
+
+        signature = build_last_row_signature(strategy_frame)
+        return "" if signature is None else repr(signature)
+
+    def _position_state_payload(self) -> dict[str, object]:
+        """Expose only allowlisted host position facts to the advisory context."""
+
+        if not self.pos.active:
+            return {"is_flat": True}
+        return {
+            "is_flat": False,
+            "direction": self.pos.direction,
+            "original_entry_price": self.pos.entry_underlying,
+            "original_protective_stop": self.pos.stop_underlying,
+            "current_protective_stop": self.pos.stop_underlying,
+        }
+
+    def _latest_frozen_context(self) -> dict[str, dict[str, object]]:
+        """Freeze one raw-minute snapshot with the previous accepted regime."""
+
+        registry = CPR_AI_SIGNALS_LOGIC.freeze_cpr_context(
+            self._latest_one_minute_frame,
+            position_state=self._position_state_payload(),
+            prior_accepted_regime=self._prior_accepted_regime,
+        )
+        return registry.snapshot_payload()
+
+    def _current_completed_spot_signature(self) -> str:
+        """Re-sign the latest complete five-minute NIFTY bar after inference."""
+
+        snapshot = self.store.get(self.timeframe)
+        if snapshot is None or snapshot.frame.empty:
+            return ""
+        completed = CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(
+            snapshot.frame
+        )
+        return self._completed_bar_signature(completed)
+
+    @staticmethod
+    def _tool_log_payload(tool_evidence) -> list[dict[str, object]]:
+        """Convert SDK-neutral tool evidence into logger-ready dictionaries."""
+
+        return [
+            dict(vars(record)) if hasattr(record, "__dict__") else dict(record)
+            for record in tool_evidence
+        ]
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """Ask at most once per completed bar and persist valid regime memory."""
+
+        bar_signature = self._completed_bar_signature(strategy_frame)
+        if not bar_signature or bar_signature == self._last_agent_bar_signature:
+            return
+        # Consume the signature before the optional call. A timeout or malformed
+        # response must not cause repeated SDK turns on the same market bar.
+        self._last_agent_bar_signature = bar_signature
+        frozen_context = self._latest_frozen_context()
+        outcome = self.agent.decide(
+            frozen_context,
+            bar_signature=bar_signature,
+            current_signature=self._current_completed_spot_signature,
+        )
+        if outcome.accepted_regime is not None:
+            self._prior_accepted_regime = outcome.accepted_regime
+        self.decision_logger.write(
+            frozen_context=frozen_context,
+            proposal=outcome.proposal,
+            outcome=outcome,
+            latency_ms=outcome.latency_ms,
+            token_usage=outcome.token_usage,
+            tool_evidence=self._tool_log_payload(outcome.tool_evidence),
+            execution={
+                "mode": "LIVE" if self.live_trading else "PAPER",
+                "submitted": False,
+            },
+        )
+
+
+# =============================================================================
 # SUPERTREND BULLISH WORKER (3-min, hedged PE spread)
 # =============================================================================
 class SupertrendBullishWorker(BasePaperStrategyWorker):
@@ -12506,6 +12993,7 @@ STRATEGY_ENV_PREFIX = {
     "OpeningStrike": "OPENING_STRIKE",
     "CPR": "CPR",
     "CPRAlgo3": "CPR_ALGO3",
+    "CPR AI": "CPR_AI",
     "SupertrendBullish": "BULLISH",
     "DonchianBearish": "BEARISH",
     "Delta20Hedged": "DELTA20",
@@ -14481,6 +14969,47 @@ def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
     return _env_bool(f"{prefix}_VIRTUAL_TRADING", True)
 
 
+def _cpr_ai_startup_errors() -> tuple[str, ...]:
+    """Return every reason the optional CPR arbiter must be omitted at startup.
+
+    The function collects all problems in one pass so the operator can fix the
+    complete configuration instead of discovering one error per restart.  An
+    empty tuple means the worker may be constructed; it does not enable live
+    trading, which is impossible for this worker by design.
+    """
+
+    if not _env_bool("CPR_AI_ENABLED", False):
+        return ()
+    errors: list[str] = []
+    if CPRAIWorker is None:
+        detail = f" ({CPR_AI_IMPORT_ERROR})" if CPR_AI_IMPORT_ERROR else ""
+        errors.append(f"CPR AI optional dependencies are unavailable{detail}.")
+    else:
+        # Keep the SDK import lazy, but preflight its module spec at startup so a
+        # missing optional stack omits this worker instead of logging one HOLD
+        # on every five-minute bar all day.
+        missing = [
+            package
+            for package in ("openai_codex", "mcp", "pydantic")
+            if importlib.util.find_spec(package) is None
+        ]
+        if missing:
+            errors.append(
+                "CPR AI optional runtime is incomplete; missing: "
+                + ", ".join(missing)
+                + "."
+            )
+    if _env_bool("CPR_AI_LIVE_TRADING", False):
+        errors.append("CPR_AI_LIVE_TRADING=true is invalid: this worker is paper-only.")
+    # The AI worker internally evaluates the same strategies.  Requiring both
+    # deterministic workers off prevents duplicated CPR entries and P&L rows.
+    if _env_bool("CPR_VIRTUAL_TRADING", True):
+        errors.append("Set CPR_VIRTUAL_TRADING=false before enabling CPR AI.")
+    if _env_bool("CPR_ALGO3_VIRTUAL_TRADING", True):
+        errors.append("Set CPR_ALGO3_VIRTUAL_TRADING=false before enabling CPR AI.")
+    return tuple(errors)
+
+
 _RISK_BUDGET_PREFIXES = frozenset(
     {"PROFIT_SHOOTER", "GOLDMINE", "MONEY_MACHINE", "SL_HUNTING"}
 )
@@ -14715,6 +15244,17 @@ def _configure_startup_live_trading(
                 "No env prefix mapped for strategy %s; forcing PAPER.",
                 worker.strategy_name,
             )
+            continue
+        if getattr(worker, "paper_only", False):
+            # This attribute-level guard protects any future paper-only worker,
+            # while `_cpr_ai_startup_errors` additionally treats the CPR flag as
+            # invalid even when the global live switch is off.
+            if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
+                logger.error(
+                    "%s is PAPER-ONLY; ignoring %s_LIVE_TRADING=true.",
+                    worker.strategy_name,
+                    prefix,
+                )
             continue
         if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
             config_errors = _live_config_errors(worker, prefix)
@@ -15352,6 +15892,28 @@ def main() -> None:
                 exc,
                 exc_info=True,
             )
+
+    # ----- CPR Codex AI agent (optional): conservative PAPER-ONLY arbiter.
+    # It may replace the two deterministic CPR workers, never coexist with them.
+    # The deterministic workers were constructed above because worker assembly
+    # stays centralized; their required false virtual gates remove them in the
+    # common filtering pass below before any thread starts.
+    if _env_bool("CPR_AI_ENABLED", False):
+        cpr_ai_errors = _cpr_ai_startup_errors()
+        if cpr_ai_errors:
+            logger.error(
+                "CPR AI worker omitted due to invalid configuration | %s",
+                "; ".join(cpr_ai_errors),
+            )
+        else:
+            try:
+                workers.append(CPRAIWorker(store, stop_event, broker))
+            except Exception as exc:  # noqa: BLE001 - optional strategy, never fatal
+                logger.error(
+                    "CPR AI worker could not be created (%s); continuing without it.",
+                    type(exc).__name__,
+                    exc_info=True,
+                )
 
     # -------------------------------------------------------------------------
     # Per-strategy virtual (paper) trading gate.

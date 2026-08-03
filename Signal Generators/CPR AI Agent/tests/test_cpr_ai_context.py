@@ -100,6 +100,19 @@ def test_context_uses_hand_derived_previous_day_levels_and_opening_facts():
     assert levels["next_levels"]["downside"]["name"] == "r2"
 
 
+def test_context_carries_only_the_prior_host_accepted_regime_into_session_levels():
+    """The next turn sees host memory without letting context infer a regime."""
+
+    context = build_cpr_context(
+        _two_session_frame(),
+        prior_accepted_regime="TRENDING",
+    )
+
+    assert context["session_levels"]["prior_accepted_regime"] == "TRENDING"
+    with pytest.raises(ValueError, match="prior_accepted_regime"):
+        build_cpr_context(_two_session_frame(), prior_accepted_regime="BREAKOUT")
+
+
 def test_momentum_contains_tradingview_srsi_and_equal_weight_vwap_fallback():
     """Missing index volume uses typical-price averaging while SRSI exposes crosses."""
 

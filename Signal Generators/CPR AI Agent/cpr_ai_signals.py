@@ -13,10 +13,17 @@ def freeze_cpr_context(
     one_minute_candles: pd.DataFrame,
     *,
     position_state: dict[str, Any] | None = None,
+    prior_accepted_regime: str | None = None,
 ) -> FrozenCPRContextRegistry:
     """Build and freeze one CPR context without invoking a strategy generator."""
 
-    return FrozenCPRContextRegistry(build_cpr_context(one_minute_candles, position_state=position_state))
+    return FrozenCPRContextRegistry(
+        build_cpr_context(
+            one_minute_candles,
+            position_state=position_state,
+            prior_accepted_regime=prior_accepted_regime,
+        )
+    )
 
 
 __all__ = ["freeze_cpr_context"]
