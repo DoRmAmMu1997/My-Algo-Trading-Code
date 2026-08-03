@@ -8967,6 +8967,506 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
         logger.write.assert_called_once()
 
+    def test_startup_allows_independent_cpr_workers_and_the_normal_live_gate(self):
+        """CPR AI no longer requires sibling workers off or rejects live mode."""
+
+        values = {
+            "CPR_AI_ENABLED": True,
+            "CPR_AI_LIVE_TRADING": True,
+            "CPR_VIRTUAL_TRADING": True,
+            "CPR_ALGO3_VIRTUAL_TRADING": True,
+        }
+        with (
+            patch.object(master_file, "_env_bool", side_effect=lambda key, default=False: values.get(key, default)),
+            patch.object(master_file.importlib.util, "find_spec", return_value=object()),
+        ):
+            self.assertEqual(master_file._cpr_ai_startup_errors(), ())
+
+        self.assertFalse(hasattr(master_file.CPRAIWorker, "paper_only"))
+        self.assertEqual(master_file.CPR_AI_TRADING_START_MINUTE, 30)
+        self.assertEqual(master_file.CPR_AI_ENTRY_CUTOFF_MINUTE, 0)
+        self.assertEqual(master_file.CPR_AI_BAR_MINUTES, 5)
+        self.assertEqual(master_file.CPR_AI_MAX_SCALE_INS, 1)
+
+    def test_flat_skips_at_1500_but_open_position_still_gets_exit_inference(self):
+        """The entry cutoff does not silence premise exits before 15:15."""
+
+        flat, flat_agent, _logger = self._worker()
+        flat._at_or_after_entry_cutoff = MagicMock(return_value=True)
+        flat.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
+        flat_agent.decide.assert_not_called()
+
+        opened, open_agent, _logger = self._worker()
+        opened._at_or_after_entry_cutoff = MagicMock(return_value=True)
+        opened.pos = master_file.PaperPosition(active=True, direction="LONG")
+        opened._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        opened._latest_frozen_context = lambda: {
+            "session_levels": {},
+            "momentum_vwap": {
+                "stochastic_rsi": {"cross_down": False, "cross_up": False},
+                "candle": {"close": 101.0},
+            },
+            "market_structure": {},
+            "position_state": {"is_flat": False, "direction": "LONG"},
+        }
+        opened._completed_bar_signature = lambda _frame: "after-cutoff"
+        opened._current_completed_spot_signature = lambda: "after-cutoff"
+        open_agent.decide.return_value.action = "EXIT"
+        open_agent.decide.return_value.accepted = True
+        opened.exit_position = MagicMock()
+
+        opened.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
+
+        open_agent.decide.assert_called_once()
+        opened.exit_position.assert_called_once_with("CPR_AI_PREMISE_EXIT")
+
+    def test_spot_stop_and_final_target_exit_without_calling_the_agent(self):
+        """Latest spot owns hard protection and final R2/S2 booking each poll."""
+
+        worker, agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(active=True, direction="LONG")
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        worker.exit_position = MagicMock()
+
+        self.assertTrue(worker._check_cpr_spot_boundaries(95.0))
+        worker.exit_position.assert_called_once_with("CPR_AI_HARD_STOP")
+        worker.exit_position.reset_mock()
+        self.assertTrue(worker._check_cpr_spot_boundaries(118.0))
+        worker.exit_position.assert_called_once_with("CPR_AI_FINAL_TARGET")
+        agent.decide.assert_not_called()
+
+    def test_prebar_safety_checks_latest_spot_on_every_poll(self):
+        """Hard protection runs even when no new five-minute bar exists."""
+
+        worker, agent, _logger = self._worker()
+        worker._run_shutdown_cycle_if_requested = MagicMock(return_value=False)
+        worker.is_max_loss_breached = MagicMock(return_value=(False, 0.0, 0.0))
+        worker._handle_market_data_health = MagicMock(return_value=False)
+        worker._get_underlying_spot = MagicMock(return_value=95.0)
+        worker._check_cpr_spot_boundaries = MagicMock(return_value=True)
+        with patch.object(master_file, "is_after_time", return_value=False):
+            consumed = worker._run_prebar_safety()
+
+        self.assertTrue(consumed)
+        worker._check_cpr_spot_boundaries.assert_called_once_with(95.0)
+        agent.decide.assert_not_called()
+
+    def test_completed_bar_srsi_precedes_agent_and_reversal_stages_never_loosen_stop(self):
+        """SRSI exits first; reversal milestones ratchet from risk to BE then 1R."""
+
+        worker, agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(active=True, direction="LONG")
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_REVERSAL",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        worker.exit_position = MagicMock()
+        reversal = {
+            "momentum_vwap": {
+                "stochastic_rsi": {"cross_down": True, "cross_up": False},
+                "candle": {"close": 104.0},
+            }
+        }
+
+        self.assertTrue(worker._manage_completed_bar(reversal))
+        worker.exit_position.assert_called_once_with("CPR_AI_SRSI_REVERSAL")
+        agent.decide.assert_not_called()
+
+        worker.exit_position.reset_mock()
+        reversal["momentum_vwap"]["stochastic_rsi"]["cross_down"] = False
+        reversal["momentum_vwap"]["candle"]["close"] = 105.0
+        self.assertFalse(worker._manage_completed_bar(reversal))
+        self.assertEqual(worker._cpr_state.current_hard_stop, 100.0)
+        reversal["momentum_vwap"]["candle"]["close"] = 110.0
+        self.assertFalse(worker._manage_completed_bar(reversal))
+        self.assertEqual(worker._cpr_state.current_hard_stop, 105.0)
+        self.assertTrue(worker._cpr_state.trail_armed)
+
+    def test_reversal_stage_two_uses_the_following_buffered_cpr_milestone(self):
+        """The second ratchet uses the next CPR level, not only R2/final target."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            quantity=50,
+            entry_trade_price=10.0,
+        )
+        outcome = SimpleNamespace(
+            entry_price=100.0,
+            stop_price=80.0,
+            risk_points=20.0,
+            milestone_price=128.0,
+            final_target_price=148.0,
+            accepted_regime="TRENDING",
+            proposal=SimpleNamespace(setup="TRENDING_VWAP_REVERSAL"),
+        )
+        context = {
+            "session_levels": {
+                "next_levels": {
+                    "ordered": [
+                        {"name": "r1", "price": 130.0},
+                        {"name": "pivot_extension", "price": 135.0},
+                        {"name": "r2", "price": 150.0},
+                    ]
+                }
+            }
+        }
+
+        worker._initialize_trade_state(outcome, context)
+
+        self.assertEqual(worker._cpr_state.first_milestone, 120.0)
+        self.assertEqual(worker._cpr_state.following_milestone, 133.0)
+
+    def test_completed_bar_mechanical_exit_suppresses_that_bars_agent_turn(self):
+        """A bar consumed by SRSI/trailing cannot also ask for a reversal."""
+
+        worker, agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(active=True, direction="LONG")
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="SIDEWAYS_SRSI",
+            accepted_regime="SIDEWAYS",
+            initial_filled_quantity=50,
+        )
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {},
+            "momentum_vwap": {
+                "stochastic_rsi": {"cross_down": True, "cross_up": False},
+                "candle": {"close": 99.0},
+            },
+            "market_structure": {},
+            "position_state": {"is_flat": False, "direction": "LONG"},
+        }
+        worker._completed_bar_signature = lambda _frame: "exit-bar"
+        worker.exit_position = MagicMock()
+
+        worker.process_strategy_frame(pd.DataFrame([{"close": 99.0}]))
+
+        worker.exit_position.assert_called_once_with("CPR_AI_SRSI_REVERSAL")
+        agent.decide.assert_not_called()
+
+    def test_paper_scale_in_adds_initial_quantity_once_and_uses_weighted_price(self):
+        """The add reuses the locked contract and aggregates its separate mark."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-LOCKED",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 13),
+            option_lot_size=50,
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=100.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        worker._get_dealable_option_ltp = MagicMock(return_value=(14.0, True))
+        worker.contract_resolver = MagicMock()
+
+        self.assertTrue(worker._execute_scale_in())
+
+        self.assertTrue(worker._cpr_state.scale_in_used)
+        self.assertEqual(worker._cpr_state.add_quantity, 50)
+        self.assertEqual(worker._cpr_state.aggregate_quantity, 100)
+        self.assertEqual(worker._cpr_state.aggregate_entry_price, 12.0)
+        self.assertFalse(worker._execute_scale_in())
+        worker.contract_resolver.get_atm_option.assert_not_called()
+
+    def test_failed_paper_pricing_does_not_consume_the_one_successful_add(self):
+        """Paper marks scale-in used only after it can actually book the add."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=100.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+        )
+        worker._get_dealable_option_ltp = MagicMock(return_value=(0.0, False))
+
+        self.assertFalse(worker._execute_scale_in())
+        self.assertFalse(worker._cpr_state.scale_in_used)
+
+    def test_live_scale_in_uses_role_a_and_never_falls_back_to_paper(self):
+        """Filled, rejected, partial, and unknown adds keep ledger semantics."""
+
+        for status in (
+            master_file.OrderStatus.FILLED,
+            master_file.OrderStatus.REJECTED,
+            master_file.OrderStatus.PARTIAL,
+            master_file.OrderStatus.UNKNOWN,
+        ):
+            with self.subTest(status=status):
+                worker, _agent, _logger = self._worker()
+                worker.live_trading = True
+                worker.pos = master_file.PaperPosition(
+                    active=True,
+                    direction="LONG",
+                    symbol="NIFTY-LOCKED",
+                    quantity=50,
+                    entry_trade_price=10.0,
+                    option_security_id=123,
+                    option_exchange_segment="NSE_FNO",
+                    option_right="CE",
+                    option_strike=25000.0,
+                    option_expiry=date(2026, 8, 13),
+                )
+                worker._cpr_state = master_file.CPRAITradeState(
+                    original_entry_price=100.0,
+                    original_risk_points=5.0,
+                    original_protective_stop=95.0,
+                    current_hard_stop=100.0,
+                    first_milestone=105.0,
+                    following_milestone=110.0,
+                    final_target=118.0,
+                    premise="TRENDING_VWAP_CONTINUATION",
+                    accepted_regime="TRENDING",
+                    initial_filled_quantity=50,
+                )
+                worker._get_dealable_option_ltp = MagicMock(return_value=(11.0, True))
+                spec = master_file.LegSpec(
+                    strategy="CPR AI",
+                    correlation_id="ABCD1234",
+                    role="A",
+                    underlying="NIFTY",
+                    symbol="NIFTY-LOCKED",
+                    option_type="CE",
+                    strike=25000.0,
+                    expiry=date(2026, 8, 13),
+                    opening_side="BUY",
+                    target_quantity=50,
+                    owner_id="EFGH5678",
+                )
+                filled = (
+                    50
+                    if status is master_file.OrderStatus.FILLED
+                    else 25
+                    if status is master_file.OrderStatus.PARTIAL
+                    else 0
+                )
+                live_state = master_file.LiveLegState(
+                    exposure_id="test-add",
+                    spec=spec,
+                    requested_quantity=50,
+                    filled_quantity=filled,
+                    remaining_quantity=50 - filled,
+                    confirmed_live_quantity=filled,
+                    exposure_indeterminate=status in {master_file.OrderStatus.PARTIAL, master_file.OrderStatus.UNKNOWN},
+                    entry_priced_quantity=filled,
+                    entry_fill_notional=filled * 12.0,
+                )
+                result = master_file.OrderResult(
+                    order_id="ADD",
+                    requested_quantity=50,
+                    filled_quantity=filled,
+                    remaining_quantity=50 - filled,
+                    status=status,
+                    broker_state=status.value,
+                    reason="synthetic",
+                    average_fill_price=12.0 if filled else 0.0,
+                )
+
+                def place(
+                    _side,
+                    leg,
+                    *,
+                    opens_exposure,
+                    outcome_status=status,
+                    outcome_state=live_state,
+                    outcome_result=result,
+                ):
+                    self.assertTrue(opens_exposure)
+                    self.assertEqual(leg["role"], "A")
+                    self.assertEqual(leg["dhan_symbol"], "NIFTY-LOCKED")
+                    if outcome_status is not master_file.OrderStatus.REJECTED:
+                        leg["live_leg"] = outcome_state
+                    return outcome_result
+
+                worker._place_real_leg = MagicMock(side_effect=place)
+
+                confirmed = worker._execute_scale_in()
+
+                self.assertEqual(confirmed, status is master_file.OrderStatus.FILLED)
+                self.assertTrue(worker._cpr_state.scale_in_used)
+                self.assertEqual(
+                    worker._cpr_state.add_quantity,
+                    50 if status is master_file.OrderStatus.FILLED else 0,
+                )
+
+    def test_exit_books_weighted_primary_and_add_on_pnl_then_unsubscribes_once(self):
+        """A scaled paper trade realizes both locked-contract entry marks."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-LOCKED",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=123,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 13),
+            option_lot_size=50,
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=100.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="TRENDING_VWAP_CONTINUATION",
+            accepted_regime="TRENDING",
+            initial_filled_quantity=50,
+            scale_in_used=True,
+            add_quantity=50,
+            add_entry_trade_price=14.0,
+        )
+        worker._get_dealable_option_ltp = MagicMock(return_value=(15.0, True))
+        worker.store.unregister_option_subscription = MagicMock()
+
+        worker.exit_position("TEST_EXIT")
+
+        self.assertFalse(worker.pos.active)
+        self.assertEqual(worker.realized_pnl, 300.0)
+        self.assertEqual(worker.completed_trades, 1)
+        worker.store.unregister_option_subscription.assert_called_once()
+
+    def test_audit_failure_blocks_entries_but_does_not_block_an_open_position_exit(self):
+        """An audit outage fails closed for exposure and fail-open for reduction."""
+
+        worker, agent, logger = self._worker()
+        logger.write.side_effect = OSError("disk full")
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {}, "momentum_vwap": {}, "market_structure": {}, "position_state": {"is_flat": True}
+        }
+        worker._completed_bar_signature = lambda _frame: "entry"
+        worker._current_completed_spot_signature = lambda: "entry"
+        agent.decide.return_value = agent.decide.return_value.__class__(**vars(agent.decide.return_value))
+        agent.decide.return_value.action = "ENTER_LONG"
+        agent.decide.return_value.accepted = True
+        agent.decide.return_value.entry_price = 100.0
+        agent.decide.return_value.stop_price = 95.0
+        agent.decide.return_value.milestone_price = 108.0
+        agent.decide.return_value.final_target_price = 118.0
+        agent.decide.return_value.risk_points = 5.0
+        agent.decide.return_value.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        worker.enter_position = MagicMock(return_value=True)
+
+        worker.process_strategy_frame(pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-03 09:30"), "close": 100.0}]))
+
+        worker.enter_position.assert_not_called()
+
+    def test_accepted_entry_logs_the_final_submission_outcome_and_exact_geometry(self):
+        """The audit trail ends with what the host actually submitted."""
+
+        worker, agent, logger = self._worker()
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {}, "momentum_vwap": {}, "market_structure": {}, "position_state": {"is_flat": True}
+        }
+        worker._completed_bar_signature = lambda _frame: "accepted-entry"
+        worker._current_completed_spot_signature = lambda: "accepted-entry"
+        outcome = agent.decide.return_value
+        outcome.action = "ENTER_LONG"
+        outcome.accepted = True
+        outcome.accepted_regime = "TRENDING"
+        outcome.entry_price = 100.0
+        outcome.stop_price = 95.0
+        outcome.milestone_price = 108.0
+        outcome.final_target_price = 118.0
+        outcome.risk_points = 5.0
+        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+
+        def enter(direction, entry, stop, target):
+            worker.pos = master_file.PaperPosition(
+                active=True,
+                direction=direction,
+                quantity=50,
+                entry_underlying=entry,
+                stop_underlying=stop,
+                target_underlying=target,
+                entry_trade_price=10.0,
+            )
+            return True
+
+        worker.enter_position = MagicMock(side_effect=enter)
+        worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
+
+        worker.enter_position.assert_called_once_with("LONG", 100.0, 95.0, 118.0)
+        self.assertEqual(logger.write.call_count, 2)
+        self.assertEqual(
+            logger.write.call_args.kwargs["execution"],
+            {"mode": "PAPER", "submitted": True, "status": "ENTRY_SUBMITTED"},
+        )
+
 
 if __name__ == "__main__":
     # Use the custom runner so both `python file.py` and any other direct

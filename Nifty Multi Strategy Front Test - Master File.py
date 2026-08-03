@@ -1221,8 +1221,33 @@ CPR_ALGO3_LOGIC = load_module(
 # workers untouched.
 CPR_AI_AVAILABLE = False
 CPR_AI_IMPORT_ERROR = ""
+_cpr_ai_sibling_names: tuple[str, ...] = ()
+_cpr_ai_previous_modules: dict[str, object] = {}
 try:
     _cpr_ai_dir = ROOT_DIR / "Signal Generators" / "CPR AI Agent"
+    _cpr_ai_sibling_names = tuple(
+        path.stem for path in _cpr_ai_dir.glob("cpr_ai_*.py")
+    )
+    _cpr_ai_previous_modules = {}
+    for _cpr_ai_name in _cpr_ai_sibling_names:
+        _existing_cpr_ai_module = sys.modules.get(_cpr_ai_name)
+        if _existing_cpr_ai_module is None:
+            continue
+        _existing_cpr_ai_file = getattr(_existing_cpr_ai_module, "__file__", "")
+        try:
+            _existing_is_ours = (
+                Path(_existing_cpr_ai_file).resolve().parent
+                == _cpr_ai_dir.resolve()
+            )
+        except (OSError, TypeError, ValueError):
+            _existing_is_ours = False
+        if not _existing_is_ours:
+            _cpr_ai_previous_modules[_cpr_ai_name] = _existing_cpr_ai_module
+    if _cpr_ai_previous_modules:
+        # A bare sibling name already belongs to another importer. Loading our
+        # space-containing directory would silently bind against or replace it.
+        # Disable only this optional worker instead of shadowing that module.
+        raise ImportError("CPR AI sibling module-name collision")
     CPR_AI_AGENT_LOGIC = load_module(
         "master_cpr_ai_agent", _cpr_ai_dir / "cpr_ai_agent.py"
     )
@@ -1237,6 +1262,10 @@ try:
     )
     CPR_AI_AVAILABLE = True
 except Exception as _cpr_ai_import_exc:  # optional strategy, never fatal
+    for _cpr_ai_name in _cpr_ai_sibling_names:
+        if _cpr_ai_name not in _cpr_ai_previous_modules:
+            sys.modules.pop(_cpr_ai_name, None)
+    sys.modules.update(_cpr_ai_previous_modules)
     CPR_AI_AGENT_LOGIC = None
     CPR_AI_SIGNALS_LOGIC = None
     CPR_AI_CONTEXT_LOGIC = None
@@ -8765,275 +8794,60 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
-# CPR CODEX AI WORKER (optional arbiter over Algo 1, Algo 2, and Algo 3)
+# CPR CODEX AI WORKER (optional independent SRSI/VWAP policy worker)
 # =============================================================================
-CPRAIWorker = None
-if CPR_AI_AVAILABLE:
+@dataclass
+class CPRAITradeState:
+    """CPR-AI-only risk memory kept separate from the generic option position.
 
-    class _CPRAIArbiterGroundwork(CPRAlgo3StrategyWorker):
-        """Paper-only Codex arbiter over three frozen deterministic CPR results.
+    The generic :class:`PaperPosition` continues to own contract and execution
+    facts. This sidecar owns only CPR premise, immutable entry geometry,
+    mechanical trailing state, and the optional equal-size add-on leg.
+    """
 
-        Beginner-level flow for a flat position:
+    original_entry_price: float
+    original_risk_points: float
+    original_protective_stop: float
+    current_hard_stop: float
+    first_milestone: float
+    following_milestone: float
+    final_target: float
+    premise: str
+    accepted_regime: str | None
+    initial_filled_quantity: int
+    trailing_stage: str = "NONE"
+    trail_armed: bool = False
+    prior_completed_close: float | None = None
+    scale_in_used: bool = False
+    add_quantity: int = 0
+    add_entry_trade_price: float = 0.0
+    add_entry_price_quality: str = PRICE_QUALITY_UNKNOWN
+    add_live_leg: LiveLegState | None = None
 
-        1. Reuse the existing CPR code to calculate Algo 1, Algo 2, and Algo 3.
-        2. Freeze those three results so Python and MCP see identical facts.
-        3. Ask Codex to select one genuine signal or return ``HOLD``.
-        4. Revalidate the proposal, market-data signature, and worker lifecycle.
-        5. Copy entry/stop/target from the selected deterministic result into the
-           inherited ATM *paper* entry path.
+    @property
+    def aggregate_quantity(self) -> int:
+        """Return initial plus broker-confirmed/paper add-on quantity."""
 
-        Codex has no execution tool and never receives an open position.  Once a
-        position exists, stop/target, max-loss, stale-data shutdown, and daily
-        square-off remain entirely mechanical in the existing worker framework.
-        """
+        return self.initial_filled_quantity + self.add_quantity
 
-        strategy_name = "CPR AI"
-        poll_seconds = CPR_AI_POLL_SECONDS
-        lots = CPR_AI_LOTS
-        max_loss = CPR_AI_MAX_LOSS
-        trading_start_hour = CPR_AI_TRADING_START_HOUR
-        trading_start_minute = CPR_AI_TRADING_START_MINUTE
-        square_off_hour = CPR_AI_SQUARE_OFF_HOUR
-        square_off_minute = CPR_AI_SQUARE_OFF_MINUTE
-        paper_only = True
+    @property
+    def aggregate_entry_price(self) -> float:
+        """Return the quantity-weighted option entry mark across both legs."""
 
-        def __init__(
-            self,
-            store: SharedMarketDataStore,
-            stop_event: threading.Event,
-            broker: DhanBrokerClient,
-            *,
-            agent=None,
-            decision_logger=None,
-            algo1_generator=None,
-            algo2_generator=None,
-            algo3_generator=None,
-        ):
-            """Create the paper worker and allow dependency injection in tests.
+        total = self.aggregate_quantity
+        if total <= 0:
+            return 0.0
+        # The caller supplies the primary price separately when no add exists;
+        # this property is finalized by ``set_primary_entry_trade_price``.
+        primary_total = self._primary_entry_trade_price * self.initial_filled_quantity
+        return (primary_total + self.add_entry_trade_price * self.add_quantity) / total
 
-            Production leaves the optional keyword arguments unset and receives
-            the repository's real deterministic generators, Codex policy layer,
-            and JSONL logger.  Tests inject small fakes so they can prove the
-            safety contract without network access or a broker SDK.
-            """
+    _primary_entry_trade_price: float = 0.0
 
-            super().__init__(store, stop_event, broker)
-            # A normal CPR engine is retained only for mechanical stop/target
-            # evaluation after an entry.  It does not ask Codex to manage exits.
-            self.exit_engine = CPR_LOGIC.CPRSignalEngine(CPR_STRATEGY_CONFIG)
-            # Split the existing combined CPR generator into the requested Algo
-            # 1 and Algo 2 tool views without altering either calculation.
-            self.algo1_generator = algo1_generator or CPR_LOGIC.CPRSignalGenerator(
-                CPR_STRATEGY_CONFIG, enabled_algorithms=("ALGO1",)
-            )
-            self.algo2_generator = algo2_generator or CPR_LOGIC.CPRSignalGenerator(
-                CPR_STRATEGY_CONFIG,
-                enabled_algorithms=("ALGO2_ZONE", "RSI_DIVERGENCE"),
-            )
-            self.algo3_generator = algo3_generator or CPR_ALGO3_LOGIC.NiftyCPRAlgo3SignalGenerator(
-                CPR_ALGO3_CONFIG
-            )
-            # The policy object imports the real SDK runner lazily on its first
-            # call.  Merely constructing the master does not authenticate Codex.
-            self.agent = agent or CPR_AI_AGENT_LOGIC.CPRAgent(
-                model=CPR_AI_MODEL,
-                reasoning_effort=CPR_AI_REASONING_EFFORT,
-                timeout_seconds=CPR_AI_SDK_TIMEOUT_SECONDS,
-            )
-            self.decision_logger = decision_logger or CPR_AI_DECISION_LOGIC.CPRDecisionLogger(
-                CPR_AI_DECISION_LOG_PATH,
-                enabled=CPR_AI_DECISION_LOGGING_ENABLED,
-            )
-            # Marking a signature before inference enforces one attempt per
-            # completed five-minute candle, including failures and timeouts.
-            self._last_agent_bar_signature = None
-            self._paper_only_warning_logged = False
+    def set_primary_entry_trade_price(self, price: float) -> None:
+        """Remember the immutable primary option fill for weighted accounting."""
 
-        def _enforce_paper_only(self) -> None:
-            """Neutralize even an accidental runtime mutation of live_trading."""
-
-            if self.live_trading and not self._paper_only_warning_logged:
-                self.log.error(
-                    "CPR AI is PAPER-ONLY; ignoring an attempted live-mode mutation."
-                )
-                self._paper_only_warning_logged = True
-            self.live_trading = False
-
-        def _ensure_observation_strikes(self) -> bool:
-            """Resolve and retain Algo 3's fixed current-week observation legs.
-
-            Algo 3 reads an ITM call and put in addition to NIFTY spot.  The
-            strikes are chosen once per worker session so their VWAP/CPR history
-            stays continuous.  These contracts are observations only; accepted
-            entries still use the inherited ATM next-next-expiry instrument.
-            """
-
-            if self.itm_ce is not None and self.itm_pe is not None:
-                return True
-            spot = self._get_underlying_spot(fallback=0.0)
-            if spot <= 0:
-                return False
-            # A call becomes ITM below ATM, while a put becomes ITM above ATM.
-            atm = round(spot / ATM_STRIKE_STEP) * ATM_STRIKE_STEP
-            ce_strike = atm - CPR_AI_ITM_OFFSET
-            pe_strike = atm + CPR_AI_ITM_OFFSET
-            try:
-                expiry = self.contract_resolver.get_current_week_expiry()
-                ce = self.contract_resolver.get_option_for_strike(
-                    expiry, ce_strike, "CE"
-                )
-                pe = self.contract_resolver.get_option_for_strike(
-                    expiry, pe_strike, "PE"
-                )
-            except Exception as exc:
-                self.log.warning(
-                    "CPR AI Algo 3 observation-strike resolution failed: %s", exc
-                )
-                return False
-            if not ce or not pe:
-                return False
-            # Store the pair only after both contracts resolve successfully; a
-            # half-populated pair would make synchronized Algo 3 evidence unsafe.
-            self.itm_ce, self.itm_pe, self.observation_expiry = ce, pe, expiry
-            self.log.info(
-                "CPR AI observation legs fixed | Expiry=%s | CE=%s | PE=%s",
-                expiry.isoformat(),
-                ce["trading_symbol"],
-                pe["trading_symbol"],
-            )
-            return True
-
-        def _current_completed_spot_signature(self) -> str:
-            """Re-read and sign the latest completed spot bar after inference.
-
-            Codex can take many seconds.  Comparing this value with the original
-            signature prevents a decision about bar N from entering on bar N+1.
-            """
-
-            snapshot = self.store.get(self.timeframe)
-            if snapshot is None or snapshot.frame.empty:
-                return ""
-            frame = self.build_strategy_frame(snapshot.frame)
-            return str(build_last_row_signature(frame))
-
-        def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
-            """Exit mechanically when open; otherwise arbitrate one frozen bar.
-
-            The base loop already supplies a completed, indicator-enriched CPR
-            frame and gates repeated frame signatures.  This method adds a local
-            no-retry signature because SDK failures must also consume the bar.
-            """
-
-            # Enforce paper mode on every pass, not just during startup, so an
-            # accidental runtime attribute mutation cannot reach live execution.
-            self._enforce_paper_only()
-            if self.pos.active:
-                # Recreate the ordinary CPR position context from persisted
-                # levels.  Codex is neither called nor shown this open position.
-                position = CPR_LOGIC.CPRPositionContext(
-                    direction=self.pos.direction,
-                    entry_underlying=self.pos.entry_underlying,
-                    stop_underlying=self.pos.stop_underlying,
-                    target_underlying=self.pos.target_underlying,
-                    strategy_name=self.strategy_name,
-                )
-                decision = self.exit_engine.evaluate_candle(
-                    strategy_frame, position=position
-                )
-                if decision.action == "EXIT":
-                    self.exit_position(decision.exit_reason)
-                return
-
-            bar_signature = str(build_last_row_signature(strategy_frame))
-            if not bar_signature or bar_signature == "None":
-                return
-            if self._last_agent_bar_signature == bar_signature:
-                return
-            # Mark before inference: failures/timeouts are never retried on the
-            # same completed candle.
-            self._last_agent_bar_signature = bar_signature
-
-            spot_snapshot = self.store.get(self.timeframe)
-            if spot_snapshot is None or spot_snapshot.frame.empty:
-                return
-            ce_ohlc = None
-            pe_ohlc = None
-            if self._ensure_observation_strikes():
-                try:
-                    ce_ohlc = self._fetch_option_1m(self.itm_ce)
-                    pe_ohlc = self._fetch_option_1m(self.itm_pe)
-                except Exception as exc:
-                    # Algo 3 becomes unavailable; Algo 1/2 are still valid inputs.
-                    self.log.warning(
-                        "CPR AI Algo 3 observation fetch failed (%s).",
-                        type(exc).__name__,
-                    )
-                    ce_ohlc = None
-                    pe_ohlc = None
-
-            tool_results = CPR_AI_SIGNALS_LOGIC.compute_cpr_tool_results(
-                spot_snapshot.frame,
-                ce_candles=ce_ohlc,
-                pe_candles=pe_ohlc,
-                algo1_generator=self.algo1_generator,
-                algo2_generator=self.algo2_generator,
-                algo3_generator=self.algo3_generator,
-            )
-            outcome = self.agent.decide(
-                tool_results,
-                bar_signature=bar_signature,
-                current_signature=self._current_completed_spot_signature,
-            )
-            submitted = False
-            blocked_reason = ""
-            try:
-                if outcome.accepted:
-                    # Inference may finish after shutdown or the 15:15 cutoff.
-                    # Recheck lifecycle state immediately before any entry call.
-                    if self.stop_event.is_set():
-                        blocked_reason = "stop_event"
-                    elif self.lifecycle.snapshot().state is not LifecycleState.RUNNING:
-                        blocked_reason = "worker_not_running"
-                    elif is_after_time(self.square_off_hour, self.square_off_minute):
-                        blocked_reason = "time_cutoff"
-                    else:
-                        self.signal_count += 1
-                        # Direction is the only translation performed here.  All
-                        # three levels came from the selected frozen tool result.
-                        direction = (
-                            "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
-                        )
-                        submitted = self.enter_position(
-                            direction,
-                            outcome.entry_underlying,
-                            outcome.stop_underlying,
-                            outcome.target_underlying,
-                        )
-                        if submitted:
-                            self.entry_submit_count += 1
-            except Exception as exc:
-                # The worker loop owns exception handling, but the proposal must
-                # still leave an audit record before control returns to it.
-                self.decision_logger.write(
-                    bar_signature=bar_signature,
-                    tool_results=tool_results,
-                    outcome=outcome,
-                    execution={
-                        "submitted": False,
-                        "mode": "PAPER",
-                        "error": type(exc).__name__,
-                    },
-                )
-                raise
-            execution = {"submitted": bool(submitted), "mode": "PAPER"}
-            if blocked_reason:
-                execution["blocked_reason"] = blocked_reason
-            self.decision_logger.write(
-                bar_signature=bar_signature,
-                tool_results=tool_results,
-                outcome=outcome,
-                execution=execution,
-            )
+        self._primary_entry_trade_price = float(price)
 
 
 class CPRAIWorker(AtmSingleLegStrategyWorker):
@@ -9087,6 +8901,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         self._latest_one_minute_frame = pd.DataFrame()
         self._last_agent_bar_signature: str | None = None
         self._prior_accepted_regime: str | None = None
+        self._cpr_state: CPRAITradeState | None = None
 
     def minimum_source_rows(self) -> int:
         """Let the independent context decide when its own history is sufficient."""
@@ -9116,12 +8931,27 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         if not self.pos.active:
             return {"is_flat": True}
+        state = self._cpr_state
+        if state is None:
+            return {"is_flat": False, "direction": self.pos.direction}
         return {
             "is_flat": False,
             "direction": self.pos.direction,
-            "original_entry_price": self.pos.entry_underlying,
-            "original_protective_stop": self.pos.stop_underlying,
-            "current_protective_stop": self.pos.stop_underlying,
+            "original_entry_price": state.original_entry_price,
+            "original_risk_points": state.original_risk_points,
+            "original_protective_stop": state.original_protective_stop,
+            "current_protective_stop": state.current_hard_stop,
+            "trailing_stage": state.trailing_stage,
+            "milestone_price": state.first_milestone,
+            "final_target_price": state.final_target,
+            "premise": state.premise,
+            "setup": state.premise,
+            "scale_in_eligible": bool(
+                self.pos.direction == "LONG"
+                and state.premise.startswith("TRENDING_")
+                and not state.scale_in_used
+            ),
+            "scale_in_count": 1 if state.scale_in_used else 0,
         }
 
     def _latest_frozen_context(self) -> dict[str, dict[str, object]]:
@@ -9154,9 +8984,447 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             for record in tool_evidence
         ]
 
+    @staticmethod
+    def _crossed(direction: str, value: float, threshold: float) -> bool:
+        """Return whether a directional favorable threshold has been reached."""
+
+        return value >= threshold if direction == "LONG" else value <= threshold
+
+    def _set_hard_stop(self, candidate: float) -> None:
+        """Ratchet protection without ever loosening the existing hard stop."""
+
+        state = self._cpr_state
+        if state is None:
+            return
+        if self.pos.direction == "LONG":
+            state.current_hard_stop = max(state.current_hard_stop, float(candidate))
+        else:
+            state.current_hard_stop = min(state.current_hard_stop, float(candidate))
+        self.pos.stop_underlying = state.current_hard_stop
+
+    def _check_cpr_spot_boundaries(self, spot: float) -> bool:
+        """Apply CPR hard stop and final buffered R2/S2 booking on every poll."""
+
+        state = self._cpr_state
+        if not self.pos.active or state is None or spot <= 0:
+            return False
+        stopped = (
+            spot <= state.current_hard_stop
+            if self.pos.direction == "LONG"
+            else spot >= state.current_hard_stop
+        )
+        if stopped:
+            self.exit_position("CPR_AI_HARD_STOP")
+            return True
+        final_hit = self._crossed(self.pos.direction, spot, state.final_target)
+        if final_hit:
+            self.exit_position("CPR_AI_FINAL_TARGET")
+            return True
+        return False
+
+    def _run_prebar_safety(self) -> bool:
+        """Run load-bearing lifecycle and spot safety before any bar/model work."""
+
+        if self._run_shutdown_cycle_if_requested():
+            return True
+        breached, total_pnl, open_pnl = self.is_max_loss_breached()
+        if breached:
+            self.handle_max_loss_and_stop(total_pnl, open_pnl)
+            return True
+        if is_after_time(self.square_off_hour, self.square_off_minute):
+            self.handle_square_off_and_stop()
+            return True
+        if self._handle_market_data_health():
+            return True
+        spot = self._get_underlying_spot(fallback=0.0)
+        return self._check_cpr_spot_boundaries(spot)
+
+    def _manage_completed_bar(self, frozen_context: dict[str, object]) -> bool:
+        """Run SRSI reversal, staged ratchets, then prior-close trailing.
+
+        Trail semantics are explicit: the bar that arms trailing becomes the
+        reference. Each later completed close is compared with that immediately
+        preceding accepted close; a favorable/flat close replaces the reference.
+        """
+
+        state = self._cpr_state
+        if not self.pos.active or state is None:
+            return False
+        momentum = frozen_context["momentum_vwap"]
+        srsi = momentum["stochastic_rsi"]
+        bearish = self.pos.direction == "LONG" and srsi.get("cross_down") is True
+        bullish = self.pos.direction == "SHORT" and srsi.get("cross_up") is True
+        if bearish or bullish:
+            self.exit_position("CPR_AI_SRSI_REVERSAL")
+            return True
+        close = float(momentum["candle"]["close"])
+
+        if state.trail_armed and state.prior_completed_close is not None:
+            trail_exit = (
+                close < state.prior_completed_close
+                if self.pos.direction == "LONG"
+                else close > state.prior_completed_close
+            )
+            if trail_exit:
+                self.exit_position("CPR_AI_PRIOR_CLOSE_TRAIL")
+                return True
+
+        if state.premise == "TRENDING_VWAP_REVERSAL":
+            if state.trailing_stage == "NONE" and self._crossed(
+                self.pos.direction, close, state.first_milestone
+            ):
+                self._set_hard_stop(state.original_entry_price)
+                state.trailing_stage = "BREAKEVEN"
+            if state.trailing_stage == "BREAKEVEN" and self._crossed(
+                self.pos.direction, close, state.following_milestone
+            ):
+                locked = (
+                    state.original_entry_price + state.original_risk_points
+                    if self.pos.direction == "LONG"
+                    else state.original_entry_price - state.original_risk_points
+                )
+                self._set_hard_stop(locked)
+                state.trailing_stage = "R1_LOCKED"
+                state.trail_armed = True
+                state.prior_completed_close = close
+        elif state.trailing_stage == "NONE" and self._crossed(
+            self.pos.direction, close, state.first_milestone
+        ):
+            self._set_hard_stop(state.original_entry_price)
+            state.trailing_stage = "TRAILING"
+            state.trail_armed = True
+            state.prior_completed_close = close
+
+        if state.trail_armed:
+            state.prior_completed_close = close
+        return False
+
+    def _at_or_after_entry_cutoff(self) -> bool:
+        """Return whether new entries/adds are barred at 15:00 IST."""
+
+        return is_after_time(CPR_AI_ENTRY_CUTOFF_HOUR, CPR_AI_ENTRY_CUTOFF_MINUTE)
+
+    def _get_open_position_pnl(self) -> float:
+        """Aggregate primary and confirmed/paper add-on option MTM."""
+
+        if not self.pos.active:
+            return 0.0
+        live = self._get_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+            fallback=self.pos.entry_trade_price,
+        )
+        primary = (live - self.pos.entry_trade_price) * self.pos.quantity
+        state = self._cpr_state
+        if state is None or state.add_quantity <= 0:
+            return primary
+        return primary + (live - state.add_entry_trade_price) * state.add_quantity
+
+    def _execute_scale_in(self) -> bool:
+        """Submit the one equal-size R1 add using the locked primary contract."""
+
+        state = self._cpr_state
+        if (
+            state is None
+            or not self.pos.active
+            or state.scale_in_used
+            or self._at_or_after_entry_cutoff()
+        ):
+            return False
+        quantity = int(state.initial_filled_quantity)
+        if quantity <= 0:
+            return False
+        mark, mark_is_fresh = self._get_dealable_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+        )
+        if mark <= 0 or (self.live_trading and not mark_is_fresh):
+            return False
+        if not self.live_trading:
+            # Paper has no ambiguous submission. Consume the one add only when
+            # a real mark exists and the bookkeeping can be completed.
+            state.scale_in_used = True
+            state.set_primary_entry_trade_price(self.pos.entry_trade_price)
+            state.add_quantity = quantity
+            state.add_entry_trade_price = float(mark)
+            state.add_entry_price_quality = (
+                PRICE_QUALITY_PAPER_FRESH_MARK
+                if mark_is_fresh
+                else PRICE_QUALITY_STALE_MARK
+            )
+            return True
+
+        leg = {
+            "option_type": self.pos.option_right,
+            "strike": self.pos.option_strike,
+            "expiry": self.pos.option_expiry,
+            "quantity": quantity,
+            "dhan_symbol": self.pos.symbol,
+            "role": "A",
+        }
+        # Live consumes the add immediately before its first broker submission.
+        # PARTIAL/UNKNOWN responses may already represent real exposure, so the
+        # same scale-in can never be retried as though nothing happened.
+        state.scale_in_used = True
+        result = self._place_real_leg("BUY", leg, opens_exposure=True)
+        live_state = leg.get("live_leg")
+        if isinstance(live_state, LiveLegState):
+            state.add_live_leg = live_state
+        if result.status is not OrderStatus.FILLED or not isinstance(
+            live_state, LiveLegState
+        ) or not live_state.entry_complete:
+            return False
+        add_price, quality = self._accounting_price(
+            live_state,
+            mark,
+            mark_is_fresh=mark_is_fresh,
+            phase="ENTRY",
+        )
+        state.add_quantity = int(live_state.filled_quantity)
+        state.add_entry_trade_price = float(add_price)
+        state.add_entry_price_quality = quality
+        return state.add_quantity > 0
+
+    @staticmethod
+    def _directional_earlier(direction: str, first: float, second: float) -> float:
+        """Choose the nearer favorable price in one direction."""
+
+        return min(first, second) if direction == "LONG" else max(first, second)
+
+    @staticmethod
+    def _following_buffered_milestone(
+        direction: str,
+        first_milestone: float,
+        final_target: float,
+        frozen_context: dict[str, object],
+    ) -> float:
+        """Return the next directional CPR level after the first milestone."""
+
+        ordered = (
+            frozen_context.get("session_levels", {})
+            .get("next_levels", {})
+            .get("ordered", [])
+        )
+        candidates: list[float] = []
+        for item in ordered:
+            if not isinstance(item, dict) or not isinstance(
+                item.get("price"), (int, float)
+            ):
+                continue
+            raw = float(item["price"])
+            buffered = (
+                raw - CPR_AI_LEVEL_BUFFER_POINTS
+                if direction == "LONG"
+                else raw + CPR_AI_LEVEL_BUFFER_POINTS
+            )
+            if (direction == "LONG" and buffered > first_milestone) or (
+                direction == "SHORT" and buffered < first_milestone
+            ):
+                candidates.append(buffered)
+        if not candidates:
+            return final_target
+        return min(candidates) if direction == "LONG" else max(candidates)
+
+    def _initialize_trade_state(self, outcome, frozen_context: dict[str, object]) -> None:
+        """Freeze the accepted host geometry immediately after a filled entry."""
+
+        direction = self.pos.direction
+        entry = float(outcome.entry_price)
+        risk = float(outcome.risk_points)
+        one_r = entry + risk if direction == "LONG" else entry - risk
+        two_r = entry + 2 * risk if direction == "LONG" else entry - 2 * risk
+        first = self._directional_earlier(
+            direction, one_r, float(outcome.milestone_price)
+        )
+        following_cpr = self._following_buffered_milestone(
+            direction,
+            float(outcome.milestone_price),
+            float(outcome.final_target_price),
+            frozen_context,
+        )
+        following = self._directional_earlier(
+            direction, two_r, following_cpr
+        )
+        self._cpr_state = CPRAITradeState(
+            original_entry_price=entry,
+            original_risk_points=risk,
+            original_protective_stop=float(outcome.stop_price),
+            current_hard_stop=float(outcome.stop_price),
+            first_milestone=first,
+            following_milestone=following,
+            final_target=float(outcome.final_target_price),
+            premise=str(outcome.proposal.setup),
+            accepted_regime=outcome.accepted_regime,
+            initial_filled_quantity=int(self.pos.quantity),
+        )
+        self._cpr_state.set_primary_entry_trade_price(self.pos.entry_trade_price)
+
+    def exit_position(self, reason: str) -> None:
+        """Close primary and add-on legs, retaining state until both are flat."""
+
+        state = self._cpr_state
+        if not self.pos.active or state is None:
+            super().exit_position(reason)
+            return
+        closed = self.pos
+        mark, mark_is_fresh = self._get_dealable_option_ltp(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+        )
+        if mark <= 0:
+            mark, mark_is_fresh = closed.entry_trade_price, False
+
+        primary_leg = {
+            "option_type": closed.option_right,
+            "strike": closed.option_strike,
+            "expiry": closed.option_expiry,
+            "quantity": closed.quantity,
+            "dhan_symbol": closed.symbol,
+            "role": "N",
+            "live_leg": closed.live_leg,
+        }
+        add_leg = {
+            "option_type": closed.option_right,
+            "strike": closed.option_strike,
+            "expiry": closed.option_expiry,
+            "quantity": max(state.initial_filled_quantity, state.add_quantity),
+            "dhan_symbol": closed.symbol,
+            "role": "A",
+            "live_leg": state.add_live_leg,
+        }
+        for leg, is_live in (
+            (primary_leg, closed.live_leg is not None),
+            (add_leg, state.add_live_leg is not None),
+        ):
+            if not is_live:
+                continue
+            self._place_real_leg("SELL", leg, opens_exposure=False)
+
+        primary_state = primary_leg.get("live_leg")
+        add_state = add_leg.get("live_leg")
+        if isinstance(primary_state, LiveLegState):
+            closed.live_leg = primary_state
+        if isinstance(add_state, LiveLegState):
+            state.add_live_leg = add_state
+        live_states = tuple(
+            leg_state
+            for leg_state in (closed.live_leg, state.add_live_leg)
+            if isinstance(leg_state, LiveLegState)
+        )
+        if any(not leg_state.broker_confirmed_flat for leg_state in live_states):
+            self.log.error(
+                "CPR AI exit retained local state: both execution-ledger legs "
+                "are not yet broker-confirmed flat."
+            )
+            return
+
+        primary_exit, primary_quality = self._accounting_price(
+            closed.live_leg,
+            mark,
+            mark_is_fresh=mark_is_fresh,
+            phase="EXIT",
+        )
+        primary_pnl = (
+            primary_exit - closed.entry_trade_price
+        ) * state.initial_filled_quantity
+        add_quantity = state.add_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_quantity = int(state.add_live_leg.filled_quantity)
+        add_pnl = 0.0
+        add_exit = primary_exit
+        add_quality = primary_quality
+        if add_quantity > 0:
+            add_exit, add_quality = self._accounting_price(
+                state.add_live_leg,
+                mark,
+                mark_is_fresh=mark_is_fresh,
+                phase="EXIT",
+            )
+            add_pnl = (add_exit - state.add_entry_trade_price) * add_quantity
+        pnl = primary_pnl + add_pnl
+        self.realized_pnl += pnl
+        self.completed_trades += 1
+        self.log.info(
+            "CPR AI EXIT %s | reason=%s primary_qty=%s add_qty=%s pnl=%.2f",
+            closed.direction,
+            reason,
+            state.initial_filled_quantity,
+            add_quantity,
+            pnl,
+        )
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "mode": "LIVE" if live_states else "PAPER",
+                "direction": closed.direction,
+                "reason": reason,
+                "quantity": state.initial_filled_quantity + add_quantity,
+                "pnl": pnl,
+                "legs": [
+                    {
+                        "symbol": closed.symbol,
+                        "side": "SELL",
+                        "right": closed.option_right,
+                        "strike": closed.option_strike,
+                        "entry_price": closed.entry_trade_price,
+                        "exit_price": primary_exit,
+                        "exit_price_quality": primary_quality,
+                    },
+                    {
+                        "symbol": closed.symbol,
+                        "side": "SELL",
+                        "right": closed.option_right,
+                        "strike": closed.option_strike,
+                        "entry_price": state.add_entry_trade_price,
+                        "exit_price": add_exit,
+                        "exit_price_quality": add_quality,
+                        "quantity": add_quantity,
+                    },
+                ],
+            }
+        )
+        self.store.unregister_option_subscription(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+            owner_id=self._execution_owner_id,
+        )
+        self.after_exit(closed, reason)
+        self.pos = PaperPosition()
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        """Clear CPR-only state only after the generic exit proves exposure flat."""
+
+        del closed_position, reason
+        self._cpr_state = None
+
+    def _write_final_execution(
+        self,
+        frozen_context: dict[str, object],
+        outcome,
+        execution: dict[str, object],
+    ) -> None:
+        """Best-effort append the post-action result after the mandatory audit."""
+
+        try:
+            self.decision_logger.write(
+                frozen_context=frozen_context,
+                proposal=outcome.proposal,
+                outcome=outcome,
+                latency_ms=outcome.latency_ms,
+                token_usage=outcome.token_usage,
+                tool_evidence=self._tool_log_payload(outcome.tool_evidence),
+                execution=execution,
+            )
+        except Exception as exc:  # noqa: BLE001 - the pre-action audit still exists
+            self.log.error(
+                "CPR AI final execution audit failed (%s).", type(exc).__name__
+            )
+
     def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
         """Ask at most once per completed bar and persist valid regime memory."""
 
+        if not self.pos.active and self._at_or_after_entry_cutoff():
+            return
         bar_signature = self._completed_bar_signature(strategy_frame)
         if not bar_signature or bar_signature == self._last_agent_bar_signature:
             return
@@ -9164,6 +9432,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         # response must not cause repeated SDK turns on the same market bar.
         self._last_agent_bar_signature = bar_signature
         frozen_context = self._latest_frozen_context()
+        if self.pos.active and self._manage_completed_bar(frozen_context):
+            return
         outcome = self.agent.decide(
             frozen_context,
             bar_signature=bar_signature,
@@ -9171,18 +9441,106 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         )
         if outcome.accepted_regime is not None:
             self._prior_accepted_regime = outcome.accepted_regime
-        self.decision_logger.write(
-            frozen_context=frozen_context,
-            proposal=outcome.proposal,
-            outcome=outcome,
-            latency_ms=outcome.latency_ms,
-            token_usage=outcome.token_usage,
-            tool_evidence=self._tool_log_payload(outcome.tool_evidence),
-            execution={
+        # Audit before any exposure-increasing submission. If the disk/logger
+        # fails, entry and scale-in fail closed; an already-open EXIT remains a
+        # risk-reducing safety decision and is still honored below.
+        audit_ok = True
+        try:
+            self.decision_logger.write(
+                frozen_context=frozen_context,
+                proposal=outcome.proposal,
+                outcome=outcome,
+                latency_ms=outcome.latency_ms,
+                token_usage=outcome.token_usage,
+                tool_evidence=self._tool_log_payload(outcome.tool_evidence),
+                execution={
+                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "submitted": False,
+                    "status": "AUDITED_BEFORE_EXECUTION",
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - entries fail closed; exits continue
+            audit_ok = False
+            self.log.error("CPR AI decision audit failed (%s).", type(exc).__name__)
+
+        if not outcome.accepted:
+            return
+        if self.pos.active:
+            if outcome.action == "EXIT":
+                self.exit_position("CPR_AI_PREMISE_EXIT")
+                self._write_final_execution(
+                    frozen_context,
+                    outcome,
+                    {
+                        "mode": "LIVE" if self.live_trading else "PAPER",
+                        "submitted": True,
+                        "status": "EXIT_CONFIRMED" if not self.pos.active else "EXIT_UNCONFIRMED",
+                    },
+                )
+            elif outcome.action == "SCALE_IN" and audit_ok:
+                confirmed = self._execute_scale_in()
+                self._write_final_execution(
+                    frozen_context,
+                    outcome,
+                    {
+                        "mode": "LIVE" if self.live_trading else "PAPER",
+                        "submitted": bool(
+                            self._cpr_state and self._cpr_state.scale_in_used
+                        ),
+                        "status": "SCALE_IN_CONFIRMED" if confirmed else "SCALE_IN_UNCONFIRMED",
+                    },
+                )
+            return
+        if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
+            return
+        direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
+        submitted = self.enter_position(
+            direction,
+            float(outcome.entry_price),
+            float(outcome.stop_price),
+            float(outcome.final_target_price),
+        )
+        if submitted:
+            self._initialize_trade_state(outcome, frozen_context)
+        self._write_final_execution(
+            frozen_context,
+            outcome,
+            {
                 "mode": "LIVE" if self.live_trading else "PAPER",
-                "submitted": False,
+                "submitted": bool(submitted),
+                "status": "ENTRY_SUBMITTED" if submitted else "ENTRY_BLOCKED",
             },
         )
+
+    def run(self) -> None:
+        """Poll five-second safety continuously and infer only on completed bars."""
+
+        self.log.info("Starting %s strategy worker.", self.strategy_name)
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
+            try:
+                if self._run_prebar_safety():
+                    self.wait_for_next_poll()
+                    continue
+                if is_before_time(self.trading_start_hour, self.trading_start_minute):
+                    if not self.preopen_wait_logged:
+                        self.log.info("Before CPR AI 09:30 start; waiting.")
+                        self.preopen_wait_logged = True
+                    self.wait_for_next_poll()
+                    continue
+                self.preopen_wait_logged = False
+                snapshot = self.store.get(self.timeframe)
+                if snapshot is None or snapshot.frame.empty:
+                    self.wait_for_next_poll()
+                    continue
+                completed = self.build_strategy_frame(snapshot.frame)
+                if completed.empty:
+                    self.wait_for_next_poll()
+                    continue
+                self.process_strategy_frame(completed)
+            except Exception as exc:  # noqa: BLE001 - one turn must not kill safety
+                self.log.exception("CPR AI worker poll failed: %s", exc)
+            self.wait_for_next_poll()
+        self.log.info("%s strategy worker exited.", self.strategy_name)
 
 
 # =============================================================================
@@ -14973,15 +15331,15 @@ def _cpr_ai_startup_errors() -> tuple[str, ...]:
     """Return every reason the optional CPR arbiter must be omitted at startup.
 
     The function collects all problems in one pass so the operator can fix the
-    complete configuration instead of discovering one error per restart.  An
-    empty tuple means the worker may be constructed; it does not enable live
-    trading, which is impossible for this worker by design.
+    complete configuration instead of discovering one error per restart. An
+    empty tuple means construction is allowed; the normal startup exposure
+    audit and per-strategy double gate separately decide live mode.
     """
 
     if not _env_bool("CPR_AI_ENABLED", False):
         return ()
     errors: list[str] = []
-    if CPRAIWorker is None:
+    if not CPR_AI_AVAILABLE:
         detail = f" ({CPR_AI_IMPORT_ERROR})" if CPR_AI_IMPORT_ERROR else ""
         errors.append(f"CPR AI optional dependencies are unavailable{detail}.")
     else:
@@ -14999,14 +15357,6 @@ def _cpr_ai_startup_errors() -> tuple[str, ...]:
                 + ", ".join(missing)
                 + "."
             )
-    if _env_bool("CPR_AI_LIVE_TRADING", False):
-        errors.append("CPR_AI_LIVE_TRADING=true is invalid: this worker is paper-only.")
-    # The AI worker internally evaluates the same strategies.  Requiring both
-    # deterministic workers off prevents duplicated CPR entries and P&L rows.
-    if _env_bool("CPR_VIRTUAL_TRADING", True):
-        errors.append("Set CPR_VIRTUAL_TRADING=false before enabling CPR AI.")
-    if _env_bool("CPR_ALGO3_VIRTUAL_TRADING", True):
-        errors.append("Set CPR_ALGO3_VIRTUAL_TRADING=false before enabling CPR AI.")
     return tuple(errors)
 
 
@@ -15244,17 +15594,6 @@ def _configure_startup_live_trading(
                 "No env prefix mapped for strategy %s; forcing PAPER.",
                 worker.strategy_name,
             )
-            continue
-        if getattr(worker, "paper_only", False):
-            # This attribute-level guard protects any future paper-only worker,
-            # while `_cpr_ai_startup_errors` additionally treats the CPR flag as
-            # invalid even when the global live switch is off.
-            if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
-                logger.error(
-                    "%s is PAPER-ONLY; ignoring %s_LIVE_TRADING=true.",
-                    worker.strategy_name,
-                    prefix,
-                )
             continue
         if master_live and _env_bool(f"{prefix}_LIVE_TRADING", False):
             config_errors = _live_config_errors(worker, prefix)
@@ -15893,11 +16232,9 @@ def main() -> None:
                 exc_info=True,
             )
 
-    # ----- CPR Codex AI agent (optional): conservative PAPER-ONLY arbiter.
-    # It may replace the two deterministic CPR workers, never coexist with them.
-    # The deterministic workers were constructed above because worker assembly
-    # stays centralized; their required false virtual gates remove them in the
-    # common filtering pass below before any thread starts.
+    # ----- CPR Codex AI agent (optional): independent five-minute worker.
+    # Ordinary CPR and CPR Algo 3 remain independently constructible and may run
+    # beside it; the shared startup audit and per-strategy gates apply normally.
     if _env_bool("CPR_AI_ENABLED", False):
         cpr_ai_errors = _cpr_ai_startup_errors()
         if cpr_ai_errors:
