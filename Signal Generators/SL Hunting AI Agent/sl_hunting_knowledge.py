@@ -417,6 +417,30 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   / opening range, and there must be no bullish rejection reclaiming those levels.
   Default gap-down logic still looks UP; use this short branch only when sellers
   are not huntable and buyer inventory / failed recovery is the active trap.
+- SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
+  gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
+  available". That premise is FALSE when the prior session already seated a buying
+  crowd and today's gap merely extends it. Two checkable tells that the buyers ARE
+  seated, and the gap-up is therefore a SHORT setup against them:
+    * ALL THREE indices are holding an EXACT round-number support after a positive
+      prior session (e.g. NIFTY ~24500, BankNIFTY ~57500, Sensex on its own round
+      number). A crowd that bought at a round number and is still sitting on it,
+      with no evidence anyone sold into it, is inventory — not absence.
+    * The prior session's rally was NOT distorted by an upcoming holiday. Before a
+      multi-day holiday retail takes LESS risk, so the same rally seats FEWER
+      people than it would on an ordinary day; once the holiday has passed, an
+      identical-looking gap-up reads the OPPOSITE way.
+  Worked example (4 Aug 2026): two gap-ups on consecutive days, opposite plans.
+  Day one had a mid-week holiday ahead and a retracement inside the rally, so the
+  crowd was thin and IH went WITH the gap (long). Day two had no holiday and all
+  three indices sat exactly on round numbers, so the crowd was seated and he
+  traded AGAINST them (puts). Same opening type, inverted conclusion — the gap
+  alone never decides; who is seated decides.
+- CLOSING-PRICE BREAKDOWN IS THE TRIGGER when hunting seated buyers, not the gap
+  and not the approach to the level. Buyers only start giving their SLs once price
+  trades BELOW THE PREVIOUS CLOSE across the indices. Sitting on that level is not
+  breaking it. If the breakdown never arrives the trade never existed: no
+  breakdown, no stop-fuel, and nothing to hold on to (see RISK).
 - GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL. A BIGGER gap does NOT make this
   branch stronger — it makes it worse. A modest gap leaves price near the stop
   clusters that fuel a move; an oversized gap has jumped clean past everybody's
@@ -729,6 +753,29 @@ RISK DISCIPLINE
   the expected "trap" fails and price goes sideways / against you. Honour a pre-set
   max loss and NEVER hold a loser hoping for a reversal; you are intraday and cannot
   wait indefinitely.
+- A TRIGGER THAT NEVER FIRED IS AN EXIT REASON, not a reason to keep waiting (v3y).
+  When the setup depended on a specific break — the closing-price breakdown that
+  makes seated buyers surrender — and price merely sits at that level without
+  taking it, the fuel you were trading never got released. That is not "still
+  setting up"; it is the trade failing to start. Leave rather than paying theta to
+  find out.
+- BEING DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD (v3y). "You cannot chase the
+  market insisting that YOU are right and IT is wrong." A premise that still LOOKS
+  correct — the crowd really is seated, the level really is there — is not evidence
+  the trade is working. Reasoning that keeps restating why the setup was good is
+  the tell that it has stopped being a decision and become a defence of the entry.
+- A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD (v3y). When price hangs at
+  your level instead of breaking it, the delay itself invites OTHER traders onto
+  your side of the trade. Their stops then cluster just beyond, and that cluster
+  becomes the fuel for a move AGAINST you — the same mechanism you were trying to
+  exploit, pointed the other way. Company at a level is a warning, not comfort:
+  the break should come promptly, "from about here", or the edge has inverted.
+- VOLATILE-DAY SIZING WIDENS BOTH ENDS, not just the stop (v3y). On a day that
+  opens with visibly fast momentum — especially after a stretch of sideways
+  sessions that produced none — widen the TARGET as well as the stop. A normal
+  target gets hit and left far behind, and a normal stop gets taken by ordinary
+  noise on the way. Because lots are auto-computed from the stop distance, a wider
+  stop shrinks position size rather than enlarging rupee risk.
 - TIME-DECAY discipline (you BUY options): a bought option bleeds premium while the
   market goes sideways — most sharply near/at EXPIRY. If the expected move does not
   come reasonably quickly, EXIT; do not let theta erode a stalled position.
@@ -965,6 +1012,16 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   about the LEADER failing to lead, not about momentum speed in general — a genuine
   leader-led move that grinds on in small candles is still the sustainable kind
   described in RISK.)
+- INDEX HIERARCHY ON THE WAY OUT — the indices are NOT equal when a position is
+  going against you (v3y). NIFTY and Sensex drifting against the trade is
+  TOLERABLE; that is handleable noise and does not by itself end the trade.
+  BankNIFTY turning against the trade is DISQUALIFYING: cut there, do not wait for
+  the stop and do not wait for the other two to agree. Live example (4 Aug 2026):
+  IH held a three-index PUT basket while the fall he wanted had not started, and
+  cut it for a loss the moment BankNIFTY began rising — "if BankNIFTY has started
+  going up there is no benefit in waiting", while explicitly saying he could have
+  HANDLED NIFTY and Sensex ticking up. So the major index is not only the entry
+  confirmation; it is the FIRST exit signal, and it outranks the other two.
 - MASKED BNF LAG: temporary BankNIFTY weakness can also be a mask that keeps
   NIFTY/Sensex breakout buyers away while the operator continues the original
   thesis. Treat BNF lag as invalidation only when it actually breaks the premise

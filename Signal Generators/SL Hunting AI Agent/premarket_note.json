@@ -1,29 +1,30 @@
 {
-  "for_date": "2026-08-04",
-  "source": "Intraday Hunter, 'Prediction For 04 AUG 2026' (IHjbAmtdLro, uploaded 2026-08-03)",
-  "context": "All three indices closed higher, NIFTY continuing up and BANKNIFTY/SENSEX sitting on round-number support, so buyers are seated across the board. NIFTY expiry falls on this session.",
+  "for_date": "2026-08-05",
+  "source": "Intraday Hunter, 'Prediction For 05 AUG 2026' (PSCeB9y9JbI, uploaded 2026-08-04)",
+  "context": "All three indices saw continued selling through the session. He reads the sellers now in as SMALL size -- they joined after the move had already run -- so there is no large trapped crowd to hunt.",
   "plan": [
-    "Every opening type points the same way today: GAP-UP, FLAT and GAP-DOWN all mean identify SELL-side setups against the seated buyers.",
-    "BIG GAP-DOWN is the single exception -- he ignores it rather than hunting into it.",
-    "On a mild GAP-DOWN expect retracement chop first; the setup still has to confirm before entry.",
-    "His premise is explicitly conditional: he targets buyers only because this is NOT an all-time-high or runaway-momentum tape. Strong trend momentum would weaken it.",
-    "BANKNIFTY sits on round-number support with more round numbers nearby -- he flags retracement risk there specifically."
+    "FLAT to GAP-DOWN: go WITH the market and identify SELL-side setups. He frames this as continuation, not a hunt -- momentum carrying rather than a trap springing.",
+    "GAP-UP: the same sell-side plan can stand, but the risk is a SIDEWAYS range that goes up a bit then down a bit. Expect chop rather than a clean move.",
+    "A VERY BIG gap is a different matter entirely -- he sets it aside rather than applying this plan to it.",
+    "Why the sellers are not the target: once a momentum move has already run, traders who join it do so in SMALL quantity. A large seated short crowd would be visible, and the market would gap hard against it to trap it.",
+    "If many sellers ARE in fact seated, he expects one of two things: a fall that moves in retracements from a flat open, or a single large gap. Both are reasons to stand aside, not to enter.",
+    "He notes the CLOSING PRICE is now calculated differently under a new exchange rule -- so the closing level his method keys off may not equal a naive previous close."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24610, 24700],
-      "support": [24500, 24400]
+      "resistance": [24530, 24610],
+      "support": [24300, 24220]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57820, 58100],
-      "support": [57500, 57154]
+      "resistance": [57650, 57800],
+      "support": [57154, 56850]
     },
     {
       "index": "SENSEX",
-      "resistance": [78850, 79100],
-      "support": [78500, 78300]
+      "resistance": [78610, 78850],
+      "support": [78400, 78000]
     }
   ]
 }

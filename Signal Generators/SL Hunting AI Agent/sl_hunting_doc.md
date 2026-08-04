@@ -2067,3 +2067,140 @@ alone is LAGGARDS NEVER JOINED (v3s).
 - `RETAIL_POSITIONING`: two sub-bullets under AGGREGATE-INVENTORY TEST.
 - `RISK`: ONLY RIDE AS FAR AS YOU KNOW THE ROAD.
 - Test marker: `test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge`.
+
+## Video addendum - the 4 Aug LIVE SESSION (v3y)
+
+**Source:** Intraday Hunter live session, 4 Aug 2026 (`i1G7hoIshyE`, 8:45).
+NIFTY expiry day. This is a **LOSING** session, which is rarer and more useful
+material than a win — and it directly follows the 3 Aug session in v3x, which
+makes the pair unusually instructive.
+
+**The setup that makes this session valuable:** 3 Aug and 4 Aug both opened
+GAP-UP. On 3 Aug he BOUGHT with the gap. On 4 Aug he SOLD puts against the
+buyers. He anticipates the obvious objection and answers it head-on:
+
+> "A question may come to your mind — sir, yesterday there was positive momentum
+> and a gap-up and you BOUGHT there. Today too there is a gap-up, the market keeps
+> going up. So why have we made a SELLING plan today?"
+
+His two discriminators, close to verbatim:
+1. **The holiday.** "Yesterday there was positive momentum, but there was some
+   retracement in it. Second, a two-day holiday was coming in the middle — because
+   of that traders take LESS risk. So there the plan was: if we get flat-to-gap-down
+   we understand buyers are seated. On a gap-up we preferred to go WITH the market."
+   "But in today's market? There was no holiday in between."
+2. **Exact round-number support on all three indices.** "All three indices have
+   taken round-number support. Around 24,500 it has taken support. Likewise in
+   BankNIFTY it has taken 57,500 support... exactly support. So buyers are seated
+   here. Nobody has gone and sold. Sensex too is sitting on a round number."
+
+**His entry rule (the trigger, not the gap):** "Buyers will start giving their SLs
+only when the market starts moving BELOW THE CLOSING PRICE — when BankNIFTY starts
+moving below its closing price and Sensex starts breaking its closing price. After
+that they will start giving SL." He entered as BankNIFTY began taking support
+*exactly at* the closing price, expecting the break: "chances of a breakdown are
+high and it will not take much time."
+
+Legs: BankNIFTY 57,800 PE + 57,700 PE, Sensex 78,700 PE, NIFTY (expiry) 1430 qty.
+
+**Volatility note:** "Today the market looks like it is doing momentum fast. It
+could be volatile. So if you are taking a target, keep it a bit BIGGER. If you are
+taking an SL, that also has to be kept reasonably wide." Also: "For many days the
+market has been sideways and was not producing momentum — today it might."
+
+**Why he cut it for a loss — the strongest part of the session:**
+- The trigger never fired. "This would only have paid if the market breaks down
+  through the closing price."
+- The index that ended it: "**Especially BankNIFTY is going up more. If BankNIFTY
+  is going up we will NOT hold this trade.**" And the explicit hierarchy: "If
+  Sensex and NIFTY moved up a little we could have HANDLED that. But once BankNIFTY
+  has started rising there is no benefit in waiting."
+- The discipline line: "Directionally we are correctly positioned, because buyers
+  should be here... **but if we are wrong we cannot chase the market insisting that
+  WE are right and YOU are wrong.** In that condition we cut the trade per the loss
+  limit."
+- A subtle one worth keeping: while price hung at the level, "because of candles
+  like this, OTHER people also start taking risk — and you know what risk they take,
+  they will SELL. Then sellers come in and get stuck, and the market starts turning."
+  Followed by: "if it is going to fall, it should fall from around here."
+
+**New, hence in the knowledge:**
+- The gap-up long branch needed a precondition it did not have — proof the buyers
+  are actually ABSENT. Two checkable tells that they are present instead
+  (round-number support across all three; no holiday distorting the prior day).
+  This is what makes two identical-looking gap-ups take opposite trades.
+- An index HIERARCHY for exits. Existing knowledge treats BankNIFTY as the major
+  index for the entry read (v3a) and covers the leader running alone (v3s/v3x).
+  This adds the losing-side rule: NIFTY/Sensex against you is tolerable, BankNIFTY
+  against you is disqualifying.
+- A trigger that never fired is an exit reason, not a reason to keep waiting.
+- Being directionally right does not earn the hold.
+- A slow grind at the level recruits your own side, whose stops become fuel against
+  you. (Related to but distinct from R:R-BAIT, which is about rejections inviting
+  shorts; this is about a stalled approach recruiting company.)
+- Volatile-day sizing widens the TARGET as well as the stop.
+
+**Confirmed but already present:** holiday carry-risk (v3g), round number and
+closing point as the level pair (`LEVELS_AND_PIVOT`), premise-invalidation exits,
+and BankNIFTY as the major index (v3a).
+
+**Knowledge changes (v3y, all prose):**
+- `OPENING_DRIVE`: SEATED-BUYER TEST + CLOSING-PRICE BREAKDOWN IS THE TRIGGER,
+  both placed ahead of the existing GAP SIZE IS A RISK DIAL bullet so they read as
+  preconditions of the long branch rather than as a competing rule.
+- `BNF_SPECIFIC`: INDEX HIERARCHY ON THE WAY OUT.
+- `RISK`: A TRIGGER THAT NEVER FIRED IS AN EXIT REASON; BEING DIRECTIONALLY RIGHT
+  DOES NOT EARN THE HOLD; A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD;
+  VOLATILE-DAY SIZING WIDENS BOTH ENDS.
+- Test markers: `test_system_prompt_has_v3y_seated_buyer_and_index_hierarchy_knowledge`
+  and `test_v3y_gap_conflict_does_not_contradict_the_opening_drive_branch` (the
+  latter pins the ORDERING, so the seated-buyer test cannot drift into looking like
+  an alternative gap-up rule the agent could pick between).
+
+**Note on the pre-open note:** the 2026-08-04 note shipped in PR #101 was
+transcribed from his 3 Aug *prediction* video and said sell-side on every opening
+type, big gap-down excepted. This live session is that plan being executed and
+then cut. The note was directionally what he traded; it is the EXIT that carried
+the lesson, and a pre-open note can never contain that.
+
+### Pre-open note for 2026-08-05 (shipped alongside v3y)
+
+**Source:** Intraday Hunter, "Prediction For 05 AUG 2026" (`PSCeB9y9JbI`,
+uploaded 2026-08-04, 2:34).
+
+**The plan has now inverted twice in three sessions**, which is the reason this
+channel exists as a DATED note rather than as knowledge:
+
+| Session | Plan | Who is the target |
+|---|---|---|
+| 3 Aug | gap-up -> BUY with it | nobody trapped; follow |
+| 4 Aug | every opening type -> SELL | seated BUYERS, hunted |
+| 5 Aug | flat/gap-down -> SELL **with** the market | nobody; this is continuation |
+
+4 Aug and 5 Aug are both "sell side" but for OPPOSITE reasons. On 4 Aug he was
+hunting a seated buyer crowd. For 5 Aug he explicitly says the sellers now in are
+NOT a crowd worth hunting: "once a momentum move has already happened, a trader
+who enters does not enter in large quantity" — so the move can simply continue,
+and he goes WITH it. A note that just echoed "sell side" from the previous day
+would carry the direction and lose the entire reason.
+
+Two things carried into the note beyond levels:
+- **The trap-detection logic, stated as a rule:** if a large short crowd HAD
+  seated, the market would know and "would directly give a big gap and make a
+  trap there". So a big gap is evidence about positioning, not just volatility —
+  which is why he sets a very large gap aside from this plan entirely.
+- **A market-mechanics flag:** "the closing price is being calculated a bit
+  differently now, according to the new rule." His whole method keys off the
+  previous CLOSE, so the level may not equal a naive previous close. Worth
+  watching in the runner, which computes its own levels.
+
+**Transcription caveat:** the auto-transcript renders one BankNIFTY resistance as
+"5780" where every other level is five digits; read as 57800, alongside 57650.
+Sensex supports came through as the run-on "780007840", read as 78000 and 78400.
+Neither could be confirmed against the on-screen chart (browser pane not
+compositing). They are advisory candidate levels only.
+
+**Test marker:** `test_shipped_note_matches_august_5_intraday_hunter_plan`,
+re-pinned from the 4 Aug content. It now also asserts the "SMALL size" phrase in
+`context`, because that is the clause distinguishing this sell-side plan from
+yesterday's opposite-reasoned one.
