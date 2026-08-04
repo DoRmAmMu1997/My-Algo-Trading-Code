@@ -2162,3 +2162,45 @@ transcribed from his 3 Aug *prediction* video and said sell-side on every openin
 type, big gap-down excepted. This live session is that plan being executed and
 then cut. The note was directionally what he traded; it is the EXIT that carried
 the lesson, and a pre-open note can never contain that.
+
+### Pre-open note for 2026-08-05 (shipped alongside v3y)
+
+**Source:** Intraday Hunter, "Prediction For 05 AUG 2026" (`PSCeB9y9JbI`,
+uploaded 2026-08-04, 2:34).
+
+**The plan has now inverted twice in three sessions**, which is the reason this
+channel exists as a DATED note rather than as knowledge:
+
+| Session | Plan | Who is the target |
+|---|---|---|
+| 3 Aug | gap-up -> BUY with it | nobody trapped; follow |
+| 4 Aug | every opening type -> SELL | seated BUYERS, hunted |
+| 5 Aug | flat/gap-down -> SELL **with** the market | nobody; this is continuation |
+
+4 Aug and 5 Aug are both "sell side" but for OPPOSITE reasons. On 4 Aug he was
+hunting a seated buyer crowd. For 5 Aug he explicitly says the sellers now in are
+NOT a crowd worth hunting: "once a momentum move has already happened, a trader
+who enters does not enter in large quantity" — so the move can simply continue,
+and he goes WITH it. A note that just echoed "sell side" from the previous day
+would carry the direction and lose the entire reason.
+
+Two things carried into the note beyond levels:
+- **The trap-detection logic, stated as a rule:** if a large short crowd HAD
+  seated, the market would know and "would directly give a big gap and make a
+  trap there". So a big gap is evidence about positioning, not just volatility —
+  which is why he sets a very large gap aside from this plan entirely.
+- **A market-mechanics flag:** "the closing price is being calculated a bit
+  differently now, according to the new rule." His whole method keys off the
+  previous CLOSE, so the level may not equal a naive previous close. Worth
+  watching in the runner, which computes its own levels.
+
+**Transcription caveat:** the auto-transcript renders one BankNIFTY resistance as
+"5780" where every other level is five digits; read as 57800, alongside 57650.
+Sensex supports came through as the run-on "780007840", read as 78000 and 78400.
+Neither could be confirmed against the on-screen chart (browser pane not
+compositing). They are advisory candidate levels only.
+
+**Test marker:** `test_shipped_note_matches_august_5_intraday_hunter_plan`,
+re-pinned from the 4 Aug content. It now also asserts the "SMALL size" phrase in
+`context`, because that is the clause distinguishing this sell-side plan from
+yesterday's opposite-reasoned one.

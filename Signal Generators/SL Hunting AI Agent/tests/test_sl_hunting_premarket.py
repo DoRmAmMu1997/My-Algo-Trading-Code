@@ -172,17 +172,18 @@ def test_shipped_note_file_is_valid():
     assert format_premarket_note(note, date.fromisoformat(note.for_date)) != ""
 
 
-def test_shipped_note_matches_august_4_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 3 Aug transcript.
+def test_shipped_note_matches_august_5_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 4 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    Worth knowing when re-reading this: 4 Aug is NOT a repeat of 3 Aug. On 3 Aug
-    the plan forked on the opening type (gap-up -> buy side, flat/gap-down ->
-    sell side). Here every opening type points the SAME way -- sell side --
-    with a big gap-down as the only stand-aside. An assertion that still fork on
-    the gap direction would mean the note was copied, not re-transcribed.
+    Worth knowing when re-reading this: the plan has now inverted twice in three
+    sessions, so a note that merely echoes the previous day is a copy, not a
+    transcription. 3 Aug forked on the opening type (gap-up -> buy). 4 Aug pointed
+    every opening type at the sell side, hunting seated BUYERS. 5 Aug is sell side
+    again but for the OPPOSITE reason -- going WITH continued selling, explicitly
+    because the sellers are NOT a big seated crowd worth hunting.
     """
     import os
 
@@ -191,35 +192,43 @@ def test_shipped_note_matches_august_4_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-04"
-    assert "IHjbAmtdLro" in note.source
+    assert note.for_date == "2026-08-05"
+    assert "PSCeB9y9JbI" in note.source
+    # The distinguishing claim: sellers are small, so this is continuation.
+    assert "SMALL size" in note.context
     assert note.plan == [
-        "Every opening type points the same way today: GAP-UP, FLAT and GAP-DOWN "
-        "all mean identify SELL-side setups against the seated buyers.",
-        "BIG GAP-DOWN is the single exception -- he ignores it rather than "
-        "hunting into it.",
-        "On a mild GAP-DOWN expect retracement chop first; the setup still has to "
-        "confirm before entry.",
-        "His premise is explicitly conditional: he targets buyers only because "
-        "this is NOT an all-time-high or runaway-momentum tape. Strong trend "
-        "momentum would weaken it.",
-        "BANKNIFTY sits on round-number support with more round numbers nearby -- "
-        "he flags retracement risk there specifically.",
+        "FLAT to GAP-DOWN: go WITH the market and identify SELL-side setups. He "
+        "frames this as continuation, not a hunt -- momentum carrying rather than "
+        "a trap springing.",
+        "GAP-UP: the same sell-side plan can stand, but the risk is a SIDEWAYS "
+        "range that goes up a bit then down a bit. Expect chop rather than a clean "
+        "move.",
+        "A VERY BIG gap is a different matter entirely -- he sets it aside rather "
+        "than applying this plan to it.",
+        "Why the sellers are not the target: once a momentum move has already run, "
+        "traders who join it do so in SMALL quantity. A large seated short crowd "
+        "would be visible, and the market would gap hard against it to trap it.",
+        "If many sellers ARE in fact seated, he expects one of two things: a fall "
+        "that moves in retracements from a flat open, or a single large gap. Both "
+        "are reasons to stand aside, not to enter.",
+        "He notes the CLOSING PRICE is now calculated differently under a new "
+        "exchange rule -- so the closing level his method keys off may not equal a "
+        "naive previous close.",
     ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24610.0, 24700.0],
-            "support": [24500.0, 24400.0],
+            "resistance": [24530.0, 24610.0],
+            "support": [24300.0, 24220.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57820.0, 58100.0],
-            "support": [57500.0, 57154.0],
+            "resistance": [57650.0, 57800.0],
+            "support": [57154.0, 56850.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78850.0, 79100.0],
-            "support": [78500.0, 78300.0],
+            "resistance": [78610.0, 78850.0],
+            "support": [78400.0, 78000.0],
         },
     ]
