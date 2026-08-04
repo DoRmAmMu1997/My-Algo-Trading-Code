@@ -10,6 +10,7 @@ the router refuses to guess a regime it cannot measure.
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -227,6 +228,115 @@ def test_fade_threshold_matches_the_source_formula():
         frame, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
         stop_loss_pct=0.015, target_pct=0.03,
     )["mr_long_setup"].any()
+
+
+def test_fade_stands_down_when_the_bar_already_reached_the_mean():
+    """Regression, observed live 2026-08-04: entered 10:24:11, "TARGET" 10:24:20,
+    +0.05 option points.
+
+    The fade fires on a bar that CLOSES below VWAP, but such a bar's HIGH is
+    usually back above VWAP -- it dipped to close there. Since the engine tests
+    stop/target against the CURRENT bar's full range, the VWAP target was already
+    inside the entry bar, so the position exited on TARGET at the next evaluation
+    having never moved. If the bar already traded to the mean, the reversion this
+    rule exists to capture happened inside it and there is no trade left.
+    """
+    frame = regime_common.prepare_session_frame(_session("2026-08-03", 40), 15)
+    frame["adx"] = 10.0
+    frame["atr"] = 10.0
+    # Extended 30 below VWAP (threshold is max(10*0.6, 15) = 15), so distance
+    # alone would fire the long fade.
+    frame["vwap"] = frame["close"] + 30.0
+
+    reached = frame.copy()
+    reached["high"] = reached["vwap"] + 1.0          # bar already traded past VWAP
+    assert not attach_mean_reversion_columns(
+        reached, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_long_setup"].any(), "took a fade whose target was inside the entry bar"
+
+    room = frame.copy()
+    room["high"] = room["close"] + 1.0               # still well short of VWAP
+    assert attach_mean_reversion_columns(
+        room, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_long_setup"].any(), "guard also blocked a fade that had real room"
+
+
+def test_short_fade_stands_down_when_the_bar_already_reached_the_mean():
+    """Same guard, mirrored -- the short side has the identical exposure."""
+    frame = regime_common.prepare_session_frame(_session("2026-08-03", 40), 15)
+    frame["adx"] = 10.0
+    frame["atr"] = 10.0
+    frame["vwap"] = frame["close"] - 30.0            # extended ABOVE VWAP
+
+    reached = frame.copy()
+    reached["low"] = reached["vwap"] - 1.0
+    assert not attach_mean_reversion_columns(
+        reached, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_short_setup"].any()
+
+    room = frame.copy()
+    room["low"] = room["close"] - 1.0
+    assert attach_mean_reversion_columns(
+        room, atr_mult=0.6, min_points=15.0, adx_ceiling=25.0,
+        stop_loss_pct=0.015, target_pct=0.03,
+    )["mr_short_setup"].any()
+
+
+def _ranging_session(day: str, bars: int, *, base: float = 25000.0, amp: float = 40.0,
+                     period: float = 9.0, seed: int = 7) -> pd.DataFrame:
+    """A choppy session that actually produces MEAN-REVERSION bars.
+
+    The plain ramp in `_session` trends hard enough that ADX never drops under
+    the 20 threshold, so the router picks BREAKOUT on every bar and any test
+    filtering for fades silently matches nothing. Sine + noise keeps ADX low
+    enough for the range regime and swings price through its own VWAP.
+    """
+    rng = np.random.default_rng(seed)
+    start = datetime.fromisoformat(f"{day} 09:15:00")
+    rows: list[dict] = []
+    previous = base
+    for i in range(bars):
+        close = base + amp * math.sin(i / period) + rng.normal(0.0, 12.0)
+        rows.append({
+            "timestamp": start + timedelta(minutes=i),
+            "open": previous,
+            "high": max(previous, close) + 10.0,
+            "low": min(previous, close) - 10.0,
+            "close": close,
+        })
+        previous = close
+    return pd.DataFrame(rows)
+
+
+def test_a_published_fade_cannot_exit_on_target_from_its_own_entry_bar():
+    """End-to-end version of the guard: take whatever the builder publishes and
+    prove the engine will not immediately close it on TARGET."""
+    config = ROUTER.RegimeAdaptiveConfig()
+    frame = ROUTER.build_regime_adaptive_with_indicators(_ranging_session("2026-08-03", 250), config)
+    engine = ROUTER.RegimeAdaptiveSignalEngine(config)
+
+    fades = frame[(frame["regime"] == ROUTER.MEAN_REVERSION_BRANCH)
+                  & (frame["long_setup"] | frame["short_setup"])]
+    # Without this the test passes by matching nothing -- which is exactly what it
+    # did on the trending fixture before the live bug made the gap obvious.
+    assert len(fades) > 0, "fixture produced no fade setups; the assertion below would be vacuous"
+    for _index, row in fades.iterrows():
+        is_long = bool(row["long_setup"])
+        side = "long" if is_long else "short"
+        one_bar = frame.loc[[_index]]
+        position = ROUTER.RegimeAdaptivePositionContext(
+            direction="LONG" if is_long else "SHORT",
+            entry_underlying=float(row[f"{side}_entry_price"]),
+            stop_underlying=float(row[f"{side}_stop_from_setup"]),
+            target_underlying=float(row[f"{side}_target_from_setup"]),
+        )
+        decision = engine.evaluate_candle(one_bar, position=position)
+        assert decision.exit_reason != "TARGET", (
+            f"{side} fade at {row.get('timestamp')} exits on TARGET using its own entry bar"
+        )
 
 
 def test_config_defaults_match_the_source_fade_distance():
