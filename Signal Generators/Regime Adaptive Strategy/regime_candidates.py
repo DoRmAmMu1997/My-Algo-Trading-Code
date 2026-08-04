@@ -106,6 +106,9 @@ def attach_mean_reversion_columns(
     adx = result["adx"].astype(float)
     vwap = result["vwap"].astype(float)
 
+    high = result["high"].astype(float)
+    low = result["low"].astype(float)
+
     distance = close - vwap
     threshold = np.maximum(atr * float(atr_mult), float(min_points))
     # ADX must be PRESENT and below the ceiling. `adx.notna()` is what makes a
@@ -113,15 +116,30 @@ def attach_mean_reversion_columns(
     range_regime = adx.notna() & (adx < float(adx_ceiling))
     usable = range_regime & atr.notna() & vwap.notna()
 
-    result["mr_long_setup"] = (usable & (distance <= -threshold)).fillna(False)
-    result["mr_short_setup"] = (usable & (distance >= threshold)).fillna(False)
-
     result["mr_long_entry_price"] = close
     result["mr_short_entry_price"] = close
     result["mr_long_stop_from_setup"] = close * (1.0 - float(stop_loss_pct))
     # A fade targets the mean it is fading back towards, capped by the ordinary
     # percentage target so a VWAP sitting far away cannot invent a huge target.
-    result["mr_long_target_from_setup"] = np.minimum(vwap, close * (1.0 + float(target_pct)))
+    long_target = np.minimum(vwap, close * (1.0 + float(target_pct)))
+    short_target = np.maximum(vwap, close * (1.0 - float(target_pct)))
+    result["mr_long_target_from_setup"] = long_target
     result["mr_short_stop_from_setup"] = close * (1.0 + float(stop_loss_pct))
-    result["mr_short_target_from_setup"] = np.maximum(vwap, close * (1.0 - float(target_pct)))
+    result["mr_short_target_from_setup"] = short_target
+
+    # ALREADY-REVERTED GUARD. The fade fires on a bar that CLOSES beyond the
+    # threshold, but that same bar's HIGH/LOW usually reaches back past VWAP --
+    # a bar that dipped below VWAP to close there generally traded above it on
+    # the way. Because the engine tests stop/target against the CURRENT bar's
+    # full range, such a setup exits on TARGET at the very next evaluation,
+    # booking a fill-to-fill round trip that never moved. Observed live on
+    # 2026-08-04: entered 10:24:11, "TARGET" at 10:24:20, +0.05 option points.
+    #
+    # If the bar has already traded to the mean, the reversion this rule exists
+    # to capture has happened INSIDE it -- so there is nothing left to trade.
+    long_room = high < long_target
+    short_room = low > short_target
+
+    result["mr_long_setup"] = (usable & (distance <= -threshold) & long_room).fillna(False)
+    result["mr_short_setup"] = (usable & (distance >= threshold) & short_room).fillna(False)
     return result

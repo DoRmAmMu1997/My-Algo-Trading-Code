@@ -155,6 +155,40 @@ every strategy except Regime Adaptive (`_DEFAULT_MAX_SPREAD_PCT`), so no existin
 worker's behaviour changed. The default lives in code, not only in `env.example`,
 so deleting the `.env` line cannot silently disarm it.
 
+### First session's numbers, and why the refusal rule stays (2026-08-04)
+
+Paper session, 4 entries. Every gate reading:
+
+| Time | Spread | Liquidity | Strikes |
+|---|---|---|---|
+| 09:54 | 0.27% | 89.9 | 462 |
+| 10:24 | 0.23% | 89.9 | 462 |
+| 10:25 | 0.31% | 90.1 | 462 |
+| 11:55 | **unscoreable** | **unscoreable** | — |
+
+Two things to take from that:
+
+1. **Both caps are loose by roughly an order of magnitude.** The worst spread seen
+   was 0.31% against a 2.00% cap, and liquidity sat at ~90 against a floor of 30 —
+   over 462 strikes. The worry recorded above, that a far-OTM tail would drag the
+   median down and veto everything, **did not happen.** Neither gate has yet
+   refused anything, so neither is proven in anger.
+2. **1 entry in 4 could not be scored at all.** At 11:55:18 `/optionchain` returned
+   a success-shaped but EMPTY payload — Dhan's rate-limit response; no fetch
+   exception was logged, so transport was fine. Paper proceeded (by design) and
+   that trade was the day's best, +Rs.1,423.50. On LIVE both gates would have
+   refused it.
+
+**Operator decision (2026-08-04): the live refusal stays.** The reasoning is that
+the +Rs.1,423.50 outcome was chance — the same unscoreable entry could equally
+have been the day's worst trade, and a rule that lets an unverifiable entry
+through because it *might* be the winner is not a risk rule. Regime Adaptive
+continues VIRTUAL for about a month before this is revisited with a real sample of
+how often the chain is unscoreable and what those entries actually do.
+
+Do NOT "fix" the refusal by relaxing it because a blocked trade would have won;
+that reasoning is only ever available after the fact.
+
 ---
 
 ## The liquidity gate (implemented)

@@ -12941,6 +12941,25 @@ def _build_signal_gen_worker_class(
                 return
 
             # Flat -> a LONG buys an ATM CE, a SHORT buys an ATM PE (see enter_position).
+            if decision.action in ("ENTER_LONG", "ENTER_SHORT"):
+                # Log WHY before acting. For most ports `reason` is a short rule
+                # name, but for the Regime Adaptive router it also names the
+                # branch that fired ("BREAKOUT_long" / "MEANREV_short"), which is
+                # otherwise invisible: the entry line below records the option and
+                # the levels, never which rule chose them. Without this you cannot
+                # confirm from a session log that the router actually switched
+                # branch as ADX crossed -- the one thing its porting notes ask you
+                # to verify in paper.
+                self.log.info(
+                    "SIGNAL %s | %s | reason=%s | entry=%.2f stop=%.2f target=%.2f%s",
+                    decision.action,
+                    self.strategy_name,
+                    getattr(decision, "reason", "") or "-",
+                    _safe_float(decision.entry_underlying, 0.0),
+                    _safe_float(decision.stop_underlying, 0.0),
+                    _safe_float(getattr(decision, "target_underlying", 0.0), 0.0),
+                    f" | {decision.debug}" if getattr(decision, "debug", None) else "",
+                )
             if decision.action == "ENTER_LONG":
                 self.enter_position(
                     "LONG",
