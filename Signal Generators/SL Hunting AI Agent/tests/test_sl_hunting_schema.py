@@ -619,6 +619,51 @@ def test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge():
     assert "no read, no position" in prompt
 
 
+def test_system_prompt_has_v3y_seated_buyer_and_index_hierarchy_knowledge():
+    """v3y (4 Aug live session): IH's LOSING trade, and the day the same opening
+    type produced the opposite plan two days running.
+
+    Both days gapped up. Day one he bought WITH the gap; day two he sold puts
+    AGAINST the buyers -- because day one had a mid-week holiday ahead (thin crowd)
+    and a retracement inside the rally, while day two had no holiday and all three
+    indices sat on exact round-number support (seated crowd). He then cut the trade
+    for a loss the moment BankNIFTY turned up, saying he could have handled NIFTY
+    and Sensex ticking against him but not the major index.
+    """
+    prompt = build_system_prompt()
+    # The gap-up long branch must first prove the buyers are actually absent.
+    assert "SEATED-BUYER TEST" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "EXACT round-number support" in prompt
+    assert "takes LESS risk" in prompt
+    assert "identical-looking gap-up reads the OPPOSITE way" in prompt
+    # The hunt needs the break, not merely the approach to the level.
+    assert "CLOSING-PRICE BREAKDOWN IS THE TRIGGER" in prompt
+    assert "Sitting on that level is not" in prompt
+    # The indices are not equal once a position is losing.
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+    assert "DISQUALIFYING" in prompt
+    # ...and the three discipline lessons the loss paid for.
+    assert "A TRIGGER THAT NEVER FIRED IS AN EXIT REASON" in prompt
+    assert "BEING DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD" in prompt
+    assert "A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD" in prompt
+    assert "VOLATILE-DAY SIZING WIDENS BOTH ENDS" in prompt
+
+
+def test_v3y_gap_conflict_does_not_contradict_the_opening_drive_branch():
+    """The seated-buyer test must READ AS a precondition of the gap-up long, not as
+    a second, competing gap-up rule. If both are stated flatly the agent can pick
+    whichever suits the bar it is looking at."""
+    prompt = build_system_prompt()
+    seated = prompt.index("SEATED-BUYER TEST")
+    gap_size = prompt.index("GAP SIZE IS A RISK DIAL")
+    drive = prompt.index("OPENING DRIVE — early-session continuation exceptions")
+    # It lives inside the OPENING DRIVE conditions, ahead of the risk-dial rule.
+    assert drive < seated < gap_size
+    # And it is explicitly ordered before the branch may fire.
+    assert "BEFORE the long branch fires" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
