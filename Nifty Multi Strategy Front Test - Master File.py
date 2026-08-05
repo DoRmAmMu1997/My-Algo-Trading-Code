@@ -231,6 +231,7 @@ from __future__ import annotations
 
 # --- Standard library imports ------------------------------------------------
 import contextlib
+import csv
 import glob
 import html
 import importlib.util
@@ -4299,6 +4300,11 @@ class BasePaperStrategyWorker(threading.Thread):
         # notifications are disabled, in which case publish_trade_event no-ops.
         self.trade_event_queue = None
 
+        # Always-on trade-event sink consumed by TradeCsvWorker, which appends
+        # every entry/exit to a daily CSV for easy end-of-day review.
+        # main() injects it after construction.
+        self.csv_trade_queue: queue.Queue | None = None
+
         # Per-strategy execution mode. Defaults to paper; main() flips this to
         # True after construction when LIVE_TRADING_ENABLED and this strategy's
         # <PREFIX>_LIVE_TRADING are both on. When True, the take-trade logic places
@@ -5621,13 +5627,15 @@ class BasePaperStrategyWorker(threading.Thread):
 
     def publish_trade_event(self, event: dict) -> None:
         """
-        Best-effort hand-off of a trade event to the Telegram notifier queue.
+        Best-effort hand-off of a trade event to the Telegram notifier queue
+        and the always-on CSV trade log queue.
 
         Used by every worker (single-leg and hedged) on each entry/exit. It
         never raises and never blocks: trading must continue even if the queue
         is absent (notifications off), full, or otherwise unhappy. The consumer
-        (TelegramMessageWorker) owns all formatting and network I/O, so the
-        trading threads are never exposed to Telegram latency or failures.
+        (TelegramMessageWorker) owns Telegram formatting and network I/O;
+        TradeCsvWorker owns the daily CSV file I/O. Neither exposes latency
+        or failures back to the trading threads.
         """
         try:
             event.setdefault("strategy", self.strategy_name)
@@ -5636,10 +5644,14 @@ class BasePaperStrategyWorker(threading.Thread):
             mode_parts = _execution_mode_parts(event["mode"])
             with self._execution_mode_lock:
                 self._execution_modes_seen.update(mode_parts)
+            # Telegram notifier (optional)
             event_queue = getattr(self, "trade_event_queue", None)
-            if event_queue is None:
-                return
-            event_queue.put_nowait(event)
+            if event_queue is not None:
+                event_queue.put_nowait(event)
+            # CSV trade log (always-on, injected by main())
+            csv_queue = getattr(self, "csv_trade_queue", None)
+            if csv_queue is not None:
+                csv_queue.put_nowait(event)
         except Exception:
             # A failed enqueue must never disturb the trading loop.
             pass
@@ -14487,6 +14499,120 @@ def format_trade_message(event: dict) -> str:
     return "\n".join(lines)
 
 
+class TradeCsvWorker(threading.Thread):
+    """
+    Appends every trade entry/exit event to a daily CSV file for easy
+    end-of-day review.
+
+    Design:
+    - Always active (not behind a flag). main() creates the queue and injects
+      it into every worker via ``worker.csv_trade_queue``.
+    - One CSV per calendar date: ``Dependencies/log_files/trades_YYYY-MM-DD.csv``.
+      If the file already exists (e.g. the runner is restarted mid-day) rows are
+      appended, not overwritten.
+    - Columns written per row:
+        timestamp, strategy, mode, action, direction, symbol, right, strike,
+        expiry, qty, spot, entry_price, exit_price, pnl, cum_pnl, reason, ref
+    - Runs as a daemon thread so it never prevents a clean shutdown; the stop
+      event triggers a final drain so end-of-day exit rows are never lost.
+    """
+
+    # Ordered column names for the CSV header.
+    COLUMNS = [
+        "timestamp", "strategy", "mode", "action", "direction",
+        "symbol", "right", "strike", "expiry", "qty", "spot",
+        "entry_price", "exit_price", "pnl", "cum_pnl", "reason", "ref",
+    ]
+
+    def __init__(self, event_queue: queue.Queue, stop_event: threading.Event):
+        super().__init__(name="TradeCsvWorker", daemon=True)
+        self.event_queue = event_queue
+        self.stop_event = stop_event
+        self.log = logging.getLogger(f"{LOGGER_NAME}.trade_csv")
+        self._log_dir = ROOT_DIR / "Dependencies" / "log_files"
+        self._written = 0
+
+    def _csv_path(self) -> Path:
+        """Return today's CSV path (re-evaluated each call so a midnight
+        rollover produces a new file automatically)."""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        return self._log_dir / f"trades_{date_str}.csv"
+
+    def _write_row(self, event: dict) -> None:
+        """Extract fields from an event dict and append one CSV row."""
+        action = event.get("action", "")
+        # Skip non-trade events such as EOD summaries or startup alerts.
+        if action not in ("ENTRY", "EXIT", "EXIT_FAILED", "RE-ENTRY"):
+            return
+
+        # Pull out the first leg for single-leg strategies; hedged workers may
+        # put multiple legs in event["legs"] -- write one row per leg.
+        legs = event.get("legs") or [{}]
+        base = {
+            "timestamp": event.get("ts", ""),
+            "strategy":  event.get("strategy", ""),
+            "mode":      event.get("mode", ""),
+            "action":    action,
+            "direction": event.get("direction", ""),
+            "expiry":    event.get("expiry", ""),
+            "qty":       event.get("quantity", ""),
+            "spot":      event.get("spot", ""),
+            "reason":    event.get("reason", ""),
+            "pnl":       event.get("pnl", ""),
+            "cum_pnl":   event.get("cum_pnl", ""),
+            "ref":       event.get("ref", ""),
+        }
+
+        csv_path = self._csv_path()
+        write_header = not csv_path.exists()
+        try:
+            with open(csv_path, "a", newline="", encoding="utf-8") as fh:
+                writer = csv.DictWriter(
+                    fh, fieldnames=self.COLUMNS, extrasaction="ignore"
+                )
+                if write_header:
+                    writer.writeheader()
+                for leg in legs:
+                    row = dict(base)
+                    row["symbol"]      = leg.get("symbol", event.get("symbol", ""))
+                    row["right"]       = leg.get("right", event.get("right", ""))
+                    row["strike"]      = leg.get("strike", event.get("strike", ""))
+                    row["entry_price"] = leg.get("entry_price", event.get("entry_price", ""))
+                    row["exit_price"]  = leg.get("exit_price", event.get("exit_price", ""))
+                    # For ENTRY rows the pnl/cum_pnl fields are blank (not yet known).
+                    writer.writerow(row)
+                    self._written += 1
+        except Exception as exc:
+            self.log.warning("TradeCsvWorker: failed to write row for %s: %s", action, exc)
+
+    def run(self) -> None:
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self.log.info(
+            "TradeCsvWorker started. Daily trade CSV: %s", self._csv_path()
+        )
+        while not self.stop_event.is_set():
+            try:
+                event = self.event_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            self._write_row(event)
+        # Drain anything still in the queue so end-of-day exits are captured.
+        self._drain_remaining()
+        self.log.info(
+            "TradeCsvWorker exited. Rows written=%d. File: %s",
+            self._written,
+            self._csv_path(),
+        )
+
+    def _drain_remaining(self) -> None:
+        while True:
+            try:
+                event = self.event_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._write_row(event)
+
+
 class TelegramMessageWorker(threading.Thread):
     """
     Posts trade events to a Telegram group/channel, one message per entry/exit.
@@ -16007,6 +16133,14 @@ def main() -> None:
     # message on every entry/exit from ANY worker. Wired only when the .env
     # flag is on AND credentials are present; otherwise workers keep their
     # default `trade_event_queue = None` and publish_trade_event() is a no-op.
+    # Always-on CSV trade log: one row per entry/exit in each worker. The
+    # queue and worker are created unconditionally so no flag is needed.
+    csv_trade_queue: queue.Queue = queue.Queue(maxsize=2000)
+    for worker in workers:
+        worker.csv_trade_queue = csv_trade_queue
+    csv_worker = TradeCsvWorker(csv_trade_queue, stop_event)
+    csv_worker.start()
+
     telegram_worker = None
     trade_event_queue = None
     if TELEGRAM_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
@@ -16066,8 +16200,9 @@ def main() -> None:
     fetcher.join(timeout=SHUTDOWN_JOIN_SECONDS)
     if telegram_worker is not None:
         telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
+    csv_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
-    supervised_threads = [fetcher, telegram_worker, *workers]
+    supervised_threads = [fetcher, telegram_worker, csv_worker, *workers]
     alive_threads = [
         thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
     ]

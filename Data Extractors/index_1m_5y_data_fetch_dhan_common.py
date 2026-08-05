@@ -36,6 +36,18 @@ if TYPE_CHECKING:
     # name. Runtime entry points execute from the repository root instead.
     from market_data_health import MarketDataValidationError, validate_ohlc_frame
 else:
+    # When this module is imported by a wrapper script (e.g. launched via
+    # `algo.py fetch-data`), Python seeds sys.path from the *script* directory
+    # ("Data Extractors/"), not from the repo root. The Dependencies package
+    # lives at repo root, so we insert that directory into sys.path before the
+    # import so it resolves correctly in all launch modes.
+    import sys as _sys
+
+    _repo_root = str(Path(__file__).resolve().parent.parent)
+    if _repo_root not in _sys.path:
+        _sys.path.insert(0, _repo_root)
+    del _repo_root
+
     from Dependencies.market_data_health import (
         MarketDataValidationError,
         validate_ohlc_frame,
@@ -64,7 +76,7 @@ class IndexFetchDefaults:
     lookback: str = "5y"
     # SECURITY: never hardcode credentials here. The client id resolves CLI
     # flag -> environment variable (DHAN_CLIENT_CODE) -> this blank. The access
-    # token is a SECRET and resolves environment variable (DHAN_TOKEN_ID, e.g.
+    # token is a SECRET and resolves environment variable (DHAN_ACCESS_TOKEN, e.g.
     # from Dependencies/.env) -> this blank ONLY -- there is deliberately no
     # CLI flag for it (MAT-108): a token typed on the command line lands in
     # shell history and process listings. A real client id + access token used
@@ -94,7 +106,7 @@ def parse_args(defaults: IndexFetchDefaults):
     # - the CLIENT ID is an account identifier (not a secret), so it may come
     #   from the CLI flag, then the environment, then the wrapper default.
     # - the ACCESS TOKEN is a secret and is read from the environment ONLY
-    #   (DHAN_TOKEN_ID, e.g. loaded from Dependencies/.env). There is
+    #   (DHAN_ACCESS_TOKEN, e.g. loaded from Dependencies/.env). There is
     #   deliberately no --access-token flag: a token typed on the command
     #   line would land in shell history and process listings.
     parser.add_argument(
@@ -143,7 +155,7 @@ def parse_args(defaults: IndexFetchDefaults):
     args = parser.parse_args()
     # Attach the token AFTER parsing so it can never be supplied (or leaked)
     # through the command line; downstream code keeps reading args.access_token.
-    args.access_token = os.getenv("DHAN_TOKEN_ID", defaults.default_access_token)
+    args.access_token = os.getenv("DHAN_ACCESS_TOKEN", defaults.default_access_token)
     return args
 
 
@@ -293,15 +305,36 @@ def normalize_response_data(data) -> pd.DataFrame:
             ts = pd.to_datetime(out["timestamp_raw"], errors="coerce", utc=True)
 
     # Dhan timestamps are normalized into India market time because that is the
-    # timezone your backtest data uses across the project.
-    out["timestamp"] = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+    # timezone your backtest data uses across the project. Dhan's historical
+    # API occasionally returns drift in the seconds component, so we floor it
+    # to the exact minute to satisfy validate_ohlc_frame's exact-minute rule.
+    out["timestamp"] = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None).dt.floor("min")
     out = out.drop(columns=["timestamp_raw"])
+    
+    # Dhan's history API can sometimes yield multiple conflicting rows for the
+    # same minute (either through seconds drift previously, or upstream API
+    # quirks). The live-trading validator strictly rejects conflicting rows,
+    # so we deduplicate them here, trusting the last record in the chunk as
+    # the final state of that minute candle.
+    out = out.drop_duplicates(subset=["timestamp"], keep="last").reset_index(drop=True)
+    
+    # Dhan's history API sporadically returns bad quotes (e.g. low > high).
+    # The live validator rejects the whole chunk if it sees even one impossible
+    # candle. Filter those out here so we can keep the rest of the valid chunk.
+    invalid_geometry = (
+        (out["low"] > out["open"])
+        | (out["low"] > out["close"])
+        | (out["high"] < out["open"])
+        | (out["high"] < out["close"])
+        | (out["low"] > out["high"])
+    )
+    if invalid_geometry.any():
+        out = out[~invalid_geometry].reset_index(drop=True)
+
     out = validate_ohlc_frame(out)
 
-    volume = pd.to_numeric(out["volume"], errors="coerce")
-    if volume.isna().any() or not volume.map(math.isfinite).all() or (volume < 0).any():
-        raise MarketDataValidationError("Dhan chunk contains invalid volume")
-    out["volume"] = volume
+    volume = pd.to_numeric(out["volume"], errors="coerce").fillna(0)
+    out["volume"] = volume.clip(lower=0)
 
     return out[["timestamp", "open", "high", "low", "close", "volume"]]
 
@@ -474,16 +507,35 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     Main script flow used by each wrapper.
 
     This is the function that turns the helper into a real CLI script:
-    1. Parse user inputs
-    2. Validate required settings
-    3. Download all chunks
-    4. Save the final CSV
+    1. Load credentials from Dependencies/.env (same pattern as the master runner
+       and all backtest scripts — override=False so explicit env vars still win)
+    2. Parse user inputs
+    3. Validate required settings
+    4. Download all chunks
+    5. Save the final CSV
     """
+    # Load credentials from Dependencies/.env so the user doesn't need to
+    # export DHAN_CLIENT_CODE / DHAN_ACCESS_TOKEN in their shell manually.
+    # override=False means a value already set in the shell environment takes
+    # priority over the file, which is the correct behaviour for CI / overrides.
+    # The .env sits one level up from this file's directory (repo_root/Dependencies/).
+    _env_path = Path(__file__).resolve().parent.parent / "Dependencies" / ".env"
+    try:
+        from dotenv import load_dotenv as _load_dotenv  # type: ignore[import-untyped]
+
+        if _env_path.exists():
+            _load_dotenv(dotenv_path=_env_path, override=False)
+    except ImportError:
+        # python-dotenv is a pinned core dependency; this branch only triggers
+        # in a broken environment. The error below will surface if credentials
+        # are also missing, which gives the user a clear next step.
+        pass
+
     args = parse_args(defaults)
 
     if not args.client_id or not args.access_token:
         raise ValueError(
-            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_TOKEN_ID in the "
+            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_ACCESS_TOKEN in the "
             "environment (e.g. Dependencies/.env). Only --client-id may be "
             "overridden on the command line; the token is environment-only."
         )

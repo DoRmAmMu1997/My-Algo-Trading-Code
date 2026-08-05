@@ -64,7 +64,7 @@ def test_access_token_is_environment_only_never_a_cli_flag(monkeypatch):
         security_id="13",
         default_output="out.csv",
     )
-    monkeypatch.setenv("DHAN_TOKEN_ID", "env-only-token")
+    monkeypatch.setenv("DHAN_ACCESS_TOKEN", "env-only-token")
     monkeypatch.setattr(sys, "argv", ["fetcher"])
 
     args = fetcher.parse_args(defaults)
