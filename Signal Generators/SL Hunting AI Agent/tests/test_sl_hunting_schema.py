@@ -664,6 +664,50 @@ def test_v3y_gap_conflict_does_not_contradict_the_opening_drive_branch():
     assert "BEFORE the long branch fires" in prompt
 
 
+def test_system_prompt_has_v3z_missing_rip_and_rule_discipline_knowledge():
+    """v3z (5 Aug live session): a WIN, and the session where he re-examines the
+    v3y loss and keeps the rule anyway.
+
+    Big gap-up, then rejection. He sold -- not fading the gap, but reading that
+    retail never got short: "if retail HAD sold, the market would have started
+    rising directly, leaving no time". No sellers above means a further push up
+    attracts only buyers, so down is the path. He then booked early because the
+    PREVIOUS day was a loss, and reflected that yesterday's INDEX HIERARCHY cut
+    was wrong in outcome -- the market fell from almost exactly where he exited --
+    and that the rule stands regardless.
+    """
+    prompt = build_system_prompt()
+    # Absence of the hunt is evidence about who is absent.
+    assert "THE MISSING RIP IS THE TELL" in prompt
+    assert "leaving no time" in prompt
+    # A big gap has nowhere to set the lure.
+    assert "BAIT ROOM" in prompt
+    # The meta-discipline lesson, which exists to protect v3y's exit rule.
+    assert "A RULE THAT COST YOU MONEY YESTERDAY IS STILL THE RULE" in prompt
+    assert "invisible by construction" in prompt
+    assert "sample of one" in prompt
+    # In-trade twin of BOTH-SIDES PARTICIPATION.
+    assert "TWO-SIDED FLOW PROTECTS AN OPEN PROFIT" in prompt
+    # Post-loss target discipline, distinct from the re-entry speed limit.
+    assert "AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN THE BIG ONE" in prompt
+    assert "POST-LOSS SPEED LIMIT, which governs" in prompt
+    assert "NAME THE ONE WAY THIS TRADE FAILS" in prompt
+
+
+def test_v3z_rule_discipline_cannot_be_read_as_licence_to_hold():
+    """The dangerous misreading of "the rule cost me money" is "so hold longer".
+
+    v3z must reinforce the v3y exit, never soften it, so the prompt has to keep
+    both the hierarchy exit and the never-hold-a-loser rule intact alongside it.
+    """
+    prompt = build_system_prompt()
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+    assert "NEVER hold a loser hoping for a reversal" in prompt
+    # The lesson is explicitly about NOT relaxing an exit rule.
+    # Wrap-independent: this sentence spans a line break in the source.
+    assert "Never widen, delay, or suspend an exit" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 

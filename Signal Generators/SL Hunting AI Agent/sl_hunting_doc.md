@@ -2204,3 +2204,108 @@ compositing). They are advisory candidate levels only.
 re-pinned from the 4 Aug content. It now also asserts the "SMALL size" phrase in
 `context`, because that is the clause distinguishing this sell-side plan from
 yesterday's opposite-reasoned one.
+
+## Video addendum - the 5 Aug LIVE SESSION (v3z)
+
+**Source:** Intraday Hunter live session, 5 Aug 2026 (`lS-sUh54LeA`, 10:47).
+A WIN — and, more valuable, the session in which he re-opens the v3y loss and
+keeps the rule that caused it.
+
+**Setup:** big gap-up, then a rejection to buying. He SOLD (puts): BankNIFTY
+57800 PE 1170 qty, Sensex 900 qty, NIFTY 1430 qty. Booked a good profit inside
+the first hour.
+
+### The read: he was not fading the gap, he was reading an absent crowd
+
+> "You may think sellers are seated here and the market can target them. But with
+> the kind of momentum that just happened, most people could not even get a sell
+> trade on... **Retail selling has NOT happened here. You see a gap-up, but retail
+> selling is not here. If retail HAD sold, the market would have done something
+> different — it would have started rising directly. There would have been no
+> time.**"
+
+That is an inference from ABSENCE, and it is the new idea: the market not ripping
+higher immediately is itself evidence that there is nobody above to rip through.
+Then the asymmetry he trades on:
+
+> "If it goes directly up, only BUYERS are going to come there; nobody will sell.
+> **The market does not work in a situation where only one side's traders are
+> operating.**"
+
+Up = one-sided, therefore unsustainable. Down = both sides still arguing,
+therefore the path. He also notes the gap was too big to be a bait: "sometimes
+sellers get seated and the market tempts them a little, then starts rising. But
+this gap-up is so large that there is no ROOM to tempt."
+
+### The in-trade monitor
+
+> "While the market is falling, as long as buyers are coming and sellers are
+> coming — 'let me take a trade too', 'let me take a trade too' — **nobody is
+> going to touch your profit.** But when it starts to feel like ONLY sellers are
+> coming, only buyers are coming, then danger starts hovering over your profit."
+
+This is BOTH-SIDES PARTICIPATION applied to an OPEN position rather than to an
+entry, which is what makes it worth adding.
+
+### Re-opening the v3y loss — the most important part
+
+> "Yesterday we had a loss. It was a very wrong loss. **If we had stayed seated a
+> little, it would have worked out.** But when BankNIFTY starts going up you have
+> to get out, because BankNIFTY is our MAJOR index. Yesterday BankNIFTY alone
+> started rising, so we cut. Otherwise the market did fall properly later —
+> **almost exactly from where we exited. I saw it.** Never mind, it happens.
+> **Follow the rule. It works better for you.**"
+
+The v3y INDEX HIERARCHY exit cost him the trade, he watched it would have paid,
+and he reaffirmed the rule anyway. That is rarer than either a win or a loss, and
+it is the reason this became a knowledge entry rather than a note.
+
+It also happens to be the same argument the operator made on 2026-08-04 about
+keeping the LIVE refusal on an unscoreable option chain even though the blocked
+entry turned out to be the day's best trade (see
+`Signal Generators/Regime Adaptive Strategy/REGIME_PORTING_NOTES.md`). Two
+independent instances of the same discipline in two days.
+
+### Why he booked early
+
+> "The target could be made bigger here... but yesterday we had a loss. If today
+> is giving a chance to make profit, take a good profit and go."
+
+He says in the same breath that more momentum was likely, and leaves regardless.
+Distinct from the existing POST-LOSS SPEED LIMIT, which governs re-ENTRY speed;
+this governs how much you demand from the trade you are already in.
+
+### One more, on where to point attention
+
+> "The wrong thing the market can do to us is give a round-number breakout."
+
+So he watched BankNIFTY's approach to 58,000 specifically — and said he watched
+BankNIFTY hardest **because that is where his quantity is largest**, not because
+its chart was the most interesting.
+
+**New, hence in the knowledge:**
+- The missing rip is the tell (absence of the hunt identifies the absent crowd).
+- A large gap removes the BAIT ROOM, so "they will be baited then squeezed" is
+  not available.
+- A rule that cost you money yesterday is still the rule.
+- Two-sided flow protects an open profit; one-sided flow endangers it.
+- After a losing day, take the good profit rather than the big one.
+- Name the one way this trade fails, then watch that — and watch it hardest where
+  the quantity is largest.
+
+**Confirmed but already present:** BOTH-SIDES PARTICIPATION for entries, GAP SIZE
+IS A RISK DIAL, POST-LOSS SPEED LIMIT, the INDEX HIERARCHY exit itself (v3y), and
+BankNIFTY as the major index (v3a).
+
+**Knowledge changes (v3z, all prose):**
+- `RETAIL_POSITIONING`: THE MISSING RIP IS THE TELL.
+- `OPENING_DRIVE`: the BAIT ROOM clause, folded into GAP SIZE IS A RISK DIAL.
+- `RISK`: A RULE THAT COST YOU MONEY YESTERDAY IS STILL THE RULE; TWO-SIDED FLOW
+  PROTECTS AN OPEN PROFIT; AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN
+  THE BIG ONE; NAME THE ONE WAY THIS TRADE FAILS.
+- Test markers: `test_system_prompt_has_v3z_missing_rip_and_rule_discipline_knowledge`
+  and `test_v3z_rule_discipline_cannot_be_read_as_licence_to_hold`. The second
+  exists because "the rule cost me money" has an obvious dangerous misreading —
+  "so hold longer next time" — and v3z must reinforce the v3y exit, never soften
+  it. It asserts the hierarchy exit and the never-hold-a-loser rule are both still
+  present alongside the new lesson.
