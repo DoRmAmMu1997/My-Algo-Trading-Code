@@ -1,29 +1,27 @@
 {
-  "for_date": "2026-08-05",
-  "source": "Intraday Hunter, 'Prediction For 05 AUG 2026' (PSCeB9y9JbI, uploaded 2026-08-04)",
-  "context": "All three indices saw continued selling through the session. He reads the sellers now in as SMALL size -- they joined after the move had already run -- so there is no large trapped crowd to hunt.",
+  "for_date": "2026-08-06",
+  "source": "Intraday Hunter, 'Prediction For 06 AUG 2026' (-51EUk_dukw, uploaded 2026-08-05)",
+  "context": "All three indices saw decent selling, but NONE broke its closing price and NIFTY closed holding a round-number support. The seated crowd is now SELLERS, and the level holding leaves them exposed.",
   "plan": [
-    "FLAT to GAP-DOWN: go WITH the market and identify SELL-side setups. He frames this as continuation, not a hunt -- momentum carrying rather than a trap springing.",
-    "GAP-UP: the same sell-side plan can stand, but the risk is a SIDEWAYS range that goes up a bit then down a bit. Expect chop rather than a clean move.",
-    "A VERY BIG gap is a different matter entirely -- he sets it aside rather than applying this plan to it.",
-    "Why the sellers are not the target: once a momentum move has already run, traders who join it do so in SMALL quantity. A large seated short crowd would be visible, and the market would gap hard against it to trap it.",
-    "If many sellers ARE in fact seated, he expects one of two things: a fall that moves in retracements from a flat open, or a single large gap. Both are reasons to stand aside, not to enter.",
-    "He notes the CLOSING PRICE is now calculated differently under a new exchange rule -- so the closing level his method keys off may not equal a naive previous close."
+    "FLAT to GAP-UP: identify BUY-side setups. A flat or higher open leaves the seated sellers exposed with their stops above -- they are the crowd to hunt.",
+    "GAP-DOWN: identify SELL-side setups and go WITH the market instead. A decent gap-down puts those sellers INTO PROFIT, so there is no threat on them and no hunt available.",
+    "Which side is seated decides the direction, not the gap itself: today the seated crowd is SELLERS, so a gap-up is a hunt setup and a gap-down is a follow setup.",
+    "The sellers are seated but NOT yet confirmed trapped -- no index broke its closing price, so the move that would validate a short has not happened."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24530, 24610],
-      "support": [24300, 24220]
+      "resistance": [24610, 24700],
+      "support": [24420, 24300]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57650, 57800],
-      "support": [57154, 56850]
+      "resistance": [57880, 58100],
+      "support": [57150, 56850]
     },
     {
       "index": "SENSEX",
-      "resistance": [78610, 78850],
+      "resistance": [78850, 79100],
       "support": [78400, 78000]
     }
   ]

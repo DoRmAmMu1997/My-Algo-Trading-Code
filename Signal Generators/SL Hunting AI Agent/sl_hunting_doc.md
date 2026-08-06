@@ -2309,3 +2309,38 @@ BankNIFTY as the major index (v3a).
   "so hold longer next time" — and v3z must reinforce the v3y exit, never soften
   it. It asserts the hierarchy exit and the never-hold-a-loser rule are both still
   present alongside the new lesson.
+
+### Pre-open note for 2026-08-06 (shipped alongside v3z)
+
+**Source:** Intraday Hunter, "Prediction For 06 AUG 2026" (`-51EUk_dukw`,
+uploaded 2026-08-05, 1:40).
+
+**The seated side has flipped, and with it the whole gap mapping.** Four notes,
+four different configurations:
+
+| Session | Seated crowd | Gap-up means | Gap-down means |
+|---|---|---|---|
+| 3 Aug | buyers (thin) | follow, BUY | hunt, SELL |
+| 4 Aug | buyers (seated) | hunt, SELL | hunt, SELL |
+| 5 Aug | sellers (too small to hunt) | SELL, chop risk | follow, SELL |
+| 6 Aug | **sellers (seated)** | **hunt, BUY** | **follow, SELL** |
+
+This is the first note in the series where SELLERS are the crowd worth hunting,
+which inverts the gap mapping outright: a flat-to-gap-up now leaves their stops
+exposed above and is the BUY-side hunt, while a decent gap-down puts them into
+profit — "there will be no threat on these sellers" — so there is nothing to hunt
+and he follows the move down instead.
+
+**One qualifier he repeats for all three indices:** the selling was decent but
+**none of them broke its closing price**, and NIFTY closed holding a round-number
+(500-level) support. So the sellers are seated but not yet validated — the move
+that would confirm the short has not happened. That is the clause most likely to
+matter if tomorrow opens flat.
+
+**Transcription caveat:** the Sensex supports again arrived as the run-on
+"780007840", read as 78000 and 78400 — the same ASR artefact as the 5 Aug note.
+Advisory candidate levels only.
+
+**Test marker:** `test_shipped_note_matches_august_6_intraday_hunter_plan`,
+re-pinned from the 5 Aug content, asserting the "NONE broke its closing price"
+clause because that is what distinguishes seated-but-unconfirmed from trapped.
