@@ -2457,3 +2457,50 @@ discipline.
   matters more than usual: this is the first lesson that argues for NOT closing,
   so it carries an explicit scope clause and the test asserts every exit rule it
   must not weaken is still present beside it.
+
+### Pre-open note for 2026-08-07 (shipped alongside v4a)
+
+**Source:** Intraday Hunter, "Prediction For 07 AUG 2026" (`Lq7JGlZj6PY`,
+uploaded 2026-08-06, 2:00).
+
+**The seated side has flipped back to BUYERS.** Five notes, five configurations:
+
+| Session | Seated crowd | The hunt is | The follow is |
+|---|---|---|---|
+| 3 Aug | buyers (thin) | gap-down -> SELL | gap-up -> BUY |
+| 4 Aug | buyers (seated) | any open -> SELL | — |
+| 5 Aug | sellers (too small) | — | any open -> SELL |
+| 6 Aug | sellers (seated) | gap-up -> BUY | gap-down -> SELL |
+| 7 Aug | **buyers (seated)** | **gap-down -> SELL** | **flat/gap-up -> BUY** |
+
+> "There is some positive momentum. Not big momentum, but **enough that people
+> would go and make CALL trades**. So buyers will be seated here... To target the
+> buyers, what do we need? At minimum a GAP-DOWN."
+
+He also names where their stops are — "somewhere at these lower points that have
+formed" — which is a concrete claim rather than a vague direction.
+
+**A first for this channel: a MAGNITUDE-scaled condition.**
+
+> "If we get a decent gap-down — that is, **the farther the opening is from
+> 58,000, the better for us** — so we can target these buyers."
+
+Every prior note treated gap direction as categorical. This one says the SIZE of
+the adverse gap improves the hunt, because distance is what puts the crowd
+underwater. Worth noting it does NOT contradict `GAP SIZE IS A RISK DIAL` in the
+knowledge, which says a bigger gap makes the CONTINUATION branch worse: that rule
+is about trading WITH a gap past everyone's stops, this is about trading AGAINST a
+crowd the gap has just buried. Different branches, opposite signs, both correct.
+
+**A link to v4a:** he stresses the recruiting move was small — "not big momentum,
+but enough that people would make call trades" — which is exactly the
+lightly-committed crowd v4a's A FRESHLY RECRUITED CROWD HAS TIGHT STOPS describes.
+Expect a sharp but small flush if the gap-down arrives.
+
+**Transcription caveat:** one BankNIFTY support arrived as "5710" where every
+other level is five digits; read as 57100 alongside 57500. Same dropped-digit ASR
+artefact seen on 4 and 5 Aug. Advisory candidate levels only.
+
+**Test marker:** `test_shipped_note_matches_august_7_intraday_hunter_plan`,
+re-pinned from the 6 Aug content, asserting the "BUYERS are the seated crowd"
+clause because that is the single fact the whole gap mapping hangs on.
