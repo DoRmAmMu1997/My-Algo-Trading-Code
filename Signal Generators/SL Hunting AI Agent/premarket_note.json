@@ -1,28 +1,28 @@
 {
-  "for_date": "2026-08-06",
-  "source": "Intraday Hunter, 'Prediction For 06 AUG 2026' (-51EUk_dukw, uploaded 2026-08-05)",
-  "context": "All three indices saw decent selling, but NONE broke its closing price and NIFTY closed holding a round-number support. The seated crowd is now SELLERS, and the level holding leaves them exposed.",
+  "for_date": "2026-08-07",
+  "source": "Intraday Hunter, 'Prediction For 07 AUG 2026' (Lq7JGlZj6PY, uploaded 2026-08-06)",
+  "context": "Mild positive momentum -- not big, but enough that people took CALL trades -- while Sensex barely moved yet held itself up. BUYERS are the seated crowd, with their stops at the lower points already formed.",
   "plan": [
-    "FLAT to GAP-UP: identify BUY-side setups. A flat or higher open leaves the seated sellers exposed with their stops above -- they are the crowd to hunt.",
-    "GAP-DOWN: identify SELL-side setups and go WITH the market instead. A decent gap-down puts those sellers INTO PROFIT, so there is no threat on them and no hunt available.",
-    "Which side is seated decides the direction, not the gap itself: today the seated crowd is SELLERS, so a gap-up is a hunt setup and a gap-down is a follow setup.",
-    "The sellers are seated but NOT yet confirmed trapped -- no index broke its closing price, so the move that would validate a short has not happened."
+    "GAP-DOWN: identify SELL-side setups and hunt the seated buyers. Their stops sit at the lower points already formed on the chart.",
+    "The BIGGER the gap-down the better the hunt -- he wants the open as far below BankNIFTY 58,000 as it can be, because that distance is what puts the buyers underwater.",
+    "FLAT to GAP-UP: identify BUY-side setups and go WITH the market instead. It has been grinding slowly upward, so a flat or higher open offers no hunt.",
+    "The momentum that recruited those call buyers was SMALL, not a big move -- so treat this as a modest, lightly committed crowd rather than a heavily loaded one."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24610, 24700],
-      "support": [24420, 24300]
+      "resistance": [24720, 24800],
+      "support": [24610, 24500]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57880, 58100],
-      "support": [57150, 56850]
+      "resistance": [58100, 58400],
+      "support": [57500, 57100]
     },
     {
       "index": "SENSEX",
-      "resistance": [78850, 79100],
-      "support": [78400, 78000]
+      "resistance": [79200, 79500],
+      "support": [78650, 78300]
     }
   ]
 }

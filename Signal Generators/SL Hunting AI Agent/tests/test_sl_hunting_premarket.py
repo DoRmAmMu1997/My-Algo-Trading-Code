@@ -172,18 +172,22 @@ def test_shipped_note_file_is_valid():
     assert format_premarket_note(note, date.fromisoformat(note.for_date)) != ""
 
 
-def test_shipped_note_matches_august_6_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 5 Aug transcript.
+def test_shipped_note_matches_august_7_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 6 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    Worth knowing when re-reading this: the SEATED SIDE has flipped. 4 Aug hunted
-    seated BUYERS (so gap-up -> sell). 5 Aug went WITH continued selling because
-    the sellers were too small to hunt. 6 Aug is the first note where SELLERS are
-    the seated crowd worth hunting, which inverts the gap mapping outright:
-    flat/gap-up is now the BUY-side hunt, and a gap-down is the follow. An
-    assertion still reading "gap-up -> sell" would mean the note was copied.
+    Worth knowing when re-reading this: the SEATED SIDE flips constantly, so a
+    note echoing the previous day is a copy rather than a transcription. 5 Aug:
+    sellers, too small to hunt. 6 Aug: sellers seated, so gap-up was the BUY-side
+    hunt. 7 Aug: BUYERS are seated, which inverts it back -- gap-DOWN is now the
+    SELL-side hunt and flat/gap-up is the follow.
+
+    It also carries the first MAGNITUDE-scaled condition in the series: a bigger
+    gap-down makes the hunt better, not worse, because distance is what puts the
+    buyers underwater. That is specific to hunting a crowd and does not contradict
+    GAP SIZE IS A RISK DIAL, which governs the continuation branch.
     """
     import os
 
@@ -192,38 +196,37 @@ def test_shipped_note_matches_august_6_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-06"
-    assert "-51EUk_dukw" in note.source
-    # The distinguishing facts: sellers seated, but the closing price never broke.
-    assert "NONE broke its closing price" in note.context
+    assert note.for_date == "2026-08-07"
+    assert "Lq7JGlZj6PY" in note.source
+    # The distinguishing facts: buyers seated, recruited by only a small move.
+    assert "BUYERS are the seated crowd" in note.context
     assert note.plan == [
-        "FLAT to GAP-UP: identify BUY-side setups. A flat or higher open leaves "
-        "the seated sellers exposed with their stops above -- they are the crowd "
-        "to hunt.",
-        "GAP-DOWN: identify SELL-side setups and go WITH the market instead. A "
-        "decent gap-down puts those sellers INTO PROFIT, so there is no threat on "
-        "them and no hunt available.",
-        "Which side is seated decides the direction, not the gap itself: today the "
-        "seated crowd is SELLERS, so a gap-up is a hunt setup and a gap-down is a "
-        "follow setup.",
-        "The sellers are seated but NOT yet confirmed trapped -- no index broke "
-        "its closing price, so the move that would validate a short has not "
-        "happened.",
+        "GAP-DOWN: identify SELL-side setups and hunt the seated buyers. Their "
+        "stops sit at the lower points already formed on the chart.",
+        "The BIGGER the gap-down the better the hunt -- he wants the open as far "
+        "below BankNIFTY 58,000 as it can be, because that distance is what puts "
+        "the buyers underwater.",
+        "FLAT to GAP-UP: identify BUY-side setups and go WITH the market instead. "
+        "It has been grinding slowly upward, so a flat or higher open offers no "
+        "hunt.",
+        "The momentum that recruited those call buyers was SMALL, not a big move "
+        "-- so treat this as a modest, lightly committed crowd rather than a "
+        "heavily loaded one.",
     ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24610.0, 24700.0],
-            "support": [24420.0, 24300.0],
+            "resistance": [24720.0, 24800.0],
+            "support": [24610.0, 24500.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57880.0, 58100.0],
-            "support": [57150.0, 56850.0],
+            "resistance": [58100.0, 58400.0],
+            "support": [57500.0, 57100.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78850.0, 79100.0],
-            "support": [78400.0, 78000.0],
+            "resistance": [79200.0, 79500.0],
+            "support": [78650.0, 78300.0],
         },
     ]

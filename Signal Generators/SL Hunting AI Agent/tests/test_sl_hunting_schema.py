@@ -708,6 +708,50 @@ def test_v3z_rule_discipline_cannot_be_read_as_licence_to_hold():
     assert "Never widen, delay, or suspend an exit" in prompt
 
 
+def test_system_prompt_has_v4a_second_day_recruitment_knowledge():
+    """v4a (6 Aug live session): IH bought a gap-up to hunt SELLERS, and the
+    reasoning dates the inventory.
+
+    One down day after a positive stretch recruits almost nobody -- traders cannot
+    believe the turn. The SECOND consecutive down day is when confidence arrives
+    and shorts actually get seated. So two down days plus a gap-up is a long
+    against them, and the move should be sharp but small because a freshly
+    recruited crowd holds tight stops.
+    """
+    prompt = build_system_prompt()
+    assert "SECOND-DAY RECRUITMENT" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "confidence arrives" in prompt
+    assert "a single session's move is not a crowd" in prompt
+    # Tight stops -> sharp but small, and slow means the cluster is not there.
+    assert "A FRESHLY RECRUITED CROWD HAS TIGHT STOPS" in prompt
+    assert "SIGNATURE" in prompt
+    assert "reduce the target, do not extend the hold" in prompt
+    # The two-phase handling of a wobble, and the other two lessons.
+    assert "A REJECTION BEFORE THE FLUSH IS NOISE" in prompt
+    assert "ERRORS IN PROFIT ARE CHEAP" in prompt
+    assert "PREFER A DIP TO A CHASE" in prompt
+
+
+def test_v4a_rejection_rule_cannot_be_read_as_licence_to_hold_a_loser():
+    """The dangerous misreading of "a rejection is noise" is "so sit through it".
+
+    This is the same failure mode v3z's rule-discipline lesson had, and it matters
+    more here because this one is explicitly about NOT closing. The prompt must
+    keep every exit rule intact beside it and scope the narrowing precisely.
+    """
+    prompt = build_system_prompt()
+    # It must state its own scope.
+    assert "THIS IS NOT LICENCE TO HOLD A LOSER" in prompt
+    assert "premise-invalidation" in prompt
+    # ...and the exits it must not weaken must still be present.
+    assert "NEVER hold a loser hoping for a reversal" in prompt
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+    assert "A TRIGGER THAT NEVER FIRED IS AN EXIT REASON" in prompt
+    # The discriminator has to be an observable, not a feeling.
+    assert "THE DISCRIMINATOR IS FACTUAL, NOT A FEELING" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
