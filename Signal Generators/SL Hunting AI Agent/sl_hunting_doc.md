@@ -2344,3 +2344,116 @@ Advisory candidate levels only.
 **Test marker:** `test_shipped_note_matches_august_6_intraday_hunter_plan`,
 re-pinned from the 5 Aug content, asserting the "NONE broke its closing price"
 clause because that is what distinguishes seated-but-unconfirmed from trapped.
+
+## Video addendum - the 6 Aug LIVE SESSION (v4a)
+
+**Source:** Intraday Hunter live session, 6 Aug 2026 (`9pZtVvUBDq4`, 9:45). A WIN,
+and he BOUGHT — the first buy-side session in this run.
+
+**Setup:** slight gap-up, plan already positive from his own analysis. He wanted
+price a little LOWER before entering, got a small rejection, and bought calls
+(BankNIFTY 57700 CE + 57800 CE, NIFTY 1430 qty). Booked a good profit.
+
+### The dating rule — why the sellers existed today but not yesterday
+
+This is the core new idea, and it completes v3z rather than repeating it:
+
+> "When selling comes on ONE day, not many people can participate — before that
+> the market was decently positive, there were gap-ups, so people cannot
+> participate. **But when the NEXT day also falls the same way, traders start
+> paying attention — 'the market is going down, why not make a put trade here'.
+> So sellers WILL have come in.** We are making those sellers our target."
+
+v3z said "retail did not get to sell" about a single day. v4a says **when they
+DO** — on the second consecutive adverse day. Together they date the inventory,
+which is what turns "is a crowd seated?" from a feeling into a count.
+
+### What a freshly recruited crowd implies
+
+> "Whoever is sitting in a trade here will not give the market a very big SL."
+
+Two consequences that pull opposite ways on purpose: do NOT plan a large target
+(the move exists to take a shallow stop cluster, not to trend), but DO expect the
+move to be FAST —
+
+> "The momentum should be fast, because these sellers will not give the market
+> much opportunity... if it is going to hit their SL, the market will pause a
+> little and then suddenly produce fast momentum and eat as many SLs as it can."
+
+So speed is the SIGNATURE of the flush, and a slow grind means the cluster you
+assumed is probably not there: "if the momentum is slow then maybe we will not get
+that much target — we will have to take an average target."
+
+### Entry preference
+
+He wanted a dip BEFORE buying, not the first push up: "if we get the market a bit
+lower it is better; if it starts rising directly we would have to work with a
+retracement." He also checked no big sudden selling was underway first — a small
+orderly move against you is a cheap fill, a large one says the premise is wrong.
+
+### The two-phase handling of a wobble
+
+Mid-trade his profit collapsed on a rejection:
+
+> "There is no need to be afraid of such a rejection. Nothing will happen. There
+> will be up and down moves, but **you will definitely get one opportunity in
+> which your profit is made.**"
+
+...and then, once the sharp move came: "a good profit has been made, so we will
+not be greedy" — and he booked. The discriminator between the two phases is
+factual: **has the fast one-way move through the stop cluster happened yet?**
+
+### The asymmetry
+
+> "When profit is increasing, if you wait a bit, enlarge the target, even make a
+> few mistakes — in profit those pass. **But never make a mistake in a loss.**"
+
+Also, on humility: "SL hunting does not mean what you thought is what will happen…
+I make mistakes too. When a mistake happens, accept it and take the loss." And
+practically: "do not work thinking at 100% that your trade must go right — better
+to wait, REDUCE QUANTITY."
+
+### How the agent compared on the same session
+
+The agent traded the same premise FIRST and then abandoned it:
+
+| # | Agent | Result |
+|---|---|---|
+| 1 | 09:23 LONG `hammer_confirmation_gapup_seller_hunt` | **+Rs.712.75**, booked in 3.5 min ("momentum stalled") |
+| 2 | 10:06 SHORT `double_top_neckline_break_continuation` | -Rs.1,767.75 (cut on BankNIFTY confirming against) |
+| 3 | 10:16 SHORT `shooting_star_fib50_rejection` | -Rs.1,547.25 (premise stalled) |
+| | | **-Rs.2,602.25** |
+
+Trade 1 IS IH's trade — same direction, same premise, even the same name for it
+("gapup_seller_hunt"), and it was the only winner. The agent then closed it after
+3.5 minutes on a stall, and traded AGAINST that read twice.
+
+IH sat through the same stall, said explicitly it was not to be feared, and took
+the move. That is exactly what A REJECTION BEFORE THE FLUSH IS NOISE is for — and
+the two losses that followed are what ERRORS IN PROFIT ARE CHEAP; ERRORS IN A LOSS
+ARE NOT is for. The pre-open note was injected (1909 chars) and cited in 4
+decisions, and its plan — gap-up means hunt the seated sellers, BUY side — was
+correct.
+
+**New, hence in the knowledge:**
+- SECOND-DAY RECRUITMENT (one adverse day seats nobody; the second does).
+- A freshly recruited crowd has tight stops: sharp but SMALL, and FAST or not real.
+- A rejection BEFORE the flush is noise; after it, book.
+- Errors in profit are cheap; errors in a loss are not.
+- When the stops are above you, prefer a dip to a chase.
+
+**Confirmed but already present:** THE MISSING RIP IS THE TELL (v3z) is the
+one-day half of the recruitment rule; recruit-then-turn after the flush is
+RECRUITMENT HISTORY; "reduce quantity when unsure" overlaps existing sizing
+discipline.
+
+**Knowledge changes (v4a, all prose):**
+- `RETAIL_POSITIONING`: SECOND-DAY RECRUITMENT; A FRESHLY RECRUITED CROWD HAS
+  TIGHT STOPS.
+- `RISK`: A REJECTION BEFORE THE FLUSH IS NOISE; ERRORS IN PROFIT ARE CHEAP;
+  WHEN THE STOPS ARE ABOVE YOU, PREFER A DIP TO A CHASE.
+- Test markers: `test_system_prompt_has_v4a_second_day_recruitment_knowledge` and
+  `test_v4a_rejection_rule_cannot_be_read_as_licence_to_hold_a_loser`. The second
+  matters more than usual: this is the first lesson that argues for NOT closing,
+  so it carries an explicit scope clause and the test asserts every exit rule it
+  must not weaken is still present beside it.
