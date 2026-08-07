@@ -2504,3 +2504,120 @@ artefact seen on 4 and 5 Aug. Advisory candidate levels only.
 **Test marker:** `test_shipped_note_matches_august_7_intraday_hunter_plan`,
 re-pinned from the 6 Aug content, asserting the "BUYERS are the seated crowd"
 clause because that is the single fact the whole gap mapping hangs on.
+
+## Video addendum - the 7 Aug LIVE SESSION (v4b)
+
+**Source:** Intraday Hunter live session, 7 Aug 2026 (`SupzF0JT_vE`, 9:10). A WIN
+on the put side, and the first session where he ENLARGED the target mid-trade and
+explained the reasoning for it.
+
+**Setup:** slight gap-down, then a recovery. He waited through the bounce, sold
+puts into it (BankNIFTY 57900 + 57800 PE, Sensex 900, NIFTY 1430), and booked a
+large profit. The 2026-08-07 pre-open note called exactly this: buyers seated,
+gap-down means hunt them, sell side.
+
+### The central idea: the bounce is the trap, not its failure
+
+> "If the market had opened gap-down and started falling directly, the buyers
+> might have got out **in two or three minutes**. But once it comes up, the trader
+> gets a little hope that yes, the market can go up too — and he may even try to
+> AVERAGE."
+
+> "Those sitting in buys should feel the market can go up, **so that when it goes
+> down again they take a bigger loss.**"
+
+This inverts the naive read. A post-gap bounce toward a trapped crowd's entry is
+the most commonly misread event on a chart: it looks like the short failing, and
+it is actually the mechanism that converts a small trapped loss into a large one.
+A direct fall is the operator's WORST outcome, because the crowd escapes cheaply.
+
+Recorded with the invalidation attached, so it cannot read as "ignore adverse
+movement": what would genuinely break the trade is price RECLAIMING the level, not
+approaching and failing at it. IH named his in advance — "if it crosses the
+closing price, understand we have made the trade wrong."
+
+### Why the resistance did not recruit fresh sellers
+
+A viewer objection he answers directly, and the answer is a general rule:
+
+> "They will not be able to sell here. Most traders who sold did it earlier in
+> this chart and had to suffer losses again and again. **Now everyone's focus is
+> on where to BUY**, because their mindset has formed that the market keeps going
+> up. Nobody is even paying attention to the resistance."
+
+A level does not attract participants by geometry — it attracts whoever the recent
+past has left willing to act there. Added as REGIME MEMORY DECIDES WHO SHOWS UP AT
+A LEVEL, with the practical test: ask who has been PAID and who PUNISHED lately.
+
+### Target sizing from crowd behaviour — completing the v4a pair
+
+> "Why could we make the target bigger here? Because those who average get a
+> little courage from the market — 'go on, wait' — and then it targets them. So
+> their SLs would have been hit."
+
+v4a: freshly recruited crowd, shallow stops, SMALL target, fast move.
+v4b: crowd baited into AVERAGING, more size at a worse average, pain threshold
+further away, so the flush runs further and a LARGER target is justified.
+
+Together they give a way to size a target from what the crowd has DONE rather than
+from a fixed percentage. He also cites all three indices moving together as a
+second reason to enlarge.
+
+### The stall is the last bait
+
+> "Now what will the market do? Give them a little hope that the breakdown is not
+> going to happen... with that hope they will take an even bigger loss. **You will
+> get one more momentum move. Then book the target.**"
+
+Added as EXPECT A SECOND LEG AFTER THE PAUSE, THEN BOOK — scoped explicitly to a
+position that is working, never to one that is offside.
+
+### The hierarchy is asymmetric
+
+> "Looking at BankNIFTY it seems the trade should be taken right now. **But let us
+> wait a little, according to Sensex and NIFTY.**" ... "BankNIFTY's chart is
+> completely right; it is Sensex and NIFTY where we could have trouble."
+
+He had a textbook major-index setup and did NOT take it until the laggards agreed.
+That qualifies v3y's INDEX HIERARCHY, which is an EXIT rule: the leader alone is
+enough to CLOSE on, not enough to OPEN on. Entering on the leader alone buys a
+move the other two may never join; exiting on it alone only costs a trade.
+
+### How the agent compared
+
+| # | Agent (all SHORT) | Result |
+|---|---|---|
+| 1 | 09:32 -> 09:34 `pivot_resistance_shooting_star_reject` | -Rs.62.00 (cut in 2.5 min, "price round-tripped") |
+| 2 | 09:43 -> 09:44 `averaging_trap_bearish_inside_bar_breakdown` | -Rs.1,089.75 (cut in 1.4 min, "spot pinned") |
+| 3 | 10:03 -> 10:09 BNF / 10:12 NIFTY | -Rs.128.00 (**per-leg**: BNF -1,038.00, NIFTY +910.00) |
+| 4 | 10:18 -> 10:28 | **+Rs.2,400.75** ("Booking profit on seated-buyer short hunt") |
+| | | **+Rs.1,121.00** |
+
+Three points worth recording:
+
+1. **The note's plan was followed and it worked.** All four entries were shorts,
+   the gap-down condition was met (NIFTY -97, BankNIFTY -182, "well below 58000" —
+   the note's own magnitude clause appears in entry 2's reasoning), and the day
+   was profitable.
+2. **v4a was live today and did not prevent the early cuts.** Trades 1 and 2 were
+   closed after 2.5 and 1.4 minutes on a round-trip and a stall — precisely the
+   post-gap bounce this session explains. A REJECTION BEFORE THE FLUSH IS NOISE
+   merged the previous evening and was in the prompt. Stated plainly because it is
+   evidence about what prose can and cannot change: the agent still cut. v4b
+   attacks the same behaviour from the mechanism side rather than the discipline
+   side, which may or may not do better.
+3. **The per-leg exit earned its keep.** On trade 3 the agent cut BankNIFTY alone
+   (-Rs.1,038.00) and let NIFTY run to target (+Rs.910.00), turning what would
+   have been a full-basket loss into -Rs.128.00. First clear instance of the
+   `exit_leg` selector paying for itself.
+
+**Knowledge changes (v4b, all prose):**
+- `RETAIL_POSITIONING`: THE POST-GAP BOUNCE IS THE TRAP DEEPENING; REGIME MEMORY
+  DECIDES WHO SHOWS UP AT A LEVEL.
+- `RISK`: A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET; EXPECT A SECOND
+  LEG AFTER THE PAUSE, THEN BOOK.
+- `BNF_SPECIFIC`: THE HIERARCHY IS ASYMMETRIC (entry vs exit).
+- Test markers: `test_system_prompt_has_v4b_post_gap_bounce_and_averaging_target_knowledge`
+  and `test_v4b_bounce_rule_names_what_would_actually_invalidate`. The second
+  exists because a rule that says "do not exit on a bounce" must also say what a
+  real invalidation looks like, or it degrades into "ignore adverse movement".

@@ -752,6 +752,46 @@ def test_v4a_rejection_rule_cannot_be_read_as_licence_to_hold_a_loser():
     assert "THE DISCRIMINATOR IS FACTUAL, NOT A FEELING" in prompt
 
 
+def test_system_prompt_has_v4b_post_gap_bounce_and_averaging_target_knowledge():
+    """v4b (7 Aug live session): a WIN on the put side where he ENLARGED the
+    target mid-trade.
+
+    The central idea inverts the naive read of a post-gap bounce: a gap that fell
+    straight down would let the trapped crowd out in two or three minutes, so the
+    bounce exists to give them hope, make them hold or average, and deepen the
+    loss. A crowd that has averaged then justifies a BIGGER target, and a stall
+    mid-flush predicts one more leg rather than the end.
+    """
+    prompt = build_system_prompt()
+    assert "THE POST-GAP BOUNCE IS THE TRAP DEEPENING" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "three minutes" in prompt
+    assert "REGIME MEMORY DECIDES WHO SHOWS UP AT A LEVEL" in prompt
+    assert "who has been PAID and who has been PUNISHED" in prompt
+    # Target sizing from crowd behaviour, and the pair it completes.
+    assert "A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET" in prompt
+    assert "A FRESHLY RECRUITED CROWD HAS TIGHT STOPS" in prompt
+    assert "EXPECT A SECOND LEG AFTER THE PAUSE" in prompt
+    # The entry/exit asymmetry of the major index.
+    assert "THE HIERARCHY IS ASYMMETRIC" in prompt
+    assert "Be slow to enter on BankNIFTY alone" in prompt
+
+
+def test_v4b_bounce_rule_names_what_would_actually_invalidate():
+    """The bounce rule tells the agent NOT to exit on a bounce, so it must also
+    say what a real invalidation looks like -- otherwise it reads as "ignore
+    adverse movement", which is the failure mode every one of these lessons has.
+    """
+    prompt = build_system_prompt()
+    # It must point at a concrete, checkable invalidation.
+    assert "RECLAIMING the level" in prompt
+    # ...and the second-leg rule must scope itself off an offside position.
+    assert "does not extend to a position that is offside" in prompt
+    # The exits it must not weaken are still present.
+    assert "NEVER hold a loser hoping for a reversal" in prompt
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
