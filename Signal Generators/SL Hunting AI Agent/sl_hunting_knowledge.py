@@ -69,6 +69,38 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   off an EXACT closing-price touch right after a huge gap-up) is unsustainable —
   fade it. Corollary: an EXACT touch-and-bounce at a level is fragile; small,
   partial rejections at the level are the go-with tell instead.
+- SECOND-DAY RECRUITMENT — one adverse day does NOT seat a crowd, the SECOND one
+  does (v4a). This is the counterpart to THE MISSING RIP IS THE TELL, and together
+  they date the inventory. Day one of a fall after a positive stretch recruits
+  almost nobody: traders are still mentally in the uptrend, they cannot believe
+  the turn, and the ones who do act take small size. When the NEXT day falls the
+  same way, confidence arrives — "the market is going down, why not buy a put" —
+  and only THEN is there a short crowd worth hunting. So:
+    * ONE down day + a gap-up = no seller inventory; the gap-up is not a hunt.
+    * TWO consecutive down days + a gap-up = sellers ARE seated with their stops
+      above; the gap-up IS the hunt, and the trade is LONG against them.
+  Mirror the same test for buyers after two up days. Count the days before
+  deciding whether a crowd exists — a single session's move is not a crowd.
+- A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, so expect a SHARP but SMALL move
+  (v4a). Traders who joined only on the second day have no conviction and "will
+  not give the market a very big SL". Two consequences, and they pull in opposite
+  directions on purpose:
+    * Do NOT plan a large target. The move exists to take a shallow stop cluster,
+      not to trend. A normal or average target is the honest one.
+    * DO expect the move itself to be FAST. The operator pauses, then produces
+      sudden speed to eat as many stops as it can reach. Speed is the SIGNATURE
+      of the flush.
+  If the expected move arrives SLOW and grinding instead, the stop cluster you
+  assumed is probably not there — reduce the target, do not extend the hold.
+- THE MISSING RIP IS THE TELL (v3z). If a crowd really HAD positioned against the
+  gap, the market would not sit around: it would rip straight through their stops
+  at once, "leaving no time". So a gap that instead stalls, prints a rejection, or
+  makes a high and hangs there is EVIDENCE THAT THE OPPOSING CROWD IS NOT THERE —
+  absence of the hunt tells you who is absent. Read it forward: with no seller
+  inventory above, a further push up would attract ONLY buyers (see BOTH-SIDES
+  PARTICIPATION) and cannot be sustained, so the path of least resistance is DOWN.
+  This is how a gap-up session can be a SHORT: not fading the gap, but reading
+  that the hunt the gap seemed to promise never had a target.
 - EVENT / HOLIDAY PARTICIPATION: known news shocks, Fridays, weekends, and
   multi-day holidays can REMOVE one side from the risk pool. If buyers/sellers are
   unlikely to hold or initiate large risk, do not assume their SL inventory exists.
@@ -445,7 +477,12 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   branch stronger — it makes it worse. A modest gap leaves price near the stop
   clusters that fuel a move; an oversized gap has jumped clean past everybody's
   stops, so there is nothing nearby to hunt, momentum tends to be slow, and a
-  rejection has a lot of room to run back through you. Trade the oversized gap, if
+  rejection has a lot of room to run back through you. A large gap also removes the
+  BAIT ROOM (v3z): the usual way an opposing crowd gets punished is a small
+  rejection near the open that lures them in, followed by the reversal that forces
+  them to cover. A gap big enough to jump clean past that zone leaves the operator
+  nowhere to set the lure, so the "they will be baited and then squeezed" path is
+  simply not on the table and must not be assumed. Trade the oversized gap, if
   at all, as a smaller / NORMAL-target trade with a rejection-triggered exit — never
   as a high-conviction runner. (Distinct from GAP-SIZE ASYMMETRY, which compares the
   gaps ACROSS indices; this is about the absolute size of the gap you are trading.)
@@ -770,6 +807,78 @@ RISK DISCIPLINE
   becomes the fuel for a move AGAINST you — the same mechanism you were trying to
   exploit, pointed the other way. Company at a level is a warning, not comfort:
   the break should come promptly, "from about here", or the edge has inverted.
+- A REJECTION BEFORE THE FLUSH IS NOISE; A REJECTION AFTER IT IS THE EXIT (v4a).
+  When you are positioned against a seated crowd, the trade has TWO phases and
+  they take opposite handling:
+    * BEFORE the flush — the stops you are trading toward have NOT been taken yet.
+      Price will wobble both ways and can hand back most of an early paper profit.
+      That is not the read failing; it is the setup still waiting. "There is no
+      need to be afraid of such a rejection. There will be up and down moves, but
+      you will definitely get one opportunity in which your profit is made."
+    * AFTER the flush — the sharp move has run and the stops are gone. Now book.
+      "A good profit has been made, so we will not be greedy."
+  THE DISCRIMINATOR IS FACTUAL, NOT A FEELING: has the fast, one-way move through
+  the stop cluster actually happened? If no, a wobble is not information. If yes,
+  the fuel is spent and further holding is greed.
+  SCOPE — THIS IS NOT LICENCE TO HOLD A LOSER. It applies only while the PREMISE
+  is intact: the crowd still seated, your level still untaken, and price still on
+  the correct side of your stop. Your stop, the max loss, premise-invalidation,
+  the INDEX HIERARCHY exit and the post-exit cooldown all continue to govern
+  unchanged. This narrows ONE thing only: a profit giving back part of itself
+  before the flush is not by itself a reason to close.
+- ERRORS IN PROFIT ARE CHEAP; ERRORS IN A LOSS ARE NOT (v4a). "When profit is
+  increasing, if you wait a bit, enlarge the target, even make a few mistakes —
+  in profit those pass. But NEVER make a mistake in a loss." The asymmetry is
+  structural: a misjudgement while ahead costs some of a gain you did not have
+  before, while the same misjudgement while behind compounds a real loss and is
+  the one that ends days. So spend your carefulness where it is expensive — on
+  the losing side. And when you are wrong, "accept the mistake and take the loss";
+  do not spend more of the day's risk defending the entry (see BEING
+  DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD).
+- WHEN THE STOPS ARE ABOVE YOU, PREFER A DIP TO A CHASE (v4a). Hunting a crowd
+  whose stops sit above means you want to be LONG — but the cheap entry is a small
+  move DOWN, not the first push up. "If we get the market a bit lower it is better
+  for us; if it starts rising directly we would have to work with a retracement
+  instead." A dip against your intended direction, with no big sudden opposite
+  flow, is the low-risk fill; chasing the first move up means paying for it and
+  then waiting for a pullback anyway. One check before taking the dip: confirm the
+  move against you is SMALL and orderly — a large sudden flow the other way says
+  the premise is wrong, not that the entry is cheap. Mirror it for shorts.
+- A RULE THAT COST YOU MONEY YESTERDAY IS STILL THE RULE (v3z). The session after
+  cutting a good-looking trade on the INDEX HIERARCHY exit, IH watched the market
+  fall "almost exactly from where we exited" — the position he abandoned would
+  have paid — and his conclusion was unchanged: "I saw it. Never mind, it happens.
+  FOLLOW THE RULE; it works better for you." A discipline rule is judged over a
+  sample, never over the single instance where obeying it hurt, because the
+  instances where it SAVED you are invisible by construction — the loss it
+  prevented never appears in the journal. Never widen, delay, or suspend an exit
+  rule on the evidence of one trade that would have recovered. If you find
+  yourself reasoning "the rule cost me money, so the rule is wrong", you are
+  reading a sample of one.
+- TWO-SIDED FLOW PROTECTS AN OPEN PROFIT; ONE-SIDED FLOW ENDANGERS IT (v3z). While
+  a winning move still has BOTH buyers and sellers stepping in — some joining it,
+  some fading it — nobody can take your profit back: the crowd is split, so
+  neither side is dense enough to be the fuel for a reversal. The moment it starts
+  to look like only ONE side is arriving, and especially when that side is YOURS,
+  your open profit is what the next move will be aimed at. This is the in-trade
+  twin of BOTH-SIDES PARTICIPATION (which decides ENTRIES): run it as a live
+  monitor on a winner, and book while the flow is still two-sided rather than
+  after it has gone one-way.
+- AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN THE BIG ONE (v3z). IH
+  booked a still-working trade early and said exactly why: "the target could be
+  made bigger here... but yesterday we had a loss. If today is giving a chance to
+  make profit, take a good profit and go." He said in the same breath that more
+  momentum was likely — and left anyway. Restoring footing after a loss outranks
+  maximising the next trade. (Distinct from POST-LOSS SPEED LIMIT, which governs
+  how fast you may RE-ENTER; this governs how much you demand from the trade you
+  are already in.)
+- NAME THE ONE WAY THIS TRADE FAILS, THEN WATCH THAT (v3z). Before settling in to
+  hold, state the single most likely thing that would break the position, and put
+  your attention there instead of on the P&L. IH: "the wrong thing the market can
+  do to us is give a round-number breakout" — so he watched BankNIFTY's approach
+  to 58,000 specifically, and said he watched BankNIFTY hardest because that is
+  where his QUANTITY is largest. Concentrate monitoring where the exposure is
+  biggest, not where the chart is busiest.
 - VOLATILE-DAY SIZING WIDENS BOTH ENDS, not just the stop (v3y). On a day that
   opens with visibly fast momentum — especially after a stretch of sideways
   sessions that produced none — widen the TARGET as well as the stop. A normal

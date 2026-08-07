@@ -172,18 +172,22 @@ def test_shipped_note_file_is_valid():
     assert format_premarket_note(note, date.fromisoformat(note.for_date)) != ""
 
 
-def test_shipped_note_matches_august_5_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 4 Aug transcript.
+def test_shipped_note_matches_august_7_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 6 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    Worth knowing when re-reading this: the plan has now inverted twice in three
-    sessions, so a note that merely echoes the previous day is a copy, not a
-    transcription. 3 Aug forked on the opening type (gap-up -> buy). 4 Aug pointed
-    every opening type at the sell side, hunting seated BUYERS. 5 Aug is sell side
-    again but for the OPPOSITE reason -- going WITH continued selling, explicitly
-    because the sellers are NOT a big seated crowd worth hunting.
+    Worth knowing when re-reading this: the SEATED SIDE flips constantly, so a
+    note echoing the previous day is a copy rather than a transcription. 5 Aug:
+    sellers, too small to hunt. 6 Aug: sellers seated, so gap-up was the BUY-side
+    hunt. 7 Aug: BUYERS are seated, which inverts it back -- gap-DOWN is now the
+    SELL-side hunt and flat/gap-up is the follow.
+
+    It also carries the first MAGNITUDE-scaled condition in the series: a bigger
+    gap-down makes the hunt better, not worse, because distance is what puts the
+    buyers underwater. That is specific to hunting a crowd and does not contradict
+    GAP SIZE IS A RISK DIAL, which governs the continuation branch.
     """
     import os
 
@@ -192,43 +196,37 @@ def test_shipped_note_matches_august_5_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-05"
-    assert "PSCeB9y9JbI" in note.source
-    # The distinguishing claim: sellers are small, so this is continuation.
-    assert "SMALL size" in note.context
+    assert note.for_date == "2026-08-07"
+    assert "Lq7JGlZj6PY" in note.source
+    # The distinguishing facts: buyers seated, recruited by only a small move.
+    assert "BUYERS are the seated crowd" in note.context
     assert note.plan == [
-        "FLAT to GAP-DOWN: go WITH the market and identify SELL-side setups. He "
-        "frames this as continuation, not a hunt -- momentum carrying rather than "
-        "a trap springing.",
-        "GAP-UP: the same sell-side plan can stand, but the risk is a SIDEWAYS "
-        "range that goes up a bit then down a bit. Expect chop rather than a clean "
-        "move.",
-        "A VERY BIG gap is a different matter entirely -- he sets it aside rather "
-        "than applying this plan to it.",
-        "Why the sellers are not the target: once a momentum move has already run, "
-        "traders who join it do so in SMALL quantity. A large seated short crowd "
-        "would be visible, and the market would gap hard against it to trap it.",
-        "If many sellers ARE in fact seated, he expects one of two things: a fall "
-        "that moves in retracements from a flat open, or a single large gap. Both "
-        "are reasons to stand aside, not to enter.",
-        "He notes the CLOSING PRICE is now calculated differently under a new "
-        "exchange rule -- so the closing level his method keys off may not equal a "
-        "naive previous close.",
+        "GAP-DOWN: identify SELL-side setups and hunt the seated buyers. Their "
+        "stops sit at the lower points already formed on the chart.",
+        "The BIGGER the gap-down the better the hunt -- he wants the open as far "
+        "below BankNIFTY 58,000 as it can be, because that distance is what puts "
+        "the buyers underwater.",
+        "FLAT to GAP-UP: identify BUY-side setups and go WITH the market instead. "
+        "It has been grinding slowly upward, so a flat or higher open offers no "
+        "hunt.",
+        "The momentum that recruited those call buyers was SMALL, not a big move "
+        "-- so treat this as a modest, lightly committed crowd rather than a "
+        "heavily loaded one.",
     ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24530.0, 24610.0],
-            "support": [24300.0, 24220.0],
+            "resistance": [24720.0, 24800.0],
+            "support": [24610.0, 24500.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57650.0, 57800.0],
-            "support": [57154.0, 56850.0],
+            "resistance": [58100.0, 58400.0],
+            "support": [57500.0, 57100.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78610.0, 78850.0],
-            "support": [78400.0, 78000.0],
+            "resistance": [79200.0, 79500.0],
+            "support": [78650.0, 78300.0],
         },
     ]

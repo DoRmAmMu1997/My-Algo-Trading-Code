@@ -1,30 +1,28 @@
 {
-  "for_date": "2026-08-05",
-  "source": "Intraday Hunter, 'Prediction For 05 AUG 2026' (PSCeB9y9JbI, uploaded 2026-08-04)",
-  "context": "All three indices saw continued selling through the session. He reads the sellers now in as SMALL size -- they joined after the move had already run -- so there is no large trapped crowd to hunt.",
+  "for_date": "2026-08-07",
+  "source": "Intraday Hunter, 'Prediction For 07 AUG 2026' (Lq7JGlZj6PY, uploaded 2026-08-06)",
+  "context": "Mild positive momentum -- not big, but enough that people took CALL trades -- while Sensex barely moved yet held itself up. BUYERS are the seated crowd, with their stops at the lower points already formed.",
   "plan": [
-    "FLAT to GAP-DOWN: go WITH the market and identify SELL-side setups. He frames this as continuation, not a hunt -- momentum carrying rather than a trap springing.",
-    "GAP-UP: the same sell-side plan can stand, but the risk is a SIDEWAYS range that goes up a bit then down a bit. Expect chop rather than a clean move.",
-    "A VERY BIG gap is a different matter entirely -- he sets it aside rather than applying this plan to it.",
-    "Why the sellers are not the target: once a momentum move has already run, traders who join it do so in SMALL quantity. A large seated short crowd would be visible, and the market would gap hard against it to trap it.",
-    "If many sellers ARE in fact seated, he expects one of two things: a fall that moves in retracements from a flat open, or a single large gap. Both are reasons to stand aside, not to enter.",
-    "He notes the CLOSING PRICE is now calculated differently under a new exchange rule -- so the closing level his method keys off may not equal a naive previous close."
+    "GAP-DOWN: identify SELL-side setups and hunt the seated buyers. Their stops sit at the lower points already formed on the chart.",
+    "The BIGGER the gap-down the better the hunt -- he wants the open as far below BankNIFTY 58,000 as it can be, because that distance is what puts the buyers underwater.",
+    "FLAT to GAP-UP: identify BUY-side setups and go WITH the market instead. It has been grinding slowly upward, so a flat or higher open offers no hunt.",
+    "The momentum that recruited those call buyers was SMALL, not a big move -- so treat this as a modest, lightly committed crowd rather than a heavily loaded one."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24530, 24610],
-      "support": [24300, 24220]
+      "resistance": [24720, 24800],
+      "support": [24610, 24500]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57650, 57800],
-      "support": [57154, 56850]
+      "resistance": [58100, 58400],
+      "support": [57500, 57100]
     },
     {
       "index": "SENSEX",
-      "resistance": [78610, 78850],
-      "support": [78400, 78000]
+      "resistance": [79200, 79500],
+      "support": [78650, 78300]
     }
   ]
 }

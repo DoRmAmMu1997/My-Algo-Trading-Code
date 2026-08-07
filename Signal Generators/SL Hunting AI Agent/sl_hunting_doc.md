@@ -2204,3 +2204,303 @@ compositing). They are advisory candidate levels only.
 re-pinned from the 4 Aug content. It now also asserts the "SMALL size" phrase in
 `context`, because that is the clause distinguishing this sell-side plan from
 yesterday's opposite-reasoned one.
+
+## Video addendum - the 5 Aug LIVE SESSION (v3z)
+
+**Source:** Intraday Hunter live session, 5 Aug 2026 (`lS-sUh54LeA`, 10:47).
+A WIN — and, more valuable, the session in which he re-opens the v3y loss and
+keeps the rule that caused it.
+
+**Setup:** big gap-up, then a rejection to buying. He SOLD (puts): BankNIFTY
+57800 PE 1170 qty, Sensex 900 qty, NIFTY 1430 qty. Booked a good profit inside
+the first hour.
+
+### The read: he was not fading the gap, he was reading an absent crowd
+
+> "You may think sellers are seated here and the market can target them. But with
+> the kind of momentum that just happened, most people could not even get a sell
+> trade on... **Retail selling has NOT happened here. You see a gap-up, but retail
+> selling is not here. If retail HAD sold, the market would have done something
+> different — it would have started rising directly. There would have been no
+> time.**"
+
+That is an inference from ABSENCE, and it is the new idea: the market not ripping
+higher immediately is itself evidence that there is nobody above to rip through.
+Then the asymmetry he trades on:
+
+> "If it goes directly up, only BUYERS are going to come there; nobody will sell.
+> **The market does not work in a situation where only one side's traders are
+> operating.**"
+
+Up = one-sided, therefore unsustainable. Down = both sides still arguing,
+therefore the path. He also notes the gap was too big to be a bait: "sometimes
+sellers get seated and the market tempts them a little, then starts rising. But
+this gap-up is so large that there is no ROOM to tempt."
+
+### The in-trade monitor
+
+> "While the market is falling, as long as buyers are coming and sellers are
+> coming — 'let me take a trade too', 'let me take a trade too' — **nobody is
+> going to touch your profit.** But when it starts to feel like ONLY sellers are
+> coming, only buyers are coming, then danger starts hovering over your profit."
+
+This is BOTH-SIDES PARTICIPATION applied to an OPEN position rather than to an
+entry, which is what makes it worth adding.
+
+### Re-opening the v3y loss — the most important part
+
+> "Yesterday we had a loss. It was a very wrong loss. **If we had stayed seated a
+> little, it would have worked out.** But when BankNIFTY starts going up you have
+> to get out, because BankNIFTY is our MAJOR index. Yesterday BankNIFTY alone
+> started rising, so we cut. Otherwise the market did fall properly later —
+> **almost exactly from where we exited. I saw it.** Never mind, it happens.
+> **Follow the rule. It works better for you.**"
+
+The v3y INDEX HIERARCHY exit cost him the trade, he watched it would have paid,
+and he reaffirmed the rule anyway. That is rarer than either a win or a loss, and
+it is the reason this became a knowledge entry rather than a note.
+
+It also happens to be the same argument the operator made on 2026-08-04 about
+keeping the LIVE refusal on an unscoreable option chain even though the blocked
+entry turned out to be the day's best trade (see
+`Signal Generators/Regime Adaptive Strategy/REGIME_PORTING_NOTES.md`). Two
+independent instances of the same discipline in two days.
+
+### Why he booked early
+
+> "The target could be made bigger here... but yesterday we had a loss. If today
+> is giving a chance to make profit, take a good profit and go."
+
+He says in the same breath that more momentum was likely, and leaves regardless.
+Distinct from the existing POST-LOSS SPEED LIMIT, which governs re-ENTRY speed;
+this governs how much you demand from the trade you are already in.
+
+### One more, on where to point attention
+
+> "The wrong thing the market can do to us is give a round-number breakout."
+
+So he watched BankNIFTY's approach to 58,000 specifically — and said he watched
+BankNIFTY hardest **because that is where his quantity is largest**, not because
+its chart was the most interesting.
+
+**New, hence in the knowledge:**
+- The missing rip is the tell (absence of the hunt identifies the absent crowd).
+- A large gap removes the BAIT ROOM, so "they will be baited then squeezed" is
+  not available.
+- A rule that cost you money yesterday is still the rule.
+- Two-sided flow protects an open profit; one-sided flow endangers it.
+- After a losing day, take the good profit rather than the big one.
+- Name the one way this trade fails, then watch that — and watch it hardest where
+  the quantity is largest.
+
+**Confirmed but already present:** BOTH-SIDES PARTICIPATION for entries, GAP SIZE
+IS A RISK DIAL, POST-LOSS SPEED LIMIT, the INDEX HIERARCHY exit itself (v3y), and
+BankNIFTY as the major index (v3a).
+
+**Knowledge changes (v3z, all prose):**
+- `RETAIL_POSITIONING`: THE MISSING RIP IS THE TELL.
+- `OPENING_DRIVE`: the BAIT ROOM clause, folded into GAP SIZE IS A RISK DIAL.
+- `RISK`: A RULE THAT COST YOU MONEY YESTERDAY IS STILL THE RULE; TWO-SIDED FLOW
+  PROTECTS AN OPEN PROFIT; AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN
+  THE BIG ONE; NAME THE ONE WAY THIS TRADE FAILS.
+- Test markers: `test_system_prompt_has_v3z_missing_rip_and_rule_discipline_knowledge`
+  and `test_v3z_rule_discipline_cannot_be_read_as_licence_to_hold`. The second
+  exists because "the rule cost me money" has an obvious dangerous misreading —
+  "so hold longer next time" — and v3z must reinforce the v3y exit, never soften
+  it. It asserts the hierarchy exit and the never-hold-a-loser rule are both still
+  present alongside the new lesson.
+
+### Pre-open note for 2026-08-06 (shipped alongside v3z)
+
+**Source:** Intraday Hunter, "Prediction For 06 AUG 2026" (`-51EUk_dukw`,
+uploaded 2026-08-05, 1:40).
+
+**The seated side has flipped, and with it the whole gap mapping.** Four notes,
+four different configurations:
+
+| Session | Seated crowd | Gap-up means | Gap-down means |
+|---|---|---|---|
+| 3 Aug | buyers (thin) | follow, BUY | hunt, SELL |
+| 4 Aug | buyers (seated) | hunt, SELL | hunt, SELL |
+| 5 Aug | sellers (too small to hunt) | SELL, chop risk | follow, SELL |
+| 6 Aug | **sellers (seated)** | **hunt, BUY** | **follow, SELL** |
+
+This is the first note in the series where SELLERS are the crowd worth hunting,
+which inverts the gap mapping outright: a flat-to-gap-up now leaves their stops
+exposed above and is the BUY-side hunt, while a decent gap-down puts them into
+profit — "there will be no threat on these sellers" — so there is nothing to hunt
+and he follows the move down instead.
+
+**One qualifier he repeats for all three indices:** the selling was decent but
+**none of them broke its closing price**, and NIFTY closed holding a round-number
+(500-level) support. So the sellers are seated but not yet validated — the move
+that would confirm the short has not happened. That is the clause most likely to
+matter if tomorrow opens flat.
+
+**Transcription caveat:** the Sensex supports again arrived as the run-on
+"780007840", read as 78000 and 78400 — the same ASR artefact as the 5 Aug note.
+Advisory candidate levels only.
+
+**Test marker:** `test_shipped_note_matches_august_6_intraday_hunter_plan`,
+re-pinned from the 5 Aug content, asserting the "NONE broke its closing price"
+clause because that is what distinguishes seated-but-unconfirmed from trapped.
+
+## Video addendum - the 6 Aug LIVE SESSION (v4a)
+
+**Source:** Intraday Hunter live session, 6 Aug 2026 (`9pZtVvUBDq4`, 9:45). A WIN,
+and he BOUGHT — the first buy-side session in this run.
+
+**Setup:** slight gap-up, plan already positive from his own analysis. He wanted
+price a little LOWER before entering, got a small rejection, and bought calls
+(BankNIFTY 57700 CE + 57800 CE, NIFTY 1430 qty). Booked a good profit.
+
+### The dating rule — why the sellers existed today but not yesterday
+
+This is the core new idea, and it completes v3z rather than repeating it:
+
+> "When selling comes on ONE day, not many people can participate — before that
+> the market was decently positive, there were gap-ups, so people cannot
+> participate. **But when the NEXT day also falls the same way, traders start
+> paying attention — 'the market is going down, why not make a put trade here'.
+> So sellers WILL have come in.** We are making those sellers our target."
+
+v3z said "retail did not get to sell" about a single day. v4a says **when they
+DO** — on the second consecutive adverse day. Together they date the inventory,
+which is what turns "is a crowd seated?" from a feeling into a count.
+
+### What a freshly recruited crowd implies
+
+> "Whoever is sitting in a trade here will not give the market a very big SL."
+
+Two consequences that pull opposite ways on purpose: do NOT plan a large target
+(the move exists to take a shallow stop cluster, not to trend), but DO expect the
+move to be FAST —
+
+> "The momentum should be fast, because these sellers will not give the market
+> much opportunity... if it is going to hit their SL, the market will pause a
+> little and then suddenly produce fast momentum and eat as many SLs as it can."
+
+So speed is the SIGNATURE of the flush, and a slow grind means the cluster you
+assumed is probably not there: "if the momentum is slow then maybe we will not get
+that much target — we will have to take an average target."
+
+### Entry preference
+
+He wanted a dip BEFORE buying, not the first push up: "if we get the market a bit
+lower it is better; if it starts rising directly we would have to work with a
+retracement." He also checked no big sudden selling was underway first — a small
+orderly move against you is a cheap fill, a large one says the premise is wrong.
+
+### The two-phase handling of a wobble
+
+Mid-trade his profit collapsed on a rejection:
+
+> "There is no need to be afraid of such a rejection. Nothing will happen. There
+> will be up and down moves, but **you will definitely get one opportunity in
+> which your profit is made.**"
+
+...and then, once the sharp move came: "a good profit has been made, so we will
+not be greedy" — and he booked. The discriminator between the two phases is
+factual: **has the fast one-way move through the stop cluster happened yet?**
+
+### The asymmetry
+
+> "When profit is increasing, if you wait a bit, enlarge the target, even make a
+> few mistakes — in profit those pass. **But never make a mistake in a loss.**"
+
+Also, on humility: "SL hunting does not mean what you thought is what will happen…
+I make mistakes too. When a mistake happens, accept it and take the loss." And
+practically: "do not work thinking at 100% that your trade must go right — better
+to wait, REDUCE QUANTITY."
+
+### How the agent compared on the same session
+
+The agent traded the same premise FIRST and then abandoned it:
+
+| # | Agent | Result |
+|---|---|---|
+| 1 | 09:23 LONG `hammer_confirmation_gapup_seller_hunt` | **+Rs.712.75**, booked in 3.5 min ("momentum stalled") |
+| 2 | 10:06 SHORT `double_top_neckline_break_continuation` | -Rs.1,767.75 (cut on BankNIFTY confirming against) |
+| 3 | 10:16 SHORT `shooting_star_fib50_rejection` | -Rs.1,547.25 (premise stalled) |
+| | | **-Rs.2,602.25** |
+
+Trade 1 IS IH's trade — same direction, same premise, even the same name for it
+("gapup_seller_hunt"), and it was the only winner. The agent then closed it after
+3.5 minutes on a stall, and traded AGAINST that read twice.
+
+IH sat through the same stall, said explicitly it was not to be feared, and took
+the move. That is exactly what A REJECTION BEFORE THE FLUSH IS NOISE is for — and
+the two losses that followed are what ERRORS IN PROFIT ARE CHEAP; ERRORS IN A LOSS
+ARE NOT is for. The pre-open note was injected (1909 chars) and cited in 4
+decisions, and its plan — gap-up means hunt the seated sellers, BUY side — was
+correct.
+
+**New, hence in the knowledge:**
+- SECOND-DAY RECRUITMENT (one adverse day seats nobody; the second does).
+- A freshly recruited crowd has tight stops: sharp but SMALL, and FAST or not real.
+- A rejection BEFORE the flush is noise; after it, book.
+- Errors in profit are cheap; errors in a loss are not.
+- When the stops are above you, prefer a dip to a chase.
+
+**Confirmed but already present:** THE MISSING RIP IS THE TELL (v3z) is the
+one-day half of the recruitment rule; recruit-then-turn after the flush is
+RECRUITMENT HISTORY; "reduce quantity when unsure" overlaps existing sizing
+discipline.
+
+**Knowledge changes (v4a, all prose):**
+- `RETAIL_POSITIONING`: SECOND-DAY RECRUITMENT; A FRESHLY RECRUITED CROWD HAS
+  TIGHT STOPS.
+- `RISK`: A REJECTION BEFORE THE FLUSH IS NOISE; ERRORS IN PROFIT ARE CHEAP;
+  WHEN THE STOPS ARE ABOVE YOU, PREFER A DIP TO A CHASE.
+- Test markers: `test_system_prompt_has_v4a_second_day_recruitment_knowledge` and
+  `test_v4a_rejection_rule_cannot_be_read_as_licence_to_hold_a_loser`. The second
+  matters more than usual: this is the first lesson that argues for NOT closing,
+  so it carries an explicit scope clause and the test asserts every exit rule it
+  must not weaken is still present beside it.
+
+### Pre-open note for 2026-08-07 (shipped alongside v4a)
+
+**Source:** Intraday Hunter, "Prediction For 07 AUG 2026" (`Lq7JGlZj6PY`,
+uploaded 2026-08-06, 2:00).
+
+**The seated side has flipped back to BUYERS.** Five notes, five configurations:
+
+| Session | Seated crowd | The hunt is | The follow is |
+|---|---|---|---|
+| 3 Aug | buyers (thin) | gap-down -> SELL | gap-up -> BUY |
+| 4 Aug | buyers (seated) | any open -> SELL | — |
+| 5 Aug | sellers (too small) | — | any open -> SELL |
+| 6 Aug | sellers (seated) | gap-up -> BUY | gap-down -> SELL |
+| 7 Aug | **buyers (seated)** | **gap-down -> SELL** | **flat/gap-up -> BUY** |
+
+> "There is some positive momentum. Not big momentum, but **enough that people
+> would go and make CALL trades**. So buyers will be seated here... To target the
+> buyers, what do we need? At minimum a GAP-DOWN."
+
+He also names where their stops are — "somewhere at these lower points that have
+formed" — which is a concrete claim rather than a vague direction.
+
+**A first for this channel: a MAGNITUDE-scaled condition.**
+
+> "If we get a decent gap-down — that is, **the farther the opening is from
+> 58,000, the better for us** — so we can target these buyers."
+
+Every prior note treated gap direction as categorical. This one says the SIZE of
+the adverse gap improves the hunt, because distance is what puts the crowd
+underwater. Worth noting it does NOT contradict `GAP SIZE IS A RISK DIAL` in the
+knowledge, which says a bigger gap makes the CONTINUATION branch worse: that rule
+is about trading WITH a gap past everyone's stops, this is about trading AGAINST a
+crowd the gap has just buried. Different branches, opposite signs, both correct.
+
+**A link to v4a:** he stresses the recruiting move was small — "not big momentum,
+but enough that people would make call trades" — which is exactly the
+lightly-committed crowd v4a's A FRESHLY RECRUITED CROWD HAS TIGHT STOPS describes.
+Expect a sharp but small flush if the gap-down arrives.
+
+**Transcription caveat:** one BankNIFTY support arrived as "5710" where every
+other level is five digits; read as 57100 alongside 57500. Same dropped-digit ASR
+artefact seen on 4 and 5 Aug. Advisory candidate levels only.
+
+**Test marker:** `test_shipped_note_matches_august_7_intraday_hunter_plan`,
+re-pinned from the 6 Aug content, asserting the "BUYERS are the seated crowd"
+clause because that is the single fact the whole gap mapping hangs on.
