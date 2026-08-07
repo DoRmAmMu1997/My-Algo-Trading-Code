@@ -18,6 +18,7 @@ import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from itertools import pairwise
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,6 +27,55 @@ import pandas as pd
 
 IST = ZoneInfo("Asia/Kolkata")
 OHLC_COLUMNS = ("open", "high", "low", "close")
+
+# NSE trades one continuous session with no lunch break. These bound the window
+# in which one-minute candles can legitimately be produced.
+MARKET_SESSION_START = dt_time(9, 15)
+MARKET_SESSION_END = dt_time(15, 30)
+# Walking day-by-day is bounded so a corrupt far-past timestamp cannot spin. Any
+# bar older than this is stale under every possible measure anyway.
+MAX_MARKET_HOURS_WALK_DAYS = 30
+
+
+def market_hours_between(start: datetime, end: datetime) -> float:
+    """Seconds of MARKET time between two aware IST datetimes.
+
+    WHY THIS EXISTS. A completed one-minute bar is stamped with EXCHANGE time, so
+    measuring its age against the wall clock counts hours in which no bar could
+    possibly have been produced. Start the runner at 08:30 and the newest
+    completed bar is yesterday's 15:29 -- roughly 61,000 wall-clock seconds old,
+    and entirely correct. Treating that as a fault produced 470 of the 472
+    "unhealthy" warnings logged on 2026-08-07, which buried the ONE line that
+    mattered (an option leg genuinely 18 minutes stale at 10:02).
+
+    Counting only market time makes the gate say what it means: "how long has the
+    feed been silent DURING the hours it should have been speaking". Overnight,
+    weekends and holidays contribute nothing; a silent feed at 09:20 still trips
+    within the normal threshold because five market minutes have really passed.
+
+    Deliberately NOT holiday-aware: this repo has no exchange calendar, and the
+    failure mode is benign -- on a holiday the runner is either not started or
+    holds nothing, and a spurious warning there costs nothing. Weekends ARE
+    excluded, because a Friday-to-Monday gap is common enough to matter.
+    """
+    if end <= start:
+        return 0.0
+    if (end - start).days > MAX_MARKET_HOURS_WALK_DAYS:
+        return math.inf
+
+    total = 0.0
+    day = start.date()
+    last_day = end.date()
+    while day <= last_day:
+        if day.weekday() < 5:  # Monday-Friday
+            open_at = datetime.combine(day, MARKET_SESSION_START).replace(tzinfo=IST)
+            close_at = datetime.combine(day, MARKET_SESSION_END).replace(tzinfo=IST)
+            overlap_start = max(start, open_at)
+            overlap_end = min(end, close_at)
+            if overlap_end > overlap_start:
+                total += (overlap_end - overlap_start).total_seconds()
+        day += timedelta(days=1)
+    return total
 
 
 class MarketDataValidationError(ValueError):
@@ -369,14 +419,24 @@ class MarketDataHealth:
         if self._newest_completed_bar is None:
             reasons.append("newest completed one-minute bar is unavailable")
         else:
-            bar_age = (now - self._newest_completed_bar).total_seconds()
+            wall_age = (now - self._newest_completed_bar).total_seconds()
             # A slightly future timestamp is normal clock skew; more than 5s
             # ahead means the feed's clock (or an epoch-unit bug) cannot be
-            # trusted, which is just as unsafe as stale data.
-            if bar_age < -5.0:
+            # trusted, which is just as unsafe as stale data. This check stays on
+            # the WALL clock deliberately -- a future-dated bar is a fault at any
+            # hour, including outside the session.
+            if wall_age < -5.0:
                 reasons.append("newest completed one-minute bar is in the future")
-            elif bar_age > self._bar_max_age:
-                reasons.append(f"newest completed one-minute bar is stale ({bar_age:.1f}s)")
+            else:
+                # Staleness, however, is measured in MARKET time: the bar carries
+                # an exchange timestamp, so overnight and weekend hours are not
+                # time in which it failed to arrive. Inside the session this is
+                # identical to the wall clock, so live behaviour is unchanged.
+                bar_age = market_hours_between(self._newest_completed_bar, now)
+                if bar_age > self._bar_max_age:
+                    reasons.append(
+                        f"newest completed one-minute bar is stale ({bar_age:.1f}s of market time)"
+                    )
 
         for key in sorted(self._required_ltp_keys):
             fetched_at = self._ltp_fetched_at.get(key)
