@@ -1,8 +1,14 @@
 """Append sanitized CPR Codex decisions as machine-readable JSONL audit rows.
 
-Logs are intended for later host execution analysis, so they retain frozen
-evidence and validation outcomes while recursively removing values that look
-like credentials.  Logging must never make a decision executable.
+Each line joins the exact frozen evidence, Codex proposal, host validation,
+authoritative geometry, actual execution provenance, latency, token totals,
+and MCP-call evidence for one decision.  That makes later paper/live review
+possible without reconstructing mutable market state.
+
+The logger is deliberately downstream of trading authority: it records what
+happened but cannot make a decision executable.  Values under credential- or
+execution-sensitive key tokens are removed recursively before anything is
+written, and disabled logging performs no filesystem mutation.
 """
 
 from __future__ import annotations
@@ -41,8 +47,10 @@ def _sensitive_key(key: Any) -> bool:
     """Match credential/execution words as tokens, not innocent substrings.
 
     Substring matching discarded useful fields such as ``ordered`` and
-    ``authoritative_geometry``.  Token-usage counters remain explicitly safe;
-    singular authentication tokens and execution provenance stay excluded.
+    ``authoritative_geometry``.  Splitting snake_case, punctuation, and
+    camelCase lets the filter remove ``api_keys``/``apiKeys`` without treating
+    innocent word fragments as secrets.  Aggregate token-usage counters remain
+    explicitly safe; authentication tokens and order/broker fields do not.
     """
 
     separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
@@ -77,7 +85,12 @@ def _sensitive_key(key: Any) -> bool:
 
 
 def _sanitized(value: Any) -> Any:
-    """Copy JSON-compatible evidence while dropping sensitive mapping fields."""
+    """Recursively copy audit evidence while dropping sensitive mapping fields.
+
+    Lists, dataclasses, and Pydantic models may nest sensitive mappings several
+    layers deep, so redaction happens before JSON serialization rather than at
+    selected call sites.  Primitive market values pass through unchanged.
+    """
 
     if isinstance(value, Mapping):
         return {
@@ -95,10 +108,14 @@ def _sanitized(value: Any) -> Any:
 
 
 class CPRDecisionLogger:
-    """Write one sanitized, append-only record per host decision when enabled."""
+    """Write one sanitized, append-only host-decision record when enabled.
+
+    JSONL keeps every decision independently parseable and avoids rewriting
+    earlier audit history if the process stops unexpectedly.
+    """
 
     def __init__(self, path: str, *, enabled: bool = True) -> None:
-        """Store the configured audit destination without creating it eagerly."""
+        """Store the destination without creating files while logging is idle."""
 
         self.path = Path(path)
         self.enabled = enabled
@@ -114,7 +131,12 @@ class CPRDecisionLogger:
         tool_evidence: list[Mapping[str, Any]],
         execution: Mapping[str, Any] | None = None,
     ) -> None:
-        """Append a complete non-secret record; execution defaults to order-free."""
+        """Append one complete sanitized record after a host decision.
+
+        The default execution object explicitly says no order was submitted,
+        which is safer than leaving an absent field open to interpretation.
+        Parent directories are created only after the enabled guard passes.
+        """
 
         if not self.enabled:
             return

@@ -1,8 +1,16 @@
-"""Compute a self-contained, deterministic CPR/SRSI/VWAP context.
+"""Turn raw one-minute candles into the CPR agent's deterministic evidence.
 
-This module intentionally does not import the older CPR Strategy package.  It
-accepts ordinary one-minute OHLC history, retains prior sessions for level
-math, and exposes facts rather than choosing an agent regime or trade.
+This file owns the part of the strategy that must give the same answer every
+time: completed five-minute bars, prior-session CPR levels, indicators,
+confirmed swing points, and position facts.  It intentionally does not import
+the older CPR Strategy package, so those strategies and this agent can evolve
+and run independently.
+
+The important boundary for a new maintainer is that this module describes the
+market; it does not interpret it.  Regime classification and premise judgment
+belong to Codex, while order permission, prices, and risk checks belong to the
+host.  Keeping those responsibilities separate prevents model prose from
+quietly becoming executable trading data.
 """
 
 from __future__ import annotations
@@ -35,7 +43,12 @@ _IST = ZoneInfo("Asia/Kolkata")
 
 
 def _as_float(value: Any) -> float | None:
-    """Return a JSON-safe finite float, or ``None`` when a value is unavailable."""
+    """Return a JSON-safe finite float, or ``None`` when data is unavailable.
+
+    JSON does not have portable representations for pandas ``NA``, ``NaN``,
+    or infinity.  Converting them to ``None`` keeps the frozen MCP snapshot
+    valid and makes missing evidence explicit to the host validator.
+    """
 
     if value is None or pd.isna(value):
         return None
@@ -78,7 +91,13 @@ def _completed_minutes(
     *,
     as_of: datetime | None,
 ) -> pd.DataFrame:
-    """Return only start-stamped one-minute candles whose interval has closed."""
+    """Return only start-stamped one-minute candles whose interval has closed.
+
+    The shared feed may already contain the 09:19 row while the 09:19-09:20
+    interval is still changing.  The health helper applies that repository-wide
+    start-stamp convention, so an agent never treats that forming minute as
+    completed evidence.
+    """
 
     minutes = _prepared_minutes(one_minute_candles)
     newest = newest_completed_minute_timestamp(minutes, now=as_of)
@@ -93,11 +112,12 @@ def build_completed_five_minute_bars(
     *,
     as_of: datetime | None = None,
 ) -> pd.DataFrame:
-    """Build only exact five-observation OHLC buckets from one-minute candles.
+    """Build five-minute bars only from the five exact expected minute slots.
 
-    A bucket containing fewer than five one-minute records is deliberately
-    discarded.  This prevents an in-progress five-minute candle from being
-    mistaken for final market evidence.
+    Merely counting five rows is unsafe: a duplicated 09:17 row plus a missing
+    09:18 row would still total five observations.  The completeness mask
+    verifies the actual minute identities before resampling.  Partial/forming
+    buckets are discarded so completed-bar actions cannot fire intrabar.
     """
 
     minutes = _completed_minutes(one_minute_candles, as_of=as_of)
@@ -129,7 +149,13 @@ def build_completed_five_minute_bars(
 
 
 def _rsi_wilder(closes: pd.Series, length: int = 14) -> pd.Series:
-    """Calculate TradingView-style Wilder RSI from a close series."""
+    """Calculate TradingView-style Wilder RSI from a close series.
+
+    Wilder's method is not pandas' default exponentially weighted mean.  It
+    starts with a simple average of the first ``length`` gains/losses and then
+    applies the recursive ``(old * (length - 1) + new) / length`` update.  The
+    explicit implementation keeps our values aligned with charting evidence.
+    """
 
     if length <= 0:
         raise ValueError("Wilder RSI length must be positive.")
@@ -141,11 +167,13 @@ def _rsi_wilder(closes: pd.Series, length: int = 14) -> pd.Series:
     changes = values.diff()
     gains = changes.clip(lower=0.0)
     losses = -changes.clip(upper=0.0)
+    # Seed both averages with the first complete window.  Starting the
+    # recurrence at the first price change would produce a different RSI path.
     average_gain = float(gains.iloc[1 : length + 1].mean())
     average_loss = float(losses.iloc[1 : length + 1].mean())
 
     def rsi_value(gain: float, loss: float) -> float:
-        """Convert one pair of Wilder averages into the conventional boundary value."""
+        """Convert averaged gains/losses into RSI, including flat-market edges."""
 
         if loss == 0.0:
             return 50.0 if gain == 0.0 else 100.0
@@ -164,7 +192,12 @@ def _rsi_wilder(closes: pd.Series, length: int = 14) -> pd.Series:
 
 
 def _stochastic_rsi(closes: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Return RSI14 and TradingView-style Stochastic RSI K/D (14, 3, 3)."""
+    """Return RSI14 and TradingView-style Stochastic RSI K/D (14, 3, 3).
+
+    Stochastic RSI normalizes RSI within its own 14-value range, then smooths
+    that raw oscillator with a three-period K average and a three-period D
+    average.  The host later checks crosses and 20/80 zones from these facts.
+    """
 
     rsi = _rsi_wilder(closes, 14)
     lowest = rsi.rolling(14, min_periods=14).min()
@@ -177,7 +210,12 @@ def _stochastic_rsi(closes: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]
 
 
 def _opening_facts(session_bars: pd.DataFrame, count: int) -> dict[str, Any]:
-    """Return a completed first-N-minute OHLC corridor or a clear incomplete marker."""
+    """Return the first-N-minute corridor, or explicitly mark it incomplete.
+
+    Returning ``complete=False`` is safer than constructing a shorter opening
+    range: the model can see that the fact is unavailable, and the host cannot
+    accidentally validate a setup against a half-built window.
+    """
 
     bars_needed = count // 5
     window = session_bars.head(bars_needed)
@@ -211,7 +249,12 @@ def _session_levels(
     *,
     prior_accepted_regime: str | None,
 ) -> dict[str, Any]:
-    """Calculate prior-day CPR, support/resistance, opening, and next-level facts."""
+    """Calculate prior-day CPR, support/resistance, and opening-range facts.
+
+    ``prior_accepted_regime`` is only continuity context for the next model
+    turn.  It does not lock the new regime and is never used here to manufacture
+    an entry.  The model may change its judgment when fresh evidence warrants.
+    """
 
     sessions = sorted(minutes["timestamp"].dt.date.unique())
     if len(sessions) < 2:
@@ -239,6 +282,8 @@ def _session_levels(
         "s1": (2.0 * pivot) - prior_high,
         "s2": pivot - (prior_high - prior_low),
     }
+    # The next milestone must be beyond the two-point buffer.  A level already
+    # being touched is not advertised as future reward for the 1R geometry gate.
     ordered = sorted(
         (_level_view(name, price, current_close) for name, price in levels.items()), key=lambda item: item["price"]
     )
@@ -266,7 +311,13 @@ def _session_levels(
 
 
 def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
-    """Calculate SRSI, RSI, EMA, candle, and session VWAP evidence from bars."""
+    """Calculate SRSI, RSI, EMA, candle, and session VWAP evidence from bars.
+
+    Volume is preferred when the feed supplies it.  This repository's index
+    feed may carry no usable volume, so the deterministic fallback is the
+    expanding mean of typical price.  Its method name is included in the
+    snapshot so the agent can distinguish a proxy from true volume VWAP.
+    """
 
     bars = session_bars.copy()
     typical = (bars["high"] + bars["low"] + bars["close"]) / 3.0
@@ -275,6 +326,8 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
         vwap = (typical * volume).cumsum() / volume.cumsum()
         vwap_method = "volume_weighted"
     else:
+        # Do not invent index volume.  Equal-weight typical price is explicit,
+        # reproducible, and exposes its limitation through ``vwap_method``.
         vwap = typical.expanding().mean()
         vwap_method = "equal_weight_typical_price"
     rsi, k, d = _stochastic_rsi(bars["close"])
@@ -416,7 +469,12 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
 
 
 def _swing_points(bars: pd.DataFrame, field: str, *, window: int, higher_is_swing: bool) -> list[dict[str, Any]]:
-    """Confirm fractal swing points only after ``window`` bars on both sides."""
+    """Confirm fractal swings only after ``window`` bars exist on both sides.
+
+    Requiring later bars prevents a current extreme from being labeled a swing
+    before it is confirmed.  That delay is intentional because sideways stops
+    use the latest returned swing as authoritative geometry.
+    """
 
     values = bars[field].to_numpy(dtype=float)
     points: list[dict[str, Any]] = []
@@ -429,7 +487,13 @@ def _swing_points(bars: pd.DataFrame, field: str, *, window: int, higher_is_swin
 
 
 def _market_structure(session_bars: pd.DataFrame, levels: Mapping[str, Any], *, swing_window: int) -> dict[str, Any]:
-    """Return objective swing comparisons plus the one allowed long R1 pattern."""
+    """Return objective swing comparisons plus the one allowed long R1 add.
+
+    HH/HL/LH/LL are facts derived from confirmed points; this function does not
+    convert them into a regime.  The scale-in candidate is deliberately only
+    the documented red-then-green long pattern at R1.  No unapproved short/S1
+    mirror is inferred.
+    """
 
     highs = _swing_points(session_bars, "high", window=swing_window, higher_is_swing=True)
     lows = _swing_points(session_bars, "low", window=swing_window, higher_is_swing=False)
@@ -475,10 +539,13 @@ def build_cpr_context(
     swing_window: int = 2,
     as_of: datetime | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Freeze-ready CPR context for the latest session's last complete five-minute bar.
+    """Build the four-section snapshot for the latest completed five-minute bar.
 
-    The returned mapping has exactly the four public MCP sections.  It contains
-    no inferred regime and no execution object, credential, venue, or broker.
+    The result is ready to freeze and expose through the read-only MCP tools.
+    It contains no inferred regime (apart from the explicitly labelled prior
+    judgment), execution object, credential, venue, broker, or order method.
+    Position input is normalized before inclusion so both Codex and the host
+    validate the same facts.
     """
 
     if swing_window < 1:
@@ -487,6 +554,9 @@ def build_cpr_context(
         raise ValueError(
             "prior_accepted_regime must be SIDEWAYS, TRENDING, UNDECIDED, or None."
         )
+    # Apply the completion cutoff before resampling and again inside the public
+    # bar builder.  The second application is harmless and keeps that public
+    # helper safe when it is called independently.
     minutes = _completed_minutes(one_minute_candles, as_of=as_of)
     bars = build_completed_five_minute_bars(minutes, as_of=as_of)
     if bars.empty:

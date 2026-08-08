@@ -1,9 +1,14 @@
-"""Execute one optional Codex SDK turn in a temporary read-only process.
+"""Execute one optional Codex SDK turn inside the temporary child boundary.
 
 The parent gives this process a frozen public snapshot, not the trading
-workspace or credentials.  SDK imports remain here so an absent package fails
-only the optional CPR agent, while the parent can safely retain its normal
-market-data and broker lifecycle.
+workspace, mutable market-data store, broker session, or credentials.  The
+child's only useful capability is a required MCP server with four no-argument
+read tools.  It cannot execute an order; it can only return an advisory object
+which the parent will independently validate.
+
+SDK imports remain here so a missing or broken optional package disables only
+the CPR AI worker.  Normal market-data, broker, and mechanical-exit lifecycles
+remain in the long-running parent process.
 """
 
 from __future__ import annotations
@@ -22,8 +27,10 @@ def build_isolated_thread_config(snapshot_path: str, python_executable: str = sy
     """Build the one authoritative, read-only SDK configuration for this child.
 
     Keeping this pure lets tests prove the exact object passed to the SDK.  The
-    child has no shell, web, multi-agent, or workspace-write capability; its
-    sole MCP server can read one frozen snapshot through four named tools.
+    child has no shell, web, multi-agent, external connector, or workspace-write
+    capability; its sole required MCP server can read one frozen snapshot
+    through four named tools.  These flags are defense in depth on top of the
+    parent's auth-only ``CODEX_HOME`` and synthetic profile.
     """
 
     return {
@@ -66,7 +73,11 @@ def build_isolated_thread_config(snapshot_path: str, python_executable: str = sy
 
 
 def _item_value(item: Any, name: str, default: Any = None) -> Any:
-    """Read a public SDK item's field without depending on a private SDK model."""
+    """Read a public SDK field from either mapping or object representations.
+
+    Staying on the documented public item surface keeps this adapter tolerant
+    of harmless SDK representation differences without importing private types.
+    """
 
     return item.get(name, default) if isinstance(item, Mapping) else getattr(item, name, default)
 
@@ -78,7 +89,12 @@ def _root_item(item: Any) -> Any:
 
 
 def _tool_evidence(items: Any) -> list[dict[str, str]]:
-    """Extract only MCP tool name/status evidence; unknown item kinds are rejected later."""
+    """Extract MCP tool names/statuses without trusting their returned content.
+
+    Tool values already come from the same frozen snapshot the host owns.  What
+    matters here is proving that Codex consulted every required section exactly
+    once; the parent performs that exact-set check after this process exits.
+    """
 
     evidence: list[dict[str, str]] = []
     for wrapped in items if isinstance(items, (list, tuple)) else ():
@@ -93,7 +109,12 @@ def _tool_evidence(items: Any) -> list[dict[str, str]]:
 
 
 def _usage_mapping(usage: Any) -> dict[str, int]:
-    """Copy numeric token totals without serializing account or request metadata."""
+    """Copy numeric token totals without account or request metadata.
+
+    Usage is useful for latency/cost observability, but SDK usage objects may
+    grow extra fields.  An allowlist-by-shape (integer keys containing
+    ``token`` plus context-window size) avoids logging identifiers by accident.
+    """
 
     if hasattr(usage, "model_dump"):
         usage = usage.model_dump()
@@ -116,7 +137,12 @@ def _usage_mapping(usage: Any) -> dict[str, int]:
 
 
 def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
-    """Start one fresh ephemeral thread with only four frozen MCP reads enabled."""
+    """Start a fresh ephemeral thread with only four frozen MCP reads enabled.
+
+    ``read_only`` blocks workspace mutation and ``deny_all`` prevents an SDK
+    approval round-trip from enabling something unexpected.  Ephemeral threads
+    also prevent one bar's conversation state from influencing the next bar.
+    """
 
     from openai_codex import ApprovalMode, Codex, Sandbox
 
@@ -154,7 +180,12 @@ def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    """Read one request and emit only a structured success or failure response."""
+    """Read one exact-shaped request and emit a minimal structured response.
+
+    Failures expose only their exception category.  Exception messages can
+    contain local paths, MCP diagnostics, or authentication material and are
+    unnecessary for the parent's fail-closed HOLD decision.
+    """
 
     try:
         request = json.load(sys.stdin)

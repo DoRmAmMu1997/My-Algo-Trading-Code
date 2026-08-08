@@ -1,11 +1,17 @@
-"""Prepare the deliberately narrow child process used for an optional Codex turn.
+"""Prepare the deliberately narrow child process used for one Codex turn.
 
-The configuration below is data, not a trading integration.  It gives a child
-only the four frozen MCP reads and removes ambient credentials so an SDK issue
-cannot turn into a shell, web, workspace, or order capability.
+This parent-side adapter creates two layers of temporary isolation.  A single
+process-lifetime ``CODEX_HOME`` contains only a copy of subscription
+``auth.json`` so SDK token refreshes survive between serialized turns.  Each
+turn then receives a fresh synthetic user profile, working directory, frozen
+snapshot, and request file; all are deleted when that turn ends.
 
-The subprocess import is intentional: callers and model input cannot choose
-the fixed local interpreter or child script passed to it.
+The configuration is data, not a trading integration.  The child sees only
+four frozen MCP reads and cannot inherit broker credentials, operator plugins,
+shell tools, web access, workspace files, or order capabilities.  Its output
+remains untrusted and must pass the host's independent evidence and policy
+checks.  The subprocess import is intentional: neither callers nor model input
+can choose the fixed local interpreter or child script.
 """
 
 from __future__ import annotations
@@ -35,10 +41,13 @@ def create_auth_only_codex_home(source_home: Path, runtime_root: Path) -> Path:
     """Copy only subscription auth into a new independent Codex state home.
 
     The copy happens once per process-level home.  Codex may refresh its own
-    token file during later turns, so callers must reuse this destination and
-    must never overwrite it from, or synchronize it back to, the operator home.
+    token file during later turns, so callers reuse this destination under the
+    agent's serialization lock.  The temporary copy is never overwritten from,
+    symlinked to, or synchronized back to the operator home.
     """
 
+    # Reject symlinks on both the home and file.  Otherwise an apparently
+    # temporary boundary could still read or later mutate operator-owned state.
     source_auth = source_home / "auth.json"
     if (
         not source_home.is_dir()
@@ -55,14 +64,18 @@ def create_auth_only_codex_home(source_home: Path, runtime_root: Path) -> Path:
 
 
 def _operator_codex_home() -> Path:
-    """Resolve the operator authentication home before constructing child env."""
+    """Locate subscription auth without exposing that home to the child.
+
+    ``CODEX_HOME`` is honored for operators who keep Codex state outside the
+    default profile.  Only ``auth.json`` is copied from the resolved directory.
+    """
 
     configured = os.environ.get("CODEX_HOME")
     return Path(configured) if configured else Path.home() / ".codex"
 
 
 def _cleanup_process_codex_home() -> None:
-    """Remove the process-lifetime isolated home without touching operator state."""
+    """Delete the isolated auth copy at process exit, never operator state."""
 
     global _PROCESS_CODEX_HOME, _PROCESS_CODEX_HOME_TEMPORARY_DIRECTORY
     with _PROCESS_CODEX_HOME_LOCK:
@@ -74,7 +87,12 @@ def _cleanup_process_codex_home() -> None:
 
 
 def process_isolated_codex_home() -> Path:
-    """Return one auth-only home reused for every serialized turn this process."""
+    """Return the process-lifetime auth-only home used by serialized turns.
+
+    Reuse is deliberate: a token refresh written by the SDK remains available
+    to the next turn, while the source ``auth.json`` is copied only once and is
+    never modified.  Construction is lock-guarded in case worker startup races.
+    """
 
     global _PROCESS_CODEX_HOME, _PROCESS_CODEX_HOME_TEMPORARY_DIRECTORY
     with _PROCESS_CODEX_HOME_LOCK:
@@ -130,7 +148,11 @@ def safe_subprocess_environment(
 
 
 def build_codex_thread_config(snapshot_path: str, python_executable: str, _agent_directory: str) -> dict[str, Any]:
-    """Compatibility wrapper around the child's single authoritative builder."""
+    """Expose the child's authoritative config builder for tests and callers.
+
+    ``_agent_directory`` remains in this compatibility surface but is ignored:
+    the child must not discover tools or configuration from the repository.
+    """
 
     return build_isolated_thread_config(snapshot_path, python_executable)
 
@@ -141,7 +163,9 @@ def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:
     The parent writes only the already-frozen public context into an ephemeral
     snapshot file.  The child receives no current workspace, ambient secrets,
     or way to invoke a shell.  Its JSON result is still untrusted and undergoes
-    the host's separate four-tool, schema, and policy validation.
+    the host's separate four-tool, schema, model/prompt, freshness, and trading
+    policy validation.  The configured deadline covers the whole child process,
+    not merely the model request inside it.
     """
 
     context = kwargs.get("context")
@@ -164,6 +188,8 @@ def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:
             profile_home / "Temp",
         ):
             directory.mkdir(parents=True, exist_ok=True)
+        # Serialize only the already-frozen public mapping.  There is no handle
+        # back to the mutable market-data store or the live position object.
         snapshot = runtime_directory / "snapshot.json"
         snapshot.write_text(json.dumps(context, sort_keys=True), encoding="utf-8")
         request = {
@@ -188,9 +214,13 @@ def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:
             ),
             check=False,
         )
+    # Child stderr is deliberately not copied into the host exception: SDK
+    # failures may contain paths or authentication details useful to attackers.
     if completed.returncode != 0:
         raise RuntimeError("The isolated optional Codex subprocess rejected the turn.")
     try:
+        # Treat stdout as untrusted input even though the child is local.  A
+        # dependency failure must become HOLD, never a partially trusted turn.
         response = json.loads(completed.stdout)
         if not isinstance(response, Mapping) or response.get("ok") is not True:
             raise ValueError("Subprocess did not return a successful structured response.")

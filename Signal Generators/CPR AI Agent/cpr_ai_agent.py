@@ -1,8 +1,15 @@
-"""Validate a narrowly scoped Codex proposal against frozen CPR evidence.
+"""Convert an advisory Codex proposal into fail-closed host permission.
 
-Codex can classify a completed five-minute bar, but it never receives an order
-surface and never decides trade geometry.  This module is the fail-closed host
-boundary: every executable field below is calculated from the frozen context.
+Codex may classify a completed five-minute bar and explain whether a documented
+setup is present.  It never receives an order surface and never decides entry,
+stop, target, quantity, contract, broker, or venue.  This module is the trust
+boundary: it first proves the model read the exact frozen evidence, then parses
+the strict schema, verifies model/prompt identity and freshness, and finally
+recalculates every executable field from deterministic facts.
+
+Any missing tool call, stale bar, malformed response, optional SDK problem, or
+contradictory market fact becomes ``HOLD``.  Open-position mechanical safety
+and order execution remain outside this module in the master worker.
 """
 
 from __future__ import annotations
@@ -19,7 +26,11 @@ from cpr_ai_tools import EXPECTED_TOOL_NAMES
 
 @dataclass(frozen=True)
 class CPRToolCallRecord:
-    """One SDK-observed MCP tool call, kept as auditable evidence only."""
+    """One SDK-observed MCP read, retained only to prove tool coverage.
+
+    The record does not carry or authorize an order.  The host checks that all
+    four allowlisted tools completed exactly once before trusting model text.
+    """
 
     tool: str
     status: str
@@ -28,7 +39,11 @@ class CPRToolCallRecord:
 
 @dataclass(frozen=True)
 class CPRAgentRunResult:
-    """Minimal, SDK-neutral turn output used by the isolated host boundary."""
+    """Minimal SDK-neutral result returned by the isolated child process.
+
+    Keeping this type free of SDK classes prevents optional dependencies from
+    leaking into the master runtime and makes malformed evidence easy to test.
+    """
 
     final_response: str
     tool_calls: tuple[CPRToolCallRecord, ...]
@@ -38,7 +53,13 @@ class CPRAgentRunResult:
 
 @dataclass
 class CPRAgentOutcome:
-    """Host result separating the proposal, validation, and derived geometry."""
+    """Host-owned outcome separating advice from executable geometry.
+
+    ``proposal`` preserves what Codex asked for; ``accepted`` and the validation
+    fields record what the host allowed; price/risk fields exist only when the
+    deterministic policy derived them.  Confidence is intentionally absent
+    because model confidence never changes position size in this groundwork.
+    """
 
     action: str = "HOLD"
     proposal: Any | None = None
@@ -58,7 +79,11 @@ class CPRAgentOutcome:
 
 
 def _hold(code: str, reason: str, proposal: Any | None = None, *, regime: str | None = None) -> CPRAgentOutcome:
-    """Return a non-executing result with an explicit audit reason."""
+    """Create the universal non-executing fallback with an audit reason.
+
+    Centralizing HOLD construction ensures error paths cannot accidentally
+    retain stale entry geometry or an executable action.
+    """
 
     return CPRAgentOutcome(
         proposal=proposal,
@@ -69,7 +94,12 @@ def _hold(code: str, reason: str, proposal: Any | None = None, *, regime: str | 
 
 
 class CPRHostPolicy:
-    """Derive safe entry/exit permission from one immutable completed-bar context."""
+    """Derive permission and geometry from one immutable completed-bar snapshot.
+
+    The model selects among documented setup names, but this policy owns every
+    Boolean hard gate and every price.  It therefore remains authoritative even
+    if the model fabricates supporting prose.
+    """
 
     max_risk_points = 30.0
     milestone_buffer = 2.0
@@ -77,9 +107,11 @@ class CPRHostPolicy:
     def validate(self, context: Mapping[str, Any], proposal: Any) -> CPRAgentOutcome:
         """Accept only a proposal whose deterministic evidence proves its safety.
 
-        The model's action is merely a request.  Missing, malformed, or
-        contradictory data returns HOLD so a transient data issue cannot open a
-        live position by accident.
+        The model's action is merely a request.  The flat/open action matrix is
+        checked first: a flat worker may enter, while an open worker may only
+        exit or request the single documented add.  Missing, malformed, or
+        contradictory data returns HOLD so a transient issue cannot increase
+        exposure by accident.
         """
 
         try:
@@ -127,7 +159,11 @@ class CPRHostPolicy:
         return value
 
     def _entry(self, context: Mapping[str, Any], proposal: Any) -> CPRAgentOutcome:
-        """Validate one flat long/short request and calculate its host-owned plan."""
+        """Route a flat entry request to its deterministic setup validator.
+
+        Unknown setup names are rejected rather than treated as discretionary
+        variants.  This is the seam where future approved setups can be added.
+        """
 
         direction = "LONG" if proposal.action == "ENTER_LONG" else "SHORT"
         if proposal.setup == "SIDEWAYS_SRSI":
@@ -137,7 +173,12 @@ class CPRHostPolicy:
         return _hold("entry_setup_rejected", "Entries need a documented SRSI or VWAP setup.", proposal)
 
     def _sideways_entry(self, context: Mapping[str, Any], proposal: Any, direction: str) -> CPRAgentOutcome:
-        """Require the exact oversold/overbought cross before a mean-reversion entry."""
+        """Validate a sideways SRSI entry and select its confirmed-swing stop.
+
+        A long needs a bullish cross wholly in the oversold zone; a short needs
+        the bearish overbought mirror.  The stop comes from the latest already
+        confirmed swing, never from a model-supplied price or forming extreme.
+        """
 
         if proposal.regime != "SIDEWAYS":
             return _hold("sideways_regime_rejected", "SRSI entries require the SIDEWAYS regime.", proposal)
@@ -155,7 +196,13 @@ class CPRHostPolicy:
         return self._geometry(context, proposal, direction, float(points[-1]["price"]))
 
     def _trending_entry(self, context: Mapping[str, Any], proposal: Any, direction: str) -> CPRAgentOutcome:
-        """Apply the VWAP, body, RSI, and EMA hard gates to a trend request."""
+        """Apply every documented VWAP, candle-body, RSI, and EMA trend gate.
+
+        Continuation and reversal use different frozen VWAP sequences, but
+        both require at least 40 percent of the entry body on the trade side,
+        directional RSI, ordered/sloping EMAs, and the completed candle extreme
+        as stop.  Model reasoning cannot waive any of these conditions.
+        """
 
         if proposal.regime != "TRENDING":
             return _hold("trending_regime_rejected", "VWAP entries require the TRENDING regime.", proposal)
@@ -202,7 +249,13 @@ class CPRHostPolicy:
         return self._geometry(context, proposal, direction, float(stop))
 
     def _geometry(self, context: Mapping[str, Any], proposal: Any, direction: str, stop: float) -> CPRAgentOutcome:
-        """Calculate entry, risk, buffered milestone, and definite R2/S2 target."""
+        """Calculate all executable entry geometry from frozen price facts.
+
+        Entry is the completed-bar close.  Risk must be positive and at most 30
+        NIFTY points.  The next CPR level, adjusted by the two-point buffer,
+        must offer at least 1R; the similarly buffered R2/S2 is the definite
+        final target.  Codex never supplies or alters any of these values.
+        """
 
         levels = self._mapping(context, "session_levels")
         entry = levels.get("current_close")
@@ -251,7 +304,12 @@ class CPRHostPolicy:
         )
 
     def _scale_in(self, context: Mapping[str, Any], proposal: Any, position: Mapping[str, Any]) -> CPRAgentOutcome:
-        """Permit only the one documented long R1 scale-in; sizing stays elsewhere."""
+        """Permit only the documented one-time R1 add to a trending long.
+
+        This outcome is permission, not execution.  The master rechecks market
+        health and lifecycle state, reuses the locked contract, applies spread
+        and liquidity gates, and owns quantity/fill/reconciliation accounting.
+        """
 
         candidate = self._mapping(self._mapping(context, "market_structure"), "r1_scale_in_candidate")
         if (
@@ -280,7 +338,13 @@ class CPRHostPolicy:
 
 
 class CPRAgent:
-    """Coordinate exactly one isolated Codex inference for each completed bar."""
+    """Coordinate at most one isolated Codex inference per completed bar.
+
+    One lock protects the completed-bar cadence set; a second protects the
+    longer-lived inference boundary.  Their separation matters after a timeout:
+    Python cannot kill the SDK thread safely, so later bars must HOLD until the
+    old thread actually finishes, and its late result must never be consumed.
+    """
 
     def __init__(
         self,
@@ -292,7 +356,13 @@ class CPRAgent:
         timeout_seconds: float = 90.0,
         policy: CPRHostPolicy | None = None,
     ) -> None:
-        """Keep SDK imports out of construction so missing optional deps stay local."""
+        """Configure the optional agent without importing its SDK eagerly.
+
+        Lazy loading means environments that install only core trading
+        dependencies can still run every deterministic strategy.  A non-finite
+        or non-positive deadline is rejected now rather than becoming an
+        effectively unbounded live worker call.
+        """
 
         try:
             validated_timeout = float(timeout_seconds)
@@ -324,7 +394,13 @@ class CPRAgent:
     def decide(
         self, context: Mapping[str, Any], *, bar_signature: str, current_signature: Callable[[], str] | None = None
     ) -> CPRAgentOutcome:
-        """Run one turn, validate its evidence, and return host-owned permission only."""
+        """Run one turn and return only contemporaneous host-owned permission.
+
+        A bar signature is consumed before inference starts, so failures and
+        timeouts are not retried on the same market bar.  ``current_signature``
+        lets the host suppress a result when fresher completed evidence arrived
+        while Codex was thinking.
+        """
 
         with self._lock:
             if bar_signature in self._seen_bars:
@@ -361,7 +437,12 @@ class CPRAgent:
         return outcome
 
     def _run_turn(self, context: Mapping[str, Any], bar_signature: str) -> CPRAgentRunResult:
-        """Build the strict schema lazily and pass no execution data to the runner."""
+        """Build prompt/schema lazily and pass only advisory inputs to the child.
+
+        The bar signature is cadence metadata; the frozen context is the only
+        market evidence.  No broker client, order callback, lot count, symbol,
+        or mutable position handle crosses this boundary.
+        """
 
         from cpr_ai_prompt import CPR_AI_PROMPT_VERSION, build_system_prompt
         from cpr_ai_schema import CPRAgentDecision
@@ -384,7 +465,14 @@ class CPRAgent:
         bar_signature: str,
         current_signature: Callable[[], str] | None,
     ) -> CPRAgentOutcome:
-        """Reject bad evidence before parsing untrusted model text or host policy."""
+        """Validate a child result in strict least-trust order.
+
+        Tool completeness is checked before model text; freshness before schema;
+        schema before model/prompt echoes; and all of those before trading
+        policy.  A valid new regime may persist even when deterministic entry
+        geometry is rejected, because regime memory is advisory, not authority
+        to place a trade.
+        """
 
         evidence_error = self._tool_evidence_error(result)
         if evidence_error is not None:
@@ -419,7 +507,11 @@ class CPRAgent:
 
     @staticmethod
     def _tool_evidence_error(result: CPRAgentRunResult) -> tuple[str, str] | None:
-        """Require each allowlisted read-only tool exactly once and successfully."""
+        """Require exactly four allowlisted, unique, successful read operations.
+
+        Extra capability use is as unsafe as a missing fact: either means the
+        turn did not follow the narrow contract and must be discarded in full.
+        """
 
         if result.unexpected_actions:
             return "unexpected_agent_action", "The SDK reported a disabled capability."
