@@ -560,6 +560,46 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
     assert capsys.readouterr().out.count("NO ORDER") == 2
 
 
+def test_decision_log_removes_plural_sensitive_keys_but_keeps_near_matches(tmp_path):
+    """Plural credentials/execution keys must not leak into the JSONL audit."""
+
+    path = tmp_path / "decisions.jsonl"
+    frozen = _context()
+    outcome = CPRHostPolicy().validate(frozen, _proposal("HOLD", "SIDEWAYS", "NONE"))
+
+    # These similarly spelled fields prove that the filter is token-aware.  It
+    # must remove true credentials/execution metadata without deleting useful
+    # strategy evidence merely because a word contains "order" or "auth".
+    frozen["position_state"] = {
+        "is_flat": True,
+        "api_keys": ["SECRET-SNAKE-KEYS"],
+        "apiKeys": ["SECRET-CAMEL-KEYS"],
+        "brokers": ["SECRET-BROKER-LIST"],
+        "orders": [{"id": "SECRET-ORDER-LIST"}],
+        "passwords": ["SECRET-PASSWORD-LIST"],
+        "venues": ["SECRET-VENUE-LIST"],
+        "ordered": [{"name": "r1", "price": 110.0}],
+        "authoritative_geometry": {"preserved": True},
+    }
+    CPRDecisionLogger(str(path)).write(
+        frozen_context=frozen,
+        proposal=_proposal("HOLD", "SIDEWAYS", "NONE"),
+        outcome=outcome,
+        latency_ms=12,
+        token_usage={"total_tokens": 17},
+        tool_evidence=[record.__dict__ for record in _calls()],
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    position_state = json.loads(raw)["frozen_context"]["position_state"]
+    assert "SECRET-" not in raw
+    assert position_state == {
+        "is_flat": True,
+        "ordered": [{"name": "r1", "price": 110.0}],
+        "authoritative_geometry": {"preserved": True},
+    }
+
+
 def test_geometry_uses_next_directional_level_not_hard_coded_r1_s1():
     """Already beyond R1/S1, the next frozen milestone must be used instead."""
 

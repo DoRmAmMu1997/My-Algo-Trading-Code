@@ -19,15 +19,20 @@ _SENSITIVE_KEY_TOKENS = frozenset(
         "authentication",
         "authorization",
         "apikey",
+        "apikeys",
         "broker",
+        "brokers",
         "credential",
         "credentials",
         "order",
+        "orders",
         "password",
+        "passwords",
         "secret",
         "secrets",
         "token",
         "venue",
+        "venues",
     }
 )
 
@@ -46,7 +51,11 @@ def _sensitive_key(key: Any) -> bool:
         return False
     if tokens == ("token", "usage"):
         return False
-    if "api" in tokens and "key" in tokens:
+    # CamelCase ``apiKeys`` and snake_case ``api_keys`` both become the two
+    # tokens ``api`` and ``keys``.  Treat either singular or plural spelling
+    # as credential data while leaving unrelated fields such as ``keys_seen``
+    # available to the audit log.
+    if "api" in tokens and ("key" in tokens or "keys" in tokens):
         return True
     if "tokens" in tokens and any(
         token in {
