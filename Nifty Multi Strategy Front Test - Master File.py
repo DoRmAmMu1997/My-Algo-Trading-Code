@@ -9392,12 +9392,13 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
     than an older CPR worker. Market evidence comes only from the independent
     CPR/SRSI/VWAP context package. Codex can classify regime/setup and may veto
     or request a documented action; this host owns completed-bar cadence,
-    lifecycle/market-health checks, authoritative prices, audit-before-entry,
+    lifecycle/market-health checks, authoritative prices, the pre-entry audit
+    hook,
     contract resolution, paper/live execution, trailing exits, and broker
     reconciliation.
 
-    Mechanical risk is evaluated every five-second poll and does not wait for a
-    model call. New exposure stops at 15:00, premise exits may continue through
+    Mechanical risk is evaluated on every configured poll and does not wait for
+    a model call. New exposure stops at 15:00, premise exits may continue through
     15:15, and the standard double gate controls whether confirmed orders are
     paper or live.
     """
@@ -9457,8 +9458,9 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         """Delegate history sufficiency to the independent context builder.
 
         Returning one prevents the generic base from applying another
-        strategy's warm-up rule; the context still refuses missing prior-session
-        or indicator history with a safe no-decision error.
+        strategy's warm-up rule. The context refuses missing session/bar history;
+        indicators that are not warmed up remain explicit ``None`` facts, so the
+        host rejects any entry that requires them.
         """
 
         return 1
@@ -9642,8 +9644,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         Ordering is intentionally risk-first: requested shutdown, aggregate
         max-loss, 15:15 square-off, stale/unhealthy feed handling, then fresh
-        spot stop/target.  The same sequence is repeated after a slow inference
-        before exposure can increase.
+        spot stop/target. For an already-open position, the same sequence is
+        repeated after a slow inference before HOLD or scale-in completes. A
+        flat entry instead uses the narrower post-inference exposure gate for
+        stop/lifecycle/feed/time changes before ``enter_position`` runs.
         """
 
         if self._run_shutdown_cycle_if_requested():
@@ -10199,8 +10203,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
     ) -> None:
         """Best-effort append actual post-action provenance to the decision log.
 
-        The pre-action audit is mandatory before increasing exposure. This
-        second row enriches it with what execution really did: PAPER, LIVE,
+        The pre-action audit hook is attempted before increasing exposure. When
+        decision logging is enabled, a raised write failure blocks entry/add;
+        when explicitly disabled, the logger is a configured no-op. This second
+        row enriches the attempt with what execution really did: PAPER, LIVE,
         PAPER_FALLBACK, LIVE_INDETERMINATE, or NOT_SUBMITTED. A logging failure
         here cannot undo an exit or interrupt mechanical risk handling.
         """
@@ -10251,9 +10257,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         Flat workers skip new turns after 15:00; open workers continue for
         premise exits. Bucket identity is consumed before inference, while the
         content signature protects against true-ups. Completed-bar SRSI/trailing
-        exits run before Codex. After the turn, position identity, audit, market
-        health, lifecycle, cutoffs, max-loss, and fresh spot boundaries are
-        rechecked before exposure may increase.
+        exits run before Codex. After the turn, position identity and the audit
+        hook are checked first. Every entry/add then rechecks stop requests,
+        lifecycle, feed health, and time cutoffs; an open position additionally
+        reruns max-loss and fresh spot stop/target safety before an add.
         """
 
         if not self.pos.active and self._at_or_after_entry_cutoff():
@@ -10295,9 +10302,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             # Closing or replacing that position makes every part stale,
             # including accepted-regime memory used by the next model turn.
             self._prior_accepted_regime = outcome.accepted_regime
-        # Audit before any exposure-increasing submission. If the disk/logger
-        # fails, entry and scale-in fail closed; an already-open EXIT remains a
-        # risk-reducing safety decision and is still honored below.
+        # Invoke the configured audit hook before increasing exposure. When
+        # logging is enabled, a raised disk/logger failure blocks entry/add; an
+        # explicitly disabled logger is a deliberate no-op. An already-open EXIT
+        # remains a risk-reducing decision and is still honored below.
         audit_ok = True
         try:
             self.decision_logger.write(
@@ -10404,9 +10412,9 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
             return
-        # A flat entry reaches this boundary only after successful mandatory
-        # audit. Re-read all mutable gates now; the pre-inference checks may be
-        # up to the configured SDK timeout old.
+        # A flat entry reaches this boundary only after the configured audit
+        # hook returned without error. Re-read all mutable gates now; the
+        # pre-inference checks may be up to the configured SDK timeout old.
         blocked_reason = self._post_inference_exposure_block_reason()
         if blocked_reason:
             self._write_final_execution(
@@ -10447,7 +10455,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         )
 
     def run(self) -> None:
-        """Poll mechanical safety every five seconds and infer per closed bucket.
+        """Poll mechanical safety at the configured interval and infer per bucket.
 
         The worker starts decisions at 09:30 but safety runs even before then.
         Shared one-minute data is resampled with the current IST clock so forming
