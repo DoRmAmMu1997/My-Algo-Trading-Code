@@ -108,7 +108,7 @@ _PLACEHOLDER_REASONS = frozenset(
 NO_REASON_SENTINEL = "AI_EXIT (no reason supplied by the model)"
 
 
-def order_tool_description(venue: str) -> str:
+def order_tool_description(venue: str, *, note_active: bool = False) -> str:
     """The order tool's description, as a function so tests can assert on it.
 
     Kept out of `build_sl_hunting_mcp_server` because that call needs the Claude
@@ -136,6 +136,17 @@ def order_tool_description(venue: str) -> str:
         "and you may cut ONE leg on premise-invalidation while the other runs — but hard "
         "risk (stop/target/max-loss/square-off) always closes both. Returns whether "
         "the order was accepted or rejected."
+        + (
+            " note_check is REQUIRED on entries today because a pre-open analyst note "
+            "applies to this session. Start it with AGREES, CONTRADICTS or "
+            "NOT_APPLICABLE, then a colon and the branch of the note you are applying "
+            "-- for example 'CONTRADICTS: the note says a gap-up means follow the gap, "
+            "but I am fading it because the opening spike trapped fresh buyers'. The "
+            "note is ADVISORY and CONTRADICTS is a perfectly good answer: your own read "
+            "wins. What is not allowed is ignoring it silently."
+            if note_active
+            else ""
+        )
     )
 
 
@@ -262,6 +273,15 @@ class SLHuntingToolContext:
     broker: str | None = None
     last_price: float = field(default=0.0)
     bnf_candles: pd.DataFrame | None = None
+    # SLH-009: True when a pre-open note applies to TODAY. The note stays ADVISORY
+    # -- it can never veto a trade -- but when one exists the order tool refuses an
+    # ENTRY until the model says which branch of it applies and whether it is acting
+    # with or against it. On 2026-08-03 the agent faded a gap-up on a day its own
+    # note said gap-up means do NOT target buyers, never mentioned the note at all,
+    # and was stopped in 27 seconds. Code cannot check COMPLIANCE (which branch
+    # applies depends on the open, which only the model can read), but it can make
+    # silently ignoring the note impossible.
+    premarket_note_active: bool = False
     # Set via `expire()` when the agent abandons this bar's SDK call (SLH-001,
     # e.g. a timed-out CLI call). The abandoned agentic loop keeps running on
     # its daemon thread and could otherwise still call the order tool MINUTES
@@ -289,6 +309,7 @@ class SLHuntingToolContext:
         generation_is_current: Callable[[int], bool] | None = None,
         deadline_seconds: float | None = None,
         execution_lock: Any | None = None,
+        premarket_note_active: bool = False,
     ) -> SLHuntingToolContext:
         """Prepare the per-bar context: clean the candles, cache the last price, attach BNF.
 
@@ -313,6 +334,7 @@ class SLHuntingToolContext:
             broker=broker,
             last_price=last_price,
             bnf_candles=prepared_bnf,
+            premarket_note_active=bool(premarket_note_active),
             generation=int(generation),
             generation_is_current=generation_is_current,
             deadline_monotonic=(
@@ -387,8 +409,47 @@ class SLHuntingToolContext:
             return {"accepted": False, "reason": "decision deadline elapsed; order refused"}
         return None
 
+    # SLH-009. Accepted answers for an ENTRY while a pre-open note applies. The note
+    # is ADVISORY, so CONTRADICTS is a legitimate answer that lets the order through
+    # -- what is forbidden is not answering at all.
+    NOTE_ALIGNMENTS = ("AGREES", "CONTRADICTS", "NOT_APPLICABLE")
+
+    def _premarket_note_problem(self, note_check: str) -> str | None:
+        """Explain why this note acknowledgement is unusable, or None when fine."""
+
+        if not self.premarket_note_active:
+            return None
+        cleaned = _printable_one_line(note_check).strip()
+        if not cleaned:
+            return (
+                "a pre-open analyst note applies to TODAY and you have not addressed it. "
+                "Resend this entry with note_check set to AGREES, CONTRADICTS or "
+                "NOT_APPLICABLE, followed by the branch of the note you are applying "
+                "(e.g. 'CONTRADICTS: note says gap-up means follow the gap; I am fading "
+                "it because ...'). The note is ADVISORY -- CONTRADICTS is allowed and "
+                "your own read wins -- but it may not be passed over in silence."
+            )
+        verdict = cleaned.split(":", 1)[0].strip().upper().replace(" ", "_")
+        if verdict not in self.NOTE_ALIGNMENTS:
+            return (
+                f"note_check must START with one of {', '.join(self.NOTE_ALIGNMENTS)} "
+                f"(got {verdict!r}). Follow it with the branch you are applying."
+            )
+        if verdict != "NOT_APPLICABLE" and len(cleaned) <= len(verdict) + 1:
+            return (
+                f"note_check says {verdict} but does not say WHICH branch of the note "
+                "you are applying. Add it after a colon."
+            )
+        return None
+
     def do_order(
-        self, action: str, stop: float, target: float, reason: str, exit_leg: str = "BOTH"
+        self,
+        action: str,
+        stop: float,
+        target: float,
+        reason: str,
+        exit_leg: str = "BOTH",
+        note_check: str = "",
     ) -> dict[str, Any]:
         """Route an agent order through the injected executor (single source of truth).
 
@@ -426,6 +487,13 @@ class SLHuntingToolContext:
                         "with a one-line justification naming the setup and why you are acting."
                     ),
                 }
+            # SLH-009: when a pre-open note applies today, an ENTRY must say which
+            # branch of it applies and whether this trade agrees with it. The note
+            # remains ADVISORY -- "CONTRADICTS" is an accepted answer and the order
+            # goes through -- but it can no longer be passed over in silence.
+            note_problem = self._premarket_note_problem(note_check)
+            if note_problem:
+                return {"accepted": False, "reason": note_problem}
             entry_reason = bounded_reason(reason)
             def executor_call() -> dict[str, Any]:
                 return self.executor.enter(
@@ -545,8 +613,15 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
 
     @tool(
         order_name,
-        order_tool_description(venue),
-        {"action": str, "stop": float, "target": float, "reason": str, "exit_leg": str},
+        order_tool_description(venue, note_active=context.premarket_note_active),
+        {
+            "action": str,
+            "stop": float,
+            "target": float,
+            "reason": str,
+            "exit_leg": str,
+            "note_check": str,
+        },
     )
     async def _order(args: dict[str, Any]) -> dict[str, Any]:
         result = context.do_order(
@@ -555,6 +630,7 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
             args.get("target", 0.0),
             args.get("reason", ""),
             args.get("exit_leg", "BOTH"),
+            args.get("note_check", ""),
         )
         return _as_tool_text(result)
 

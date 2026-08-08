@@ -69,6 +69,65 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   off an EXACT closing-price touch right after a huge gap-up) is unsustainable —
   fade it. Corollary: an EXACT touch-and-bounce at a level is fragile; small,
   partial rejections at the level are the go-with tell instead.
+- THE POST-GAP BOUNCE IS THE TRAP DEEPENING, NOT THE SETUP FAILING (v4b). After a
+  gap that puts a seated crowd underwater, the bounce back toward their entry is
+  the most commonly MISREAD event on the chart. It is not your thesis breaking:
+    * A gap that fell straight down would let the trapped crowd out "in two or
+      three minutes" at a small loss. That is the operator's worst outcome, not
+      yours only.
+    * The bounce exists so they feel the market "can go up again". That hope is
+      what makes them HOLD, and often AVERAGE DOWN, instead of cutting — which is
+      what converts a small trapped loss into a large one.
+  So the sequence adverse-gap -> bounce -> stall near the old level is the trap
+  working as designed. Expect it, and do not read it as invalidation. What WOULD
+  invalidate is price actually RECLAIMING the level (previous close / round
+  number) rather than approaching and failing at it — name that level in advance
+  and let it, not the bounce, be your evidence (see NAME THE ONE WAY THIS TRADE
+  FAILS and A REJECTION BEFORE THE FLUSH IS NOISE).
+- REGIME MEMORY DECIDES WHO SHOWS UP AT A LEVEL (v4b). A level does not attract
+  participants by geometry; it attracts whoever the recent past has left willing
+  to act there. After a stretch where one side was repeatedly punished, that side
+  stops arriving even at the price where textbook logic says it should:
+    "They will not be able to sell here. Most traders who sold did it earlier in
+    this chart and had to suffer losses again and again. Now everyone's focus is
+    on where to BUY, because their mindset has formed that the market keeps going
+    up. Nobody is even paying attention to the resistance."
+  Practical use: before assuming a resistance will recruit fresh sellers (or a
+  support fresh buyers), ask who has been PAID and who has been PUNISHED over the
+  last several sessions. A level in front of a beaten side is thin, which is
+  exactly why price can lean on it and still fall.
+- SECOND-DAY RECRUITMENT — one adverse day does NOT seat a crowd, the SECOND one
+  does (v4a). This is the counterpart to THE MISSING RIP IS THE TELL, and together
+  they date the inventory. Day one of a fall after a positive stretch recruits
+  almost nobody: traders are still mentally in the uptrend, they cannot believe
+  the turn, and the ones who do act take small size. When the NEXT day falls the
+  same way, confidence arrives — "the market is going down, why not buy a put" —
+  and only THEN is there a short crowd worth hunting. So:
+    * ONE down day + a gap-up = no seller inventory; the gap-up is not a hunt.
+    * TWO consecutive down days + a gap-up = sellers ARE seated with their stops
+      above; the gap-up IS the hunt, and the trade is LONG against them.
+  Mirror the same test for buyers after two up days. Count the days before
+  deciding whether a crowd exists — a single session's move is not a crowd.
+- A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, so expect a SHARP but SMALL move
+  (v4a). Traders who joined only on the second day have no conviction and "will
+  not give the market a very big SL". Two consequences, and they pull in opposite
+  directions on purpose:
+    * Do NOT plan a large target. The move exists to take a shallow stop cluster,
+      not to trend. A normal or average target is the honest one.
+    * DO expect the move itself to be FAST. The operator pauses, then produces
+      sudden speed to eat as many stops as it can reach. Speed is the SIGNATURE
+      of the flush.
+  If the expected move arrives SLOW and grinding instead, the stop cluster you
+  assumed is probably not there — reduce the target, do not extend the hold.
+- THE MISSING RIP IS THE TELL (v3z). If a crowd really HAD positioned against the
+  gap, the market would not sit around: it would rip straight through their stops
+  at once, "leaving no time". So a gap that instead stalls, prints a rejection, or
+  makes a high and hangs there is EVIDENCE THAT THE OPPOSING CROWD IS NOT THERE —
+  absence of the hunt tells you who is absent. Read it forward: with no seller
+  inventory above, a further push up would attract ONLY buyers (see BOTH-SIDES
+  PARTICIPATION) and cannot be sustained, so the path of least resistance is DOWN.
+  This is how a gap-up session can be a SHORT: not fading the gap, but reading
+  that the hunt the gap seemed to promise never had a target.
 - EVENT / HOLIDAY PARTICIPATION: known news shocks, Fridays, weekends, and
   multi-day holidays can REMOVE one side from the risk pool. If buyers/sellers are
   unlikely to hold or initiate large risk, do not assume their SL inventory exists.
@@ -196,6 +255,32 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   often means put buyers / sellers already booked profit; they are not today's
   target. When the old crowd is safe/booked, reset the read to who is being trapped
   in the CURRENT session instead of blindly hunting the prior side.
+- AGGREGATE-INVENTORY TEST: target the side likely holding the greatest aggregate quantity,
+  not an anecdotal trader who might still be positioned. One person saying
+  "I held" does not prove a crowd or create enough stops to hunt. Infer the dominant
+  cohort from repeated participation, momentum, closing behaviour, and the
+  cross-index read. If neither side is likely carrying meaningful size, follow the
+  current momentum or HOLD rather than inventing a hunt.
+  * PROFIT DEPTH SPLITS ONE SIDE INTO TWO COHORTS. "Buyers" is not one crowd. After a
+    multi-day run, the traders positioned from far BELOW are deep in profit and are
+    NOT weak — they are riding the move and a shake does not reach them. Only the
+    MARGINAL holders, the ones who bought in the last session or two, are close
+    enough to their entry to be flushed. So a hunt aimed at "the buyers" only ever
+    collects the recent cohort, which is a far smaller pool of stops than the
+    aggregate suggests.
+  * THE COUNTER-MOVE'S SIZE AND SPEED SAY WHICH COHORT IS LEAVING. A small, slow
+    rejection is the recent cohort being shaken out and nothing more. Genuine
+    profit-booking by the deep holders shows up as BIG, QUICK selling — if that has
+    not appeared, they are still in, and the move against you is noise rather than
+    distribution. Read the character of the selling, not merely its existence.
+    (Complements COUNTER-MOVE SIZE SAYS RANGE OR BREAKOUT in RISK, which reads size
+    to test a breakout premise; this reads size to identify WHO is moving.)
+- REPEATED-FAILURE INVENTORY RESET: repeated breakdown-and-recovery cycles usually
+  evict sellers — each failed break stops them or persuades them not to hold. When
+  the level is repeatedly reclaimed while the other indices remain positive, discard
+  the stale seller-hunt assumption and reassess whether buyers have become the
+  dominant seated crowd. A later rejection alone does not restore seller inventory;
+  require fresh seller participation before treating their SLs as available again.
 - PROFIT-BOOKING RECOVERY TEST (scopes TARGET-BOOKED on an established selloff):
   after a real multi-day selloff has already paid the seller crowd and the next
   session gaps down, the first green recovery may simply let those profitable
@@ -391,11 +476,40 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   / opening range, and there must be no bullish rejection reclaiming those levels.
   Default gap-down logic still looks UP; use this short branch only when sellers
   are not huntable and buyer inventory / failed recovery is the active trap.
+- SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
+  gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
+  available". That premise is FALSE when the prior session already seated a buying
+  crowd and today's gap merely extends it. Two checkable tells that the buyers ARE
+  seated, and the gap-up is therefore a SHORT setup against them:
+    * ALL THREE indices are holding an EXACT round-number support after a positive
+      prior session (e.g. NIFTY ~24500, BankNIFTY ~57500, Sensex on its own round
+      number). A crowd that bought at a round number and is still sitting on it,
+      with no evidence anyone sold into it, is inventory — not absence.
+    * The prior session's rally was NOT distorted by an upcoming holiday. Before a
+      multi-day holiday retail takes LESS risk, so the same rally seats FEWER
+      people than it would on an ordinary day; once the holiday has passed, an
+      identical-looking gap-up reads the OPPOSITE way.
+  Worked example (4 Aug 2026): two gap-ups on consecutive days, opposite plans.
+  Day one had a mid-week holiday ahead and a retracement inside the rally, so the
+  crowd was thin and IH went WITH the gap (long). Day two had no holiday and all
+  three indices sat exactly on round numbers, so the crowd was seated and he
+  traded AGAINST them (puts). Same opening type, inverted conclusion — the gap
+  alone never decides; who is seated decides.
+- CLOSING-PRICE BREAKDOWN IS THE TRIGGER when hunting seated buyers, not the gap
+  and not the approach to the level. Buyers only start giving their SLs once price
+  trades BELOW THE PREVIOUS CLOSE across the indices. Sitting on that level is not
+  breaking it. If the breakdown never arrives the trade never existed: no
+  breakdown, no stop-fuel, and nothing to hold on to (see RISK).
 - GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL. A BIGGER gap does NOT make this
   branch stronger — it makes it worse. A modest gap leaves price near the stop
   clusters that fuel a move; an oversized gap has jumped clean past everybody's
   stops, so there is nothing nearby to hunt, momentum tends to be slow, and a
-  rejection has a lot of room to run back through you. Trade the oversized gap, if
+  rejection has a lot of room to run back through you. A large gap also removes the
+  BAIT ROOM (v3z): the usual way an opposing crowd gets punished is a small
+  rejection near the open that lures them in, followed by the reversal that forces
+  them to cover. A gap big enough to jump clean past that zone leaves the operator
+  nowhere to set the lure, so the "they will be baited and then squeezed" path is
+  simply not on the table and must not be assumed. Trade the oversized gap, if
   at all, as a smaller / NORMAL-target trade with a rejection-triggered exit — never
   as a high-conviction runner. (Distinct from GAP-SIZE ASYMMETRY, which compares the
   gaps ACROSS indices; this is about the absolute size of the gap you are trading.)
@@ -638,11 +752,31 @@ RISK DISCIPLINE
   shows the mirror as its own leg with its own P&L; `unrealized_pnl` there is BASKET P&L
   (both legs) while `nifty_leg_pnl` and the `mirror` block give you each leg alone. When in
   doubt, EXIT BOTH.
-- Require a worthwhile target: at least ~1:2 reward:risk to the next clear level
-  (swing / pivot / fibo / psych). Aim for the LIQUIDITY ZONE where the hunted SLs
-  sit (the long-wicked candle / opposite side of the first candle / the trapped
-  crowd's stops). If the nearest opposing level is too close, the target is too
-  small — HOLD.
+- OPTION-TIME-ADJUSTED REWARD/RISK: require a worthwhile and ATTAINABLE target at a
+  real swing / pivot / fibo / psych level. Normally prefer approximately 1:2
+  reward:risk to the next clear level. An approximately 1:1 trade is permitted only
+  when EVERY condition is true: the UNIQUE-TRADE FILTER passes; the
+  AGGREGATE-INVENTORY TEST gives a direct, high-clarity crowd read; the stop and
+  target are real chart levels; the rupee loss is accepted before entry; and option
+  time / theta makes a farther target unrealistic. Aim for the LIQUIDITY ZONE where
+  the hunted SLs sit, but never fabricate a distant target or widen the stop merely
+  to manufacture a ratio. Less than 1:1, or an unattainable target, is HOLD.
+- ONLY RIDE AS FAR AS YOU KNOW THE ROAD: book when the situation stops matching a
+  setup you actually have, even if nothing has invalidated and the move might well
+  continue. "More momentum could still come, but this is not one of the setups that
+  work for me" is a complete reason to be flat. The alternative is holding a
+  position whose next move you have no way to read, which is not patience — it is
+  paying to find out.
+  * This is NOT the same as premise-invalidation (your thesis broke) or as a target
+    (your number arrived). Here the trade may still be working; what ran out is your
+    ABILITY TO READ IT. Waiting past that point is chasing a road you cannot see.
+  * It is the holding-side twin of "when unsure, HOLD" in DECISION DISCIPLINE. That
+    rule keeps you OUT when you have no read; this one gets you OUT when the read
+    you entered on has been used up. Both say the same thing: no read, no position.
+  * Typical trigger, and the one that fired it in practice: the move has narrowed to
+    ONE index while the others lag, so the shared story you entered on no longer
+    exists (see LAGGARDS NEVER JOINED for the cross-index form of the same booking
+    signal).
 - YESTERDAY'S MOMENTUM CHARACTER CALIBRATES TODAY'S PATIENCE: how far a move RUNS
   tends to carry over between sessions, separately from its direction. If the
   previous session gave an early move and then spent the rest of the day sideways,
@@ -683,6 +817,125 @@ RISK DISCIPLINE
   the expected "trap" fails and price goes sideways / against you. Honour a pre-set
   max loss and NEVER hold a loser hoping for a reversal; you are intraday and cannot
   wait indefinitely.
+- A TRIGGER THAT NEVER FIRED IS AN EXIT REASON, not a reason to keep waiting (v3y).
+  When the setup depended on a specific break — the closing-price breakdown that
+  makes seated buyers surrender — and price merely sits at that level without
+  taking it, the fuel you were trading never got released. That is not "still
+  setting up"; it is the trade failing to start. Leave rather than paying theta to
+  find out.
+- BEING DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD (v3y). "You cannot chase the
+  market insisting that YOU are right and IT is wrong." A premise that still LOOKS
+  correct — the crowd really is seated, the level really is there — is not evidence
+  the trade is working. Reasoning that keeps restating why the setup was good is
+  the tell that it has stopped being a decision and become a defence of the entry.
+- A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD (v3y). When price hangs at
+  your level instead of breaking it, the delay itself invites OTHER traders onto
+  your side of the trade. Their stops then cluster just beyond, and that cluster
+  becomes the fuel for a move AGAINST you — the same mechanism you were trying to
+  exploit, pointed the other way. Company at a level is a warning, not comfort:
+  the break should come promptly, "from about here", or the edge has inverted.
+- A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET (v4b). This is the
+  counterpart to A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, and the two together
+  are how you SIZE a target from crowd behaviour rather than from a fixed
+  percentage:
+    * Freshly recruited, no averaging -> shallow stop cluster -> SMALL target,
+      fast move.
+    * Baited into averaging down -> the same traders now hold MORE size at a WORSE
+      average, and their pain threshold sits FURTHER away -> the flush runs
+      further -> a LARGER target is justified.
+  IH's own reasoning for enlarging the target mid-trade: "Why could we make the
+  target bigger here? Because those who average get a little courage from the
+  market — 'go on, wait' — and then it targets them. So their SLs would have been
+  hit." Two supporting reads for enlarging: all THREE indices moving together
+  ("achieving the target will be easy"), and a visible averaging/hope phase
+  earlier in the move.
+- EXPECT A SECOND LEG AFTER THE PAUSE, THEN BOOK (v4b). When a flush stalls
+  mid-move, the stall is usually the LAST bait rather than the end: the market
+  gives the trapped side "a little hope that the breakdown is not going to
+  happen", they hold rather than cut, and one further leg takes them out. So a
+  pause after a working flush predicts ONE more move, and that move is where the
+  target gets booked — not where a new position gets added. This is a refinement
+  of A REJECTION BEFORE THE FLUSH IS NOISE for the phase AFTER a flush has begun;
+  it does not extend to a position that is offside, and it never overrides the
+  stop, the max loss, or premise-invalidation.
+- A REJECTION BEFORE THE FLUSH IS NOISE; A REJECTION AFTER IT IS THE EXIT (v4a).
+  When you are positioned against a seated crowd, the trade has TWO phases and
+  they take opposite handling:
+    * BEFORE the flush — the stops you are trading toward have NOT been taken yet.
+      Price will wobble both ways and can hand back most of an early paper profit.
+      That is not the read failing; it is the setup still waiting. "There is no
+      need to be afraid of such a rejection. There will be up and down moves, but
+      you will definitely get one opportunity in which your profit is made."
+    * AFTER the flush — the sharp move has run and the stops are gone. Now book.
+      "A good profit has been made, so we will not be greedy."
+  THE DISCRIMINATOR IS FACTUAL, NOT A FEELING: has the fast, one-way move through
+  the stop cluster actually happened? If no, a wobble is not information. If yes,
+  the fuel is spent and further holding is greed.
+  SCOPE — THIS IS NOT LICENCE TO HOLD A LOSER. It applies only while the PREMISE
+  is intact: the crowd still seated, your level still untaken, and price still on
+  the correct side of your stop. Your stop, the max loss, premise-invalidation,
+  the INDEX HIERARCHY exit and the post-exit cooldown all continue to govern
+  unchanged. This narrows ONE thing only: a profit giving back part of itself
+  before the flush is not by itself a reason to close.
+- ERRORS IN PROFIT ARE CHEAP; ERRORS IN A LOSS ARE NOT (v4a). "When profit is
+  increasing, if you wait a bit, enlarge the target, even make a few mistakes —
+  in profit those pass. But NEVER make a mistake in a loss." The asymmetry is
+  structural: a misjudgement while ahead costs some of a gain you did not have
+  before, while the same misjudgement while behind compounds a real loss and is
+  the one that ends days. So spend your carefulness where it is expensive — on
+  the losing side. And when you are wrong, "accept the mistake and take the loss";
+  do not spend more of the day's risk defending the entry (see BEING
+  DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD).
+- WHEN THE STOPS ARE ABOVE YOU, PREFER A DIP TO A CHASE (v4a). Hunting a crowd
+  whose stops sit above means you want to be LONG — but the cheap entry is a small
+  move DOWN, not the first push up. "If we get the market a bit lower it is better
+  for us; if it starts rising directly we would have to work with a retracement
+  instead." A dip against your intended direction, with no big sudden opposite
+  flow, is the low-risk fill; chasing the first move up means paying for it and
+  then waiting for a pullback anyway. One check before taking the dip: confirm the
+  move against you is SMALL and orderly — a large sudden flow the other way says
+  the premise is wrong, not that the entry is cheap. Mirror it for shorts.
+- A RULE THAT COST YOU MONEY YESTERDAY IS STILL THE RULE (v3z). The session after
+  cutting a good-looking trade on the INDEX HIERARCHY exit, IH watched the market
+  fall "almost exactly from where we exited" — the position he abandoned would
+  have paid — and his conclusion was unchanged: "I saw it. Never mind, it happens.
+  FOLLOW THE RULE; it works better for you." A discipline rule is judged over a
+  sample, never over the single instance where obeying it hurt, because the
+  instances where it SAVED you are invisible by construction — the loss it
+  prevented never appears in the journal. Never widen, delay, or suspend an exit
+  rule on the evidence of one trade that would have recovered. If you find
+  yourself reasoning "the rule cost me money, so the rule is wrong", you are
+  reading a sample of one.
+- TWO-SIDED FLOW PROTECTS AN OPEN PROFIT; ONE-SIDED FLOW ENDANGERS IT (v3z). While
+  a winning move still has BOTH buyers and sellers stepping in — some joining it,
+  some fading it — nobody can take your profit back: the crowd is split, so
+  neither side is dense enough to be the fuel for a reversal. The moment it starts
+  to look like only ONE side is arriving, and especially when that side is YOURS,
+  your open profit is what the next move will be aimed at. This is the in-trade
+  twin of BOTH-SIDES PARTICIPATION (which decides ENTRIES): run it as a live
+  monitor on a winner, and book while the flow is still two-sided rather than
+  after it has gone one-way.
+- AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN THE BIG ONE (v3z). IH
+  booked a still-working trade early and said exactly why: "the target could be
+  made bigger here... but yesterday we had a loss. If today is giving a chance to
+  make profit, take a good profit and go." He said in the same breath that more
+  momentum was likely — and left anyway. Restoring footing after a loss outranks
+  maximising the next trade. (Distinct from POST-LOSS SPEED LIMIT, which governs
+  how fast you may RE-ENTER; this governs how much you demand from the trade you
+  are already in.)
+- NAME THE ONE WAY THIS TRADE FAILS, THEN WATCH THAT (v3z). Before settling in to
+  hold, state the single most likely thing that would break the position, and put
+  your attention there instead of on the P&L. IH: "the wrong thing the market can
+  do to us is give a round-number breakout" — so he watched BankNIFTY's approach
+  to 58,000 specifically, and said he watched BankNIFTY hardest because that is
+  where his QUANTITY is largest. Concentrate monitoring where the exposure is
+  biggest, not where the chart is busiest.
+- VOLATILE-DAY SIZING WIDENS BOTH ENDS, not just the stop (v3y). On a day that
+  opens with visibly fast momentum — especially after a stretch of sideways
+  sessions that produced none — widen the TARGET as well as the stop. A normal
+  target gets hit and left far behind, and a normal stop gets taken by ordinary
+  noise on the way. Because lots are auto-computed from the stop distance, a wider
+  stop shrinks position size rather than enlarging rupee risk.
 - TIME-DECAY discipline (you BUY options): a bought option bleeds premium while the
   market goes sideways — most sharply near/at EXPIRY. If the expected move does not
   come reasonably quickly, EXIT; do not let theta erode a stalled position.
@@ -919,6 +1172,27 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   about the LEADER failing to lead, not about momentum speed in general — a genuine
   leader-led move that grinds on in small candles is still the sustainable kind
   described in RISK.)
+- THE HIERARCHY IS ASYMMETRIC: BankNIFTY DECIDES EXITS, THE LAGGARDS GATE ENTRIES
+  (v4b). The major index leading is enough to CLOSE on (see the next bullet), but
+  it is NOT enough to OPEN on. IH, with a textbook BankNIFTY setup in front of
+  him: "Looking at BankNIFTY it seems the trade should be taken right now. But
+  let us wait a little, according to Sensex and NIFTY." He entered only once the
+  other two agreed, and said plainly which one was the risk: "BankNIFTY's chart is
+  completely right; it is Sensex and NIFTY where we could have trouble."
+  The asymmetry is deliberate and matches the risk: entering on the leader alone
+  buys a move the other two may never join (that is LAGGARDS NEVER JOINED, seen
+  from the front), while exiting on the leader alone only costs you a trade.
+  Be slow to enter on BankNIFTY alone; be fast to leave on it.
+- INDEX HIERARCHY ON THE WAY OUT — the indices are NOT equal when a position is
+  going against you (v3y). NIFTY and Sensex drifting against the trade is
+  TOLERABLE; that is handleable noise and does not by itself end the trade.
+  BankNIFTY turning against the trade is DISQUALIFYING: cut there, do not wait for
+  the stop and do not wait for the other two to agree. Live example (4 Aug 2026):
+  IH held a three-index PUT basket while the fall he wanted had not started, and
+  cut it for a loss the moment BankNIFTY began rising — "if BankNIFTY has started
+  going up there is no benefit in waiting", while explicitly saying he could have
+  HANDLED NIFTY and Sensex ticking up. So the major index is not only the entry
+  confirmation; it is the FIRST exit signal, and it outranks the other two.
 - MASKED BNF LAG: temporary BankNIFTY weakness can also be a mask that keeps
   NIFTY/Sensex breakout buyers away while the operator continues the original
   thesis. Treat BNF lag as invalidation only when it actually breaks the premise

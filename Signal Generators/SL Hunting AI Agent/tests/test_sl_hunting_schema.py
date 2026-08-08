@@ -555,6 +555,28 @@ def test_system_prompt_has_v3w_entry_point_and_counter_move_knowledge():
     assert "which reads the WITH-trend move" in prompt
 
 
+def test_system_prompt_has_v3x_aggregate_inventory_and_option_rr_knowledge():
+    """v3x: the 2 Aug weekly lecture scopes the crowd and the achievable target.
+
+    The agent must reason about the dominant aggregate inventory rather than one
+    hypothetical trader, reset a stale seller read after repeated failed breaks,
+    and permit 1:1 only for an unusually clear, time-constrained option trade.
+    """
+    prompt = build_system_prompt()
+    assert "AGGREGATE-INVENTORY TEST" in prompt
+    assert "greatest aggregate quantity" in prompt
+    assert "REPEATED-FAILURE INVENTORY RESET" in prompt
+    assert "repeated breakdown-and-recovery" in prompt
+    assert "OPTION-TIME-ADJUSTED REWARD/RISK" in prompt
+    assert "approximately 1:1" in prompt
+    assert "Less than 1:1" in prompt and "HOLD" in prompt
+    # The refinement must not erase the guardrails it relies on.
+    assert "UNIQUE-TRADE FILTER" in prompt
+    assert "TARGET-BOOKED crowd test" in prompt
+    assert "TIMEFRAME FIT" in prompt
+    assert "POST-EXIT RE-ENTRY GATE" in prompt
+
+
 def test_prompt_cap_leaves_room_for_lessons_and_a_note():
     """The cap is a sanity bound, not a budget knowledge must squeeze into.
 
@@ -568,6 +590,206 @@ def test_prompt_cap_leaves_room_for_lessons_and_a_note():
     # Worst case the runtime can add: 12 lessons at their own cap, plus a note.
     worst_case_runtime_additions = 12 * 280 + 2_500
     assert assembled + worst_case_runtime_additions < MAX_SYSTEM_PROMPT_CHARS
+
+
+def test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge():
+    """v3x (3 Aug live session): IH held a gap-up long and booked it while it was
+    still working, because the move had narrowed to BankNIFTY alone.
+
+    "More momentum could come, but this is not one of the setups that work for us...
+    we waited as far as we knew the road. Now we do not know the road." He also
+    split "the buyers" by profit depth: the Friday cohort was shaken out by the
+    gap-up, while traders positioned from far below never moved -- and the tell was
+    that no big, quick selling appeared.
+    """
+    prompt = build_system_prompt()
+    # One side is two cohorts, and only the marginal one is huntable.
+    assert "PROFIT DEPTH SPLITS ONE SIDE INTO TWO COHORTS" in prompt
+    # Wrap-independent: this phrase spans a line break in the source.
+    assert "NOT weak" in prompt and "riding the move" in prompt
+    # Character of the counter-move identifies who is leaving.
+    assert "THE COUNTER-MOVE'S SIZE AND SPEED SAY WHICH COHORT IS LEAVING" in prompt
+    assert "BIG, QUICK selling" in prompt
+    # Exit when the read runs out, not only when the thesis breaks.
+    assert "ONLY RIDE AS FAR AS YOU KNOW THE ROAD" in prompt
+    # Wrap-independent fragment: the sentence spans a line break in the source.
+    assert "paying to find out" in prompt
+    # It must be distinguished from the two exits it is NOT.
+    assert "NOT the same as premise-invalidation" in prompt
+    assert "no read, no position" in prompt
+
+
+def test_system_prompt_has_v3y_seated_buyer_and_index_hierarchy_knowledge():
+    """v3y (4 Aug live session): IH's LOSING trade, and the day the same opening
+    type produced the opposite plan two days running.
+
+    Both days gapped up. Day one he bought WITH the gap; day two he sold puts
+    AGAINST the buyers -- because day one had a mid-week holiday ahead (thin crowd)
+    and a retracement inside the rally, while day two had no holiday and all three
+    indices sat on exact round-number support (seated crowd). He then cut the trade
+    for a loss the moment BankNIFTY turned up, saying he could have handled NIFTY
+    and Sensex ticking against him but not the major index.
+    """
+    prompt = build_system_prompt()
+    # The gap-up long branch must first prove the buyers are actually absent.
+    assert "SEATED-BUYER TEST" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "EXACT round-number support" in prompt
+    assert "takes LESS risk" in prompt
+    assert "identical-looking gap-up reads the OPPOSITE way" in prompt
+    # The hunt needs the break, not merely the approach to the level.
+    assert "CLOSING-PRICE BREAKDOWN IS THE TRIGGER" in prompt
+    assert "Sitting on that level is not" in prompt
+    # The indices are not equal once a position is losing.
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+    assert "DISQUALIFYING" in prompt
+    # ...and the three discipline lessons the loss paid for.
+    assert "A TRIGGER THAT NEVER FIRED IS AN EXIT REASON" in prompt
+    assert "BEING DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD" in prompt
+    assert "A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD" in prompt
+    assert "VOLATILE-DAY SIZING WIDENS BOTH ENDS" in prompt
+
+
+def test_v3y_gap_conflict_does_not_contradict_the_opening_drive_branch():
+    """The seated-buyer test must READ AS a precondition of the gap-up long, not as
+    a second, competing gap-up rule. If both are stated flatly the agent can pick
+    whichever suits the bar it is looking at."""
+    prompt = build_system_prompt()
+    seated = prompt.index("SEATED-BUYER TEST")
+    gap_size = prompt.index("GAP SIZE IS A RISK DIAL")
+    drive = prompt.index("OPENING DRIVE — early-session continuation exceptions")
+    # It lives inside the OPENING DRIVE conditions, ahead of the risk-dial rule.
+    assert drive < seated < gap_size
+    # And it is explicitly ordered before the branch may fire.
+    assert "BEFORE the long branch fires" in prompt
+
+
+def test_system_prompt_has_v3z_missing_rip_and_rule_discipline_knowledge():
+    """v3z (5 Aug live session): a WIN, and the session where he re-examines the
+    v3y loss and keeps the rule anyway.
+
+    Big gap-up, then rejection. He sold -- not fading the gap, but reading that
+    retail never got short: "if retail HAD sold, the market would have started
+    rising directly, leaving no time". No sellers above means a further push up
+    attracts only buyers, so down is the path. He then booked early because the
+    PREVIOUS day was a loss, and reflected that yesterday's INDEX HIERARCHY cut
+    was wrong in outcome -- the market fell from almost exactly where he exited --
+    and that the rule stands regardless.
+    """
+    prompt = build_system_prompt()
+    # Absence of the hunt is evidence about who is absent.
+    assert "THE MISSING RIP IS THE TELL" in prompt
+    assert "leaving no time" in prompt
+    # A big gap has nowhere to set the lure.
+    assert "BAIT ROOM" in prompt
+    # The meta-discipline lesson, which exists to protect v3y's exit rule.
+    assert "A RULE THAT COST YOU MONEY YESTERDAY IS STILL THE RULE" in prompt
+    assert "invisible by construction" in prompt
+    assert "sample of one" in prompt
+    # In-trade twin of BOTH-SIDES PARTICIPATION.
+    assert "TWO-SIDED FLOW PROTECTS AN OPEN PROFIT" in prompt
+    # Post-loss target discipline, distinct from the re-entry speed limit.
+    assert "AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN THE BIG ONE" in prompt
+    assert "POST-LOSS SPEED LIMIT, which governs" in prompt
+    assert "NAME THE ONE WAY THIS TRADE FAILS" in prompt
+
+
+def test_v3z_rule_discipline_cannot_be_read_as_licence_to_hold():
+    """The dangerous misreading of "the rule cost me money" is "so hold longer".
+
+    v3z must reinforce the v3y exit, never soften it, so the prompt has to keep
+    both the hierarchy exit and the never-hold-a-loser rule intact alongside it.
+    """
+    prompt = build_system_prompt()
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+    assert "NEVER hold a loser hoping for a reversal" in prompt
+    # The lesson is explicitly about NOT relaxing an exit rule.
+    # Wrap-independent: this sentence spans a line break in the source.
+    assert "Never widen, delay, or suspend an exit" in prompt
+
+
+def test_system_prompt_has_v4a_second_day_recruitment_knowledge():
+    """v4a (6 Aug live session): IH bought a gap-up to hunt SELLERS, and the
+    reasoning dates the inventory.
+
+    One down day after a positive stretch recruits almost nobody -- traders cannot
+    believe the turn. The SECOND consecutive down day is when confidence arrives
+    and shorts actually get seated. So two down days plus a gap-up is a long
+    against them, and the move should be sharp but small because a freshly
+    recruited crowd holds tight stops.
+    """
+    prompt = build_system_prompt()
+    assert "SECOND-DAY RECRUITMENT" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "confidence arrives" in prompt
+    assert "a single session's move is not a crowd" in prompt
+    # Tight stops -> sharp but small, and slow means the cluster is not there.
+    assert "A FRESHLY RECRUITED CROWD HAS TIGHT STOPS" in prompt
+    assert "SIGNATURE" in prompt
+    assert "reduce the target, do not extend the hold" in prompt
+    # The two-phase handling of a wobble, and the other two lessons.
+    assert "A REJECTION BEFORE THE FLUSH IS NOISE" in prompt
+    assert "ERRORS IN PROFIT ARE CHEAP" in prompt
+    assert "PREFER A DIP TO A CHASE" in prompt
+
+
+def test_v4a_rejection_rule_cannot_be_read_as_licence_to_hold_a_loser():
+    """The dangerous misreading of "a rejection is noise" is "so sit through it".
+
+    This is the same failure mode v3z's rule-discipline lesson had, and it matters
+    more here because this one is explicitly about NOT closing. The prompt must
+    keep every exit rule intact beside it and scope the narrowing precisely.
+    """
+    prompt = build_system_prompt()
+    # It must state its own scope.
+    assert "THIS IS NOT LICENCE TO HOLD A LOSER" in prompt
+    assert "premise-invalidation" in prompt
+    # ...and the exits it must not weaken must still be present.
+    assert "NEVER hold a loser hoping for a reversal" in prompt
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
+    assert "A TRIGGER THAT NEVER FIRED IS AN EXIT REASON" in prompt
+    # The discriminator has to be an observable, not a feeling.
+    assert "THE DISCRIMINATOR IS FACTUAL, NOT A FEELING" in prompt
+
+
+def test_system_prompt_has_v4b_post_gap_bounce_and_averaging_target_knowledge():
+    """v4b (7 Aug live session): a WIN on the put side where he ENLARGED the
+    target mid-trade.
+
+    The central idea inverts the naive read of a post-gap bounce: a gap that fell
+    straight down would let the trapped crowd out in two or three minutes, so the
+    bounce exists to give them hope, make them hold or average, and deepen the
+    loss. A crowd that has averaged then justifies a BIGGER target, and a stall
+    mid-flush predicts one more leg rather than the end.
+    """
+    prompt = build_system_prompt()
+    assert "THE POST-GAP BOUNCE IS THE TRAP DEEPENING" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "three minutes" in prompt
+    assert "REGIME MEMORY DECIDES WHO SHOWS UP AT A LEVEL" in prompt
+    assert "who has been PAID and who has been PUNISHED" in prompt
+    # Target sizing from crowd behaviour, and the pair it completes.
+    assert "A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET" in prompt
+    assert "A FRESHLY RECRUITED CROWD HAS TIGHT STOPS" in prompt
+    assert "EXPECT A SECOND LEG AFTER THE PAUSE" in prompt
+    # The entry/exit asymmetry of the major index.
+    assert "THE HIERARCHY IS ASYMMETRIC" in prompt
+    assert "Be slow to enter on BankNIFTY alone" in prompt
+
+
+def test_v4b_bounce_rule_names_what_would_actually_invalidate():
+    """The bounce rule tells the agent NOT to exit on a bounce, so it must also
+    say what a real invalidation looks like -- otherwise it reads as "ignore
+    adverse movement", which is the failure mode every one of these lessons has.
+    """
+    prompt = build_system_prompt()
+    # It must point at a concrete, checkable invalidation.
+    assert "RECLAIMING the level" in prompt
+    # ...and the second-leg rule must scope itself off an offside position.
+    assert "does not extend to a position that is offside" in prompt
+    # The exits it must not weaken are still present.
+    assert "NEVER hold a loser hoping for a reversal" in prompt
+    assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
 
 
 def test_reentry_gate_does_not_contradict_the_exit_rules():

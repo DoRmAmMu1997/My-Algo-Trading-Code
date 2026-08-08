@@ -41,6 +41,22 @@ updates:
       - dependency-name: "pandas-stubs"
         update-types:
           - "version-update:semver-major"
+      # claude-agent-sdk caps this at mcp<2.0.0, so an mcp MAJOR can never
+      # resolve alongside the pinned SDK -- pip fails with ResolutionImpossible
+      # before a single test runs. This is what made PR #99 un-mergeable. Take
+      # mcp majors only together with an SDK release that raises the ceiling.
+      - dependency-name: "mcp"
+        update-types:
+          - "version-update:semver-major"
+      # The async transport under dhanhq.marketfeed, i.e. the LIVE market feed.
+      # dhanhq only declares websockets>=12.0.1, so this pin is the sole thing
+      # holding a major back, and a breaking change surfaces as a dead feed at
+      # 09:15 rather than as a failing gate -- nothing in CI opens a real
+      # socket. Bump majors deliberately, after a paper session on the new
+      # version.
+      - dependency-name: "websockets"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: github-actions
     directory: "/"

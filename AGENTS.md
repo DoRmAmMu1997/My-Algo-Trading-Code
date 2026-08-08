@@ -7,8 +7,9 @@
 
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
-the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" whose core roster
-and independently opt-in agents execute together — on paper by default, and live through a real broker when explicitly enabled.
+the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" whose approximately
+27-strategy core roster and independently opt-in agents execute together — on paper by default, and live
+through a real broker when explicitly enabled.
 Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
 
 ## Architecture (runtime)
@@ -19,16 +20,28 @@ One process, cooperating threads:
   swaps in `WebSocketMarketDataFetcher`: Dhan marketfeed ticks build the bars/LTPs
   (pure helpers in `Dependencies/tick_bar_builder.py`), with REST kept for warmup and a
   once-per-minute true-up against official candles.
-- **Strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
+- **Approximately 27 core strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
   family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / CPR Algo 3
-  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies), two
-  **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
+  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies + the
+  **Regime Adaptive** router), two **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
   and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
+  **Regime Adaptive** (ported from the MIT-licensed
+  `workratananmol-hub/nifty-options-paper-trading-bot`) is one worker that switches RULE on ADX:
+  opening-range breakout when trending, VWAP fade when ranging, no trade when ADX is missing. Its two
+  candidate rules live in `Signal Generators/Regime Adaptive Strategy/regime_candidates.py` as library
+  code with NO worker of their own — deliberately, so the router and a candidate can never take the
+  same signal twice. Read that folder's `REGIME_PORTING_NOTES.md` before enabling it live: the feed
+  carries no volume so its VWAP is an equal-weight proxy. It is also the first user of the shared
+  **bid/ask spread gate** (`<PREFIX>_MAX_SPREAD_PCT`, default 0 = off for every other strategy):
+  `_spread_gate_allows_entry` reads `top_bid_price`/`top_ask_price` off the `/optionchain`
+  response and refuses an entry wider than the cap in paper AND live, while an unreadable quote
+  refuses LIVE only. The source's VIX and breadth vetoes remain unimplemented — absent by choice,
+  not for want of data (the source runs on Dhan too).
   An **optional, opt-in CPR Codex AI Agent** is an independent five-minute SRSI/VWAP worker. It
   freezes completed-bar context behind four frozen no-argument MCP tools; Codex judges regime,
   setup, and premise exits, while the host owns deterministic entry/risk gates and execution. It is
   disabled by default, live-disabled by default, and uses the normal global-plus-strategy double gate.
-  Ordinary CPR, CPR Algo 3, and CPR AI may coexist with independent positions and P&L.
+  Ordinary CPR, CPR Algo 3, Regime Adaptive, and CPR AI may coexist with independent positions and P&L.
   Another **optional, opt-in** worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
   `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
@@ -53,6 +66,8 @@ One process, cooperating threads:
   read, BankNIFTY as the "major index", expiry-day priority, round-number magnets) that is **advisory
   context for the cross-index read — execution stays NIFTY-only** — plus general lessons merged into
   the existing sections (distilled from Intraday Hunter videos; provenance in `sl_hunting_doc.md`).
+  With both optional agents enabled, the configured roster can reach approximately 29 workers, but
+  enable and virtual-trading gates keep the running roster configuration-dependent.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading).
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
@@ -73,7 +88,10 @@ requirements-dev.txt                               # exact local/CI quality tool
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
 Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/,
-                                                   #   SL Hunting AI Agent/ — optional Claude-agent strategy)
+                                                   #   SL Hunting AI Agent/ — optional Claude-agent strategy;
+                                                   #   Regime Adaptive Strategy/ — the ADX router plus its two
+                                                   #   deliberately worker-less candidate rules; read its
+                                                   #   REGIME_PORTING_NOTES.md before enabling it live)
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup

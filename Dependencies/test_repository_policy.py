@@ -41,8 +41,16 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # dhanhq.marketfeed (the websocket market data producer) hard-imports the
     # async `websockets` library at package import time, so the exact version
     # must be pinned in core rather than left to transitive resolution.
-    assert "websockets==16.0" in core
-    assert "claude-agent-sdk==0.2.123" in ai
+    # Bumping this assertion is deliberate: dhanhq only declares
+    # websockets>=12.0.1, so the pin is the only thing standing between a feed
+    # regression and a live session. Move it together with requirements.txt, and
+    # only once a PAPER session has confirmed the feed still ticks on the new
+    # version -- CI never opens a real socket, so a green build proves nothing
+    # about the transport. Note this is a MAJOR (16 -> 17): dhanhq.marketfeed
+    # hard-imports websockets at package import time, so an incompatible API
+    # would surface as the RUNNER FAILING TO START, not merely a quiet feed.
+    assert "websockets==17.0" in core
+    assert "claude-agent-sdk==0.2.128" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR agent is an optional, subscription-authenticated
@@ -237,8 +245,8 @@ def test_cpr_ai_documentation_rejects_obsolete_arbiter_and_worker_disable_guidan
     assert "optional CPR arbiter" not in master
 
 
-def test_current_architecture_docs_do_not_freeze_the_enabled_worker_roster():
-    """Enabled totals depend on virtual gates and independently opt-in agents."""
+def test_current_architecture_docs_distinguish_core_from_optional_agents():
+    """A 27-core description must not masquerade as the enabled total."""
 
     architecture_files = (
         ROOT / "README.md",
@@ -247,20 +255,42 @@ def test_current_architecture_docs_do_not_freeze_the_enabled_worker_roster():
         ROOT / "CLAUDE.md",
         ROOT / "Nifty Multi Strategy Front Test - Master File.py",
     )
-    stale_roster = re.compile(
-        r"(?<![\dA-Za-z])(?:~?26|27(?:th)?|twenty[- ]six)(?![\dA-Za-z])"
-        r"(?:(?:[^\n]{0,60}\n)?[^\n]{0,60}"
-        r"\b(?:strategyworker|workers?|consumers?|strateg(?:y|ies))\b|\s*:)",
-        flags=re.IGNORECASE,
-    )
     failures: list[str] = []
     for path in architecture_files:
         text = path.read_text(encoding="utf-8")
-        for match in stale_roster.finditer(text):
-            line = text.count("\n", 0, match.start()) + 1
-            failures.append(f"{path.relative_to(ROOT).as_posix()}:{line}: {match.group(0)}")
+        lower = text.lower()
+        # Both agents are outside the core roster and can be independently
+        # omitted. Every current architecture overview must make both visible.
+        if "sl hunting" not in lower or "cpr codex ai" not in lower:
+            failures.append(
+                f"{path.relative_to(ROOT).as_posix()}: optional agents are incomplete"
+            )
 
-    assert not failures, "stale current worker-roster claims:\n" + "\n".join(failures)
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            normalized = line.lower().replace("twenty-seven", "27")
+            has_27_roster_claim = re.search(
+                r"(?<!\d)(?:~|approximately\s+)?27(?!\d)", normalized
+            ) and re.search(
+                r"\b(?:strategyworker|workers?|consumers?|strateg(?:y|ies))\b",
+                normalized,
+            )
+            # Regime Adaptive legitimately makes the core approximately 27,
+            # but two optional agents mean 27 can no longer describe the
+            # complete configured or running worker total.
+            if has_27_roster_claim and "core" not in normalized:
+                failures.append(
+                    f"{path.relative_to(ROOT).as_posix()}:{line_number}: {line.strip()}"
+                )
+
+        if re.search(
+            r"\b(?:26|twenty[- ]six)\s+(?:strategyworker|workers?|consumers?|strateg(?:y|ies))\b",
+            lower,
+        ):
+            failures.append(f"{path.relative_to(ROOT).as_posix()}: stale 26-worker roster")
+        if re.search(r"\b27\s+(?:workers?|strateg(?:y|ies))\s+total\b", lower):
+            failures.append(f"{path.relative_to(ROOT).as_posix()}: stale 27-worker total")
+
+    assert not failures, "ambiguous current worker-roster claims:\n" + "\n".join(failures)
     root_readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
     assert "see the latest addition at the top of this list for the current total" not in root_readme
 

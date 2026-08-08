@@ -1,15 +1,17 @@
 """
 Shared helpers for the "Misc Signal Generators" family.
 
-These thirteen signal generators are this repo's re-implementations of the
-strategies in the public TradingBot reference project. They deliberately follow
+These fourteen signal generators are this repo's re-implementations of public
+reference strategies: thirteen from the TradingBot project, plus the Regime
+Adaptive router from ``workratananmol-hub/nifty-options-paper-trading-bot``.
+They deliberately follow
 the same conventions as the existing strategy-logic modules in this codebase
 (see ``Subhamoy Strategies/subhamoy_strategy_common.py`` and
 ``goldmine_strategy_logic.py``):
 
 1. Normalize the caller's OHLC table into predictable lowercase columns.
 2. Calculate standard indicators through the repository's pinned TA-Lib build.
-3. Keep one copy of every shared indicator here so the thirteen generators stay
+3. Keep one copy of every shared indicator here so the fourteen generators stay
    small and consistent instead of each carrying its own boilerplate.
 
 This module does NOT resample data. The front-test/data-fetch layer (or, inside

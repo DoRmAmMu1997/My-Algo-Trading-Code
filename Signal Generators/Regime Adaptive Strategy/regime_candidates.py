@@ -1,0 +1,145 @@
+"""The two candidate rules the regime-adaptive router dispatches between.
+
+WHY THESE ARE PLAIN FUNCTIONS AND NOT ENGINES
+---------------------------------------------
+In the upstream project these are standalone strategies. Here the operator chose
+a ROUTER-ONLY topology: `regime_adaptive` is the single worker, and these two are
+library code behind it. If they were also registered as workers, the router and a
+candidate could take the SAME signal in the same session — real double exposure
+that the Google Sheet would not reveal, because each row would look like an
+ordinary independent strategy.
+
+So they deliberately expose no `Config` / `Engine` / `PositionContext` classes and
+are NOT listed in `test_trading_bot_ports.py`'s PORTS table. They are column
+producers: each returns the setup flags and levels for its branch, and the router
+decides which branch is live on any given bar.
+
+Both rules are LONG-OPTIONS-ONLY in effect: a bullish setup buys a CE, a bearish
+one buys a PE. Neither ever sells an option.
+
+Adapted from the MIT-licensed `workratananmol-hub/nifty-options-paper-trading-bot`
+(`src/strategies/opening_range.py`, `src/strategies/vwap_mean_reversion.py`).
+See REGIME_PORTING_NOTES.md for everything that was deliberately NOT ported.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+__all__ = [
+    "attach_breakout_columns",
+    "attach_mean_reversion_columns",
+]
+
+
+def attach_breakout_columns(
+    frame: pd.DataFrame,
+    *,
+    buffer_atr_mult: float,
+    buffer_min_points: float,
+    stop_loss_pct: float,
+    target_pct: float,
+) -> pd.DataFrame:
+    """Opening-range break confirmed by VWAP alignment. Prefix: `br_`.
+
+    A long needs price above the opening-range high by a buffer AND above VWAP;
+    a short is the mirror. The buffer is `max(atr * mult, min_points)`, matching
+    the upstream `max(atr*0.05, 2.0)` — it stops a one-tick poke through the
+    range counting as a break.
+
+    FAIL CLOSED: ATR is mandatory upstream, so a bar with no ATR (or with no
+    completed opening range, or no VWAP) produces no setup at all rather than a
+    setup computed from a partial picture.
+    """
+    result = frame.copy()
+    close = result["close"].astype(float)
+    atr = result["atr"].astype(float)
+    vwap = result["vwap"].astype(float)
+
+    buffer = np.maximum(atr * float(buffer_atr_mult), float(buffer_min_points))
+    usable = result["or_complete"].fillna(False) & atr.notna() & vwap.notna()
+
+    broke_up = close > (result["or_high"].astype(float) + buffer)
+    broke_down = close < (result["or_low"].astype(float) - buffer)
+
+    result["br_long_setup"] = (usable & broke_up & (close > vwap)).fillna(False)
+    result["br_short_setup"] = (usable & broke_down & (close < vwap)).fillna(False)
+
+    result["br_long_entry_price"] = close
+    result["br_short_entry_price"] = close
+    result["br_long_stop_from_setup"] = close * (1.0 - float(stop_loss_pct))
+    result["br_long_target_from_setup"] = close * (1.0 + float(target_pct))
+    result["br_short_stop_from_setup"] = close * (1.0 + float(stop_loss_pct))
+    result["br_short_target_from_setup"] = close * (1.0 - float(target_pct))
+    return result
+
+
+def attach_mean_reversion_columns(
+    frame: pd.DataFrame,
+    *,
+    atr_mult: float,
+    min_points: float,
+    adx_ceiling: float,
+    stop_loss_pct: float,
+    target_pct: float,
+) -> pd.DataFrame:
+    """Fade an extension away from VWAP, range regimes only. Prefix: `mr_`.
+
+    Price stretched away from VWAP by `max(atr * atr_mult, min_points)` is faded
+    back towards it: stretched BELOW goes LONG, stretched ABOVE goes SHORT.
+
+    The threshold takes the SAME shape as the breakout buffer -- a multiple of
+    ATR with an absolute floor -- and for the same reason. On a very quiet
+    session `atr * mult` can shrink to a couple of points, at which point ordinary
+    noise around VWAP would read as an "extension" worth fading. The floor is what
+    stops the rule firing on nothing. This mirrors the upstream
+    `max(ctx.atr * 0.6, 15.0)` exactly.
+
+    FAIL CLOSED twice over, exactly as upstream: ATR and ADX are both mandatory,
+    and the rule stands down entirely once `adx >= adx_ceiling`, because fading
+    a genuine trend is how a mean-reversion rule bleeds.
+    """
+    result = frame.copy()
+    close = result["close"].astype(float)
+    atr = result["atr"].astype(float)
+    adx = result["adx"].astype(float)
+    vwap = result["vwap"].astype(float)
+
+    high = result["high"].astype(float)
+    low = result["low"].astype(float)
+
+    distance = close - vwap
+    threshold = np.maximum(atr * float(atr_mult), float(min_points))
+    # ADX must be PRESENT and below the ceiling. `adx.notna()` is what makes a
+    # missing ADX a no-trade rather than a silently permissive comparison.
+    range_regime = adx.notna() & (adx < float(adx_ceiling))
+    usable = range_regime & atr.notna() & vwap.notna()
+
+    result["mr_long_entry_price"] = close
+    result["mr_short_entry_price"] = close
+    result["mr_long_stop_from_setup"] = close * (1.0 - float(stop_loss_pct))
+    # A fade targets the mean it is fading back towards, capped by the ordinary
+    # percentage target so a VWAP sitting far away cannot invent a huge target.
+    long_target = np.minimum(vwap, close * (1.0 + float(target_pct)))
+    short_target = np.maximum(vwap, close * (1.0 - float(target_pct)))
+    result["mr_long_target_from_setup"] = long_target
+    result["mr_short_stop_from_setup"] = close * (1.0 + float(stop_loss_pct))
+    result["mr_short_target_from_setup"] = short_target
+
+    # ALREADY-REVERTED GUARD. The fade fires on a bar that CLOSES beyond the
+    # threshold, but that same bar's HIGH/LOW usually reaches back past VWAP --
+    # a bar that dipped below VWAP to close there generally traded above it on
+    # the way. Because the engine tests stop/target against the CURRENT bar's
+    # full range, such a setup exits on TARGET at the very next evaluation,
+    # booking a fill-to-fill round trip that never moved. Observed live on
+    # 2026-08-04: entered 10:24:11, "TARGET" at 10:24:20, +0.05 option points.
+    #
+    # If the bar has already traded to the mean, the reversion this rule exists
+    # to capture has happened INSIDE it -- so there is nothing left to trade.
+    long_room = high < long_target
+    short_room = low > short_target
+
+    result["mr_long_setup"] = (usable & (distance <= -threshold) & long_room).fillna(False)
+    result["mr_short_setup"] = (usable & (distance >= threshold) & short_room).fillna(False)
+    return result

@@ -57,19 +57,33 @@ worker: it watches the spot PLUS a ~ITM CE and a ~ITM PE of the current-week exp
 and only fires when VWAP and the CPR band align across all three, but it still
 trades the ATM CE/PE of the next-next expiry like the rest of the ATM family. The
 Long Strangle worker is a time-based two-leg BUY of the OTM1 weekly CE+PE, with
-independent per-leg trailing stops and momentum re-entry. Together they complete
-the core roster; per-strategy gates decide its enabled subset at runtime.
+independent per-leg trailing stops and momentum re-entry.
 
-Optional agents can be independently opted in alongside that core roster. One is
-the SL Hunting AI Agent
+Newest is Regime Adaptive, a port from a DIFFERENT public project
+(workratananmol-hub/nifty-options-paper-trading-bot, MIT). It is one ATM
+single-leg worker that switches RULE on ADX: an opening-range breakout when the
+market trends, a fade back to VWAP when it ranges, and no trade at all when ADX
+is missing. Everything for it lives in "Signal Generators/Regime Adaptive Strategy/";
+its two candidate rules sit there in "regime_candidates.py"
+as library code with no worker of their own, so the router can never double up on
+a candidate's signal. Read that folder's REGIME_PORTING_NOTES.md before
+enabling it live: this runner has no volume, so its VWAP is an equal-weight proxy.
+
+Together they form an approximately TWENTY-SEVEN-strategy core roster: 23 ATM
+single-leg + 2 Hedged Puts + 1 Delta-0.2 + 1 Long Strangle. Per-strategy virtual
+gates decide which subset actually runs.
+
+Two OPTIONAL agents can be independently opted in alongside that core roster.
+One is the SL Hunting AI Agent
 (under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
 tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
 and fail-closed hard-budget sizing -- then acts through this runner's own
 enter_position/exit_position (so it is just another ATM single-leg member of the
-family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
-default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
+family). It stops opening NEW positions after 10:30
+(SL_HUNTING_NO_NEW_ENTRY_HOUR default 10 and SL_HUNTING_NO_NEW_ENTRY_MINUTE
+default 30); that is NOT a square-off -- open positions, their stop/target, and the
 15:15 square-off are all unaffected, and when flat past the cutoff it skips the LLM
 call entirely. It is OFF by default; SL_HUNTING_ENABLED=true includes it, and its
 optional deps (claude-agent-sdk, pydantic) are imported behind try/except so a missing
@@ -79,6 +93,8 @@ proposes lessons, which the operator promotes into lessons.json and the agent in
 only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
 The other is the CPR Codex AI Agent, an independent five-minute SRSI/VWAP worker
 whose model judgment remains behind deterministic host risk and execution gates.
+When both optional agents are enabled, the configured roster can reach approximately
+29 workers; enable and virtual-trading gates keep the running total configuration-dependent.
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -127,7 +143,8 @@ audit later without chasing a hidden flag.
 
 STRIKE RULES (also explicit per family)
 ---------------------------------------
-- ATM family (the 22 ATM workers) -> resolver.get_atm_option(spot, dir).
+- ATM family (the 23 core ATM workers plus any optional ATM agents) ->
+  resolver.get_atm_option(spot, dir).
   Picks the strike whose round-50 value is nearest to live spot.
 - Hedged family (Supertrend Bullish + Donchian Bearish) -> the strike
   selection lives INSIDE each dedicated worker
@@ -141,7 +158,7 @@ STRIKE RULES (also explicit per family)
 
 EXECUTION MODEL CHEAT SHEET (paper)
 -----------------------------------
-Single-leg ATM trades (the 22 ATM workers):
+Single-leg ATM trades (the core and optional ATM workers):
     PnL = (exit_option_price - entry_option_price) * qty
     Both LONG and SHORT signals open as BUY legs (CE for LONG, PE for
     SHORT). PnL is therefore always (live - entry) * qty.
@@ -199,6 +216,8 @@ CLASS HIERARCHY OVERVIEW
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
         |             Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic,
         |             Supertrend, Volatility Breakout)
+        |       +-- (+ Regime Adaptive, same factory, different source project:
+        |             an ADX router over an opening-range breakout and a VWAP fade)
         |       +-- SLHuntingAIWorker         (OPTIONAL opt-in: LLM/Claude-agent driven)
         |       +-- CPRAIWorker               (OPTIONAL opt-in: Codex SRSI/VWAP agent)
         |
@@ -1384,10 +1403,12 @@ execution_client, LIVE_EXCHANGE_SEGMENT, LIVE_PRODUCT_TYPE = _select_execution_c
 )
 
 # =============================================================================
-# SIGNAL GENERATOR PORTS (ATM single-leg strategies from the TradingBot repo)
+# SIGNAL GENERATOR PORTS (ATM single-leg strategies ported from public repos)
 # =============================================================================
-# Thirteen extra ATM single-leg strategies re-implemented from the public
-# TradingBot project, kept alongside the other strategies under Signal Generators/.
+# Fourteen extra ATM single-leg strategies re-implemented from public projects,
+# kept alongside the other strategies under Signal Generators/: thirteen from the
+# TradingBot project, plus the Regime Adaptive router from
+# workratananmol-hub/nifty-options-paper-trading-bot (MIT).
 # They are the SAME execution family as Renko/Goldmine/CPR (a LONG buys the ATM
 # CE, a SHORT the ATM PE of the next-next expiry); each is namespaced by its own
 # name so every knob is independently tunable from .env, exactly like the
@@ -1433,6 +1454,16 @@ SUPERTREND_PORT_LOGIC = load_module(
 )
 VOLATILITY_BREAKOUT_LOGIC = load_module(
     "master_volatility_breakout", SIGNAL_GEN_DIR / "Nifty Volatility Breakout Signal Generator.py"
+)
+# Regime-adaptive router (ported from the MIT-licensed
+# workratananmol-hub/nifty-options-paper-trading-bot). It dispatches between an
+# opening-range breakout and a VWAP fade on ADX. It lives in its own subfolder
+# with its two candidate rules, which are library code with NO worker of their
+# own, so the router can never double up on a candidate's signal -- see
+# Signal Generators/Regime Adaptive Strategy/REGIME_PORTING_NOTES.md.
+REGIME_ADAPTIVE_LOGIC = load_module(
+    "master_regime_adaptive",
+    SIGNAL_GEN_DIR / "Regime Adaptive Strategy" / "Nifty Regime Adaptive Signal Generator.py",
 )
 
 # =============================================================================
@@ -1600,6 +1631,19 @@ VOLATILITY_BREAKOUT_CONFIG = VOLATILITY_BREAKOUT_LOGIC.VolatilityBreakoutConfig(
     k_factor=_env_float("VOLATILITY_BREAKOUT_K_FACTOR", 0.5),
     stop_loss_pct=_env_float("VOLATILITY_BREAKOUT_STOP_LOSS_PCT", 0.02),
     target_pct=_env_float("VOLATILITY_BREAKOUT_TARGET_PCT", 0.04),
+)
+REGIME_ADAPTIVE_CONFIG = REGIME_ADAPTIVE_LOGIC.RegimeAdaptiveConfig(
+    adx_period=_env_int("REGIME_ADAPTIVE_ADX_PERIOD", 14),
+    atr_period=_env_int("REGIME_ADAPTIVE_ATR_PERIOD", 14),
+    opening_range_minutes=_env_int("REGIME_ADAPTIVE_OPENING_RANGE_MINUTES", 15),
+    adx_trend_threshold=_env_float("REGIME_ADAPTIVE_ADX_TREND_THRESHOLD", 20.0),
+    adx_meanrev_ceiling=_env_float("REGIME_ADAPTIVE_ADX_MEANREV_CEILING", 25.0),
+    breakout_buffer_atr_mult=_env_float("REGIME_ADAPTIVE_BREAKOUT_BUFFER_ATR_MULT", 0.05),
+    breakout_buffer_min_points=_env_float("REGIME_ADAPTIVE_BREAKOUT_BUFFER_MIN_POINTS", 2.0),
+    meanrev_atr_mult=_env_float("REGIME_ADAPTIVE_MEANREV_ATR_MULT", 0.6),
+    meanrev_min_points=_env_float("REGIME_ADAPTIVE_MEANREV_MIN_POINTS", 15.0),
+    stop_loss_pct=_env_float("REGIME_ADAPTIVE_STOP_LOSS_PCT", 0.015),
+    target_pct=_env_float("REGIME_ADAPTIVE_TARGET_PCT", 0.03),
 )
 
 
@@ -5741,6 +5785,52 @@ class BasePaperStrategyWorker(threading.Thread):
         self.paper_order_counter += 1
         return f"PAPER-{side}-{datetime.now():%Y%m%d%H%M%S}-{self.paper_order_counter:04d}"
 
+    def _subscribe_then_price(
+        self, contract: dict
+    ) -> tuple[float, bool, tuple[str, int] | None]:
+        """Join the feed FIRST, then price the leg. Returns (price, fresh, owned_key).
+
+        MAT-113, generalised to every worker. A tick feed cannot quote an instrument
+        it does not carry, so asking for a price before subscribing can only ever
+        succeed by accident -- via a REST fallback that has been observed returning a
+        map without the requested contract, or via a cached price left behind by an
+        earlier trade. Subscribing first makes the feed start work immediately; the
+        bounded wait then returns the moment the first tick lands, so an entry is
+        taken as soon as a price exists rather than after a fixed delay.
+
+        `owned_key` is the (segment, security_id) this call ADDED to the pool, or
+        None when the leg was already subscribed by someone else. Callers pass it to
+        `_release_feed_legs` so a fallen-through entry withdraws only what it opened
+        and never a leg shared with another worker.
+        """
+        segment = str(contract["exchange_segment"])
+        security_id = int(contract["security_id"])
+        owned = self.store.register_option_subscription(
+            OptionSubscription(
+                security_id=security_id,
+                exchange_segment=segment,
+                trading_symbol=str(contract["trading_symbol"]),
+                right=str(contract["option_type"]),
+                strike=float(contract["strike"]),
+                expiry=contract["expiry_date"],
+            ),
+            owner_id=self._execution_owner_id,
+        )
+        price, is_fresh = self._get_dealable_option_ltp(
+            segment, security_id, wait_seconds=MARKET_DATA_LTP_WAIT_SECONDS
+        )
+        return price, is_fresh, ((segment, security_id) if owned else None)
+
+    def _release_feed_legs(self, *owned_keys: tuple[str, int] | None) -> None:
+        """Withdraw feed legs this entry opened but never used."""
+        for key in owned_keys:
+            if key is None:
+                continue
+            segment, security_id = key
+            self.store.unregister_option_subscription(
+                segment, security_id, owner_id=self._execution_owner_id
+            )
+
     def _get_dealable_option_ltp(
         self, segment: str, security_id: int, *, wait_seconds: float = 0.0
     ) -> tuple[float, bool]:
@@ -6454,6 +6544,241 @@ class BasePaperStrategyWorker(threading.Thread):
 
 
 # =============================================================================
+# BID/ASK SPREAD GATE (shared; opt-in per strategy)
+# =============================================================================
+# A wide or thin option is a trade you cannot get out of at the price your stop
+# assumes. Every strategy here BUYS options, so a 2%-of-mid spread is a 2% loss
+# taken at the moment of entry before the thesis has done anything.
+#
+# WHERE THE QUOTE COMES FROM. Not the tick feed -- we subscribe
+# `MarketFeed.Ticker` only and `tick_bar_builder.py` drops depth packets, so
+# there is no bid/ask in the tick path. It comes from the `/optionchain` REST
+# response, which carries `top_bid_price` / `top_ask_price` (plus quantities)
+# per CE/PE node. `DhanBrokerClient.fetch_option_chain` has always returned that
+# payload; until now the runner parsed only OI and Greeks out of it and dropped
+# the rest.
+#
+# Default OFF for every strategy (`<PREFIX>_MAX_SPREAD_PCT=0`), so adding this
+# changes NO existing strategy's behaviour. Only prefixes listed below ship with
+# it on.
+_DEFAULT_MAX_SPREAD_PCT = {
+    # Regime Adaptive is the first user: it is a new, unproven port and the
+    # source project it came from gated on spread, so shipping it without one
+    # would be strictly weaker than the strategy we copied.
+    "REGIME_ADAPTIVE": 2.0,
+}
+
+# Same shape for the whole-chain liquidity floor (upstream vetoes below 30).
+_DEFAULT_MIN_LIQUIDITY_SCORE = {
+    "REGIME_ADAPTIVE": 30.0,
+}
+
+# Dhan allows one unique /optionchain request per 3 seconds per
+# (underlying, expiry). Entries are rare, but two workers deciding in the same
+# second on the same expiry would collide, so one short shared cache serves
+# them all. This is a rate-limit guard, not a performance cache -- the TTL is
+# deliberately the smallest value the API permits.
+OPTION_CHAIN_QUOTE_CACHE_SECONDS = _env_float("OPTION_CHAIN_QUOTE_CACHE_SECONDS", 3.0)
+_option_chain_quote_cache: dict[tuple[int, str], tuple[float, dict]] = {}
+_option_chain_quote_lock = threading.Lock()
+
+
+def _extract_quote_from_chain_node(node: object) -> tuple[float, float]:
+    """Pull ``(bid, ask)`` out of ONE CE/PE node of a `/optionchain` response.
+
+    Dhan documents `top_bid_price` / `top_ask_price`, but the SDK has shifted
+    key casing between minor releases before (see `_parse_option_chain_for_oi`),
+    so this accepts the same alternates the upstream project accepts and falls
+    back to the first level of the depth ladder. Anything unusable returns
+    ``(0.0, 0.0)`` rather than raising -- the caller treats that as "no quote",
+    which is a different thing from "a bad quote".
+    """
+    if not isinstance(node, dict):
+        return 0.0, 0.0
+
+    def _first_present(names: tuple[str, ...]) -> float:
+        for name in names:
+            if name in node:
+                value = _safe_float(node.get(name), 0.0)
+                if value > 0:
+                    return value
+        return 0.0
+
+    bid = _first_present(("top_bid_price", "best_bid", "bid", "buy_price"))
+    ask = _first_present(("top_ask_price", "best_ask", "ask", "sell_price"))
+    if bid > 0 and ask > 0:
+        return bid, ask
+
+    # Depth-ladder fallback: {"depth": {"buy": [{"price": ...}], "sell": [...]}}
+    depth = node.get("depth")
+    if isinstance(depth, dict):
+        for side_keys, current in ((("buy", "bids"), "bid"), (("sell", "asks"), "ask")):
+            if (bid if current == "bid" else ask) > 0:
+                continue
+            for key in side_keys:
+                ladder = depth.get(key)
+                if isinstance(ladder, list) and ladder and isinstance(ladder[0], dict):
+                    price = _safe_float(ladder[0].get("price"), 0.0)
+                    if price > 0:
+                        if current == "bid":
+                            bid = price
+                        else:
+                            ask = price
+                        break
+    return bid, ask
+
+
+def _parse_option_chain_quote(resp: object, strike: float, right: str) -> tuple[float, float]:
+    """Find ONE strike's CE or PE quote in a `/optionchain` response.
+
+    Defensive in the same way as `_parse_option_chain_for_oi`: any level that is
+    not the expected shape yields ``(0.0, 0.0)`` instead of raising, because a
+    malformed payload must degrade to "no quote", never to an exception inside
+    the entry path.
+
+    Dhan keys the strike map by a stringified float ("22000.000000"), so the
+    lookup compares numerically rather than by string equality.
+    """
+    if not isinstance(resp, dict):
+        return 0.0, 0.0
+    status = str(resp.get("status", "")).strip().lower()
+    if status and status != "success":
+        return 0.0, 0.0
+    payload = resp.get("data")
+    if not isinstance(payload, dict):
+        return 0.0, 0.0
+    oc = payload.get("oc") or payload.get("OC") or {}
+    if not isinstance(oc, dict):
+        return 0.0, 0.0
+
+    side = "ce" if str(right).strip().upper() == "CE" else "pe"
+    target = _safe_float(strike, 0.0)
+    if target <= 0:
+        return 0.0, 0.0
+
+    for raw_strike, legs in oc.items():
+        if abs(_safe_float(raw_strike, -1.0) - target) > 0.001:
+            continue
+        if not isinstance(legs, dict):
+            return 0.0, 0.0
+        node = legs.get(side) or legs.get(side.upper())
+        return _extract_quote_from_chain_node(node)
+    return 0.0, 0.0
+
+
+def _relative_spread_pct(bid: float, ask: float) -> float | None:
+    """Spread as a percentage OF THE MID, or None when the book is unusable.
+
+    Mid is the reference (not the bid, not the ask) because it is the price a
+    marketable order is measured against and it makes the number symmetric for
+    buyers and sellers. Returns None -- explicitly "unknown", never 0.0 -- when
+    either side is missing or the book is crossed (ask < bid), so a broken quote
+    can never read as a tight one.
+    """
+    bid_value = _safe_float(bid, 0.0)
+    ask_value = _safe_float(ask, 0.0)
+    if bid_value <= 0 or ask_value <= 0 or ask_value < bid_value:
+        return None
+    mid = (bid_value + ask_value) / 2.0
+    if mid <= 0:
+        return None
+    return (ask_value - bid_value) / mid * 100.0
+
+
+def _chain_liquidity_score(resp: object) -> tuple[float | None, dict]:
+    """Score the WHOLE chain's tradeability 0-100, or None when unknowable.
+
+    Reproduces the upstream `compute_chain_metrics` exactly:
+
+        spread_score = clamp(100 - median(spread_pct) * 8, 0, 100)
+        oi_score     = clamp(median(oi) / 100,             0, 100)
+        liquidity    = spread_score * 0.6 + oi_score * 0.4
+
+    including its median convention (`sorted(x)[len(x)//2]` -- the UPPER middle
+    for an even count, not the mean of the two) and its habit of substituting
+    50.0 for a component whose input list is empty.
+
+    ONE DELIBERATE DEVIATION. Upstream, a chain with no strikes at all scores
+    50*0.6 + 50*0.4 = 50 and sails through the veto. Here that returns None
+    instead: "we received no strikes" is not evidence of a liquid market, and this
+    runner's convention is that an unanswerable safety question fails closed on
+    live. The caller applies the usual paper/live split to None.
+
+    Returns ``(score, components)``; the components are logged so a veto is
+    diagnosable from the session log without a re-run.
+    """
+    empty: dict = {"strikes": 0}
+    if not isinstance(resp, dict):
+        return None, empty
+    status = str(resp.get("status", "")).strip().lower()
+    if status and status != "success":
+        return None, empty
+    payload = resp.get("data")
+    if not isinstance(payload, dict):
+        return None, empty
+    oc = payload.get("oc") or payload.get("OC") or {}
+    if not isinstance(oc, dict) or not oc:
+        return None, empty
+
+    spreads: list[float] = []
+    ois: list[float] = []
+    strikes = 0
+    for legs in oc.values():
+        if not isinstance(legs, dict):
+            continue
+        for side in ("ce", "pe"):
+            node = legs.get(side) or legs.get(side.upper())
+            if not isinstance(node, dict):
+                continue
+            strikes += 1
+            bid, ask = _extract_quote_from_chain_node(node)
+            spread = _relative_spread_pct(bid, ask)
+            if spread is not None:
+                spreads.append(spread)
+            open_interest = _safe_float(node.get("oi"), 0.0)
+            if open_interest > 0:  # upstream filters falsy OI out of the median
+                ois.append(open_interest)
+
+    if strikes == 0:
+        return None, empty
+
+    def _upper_median(values: list[float]) -> float:
+        return sorted(values)[len(values) // 2]
+
+    median_spread = _upper_median(spreads) if spreads else None
+    median_oi = _upper_median(ois) if ois else None
+    spread_score = 50.0 if median_spread is None else max(0.0, min(100.0, 100.0 - median_spread * 8))
+    oi_score = 50.0 if median_oi is None else max(0.0, min(100.0, median_oi / 100.0))
+    score = spread_score * 0.6 + oi_score * 0.4
+    return score, {
+        "strikes": strikes,
+        "quoted": len(spreads),
+        "median_spread_pct": median_spread,
+        "median_oi": median_oi,
+        "spread_score": spread_score,
+        "oi_score": oi_score,
+    }
+
+
+def _fetch_option_chain_cached(broker, under_security_id: int, under_segment: str, expiry) -> dict:
+    """`fetch_option_chain` behind a short shared TTL, keyed by (underlying, expiry).
+
+    Raises whatever the broker raises -- the caller decides what a failed chain
+    fetch means, and that decision differs for paper and live.
+    """
+    key = (int(under_security_id), str(expiry))
+    now = time.monotonic()
+    with _option_chain_quote_lock:
+        cached = _option_chain_quote_cache.get(key)
+        if cached is not None and (now - cached[0]) < max(OPTION_CHAIN_QUOTE_CACHE_SECONDS, 0.0):
+            return cached[1]
+    resp = broker.fetch_option_chain(int(under_security_id), str(under_segment), expiry)
+    with _option_chain_quote_lock:
+        _option_chain_quote_cache[key] = (time.monotonic(), resp)
+    return resp
+
+
+# =============================================================================
 # ATM SINGLE-LEG STRATEGY WORKER (concrete intermediate class)
 # =============================================================================
 class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
@@ -6472,6 +6797,15 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
       different math, so single-leg ATM behaviour is shared only among
       strategies that actually use it.
     """
+
+    #: Reject an entry whose option is quoted wider than this percentage of mid.
+    #: 0 disables the check, which is the default for every worker that predates
+    #: it -- see `_spread_gate_allows_entry` and `_DEFAULT_MAX_SPREAD_PCT`.
+    max_spread_pct: float = 0.0
+
+    #: Reject an entry when the whole chain scores below this on 0-100.
+    #: 0 disables it; see `_liquidity_gate_allows_entry`.
+    min_liquidity_score: float = 0.0
 
     def _get_open_position_pnl(self) -> float:
         """
@@ -6517,6 +6851,177 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             stop_underlying,
             lot_size,
         ).lots
+
+    def _spread_gate_allows_entry(
+        self,
+        direction: str,
+        trading_symbol: str,
+        option_strike: float,
+        option_right: str,
+        expiry_date,
+    ) -> bool:
+        """Veto an entry whose option is quoted too wide. True = proceed.
+
+        Off unless `<PREFIX>_MAX_SPREAD_PCT` > 0, and off for every strategy that
+        does not opt in, so this is a no-op for the workers that predate it.
+
+        The paper/live split mirrors `_get_dealable_option_ltp`, deliberately:
+
+        - Spread KNOWN and too wide -> refuse in BOTH paper and live. It is a
+          deterministic property of the market, so refusing in paper too keeps
+          the Sheet's paper rows predictive of live behaviour.
+        - Spread UNKNOWN (chain call failed, or the payload carried no quote for
+          this strike) -> LIVE refuses, PAPER proceeds with a warning. Real money
+          does not get spent on a check we could not run; paper keeps the
+          observation rather than losing a data point to a transient API error.
+        """
+        max_spread = _safe_float(getattr(self, "max_spread_pct", 0.0), 0.0)
+        if max_spread <= 0:
+            return True
+
+        try:
+            resp = _fetch_option_chain_cached(
+                self.broker,
+                NIFTY_INDEX_SECURITY_ID,
+                NIFTY_INDEX_EXCHANGE_SEGMENT,
+                expiry_date,
+            )
+            bid, ask = _parse_option_chain_quote(resp, option_strike, option_right)
+        except Exception as exc:
+            self.log.warning(
+                "Spread gate could not fetch the option chain for %s: %s",
+                trading_symbol,
+                exc,
+            )
+            bid, ask = 0.0, 0.0
+
+        spread_pct = _relative_spread_pct(bid, ask)
+        if spread_pct is None:
+            if self.live_trading:
+                self.log.error(
+                    "REFUSING LIVE %s ENTRY on %s: no usable bid/ask from the option "
+                    "chain, so the %.2f%% spread cap could not be checked.",
+                    direction,
+                    trading_symbol,
+                    max_spread,
+                )
+                return False
+            self.log.warning(
+                "PAPER %s entry on %s proceeding UNGATED: no usable bid/ask from the "
+                "option chain (cap %.2f%% not checked).",
+                direction,
+                trading_symbol,
+                max_spread,
+            )
+            return True
+
+        if spread_pct > max_spread:
+            self.log.warning(
+                "ENTRY SKIPPED BY SPREAD GATE | %s %s | %s | bid=%.2f ask=%.2f "
+                "spread=%.2f%% of mid > cap %.2f%%",
+                self.strategy_name,
+                direction,
+                trading_symbol,
+                bid,
+                ask,
+                spread_pct,
+                max_spread,
+            )
+            return False
+
+        self.log.info(
+            "Spread gate OK | %s | bid=%.2f ask=%.2f spread=%.2f%% (cap %.2f%%)",
+            trading_symbol,
+            bid,
+            ask,
+            spread_pct,
+            max_spread,
+        )
+        return True
+
+    def _liquidity_gate_allows_entry(self, direction: str, trading_symbol: str, expiry_date) -> bool:
+        """Veto an entry when the whole option chain is too illiquid. True = proceed.
+
+        Distinct from the spread gate: that one asks "is the contract I am buying
+        quoted tightly", this asks "is this chain tradeable at all right now". The
+        upstream router applies the second as a hard `liquidity_score < 30` veto.
+
+        Costs NO extra API call -- it reads the same cached `/optionchain`
+        response the spread gate just fetched for this expiry.
+
+        Same paper/live split as everywhere else in this entry path: a score below
+        the floor refuses in both modes (a market fact), an unknowable score
+        refuses live only (an infrastructure failure).
+        """
+        floor = _safe_float(getattr(self, "min_liquidity_score", 0.0), 0.0)
+        if floor <= 0:
+            return True
+
+        try:
+            resp = _fetch_option_chain_cached(
+                self.broker,
+                NIFTY_INDEX_SECURITY_ID,
+                NIFTY_INDEX_EXCHANGE_SEGMENT,
+                expiry_date,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "Liquidity gate could not fetch the option chain for %s: %s", trading_symbol, exc
+            )
+            resp = None
+
+        score, parts = _chain_liquidity_score(resp)
+        if score is None:
+            if self.live_trading:
+                self.log.error(
+                    "REFUSING LIVE %s ENTRY on %s: the option chain gave no usable "
+                    "strikes, so liquidity (floor %.1f) could not be scored.",
+                    direction,
+                    trading_symbol,
+                    floor,
+                )
+                return False
+            self.log.warning(
+                "PAPER %s entry on %s proceeding UNGATED: chain liquidity could not "
+                "be scored (floor %.1f not checked).",
+                direction,
+                trading_symbol,
+                floor,
+            )
+            return True
+
+        if score < floor:
+            # WARNING, with every component, because the most likely way this gate
+            # misbehaves is vetoing a perfectly tradeable session -- the median runs
+            # over EVERY listed strike, and a chain padded with dead far-OTM strikes
+            # drags it down regardless of how liquid the ATM contracts are. One
+            # session's logs should be enough to tell those two cases apart.
+            self.log.warning(
+                "ENTRY SKIPPED BY LIQUIDITY GATE | %s %s | %s | score=%.1f < floor %.1f "
+                "| strikes=%s quoted=%s median_spread=%s%% median_oi=%s "
+                "(spread_score=%.1f oi_score=%.1f)",
+                self.strategy_name,
+                direction,
+                trading_symbol,
+                score,
+                floor,
+                parts.get("strikes"),
+                parts.get("quoted"),
+                parts.get("median_spread_pct"),
+                parts.get("median_oi"),
+                parts.get("spread_score", 0.0),
+                parts.get("oi_score", 0.0),
+            )
+            return False
+
+        self.log.info(
+            "Liquidity gate OK | %s | score=%.1f (floor %.1f, strikes=%s)",
+            trading_symbol,
+            score,
+            floor,
+            parts.get("strikes"),
+        )
+        return True
 
     def _entry_expiry(self) -> date | None:
         """Which expiry this worker's ATM entry uses. None = the resolver default.
@@ -6666,6 +7171,16 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 sizing.reason,
             )
             return _abort_entry()
+        # Last gate before the order. Deliberately AFTER sizing: sizing is local
+        # and free, the chain call is rate-limited, so a trade sizing would have
+        # rejected never spends one.
+        if not self._spread_gate_allows_entry(
+            direction, trading_symbol, option_strike, option_right, expiry_date
+        ):
+            return _abort_entry()
+        if not self._liquidity_gate_allows_entry(direction, trading_symbol, expiry_date):
+            return _abort_entry()
+
         lots_for_entry = sizing.lots
         quantity = sizing.quantity
         entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
@@ -9900,17 +10415,17 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
                 hedge_entry_price,
             )
             return False
-        main_entry_price, main_mark_is_fresh = self._get_dealable_option_ltp(
-            str(main["exchange_segment"]), int(main["security_id"])
-        )
-        hedge_entry_price, hedge_mark_is_fresh = self._get_dealable_option_ltp(
-            str(hedge["exchange_segment"]), int(hedge["security_id"])
-        )
+        # MAT-113: subscribe both legs before pricing them, then take the entry as
+        # soon as the feed quotes them rather than after a fixed delay.
+        main_entry_price, main_mark_is_fresh, main_feed_key = self._subscribe_then_price(main)
+        hedge_entry_price, hedge_mark_is_fresh, hedge_feed_key = self._subscribe_then_price(hedge)
         if main_entry_price <= 0 or hedge_entry_price <= 0:
             self.log.warning("Skipping bullish entry because a dealable leg price is unavailable.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
         if self.live_trading and not (main_mark_is_fresh and hedge_mark_is_fresh):
             self.log.error("REFUSING LIVE bullish spread entry because a leg price is stale.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
 
         main_live_order = {
@@ -10548,17 +11063,17 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
                 hedge_entry_price,
             )
             return False
-        main_entry_price, main_mark_is_fresh = self._get_dealable_option_ltp(
-            str(main["exchange_segment"]), int(main["security_id"])
-        )
-        hedge_entry_price, hedge_mark_is_fresh = self._get_dealable_option_ltp(
-            str(hedge["exchange_segment"]), int(hedge["security_id"])
-        )
+        # MAT-113: subscribe both legs before pricing them, then take the entry as
+        # soon as the feed quotes them rather than after a fixed delay.
+        main_entry_price, main_mark_is_fresh, main_feed_key = self._subscribe_then_price(main)
+        hedge_entry_price, hedge_mark_is_fresh, hedge_feed_key = self._subscribe_then_price(hedge)
         if main_entry_price <= 0 or hedge_entry_price <= 0:
             self.log.warning("Skipping bearish entry because a dealable leg price is unavailable.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
         if self.live_trading and not (main_mark_is_fresh and hedge_mark_is_fresh):
             self.log.error("REFUSING LIVE bearish spread entry because a leg price is stale.")
+            self._release_feed_legs(main_feed_key, hedge_feed_key)
             return False
 
         main_live_order = {
@@ -12784,20 +13299,21 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             )
             return False
 
-        option_ltp, mark_is_fresh = self._get_dealable_option_ltp(
-            option_segment, option_sec_id
-        )
+        # MAT-113: join the feed before pricing, then enter as soon as it quotes.
+        option_ltp, mark_is_fresh, feed_key = self._subscribe_then_price(contract)
         if option_ltp <= 0:
             self.log.warning(
                 "Strangle %s entry skipped: option LTP unavailable for %s (security_id=%s).",
                 side, trading_symbol, option_sec_id,
             )
+            self._release_feed_legs(feed_key)
             return False
         if self.live_trading and not mark_is_fresh:
             self.log.error(
                 "REFUSING LIVE strangle %s entry because the option mark is stale.",
                 side,
             )
+            self._release_feed_legs(feed_key)
             return False
 
         quantity = lot_size * self.lots
@@ -13244,14 +13760,14 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
 
 # =============================================================================
-# SIGNAL GENERATOR PORT WORKERS (ATM single-leg; TradingBot ports)
+# SIGNAL GENERATOR PORT WORKERS (ATM single-leg; ports from public repos)
 # =============================================================================
-# The thirteen ported strategies share one identical worker lifecycle: resample
+# The fourteen ported strategies share one identical worker lifecycle: resample
 # the shared 1-min OHLC to the strategy's derived timeframe, build the strategy
 # frame, evaluate the latest candle, and translate ENTER_LONG / ENTER_SHORT /
 # EXIT into ATM CE/PE paper trades. Because they differ only by which logic module
 # + config + env prefix they use, we build them from a single factory + table
-# instead of thirteen copy-pasted classes. Each is fully namespaced by its own env
+# instead of fourteen copy-pasted classes. Each is fully namespaced by its own env
 # prefix (like Goldmine), so every operational knob is independently tunable.
 def _signal_gen_ops(prefix: str) -> dict:
     """
@@ -13260,13 +13776,14 @@ def _signal_gen_ops(prefix: str) -> dict:
     Returns the per-strategy poll cadence, resample timeframe, trading window,
     lot size, and daily max-loss cap. Every key is <PREFIX>_<NAME> in .env (e.g.
     SMA_CROSSOVER_POLL_SECONDS), so each strategy is tuned independently. The
-    defaults are identical across all thirteen; only the prefix differs.
+    defaults are identical across all fourteen; only the prefix differs.
 
     `<PREFIX>_SIZE_MULTIPLIER` scales both size-bearing values here -- the lot
-    count and the absolute daily max-loss cap. This single helper serves the 13
-    ported strategies AND the SL Hunting agent, so those 14 workers are scaled
-    by these two lines. Capital and the loss PERCENTAGE stay unscaled; only
-    their product carries the multiplier, so the cap grows exactly once.
+    count and the absolute daily max-loss cap. This single helper serves the 14
+    ported strategies (the 13 TradingBot ports plus Regime Adaptive) AND the SL
+    Hunting agent, so those 15 workers are scaled by these two lines. Capital
+    and the loss PERCENTAGE stay unscaled; only their product carries the
+    multiplier, so the cap grows exactly once.
     """
     starting_capital = _env_float(f"{prefix}_STARTING_CAPITAL", 600000.0)
     return {
@@ -13281,6 +13798,17 @@ def _signal_gen_ops(prefix: str) -> dict:
             starting_capital
             * _env_float(f"{prefix}_DAILY_MAX_LOSS_PCT", 0.03)
             * _strategy_size_multiplier(prefix)
+        ),
+        # Bid/ask spread cap. NOT a size knob (it caps a market property, not our
+        # exposure), so it reads through plain `_env_float` rather than
+        # `_scaled_float`. The in-code default comes from `_DEFAULT_MAX_SPREAD_PCT`
+        # so deleting the .env line cannot silently disarm the gate for a strategy
+        # that ships with it on.
+        "max_spread_pct": _env_float(
+            f"{prefix}_MAX_SPREAD_PCT", _DEFAULT_MAX_SPREAD_PCT.get(prefix, 0.0)
+        ),
+        "min_liquidity_score": _env_float(
+            f"{prefix}_MIN_LIQUIDITY_SCORE", _DEFAULT_MIN_LIQUIDITY_SCORE.get(prefix, 0.0)
         ),
     }
 
@@ -13301,9 +13829,9 @@ def _build_signal_gen_worker_class(
     A "worker" is one trading thread. Every poll it does the same four steps via
     the base class: read the shared 1-min candles, build this strategy's frame,
     ask the strategy engine for a decision, and act on it (buy/sell an ATM option).
-    All thirteen do those steps identically and differ only by which logic
+    All fourteen do those steps identically and differ only by which logic
     module/config/env-prefix they plug in - which is what this factory captures,
-    so we avoid thirteen near-identical copy-pasted classes.
+    so we avoid fourteen near-identical copy-pasted classes.
 
     Parameters:
     - class_name / display_name: the worker's Python class name and its log/UI name
@@ -13328,6 +13856,8 @@ def _build_signal_gen_worker_class(
         square_off_hour = ops["square_off_hour"]
         square_off_minute = ops["square_off_minute"]
         derived_timeframe_minutes = ops["derived_timeframe_minutes"]
+        max_spread_pct = ops["max_spread_pct"]
+        min_liquidity_score = ops["min_liquidity_score"]
 
         def __init__(self, store, stop_event, broker):
             super().__init__(store, stop_event, broker)
@@ -13363,6 +13893,25 @@ def _build_signal_gen_worker_class(
                 return
 
             # Flat -> a LONG buys an ATM CE, a SHORT buys an ATM PE (see enter_position).
+            if decision.action in ("ENTER_LONG", "ENTER_SHORT"):
+                # Log WHY before acting. For most ports `reason` is a short rule
+                # name, but for the Regime Adaptive router it also names the
+                # branch that fired ("BREAKOUT_long" / "MEANREV_short"), which is
+                # otherwise invisible: the entry line below records the option and
+                # the levels, never which rule chose them. Without this you cannot
+                # confirm from a session log that the router actually switched
+                # branch as ADX crossed -- the one thing its porting notes ask you
+                # to verify in paper.
+                self.log.info(
+                    "SIGNAL %s | %s | reason=%s | entry=%.2f stop=%.2f target=%.2f%s",
+                    decision.action,
+                    self.strategy_name,
+                    getattr(decision, "reason", "") or "-",
+                    _safe_float(decision.entry_underlying, 0.0),
+                    _safe_float(decision.stop_underlying, 0.0),
+                    _safe_float(getattr(decision, "target_underlying", 0.0), 0.0),
+                    f" | {decision.debug}" if getattr(decision, "debug", None) else "",
+                )
             if decision.action == "ENTER_LONG":
                 self.enter_position(
                     "LONG",
@@ -13425,6 +13974,9 @@ _SIGNAL_GEN_WORKER_SPECS = [
     ("VolatilityBreakoutWorker", "Volatility Breakout", VOLATILITY_BREAKOUT_LOGIC,
      "VolatilityBreakoutSignalEngine", "build_volatility_breakout_with_indicators",
      "VolatilityBreakoutPositionContext", VOLATILITY_BREAKOUT_CONFIG, "VOLATILITY_BREAKOUT"),
+    ("RegimeAdaptiveWorker", "Regime Adaptive", REGIME_ADAPTIVE_LOGIC,
+     "RegimeAdaptiveSignalEngine", "build_regime_adaptive_with_indicators",
+     "RegimeAdaptivePositionContext", REGIME_ADAPTIVE_CONFIG, "REGIME_ADAPTIVE"),
 ]
 
 # Concrete worker classes, ready to instantiate in main().
@@ -13439,7 +13991,7 @@ SIGNAL_GEN_WORKERS = [_build_signal_gen_worker_class(*spec) for spec in _SIGNAL_
 # right <PREFIX>_LIVE_TRADING flag for it. Key = the worker's strategy_name.
 #
 # The first 11 entries are typed out by hand (their strategy_name is set on the
-# class); the 13 ported strategies are added automatically from their build
+# class); the 14 ported strategies are added automatically from their build
 # specs (spec[1] is the name, spec[7] is the prefix) so the two lists can never
 # drift out of sync.
 STRATEGY_ENV_PREFIX = {
@@ -13579,8 +14131,8 @@ if SL_HUNTING_AVAILABLE:
         # 5-min default. NOTE: the agent makes one LLM/subscription call PER completed bar,
         # so 1-min is ~5x the calls/usage of 5-min — raise this if usage/cost is a concern.
         derived_timeframe_minutes = _env_int("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", 1)
-        # Stop opening NEW positions at/after this time (default 12:00), mirroring the
-        # manual "no fresh trades after noon" rule. This does NOT square off open
+        # Stop opening NEW positions at/after this time (default 10:30), mirroring the
+        # manual no-fresh-entry cutoff. This does NOT square off open
         # positions -- only the existing square_off_* gate (15:15) force-closes; exits
         # (stop/target, AI exit, max-loss) keep working. See process_strategy_frame.
         no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10)
@@ -14575,7 +15127,7 @@ if SL_HUNTING_AVAILABLE:
                             self.exit_position(hit)
                         return
 
-            # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
+            # No NEW positions at/after the entry cutoff (default 10:30). If we are FLAT
             # past the cutoff, don't consult the agent at all -- it could only ENTER, and
             # skipping it also saves the per-bar LLM call all afternoon. An OPEN position
             # is unaffected: the per-poll stop/target above, a discretionary AI exit
@@ -15083,6 +15635,7 @@ _PNL_SHEET_ROW_LABELS = {
     "Stochastic Oscillator": "Stochastic Oscillator Strategy",
     "Supertrend": "Supertrend Strategy",
     "Volatility Breakout": "Volatility Breakout Strategy",
+    "Regime Adaptive": "Regime Adaptive Strategy",
     "SupertrendBullish": "Supertrend Bullish Strategy",
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
@@ -15093,11 +15646,25 @@ _PNL_SHEET_ROW_LABELS = {
 
 _PNL_LOG_LINE_RE = re.compile(r"RealizedPnL=(-?\d+(?:\.\d+)?)")
 _PNL_MODE_RE = re.compile(r"\bMode=(PAPER|LIVE|MIXED)\b")
+# Trade count from the same summary line. Used to stop a RESTARTED runner erasing
+# a finished session: on 2026-08-03 the process was restarted at ~15:29 and every
+# worker immediately logged "Trades=0 | RealizedPnL=0.00" at square-off, seven
+# minutes after the real figures. Under plain last-write-wins those zeros would
+# overwrite a full trading day.
+_PNL_TRADES_RE = re.compile(r"\bTrades=(\d+)\b")
 # Only result-summary lines inside this window are used for the sheet. Covers
-# max-loss during the session (from 9:15) through the last square-off (15:20)
-# while ignoring after-market test runs that log fresh summaries at 17:00+.
+# max-loss during the session (from 9:15) through shutdown, while ignoring
+# after-market test runs that log fresh summaries at 17:00+.
+#
+# The end is the market close. It was 15:21 until 2026-08-03, which left only
+# ONE MINUTE of margin after the 15:20 the summaries normally land at -- and that
+# day shutdown ran a little late, so 53 of the 54 summary lines fell outside the
+# window and were silently discarded. Exactly one cell reached the Sheet (SL
+# Hunting AI's, whose summary happened to be logged at 11:00). The guard itself
+# is worth keeping: without it an evening test run would overwrite a real
+# session's P&L. What was wrong was the margin, not the idea.
 _PNL_LOG_WINDOW_START = (9, 15)
-_PNL_LOG_WINDOW_END = (15, 21)
+_PNL_LOG_WINDOW_END = (15, 30)
 
 
 def _normalize_pnl_strategy_name(name: str) -> str:
@@ -15127,7 +15694,7 @@ def _asctime_in_pnl_window(asctime: str) -> bool:
     return start_minutes <= current_minutes <= end_minutes
 
 
-def _parse_eod_pnl_by_day(log_path) -> dict:
+def _parse_eod_pnl_by_day(log_path, today_str: str | None = None) -> dict:
     """
     Parse the runner's log for each strategy's end-of-day realised P&L per day.
 
@@ -15145,6 +15712,12 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
     "Misc " are normalized before lookup in _PNL_SHEET_ROW_LABELS.
     """
     result: dict[str, dict[str, float]] = {}
+    # Summary lines for TODAY that the window threw away. Counted so the drop can
+    # announce itself: on 2026-08-03 a late shutdown put 53 of 54 summaries past
+    # the cutoff and the only symptom was a Google Sheet that quietly stayed blank.
+    skipped_today = 0
+    if today_str is None:
+        today_str = datetime.now().date().isoformat()
     try:
         # A missing log (e.g. a brand-new machine) just means "no figures yet".
         if not Path(log_path).exists():
@@ -15167,6 +15740,8 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                 # Ignore lines logged outside trading hours (e.g. an after-market
                 # test run) so they can't overwrite the real session's figures.
                 if not _asctime_in_pnl_window(asctime):
+                    if asctime.strip()[:10] == today_str:
+                        skipped_today += 1
                     continue
                 # The date is the first 10 chars of asctime: "YYYY-MM-DD".
                 date_str = asctime.strip()[:10]
@@ -15190,17 +15765,44 @@ def _parse_eod_pnl_by_day(log_path) -> dict:
                     if not mode_match:
                         continue
                     mode = mode_match.group(1)
+                trades_match = _PNL_TRADES_RE.search(message)
+                trades = int(trades_match.group(1)) if trades_match else 0
                 try:
                     # Last write wins: a later summary for the same strategy/day
-                    # (e.g. a re-entry's final line) overwrites the earlier one.
-                    result.setdefault(date_str, {})[strategy] = {
+                    # (e.g. a re-entry's final line) overwrites the earlier one --
+                    # EXCEPT when the later line reports FEWER trades. A restarted
+                    # runner logs "Trades=0" for every worker as soon as it reaches
+                    # square-off, and those empty summaries must never erase the
+                    # session that already happened. Equal counts still overwrite,
+                    # so a genuine final line for the same run wins as before, and
+                    # a strategy that really did nothing still records 0.00.
+                    previous = result.setdefault(date_str, {}).get(strategy)
+                    if previous is not None and trades < previous.get("trades", 0):
+                        continue
+                    result[date_str][strategy] = {
                         "pnl": float(match.group(1)),
                         "mode": mode,
+                        "trades": trades,
                     }
                 except ValueError:
                     continue
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Could not parse P&L from the log file: %s", exc)
+    if skipped_today:
+        # Loud on purpose. The failure mode this replaces was invisible: the run
+        # looked clean and the Sheet simply did not fill in.
+        logger.warning(
+            "P&L SHEET: %d of today's result-summary lines fell OUTSIDE the "
+            "%02d:%02d-%02d:%02d window and were IGNORED, so those strategies will "
+            "not reach the Google Sheet. The figures are still in the log. This "
+            "usually means shutdown ran late; re-running the summary writer inside "
+            "the window will backfill them.",
+            skipped_today,
+            _PNL_LOG_WINDOW_START[0],
+            _PNL_LOG_WINDOW_START[1],
+            _PNL_LOG_WINDOW_END[0],
+            _PNL_LOG_WINDOW_END[1],
+        )
     return result
 
 
@@ -16250,12 +16852,13 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM single-leg family (22): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
+        "ATM single-leg family (23): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
         "ProfitShooter 5m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
         "PCR/VWAP/ATR, CPR 5m, CPR Algo 3 5m (multi-instrument); + 13 TradingBot ports (%dm) - SMA Crossover, "
         "Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, "
         "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
-        "RSI Reversal, Stochastic, Supertrend, Volatility Breakout. "
+        "RSI Reversal, Stochastic, Supertrend, Volatility Breakout; "
+        "+ Regime Adaptive (ADX router: opening-range breakout / VWAP fade). "
         "Hedged Puts family (2): Supertrend 3m PE, Donchian 5m CE. "
         "Delta-0.2 family (1): Delta20 09:20 reference, dual-side. "
         "Long Strangle family (1): 09:30 OTM1 CE+PE, two independent legs.",
@@ -16266,9 +16869,9 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) serves the core roster plus independently opt-in
-    # agents. Per-strategy virtual gates determine the final consumer set. The
-    # producer class comes from
+    # One producer (fetcher) serves the approximately 27 core consumers plus
+    # independently opt-in SL Hunting and CPR Codex AI agents. Per-strategy
+    # virtual gates determine the final consumer set. The producer class comes from
     # MARKET_DATA_SOURCE: REST polling (default) or the Dhan websocket feed;
     # unknown values fail closed to REST inside the selector.
     fetcher_cls = _select_market_data_fetcher_class()
@@ -16298,9 +16901,10 @@ def main() -> None:
         # the ATM CE/PE next-next expiry like the rest of this family.
         CPRAlgo3StrategyWorker(store, stop_event, broker),
     ]
-    # Same family, different source: the 13 TradingBot ports are ALSO
-    # AtmSingleLegStrategyWorker subclasses (built from a shared factory), so they
-    # belong here next to the core ATM strategies rather than in a family of their own.
+    # Same family, different sources: the 13 TradingBot ports and the Regime
+    # Adaptive router are ALSO AtmSingleLegStrategyWorker subclasses (built from a
+    # shared factory), so they belong here next to the core ATM strategies rather
+    # than in a family of their own.
     workers.extend(worker_cls(store, stop_event, broker) for worker_cls in SIGNAL_GEN_WORKERS)
 
     workers += [
@@ -16334,8 +16938,9 @@ def main() -> None:
             )
 
     # ----- CPR Codex AI agent (optional): independent five-minute worker.
-    # Ordinary CPR and CPR Algo 3 remain independently constructible and may run
-    # beside it; the shared startup audit and per-strategy gates apply normally.
+    # Ordinary CPR, CPR Algo 3, and Regime Adaptive remain independently
+    # constructible and may run beside it; the shared startup audit and
+    # per-strategy gates apply normally.
     if _env_bool("CPR_AI_ENABLED", False):
         cpr_ai_errors = _cpr_ai_startup_errors()
         if cpr_ai_errors:

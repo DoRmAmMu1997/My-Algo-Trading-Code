@@ -723,6 +723,77 @@ def test_do_order_sanitizes_and_truncates_exit_reason_without_blocking():
     assert len(recorded) == MAX_REASON_CHARS
 
 
+def test_slh009_entry_requires_a_note_check_when_a_note_applies():
+    """SLH-009: a pre-open note may not be passed over in silence.
+
+    On 2026-08-03 the agent faded a gap-up on a day its own note said gap-up means
+    do NOT target buyers, never mentioned the note at all, and was stopped in 27
+    seconds. Code cannot check COMPLIANCE -- which branch applies depends on the
+    open, which only the model can read -- but it can make silence impossible.
+    """
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex, premarket_note_active=True)
+    price = ctx.last_price
+
+    res = ctx.do_order(
+        "ENTER_LONG", stop=price - 30, target=price + 60,
+        reason="double bottom at the pivot with a confirmed hammer",
+    )
+    assert res["accepted"] is False
+    assert "note_check" in res["reason"]
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_slh009_contradicting_the_note_is_allowed():
+    """The note stays ADVISORY: disagreeing is a valid answer, not a refusal."""
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex, premarket_note_active=True)
+    price = ctx.last_price
+
+    res = ctx.do_order(
+        "ENTER_SHORT", stop=price + 30, target=price - 60,
+        reason="opening spike trapped fresh buyers; shooting star confirmed",
+        note_check="CONTRADICTS: note says gap-up means follow the gap, but the "
+                   "spike trapped buyers so I am fading it",
+    )
+    assert res["accepted"] is True
+    assert ex.snapshot()["in_position"] is True
+
+
+def test_slh009_rejects_a_verdict_without_a_branch():
+    """AGREES on its own does not prove the note was read."""
+    ex = StandaloneExecutor()
+    price = SLHuntingToolContext.build(_candles(), ex).last_price
+    for bad in ("AGREES", "MAYBE: the note is unclear", "   "):
+        ctx = SLHuntingToolContext.build(_candles(), ex, premarket_note_active=True)
+        res = ctx.do_order(
+            "ENTER_LONG", stop=price - 30, target=price + 60,
+            reason="double bottom at the pivot with a confirmed hammer",
+            note_check=bad,
+        )
+        assert res["accepted"] is False, bad
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_slh009_is_dormant_when_no_note_applies_and_never_blocks_an_exit():
+    """No note today -> nothing changes. And an EXIT is never gated on it."""
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex, premarket_note_active=False)
+    price = ctx.last_price
+    assert ctx.do_order(
+        "ENTER_LONG", stop=price - 30, target=price + 60,
+        reason="double bottom at the pivot with a confirmed hammer",
+    )["accepted"] is True
+
+    # Even with a note active, exits must never be refused for want of a note_check.
+    exit_ctx = SLHuntingToolContext.build(_candles(), ex, premarket_note_active=True)
+    out = exit_ctx.do_order(
+        "EXIT", stop=0.0, target=0.0, reason="premise invalidated; booking the loss"
+    )
+    assert out["accepted"] is True
+    assert ex.snapshot()["in_position"] is False
+
+
 def test_reason_bound_has_exactly_one_definition():
     """The tool and the executor must never disagree about what was recorded.
 

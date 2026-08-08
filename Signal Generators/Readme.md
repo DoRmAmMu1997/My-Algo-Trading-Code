@@ -11,6 +11,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 - GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
 - Claude Opus 4.8 Max: Ported 13 strategies from the public TradingBot project (the `Nifty * Signal Generator.py` files listed below) plus the shared `misc_strategy_common.py`, and wired them into the front-test master
 - Claude Opus 4.8 Max: Built the **SL Hunting AI Agent** (`SL Hunting AI Agent/`) — an LLM-driven strategy (a Claude agent), unlike the deterministic generators above (see its own README)
+- Codex: Built the independent, opt-in **CPR Codex AI Agent** (`CPR AI Agent/`) — a five-minute SRSI/VWAP worker whose host owns every mechanical risk and execution gate
 
 # Where each generator is used
 | File | Shape | Used by |
@@ -20,6 +21,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/Nifty CPR Algo 2 Signal Generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
 | `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
 | `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
+| `CPR AI Agent/` | Frozen five-minute context, four no-argument tools, Codex judgment, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
 | `Subhamoy Strategies/Nifty Goldmine Signal Generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
@@ -57,6 +59,50 @@ independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 | `Nifty Supertrend Signal Generator.py` | ATR-band Supertrend flip |
 | `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
 | `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
+
+# Regime Adaptive port (`Regime Adaptive Strategy/`) — different source project
+One more ATM single-leg worker, adapted from the MIT-licensed
+[`workratananmol-hub/nifty-options-paper-trading-bot`](https://github.com/workratananmol-hub/nifty-options-paper-trading-bot).
+Same factory, same `.env` prefix convention (`REGIME_ADAPTIVE_*`), same execution
+family — but it is a **router**, not a single rule. It reads ADX each bar and
+switches which rule applies:
+
+- ADX missing → **no trade** (it refuses to guess the regime)
+- ADX ≥ `REGIME_ADAPTIVE_ADX_TREND_THRESHOLD` → opening-range breakout, confirmed by VWAP
+- ADX below it → fade an extension away from VWAP
+
+Everything for it lives in its own folder, `Regime Adaptive Strategy/`:
+
+| File | Role |
+|---|---|
+| `Nifty Regime Adaptive Signal Generator.py` | the router — the only worker of the three |
+| `regime_candidates.py` | the two candidate rules, as pure column-producing functions |
+| `regime_common.py` | session date, session VWAP, session opening range — and this folder's **only** `sys.path` bootstrap, which is why it re-exports the shared indicators from `misc_strategy_common` one level up |
+| `conftest.py` | the pytest equivalent of that bootstrap (same pattern as `SL Hunting AI Agent/`) |
+| `REGIME_PORTING_NOTES.md` | **read before enabling live** — what was dropped and why |
+
+Two things to know before touching it:
+
+1. **The candidates are library code, deliberately.** They expose no
+   `Config`/`Engine`/`PositionContext`, have no env prefix and no P&L row, and are
+   absent from `test_trading_bot_ports.py`'s `PORTS` table. If either were also a
+   worker, it and the router could take the *same signal in the same session* —
+   real double size that the Google Sheet would not reveal.
+2. **VWAP here is a proxy.** The live feed carries no volume, so `vwap` is an
+   equal-weight session mean unless a `volume` column is present (backtests). Both
+   rules are VWAP-centric, so this is a genuine fidelity gap that no test catches;
+   every bar carries `vwap_is_proxy` to record which was used. Paper only until it
+   has several clean sessions.
+
+# CPR Codex AI Agent (`CPR AI Agent/`) — independent, opt-in worker
+This is not another deterministic CPR wrapper. `CPRAIWorker` freezes completed
+five-minute SRSI/VWAP context behind four no-argument tools, asks Codex for a
+regime/setup or premise-exit judgment, and then applies host-owned entry, sizing,
+time, lifecycle, and execution gates. It is disabled by default and live-disabled
+by default. Ordinary CPR, CPR Algo 3, Regime Adaptive, SL Hunting, and CPR AI have
+independent prefixes, workers, positions, and P&L and may coexist when their own
+enable and virtual-trading gates permit it. See `CPR AI Agent/README.md` for the
+isolation boundary and order-free synthetic smoke command.
 
 # SL Hunting AI Agent (`SL Hunting AI Agent/`) — LLM-driven, a different kind
 Unlike everything else in this folder (deterministic "DataFrame in → signal out" transforms,
