@@ -3,13 +3,16 @@
 The configuration below is data, not a trading integration.  It gives a child
 only the four frozen MCP reads and removes ambient credentials so an SDK issue
 cannot turn into a shell, web, workspace, or order capability.
+
+The subprocess import is intentional: callers and model input cannot choose
+the fixed local interpreter or child script passed to it.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import tempfile
 from collections.abc import Mapping
@@ -89,7 +92,8 @@ def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:
             text=True,
             capture_output=True,
             timeout=90,
-            shell=False,
+            # A list argv and shell=False disable shell expansion for every model-supplied request field.
+            shell=False,  # nosec B603
             cwd=temporary_directory,
             env=safe_subprocess_environment(),
             check=False,

@@ -3,12 +3,15 @@
 Every response in this module is a local fake.  These tests deliberately
 exercise the real host policy, never an SDK or broker, because a model proposal
 is untrusted input in a live-money system.
+
+The subprocess import only creates a local CompletedProcess fake; it never
+launches a user- or model-selected command.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 import time
