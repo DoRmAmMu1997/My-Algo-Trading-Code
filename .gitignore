@@ -34,3 +34,8 @@ Thumbs.db
 coverage.json
 coverage-*.json
 htmlcov/
+
+# Superpowers stores local agent plans, progress ledgers, and verification
+# reports here. They describe one development session rather than the product,
+# so keep the complete workspace-private directory out of source control.
+.superpowers/
