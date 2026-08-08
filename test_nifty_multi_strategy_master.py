@@ -9523,7 +9523,9 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             initial_filled_quantity=50,
         )
         worker._latest_frozen_context = lambda: {
-            "session_levels": {},
+            "session_levels": {
+                "prior_accepted_regime": worker._prior_accepted_regime,
+            },
             "momentum_vwap": {
                 "stochastic_rsi": {"cross_down": False, "cross_up": False},
                 "candle": {"close": 101.0},
@@ -10773,9 +10775,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
     def test_stale_scale_in_cannot_apply_to_a_replacement_position(self):
         """A decision frozen for a closed trade cannot add to its successor."""
 
-        worker, agent, _logger, outcome = self._scale_in_race_worker(
+        worker, agent, logger, outcome = self._scale_in_race_worker(
             "scale-in-replaced-position"
         )
+        worker._prior_accepted_regime = "SIDEWAYS"
+        outcome.accepted_regime = "TRENDING"
 
         def decide(*_args, **_kwargs):
             worker.pos = master_file.PaperPosition(
@@ -10821,6 +10825,22 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._place_real_leg.assert_not_called()
         self.assertEqual(worker.pos.symbol, "NIFTY-REPLACEMENT")
         self.assertFalse(worker._cpr_state.scale_in_used)
+        logger.write.assert_called_once()
+        self.assertEqual(
+            logger.write.call_args.kwargs["execution"],
+            {
+                "mode": "LIVE",
+                "submitted": False,
+                "status": "STALE_POSITION_RESPONSE",
+            },
+        )
+        self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
+        self.assertEqual(
+            worker._latest_frozen_context()["session_levels"][
+                "prior_accepted_regime"
+            ],
+            "SIDEWAYS",
+        )
 
     def test_scale_in_rejects_a_wide_locked_contract_spread_without_consuming_add(self):
         """The one-time add remains eligible when its locked quote is too wide."""

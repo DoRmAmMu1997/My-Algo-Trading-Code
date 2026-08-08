@@ -10048,7 +10048,15 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             bar_signature=bar_signature,
             current_signature=self._current_completed_spot_signature,
         )
-        if outcome.accepted_regime is not None:
+        stale_position_response = inference_position is not None and (
+            self.pos is not inference_position
+            or not self.pos.active
+            or self._cpr_state is not inference_trade_state
+        )
+        if not stale_position_response and outcome.accepted_regime is not None:
+            # A response belongs to the exact open position that was frozen.
+            # Closing or replacing that position makes every part stale,
+            # including accepted-regime memory used by the next model turn.
             self._prior_accepted_regime = outcome.accepted_regime
         # Audit before any exposure-increasing submission. If the disk/logger
         # fails, entry and scale-in fail closed; an already-open EXIT remains a
@@ -10065,13 +10073,19 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 execution={
                     "mode": "LIVE" if self.live_trading else "PAPER",
                     "submitted": False,
-                    "status": "AUDITED_BEFORE_EXECUTION",
+                    "status": (
+                        "STALE_POSITION_RESPONSE"
+                        if stale_position_response
+                        else "AUDITED_BEFORE_EXECUTION"
+                    ),
                 },
             )
         except Exception as exc:  # noqa: BLE001 - entries fail closed; exits continue
             audit_ok = False
             self.log.error("CPR AI decision audit failed (%s).", type(exc).__name__)
 
+        if stale_position_response:
+            return
         if not outcome.accepted:
             if inference_position is not None:
                 if (
