@@ -54,12 +54,15 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR agent is an optional, subscription-authenticated
-    # runtime. Keep its small compatibility set exact and reviewable.
+    # runtime. Keep its small compatibility set exact and reviewable. Both AI
+    # agents run inside the same master process, so they must also agree on the
+    # one MCP package version that Python can install into that environment.
     assert codex_ai == [
         "openai-codex==0.144.4",
-        "mcp==1.28.1",
+        "mcp==1.29.0",
         "pydantic==2.13.4",
     ]
+    assert "mcp==1.29.0" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
     assert any(
