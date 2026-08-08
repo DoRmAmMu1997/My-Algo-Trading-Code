@@ -1,4 +1,10 @@
-"""Build the versioned system prompt for CPR context judgment."""
+"""Assemble the versioned system prompt from small, auditable sections.
+
+The prompt teaches Codex how to interpret host-calculated facts; it does not
+grant execution authority.  Keeping role, tool, judgment, and output rules in
+separate constants makes future operator-approved knowledge easy to add
+without burying safety instructions inside runtime orchestration code.
+"""
 
 from __future__ import annotations
 
@@ -35,14 +41,20 @@ venue, order, or any execution field."""
 
 
 def build_system_prompt(*, operator_approved_knowledge: str = "", discretionary_context: str = "") -> str:
-    """Return the modular prompt with an operator-approved knowledge extension seam.
+    """Return one prompt while keeping future knowledge visibly separated.
 
     ``discretionary_context`` is a harmless compatibility alias while later
-    runtime work migrates callers to the explicit operator-approved name.
+    runtime work migrates callers to the explicit operator-approved name.  The
+    extension is appended as its own labeled section; it cannot silently
+    replace the fixed role, mandatory tools, or structured-output rules.
     """
 
+    # Prefer the explicitly approved field.  The alias exists only so an older
+    # caller does not need to change at the same time as this prompt API.
     knowledge = operator_approved_knowledge.strip() or discretionary_context.strip()
     sections = [_ROLE, _TOOLS, _JUDGMENT]
+    # Keeping discretionary prose in a separate section makes later reviews
+    # show exactly what changed without mixing it into permanent safety text.
     if knowledge:
         sections.append("FUTURE OPERATOR-APPROVED KNOWLEDGE\n" + knowledge)
     sections.append(_OUTPUT)

@@ -1,4 +1,9 @@
-"""Small host-facing adapters for the independently calculated CPR context."""
+"""Provide the master worker with one small context-building entry point.
+
+This facade keeps the master runner unaware of indicator implementation and
+snapshot serialization details.  It calls only this independent CPR AI package;
+the three legacy CPR strategy generators are not imported or consulted.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +22,15 @@ def freeze_cpr_context(
     prior_accepted_regime: str | None = None,
     as_of: datetime | None = None,
 ) -> FrozenCPRContextRegistry:
-    """Build and freeze one CPR context without invoking a strategy generator."""
+    """Calculate and freeze all four tool payloads for one decision turn.
 
+    ``as_of`` gives the host one authoritative completed-minute cutoff.  The
+    same cutoff is used for calculations and for the immutable snapshot, so a
+    forming candle cannot slip into one layer but not the other.
+    """
+
+    # Build first, then serialize immediately.  Codex never receives live
+    # references to the shared DataFrame or position dictionary.
     return FrozenCPRContextRegistry(
         build_cpr_context(
             one_minute_candles,
