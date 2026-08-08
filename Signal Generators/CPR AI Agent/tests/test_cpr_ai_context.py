@@ -1,7 +1,11 @@
-"""Specify the independent five-minute CPR context supplied to the CPR agent.
+"""Specify the independent deterministic context supplied to the CPR agent.
 
-The fixtures use deliberately hand-derived prices.  They do not call any CPR
-Strategy helper, which proves this replacement layer owns its own calculations.
+The fixtures use deliberately hand-derived one-minute prices and explicit IST
+clocks. They never call an older CPR Strategy helper, which proves this package
+owns completed-bar, CPR-level, indicator, structure, and snapshot calculations.
+Literal Wilder/StochRSI values protect against substituting a similar-looking
+pandas formula, while duplicate/missing/forming-minute cases protect live
+completed-bar cadence.
 """
 
 from __future__ import annotations
@@ -27,7 +31,12 @@ from pydantic import ValidationError
 
 
 def _minute_rows(start: datetime, closes: list[float], *, volume: float | None = None) -> list[dict[str, object]]:
-    """Create one-minute candles whose OHLC values are easy to verify by hand."""
+    """Create simple one-minute candles with predictable OHLC and timestamps.
+
+    Each close gets a fixed half-point open and one-point high/low envelope, so
+    resampled values can be checked without reproducing production calculations
+    inside the test helper. Individual tests overwrite only the fact they need.
+    """
 
     rows: list[dict[str, object]] = []
     for offset, close in enumerate(closes):
@@ -45,7 +54,12 @@ def _minute_rows(start: datetime, closes: list[float], *, volume: float | None =
 
 
 def _two_session_frame() -> pd.DataFrame:
-    """Return a prior session plus enough current bars for all indicators."""
+    """Return hand-shaped prior-day levels plus a fully warmed current session.
+
+    The previous session fixes H/L/C at 110/90/105 for literal CPR assertions.
+    The current monotonic sequence provides enough completed bars for RSI,
+    StochRSI, EMA, VWAP, opening ranges, and swing calculations.
+    """
 
     previous = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30)
     # Hand-set the previous-day extremes and closing price used by CPR math.
@@ -206,7 +220,11 @@ def test_srsi_literal_crosses_report_their_direction_and_matching_zone_flags():
     previous = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30)
 
     def srsi_for_completed_bars(count: int) -> dict[str, object]:
-        """Build a repeatable five-minute close fixture without reusing production helpers."""
+        """Expand literal five-minute closes into independent one-minute input.
+
+        Repeating each close five times makes the resampled close obvious while
+        still exercising the real completion and indicator pipeline.
+        """
 
         five_minute_closes = [100.0 + 10.0 * sin(index * 0.65) for index in range(count)]
         current_minutes = _minute_rows(

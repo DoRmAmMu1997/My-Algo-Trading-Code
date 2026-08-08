@@ -1,4 +1,10 @@
-"""Cover detailed deterministic policy rejections for the CPR Codex boundary."""
+"""Exercise each deterministic host-policy gate with one-fact mutations.
+
+The baseline context is deliberately valid for a long trend entry. Parameterized
+tests change one frozen fact at a time, making a failure code attributable to a
+specific gate rather than to model prose or a second accidental invalid value.
+No broker, SDK, market feed, or order path is present in this module.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +15,12 @@ from cpr_ai_schema import CPRAgentDecision
 
 
 def _context() -> dict[str, dict[str, object]]:
-    """Return a long-valid context with literal prices and indicator gates."""
+    """Return a minimal long-valid snapshot with literal deterministic facts.
+
+    Entry 100, candle stop 95, buffered R1 108, and buffered R2 118 make the
+    accepted geometry easy to reason about. Every other field is the smallest
+    true value needed for the policy path under test.
+    """
 
     return {
         "session_levels": {
@@ -46,7 +57,7 @@ def _context() -> dict[str, dict[str, object]]:
 
 
 def _proposal(action: str, regime: str, setup: str) -> CPRAgentDecision:
-    """Return a model classification that contains no execution geometry."""
+    """Build a strict advisory proposal containing no price, size, or order data."""
 
     return CPRAgentDecision(
         action=action,

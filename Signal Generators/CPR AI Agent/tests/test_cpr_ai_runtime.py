@@ -1,11 +1,14 @@
 """Specify the isolated four-tool Codex runtime and host safety policy.
 
-Every response in this module is a local fake.  These tests deliberately
-exercise the real host policy, never an SDK or broker, because a model proposal
-is untrusted input in a live-money system.
+Every model response in this module is a local deterministic fake. The tests
+exercise the real schema, tool-evidence gate, host policy, deadline behavior,
+auth-only profile builder, and JSONL sanitizer without authenticating an SDK or
+touching a broker. This matters because model output and child-process output
+are both untrusted inputs in a live-money system.
 
-The subprocess import only creates a local CompletedProcess fake; it never
-launches a user- or model-selected command.
+The subprocess import is used only with a monkeypatched ``subprocess.run`` that
+returns a local ``CompletedProcess``. No test launches a user- or model-selected
+command, makes a network request, or creates an order.
 """
 
 from __future__ import annotations
@@ -37,7 +40,8 @@ def _context(*, is_flat: bool = True, direction: str | None = None) -> dict[str,
     """Return a hand-authored frozen bar with every required host fact.
 
     The values make a long continuation valid: close 100, stop 95, the next
-    buffered R1 milestone at 108, and a final R2 target at 118.
+    buffered R1 milestone at 108, and a final R2 target at 118. Tests mutate
+    only the boundary they name so rejection codes remain diagnostic.
     """
 
     return {
@@ -83,7 +87,7 @@ def _context(*, is_flat: bool = True, direction: str | None = None) -> dict[str,
 
 
 def _proposal(action: str, regime: str, setup: str) -> CPRAgentDecision:
-    """Build a schema-valid model classification with no execution data."""
+    """Build a schema-valid advisory classification with no execution fields."""
 
     return CPRAgentDecision(
         action=action,
@@ -97,7 +101,12 @@ def _proposal(action: str, regime: str, setup: str) -> CPRAgentDecision:
 
 
 def _calls(*, missing: str | None = None, failed: str | None = None, unexpected: bool = False):
-    """Create complete or intentionally defective MCP-call evidence."""
+    """Create exact or deliberately defective four-tool evidence.
+
+    ``missing`` omits an expected read, ``failed`` preserves its name with a
+    failed status, and ``unexpected`` appends a forbidden shell attempt. This
+    isolates the host's three distinct evidence failures.
+    """
 
     records = [
         CPRToolCallRecord(tool=name, status="failed" if name == failed else "completed")
@@ -110,7 +119,12 @@ def _calls(*, missing: str | None = None, failed: str | None = None, unexpected:
 
 
 def _runner(proposal: CPRAgentDecision, *, calls=None, delay: float = 0.0):
-    """Return an injected, deterministic SDK stand-in."""
+    """Return a deterministic SDK stand-in with optional latency/evidence.
+
+    The closure accepts the same keyword surface as the real adapter but returns
+    only local JSON and call records, so cadence and timeout behavior are tested
+    without an authenticated model call.
+    """
 
     def run(**_kwargs):
         if delay:

@@ -3295,7 +3295,12 @@ class TestExecutionModeResults(unittest.TestCase):
         self.assertEqual(unmatched, [])
 
     def test_cpr_ai_paper_live_and_mixed_results_reach_their_dedicated_rows(self):
-        """The optional P&L-producing worker must map every execution mode to a numeric row."""
+        """Route CPR AI PAPER, LIVE, and MIXED totals to three distinct rows.
+
+        The log text is synthetic, but it follows the real end-of-day summary
+        format. Distinct row indices prove a broker-backed result cannot silently
+        overwrite the paper strategy's historical series.
+        """
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "runner.log"
@@ -9435,10 +9440,20 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
 
 
 class TestCPRAIWorkerFoundation(unittest.TestCase):
-    """Specify the independent CPR AI worker before trade-management details."""
+    """Specify CPR AI cadence, mechanics, provenance, and live-ledger safety.
+
+    All agent decisions, market frames, broker outcomes, and clocks are local
+    fakes. The class intentionally exercises the real master worker while
+    preventing network, authenticated Codex, or real order activity.
+    """
 
     def setUp(self):
-        """Pin ordinary worker tests to a deterministic, pre-cutoff IST time."""
+        """Pin every test to a deterministic healthy 10:00 IST session clock.
+
+        Individual cutoff/square-off tests override this patch explicitly. The
+        shared default prevents wall-clock test runs after 15:00 from changing
+        worker behavior.
+        """
 
         safe_now = datetime(2026, 8, 3, 10, 0, tzinfo=master_file.IST_TIMEZONE)
         self._ist_now_patcher = patch.object(
@@ -9450,7 +9465,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.addCleanup(self._ist_now_patcher.stop)
 
     def _worker(self):
-        """Build a network-free worker with injected agent and audit logger."""
+        """Build a network-free worker whose default decision is advisory HOLD.
+
+        Agent and logger mocks are returned with the worker so each test can
+        assert cadence/audit calls or replace only the outcome fields it needs.
+        """
 
         agent = MagicMock()
         agent.decide.return_value = SimpleNamespace(
@@ -9492,7 +9511,13 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         closing_started=False,
         close_price=0.0,
     ):
-        """Build one immutable execution-ledger snapshot for CPR AI tests."""
+        """Build a live-leg ledger with controllable fill and close certainty.
+
+        Role ``N`` represents the primary leg and role ``A`` the one-time add.
+        ``filled`` models opening fills, ``confirmed`` models remaining broker
+        exposure after a close, and ``indeterminate`` exercises conservative
+        reconciliation/MTM behavior.
+        """
 
         target = 50
         confirmed_quantity = filled if confirmed is None else confirmed
@@ -9527,7 +9552,12 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         )
 
     def _scale_in_race_worker(self, signature):
-        """Build one open live position ready for an accepted scale-in turn."""
+        """Build an open live long poised at the post-inference scale-in gate.
+
+        The frozen context is intentionally minimal and hand-authored: these
+        race tests isolate lifecycle/health/spot changes after inference rather
+        than retesting deterministic indicator calculations.
+        """
 
         worker, agent, logger = self._worker()
         worker.live_trading = True
@@ -9638,7 +9668,13 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         logger.write.assert_called_once()
 
     def test_forming_websocket_minute_waits_for_close_and_true_up_never_repeats_bucket(self):
-        """09:19 revisions cannot infer; 09:20 infers once; a later true-up stays consumed."""
+        """Model forming websocket revisions and an official REST correction.
+
+        The same 09:19 start-stamped row changes while its minute is open, so
+        neither revision may complete the 09:15 bucket. At 09:20 the bucket may
+        infer once. A later official OHLC true-up changes content freshness but
+        must not create a second turn for that already-consumed bucket identity.
+        """
 
         worker, agent, _logger = self._worker()
         worker._latest_frozen_context = lambda: {
@@ -10819,7 +10855,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         )
 
     def test_stop_and_lifecycle_are_rechecked_after_inference(self):
-        """A shutdown transition during a slow turn blocks the late entry."""
+        """A stop-event or lifecycle shutdown during inference blocks entry.
+
+        The two transitions use one matrix because they share the exposure
+        boundary but must retain distinct audit reasons for operations review.
+        """
 
         for transition, expected_reason in (
             ("stop_event", "stop_event"),
@@ -10871,7 +10911,12 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 )
 
     def test_scale_in_rechecks_exposure_gates_after_inference(self):
-        """A late host-gate transition cannot submit an add."""
+        """Any exposure gate changing during inference blocks the role-A add.
+
+        This matrix holds the accepted proposal and open position constant while
+        changing one mutable host gate at a time. It isolates the post-inference
+        recheck from deterministic setup validation and broker submission.
+        """
 
         for transition, expected_reason in (
             ("stop_event", "stop_event"),
