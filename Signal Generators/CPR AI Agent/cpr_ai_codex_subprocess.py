@@ -33,7 +33,7 @@ def build_isolated_thread_config(snapshot_path: str, python_executable: str = sy
         "mcp_servers": {
             "cpr_ai": {
                 "command": python_executable,
-                "args": [str(Path(__file__).with_name("cpr_ai_mcp_server.py")), "--snapshot", snapshot_path],
+                "args": [str(Path(__file__).with_name("cpr_ai_mcp_server.py")), snapshot_path],
                 "required": True,
                 "enabled_tools": list(_EXPECTED_TOOLS),
                 "default_tools_approval_mode": "approve",

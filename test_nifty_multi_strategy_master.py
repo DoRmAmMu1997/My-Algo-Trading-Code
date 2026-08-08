@@ -9533,6 +9533,18 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         }
         worker._completed_bar_signature = lambda _frame: signature
         worker._current_completed_spot_signature = lambda: signature
+        worker.store.update_ltp_map(
+            {
+                (
+                    master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    master_file.NIFTY_INDEX_SECURITY_ID,
+                ): 101.0,
+                (
+                    worker.pos.option_exchange_segment,
+                    worker.pos.option_security_id,
+                ): 10.0,
+            }
+        )
         worker._get_dealable_option_ltp = MagicMock(return_value=(11.0, True))
         worker._place_real_leg = MagicMock()
         outcome = agent.decide.return_value
@@ -10669,7 +10681,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 self.assertFalse(worker._cpr_state.scale_in_used)
                 self.assertEqual(worker._cpr_state.add_quantity, 0)
                 self.assertIsNone(worker._cpr_state.add_live_leg)
-                worker._place_real_leg.assert_not_called()
+                for call in worker._place_real_leg.call_args_list:
+                    self.assertFalse(call.kwargs["opens_exposure"])
                 self.assertEqual(
                     logger.write.call_args.kwargs["execution"],
                     {
@@ -10679,6 +10692,199 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                         "blocked_reason": expected_reason,
                     },
                 )
+
+    def test_scale_in_rechecks_fresh_spot_stop_after_inference(self):
+        """A stop crossed during a slow turn exits instead of adding exposure."""
+
+        worker, agent, _logger, outcome = self._scale_in_race_worker(
+            "scale-in-late-stop"
+        )
+        state = worker._cpr_state
+        worker.store.update_ltp_map(
+            {
+                (
+                    master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    master_file.NIFTY_INDEX_SECURITY_ID,
+                ): 101.0,
+                (
+                    worker.pos.option_exchange_segment,
+                    worker.pos.option_security_id,
+                ): 10.0,
+            }
+        )
+
+        def decide(*_args, **_kwargs):
+            worker.store.update_ltp_map(
+                {
+                    (
+                        master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                        master_file.NIFTY_INDEX_SECURITY_ID,
+                    ): 94.0
+                }
+            )
+            return outcome
+
+        def exit_position(_reason):
+            worker.pos.active = False
+            worker._cpr_state = None
+
+        agent.decide.side_effect = decide
+        worker.exit_position = MagicMock(side_effect=exit_position)
+
+        worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
+
+        worker.exit_position.assert_called_once_with("CPR_AI_HARD_STOP")
+        worker._place_real_leg.assert_not_called()
+        self.assertFalse(worker.pos.active)
+        self.assertFalse(state.scale_in_used)
+
+    def test_scale_in_rechecks_fresh_max_loss_after_inference(self):
+        """A mark loss incurred during inference flattens before any add."""
+
+        worker, agent, _logger, outcome = self._scale_in_race_worker(
+            "scale-in-late-max-loss"
+        )
+        state = worker._cpr_state
+        worker.max_loss = 400.0
+        option_key = (
+            worker.pos.option_exchange_segment,
+            worker.pos.option_security_id,
+        )
+        worker.store.update_ltp_map({option_key: 10.0})
+
+        def decide(*_args, **_kwargs):
+            worker.store.update_ltp_map({option_key: 1.0})
+            return outcome
+
+        def handle_max_loss(_total_pnl, _open_pnl):
+            worker.pos.active = False
+            worker._cpr_state = None
+
+        agent.decide.side_effect = decide
+        worker.handle_max_loss_and_stop = MagicMock(side_effect=handle_max_loss)
+
+        worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
+
+        worker.handle_max_loss_and_stop.assert_called_once_with(-450.0, -450.0)
+        worker._place_real_leg.assert_not_called()
+        self.assertFalse(worker.pos.active)
+        self.assertFalse(state.scale_in_used)
+
+    def test_stale_scale_in_cannot_apply_to_a_replacement_position(self):
+        """A decision frozen for a closed trade cannot add to its successor."""
+
+        worker, agent, _logger, outcome = self._scale_in_race_worker(
+            "scale-in-replaced-position"
+        )
+
+        def decide(*_args, **_kwargs):
+            worker.pos = master_file.PaperPosition(
+                active=True,
+                direction="LONG",
+                symbol="NIFTY-REPLACEMENT",
+                quantity=50,
+                entry_trade_price=20.0,
+                option_security_id=456,
+                option_exchange_segment="NSE_FNO",
+                option_right="CE",
+                option_strike=25100.0,
+                option_expiry=date(2026, 8, 13),
+                live_leg=self._live_state("N", entry_price=20.0),
+            )
+            worker._cpr_state = master_file.CPRAITradeState(
+                original_entry_price=110.0,
+                original_risk_points=5.0,
+                original_protective_stop=105.0,
+                current_hard_stop=105.0,
+                first_milestone=115.0,
+                following_milestone=120.0,
+                final_target=128.0,
+                premise="TRENDING_VWAP_CONTINUATION",
+                accepted_regime="TRENDING",
+                initial_filled_quantity=50,
+            )
+            worker.store.update_ltp_map(
+                {
+                    ("NSE_FNO", 456): 20.0,
+                    (
+                        master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                        master_file.NIFTY_INDEX_SECURITY_ID,
+                    ): 110.0,
+                }
+            )
+            return outcome
+
+        agent.decide.side_effect = decide
+
+        worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
+
+        worker._place_real_leg.assert_not_called()
+        self.assertEqual(worker.pos.symbol, "NIFTY-REPLACEMENT")
+        self.assertFalse(worker._cpr_state.scale_in_used)
+
+    def test_scale_in_rejects_a_wide_locked_contract_spread_without_consuming_add(self):
+        """The one-time add remains eligible when its locked quote is too wide."""
+
+        master_file._option_chain_quote_cache.clear()
+        self.addCleanup(master_file._option_chain_quote_cache.clear)
+        worker, _agent, _logger, _outcome = self._scale_in_race_worker(
+            "scale-in-wide-spread"
+        )
+        worker.max_spread_pct = 2.0
+        worker.min_liquidity_score = 0.0
+        worker.broker.fetch_option_chain.return_value = {
+            "status": "success",
+            "data": {
+                "oc": {
+                    "25000.000000": {
+                        "ce": {
+                            "top_bid_price": 90.0,
+                            "top_ask_price": 110.0,
+                            "oi": 5000,
+                        }
+                    }
+                }
+            },
+        }
+
+        self.assertFalse(worker._execute_scale_in())
+
+        worker._place_real_leg.assert_not_called()
+        self.assertFalse(worker._cpr_state.scale_in_used)
+        self.assertEqual(worker._cpr_state.add_quantity, 0)
+        self.assertEqual(worker._cpr_state.add_entry_trade_price, 0.0)
+
+    def test_scale_in_rejects_failed_liquidity_score_without_consuming_add(self):
+        """An illiquid chain cannot consume or submit the one-time add."""
+
+        master_file._option_chain_quote_cache.clear()
+        self.addCleanup(master_file._option_chain_quote_cache.clear)
+        worker, _agent, _logger, _outcome = self._scale_in_race_worker(
+            "scale-in-low-liquidity"
+        )
+        worker.max_spread_pct = 0.0
+        worker.min_liquidity_score = 30.0
+        worker.broker.fetch_option_chain.return_value = {
+            "status": "success",
+            "data": {
+                "oc": {
+                    "25000.000000": {
+                        "ce": {
+                            "top_bid_price": 90.0,
+                            "top_ask_price": 110.0,
+                            "oi": 100,
+                        }
+                    }
+                }
+            },
+        }
+
+        self.assertFalse(worker._execute_scale_in())
+
+        worker._place_real_leg.assert_not_called()
+        self.assertFalse(worker._cpr_state.scale_in_used)
+        self.assertEqual(worker._cpr_state.add_quantity, 0)
+        self.assertEqual(worker._cpr_state.add_entry_trade_price, 0.0)
 
     def test_post_inference_exposure_gate_does_not_block_exit(self):
         """Risk-reducing EXIT remains fail-open when entry gates close."""

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import cpr_ai_codex_runner as codex_runner
 import cpr_ai_codex_subprocess as codex_child
+import cpr_ai_mcp_server as mcp_server
 import pytest
 from cpr_ai_agent import CPRAgent, CPRAgentRunResult, CPRHostPolicy, CPRToolCallRecord
 from cpr_ai_codex_runner import build_codex_thread_config, safe_subprocess_environment
@@ -163,6 +164,30 @@ def test_runtime_configuration_is_read_only_and_sanitizes_credentials(tmp_path):
     assert config["features"]["multi_agent"] is False
     assert config["web_search"] == "disabled"
     assert config["mcp_servers"]["cpr_ai"]["enabled_tools"] == list(EXPECTED_TOOL_NAMES)
+
+
+def test_generated_mcp_command_reaches_the_real_server_parser(tmp_path, monkeypatch):
+    """Generated MCP arguments must launch the four-tool frozen server."""
+
+    snapshot_path = tmp_path / "snapshot.json"
+    snapshot_path.write_text(json.dumps(_context()), encoding="utf-8")
+    config = build_codex_thread_config(
+        str(snapshot_path), sys.executable, str(tmp_path)
+    )
+    command = config["mcp_servers"]["cpr_ai"]
+    observed = {}
+
+    def fake_run(server, *, transport):
+        observed["transport"] = transport
+        observed["tools"] = tuple(server._tool_manager._tools)
+
+    monkeypatch.setattr("mcp.server.fastmcp.FastMCP.run", fake_run)
+
+    assert mcp_server.main(command["args"][1:]) == 0
+    assert observed == {
+        "transport": "stdio",
+        "tools": EXPECTED_TOOL_NAMES,
+    }
 
 
 def test_real_runner_uses_a_sanitized_subprocess_and_parses_only_structured_evidence(monkeypatch):

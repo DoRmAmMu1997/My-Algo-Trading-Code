@@ -9694,6 +9694,24 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         primary_is_live = isinstance(self.pos.live_leg, LiveLegState)
         if mark <= 0 or (primary_is_live and not mark_is_fresh):
             return False
+        # An add increases exposure in the same locked contract, so it must pass
+        # the same current market-quality checks as the original entry. Keep the
+        # one-use flag untouched when either gate rejects; a later completed bar
+        # may reconsider the still-unused add after market quality recovers.
+        if not self._spread_gate_allows_entry(
+            self.pos.direction,
+            self.pos.symbol,
+            self.pos.option_strike,
+            self.pos.option_right,
+            self.pos.option_expiry,
+        ):
+            return False
+        if not self._liquidity_gate_allows_entry(
+            self.pos.direction,
+            self.pos.symbol,
+            self.pos.option_expiry,
+        ):
+            return False
         if not primary_is_live:
             # Paper has no ambiguous submission. Consume the one add only when
             # a real mark exists and the bookkeeping can be completed. This
@@ -10020,6 +10038,11 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         frozen_context = self._latest_frozen_context()
         if self.pos.active and self._manage_completed_bar(frozen_context):
             return
+        # Keep the exact position objects that the frozen context described.
+        # Reconciliation may complete on another thread while inference waits;
+        # in that case its eventual response belongs to an obsolete position.
+        inference_position = self.pos if self.pos.active else None
+        inference_trade_state = self._cpr_state if self.pos.active else None
         outcome = self.agent.decide(
             frozen_context,
             bar_signature=bar_signature,
@@ -10050,8 +10073,24 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             self.log.error("CPR AI decision audit failed (%s).", type(exc).__name__)
 
         if not outcome.accepted:
+            if inference_position is not None:
+                if (
+                    self.pos is not inference_position
+                    or not self.pos.active
+                    or self._cpr_state is not inference_trade_state
+                ):
+                    return
+                # Even a rejected/failed model turn took wall-clock time. Reuse
+                # the normal safety path so shutdown, max-loss, square-off,
+                # stale-feed liquidation, and fresh spot boundaries run now.
+                self._run_prebar_safety()
             return
         if self.pos.active:
+            if inference_position is None or (
+                self.pos is not inference_position
+                or self._cpr_state is not inference_trade_state
+            ):
+                return
             if outcome.action == "EXIT":
                 self.exit_position("CPR_AI_PREMISE_EXIT")
                 self._write_final_execution(
@@ -10063,7 +10102,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                         "status": "EXIT_CONFIRMED" if not self.pos.active else "EXIT_UNCONFIRMED",
                     },
                 )
-            elif outcome.action == "SCALE_IN" and audit_ok:
+                return
+            if outcome.action == "SCALE_IN" and audit_ok:
                 blocked_reason = self._post_inference_exposure_block_reason()
                 if blocked_reason:
                     self._write_final_execution(
@@ -10076,23 +10116,33 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                             "blocked_reason": blocked_reason,
                         },
                     )
-                else:
-                    confirmed = self._execute_scale_in()
-                    self._write_final_execution(
-                        frozen_context,
-                        outcome,
-                        {
-                            "mode": self._position_execution_mode(),
-                            "submitted": bool(
-                                self._cpr_state and self._cpr_state.scale_in_used
-                            ),
-                            "status": (
-                                "SCALE_IN_CONFIRMED"
-                                if confirmed
-                                else "SCALE_IN_UNCONFIRMED"
-                            ),
-                        },
-                    )
+                    # A closed exposure gate prevents the add immediately. The
+                    # normal safety pass also performs any associated lifecycle,
+                    # square-off, or stale-feed flattening before this turn ends.
+                    self._run_prebar_safety()
+                    return
+            # Inference may take up to the configured timeout. Run the normal
+            # mechanical safety sequence again with fresh shared-market facts
+            # before honoring HOLD or any exposure-increasing scale-in.
+            if self._run_prebar_safety():
+                return
+            if outcome.action == "SCALE_IN" and audit_ok:
+                confirmed = self._execute_scale_in()
+                self._write_final_execution(
+                    frozen_context,
+                    outcome,
+                    {
+                        "mode": self._position_execution_mode(),
+                        "submitted": bool(
+                            self._cpr_state and self._cpr_state.scale_in_used
+                        ),
+                        "status": (
+                            "SCALE_IN_CONFIRMED"
+                            if confirmed
+                            else "SCALE_IN_UNCONFIRMED"
+                        ),
+                    },
+                )
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
             return
