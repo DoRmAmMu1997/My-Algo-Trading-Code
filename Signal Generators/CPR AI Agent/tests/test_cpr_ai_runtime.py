@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from enum import Enum
+from pathlib import Path
 from types import SimpleNamespace
 
 import cpr_ai_codex_runner as codex_runner
@@ -150,23 +151,136 @@ def test_agent_rejects_incomplete_or_unexpected_four_tool_evidence(missing, fail
 def test_runtime_configuration_is_read_only_and_sanitizes_credentials(tmp_path):
     """A child gets no execution surface or trading/API credentials."""
 
+    isolated_home = tmp_path / "isolated-codex-home"
+    profile_home = tmp_path / "isolated-profile"
     safe = safe_subprocess_environment(
         {
             "PATH": "safe",
             "SYSTEMROOT": "windows",
+            "HOME": "operator-home",
+            "USERPROFILE": "operator-profile",
+            "APPDATA": "operator-appdata",
+            "LOCALAPPDATA": "operator-local-appdata",
+            "CODEX_HOME": "operator-codex-home",
             "DHAN_ACCESS_TOKEN": "secret",
             "OPENAI_API_KEY": "key",
             "LIVE_TRADING_ENABLED": "true",
-        }
+        },
+        codex_home=isolated_home,
+        profile_home=profile_home,
     )
     config = build_codex_thread_config(str(tmp_path / "snapshot.json"), "python.exe", str(tmp_path))
 
-    assert safe == {"PATH": "safe", "SYSTEMROOT": "windows"}
-    assert config["features"]["shell_tool"] is False
-    assert config["features"]["unified_exec"] is False
-    assert config["features"]["multi_agent"] is False
+    assert safe == {
+        "SYSTEMROOT": "windows",
+        "CODEX_HOME": str(isolated_home),
+        "HOME": str(profile_home),
+        "USERPROFILE": str(profile_home),
+        "APPDATA": str(profile_home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(profile_home / "AppData" / "Local"),
+        "TEMP": str(profile_home / "Temp"),
+        "TMP": str(profile_home / "Temp"),
+    }
+    assert set(config["features"]) == {
+        "apps",
+        "browser_use",
+        "browser_use_external",
+        "collab",
+        "collaboration_modes",
+        "computer_use",
+        "connectors",
+        "enable_mcp_apps",
+        "in_app_browser",
+        "multi_agent",
+        "plugin_sharing",
+        "plugins",
+        "remote_plugin",
+        "shell_tool",
+        "skill_mcp_dependency_install",
+        "skill_search",
+        "tool_search",
+        "unified_exec",
+    }
+    assert all(value is False for value in config["features"].values())
     assert config["web_search"] == "disabled"
     assert config["mcp_servers"]["cpr_ai"]["enabled_tools"] == list(EXPECTED_TOOL_NAMES)
+
+
+def test_auth_only_codex_home_copies_one_artifact_and_excludes_ambient_capabilities(tmp_path):
+    """Config, MCP, plugin, skill, app, and rule sentinels cannot enter the child home."""
+
+    source_home = tmp_path / "operator-codex-home"
+    source_home.mkdir()
+    (source_home / "auth.json").write_text('{"tokens":"sentinel-auth"}', encoding="utf-8")
+    (source_home / "config.toml").write_text('[mcp_servers.sentinel]', encoding="utf-8")
+    for name in ("mcp", "plugins", "skills", "apps", "rules"):
+        directory = source_home / name
+        directory.mkdir()
+        (directory / "sentinel.txt").write_text(name, encoding="utf-8")
+
+    isolated_home = codex_runner.create_auth_only_codex_home(
+        source_home,
+        tmp_path / "runtime-root",
+    )
+
+    assert isolated_home != source_home
+    assert [path.relative_to(isolated_home) for path in isolated_home.rglob("*")] == [Path("auth.json")]
+    assert (isolated_home / "auth.json").read_text(encoding="utf-8") == '{"tokens":"sentinel-auth"}'
+
+
+def test_process_auth_home_is_copy_once_and_preserves_child_refresh(tmp_path, monkeypatch):
+    """Later turns reuse a child refresh instead of recopying stale operator auth."""
+
+    source_home = tmp_path / "operator-codex-home"
+    source_home.mkdir()
+    (source_home / "auth.json").write_text('{"state":"operator-original"}', encoding="utf-8")
+    monkeypatch.setattr(codex_runner, "_operator_codex_home", lambda: source_home)
+    codex_runner._cleanup_process_codex_home()
+    try:
+        first_home = codex_runner.process_isolated_codex_home()
+        (first_home / "auth.json").write_text('{"state":"child-refreshed"}', encoding="utf-8")
+
+        second_home = codex_runner.process_isolated_codex_home()
+
+        assert second_home == first_home
+        assert (second_home / "auth.json").read_text(encoding="utf-8") == '{"state":"child-refreshed"}'
+        assert (source_home / "auth.json").read_text(encoding="utf-8") == '{"state":"operator-original"}'
+    finally:
+        codex_runner._cleanup_process_codex_home()
+
+
+def test_missing_auth_fails_before_the_isolated_subprocess_can_launch(tmp_path, monkeypatch):
+    """No ambient profile fallback is permitted when subscription auth cannot be isolated."""
+
+    source_home = tmp_path / "missing-auth-home"
+    source_home.mkdir()
+    with pytest.raises(RuntimeError, match="authentication"):
+        codex_runner.create_auth_only_codex_home(source_home, tmp_path / "runtime-root")
+
+    launched = False
+
+    def fake_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("subprocess must not launch")
+
+    monkeypatch.setattr(codex_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        codex_runner,
+        "process_isolated_codex_home",
+        lambda: (_ for _ in ()).throw(RuntimeError("authentication isolation unavailable")),
+        raising=False,
+    )
+    with pytest.raises(RuntimeError, match="authentication"):
+        codex_runner.run_codex_turn(
+            context=_context(),
+            prompt="prompt",
+            model="gpt-5.6-terra",
+            reasoning_effort="medium",
+            output_schema={},
+            timeout_seconds=5,
+        )
+    assert launched is False
 
 
 def test_generated_mcp_command_reaches_the_real_server_parser(tmp_path, monkeypatch):
@@ -193,7 +307,9 @@ def test_generated_mcp_command_reaches_the_real_server_parser(tmp_path, monkeypa
     }
 
 
-def test_real_runner_uses_a_sanitized_subprocess_and_parses_only_structured_evidence(monkeypatch):
+def test_real_runner_uses_a_sanitized_subprocess_and_parses_only_structured_evidence(
+    monkeypatch, tmp_path
+):
     """The host must not import an SDK or give a child ambient credentials directly."""
 
     observed = {}
@@ -217,7 +333,19 @@ def test_real_runner_uses_a_sanitized_subprocess_and_parses_only_structured_evid
         )
 
     monkeypatch.setattr(codex_runner.subprocess, "run", fake_run)
-    monkeypatch.setattr(codex_runner, "safe_subprocess_environment", lambda: {"PATH": "safe"})
+    isolated_home = tmp_path / "codex-home"
+    isolated_home.mkdir()
+    (isolated_home / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        codex_runner,
+        "process_isolated_codex_home",
+        lambda: isolated_home,
+    )
+    monkeypatch.setattr(
+        codex_runner,
+        "safe_subprocess_environment",
+        lambda **_kwargs: {"PATH": "safe"},
+    )
 
     result = codex_runner.run_codex_turn(
         context=_context(), prompt="prompt", model="gpt-5.6-terra", reasoning_effort="medium", output_schema={}
@@ -227,6 +355,47 @@ def test_real_runner_uses_a_sanitized_subprocess_and_parses_only_structured_evid
     assert observed["shell"] is False
     assert result.token_usage == {"total_tokens": 2}
     assert tuple(call.tool for call in result.tool_calls) == EXPECTED_TOOL_NAMES
+
+
+@pytest.mark.parametrize("configured_timeout", [0.25, 135.0])
+def test_real_runner_uses_the_configured_subprocess_timeout(configured_timeout, monkeypatch, tmp_path):
+    """The child deadline follows the validated agent setting at lower and upper values."""
+
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "final_response": _proposal("HOLD", "UNDECIDED", "NONE").model_dump_json(),
+                    "tool_calls": [{"tool": name, "status": "completed"} for name in EXPECTED_TOOL_NAMES],
+                    "token_usage": {},
+                    "unexpected_actions": [],
+                }
+            ),
+            stderr="",
+        )
+
+    isolated_home = tmp_path / "codex-home"
+    isolated_home.mkdir()
+    (isolated_home / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(codex_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_runner, "process_isolated_codex_home", lambda: isolated_home, raising=False)
+
+    codex_runner.run_codex_turn(
+        context=_context(),
+        prompt="prompt",
+        model="gpt-5.6-terra",
+        reasoning_effort="medium",
+        output_schema={},
+        timeout_seconds=configured_timeout,
+    )
+
+    assert observed["timeout"] == configured_timeout
 
 
 def test_host_policy_derives_long_geometry_and_rejects_bad_trending_evidence():
@@ -295,6 +464,26 @@ def test_agent_rejects_schema_model_prompt_staleness_timeout_and_second_same_bar
     assert second.validation_code == "duplicate_bar"
 
 
+def test_agent_validates_positive_timeout_and_passes_it_to_the_runtime():
+    """Invalid deadlines fail at construction and valid ones reach the isolated runner."""
+
+    with pytest.raises(ValueError, match="positive"):
+        CPRAgent(timeout_seconds=0)
+    observed = {}
+
+    def runner(**kwargs):
+        observed.update(kwargs)
+        return CPRAgentRunResult(
+            final_response=_proposal("HOLD", "UNDECIDED", "NONE").model_dump_json(),
+            tool_calls=_calls(),
+        )
+
+    outcome = CPRAgent(runner=runner, timeout_seconds=17.5).decide(_context(), bar_signature="timeout-forwarded")
+
+    assert outcome.validation_code == "accepted_hold"
+    assert observed["timeout_seconds"] == 17.5
+
+
 def test_timeout_returns_before_a_late_sdk_thread_finishes():
     """A late SDK call must not hold the market worker past its 10ms deadline."""
 
@@ -336,8 +525,19 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
 
     path = tmp_path / "decisions.jsonl"
     outcome = CPRHostPolicy().validate(_context(), _proposal("HOLD", "SIDEWAYS", "NONE"))
+    frozen = _context()
+    frozen["session_levels"]["next_levels"]["ordered"] = [{"name": "r1", "price": 110.0}]
+    frozen["position_state"] = {
+        "is_flat": True,
+        "access_token": "secret",
+        "accessTokens": ["secret-plural"],
+        "auth": "secret-auth",
+        "broker": "secret-broker",
+        "order_id": "secret-order",
+        "venue": "secret-venue",
+    }
     CPRDecisionLogger(str(path)).write(
-        frozen_context={**_context(), "position_state": {"is_flat": True, "access_token": "secret"}},
+        frozen_context=frozen,
         proposal=_proposal("HOLD", "SIDEWAYS", "NONE"),
         outcome=outcome,
         latency_ms=12,
@@ -349,6 +549,11 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
     row = json.loads(raw)
     assert "secret" not in raw
     assert row["validation"]["code"] == "accepted_hold"
+    assert row["frozen_context"]["session_levels"]["next_levels"]["ordered"] == [
+        {"name": "r1", "price": 110.0}
+    ]
+    assert row["authoritative_geometry"]["action"] == "HOLD"
+    assert row["token_usage"] == {"total_tokens": 17}
     assert row["execution"] == {"mode": "ORDER_FREE", "submitted": False}
     assert runner_main(["--synthetic", "--fake"]) == 0
     assert runner_main(["--synthetic", "--authenticated"], authenticated_runner=smoke_fake_runner) == 0
@@ -504,11 +709,17 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
         "total_tokens": 5,
         "model_context_window": 128000,
     }
-    assert observed["start"]["config"]["features"] == {
-        "shell_tool": False,
-        "unified_exec": False,
-        "collab": False,
-        "multi_agent": False,
+    assert all(value is False for value in observed["start"]["config"]["features"].values())
+    assert set(observed["start"]["config"]["features"]) >= {
+        "shell_tool",
+        "unified_exec",
+        "collab",
+        "multi_agent",
+        "apps",
+        "plugins",
+        "connectors",
+        "browser_use",
+        "tool_search",
     }
     assert "workspace_write" not in observed["start"]["config"]["features"]
     host = CPRAgent(

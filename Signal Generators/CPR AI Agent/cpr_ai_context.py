@@ -8,14 +8,30 @@ math, and exposes facts rather than choosing an agent regime or trade.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 from cpr_ai_schema import validate_position_state
 
+if TYPE_CHECKING:
+    # mypy_path exposes Dependencies by its bare module name. The importlib
+    # production loader starts from the repository root instead.
+    from market_data_health import (
+        complete_minute_bucket_mask,
+        newest_completed_minute_timestamp,
+    )
+else:
+    from Dependencies.market_data_health import (
+        complete_minute_bucket_mask,
+        newest_completed_minute_timestamp,
+    )
+
 _REQUIRED_COLUMNS = ("timestamp", "open", "high", "low", "close")
 _LEVEL_BUFFER_POINTS = 2.0
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def _as_float(value: Any) -> float | None:
@@ -28,23 +44,55 @@ def _as_float(value: Any) -> float | None:
 
 
 def _prepared_minutes(one_minute_candles: pd.DataFrame) -> pd.DataFrame:
-    """Copy, type-check, and chronologically sort one-minute OHLC observations."""
+    """Copy, type-check, and chronologically sort one-minute OHLC observations.
+
+    Duplicate timestamps deliberately remain present here.  The exact-minute
+    completeness check below must see them; silently keeping one revision could
+    let a duplicated/missing websocket sequence masquerade as a complete bar.
+    """
 
     missing = [column for column in _REQUIRED_COLUMNS if column not in one_minute_candles.columns]
     if missing:
         raise ValueError(f"One-minute CPR context is missing columns: {missing}")
     frame = one_minute_candles.loc[:, [*one_minute_candles.columns]].copy()
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="raise")
+    parsed_timestamps = pd.to_datetime(frame["timestamp"], errors="raise")
+    frame["timestamp"] = [
+        (
+            pd.Timestamp(value).tz_localize(_IST)
+            if pd.Timestamp(value).tzinfo is None
+            else pd.Timestamp(value).tz_convert(_IST)
+        ).tz_localize(None)
+        for value in parsed_timestamps
+    ]
     for column in ("open", "high", "low", "close"):
         frame[column] = pd.to_numeric(frame[column], errors="raise")
     if "volume" not in frame:
         frame["volume"] = 0.0
     frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce").fillna(0.0)
-    frame = frame.sort_values("timestamp", kind="stable").drop_duplicates("timestamp", keep="last")
+    frame = frame.sort_values("timestamp", kind="stable")
     return frame.reset_index(drop=True)
 
 
-def build_completed_five_minute_bars(one_minute_candles: pd.DataFrame) -> pd.DataFrame:
+def _completed_minutes(
+    one_minute_candles: pd.DataFrame,
+    *,
+    as_of: datetime | None,
+) -> pd.DataFrame:
+    """Return only start-stamped one-minute candles whose interval has closed."""
+
+    minutes = _prepared_minutes(one_minute_candles)
+    newest = newest_completed_minute_timestamp(minutes, now=as_of)
+    if newest is None:
+        return minutes.iloc[0:0].copy()
+    cutoff = pd.Timestamp(newest).tz_convert(_IST).tz_localize(None)
+    return minutes.loc[minutes["timestamp"] <= cutoff].reset_index(drop=True)
+
+
+def build_completed_five_minute_bars(
+    one_minute_candles: pd.DataFrame,
+    *,
+    as_of: datetime | None = None,
+) -> pd.DataFrame:
     """Build only exact five-observation OHLC buckets from one-minute candles.
 
     A bucket containing fewer than five one-minute records is deliberately
@@ -52,12 +100,19 @@ def build_completed_five_minute_bars(one_minute_candles: pd.DataFrame) -> pd.Dat
     mistaken for final market evidence.
     """
 
-    minutes = _prepared_minutes(one_minute_candles)
+    minutes = _completed_minutes(one_minute_candles, as_of=as_of)
     completed: list[pd.DataFrame] = []
     # Resample per calendar session so a 15:29 observation cannot be paired
     # with a new day's 09:15 observation in an accidental cross-day bucket.
     for _, session in minutes.groupby(minutes["timestamp"].dt.date, sort=True):
         indexed = session.set_index("timestamp")
+        exact_minute_mask = complete_minute_bucket_mask(
+            pd.DatetimeIndex(indexed.index),
+            5,
+        )
+        indexed = indexed.loc[exact_minute_mask.to_numpy()]
+        if indexed.empty:
+            continue
         buckets = indexed.resample("5min", label="left", closed="left", origin="start_day")
         result = buckets.agg(
             open=("open", "first"),
@@ -76,20 +131,36 @@ def build_completed_five_minute_bars(one_minute_candles: pd.DataFrame) -> pd.Dat
 def _rsi_wilder(closes: pd.Series, length: int = 14) -> pd.Series:
     """Calculate TradingView-style Wilder RSI from a close series."""
 
-    changes = closes.diff()
+    if length <= 0:
+        raise ValueError("Wilder RSI length must be positive.")
+    values = pd.to_numeric(closes, errors="coerce").astype(float)
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    if len(values) <= length:
+        return result
+
+    changes = values.diff()
     gains = changes.clip(lower=0.0)
     losses = -changes.clip(upper=0.0)
-    # Wilder's RMA is an EMA with alpha=1/length, rather than the usual EMA
-    # alpha=2/(length+1).  ``min_periods`` avoids claiming early values exist.
-    average_gain = gains.ewm(alpha=1 / length, adjust=False, min_periods=length).mean()
-    average_loss = losses.ewm(alpha=1 / length, adjust=False, min_periods=length).mean()
-    relative_strength = average_gain / average_loss.replace(0.0, np.nan)
-    rsi = 100.0 - (100.0 / (1.0 + relative_strength))
-    # Flat loss-free periods conventionally read as 100; fully flat periods are
-    # neutral 50 instead of a misleading overbought signal.
-    return rsi.mask((average_loss == 0.0) & (average_gain > 0.0), 100.0).mask(
-        (average_loss == 0.0) & (average_gain == 0.0), 50.0
-    )
+    average_gain = float(gains.iloc[1 : length + 1].mean())
+    average_loss = float(losses.iloc[1 : length + 1].mean())
+
+    def rsi_value(gain: float, loss: float) -> float:
+        """Convert one pair of Wilder averages into the conventional boundary value."""
+
+        if loss == 0.0:
+            return 50.0 if gain == 0.0 else 100.0
+        return 100.0 - (100.0 / (1.0 + gain / loss))
+
+    result.iloc[length] = rsi_value(average_gain, average_loss)
+    for position in range(length + 1, len(values)):
+        average_gain = (
+            average_gain * (length - 1) + float(gains.iloc[position])
+        ) / length
+        average_loss = (
+            average_loss * (length - 1) + float(losses.iloc[position])
+        ) / length
+        result.iloc[position] = rsi_value(average_gain, average_loss)
+    return result
 
 
 def _stochastic_rsi(closes: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
@@ -402,6 +473,7 @@ def build_cpr_context(
     position_state: Mapping[str, Any] | None = None,
     prior_accepted_regime: str | None = None,
     swing_window: int = 2,
+    as_of: datetime | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Freeze-ready CPR context for the latest session's last complete five-minute bar.
 
@@ -415,8 +487,8 @@ def build_cpr_context(
         raise ValueError(
             "prior_accepted_regime must be SIDEWAYS, TRENDING, UNDECIDED, or None."
         )
-    minutes = _prepared_minutes(one_minute_candles)
-    bars = build_completed_five_minute_bars(minutes)
+    minutes = _completed_minutes(one_minute_candles, as_of=as_of)
+    bars = build_completed_five_minute_bars(minutes, as_of=as_of)
     if bars.empty:
         raise ValueError("CPR context needs at least one complete five-minute bar.")
     current_day = bars.iloc[-1]["timestamp"].date()

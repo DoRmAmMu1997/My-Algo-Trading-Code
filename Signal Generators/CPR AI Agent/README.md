@@ -72,7 +72,10 @@ host then enforces the selected framework:
 
 - Before 09:30 IST the worker waits.
 - It polls mechanical safety every five seconds and calls Codex at most once for
-  each newly completed five-minute candle.
+  each newly completed five-minute candle. A start-stamped one-minute candle is
+  not complete until the next minute begins, and all five exact minute slots
+  must exist once; websocket revisions and later REST true-ups cannot create a
+  second call for the same bucket.
 - At 15:00 IST new entries and adds stop; management and exits continue.
 - At 15:15 IST the host square-off closes exposure and stops the worker.
 
@@ -106,11 +109,27 @@ python -m pip install -r requirements-codex-ai.txt
 Use the operator's existing subscription-backed Codex/ChatGPT authentication.
 Do not put an OpenAI API key, broker credential, or trading credential in the
 CPR subprocess. The parent passes only a frozen public snapshot into a temporary
-directory. The child receives a strict allowlist of OS plumbing, profile, and
-Codex-discovery variables; trading and API secrets are excluded. It runs
-read-only with deny-all approvals; shell, unified exec, web search, collaboration,
-multi-agent actions, and workspace writes are disabled. Its only enabled tools
-are the four local read-only MCP tools above.
+directory. It copies the operator's `auth.json` once into a process-lifetime,
+auth-only temporary `CODEX_HOME`, then reuses that isolated copy so a child token
+refresh survives later serialized turns. The copy is never synchronized back or
+symlinked; config, global MCP servers, plugins, skills, apps, and rules are not
+copied. HOME, USERPROFILE, AppData, and temp paths point to a separate synthetic
+profile under a strict allowlist. It runs read-only with deny-all approvals; shell, unified exec, web
+search, collaboration, multi-agent actions, browser/computer use, plugins, apps,
+and workspace writes are disabled. Its only enabled tools are the four local
+read-only MCP tools above. Missing isolatable authentication fails before child
+launch. Trading and API secrets remain excluded from the child environment.
+
+## Operator P&L sheet rows
+
+Add these exact labels to column A of the configured monthly result sheet:
+
+- `CPR AI Agent Strategy` for PAPER results
+- `CPR AI Agent Strategy [LIVE]` for LIVE results
+- `CPR AI Agent Strategy [MIXED]` when one session contains both modes
+
+The normal end-of-day updater writes the matching row automatically and skips a
+missing row with a warning; the labels remain separate from legacy CPR workers.
 
 ## Decision audit
 

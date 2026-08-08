@@ -8,13 +8,20 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from math import sin
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
-from cpr_ai_context import build_completed_five_minute_bars, build_cpr_context
+from cpr_ai_context import (
+    _rsi_wilder,
+    _stochastic_rsi,
+    build_completed_five_minute_bars,
+    build_cpr_context,
+)
 from cpr_ai_mcp_server import build_mcp_server, load_snapshot_payload
 from cpr_ai_prompt import CPR_AI_PROMPT_VERSION, build_system_prompt
 from cpr_ai_schema import CPRAgentDecision, validate_position_state
+from cpr_ai_signals import freeze_cpr_context
 from cpr_ai_tools import EXPECTED_TOOL_NAMES, FrozenCPRContextRegistry
 from pydantic import ValidationError
 
@@ -67,6 +74,47 @@ def test_completed_five_minute_bars_drop_a_partial_bucket_and_preserve_ohlc():
     }
 
 
+def test_current_start_stamped_minute_cannot_complete_its_five_minute_bucket():
+    """A changing 09:19 websocket candle is forming until the clock reaches 09:20."""
+
+    frame = pd.DataFrame(
+        _minute_rows(datetime(2026, 8, 3, 9, 15), [100.0, 101.0, 102.0, 103.0, 104.0])
+    )
+    before_close = datetime(2026, 8, 3, 9, 19, 45, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+    assert build_completed_five_minute_bars(frame, as_of=before_close).empty
+    frame.loc[4, ["high", "close"]] = [110.0, 109.0]
+    assert build_completed_five_minute_bars(frame, as_of=before_close).empty
+
+    at_close = datetime(2026, 8, 3, 9, 20, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    completed = build_completed_five_minute_bars(frame, as_of=at_close)
+    assert completed["timestamp"].tolist() == [pd.Timestamp("2026-08-03 09:15:00")]
+    assert completed.iloc[0]["close"] == 109.0
+
+
+@pytest.mark.parametrize(
+    "minute_offsets",
+    [
+        [0, 1, 2, 3],
+        [0, 0, 2, 3, 4],
+        [0, 1, 2, 3, 4, 4],
+    ],
+)
+def test_completed_bucket_requires_each_exact_minute_once(minute_offsets):
+    """A missing or duplicate minute must not masquerade as a completed bucket."""
+
+    rows = _minute_rows(datetime(2026, 8, 3, 9, 15), [100.0] * len(minute_offsets))
+    for row, offset in zip(rows, minute_offsets, strict=True):
+        row["timestamp"] = datetime(2026, 8, 3, 9, 15) + timedelta(minutes=offset)
+
+    completed = build_completed_five_minute_bars(
+        pd.DataFrame(rows),
+        as_of=datetime(2026, 8, 3, 9, 20, tzinfo=ZoneInfo("Asia/Kolkata")),
+    )
+
+    assert completed.empty
+
+
 def test_context_rejects_a_newest_session_without_a_completed_five_minute_bar():
     """One to four newest-session minutes must not reuse yesterday's context."""
 
@@ -74,6 +122,24 @@ def test_context_rejects_a_newest_session_without_a_completed_five_minute_bar():
 
     with pytest.raises(ValueError, match="latest input session"):
         build_cpr_context(pd.concat([_two_session_frame(), pd.DataFrame(newest_partial_session)], ignore_index=True))
+
+
+def test_context_and_freezer_share_one_explicit_completed_bar_cutoff():
+    """The context and immutable registry must exclude the same current forming minute."""
+
+    previous = _minute_rows(datetime(2026, 8, 2, 9, 15), [100.0] * 30)
+    current = _minute_rows(datetime(2026, 8, 3, 9, 15), [101.0] * 9 + [109.0])
+    frame = pd.DataFrame(previous + current)
+    before_close = datetime(2026, 8, 3, 9, 24, 50, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+    with pytest.raises(ValueError, match="two complete"):
+        build_cpr_context(frame, as_of=before_close)
+
+    at_close = datetime(2026, 8, 3, 9, 25, tzinfo=ZoneInfo("Asia/Kolkata"))
+    context = build_cpr_context(frame, as_of=at_close)
+    frozen = freeze_cpr_context(frame, as_of=at_close).snapshot_payload()
+    assert context["session_levels"]["current_close"] == 109.0
+    assert frozen == context
 
 
 def test_context_uses_hand_derived_previous_day_levels_and_opening_facts():
@@ -152,20 +218,50 @@ def test_srsi_literal_crosses_report_their_direction_and_matching_zone_flags():
     # These values are literal results from the standard Wilder RSI(14),
     # Stoch(14), K SMA(3), D SMA(3) equations for the listed sine closes.
     oversold_cross = srsi_for_completed_bars(39)
-    assert oversold_cross["current_k"] == pytest.approx(11.0362255097)
-    assert oversold_cross["current_d"] == pytest.approx(5.5542834290)
+    assert oversold_cross["current_k"] == pytest.approx(13.2985980859)
+    assert oversold_cross["current_d"] == pytest.approx(11.5561175228)
     assert oversold_cross["cross_up"] is True
     assert oversold_cross["cross_down"] is False
     assert oversold_cross["cross_up_in_oversold"] is True
     assert oversold_cross["cross_down_in_overbought"] is False
 
     overbought_cross = srsi_for_completed_bars(73)
-    assert overbought_cross["current_k"] == pytest.approx(82.6066025590)
-    assert overbought_cross["current_d"] == pytest.approx(86.6324134948)
+    assert overbought_cross["current_k"] == pytest.approx(83.4730716424)
+    assert overbought_cross["current_d"] == pytest.approx(87.7732961026)
     assert overbought_cross["cross_up"] is False
     assert overbought_cross["cross_down"] is True
     assert overbought_cross["cross_up_in_oversold"] is False
     assert overbought_cross["cross_down_in_overbought"] is True
+
+
+def test_wilder_rsi_uses_first_fourteen_change_sma_then_recursive_rma():
+    """The first seed and next update are literal Wilder values, not pandas EWM output."""
+
+    closes = pd.Series(
+        [100, 101, 102, 101, 103, 102, 104, 103, 105, 104, 106, 105, 107, 106, 108, 107],
+        dtype=float,
+    )
+
+    rsi = _rsi_wilder(closes)
+
+    assert rsi.iloc[:14].isna().all()
+    assert rsi.iloc[14] == pytest.approx(70.0)
+    assert rsi.iloc[15] == pytest.approx(66.4233576642)
+
+
+def test_wilder_rsi_flat_and_monotonic_boundaries_are_neutral_and_overbought():
+    """Zero loss and zero movement receive explicit, stable RSI boundary values."""
+
+    flat = _rsi_wilder(pd.Series([100.0] * 20))
+    rising = _rsi_wilder(pd.Series([float(value) for value in range(100, 120)]))
+
+    assert flat.iloc[:14].isna().all()
+    assert flat.iloc[14:].tolist() == [50.0] * 6
+    assert rising.iloc[:14].isna().all()
+    assert rising.iloc[14:].tolist() == [100.0] * 6
+    _, flat_k, flat_d = _stochastic_rsi(pd.Series([100.0] * 40))
+    assert flat_k.isna().all()
+    assert flat_d.isna().all()
 
 
 def test_momentum_exposes_rsi_ema_candle_and_deterministic_vwap_sequence_evidence():

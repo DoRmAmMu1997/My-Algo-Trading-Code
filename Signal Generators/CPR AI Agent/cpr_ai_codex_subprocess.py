@@ -27,7 +27,30 @@ def build_isolated_thread_config(snapshot_path: str, python_executable: str = sy
     """
 
     return {
-        "features": {"shell_tool": False, "unified_exec": False, "collab": False, "multi_agent": False},
+        # Every key below is present in the pinned openai-codex 0.144.4 config
+        # schema.  The auth-only CODEX_HOME is the primary boundary; these
+        # supported flags are defense in depth against optional capability
+        # discovery inside the isolated child.
+        "features": {
+            "apps": False,
+            "browser_use": False,
+            "browser_use_external": False,
+            "collab": False,
+            "collaboration_modes": False,
+            "computer_use": False,
+            "connectors": False,
+            "enable_mcp_apps": False,
+            "in_app_browser": False,
+            "multi_agent": False,
+            "plugin_sharing": False,
+            "plugins": False,
+            "remote_plugin": False,
+            "shell_tool": False,
+            "skill_mcp_dependency_install": False,
+            "skill_search": False,
+            "tool_search": False,
+            "unified_exec": False,
+        },
         "web_search": "disabled",
         "shell_environment_policy": {"inherit": "none"},
         "mcp_servers": {

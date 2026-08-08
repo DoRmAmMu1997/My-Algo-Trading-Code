@@ -8,11 +8,63 @@ like credentials.  Logging must never make a decision executable.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-_SENSITIVE_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL", "AUTH", "BROKER", "ORDER", "VENUE")
+_SENSITIVE_KEY_TOKENS = frozenset(
+    {
+        "auth",
+        "authentication",
+        "authorization",
+        "apikey",
+        "broker",
+        "credential",
+        "credentials",
+        "order",
+        "password",
+        "secret",
+        "secrets",
+        "token",
+        "venue",
+    }
+)
+
+
+def _sensitive_key(key: Any) -> bool:
+    """Match credential/execution words as tokens, not innocent substrings.
+
+    Substring matching discarded useful fields such as ``ordered`` and
+    ``authoritative_geometry``.  Token-usage counters remain explicitly safe;
+    singular authentication tokens and execution provenance stay excluded.
+    """
+
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
+    tokens = tuple(token for token in re.split(r"[^a-z0-9]+", separated.lower()) if token)
+    if not tokens:
+        return False
+    if tokens == ("token", "usage"):
+        return False
+    if "api" in tokens and "key" in tokens:
+        return True
+    if "tokens" in tokens and any(
+        token in {
+            "access",
+            "auth",
+            "authentication",
+            "authorization",
+            "bearer",
+            "refresh",
+            "session",
+        }
+        for token in tokens
+    ):
+        return True
+    return any(
+        token in _SENSITIVE_KEY_TOKENS
+        for token in tokens
+    )
 
 
 def _sanitized(value: Any) -> Any:
@@ -22,7 +74,7 @@ def _sanitized(value: Any) -> Any:
         return {
             str(key): _sanitized(item)
             for key, item in value.items()
-            if not any(marker in str(key).upper() for marker in _SENSITIVE_MARKERS)
+            if not _sensitive_key(key)
         }
     if isinstance(value, (list, tuple)):
         return [_sanitized(item) for item in value]

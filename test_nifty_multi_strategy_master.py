@@ -3294,6 +3294,40 @@ class TestExecutionModeResults(unittest.TestCase):
         self.assertEqual(updates, [(1, 1, 100.0), (2, 1, -25.0)])
         self.assertEqual(unmatched, [])
 
+    def test_cpr_ai_paper_live_and_mixed_results_reach_their_dedicated_rows(self):
+        """The optional P&L-producing worker must map every execution mode to a numeric row."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runner.log"
+            path.write_text(
+                "2026-08-03 15:20:00,000 | INFO | CPR AIThread | "
+                "Result summary | Mode=PAPER | Trades=1 | RealizedPnL=10.00\n"
+                "2026-08-04 15:20:00,000 | INFO | CPR AIThread | "
+                "Result summary | Mode=LIVE | Trades=2 | RealizedPnL=20.00\n"
+                "2026-08-05 15:20:00,000 | INFO | CPR AIThread | "
+                "Result summary | Mode=MIXED | Trades=3 | RealizedPnL=30.00\n",
+                encoding="utf-8",
+            )
+            parsed = master_file._parse_eod_pnl_by_day(path, today_str="2026-08-05")
+
+        values = [
+            ["Strategy", "2026-08-03", "2026-08-04", "2026-08-05"],
+            ["CPR AI Agent Strategy", "", "", ""],
+            ["CPR AI Agent Strategy [LIVE]", "", "", ""],
+            ["CPR AI Agent Strategy [MIXED]", "", "", ""],
+        ]
+        updates, unmatched = master_file._compute_pnl_sheet_updates(
+            values,
+            parsed,
+            "2026-08-05",
+        )
+
+        self.assertEqual(
+            updates,
+            [(1, 1, 10.0), (2, 2, 20.0), (3, 3, 30.0)],
+        )
+        self.assertEqual(unmatched, [])
+
 
 class TestOptionChainQuoteParsing(unittest.TestCase):
     """The pure half of the spread gate: getting a bid/ask out of the payload."""
@@ -3594,7 +3628,7 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master_file.HeikinAshiStrategyWorker, master_file.ProfitShooterStrategyWorker,
             master_file.GoldmineStrategyWorker, master_file.MoneyMachineStrategyWorker,
             master_file.OpeningStrikePCRVWAPATRWorker, master_file.CPRStrategyWorker,
-            master_file.CPRAlgo3StrategyWorker,
+            master_file.CPRAlgo3StrategyWorker, master_file.CPRAIWorker,
             master_file.SupertrendBullishWorker, master_file.DonchianBearishWorker,
             master_file.Delta20HedgedSpreadWorker, master_file.LongStrangleWorker,
         ]
@@ -9602,6 +9636,210 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(agent.decide.call_args.kwargs["current_signature"](), "bar-0930")
         self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
         logger.write.assert_called_once()
+
+    def test_forming_websocket_minute_waits_for_close_and_true_up_never_repeats_bucket(self):
+        """09:19 revisions cannot infer; 09:20 infers once; a later true-up stays consumed."""
+
+        worker, agent, _logger = self._worker()
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {"prior_accepted_regime": None},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        start = datetime(2026, 8, 3, 9, 15)
+        minutes = pd.DataFrame(
+            [
+                {
+                    "timestamp": start + timedelta(minutes=offset),
+                    "open": 100.0 + offset,
+                    "high": 101.0 + offset,
+                    "low": 99.0 + offset,
+                    "close": 100.5 + offset,
+                    "volume": 0.0,
+                }
+                for offset in range(5)
+            ]
+        )
+        before_close = datetime(2026, 8, 3, 9, 19, 40, tzinfo=master_file.IST_TIMEZONE)
+
+        first_revision = worker.build_strategy_frame(minutes, as_of=before_close)
+        minutes.loc[4, ["high", "close"]] = [110.0, 109.0]
+        second_revision = worker.build_strategy_frame(minutes, as_of=before_close)
+        self.assertTrue(first_revision.empty)
+        self.assertTrue(second_revision.empty)
+        agent.decide.assert_not_called()
+
+        at_close = datetime(2026, 8, 3, 9, 20, tzinfo=master_file.IST_TIMEZONE)
+        completed = worker.build_strategy_frame(minutes, as_of=at_close)
+        worker.process_strategy_frame(completed)
+        self.assertEqual(agent.decide.call_count, 1)
+
+        # The official REST candle may correct OHLC after the call. Its content
+        # signature changes, but its immutable 09:15 bucket identity does not.
+        minutes.loc[4, ["high", "close"]] = [112.0, 111.0]
+        corrected = worker.build_strategy_frame(minutes, as_of=at_close)
+        worker.process_strategy_frame(corrected)
+        self.assertEqual(agent.decide.call_count, 1)
+
+    def test_bucket_identity_is_stable_while_content_signature_detects_true_up(self):
+        """Cadence keys on session/bucket; stale-result checks key on frozen OHLC content."""
+
+        worker, _agent, _logger = self._worker()
+        original = pd.DataFrame(
+            [
+                {
+                    "timestamp": pd.Timestamp("2026-08-03 09:15"),
+                    "open": 100.0,
+                    "high": 102.0,
+                    "low": 99.0,
+                    "close": 101.0,
+                }
+            ]
+        )
+        corrected = original.copy(deep=True)
+        corrected.loc[0, ["high", "close"]] = [103.0, 102.0]
+
+        self.assertEqual(
+            worker._completed_bar_identity(original),
+            worker._completed_bar_identity(corrected),
+        )
+        self.assertNotEqual(
+            worker._completed_bar_signature(original),
+            worker._completed_bar_signature(corrected),
+        )
+
+    def test_final_entry_audit_uses_actual_broker_and_position_provenance(self):
+        """Paper fallback and indeterminate live exposure cannot inherit the configured LIVE tag."""
+
+        cases = (
+            ("paper", False, True, None, "PAPER", "ENTRY_SUBMITTED"),
+            ("live", True, True, self._live_state("N"), "LIVE", "ENTRY_SUBMITTED"),
+            ("paper_fallback", True, True, None, "PAPER_FALLBACK", "ENTRY_SUBMITTED"),
+            ("host_blocked", True, False, None, "NOT_SUBMITTED", "ENTRY_BLOCKED"),
+            (
+                "unconfirmed_live",
+                True,
+                False,
+                self._live_state("N", filled=0, confirmed=0, indeterminate=True, entry_price=0.0),
+                "LIVE_INDETERMINATE",
+                "ENTRY_UNCONFIRMED",
+            ),
+        )
+        for name, live_trading, submitted, live_state, expected_mode, expected_status in cases:
+            with self.subTest(name=name):
+                worker, agent, logger = self._worker()
+                worker.live_trading = live_trading
+                worker._latest_frozen_context = lambda: {
+                    "session_levels": {},
+                    "momentum_vwap": {},
+                    "market_structure": {},
+                    "position_state": {"is_flat": True},
+                }
+                worker._completed_bar_signature = lambda _frame, value=name: value
+                worker._current_completed_spot_signature = lambda value=name: value
+                outcome = agent.decide.return_value
+                outcome.action = "ENTER_LONG"
+                outcome.accepted = True
+                outcome.entry_price = 100.0
+                outcome.stop_price = 95.0
+                outcome.milestone_price = 108.0
+                outcome.final_target_price = 118.0
+                outcome.risk_points = 5.0
+                outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+
+                def enter(
+                    direction,
+                    entry,
+                    stop,
+                    target,
+                    *,
+                    state=live_state,
+                    accepted=submitted,
+                    current_worker=worker,
+                ):
+                    del entry, stop, target
+                    if accepted:
+                        current_worker.pos = master_file.PaperPosition(
+                            active=True,
+                            direction=direction,
+                            quantity=50,
+                            entry_trade_price=10.0,
+                            live_leg=state,
+                        )
+                    elif state is not None:
+                        current_worker._orphan_live_legs = [{"live_leg": state}]
+                    return accepted
+
+                worker.enter_position = MagicMock(side_effect=enter)
+                worker.process_strategy_frame(
+                    pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-03 09:30"), "close": 100.0}])
+                )
+
+                final_execution = logger.write.call_args.kwargs["execution"]
+                self.assertEqual(final_execution["mode"], expected_mode)
+                self.assertEqual(final_execution["status"], expected_status)
+
+    def test_final_exit_audit_captures_provenance_before_position_state_is_cleared(self):
+        """Confirmed live, unconfirmed live, paper, and paper-fallback exits remain distinguishable."""
+
+        cases = (
+            ("paper", False, None, True, "PAPER"),
+            ("live", True, self._live_state("N"), True, "LIVE"),
+            ("paper_fallback", True, None, True, "PAPER_FALLBACK"),
+            (
+                "unconfirmed_live",
+                True,
+                self._live_state("N", confirmed=25, indeterminate=True),
+                False,
+                "LIVE_INDETERMINATE",
+            ),
+        )
+        for name, live_trading, live_state, closes, expected_mode in cases:
+            with self.subTest(name=name):
+                worker, agent, logger = self._worker()
+                worker.live_trading = live_trading
+                worker.pos = master_file.PaperPosition(
+                    active=True,
+                    direction="LONG",
+                    quantity=50,
+                    entry_trade_price=10.0,
+                    live_leg=live_state,
+                )
+                worker._cpr_state = MagicMock()
+                worker._manage_completed_bar = MagicMock(return_value=False)
+                worker._latest_frozen_context = lambda: {
+                    "session_levels": {},
+                    "momentum_vwap": {},
+                    "market_structure": {},
+                    "position_state": {"is_flat": False, "direction": "LONG"},
+                }
+                worker._completed_bar_signature = lambda _frame, value=name: value
+                worker._current_completed_spot_signature = lambda value=name: value
+                outcome = agent.decide.return_value
+                outcome.action = "EXIT"
+                outcome.accepted = True
+
+                def exit_position(
+                    _reason,
+                    *,
+                    should_close=closes,
+                    current_worker=worker,
+                ):
+                    if should_close:
+                        current_worker.pos = master_file.PaperPosition()
+
+                worker.exit_position = MagicMock(side_effect=exit_position)
+                worker.process_strategy_frame(
+                    pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-03 09:35"), "close": 101.0}])
+                )
+
+                final_execution = logger.write.call_args.kwargs["execution"]
+                self.assertEqual(final_execution["mode"], expected_mode)
+                self.assertEqual(
+                    final_execution["status"],
+                    "EXIT_CONFIRMED" if closes else "EXIT_UNCONFIRMED",
+                )
 
     def test_startup_allows_independent_cpr_workers_and_the_normal_live_gate(self):
         """CPR AI no longer requires sibling workers off or rejects live mode."""

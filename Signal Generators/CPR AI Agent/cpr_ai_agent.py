@@ -7,6 +7,7 @@ boundary: every executable field below is calculated from the frozen context.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass, field
@@ -293,11 +294,17 @@ class CPRAgent:
     ) -> None:
         """Keep SDK imports out of construction so missing optional deps stay local."""
 
+        try:
+            validated_timeout = float(timeout_seconds)
+        except (TypeError, ValueError) as error:
+            raise ValueError("timeout_seconds must be a positive finite number.") from error
+        if not math.isfinite(validated_timeout) or validated_timeout <= 0.0:
+            raise ValueError("timeout_seconds must be a positive finite number.")
         self.runner = runner or self._default_runner
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.prompt_version = prompt_version
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = validated_timeout
         self.policy = policy or CPRHostPolicy()
         self._lock = __import__("threading").Lock()
         # A timed-out Python thread cannot be killed safely.  This separate
@@ -367,6 +374,7 @@ class CPRAgent:
             reasoning_effort=self.reasoning_effort,
             prompt_version=self.prompt_version or CPR_AI_PROMPT_VERSION,
             output_schema=CPRAgentDecision.model_json_schema(),
+            timeout_seconds=self.timeout_seconds,
         )
 
     def _validate_run(

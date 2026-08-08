@@ -9417,7 +9417,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         self.agent = agent
         self.decision_logger = decision_logger
         self._latest_one_minute_frame = pd.DataFrame()
-        self._last_agent_bar_signature: str | None = None
+        self._latest_context_as_of: datetime | None = None
+        self._last_agent_bar_identity: str | None = None
         self._prior_accepted_regime: str | None = None
         self._cpr_state: CPRAITradeState | None = None
 
@@ -9431,11 +9432,20 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         return 1
 
-    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
-        """Cache raw minutes and return only complete five-minute NIFTY bars."""
+    def build_strategy_frame(
+        self,
+        ohlc: pd.DataFrame,
+        *,
+        as_of: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Cache raw minutes and return clock-complete five-minute NIFTY bars."""
 
         self._latest_one_minute_frame = ohlc.copy(deep=True)
-        return CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(ohlc)
+        self._latest_context_as_of = as_of or _ist_now()
+        return CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(
+            ohlc,
+            as_of=self._latest_context_as_of,
+        )
 
     @staticmethod
     def _completed_bar_signature(strategy_frame: pd.DataFrame) -> str:
@@ -9443,6 +9453,21 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         signature = build_last_row_signature(strategy_frame)
         return "" if signature is None else repr(signature)
+
+    def _completed_bar_identity(self, strategy_frame: pd.DataFrame) -> str:
+        """Identify one immutable session/bucket independently of OHLC revisions."""
+
+        if strategy_frame.empty or "timestamp" not in strategy_frame.columns:
+            # Production context bars always have a timestamp.  This fallback
+            # keeps synthetic host tests and defensive callers fail-closed on
+            # their existing content signature rather than inventing a bucket.
+            return self._completed_bar_signature(strategy_frame)
+        timestamp = pd.Timestamp(strategy_frame.iloc[-1]["timestamp"])
+        if pd.isna(timestamp):
+            return ""
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.tz_convert(IST_TIMEZONE).tz_localize(None)
+        return f"{timestamp.date()}|{timestamp.isoformat()}"
 
     def _position_state_payload(self) -> dict[str, object]:
         """Expose only allowlisted host position facts to the advisory context."""
@@ -9479,6 +9504,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             self._latest_one_minute_frame,
             position_state=self._position_state_payload(),
             prior_accepted_regime=self._prior_accepted_regime,
+            as_of=self._latest_context_as_of,
         )
         return registry.snapshot_payload()
 
@@ -9489,7 +9515,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         if snapshot is None or snapshot.frame.empty:
             return ""
         completed = CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(
-            snapshot.frame
+            snapshot.frame,
+            as_of=self._latest_context_as_of,
         )
         return self._completed_bar_signature(completed)
 
@@ -9666,12 +9693,47 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         """Classify the active basket from actual broker-backed leg state."""
 
         state = self._cpr_state
-        return (
-            "LIVE"
-            if self.pos.live_leg is not None
-            or (state is not None and state.add_live_leg is not None)
-            else "PAPER"
+        live_states = tuple(
+            leg_state
+            for leg_state in (
+                self.pos.live_leg,
+                state.add_live_leg if state is not None else None,
+            )
+            if isinstance(leg_state, LiveLegState)
         )
+        if any(
+            leg_state.exposure_indeterminate
+            or (leg_state.exposure_possible and not leg_state.entry_complete)
+            for leg_state in live_states
+        ):
+            return "LIVE_INDETERMINATE"
+        if any(leg_state.exposure_possible for leg_state in live_states):
+            return "LIVE"
+        return "PAPER_FALLBACK" if self.live_trading else "PAPER"
+
+    def _entry_execution_mode(self, submitted: bool) -> str:
+        """Classify an entry from the adopted position or retained orphan exposure."""
+
+        orphan_states = tuple(
+            leg.get("live_leg")
+            for leg in self._orphan_live_legs
+            if isinstance(leg.get("live_leg"), LiveLegState)
+        )
+        if any(state.exposure_possible for state in orphan_states):
+            return "LIVE_INDETERMINATE"
+        if submitted and self.pos.active:
+            return self._position_execution_mode()
+        return "NOT_SUBMITTED"
+
+    @staticmethod
+    def _exit_execution_mode(before_exit: str, *, position_still_active: bool) -> str:
+        """Preserve captured provenance after a confirmed exit clears position state."""
+
+        if position_still_active and before_exit == "LIVE":
+            # The final status separately says EXIT_UNCONFIRMED.  Conservatively
+            # retain possible live exposure rather than claiming a live close.
+            return "LIVE_INDETERMINATE"
+        return before_exit
 
     def _execute_scale_in(self) -> bool:
         """Submit the one equal-size R1 add using the locked primary contract."""
@@ -10029,12 +10091,17 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         if not self.pos.active and self._at_or_after_entry_cutoff():
             return
-        bar_signature = self._completed_bar_signature(strategy_frame)
-        if not bar_signature or bar_signature == self._last_agent_bar_signature:
+        bar_identity = self._completed_bar_identity(strategy_frame)
+        if not bar_identity or bar_identity == self._last_agent_bar_identity:
             return
-        # Consume the signature before the optional call. A timeout or malformed
-        # response must not cause repeated SDK turns on the same market bar.
-        self._last_agent_bar_signature = bar_signature
+        # Consume immutable bucket identity before the optional call.  A timeout,
+        # malformed response, or later REST true-up cannot repeat this inference.
+        self._last_agent_bar_identity = bar_identity
+        # Content remains separate: a true-up while inference is running must
+        # still make the eventual output stale at the agent boundary.
+        bar_signature = self._completed_bar_signature(strategy_frame)
+        if not bar_signature:
+            return
         frozen_context = self._latest_frozen_context()
         if self.pos.active and self._manage_completed_bar(frozen_context):
             return
@@ -10106,12 +10173,16 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             ):
                 return
             if outcome.action == "EXIT":
+                before_exit_mode = self._position_execution_mode()
                 self.exit_position("CPR_AI_PREMISE_EXIT")
                 self._write_final_execution(
                     frozen_context,
                     outcome,
                     {
-                        "mode": "LIVE" if self.live_trading else "PAPER",
+                        "mode": self._exit_execution_mode(
+                            before_exit_mode,
+                            position_still_active=self.pos.active,
+                        ),
                         "submitted": True,
                         "status": "EXIT_CONFIRMED" if not self.pos.active else "EXIT_UNCONFIRMED",
                     },
@@ -10166,7 +10237,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 frozen_context,
                 outcome,
                 {
-                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "mode": "NOT_SUBMITTED",
                     "submitted": False,
                     "status": "ENTRY_BLOCKED",
                     "blocked_reason": blocked_reason,
@@ -10182,13 +10253,20 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         )
         if submitted:
             self._initialize_trade_state(outcome, frozen_context)
+        entry_mode = self._entry_execution_mode(bool(submitted))
         self._write_final_execution(
             frozen_context,
             outcome,
             {
-                "mode": "LIVE" if self.live_trading else "PAPER",
+                "mode": entry_mode,
                 "submitted": bool(submitted),
-                "status": "ENTRY_SUBMITTED" if submitted else "ENTRY_BLOCKED",
+                "status": (
+                    "ENTRY_SUBMITTED"
+                    if submitted
+                    else "ENTRY_UNCONFIRMED"
+                    if entry_mode == "LIVE_INDETERMINATE"
+                    else "ENTRY_BLOCKED"
+                ),
             },
         )
 
@@ -10212,7 +10290,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 if snapshot is None or snapshot.frame.empty:
                     self.wait_for_next_poll()
                     continue
-                completed = self.build_strategy_frame(snapshot.frame)
+                completed = self.build_strategy_frame(
+                    snapshot.frame,
+                    as_of=_ist_now(),
+                )
                 if completed.empty:
                     self.wait_for_next_poll()
                     continue
@@ -15686,6 +15767,7 @@ _PNL_SHEET_ROW_LABELS = {
     "OpeningStrike": "Opening Strike PCR VWAP ATR Strategy",
     "CPR": "CPR Strategy",
     "CPRAlgo3": "CPR Algo 3 Strategy",
+    "CPR AI": "CPR AI Agent Strategy",
     "SMA Crossover": "SMA Crossover Strategy",
     "Bollinger Bands": "Bollinger Bands Strategy",
     "Keltner Squeeze": "Keltner Squeeze Strategy",

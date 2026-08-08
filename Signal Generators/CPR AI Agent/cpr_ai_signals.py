@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -14,6 +15,7 @@ def freeze_cpr_context(
     *,
     position_state: dict[str, Any] | None = None,
     prior_accepted_regime: str | None = None,
+    as_of: datetime | None = None,
 ) -> FrozenCPRContextRegistry:
     """Build and freeze one CPR context without invoking a strategy generator."""
 
@@ -22,6 +24,7 @@ def freeze_cpr_context(
             one_minute_candles,
             position_state=position_state,
             prior_accepted_regime=prior_accepted_regime,
+            as_of=as_of,
         )
     )
 
