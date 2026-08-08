@@ -34,18 +34,22 @@ jobs:
           cache: pip
 
       - name: Install dependencies
+        # The Codex set is optional in production but installed here so its
+        # importable runtime receives the same tests, mypy, and audit gates.
+        # CI never runs the authenticated CPR AI smoke command.
         run: |
           python -m pip install --upgrade pip
           python -m pip install \
             -r requirements.txt \
             -r requirements-dev.txt \
-            -r requirements-ai.txt
+            -r requirements-ai.txt \
+            -r requirements-codex-ai.txt
           python -m pip check
 
       - name: Audit installed Python dependencies
         # The hosted runner starts clean, so --local audits exactly the core,
-        # developer, and AI environment installed above rather than unrelated
-        # packages from a developer's system Python.
+        # developer, Claude AI, and Codex AI environment installed above rather
+        # than unrelated packages from a developer's system Python.
         run: python -m pip_audit --local --progress-spinner off
 
       - name: Validate pre-commit configuration

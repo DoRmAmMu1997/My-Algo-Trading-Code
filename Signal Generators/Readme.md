@@ -11,6 +11,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 - GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
 - Claude Opus 4.8 Max: Ported 13 strategies from the public TradingBot project (the `Nifty * Signal Generator.py` files listed below) plus the shared `misc_strategy_common.py`, and wired them into the front-test master
 - Claude Opus 4.8 Max: Built the **SL Hunting AI Agent** (`SL Hunting AI Agent/`) — an LLM-driven strategy (a Claude agent), unlike the deterministic generators above (see its own README)
+- Codex: Built the independent, opt-in **CPR Codex AI Agent** (`CPR AI Agent/`) — a five-minute SRSI/VWAP worker whose host owns every mechanical risk and execution gate
 
 # Where each generator is used
 | File | Shape | Used by |
@@ -20,6 +21,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/Nifty CPR Algo 2 Signal Generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
 | `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
 | `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
+| `CPR AI Agent/` | Frozen five-minute context, four no-argument tools, Codex judgment, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
 | `Subhamoy Strategies/Nifty Goldmine Signal Generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
@@ -92,6 +94,16 @@ Two things to know before touching it:
    every bar carries `vwap_is_proxy` to record which was used. Paper only until it
    has several clean sessions.
 
+# CPR Codex AI Agent (`CPR AI Agent/`) — independent, opt-in worker
+This is not another deterministic CPR wrapper. `CPRAIWorker` freezes completed
+five-minute SRSI/VWAP context behind four no-argument tools, asks Codex for a
+regime/setup or premise-exit judgment, and then applies host-owned entry, sizing,
+time, lifecycle, and execution gates. It is disabled by default and live-disabled
+by default. Ordinary CPR, CPR Algo 3, Regime Adaptive, SL Hunting, and CPR AI have
+independent prefixes, workers, positions, and P&L and may coexist when their own
+enable and virtual-trading gates permit it. See `CPR AI Agent/README.md` for the
+isolation boundary and order-free synthetic smoke command.
+
 # SL Hunting AI Agent (`SL Hunting AI Agent/`) — LLM-driven, a different kind
 Unlike everything else in this folder (deterministic "DataFrame in → signal out" transforms,
 or stateful engines that compute a signal from a formula), the **SL Hunting AI Agent** is an
@@ -102,7 +114,7 @@ discretionary *SL Hunting* price-action method on NIFTY ATM options, with **Bank
 cross-confirmation** and dynamic **~₹2,500 risk-per-trade** sizing. Every NIFTY entry is also
 mirrored with an **equal-lot BankNIFTY ATM** leg (`SL_HUNTING_BNF_MIRROR`) — tied for hard risk,
 but cut per-leg on premise-invalidation (see its README). It is wired into the
-front-test master as the **optional, opt-in 28th worker** (`SL_HUNTING_ENABLED`, off by default;
+front-test master as an **independently opt-in agent** (`SL_HUNTING_ENABLED`, off by default;
 paper unless explicitly enabled; **fail-soft** — a safe HOLD on any error). It also **learns
 from its own trades** (a per-trade journal → an off-loop reflection coach → human-gated lessons
 injected into its prompt) and writes a **per-bar decision log**. The agent has its own subfolder
