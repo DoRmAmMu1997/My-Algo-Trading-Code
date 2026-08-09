@@ -2621,3 +2621,146 @@ Three points worth recording:
   and `test_v4b_bounce_rule_names_what_would_actually_invalidate`. The second
   exists because a rule that says "do not exit on a bounce" must also say what a
   real invalidation looks like, or it degrades into "ignore adverse movement".
+
+### Pre-open note for 2026-08-10 (Monday)
+
+**Source:** Intraday Hunter, "Prediction For 10 AUG 2026" (`KDqQnqYmxws`,
+uploaded 2026-08-09, 2:00). Note-only; no knowledge version attached.
+
+**Dated to MONDAY, not "tomorrow".** Written on a Sunday after a Friday session,
+so the next TRADING day is 10 Aug. A note dated to a weekend can never be
+injected and fails silently — the gate simply finds no match and the session runs
+without a note, with nothing in the log to distinguish that from an ordinary
+stale note. A new test, `test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day`,
+now asserts `for_date` never lands on a Saturday or Sunday.
+
+**This note is the first genuinely UNCERTAIN one in the series.** Every previous
+note named a seated crowd with confidence; this one says the market has been
+sideways for two-three days, so nobody is decisively seated:
+
+| Session | Seated crowd |
+|---|---|
+| 3-4 Aug | buyers |
+| 5-6 Aug | sellers |
+| 7 Aug | buyers |
+| **10 Aug** | **unclear — sideways, small momentum** |
+
+Three things worth having beyond the mapping:
+
+- **An unlock level for the hunt.** "If sellers are seated here, the market cannot
+  eat their SLs until the 58,000 level is crossed." That converts "are sellers
+  huntable?" into one checkable condition.
+- **The first explicit ESCAPE HATCH.** "In flat-to-gap-down, if a good gap opens,
+  our plan will be DIFFERENT" — and he does not say what it becomes. Recorded as
+  stand-aside rather than guessing the missing branch, which is the honest
+  reading and the safe one.
+- **He names the risk himself.** "Risk increases this way because the momentum is
+  small — it goes up a bit, down a bit." That pairs with v4a's tight-stop crowd
+  and v4b's regime memory: a chopping tape recruits nobody firmly, so there is
+  less to hunt in either direction.
+
+Sensex is flagged as ambiguous on both sides — sellers may be present, and buyers
+may arrive on the longer-term positive read.
+
+**Transcription caveat:** one NIFTY support arrived as "2440", read as 24400
+alongside 24360 — the same dropped-trailing-zero artefact seen on 4 Aug and 7 Aug.
+Advisory candidate levels only.
+
+**The lecture from the same weekend is distilled as v4c below.**
+
+## Video addendum - the weekend DEMAND & SUPPLY lecture (v4c)
+
+**Source:** Intraday Hunter, `K_TXTlwBANs`, 7:40. Listed in search as "Supply &
+Demand Traps: Why Traders Keep Losing" and titled on the watch page "How Does the
+Market Hunt Stop Losses? | Demand & Supply" — the ID is the reliable identifier.
+A LECTURE, not a session: there is no trade to compare against.
+
+### Why this one earns a knowledge entry
+
+Everything else in `RETAIL_POSITIONING` answers "who is already trapped?". This
+lecture answers what happens when that supply RUNS OUT:
+
+> "For a time we have positional buyers' or sellers' SLs available, which the
+> market targets for momentum. **But once those SLs are exhausted, and the market
+> has to CREATE stop-losses** — then we have to look at which zone demand and
+> supply can be highest in. The market will create its SLs accordingly."
+
+So the read becomes two-phase: hunt existing inventory while it exists; once it is
+spent, stop looking for a victim and ask where the next crowd will be BUILT. The
+operator's incentive is framed as an ordinary commercial one — profit is made
+where volume is high, not where it is thin.
+
+### The mechanism worth the most: ambiguity suppresses size
+
+This is the sharpest idea in the lecture, and it explains WHY levels break:
+
+> "If it had taken support there and gone into buying... the market would have
+> looked strong. But no — the market had to break down, because **if it had held
+> support, people would not have taken large quantity.** The seller could not take
+> much, because he would think the market is holding support; the buyer would not
+> work much either, because he would think the market is negative. **So buyers and
+> sellers both work in SMALL quantity there.** But when the market breaks down,
+> activity increases."
+
+Doubt keeps position size small. A break removes the doubt, size goes up, and
+THAT is the inventory:
+
+> "When he felt the breakout was happening and the market was going up... that
+> greed is created, demand and supply are kept high so that as many people as
+> possible can participate. **And as soon as they participated, the next day they
+> became the target.**"
+
+Two consequences recorded with it:
+- Read a breakout as a RECRUITMENT DEVICE first, a directional signal second. The
+  question is not "is this break real" but "who just committed size, and where are
+  their stops now".
+- A FAILED breakout is therefore the NORMAL outcome, not a malfunction: "that is
+  why you will repeatedly see breakouts and breakdowns, and they often appear as
+  failures."
+
+### Round numbers, in a role they did not have before
+
+Elsewhere in the knowledge a round number is a level price is attracted to. Here
+it is a force multiplier on recruitment:
+
+> "There is a round number of 58,000 available. What happens? **More buyers
+> activate.** More buyers activate, so it gets more SLs."
+
+So a break at or through a round number builds a DENSER cluster than the same
+break elsewhere — which feeds the target-sizing judgement from v4b.
+
+### A third axis for target size
+
+v4a sized the target by how recently the crowd was recruited; v4b by whether it
+had averaged down. This adds HOW MANY are seated, and the reason is behavioural
+rather than arithmetic:
+
+> "In a positive market more buyers are seated, so you will get a little extra
+> momentum... those seated buyers will WAIT, and because they wait you get more
+> momentum." Against a thin side: "when selling comes into a positive chart, few
+> can even participate, and those sellers who did come were hit straight away."
+
+**New, hence in the knowledge:**
+- The manufactured-inventory phase after trapped inventory is spent.
+- Ambiguity suppresses size; a break removes it (why levels get broken at all).
+- A failed breakout is the normal outcome of a recruiting break.
+- Round numbers as recruitment amplifiers, not only as levels.
+- Crowd SIZE as a third target-sizing input.
+
+**Confirmed but already present:** the recruit-then-turn cycle
+(RECRUITMENT HISTORY), round numbers as levels/magnets (LEVELS_AND_PIVOT), and
+R:R-BAIT, which is the same operator intent seen at a rejection rather than at a
+break.
+
+**Knowledge changes (v4c, all prose):**
+- `RETAIL_POSITIONING`: WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET
+  MANUFACTURES MORE; AMBIGUITY SUPPRESSES SIZE, BREAKING A LEVEL REMOVES IT;
+  A FAILED BREAKOUT IS THE NORMAL OUTCOME; ROUND NUMBERS AMPLIFY RECRUITMENT.
+- `RISK`: CROWD SIZE IS THE THIRD TARGET INPUT.
+- Test markers: `test_system_prompt_has_v4c_manufactured_inventory_knowledge` and
+  `test_v4c_breakout_rule_does_not_turn_into_a_fade_everything_rule`. The second
+  matters because "a failed breakout is normal" reads very easily as "always fade
+  breakouts" — which would contradict both the OPENING DRIVE continuation branch
+  and the runner's live Regime Adaptive BREAKOUT branch. The test asserts the
+  lesson stays a QUESTION about who committed size rather than a default
+  direction, and that the continuation knowledge is still present beside it.

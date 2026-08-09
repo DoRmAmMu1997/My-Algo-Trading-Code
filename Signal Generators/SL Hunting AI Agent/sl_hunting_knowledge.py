@@ -69,6 +69,44 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   off an EXACT closing-price touch right after a huge gap-up) is unsustainable —
   fade it. Corollary: an EXACT touch-and-bounce at a level is fragile; small,
   partial rejections at the level are the go-with tell instead.
+- WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET MANUFACTURES MORE (v4c). The
+  rest of this section is about FINDING a crowd that is already trapped. That
+  supply is finite: "for a time we have positional buyers'/sellers' SLs available,
+  which the market targets for momentum. But once those SLs are exhausted, the
+  market has to CREATE stop-losses." Where it creates them is not arbitrary — it
+  goes to whichever zone can activate the MOST participants, because that is where
+  the most new stops come from. So the read has two phases:
+    1. Is there existing trapped inventory? Hunt that (everything above).
+    2. If it has already been taken, stop looking for a victim and ask instead
+       WHERE THE NEXT CROWD WILL BE BUILT — the zone of highest demand/supply.
+  The operator's incentive is an ordinary business one: profit is made where
+  volume is high, not where it is thin.
+- AMBIGUITY SUPPRESSES SIZE; BREAKING A LEVEL REMOVES IT (v4c). This is WHY a
+  level gets broken, and it is the most useful mechanism in the lecture. While
+  price hovers under a level, nobody commits: sellers stay small because it looks
+  like support is holding, buyers stay small because the tape looks negative —
+  "so buyers and sellers both work in SMALL quantity there". The break is what
+  resolves the doubt, and the moment it resolves, size goes up: "when he felt the
+  breakout was happening and the market was going to move up... that greed is
+  created, demand and supply are kept high so that as many people as possible can
+  participate. And as soon as they participated, the next day they became the
+  target."
+  Read a breakout as a RECRUITMENT DEVICE first and a directional signal second.
+  The question is not "is this break real" but "who just committed size because of
+  it, and where are their stops now".
+- A FAILED BREAKOUT IS THE NORMAL OUTCOME, NOT A MALFUNCTION (v4c). It follows
+  directly: if a break's function is to recruit, the recruits must then be taken,
+  which means the break reverses. "That is why you will repeatedly see breakouts
+  and breakdowns in the market, and they often appear as FAILURES." Do not treat
+  a failed break as the market misbehaving or as evidence your level was wrong.
+- ROUND NUMBERS AMPLIFY RECRUITMENT, not just support and resistance (v4c).
+  Elsewhere a round number is a level price is attracted to. Here it is a force
+  MULTIPLIER on a break: "there is a round number of 58,000 available. What
+  happens? More buyers activate. More buyers activate, so it gets more SLs." A
+  break AT or THROUGH a round number therefore builds a DENSER stop cluster than
+  the same break elsewhere — which makes the subsequent reversal both more likely
+  and worth a larger target (see A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER
+  TARGET for the other half of that sizing judgement).
 - THE POST-GAP BOUNCE IS THE TRAP DEEPENING, NOT THE SETUP FAILING (v4b). After a
   gap that puts a seated crowd underwater, the bounce back toward their entry is
   the most commonly MISREAD event on the chart. It is not your thesis breaking:
@@ -849,6 +887,15 @@ RISK DISCIPLINE
   hit." Two supporting reads for enlarging: all THREE indices moving together
   ("achieving the target will be easy"), and a visible averaging/hope phase
   earlier in the move.
+- CROWD SIZE IS THE THIRD TARGET INPUT (v4c). Alongside how recently the crowd was
+  recruited (v4a) and whether it has averaged down (v4b), HOW MANY are seated
+  scales the move available against them — and for a reason worth knowing: a
+  heavily seated side does not cut quickly. "In a positive market more buyers are
+  seated, so you will get a little extra momentum... those seated buyers will
+  WAIT, and because they wait you get more momentum." A thin side, by contrast,
+  is hit immediately and gives a short move: "when selling comes into a positive
+  chart, few can even participate, and those sellers who did come were hit
+  straight away."
 - EXPECT A SECOND LEG AFTER THE PAUSE, THEN BOOK (v4b). When a flush stalls
   mid-move, the stall is usually the LAST bait rather than the end: the market
   gives the trapped side "a little hope that the breakdown is not going to
