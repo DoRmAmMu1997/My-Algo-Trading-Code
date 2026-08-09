@@ -1,28 +1,30 @@
 {
-  "for_date": "2026-08-07",
-  "source": "Intraday Hunter, 'Prediction For 07 AUG 2026' (Lq7JGlZj6PY, uploaded 2026-08-06)",
-  "context": "Mild positive momentum -- not big, but enough that people took CALL trades -- while Sensex barely moved yet held itself up. BUYERS are the seated crowd, with their stops at the lower points already formed.",
+  "for_date": "2026-08-10",
+  "source": "Intraday Hunter, 'Prediction For 10 AUG 2026' (KDqQnqYmxws, uploaded 2026-08-09)",
+  "context": "Two to three days of sideways with only small momentum, so neither side is decisively seated. Sellers may be in, but their stops sit above BankNIFTY 58,000 and cannot be reached until that level is crossed.",
   "plan": [
-    "GAP-DOWN: identify SELL-side setups and hunt the seated buyers. Their stops sit at the lower points already formed on the chart.",
-    "The BIGGER the gap-down the better the hunt -- he wants the open as far below BankNIFTY 58,000 as it can be, because that distance is what puts the buyers underwater.",
-    "FLAT to GAP-UP: identify BUY-side setups and go WITH the market instead. It has been grinding slowly upward, so a flat or higher open offers no hunt.",
-    "The momentum that recruited those call buyers was SMALL, not a big move -- so treat this as a modest, lightly committed crowd rather than a heavily loaded one."
+    "FLAT to GAP-DOWN: identify SELL-side setups and go WITH the market -- following the rejection rather than hunting anyone.",
+    "GAP-UP: identify BUY-side setups. That both targets the seated sellers and runs with a chart that was heading up before this week's chop.",
+    "A LARGE gap-down VOIDS this plan: he says explicitly that a good gap there means a DIFFERENT plan, without saying what it is. Treat that as stand aside, not as a licence to guess.",
+    "Sellers' stops are UNREACHABLE until BankNIFTY crosses 58,000. Until that happens there is no seller hunt available, whatever the open looks like.",
+    "He flags elevated risk in as many words: the momentum is SMALL and the last two-three days are sideways, so expect a little up then a little down.",
+    "Sensex is the ambiguous one -- he says sellers may be there AND that some buyers may arrive on the positive longer-term read."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24720, 24800],
-      "support": [24610, 24500]
+      "resistance": [24590, 24670],
+      "support": [24400, 24360]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [58100, 58400],
-      "support": [57500, 57100]
+      "resistance": [58000, 58300],
+      "support": [57500, 57340]
     },
     {
       "index": "SENSEX",
-      "resistance": [79200, 79500],
-      "support": [78650, 78300]
+      "resistance": [78640, 78920],
+      "support": [78200, 78000]
     }
   ]
 }

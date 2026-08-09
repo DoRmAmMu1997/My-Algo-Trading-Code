@@ -2621,3 +2621,52 @@ Three points worth recording:
   and `test_v4b_bounce_rule_names_what_would_actually_invalidate`. The second
   exists because a rule that says "do not exit on a bounce" must also say what a
   real invalidation looks like, or it degrades into "ignore adverse movement".
+
+### Pre-open note for 2026-08-10 (Monday)
+
+**Source:** Intraday Hunter, "Prediction For 10 AUG 2026" (`KDqQnqYmxws`,
+uploaded 2026-08-09, 2:00). Note-only; no knowledge version attached.
+
+**Dated to MONDAY, not "tomorrow".** Written on a Sunday after a Friday session,
+so the next TRADING day is 10 Aug. A note dated to a weekend can never be
+injected and fails silently — the gate simply finds no match and the session runs
+without a note, with nothing in the log to distinguish that from an ordinary
+stale note. A new test, `test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day`,
+now asserts `for_date` never lands on a Saturday or Sunday.
+
+**This note is the first genuinely UNCERTAIN one in the series.** Every previous
+note named a seated crowd with confidence; this one says the market has been
+sideways for two-three days, so nobody is decisively seated:
+
+| Session | Seated crowd |
+|---|---|
+| 3-4 Aug | buyers |
+| 5-6 Aug | sellers |
+| 7 Aug | buyers |
+| **10 Aug** | **unclear — sideways, small momentum** |
+
+Three things worth having beyond the mapping:
+
+- **An unlock level for the hunt.** "If sellers are seated here, the market cannot
+  eat their SLs until the 58,000 level is crossed." That converts "are sellers
+  huntable?" into one checkable condition.
+- **The first explicit ESCAPE HATCH.** "In flat-to-gap-down, if a good gap opens,
+  our plan will be DIFFERENT" — and he does not say what it becomes. Recorded as
+  stand-aside rather than guessing the missing branch, which is the honest
+  reading and the safe one.
+- **He names the risk himself.** "Risk increases this way because the momentum is
+  small — it goes up a bit, down a bit." That pairs with v4a's tight-stop crowd
+  and v4b's regime memory: a chopping tape recruits nobody firmly, so there is
+  less to hunt in either direction.
+
+Sensex is flagged as ambiguous on both sides — sellers may be present, and buyers
+may arrive on the longer-term positive read.
+
+**Transcription caveat:** one NIFTY support arrived as "2440", read as 24400
+alongside 24360 — the same dropped-trailing-zero artefact seen on 4 Aug and 7 Aug.
+Advisory candidate levels only.
+
+**Also available and NOT yet distilled:** a lecture-style upload from the same
+weekend, "Supply & Demand Traps: Why Traders Keep Losing" (`K_TXTlwBANs`). It is
+method teaching rather than a session, so it is a candidate for a future
+knowledge version rather than for this note.
