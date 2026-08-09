@@ -792,6 +792,44 @@ def test_v4b_bounce_rule_names_what_would_actually_invalidate():
     assert "INDEX HIERARCHY ON THE WAY OUT" in prompt
 
 
+def test_system_prompt_has_v4c_manufactured_inventory_knowledge():
+    """v4c (weekend lecture, not a session): where the market CREATES stops.
+
+    Every other part of the method finds inventory that is already trapped. This
+    adds the phase after that supply runs out: the market must manufacture a new
+    crowd, and it does so wherever demand and supply can be made highest --
+    which is what a breakout is FOR.
+    """
+    prompt = build_system_prompt()
+    assert "WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET MANUFACTURES MORE" in prompt
+    # Wrap-independent fragments: these sentences span line breaks in the source.
+    assert "WHERE THE NEXT CROWD WILL BE BUILT" in prompt
+    # The mechanism: doubt keeps size small, a break resolves it.
+    assert "AMBIGUITY SUPPRESSES SIZE" in prompt
+    assert "RECRUITMENT DEVICE" in prompt
+    # ...and its direct corollary.
+    assert "A FAILED BREAKOUT IS THE NORMAL OUTCOME" in prompt
+    assert "ROUND NUMBERS AMPLIFY RECRUITMENT" in prompt
+    assert "CROWD SIZE IS THE THIRD TARGET INPUT" in prompt
+
+
+def test_v4c_breakout_rule_does_not_turn_into_a_fade_everything_rule():
+    """"A failed breakout is normal" must not become "always fade breakouts".
+
+    The runner has a live BREAKOUT branch (Regime Adaptive) and the method has a
+    with-the-gap opening drive, so a blanket anti-breakout reading would
+    contradict working strategy. The lesson is about asking WHO committed size,
+    not about a default direction -- and the existing continuation branches must
+    still stand.
+    """
+    prompt = build_system_prompt()
+    # It frames the question, rather than prescribing a side.
+    assert "who just committed size because of" in prompt
+    # The continuation knowledge it must not override is still present.
+    assert "OPENING DRIVE" in prompt
+    assert "RUNAWAY" in prompt or "runaway" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
