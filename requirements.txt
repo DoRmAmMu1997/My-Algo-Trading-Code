@@ -27,7 +27,7 @@ websocket-client==1.8.0
 # `websockets` library at package import time. It already arrives transitively
 # with dhanhq, but per DEPS-001 the exact version the live runner was verified
 # with must be pinned here rather than left to transitive resolution.
-websockets==17.0
+websockets==17.0.1
 TA-Lib==0.6.8
 
 # ---- Exact optional dependency sets -----------------------------------------
