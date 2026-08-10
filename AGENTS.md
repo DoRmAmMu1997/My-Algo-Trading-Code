@@ -194,8 +194,10 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,
-  Bandit, and pre-commit. Coverage floors are 54.7% overall, 90% for new
+  Bandit, and pre-commit. Coverage floors are 70% overall, 90% for new
   execution/reconciliation/data-safety modules, and 80% per broker adapter.
+  The overall floor only ever moves UP, and only after a run shows headroom --
+  never lower it to make a red build pass.
 - **Dependencies:** install core with `pip install -r requirements.txt`; add
   `requirements-ai.txt` for SL Hunting and `requirements-dev.txt` for local
   gates. `requirements-brokers.txt` is the isolated upstream compatibility

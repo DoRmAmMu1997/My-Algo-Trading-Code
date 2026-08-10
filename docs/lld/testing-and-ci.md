@@ -123,7 +123,7 @@ budgets are enforced from `coverage.json` by
 
 | Tier | Floor | Modules |
 |---|---|---|
-| Repository baseline | **54.7%** | everything |
+| Repository floor | **70%** | everything (measured 71.4%; original MAT-110 baseline was 54.7%) |
 | Safety / data-safety | **90%** | `broker_contract`, `execution_ledger`, `startup_exposure`, `trading_lifecycle`, `market_data_health`, `tick_bar_builder`, `next_open_entry`, `risk_sizing`, `order_splitting`, `secret_redaction` |
 | Broker adapters | **80%** | Kotak, Shoonya, Flattrade, Dhan |
 
@@ -179,7 +179,7 @@ runtime. It asserts, without contacting any network:
 - dependency sets are exact (`==` pins) and Kotak uses its official Git tag;
 - CI runs the audit, branch coverage, and every dependency set;
 - Dependabot updates pip and GitHub Actions weekly;
-- coverage config stays branch-enabled at the 54.7% baseline;
+- coverage config stays branch-enabled at the 70% floor;
 - every `cpr_ai_*.py` module is inside mypy's scope;
 - `env.example` documents every `_env_*` key the code reads (>300 found, as a
   sanity check that the AST walk still works);
