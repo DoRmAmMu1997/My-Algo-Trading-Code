@@ -69,7 +69,18 @@ One process, cooperating threads:
   With both optional agents enabled, the configured roster can reach approximately 29 workers, but
   enable and virtual-trading gates keep the running roster configuration-dependent.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
-  (best-effort alerts; never blocks trading).
+  (best-effort alerts; never blocks trading). That same `publish_trade_event` choke point also
+  mirrors every event into the **crash-durable session state** (`Dependencies/session_state.py`,
+  `SESSION_STATE_*`, on by default): an atomically-written JSON file holding each closed trade's
+  P&L immediately, plus every OPEN position — entry fill price, stop, target, quantity, contract
+  ids and last cached LTP — snapshotted every 30s from the supervisor thread. Before a replacement
+  run writes anything, it archives the exact prior file and carries same-day realized P&L into every
+  matching worker so a restart cannot reset a daily max-loss budget. It exists because the Sheet is
+  written ONCE at a clean end-of-day, so a mid-session crash (2026-08-10's machine hang) otherwise
+  loses the whole day's books. Resuming OPEN exposure remains opt-in (`SESSION_STATE_RESUME_ENABLED`,
+  default false) and deliberately narrow — today's date, an unclean shutdown, PAPER, single-leg
+  only; live positions are never restored because the broker account is the authority there. See
+  `docs/adr/0012`.
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
   **`execution_client`** (see Broker layer). On a clean end-of-day, per-strategy P&L is written to a
   Google Sheet with separate PAPER/LIVE/MIXED row labels. All behaviour is driven by a single `.env`
@@ -79,8 +90,9 @@ One process, cooperating threads:
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
-test_nifty_multi_strategy_master.py                # unittest suite for the master
-test_market_data_health.py                         # unittest suite for the shared feed-health gates
+Tests/                                             # EVERY test, mirroring the source tree (docs/adr/0010)
+  test_nifty_multi_strategy_master.py              #   unittest suite for the master
+  test_market_data_health.py                       #   unittest suite for the shared feed-health gates
 requirements.txt                                   # exact core runtime dependencies
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
 requirements-ai.txt                                # exact optional Claude Agent SDK stack
@@ -98,12 +110,13 @@ Dependencies/
   check_env_config.py                              # `algo.py check-env` config-drift audit (read-only)
   Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
-  Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py,
-                    test_flattrade_execution.py
-  Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py, test_dhan_execution.py
+  Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py
+  Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 scripts/check_coverage_thresholds.py               # branch-coverage policy gate
+docs/                                              # committed architecture set: hld/, lld/, adr/
+                                                   #   (docs/superpowers/ is a session scratchpad, gitignored)
 Backtest Outputs/                                  # generated CSVs/logs (gitignored)
 ```
 
@@ -175,20 +188,29 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   `Dependencies/.env` against `env.example` and against the keys the code's `_env_*` calls actually
   read, reporting settings missing from `.env` (an unseen in-code default is in force), mistyped or
   stale keys, and knobs missing from the template. Read-only, and it prints key NAMES only — never a
-  value out of `.env` — so its output is safe to share. `test_repository_policy.py` imports the same
+  value out of `.env` — so its output is safe to share. `Tests/Dependencies/test_repository_policy.py` imports the same
   helpers so CI fails when a new `_env_*` key lands without an `env.example` entry.
-- **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
-  mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
-  under `Signal Generators/`.
+- **Tests:** EVERY suite lives under `Tests/`, mirroring the source tree — the test for
+  `Signal Generators/<X>` sits at `Tests/Signal Generators/<X>`. Run the master suite with
+  `python -m unittest Tests.test_nifty_multi_strategy_master` (loads the master via `importlib`,
+  mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Two rules when adding
+  a test: put it at the mirrored path, and keep its FILENAME unique repository-wide (pytest keys
+  modules by basename — there are no `__init__.py` files). A `Tests/` folder mirroring a
+  spaced-name source folder carries a `conftest.py` that puts the SOURCE folder on `sys.path`,
+  never the test folder, so tests exercise the same import resolution production uses.
 - **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):**
-  `python -m unittest test_nifty_multi_strategy_master`,
-  `python -m unittest test_market_data_health`,
-  `python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q`,
+  `python -m unittest Tests.test_nifty_multi_strategy_master`,
+  `python -m unittest Tests.test_market_data_health`,
+  `python -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q`,
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,
-  Bandit, and pre-commit. Coverage floors are 54.7% overall, 90% for new
+  Bandit, and pre-commit. Coverage floors are 68% overall, 90% for new
   execution/reconciliation/data-safety modules, and 80% per broker adapter.
+  Judge the overall floor from CI, never from a local run: a machine with the
+  optional broker SDKs installed runs 7 tests CI's verify job skips and reads
+  ~2 points high (CI measures 69.1%). The floor only ever moves UP, and only
+  after a CI run shows headroom -- never lower it to make a red build pass.
 - **Dependencies:** install core with `pip install -r requirements.txt`; add
   `requirements-ai.txt` for SL Hunting and `requirements-dev.txt` for local
   gates. `requirements-brokers.txt` is the isolated upstream compatibility

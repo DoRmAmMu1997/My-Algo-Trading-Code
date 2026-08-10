@@ -514,6 +514,26 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   / opening range, and there must be no bullish rejection reclaiming those levels.
   Default gap-down logic still looks UP; use this short branch only when sellers
   are not huntable and buyer inventory / failed recovery is the active trap.
+- DEFAULT FLAT-OPEN READ: A FLAT OPEN CANNOT RUN THE WAY A GAP CAN (v4d), and the
+  reason is participation rather than momentum. This is the DEFAULT after an
+  ordinary or recently rising session; the strict multi-day-down seller-hunt
+  exception is named explicitly as Variant B below. A gap RUNS because it denied
+  everyone entry: "in a gap-up
+  the market gives nobody a chance, it just runs." A FLAT open grants entry — the
+  crowd gets positioned during the first minutes — and that positioning is exactly
+  the inventory that caps the move. IH, on a flat open he sold into: "this market
+  could only have gone up if we had got a direct gap-up; that would have made the
+  structure different. But we got flat... opening flat, the chances of it going up
+  are LOW." And on his own risk: "in a gap-up there could have been a problem;
+  with a flat open there is no problem for us."
+  So the opening type is not a strength reading, it is a PARTICIPATION reading:
+    * GAP    -> nobody positioned -> nothing overhead -> it can run, follow it.
+    * FLAT   -> everybody positioned -> inventory overhead -> fading the attempt
+                is the higher-probability side, not chasing it.
+  This is the same logic as the gap-up long branch below, stated from the other
+  end, and it is why a flat-open rally into a level is normally a SHORT candidate
+  rather than a breakout candidate. Do not apply that default when every
+  condition of the separately scoped Variant B seller-hunt long is satisfied.
 - SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
   gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
   available". That premise is FALSE when the prior session already seated a buying
@@ -887,6 +907,38 @@ RISK DISCIPLINE
   hit." Two supporting reads for enlarging: all THREE indices moving together
   ("achieving the target will be easy"), and a visible averaging/hope phase
   earlier in the move.
+- BOOK BEFORE THE ROUND NUMBER, NOT AT IT, WHEN ALL THREE INDICES ARE RUNNING
+  (v4d). A round number ahead of a winning position is not a target, it is where
+  everyone else's target IS — which makes it the natural place for the move to be
+  turned. IH, sitting on a large profit with the round number still ahead: "it has
+  the courage to go to the 500. But we should get out a little BEFORE, because
+  there is continuous momentum in all three indices, so other people will get
+  greedy too. So we book just before the round number and leave."
+  The trigger is the combination: a strong, three-index-aligned move is precisely
+  what recruits the late crowd, and that crowd's take-profit orders and the
+  operator's reversal both sit at the round figure. Take the money on the approach
+  and let somebody else find out what happens at the level. (Consistent with
+  ROUND NUMBERS AMPLIFY RECRUITMENT: the same density that makes a break there
+  powerful makes it a bad place to still be holding.)
+- YOUR ENTRY PRICE IS THE FOURTH TARGET INPUT (v4d). v4a sizes the target by how
+  recently the crowd was recruited, v4b by whether it averaged down, v4c by how
+  many are seated — all properties of THEM. This one is a property of YOU: how
+  good a fill you got. Selling from the top of a bounce leaves the whole move
+  available; selling after price has already fallen leaves only what is left.
+  "Because we got the chance to sell from ABOVE... if the market had started
+  falling directly, we might have had to take a coverage target instead of a big
+  one. But we got it higher up, so the target will be good."
+  Practical form: a poor or late fill should SHRINK the target, not be compensated
+  for by holding longer.
+- PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES (v4d). Distinct from the stop,
+  which is where the trade is wrong; this is how much movement against you is
+  still CONSISTENT with the read. IH, before entering: "if it breaks out we will
+  look for 60-70 points. The market might go further, to 160 — and that could be
+  wrong. So it is better if it does not break out at all." Naming the tolerated
+  magnitude in advance turns "is this still my setup?" into a measurement rather
+  than a feeling, and it is what lets A REJECTION BEFORE THE FLUSH IS NOISE be
+  applied without it becoming an excuse: a wobble inside the band is noise, and
+  one well beyond it is the read being wrong even if the stop has not been hit.
 - CROWD SIZE IS THE THIRD TARGET INPUT (v4c). Alongside how recently the crowd was
   recruited (v4a) and whether it has averaged down (v4b), HOW MANY are seated
   scales the move available against them — and for a reason worth knowing: a

@@ -55,7 +55,6 @@ kill-switch (also scaled) still caps the day.
 | `sl_hunting_coach.py` | v3 reflection coach — proposes lessons from the journal (`--reflect`/`--promote`/`--list`). |
 | `sl_hunting_lessons.py` | v3 lessons store (schema, consolidate, `format_lessons` for prompt injection). |
 | `lessons.json` | The APPROVED (live) lessons the agent injects — starts empty; you promote into it. |
-| `tests/` | pytest suite — runs with a fake runner, no SDK/CLI/network. |
 
 ## Setup (one-time)
 ```bash
@@ -139,8 +138,11 @@ cutoff the agent isn't called at all, so it makes **no LLM calls for the rest of
   worker — the rest of the master and its test suite are unaffected.
 
 ## Tests
+The suite lives at the mirrored path under `Tests/` (see
+`docs/adr/0010-tests-in-a-mirrored-tests-tree.md`). It runs with a fake runner —
+no SDK, CLI, or network.
 ```bash
-pytest "Signal Generators/SL Hunting AI Agent/tests"
+pytest "Tests/Signal Generators/SL Hunting AI Agent"
 ```
 
 ## BankNIFTY cross-confirmation (v2)

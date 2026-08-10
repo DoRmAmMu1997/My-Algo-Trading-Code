@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CPRAction = Literal["HOLD", "ENTER_LONG", "ENTER_SHORT", "EXIT", "SCALE_IN"]
 CPRRegime = Literal["SIDEWAYS", "TRENDING", "UNDECIDED"]
@@ -44,7 +44,9 @@ class CPRAgentDecision(BaseModel):
     action: CPRAction
     regime: CPRRegime
     setup: CPRSetup
-    confidence: int
+    # Field bounds become JSON-Schema minimum/maximum values.  Codex therefore
+    # sees the same 0-10 contract that Pydantic enforces after the turn returns.
+    confidence: int = Field(ge=0, le=10)
     reasoning: str
     model_used: str
     prompt_version: str

@@ -448,7 +448,10 @@ class CPRAgent:
         from cpr_ai_schema import CPRAgentDecision
 
         return self.runner(
-            prompt=build_system_prompt(),
+            # Tell the prompt builder which configured model identifier must be
+            # echoed in the strict response.  This remains advisory metadata;
+            # the host independently verifies it before accepting a decision.
+            prompt=build_system_prompt(model_used=self.model),
             context=context,
             bar_signature=bar_signature,
             model=self.model,

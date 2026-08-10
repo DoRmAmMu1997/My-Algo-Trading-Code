@@ -1,25 +1,27 @@
 {
-  "for_date": "2026-08-10",
-  "source": "Intraday Hunter, 'Prediction For 10 AUG 2026' (KDqQnqYmxws, uploaded 2026-08-09)",
-  "context": "Two to three days of sideways with only small momentum, so neither side is decisively seated. Sellers may be in, but their stops sit above BankNIFTY 58,000 and cannot be reached until that level is crossed.",
+  "for_date": "2026-08-11",
+  "source": "Intraday Hunter, 'Prediction For 11 AUG 2026' (cOvPKZFervw, uploaded 2026-08-10)",
+  "context": "NIFTY sold off but the BREAKDOWN FAILED -- it turned straight back up and held above. Buyers who joined were flushed on the closing rejection. BankNIFTY sold with no follow-through; Sensex sold, recovered, then rejected late.",
   "plan": [
-    "FLAT to GAP-DOWN: identify SELL-side setups and go WITH the market -- following the rejection rather than hunting anyone.",
-    "GAP-UP: identify BUY-side setups. That both targets the seated sellers and runs with a chart that was heading up before this week's chop.",
-    "A LARGE gap-down VOIDS this plan: he says explicitly that a good gap there means a DIFFERENT plan, without saying what it is. Treat that as stand aside, not as a licence to guess.",
-    "Sellers' stops are UNREACHABLE until BankNIFTY crosses 58,000. Until that happens there is no seller hunt available, whatever the open looks like.",
-    "He flags elevated risk in as many words: the momentum is SMALL and the last two-three days are sideways, so expect a little up then a little down.",
-    "Sensex is the ambiguous one -- he says sellers may be there AND that some buyers may arrive on the positive longer-term read."
+    "FLAT to GAP-UP: identify BUY-side setups and go WITH the market. Same read on all three indices -- NIFTY, BankNIFTY and Sensex get the identical conditional.",
+    "GAP-DOWN: identify SELL-side setups. He says the structure becomes DIFFERENT there and traps form differently, so treat it as its own regime rather than a mirror of the up case.",
+    "The failed breakdown is the whole story: sellers were TURNED AROUND rather than paid, so they are the trapped inventory carried into this session.",
+    "He explicitly allows that today may only have spun the sellers, and that the NEXT gap-down is where the market could finally deliver momentum.",
+    "EXPIRY DAY -- flagged in the first ten seconds. Expect the usual expiry premium decay and pinning distortion around round strikes.",
+    "Buyers who entered on the hold were flushed on the last rejection, so freshly recruited longs are already thin going in.",
+    "NOTE: this INVERTS yesterday's plan (10 Aug wanted sells on flat, buys on a gap-up). Do not carry the previous session's conditional forward.",
+    "No stand-aside branch this time, unlike 10 Aug's large-gap-down veto -- both directions are actionable as stated."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24590, 24670],
-      "support": [24400, 24360]
+      "resistance": [24610, 24670],
+      "support": [24440, 24360]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [58000, 58300],
-      "support": [57500, 57340]
+      "resistance": [57800, 58000],
+      "support": [57340, 57150]
     },
     {
       "index": "SENSEX",

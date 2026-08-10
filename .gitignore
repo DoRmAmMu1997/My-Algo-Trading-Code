@@ -21,6 +21,13 @@ Backtest Outputs/
 *.log
 # DhanHQ instrument master dump (regenerated daily by the runner; auto-swept)
 Dependencies/all_instrument*.csv
+# Crash-durable session state (rewritten every session; holds live position and
+# P&L detail, so it is operational data and never belongs in the repository)
+Dependencies/session_state.json
+Dependencies/session_state.json.tmp
+# Exact prior-run files are rotated here before a replacement session starts.
+# They remain operational P&L/position evidence and must stay out of Git too.
+Dependencies/session_state.*.recovery.json
 
 # IDE / OS
 .vscode/
@@ -39,3 +46,7 @@ htmlcov/
 # reports here. They describe one development session rather than the product,
 # so keep the complete workspace-private directory out of source control.
 .superpowers/
+# Same reasoning for the plans/specs Superpowers writes under docs/: they are a
+# per-session working record, not product documentation. docs/ itself is the
+# committed architecture set (hld/, lld/, adr/) -- only this subtree is ignored.
+docs/superpowers/

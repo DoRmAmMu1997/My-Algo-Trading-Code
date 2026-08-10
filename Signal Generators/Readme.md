@@ -78,8 +78,8 @@ Everything for it lives in its own folder, `Regime Adaptive Strategy/`:
 | `Nifty Regime Adaptive Signal Generator.py` | the router — the only worker of the three |
 | `regime_candidates.py` | the two candidate rules, as pure column-producing functions |
 | `regime_common.py` | session date, session VWAP, session opening range — and this folder's **only** `sys.path` bootstrap, which is why it re-exports the shared indicators from `misc_strategy_common` one level up |
-| `conftest.py` | the pytest equivalent of that bootstrap (same pattern as `SL Hunting AI Agent/`) |
 | `REGIME_PORTING_NOTES.md` | **read before enabling live** — what was dropped and why |
+| _(tests)_ | at the mirrored path `Tests/Signal Generators/Regime Adaptive Strategy/`, whose `conftest.py` is the pytest equivalent of that bootstrap (same pattern as `SL Hunting AI Agent/`) |
 
 Two things to know before touching it:
 

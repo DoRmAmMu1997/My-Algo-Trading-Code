@@ -13,8 +13,8 @@ attributed in each new module's docstring.
 | `regime_common.py` | Session date, session VWAP, session opening range |
 | `regime_candidates.py` | The two candidate rules, as pure column-producing functions |
 | `Nifty Regime Adaptive Signal Generator.py` | The router — the only new worker |
-| `conftest.py` | pytest `sys.path` bootstrap for this folder |
-| `test_regime_adaptive.py` | Behaviour tests for the above |
+| `Tests/Signal Generators/Regime Adaptive Strategy/conftest.py` | pytest `sys.path` bootstrap pointing back at this folder |
+| `Tests/Signal Generators/Regime Adaptive Strategy/test_regime_adaptive.py` | Behaviour tests for the above |
 
 **One note on imports.** The master's `load_module()` puts only the loaded file's
 own directory on `sys.path`, so a module in here cannot see

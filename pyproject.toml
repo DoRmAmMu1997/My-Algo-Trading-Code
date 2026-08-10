@@ -39,8 +39,10 @@ external = ["BLE"]
 [tool.ruff.lint.per-file-ignores]
 # B017: tests intentionally assert on bare Exception for defensive paths.
 # RUF012: test fakes use mutable class attributes as fixtures.
+# Every suite lives under Tests/ (mirroring the source tree); the glob covers
+# them all, and the master suite is named explicitly for discoverability.
 "**/test_*.py" = ["B017", "RUF012"]
-"test_nifty_multi_strategy_master.py" = ["B017", "RUF012"]
+"Tests/test_nifty_multi_strategy_master.py" = ["B017", "RUF012"]
 # Reference-only backtests keep the deliberate sys.path-before-import pattern.
 "My Backtest Files (For Reference)/**" = ["E402"]
 
@@ -64,6 +66,7 @@ files = [
     "Dependencies/market_data_health.py",
     "Dependencies/tick_bar_builder.py",
     "Dependencies/risk_sizing.py",
+    "Dependencies/session_state.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
     "Dependencies/Kotak API/kotak_execution.py",
@@ -164,6 +167,12 @@ relative_files = true
 concurrency = ["thread"]
 source = ["."]
 omit = [
+    # Every suite now lives under Tests/ (mirroring the source tree). Both
+    # patterns are listed because Coverage.py's `*` does not cross a path
+    # separator: the first catches Tests/test_x.py, the second the nested
+    # Tests/<Component>/... suites.
+    "Tests/*",
+    "Tests/**/*",
     "*/test_*.py",
     "*/tests/*",
     "Backtest Outputs/*",
@@ -172,10 +181,23 @@ omit = [
 ]
 
 [tool.coverage.report]
-# MAT-110 measured the branch-enabled runtime baseline before installing this
-# gate. Per-module 90%/80% budgets are enforced from coverage.json by the small
-# policy script because Coverage.py has only one global fail-under setting.
-fail_under = 54.7
+# MAT-110 measured the branch-enabled runtime baseline (54.7%) before installing
+# this gate. Coverage has grown well past it since, so the floor was raised -- a
+# floor 14 points below actual stops nothing. Per-module 90%/80% budgets are
+# enforced from coverage.json by the small policy script because Coverage.py has
+# only one global fail-under setting.
+#
+# 68.0 is set against CI's 69.1%. USE THE CI NUMBER, NOT A LOCAL ONE: a developer
+# machine with the optional broker SDKs installed (neo_api_client, pyotp) runs 7
+# tests that CI's verify job skips, and reads ~71.4% -- about 2.3 points high. CI
+# installs core + dev + ai + codex-ai only, deliberately (Kotak's official tag
+# pins older pandas/requests and cannot share the audited core environment), so
+# the hosted number is the honest one.
+#
+# Raising this is deliberate and one-way: only move it UP, and only after a CI
+# run shows real headroom. Lowering it to make a red build pass defeats the gate
+# -- fix the tests instead.
+fail_under = 68.0
 precision = 1
 show_missing = true
 skip_covered = false
