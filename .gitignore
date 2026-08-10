@@ -21,6 +21,10 @@ Backtest Outputs/
 *.log
 # DhanHQ instrument master dump (regenerated daily by the runner; auto-swept)
 Dependencies/all_instrument*.csv
+# Crash-durable session state (rewritten every session; holds live position and
+# P&L detail, so it is operational data and never belongs in the repository)
+Dependencies/session_state.json
+Dependencies/session_state.json.tmp
 
 # IDE / OS
 .vscode/

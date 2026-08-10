@@ -11220,6 +11220,250 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         )
 
 
+class TestSessionStatePersistence(unittest.TestCase):
+    """The runner half of crash-durable state.
+
+    The module's own rules are covered in Tests/Dependencies/test_session_state.py;
+    what matters here is that the runner actually FEEDS it -- every trade event,
+    and every open position with the entry price a resume depends on.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        self.worker.strategy_name = "Renko"
+
+    def _open_position(self):
+        return master_file.PaperPosition(
+            active=True,
+            direction="BULLISH",
+            symbol="NIFTY-Aug2026-24550-CE",
+            quantity=75,
+            entry_trade_price=112.35,
+            entry_underlying=24561.2,
+            stop_underlying=24510.0,
+            target_underlying=24640.0,
+            option_security_id=43210,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=24550.0,
+            option_expiry=date(2026, 8, 11),
+            option_lot_size=75,
+        )
+
+    # -- the choke point -------------------------------------------------
+    def test_every_trade_event_reaches_the_state_store(self):
+        """One hook on publish_trade_event covers all 25 call sites."""
+        state = MagicMock()
+        self.worker.session_state = state
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": -929.5})
+
+        state.record_trade_event.assert_called_once()
+        recorded = state.record_trade_event.call_args.args[0]
+        self.assertEqual(recorded["pnl"], -929.5)
+        # publish_trade_event stamps these before handing the event over.
+        self.assertEqual(recorded["strategy"], "Renko")
+        self.assertEqual(recorded["mode"], "PAPER")
+
+    def test_state_is_recorded_even_without_telegram(self):
+        """Notifications are optional; losing the day's books is not."""
+        state = MagicMock()
+        self.worker.session_state = state
+        self.worker.trade_event_queue = None
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": 1.0})
+        state.record_trade_event.assert_called_once()
+
+    def test_a_failing_state_store_never_breaks_telegram_or_trading(self):
+        state = MagicMock()
+        state.record_trade_event.side_effect = RuntimeError("disk full")
+        self.worker.session_state = state
+        self.worker.trade_event_queue = master_file.queue.Queue(maxsize=10)
+
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": 1.0})  # must not raise
+        # publish_trade_event swallows the failure; trading continues either way.
+        self.assertTrue(state.record_trade_event.called)
+
+    def test_no_state_store_is_a_silent_no_op(self):
+        self.worker.session_state = None
+        self.worker.trade_event_queue = master_file.queue.Queue(maxsize=10)
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": 1.0})
+        self.assertEqual(self.worker.trade_event_queue.qsize(), 1)
+
+    # -- snapshots -------------------------------------------------------
+    def test_snapshot_captures_entry_price_stop_target_and_live_mark(self):
+        self.worker.pos = self._open_position()
+        self.worker.realized_pnl = -929.5
+        self.worker.completed_trades = 2
+        self.store.update_ltp_map({("NSE_FNO", 43210): 98.1})
+
+        snapshot = master_file._worker_session_state_snapshot(self.worker)
+
+        self.assertEqual(snapshot["strategy"], "Renko")
+        self.assertEqual(snapshot["realized_pnl"], -929.5)
+        self.assertEqual(snapshot["completed_trades"], 2)
+        self.assertFalse(snapshot["live_trading"])
+        position = snapshot["open_position"]
+        self.assertEqual(position["entry_trade_price"], 112.35)
+        self.assertEqual(position["stop_underlying"], 24510.0)
+        self.assertEqual(position["target_underlying"], 24640.0)
+        self.assertEqual(position["last_mark_ltp"], 98.1)
+        # (98.10 - 112.35) * 75
+        self.assertAlmostEqual(position["unrealized_pnl"], -1068.75, places=2)
+
+    def test_flat_worker_snapshots_no_position(self):
+        snapshot = master_file._worker_session_state_snapshot(self.worker)
+        self.assertNotIn("open_position", snapshot)
+
+    def test_leg_marks_read_the_cache_only(self):
+        """This runs on the supervisor thread; a broker call would stall it."""
+        self.worker.pos = self._open_position()
+        broker = self.worker.broker
+        marks = master_file._position_leg_marks(self.worker.pos, self.store)
+
+        self.assertEqual(marks, {})  # cache cold -> no mark, and...
+        broker.fetch_ltp_map.assert_not_called()  # ...no network fallback.
+
+    def test_snapshot_of_a_broken_worker_does_not_blind_the_others(self):
+        broken = MagicMock()
+        broken.strategy_name = "Broken"
+        type(broken).completed_trades = property(
+            lambda _self: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+        snapshots = master_file._session_state_snapshots([broken, self.worker])
+        self.assertEqual([s["strategy"] for s in snapshots], ["Renko"])
+
+    # -- resume ----------------------------------------------------------
+    def test_position_record_round_trips_through_the_file(self):
+        original = self._open_position()
+        record = master_file.serialize_position(original, leg_marks={"option": 98.1})
+        # Force it through JSON: that is what a real recovery reads.
+        rebuilt = master_file._paper_position_from_record(json.loads(json.dumps(record)))
+
+        self.assertTrue(rebuilt.active)
+        self.assertEqual(rebuilt.entry_trade_price, original.entry_trade_price)
+        self.assertEqual(rebuilt.quantity, original.quantity)
+        self.assertEqual(rebuilt.stop_underlying, original.stop_underlying)
+        self.assertEqual(rebuilt.target_underlying, original.target_underlying)
+        self.assertEqual(rebuilt.option_expiry, original.option_expiry)
+        self.assertEqual(rebuilt.option_security_id, original.option_security_id)
+        # Broker exposure is never asserted by this file.
+        self.assertIsNone(rebuilt.live_leg)
+
+    def test_incomplete_record_is_rejected_rather_than_half_restored(self):
+        for broken in (
+            {"quantity": 0, "entry_trade_price": 112.35, "option_security_id": 1},
+            {"quantity": 75, "entry_trade_price": 0.0, "option_security_id": 1},
+            {"quantity": 75, "entry_trade_price": 112.35, "option_security_id": 0},
+        ):
+            with self.subTest(broken=broken), self.assertRaises(ValueError):
+                master_file._paper_position_from_record(broken)
+
+    def _write_state(self, tmpdir, *, live=False, clean=False, session_date=None):
+        record = master_file.serialize_position(
+            self._open_position(), leg_marks={"option": 98.1}
+        )
+        state = {
+            "schema_version": 1,
+            "session_date": (
+                session_date or datetime.now(master_file.IST_TIMEZONE).date()
+            ).isoformat(),
+            "clean_shutdown": clean,
+            "strategies": {
+                "Renko": {
+                    "live_trading": live,
+                    "execution_mode": "LIVE" if live else "PAPER",
+                    "realized_pnl": -929.5,
+                    "completed_trades": 2,
+                    "open_position": record,
+                }
+            },
+            "trades": [],
+        }
+        path = Path(tmpdir) / "session_state.json"
+        path.write_text(json.dumps(state), encoding="utf-8")
+        return str(path)
+
+    def test_resume_restores_position_pnl_and_the_ltp_subscription(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_state(tmpdir)
+            restored = master_file._resume_open_positions([self.worker], path)
+
+        self.assertEqual(restored, 1)
+        self.assertTrue(self.worker.pos.active)
+        self.assertEqual(self.worker.pos.entry_trade_price, 112.35)
+        self.assertEqual(self.worker.pos.stop_underlying, 24510.0)
+        # The day's books carry over so the max-loss switch is not reset.
+        self.assertEqual(self.worker.realized_pnl, -929.5)
+        self.assertEqual(self.worker.completed_trades, 2)
+        # Without the subscription the resumed leg would never be priced again.
+        subscribed = {
+            (sub.exchange_segment, sub.security_id)
+            for sub in self.store.snapshot_option_subscriptions()
+        }
+        self.assertIn(("NSE_FNO", 43210), subscribed)
+
+    def test_resume_refuses_a_live_enabled_worker(self):
+        """The broker account, not this file, decides what is open in live."""
+        self.worker.live_trading = True
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_state(tmpdir, live=False)  # file says PAPER...
+            restored = master_file._resume_open_positions([self.worker], path)
+        # ...but THIS session is live-enabled, so it still refuses.
+        self.assertEqual(restored, 0)
+        self.assertFalse(self.worker.pos.active)
+
+    def test_resume_refuses_a_clean_shutdown_and_a_stale_date(self):
+        for kwargs in (
+            {"clean": True},
+            {"session_date": date(2020, 1, 1)},
+        ):
+            with self.subTest(**kwargs), tempfile.TemporaryDirectory() as tmpdir:
+                self.worker.pos = master_file.PaperPosition()
+                path = self._write_state(tmpdir, **kwargs)
+                self.assertEqual(
+                    master_file._resume_open_positions([self.worker], path), 0
+                )
+                self.assertFalse(self.worker.pos.active)
+
+    def test_resume_skips_a_strategy_that_is_not_running(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_state(tmpdir)
+            self.assertEqual(master_file._resume_open_positions([], path), 0)
+
+    def test_resume_leaves_the_worker_flat_when_the_record_is_unusable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "session_state.json"
+            state = json.loads(Path(self._write_state(tmpdir)).read_text(encoding="utf-8"))
+            state["strategies"]["Renko"]["open_position"]["quantity"] = 0
+            path.write_text(json.dumps(state), encoding="utf-8")
+            restored = master_file._resume_open_positions([self.worker], str(path))
+
+        self.assertEqual(restored, 0)
+        self.assertFalse(self.worker.pos.active)
+
+    def test_resume_refuses_an_unsupported_position_shape(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "session_state.json"
+            state = json.loads(Path(self._write_state(tmpdir)).read_text(encoding="utf-8"))
+            state["strategies"]["Renko"]["open_position"]["position_type"] = (
+                "HedgedPaperPosition"
+            )
+            path.write_text(json.dumps(state), encoding="utf-8")
+            self.assertEqual(
+                master_file._resume_open_positions([self.worker], str(path)), 0
+            )
+        self.assertFalse(self.worker.pos.active)
+
+    def test_resume_with_no_state_file_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = str(Path(tmpdir) / "nothing.json")
+            self.assertEqual(
+                master_file._resume_open_positions([self.worker], missing), 0
+            )
+
+
 if __name__ == "__main__":
     # Use the custom runner so both `python file.py` and any other direct
     # invocation produce verbose per-test output PLUS the final summary.

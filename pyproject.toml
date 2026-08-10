@@ -66,6 +66,7 @@ files = [
     "Dependencies/market_data_health.py",
     "Dependencies/tick_bar_builder.py",
     "Dependencies/risk_sizing.py",
+    "Dependencies/session_state.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
     "Dependencies/Kotak API/kotak_execution.py",

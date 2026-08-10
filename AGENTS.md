@@ -69,7 +69,16 @@ One process, cooperating threads:
   With both optional agents enabled, the configured roster can reach approximately 29 workers, but
   enable and virtual-trading gates keep the running roster configuration-dependent.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
-  (best-effort alerts; never blocks trading).
+  (best-effort alerts; never blocks trading). That same `publish_trade_event` choke point also
+  mirrors every event into the **crash-durable session state** (`Dependencies/session_state.py`,
+  `SESSION_STATE_*`, on by default): an atomically-written JSON file holding each closed trade's
+  P&L immediately, plus every OPEN position — entry fill price, stop, target, quantity, contract
+  ids and last cached LTP — snapshotted every 30s from the supervisor thread. It exists because the
+  Sheet is written ONCE at a clean end-of-day, so a mid-session crash (2026-08-10's machine hang)
+  otherwise loses the whole day's books. Resuming a position from it is opt-in
+  (`SESSION_STATE_RESUME_ENABLED`, default false) and deliberately narrow — today's date, an
+  unclean shutdown, PAPER, single-leg only; live positions are never restored because the broker
+  account is the authority there. See `docs/adr/0012`.
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
   **`execution_client`** (see Broker layer). On a clean end-of-day, per-strategy P&L is written to a
   Google Sheet with separate PAPER/LIVE/MIXED row labels. All behaviour is driven by a single `.env`

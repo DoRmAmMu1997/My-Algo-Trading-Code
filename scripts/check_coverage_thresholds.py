@@ -36,6 +36,10 @@ SAFETY_THRESHOLDS = {
     # MAT-108's redaction layer is data-safety code: a regression here leaks
     # credentials into logs, so it carries the same 90% budget.
     "Dependencies/secret_redaction.py": 90.0,
+    # The crash-durable session state IS the recovery path for a session that
+    # dies before publishing results. A regression here is silent until the
+    # day it matters, so it carries the data-safety budget.
+    "Dependencies/session_state.py": 90.0,
 }
 
 # EVERY live execution adapter belongs in this dict. A broker added without a
