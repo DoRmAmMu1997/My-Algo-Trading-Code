@@ -47,11 +47,24 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # regression and a live session. Move it together with requirements.txt, and
     # only once a PAPER session has confirmed the feed still ticks on the new
     # version -- CI never opens a real socket, so a green build proves nothing
-    # about the transport. Note this is a MAJOR (16 -> 17): dhanhq.marketfeed
-    # hard-imports websockets at package import time, so an incompatible API
-    # would surface as the RUNNER FAILING TO START, not merely a quiet feed.
-    assert "websockets==17.0" in core
-    assert "claude-agent-sdk==0.2.128" in ai
+    # about the transport.
+    #
+    # 17.0 -> 17.0.1 (2026-08-11, PR #119). The upstream tag-to-tag diff looks
+    # alarming -- it removes `Server.wrap()` and reworks the asyncio server --
+    # but every one of those is SERVER-side and marketfeed is a client. Its
+    # entire surface is three names, all confirmed present in 17.0.1:
+    # `websockets.connect`, `websockets.ConnectionClosed`, and
+    # `websockets.protocol.State.CLOSED`. That rules out the import-time
+    # "runner fails to start" failure this pin exists to prevent; it does NOT
+    # prove the transport behaves, which only a session on the real socket can.
+    # Operator decision: validate on the next run rather than ahead of the
+    # merge, because MARKET_DATA_SOURCE=WEBSOCKET is active but every strategy
+    # is PAPER (LIVE_TRADING_ENABLED=false), so a bad feed costs a session and
+    # not money. If the feed does not tick, revert this pin first.
+    assert "websockets==17.0.1" in core
+    # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
+    # is an active path, but paper-only until the next session confirms it.
+    assert "claude-agent-sdk==0.2.132" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR agent is an optional, subscription-authenticated
