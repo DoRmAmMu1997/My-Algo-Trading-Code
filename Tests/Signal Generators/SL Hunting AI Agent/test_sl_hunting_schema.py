@@ -830,6 +830,42 @@ def test_v4c_breakout_rule_does_not_turn_into_a_fade_everything_rule():
     assert "RUNAWAY" in prompt or "runaway" in prompt
 
 
+def test_system_prompt_has_v4d_flat_open_and_round_number_booking_knowledge():
+    """v4d (10 Aug live session): a large win on puts from a FLAT open.
+
+    The opening type is reframed as a PARTICIPATION reading rather than a
+    strength reading -- a gap runs because it denied everyone entry, a flat open
+    cannot because it granted it. He then booked a big profit deliberately BEFORE
+    the round number, because a three-index move is what recruits the late crowd
+    and their targets all sit at the round figure.
+    """
+    prompt = build_system_prompt()
+    assert "A FLAT OPEN CANNOT RUN THE WAY A GAP CAN" in prompt
+    # Wrap-independent fragments: these span line breaks in the source.
+    assert "PARTICIPATION reading" in prompt
+    assert "BOOK BEFORE THE ROUND NUMBER" in prompt
+    assert "everyone else's target IS" in prompt
+    # The two new target inputs, and the tolerated-adverse-move band.
+    assert "YOUR ENTRY PRICE IS THE FOURTH TARGET INPUT" in prompt
+    assert "PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES" in prompt
+
+
+def test_target_sizing_inputs_are_all_present_and_distinct():
+    """The four target-sizing inputs accumulated across v4a-v4d must coexist.
+
+    Each was added in a different version and they pull in different directions,
+    so a later edit that dropped one would quietly change how every target is
+    sized without failing any other test.
+    """
+    prompt = build_system_prompt()
+    assert "A FRESHLY RECRUITED CROWD HAS TIGHT STOPS" in prompt        # v4a: recency
+    assert "A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET" in prompt  # v4b
+    assert "CROWD SIZE IS THE THIRD TARGET INPUT" in prompt             # v4c
+    assert "YOUR ENTRY PRICE IS THE FOURTH TARGET INPUT" in prompt      # v4d
+    # v4d's is the only one about the trader rather than the crowd.
+    assert "a property of YOU" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 

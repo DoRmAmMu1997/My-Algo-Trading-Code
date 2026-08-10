@@ -2752,7 +2752,7 @@ rather than arithmetic:
 R:R-BAIT, which is the same operator intent seen at a rejection rather than at a
 break.
 
-**Knowledge changes (v4c, all prose):**
+**Knowledge changes (v4c, all prose) — see v4d below for the 10 Aug session:**
 - `RETAIL_POSITIONING`: WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET
   MANUFACTURES MORE; AMBIGUITY SUPPRESSES SIZE, BREAKING A LEVEL REMOVES IT;
   A FAILED BREAKOUT IS THE NORMAL OUTCOME; ROUND NUMBERS AMPLIFY RECRUITMENT.
@@ -2764,3 +2764,105 @@ break.
   and the runner's live Regime Adaptive BREAKOUT branch. The test asserts the
   lesson stays a QUESTION about who committed size rather than a default
   direction, and that the continuation knowledge is still present beside it.
+
+## Video addendum - the 10 Aug LIVE SESSION (v4d)
+
+**Source:** Intraday Hunter live session, 10 Aug 2026 (`flhHzz87Of0`, 10:50). A
+large WIN on the put side from an ALMOST FLAT open, with the target deliberately
+enlarged and then booked short of the round number.
+
+### The opening type is a participation reading, not a strength reading
+
+The clearest new idea, and it inverts how a flat open usually gets read:
+
+> "This market could only have gone up if we had got a direct gap-up — that would
+> have made the structure different. But we got flat... **opening flat, the
+> chances of it going up are LOW.**"
+> "In a gap-up the market gives nobody a chance, it just runs."
+
+A gap RUNS because it denied everyone entry. A flat open GRANTS entry, the crowd
+positions during the first minutes, and that positioning is the inventory that
+caps the move:
+
+| Open | Who positioned | Consequence |
+|---|---|---|
+| GAP | nobody | nothing overhead — it can run, follow it |
+| FLAT | everybody | inventory overhead — fade the attempt, do not chase it |
+
+This is the existing gap-up long branch stated from the other end, which is why
+it went into `OPENING_DRIVE` beside it rather than into a section of its own.
+
+### Book BEFORE the round number when all three indices are running
+
+> "It has the courage to go to the 500. **But we should get out a little BEFORE**,
+> because there is continuous momentum in all three indices, so other people will
+> get greedy too. So we book just before the round number and leave."
+
+A strong three-index-aligned move is exactly what recruits the late crowd, and
+that crowd's take-profits — plus the operator's reversal — both sit at the round
+figure. This is the flip side of v4c's ROUND NUMBERS AMPLIFY RECRUITMENT: the
+density that makes a break there powerful makes it a bad place to still be
+holding.
+
+### A fourth target-sizing input, and the first about YOU
+
+> "Because we got the chance to sell from ABOVE... if the market had started
+> falling directly, we might have had to take a coverage target instead of a big
+> one. But we got it higher up, so the target will be good."
+
+v4a sized by the crowd's recency, v4b by whether it averaged, v4c by how many are
+seated — all properties of THEM. This one is the quality of YOUR fill. Recorded
+with its practical form: a poor or late fill should SHRINK the target rather than
+be compensated for by holding longer.
+
+A test now asserts all four inputs coexist, because each arrived in a different
+version and a later edit could drop one without failing anything else.
+
+### Pre-committing the tolerated adverse move
+
+> "If it breaks out we will look for 60-70 points. The market might go further, to
+> 160 — and that could be wrong. **So it is better if it does not break out at
+> all.**"
+
+Distinct from the stop (where the trade is WRONG), this is how much movement
+against you is still CONSISTENT with the read. It also gives v4a's A REJECTION
+BEFORE THE FLUSH IS NOISE a measurable boundary: a wobble inside the band is
+noise, one well beyond it is the read failing even before the stop is touched.
+
+### The agent's session, and a data-integrity problem
+
+The runner was **restarted four times** (08:18, 08:21, 09:13, 10:37). The 09:13
+instance traded and was then killed WITHOUT a clean shutdown — the log goes
+straight from a 10:31 true-up to a new "Starting..." at 10:37:51, with no
+`Result summary` anywhere between 09:13 and 10:37.
+
+SL Hunting's real day happened inside that instance:
+
+| Time | NIFTY | BNF | Basket |
+|---|---|---|---|
+| 09:23:30 | -191.75 | +60.00 | -131.75 |
+| 09:51:03 | -136.50 | -72.00 | -208.50 |
+| 10:15:37 | -2,431.00 | -2,424.00 | **-4,855.00** |
+| | | | **-5,195.25** |
+
+The only SL Hunting `Result summary` for 10 Aug is at 11:00:01, from the NEW
+instance, reading `Trades=0 | RealizedPnL=0.00`.
+
+**This is a DIFFERENT failure from the 2026-08-03 one.** There, a restarted runner
+logged `Trades=0` OVER real figures, and the trades-count guard in
+`_compute_pnl_sheet_updates` was added to stop that. Here the figures never got a
+summary at all, so there is nothing for the guard to prefer — every SL Hunting
+summary for the day reads zero, and the Sheet will record 0.00 against a real
+-Rs.5,195.25. The guard stops the wrong number winning; it cannot invent a number
+that was never logged.
+
+One thing that DID work: the 09:24 exit fired on `setup=index_hierarchy_exit` —
+"BankNIFTY, the major index, has turned decisively against our LONG" — v3y's rule
+cited by name in a live decision.
+
+**Knowledge changes (v4d, all prose):**
+- `OPENING_DRIVE`: A FLAT OPEN CANNOT RUN THE WAY A GAP CAN.
+- `RISK`: BOOK BEFORE THE ROUND NUMBER, NOT AT IT; YOUR ENTRY PRICE IS THE FOURTH
+  TARGET INPUT; PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES.
+- Test markers: `test_system_prompt_has_v4d_flat_open_and_round_number_booking_knowledge`
+  and `test_target_sizing_inputs_are_all_present_and_distinct`.
