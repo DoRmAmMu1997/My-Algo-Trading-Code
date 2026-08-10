@@ -201,18 +201,17 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_10_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 9 Aug transcript.
+def test_shipped_note_matches_august_11_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 10 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    Two things make this one different from every note before it. First, the
-    market is SIDEWAYS over two-three days, so neither side is decisively seated
-    and he says so -- the previous notes all named a seated crowd with confidence.
-    Second, it carries the first explicit ESCAPE HATCH: a large gap-down means "a
-    different plan", which he does not specify. The note records that as stand
-    aside rather than inventing the missing branch.
+    The distinguishing fact this time is a FAILED BREAKDOWN: NIFTY sold, broke
+    down, and immediately turned back up and held. That flips the whole
+    conditional relative to 10 Aug -- a flat open now wants BUYS, where the day
+    before it wanted SELLS -- so the assertion below is deliberately exact about
+    which side each gap branch takes. It is also an EXPIRY session.
     """
     import os
 
@@ -221,38 +220,27 @@ def test_shipped_note_matches_august_10_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-10"
-    assert "KDqQnqYmxws" in note.source
-    # The distinguishing facts: sideways, and an unlock level for the seller hunt.
-    assert "neither side is decisively seated" in note.context
-    assert "58,000" in note.context
-    assert note.plan == [
-        "FLAT to GAP-DOWN: identify SELL-side setups and go WITH the market -- "
-        "following the rejection rather than hunting anyone.",
-        "GAP-UP: identify BUY-side setups. That both targets the seated sellers "
-        "and runs with a chart that was heading up before this week's chop.",
-        "A LARGE gap-down VOIDS this plan: he says explicitly that a good gap "
-        "there means a DIFFERENT plan, without saying what it is. Treat that as "
-        "stand aside, not as a licence to guess.",
-        "Sellers' stops are UNREACHABLE until BankNIFTY crosses 58,000. Until "
-        "that happens there is no seller hunt available, whatever the open looks "
-        "like.",
-        "He flags elevated risk in as many words: the momentum is SMALL and the "
-        "last two-three days are sideways, so expect a little up then a little "
-        "down.",
-        "Sensex is the ambiguous one -- he says sellers may be there AND that "
-        "some buyers may arrive on the positive longer-term read.",
-    ]
+    assert note.for_date == "2026-08-11"
+    assert "cOvPKZFervw" in note.source
+    # The distinguishing fact: the breakdown failed and the market held above.
+    assert "BREAKDOWN FAILED" in note.context
+    # The plan must be the INVERSE of the previous session's, so assert the
+    # direction of each branch rather than merely that a plan exists.
+    assert note.plan[0].startswith("FLAT to GAP-UP: identify BUY-side setups")
+    assert note.plan[1].startswith("GAP-DOWN: identify SELL-side setups")
+    assert any("EXPIRY DAY" in line for line in note.plan)
+    assert any("INVERTS yesterday's plan" in line for line in note.plan)
+    assert len(note.plan) == 8
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24590.0, 24670.0],
-            "support": [24400.0, 24360.0],
+            "resistance": [24610.0, 24670.0],
+            "support": [24440.0, 24360.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [58000.0, 58300.0],
-            "support": [57500.0, 57340.0],
+            "resistance": [57800.0, 58000.0],
+            "support": [57340.0, 57150.0],
         },
         {
             "index": "SENSEX",

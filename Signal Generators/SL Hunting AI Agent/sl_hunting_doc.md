@@ -2866,3 +2866,49 @@ cited by name in a live decision.
   TARGET INPUT; PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES.
 - Test markers: `test_system_prompt_has_v4d_flat_open_and_round_number_booking_knowledge`
   and `test_target_sizing_inputs_are_all_present_and_distinct`.
+---
+
+### Pre-open note for 2026-08-11 (Tuesday, EXPIRY)
+
+**Source:** Intraday Hunter, "Prediction For 11 AUG 2026" (`cOvPKZFervw`,
+uploaded 2026-08-10, 1:55). Note-only; no knowledge version attached.
+
+**The plan INVERTS overnight, and that is the point of this entry.** Every note
+in this series so far has been read forward from a seated crowd. This one flips
+the gap conditional outright:
+
+| Session | FLAT open wants | GAP against wants |
+|---|---|---|
+| 10 Aug | SELL side | GAP-UP -> BUY side |
+| **11 Aug** | **BUY side** | **GAP-DOWN -> SELL side** |
+
+The cause is a single event he describes in the first fifteen seconds: NIFTY
+sold, **broke down, and then immediately turned back up and held above**. A
+breakdown that fails does not leave the sellers paid — it leaves them turned
+around, which is exactly the trapped inventory the method hunts. Hence buys on a
+flat-to-gap-up open, following the market rather than fading it.
+
+Three details worth keeping:
+
+- **He does not treat the gap-down branch as a mirror.** "In case of gap-down the
+  structure can become different, traps can form differently there." The note
+  records that as its own regime rather than as the up-case reversed.
+- **He allows that today may only have SPUN the sellers** — "maybe the market
+  just turned the seller around here, but on the next gap-down the market may be
+  able to give a momentum." That is an explicit statement that the trap may still
+  be loading rather than sprung.
+- **No escape hatch this time.** Unlike 10 Aug's large-gap-down veto, both
+  branches are stated and actionable, so the note carries no stand-aside line.
+
+**Expiry.** Flagged in his opening sentence ("tomorrow there is expiry in it"),
+and 11 Aug is a Tuesday, which is the current NIFTY weekly expiry. That pairs
+with v4d's BOOK BEFORE THE ROUND NUMBER: expiry pinning makes round strikes even
+more magnetic, so the note carries the expiry warning as its own plan line.
+
+**Levels are cleaner than the 10 Aug set** — no dropped-trailing-zero artefacts
+this time; all six NIFTY/BankNIFTY numbers and all four Sensex numbers arrived
+with full precision. Advisory candidate levels only, as always.
+
+Test updated: `test_shipped_note_matches_august_11_intraday_hunter_plan`
+replaces the 10 Aug equivalent and asserts the branch DIRECTIONS explicitly,
+because an inverted plan is the specific failure mode a copy-forward would cause.
