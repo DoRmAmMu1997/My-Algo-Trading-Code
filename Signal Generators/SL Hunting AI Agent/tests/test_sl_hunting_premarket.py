@@ -172,22 +172,38 @@ def test_shipped_note_file_is_valid():
     assert format_premarket_note(note, date.fromisoformat(note.for_date)) != ""
 
 
-def test_shipped_note_matches_august_7_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 6 Aug transcript.
+def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
+    """A note dated to a weekend can never fire, and would fail silently.
+
+    The date gate only injects when `for_date` equals the session's date, so a
+    note written on a Friday evening for "tomorrow" would sit dead all weekend
+    and the Monday session would run with no note at all -- with nothing in the
+    log to say so, because a stale note is a normal, expected state.
+    """
+    import os
+    from datetime import date as _date
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    note = load_premarket_note(os.path.join(here, "premarket_note.json"))
+    assert note is not None
+    assert _date.fromisoformat(note.for_date).weekday() < 5, (
+        f"premarket_note.json is dated {note.for_date}, which is a weekend -- "
+        "it can never be injected. Date it to the next TRADING day."
+    )
+
+
+def test_shipped_note_matches_august_10_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 9 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    Worth knowing when re-reading this: the SEATED SIDE flips constantly, so a
-    note echoing the previous day is a copy rather than a transcription. 5 Aug:
-    sellers, too small to hunt. 6 Aug: sellers seated, so gap-up was the BUY-side
-    hunt. 7 Aug: BUYERS are seated, which inverts it back -- gap-DOWN is now the
-    SELL-side hunt and flat/gap-up is the follow.
-
-    It also carries the first MAGNITUDE-scaled condition in the series: a bigger
-    gap-down makes the hunt better, not worse, because distance is what puts the
-    buyers underwater. That is specific to hunting a crowd and does not contradict
-    GAP SIZE IS A RISK DIAL, which governs the continuation branch.
+    Two things make this one different from every note before it. First, the
+    market is SIDEWAYS over two-three days, so neither side is decisively seated
+    and he says so -- the previous notes all named a seated crowd with confidence.
+    Second, it carries the first explicit ESCAPE HATCH: a large gap-down means "a
+    different plan", which he does not specify. The note records that as stand
+    aside rather than inventing the missing branch.
     """
     import os
 
@@ -196,37 +212,42 @@ def test_shipped_note_matches_august_7_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-07"
-    assert "Lq7JGlZj6PY" in note.source
-    # The distinguishing facts: buyers seated, recruited by only a small move.
-    assert "BUYERS are the seated crowd" in note.context
+    assert note.for_date == "2026-08-10"
+    assert "KDqQnqYmxws" in note.source
+    # The distinguishing facts: sideways, and an unlock level for the seller hunt.
+    assert "neither side is decisively seated" in note.context
+    assert "58,000" in note.context
     assert note.plan == [
-        "GAP-DOWN: identify SELL-side setups and hunt the seated buyers. Their "
-        "stops sit at the lower points already formed on the chart.",
-        "The BIGGER the gap-down the better the hunt -- he wants the open as far "
-        "below BankNIFTY 58,000 as it can be, because that distance is what puts "
-        "the buyers underwater.",
-        "FLAT to GAP-UP: identify BUY-side setups and go WITH the market instead. "
-        "It has been grinding slowly upward, so a flat or higher open offers no "
-        "hunt.",
-        "The momentum that recruited those call buyers was SMALL, not a big move "
-        "-- so treat this as a modest, lightly committed crowd rather than a "
-        "heavily loaded one.",
+        "FLAT to GAP-DOWN: identify SELL-side setups and go WITH the market -- "
+        "following the rejection rather than hunting anyone.",
+        "GAP-UP: identify BUY-side setups. That both targets the seated sellers "
+        "and runs with a chart that was heading up before this week's chop.",
+        "A LARGE gap-down VOIDS this plan: he says explicitly that a good gap "
+        "there means a DIFFERENT plan, without saying what it is. Treat that as "
+        "stand aside, not as a licence to guess.",
+        "Sellers' stops are UNREACHABLE until BankNIFTY crosses 58,000. Until "
+        "that happens there is no seller hunt available, whatever the open looks "
+        "like.",
+        "He flags elevated risk in as many words: the momentum is SMALL and the "
+        "last two-three days are sideways, so expect a little up then a little "
+        "down.",
+        "Sensex is the ambiguous one -- he says sellers may be there AND that "
+        "some buyers may arrive on the positive longer-term read.",
     ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24720.0, 24800.0],
-            "support": [24610.0, 24500.0],
+            "resistance": [24590.0, 24670.0],
+            "support": [24400.0, 24360.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [58100.0, 58400.0],
-            "support": [57500.0, 57100.0],
+            "resistance": [58000.0, 58300.0],
+            "support": [57500.0, 57340.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [79200.0, 79500.0],
-            "support": [78650.0, 78300.0],
+            "resistance": [78640.0, 78920.0],
+            "support": [78200.0, 78000.0],
         },
     ]

@@ -5,8 +5,8 @@ Nifty Multi Strategy Front Test - Master File
 
 WHAT THIS FILE IS (read this first if you have never seen this code base)
 ------------------------------------------------------------------------
-This is a single multi-threaded paper-trading runner that combines TWENTY-SIX
-NIFTY strategies behind ONE shared market-data fetcher. It started as
+This is a single multi-threaded paper-trading runner that combines a core roster
+plus independently opt-in NIFTY agents behind ONE shared market-data fetcher. It started as
 the union of two earlier files plus one Greeks-driven addition:
 
   1. "Nifty Multi Strategy Front Test - DhanHQ ATM Options.py"
@@ -69,18 +69,21 @@ as library code with no worker of their own, so the router can never double up o
 a candidate's signal. Read that folder's REGIME_PORTING_NOTES.md before
 enabling it live: this runner has no volume, so its VWAP is an equal-weight proxy.
 
-Together they bring the runner to TWENTY-SEVEN strategies total: 23 ATM
-single-leg + 2 Hedged Puts + 1 Delta-0.2 + 1 Long Strangle.
+Together they form an approximately TWENTY-SEVEN-strategy core roster: 23 ATM
+single-leg + 2 Hedged Puts + 1 Delta-0.2 + 1 Long Strangle. Per-strategy virtual
+gates decide which subset actually runs.
 
-One OPTIONAL, opt-in 28th worker can also be loaded: the SL Hunting AI Agent
+Two OPTIONAL agents can be independently opted in alongside that core roster.
+One is the SL Hunting AI Agent
 (under "Signal Generators/SL Hunting AI Agent/"). Unlike every other strategy it
 is LLM-driven -- a Claude agent (claude-agent-sdk, on your Claude subscription)
 decides once per completed 1-min bar (the method's native timeframe) via in-process
 tools -- with optional BankNIFTY cross-confirmation fetched per bar (like CPR Algo 3)
 and fail-closed hard-budget sizing -- then acts through this runner's own
 enter_position/exit_position (so it is just another ATM single-leg member of the
-family). It stops opening NEW positions after noon (SL_HUNTING_NO_NEW_ENTRY_HOUR,
-default 12:00); that is NOT a square-off -- open positions, their stop/target, and the
+family). It stops opening NEW positions after 10:30
+(SL_HUNTING_NO_NEW_ENTRY_HOUR default 10 and SL_HUNTING_NO_NEW_ENTRY_MINUTE
+default 30); that is NOT a square-off -- open positions, their stop/target, and the
 15:15 square-off are all unaffected, and when flat past the cutoff it skips the LLM
 call entirely. It is OFF by default; SL_HUNTING_ENABLED=true includes it, and its
 optional deps (claude-agent-sdk, pydantic) are imported behind try/except so a missing
@@ -88,6 +91,10 @@ dep simply disables it without touching the rest of the runner. It can also lear
 its own trades (v3): a per-trade journal feeds an off-loop reflection coach that
 proposes lessons, which the operator promotes into lessons.json and the agent injects
 only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
+The other is the CPR Codex AI Agent, an independent five-minute SRSI/VWAP worker
+whose model judgment remains behind deterministic host risk and execution gates.
+When both optional agents are enabled, the configured roster can reach approximately
+29 workers; enable and virtual-trading gates keep the running total configuration-dependent.
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -136,7 +143,8 @@ audit later without chasing a hidden flag.
 
 STRIKE RULES (also explicit per family)
 ---------------------------------------
-- ATM family (the 22 ATM workers) -> resolver.get_atm_option(spot, dir).
+- ATM family (the 23 core ATM workers plus any optional ATM agents) ->
+  resolver.get_atm_option(spot, dir).
   Picks the strike whose round-50 value is nearest to live spot.
 - Hedged family (Supertrend Bullish + Donchian Bearish) -> the strike
   selection lives INSIDE each dedicated worker
@@ -150,7 +158,7 @@ STRIKE RULES (also explicit per family)
 
 EXECUTION MODEL CHEAT SHEET (paper)
 -----------------------------------
-Single-leg ATM trades (the 22 ATM workers):
+Single-leg ATM trades (the core and optional ATM workers):
     PnL = (exit_option_price - entry_option_price) * qty
     Both LONG and SHORT signals open as BUY legs (CE for LONG, PE for
     SHORT). PnL is therefore always (live - entry) * qty.
@@ -168,7 +176,7 @@ THREAD ARCHITECTURE
       ANY worker (single batched ticker_data call).
     * Publishes everything into a thread-safe `SharedMarketDataStore`.
 
-- Twenty-six `*StrategyWorker` threads:
+- Configured `*StrategyWorker` threads:
     * Read the 1-minute OHLC from the shared store.
     * Resample locally if their strategy timeframe is higher than 1m.
     * Run their own signal generator (the Delta-0.2 worker is the
@@ -178,13 +186,13 @@ THREAD ARCHITECTURE
       direct LTP fallback fetches when the cache is cold.
 
 This central-fetcher design keeps API usage low and makes the data
-deterministic across all twenty-six strategies.
+deterministic across every enabled strategy.
 
 WHY ONE FILE INSTEAD OF SEPARATE FILES
 --------------------------------------
 - Single fetch budget. One DhanHQ ticker_data call covers spot plus
   every active option leg from every worker simultaneously.
-- One log destination. All twenty-six strategies share LOG_FILE so a single
+- One log destination. Every enabled strategy shares LOG_FILE so a single
   audit trail captures the day.
 - One process to start, one Ctrl+C to stop everything cleanly.
 
@@ -210,15 +218,16 @@ CLASS HIERARCHY OVERVIEW
         |             Supertrend, Volatility Breakout)
         |       +-- (+ Regime Adaptive, same factory, different source project:
         |             an ADX router over an opening-range breakout and a VWAP fade)
-        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in 28th: LLM/Claude-agent driven)
+        |       +-- SLHuntingAIWorker         (OPTIONAL opt-in: LLM/Claude-agent driven)
+        |       +-- CPRAIWorker               (OPTIONAL opt-in: Codex SRSI/VWAP agent)
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
         +-- Delta20HedgedSpreadWorker  (dual-side hedged spread, Greeks-driven)
         +-- LongStrangleWorker         (time-based two-leg BUY OTM1 CE+PE, momentum re-entry)
 
-The split is intentional: only the ATM workers (the 9 core + 13 ports) share an
-`enter_position` / `exit_position` flow, so it is hosted on
+The split is intentional: the core ATM workers, TradingBot ports, and optional
+ATM agents share an `enter_position` / `exit_position` flow, so it is hosted on
 `AtmSingleLegStrategyWorker`. The hedged workers each implement
 their own enter / exit because the position shape, leg count, and
 PnL math differ - and the Delta-0.2 worker further differs in that
@@ -460,7 +469,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 #     which is a silent mismatch between size and risk.
 #   * PER-STRATEGY ONLY -- there is deliberately NO global master multiplier
 #     (same shape as `<PREFIX>_VIRTUAL_TRADING`). Scaling must be an explicit,
-#     per-strategy opt-in so one mistyped global cannot enlarge all 28 workers.
+#     per-strategy opt-in so one mistyped global cannot enlarge every enabled strategy.
 #   * APPLIES TO PAPER **AND** LIVE, so an enlarged size can be paper-validated
 #     first and the Sheet's paper rows stay predictive of live behaviour.
 #   * CEILING of 25 (`MAX_SIZE_MULTIPLIER`), so a fat-fingered "250" cannot size
@@ -734,6 +743,41 @@ CPR_ALGO3_SQUARE_OFF_MINUTE = _env_int("CPR_ALGO3_SQUARE_OFF_MINUTE", 15)
 # points ITM (stepping past the 50-point strike), so CE strike = ATM - offset and
 # PE strike = ATM + offset, rounded to the listed strike step.
 CPR_ALGO3_ITM_OFFSET = _env_float("CPR_ALGO3_ITM_OFFSET", 100.0)
+
+
+# =============================================================================
+# CPR CODEX AI AGENT CONSTANTS (optional independent five-minute worker)
+# =============================================================================
+# This agent is opt-in and independent from CPR Algo 1/2/3. Configuration uses
+# the same helpers as every other strategy: lot count and daily max loss pass
+# through the per-strategy multiplier, while live execution still requires BOTH
+# the global and CPR-AI-specific live flags. Indicator/risk constants below are
+# intentionally fixed host rules; Codex cannot change them in its response.
+CPR_AI_ENABLED = _env_bool("CPR_AI_ENABLED", False)
+CPR_AI_MODEL = _env_str("CPR_AI_MODEL", "gpt-5.6-terra")
+CPR_AI_REASONING_EFFORT = _env_str("CPR_AI_REASONING_EFFORT", "medium").lower()
+CPR_AI_SDK_TIMEOUT_SECONDS = _env_int("CPR_AI_SDK_TIMEOUT_SECONDS", 90)
+CPR_AI_LOTS = _scaled_int("CPR_AI", "CPR_AI_LOTS", 1)
+CPR_AI_MAX_LOSS = _scaled_float("CPR_AI", "CPR_AI_MAX_LOSS", 5500.0)
+CPR_AI_POLL_SECONDS = _env_int("CPR_AI_POLL_SECONDS", 5)
+CPR_AI_TRADING_START_HOUR = _env_int("CPR_AI_TRADING_START_HOUR", 9)
+CPR_AI_TRADING_START_MINUTE = _env_int("CPR_AI_TRADING_START_MINUTE", 30)
+CPR_AI_ENTRY_CUTOFF_HOUR = _env_int("CPR_AI_ENTRY_CUTOFF_HOUR", 15)
+CPR_AI_ENTRY_CUTOFF_MINUTE = _env_int("CPR_AI_ENTRY_CUTOFF_MINUTE", 0)
+CPR_AI_SQUARE_OFF_HOUR = _env_int("CPR_AI_SQUARE_OFF_HOUR", 15)
+CPR_AI_SQUARE_OFF_MINUTE = _env_int("CPR_AI_SQUARE_OFF_MINUTE", 15)
+CPR_AI_BAR_MINUTES = 5
+CPR_AI_MAX_STOP_POINTS = 30.0
+CPR_AI_LEVEL_BUFFER_POINTS = 2.0
+CPR_AI_MIN_BODY_FRACTION = 0.40
+CPR_AI_MAX_SCALE_INS = 1
+CPR_AI_DECISION_LOGGING_ENABLED = _env_bool(
+    "CPR_AI_DECISION_LOGGING_ENABLED", True
+)
+CPR_AI_DECISION_LOG_PATH = _env_str(
+    "CPR_AI_DECISION_LOG_PATH",
+    str(ROOT_DIR / "Backtest Outputs" / "cpr_ai_decisions.jsonl"),
+)
 
 
 # =============================================================================
@@ -1049,7 +1093,7 @@ def setup_logging() -> logging.Logger:
     Configure the shared root logger for the whole runner.
 
     Why we configure the *root* logger (not just our named logger):
-    - This file starts a fetcher thread plus six worker threads.
+    - This file starts one fetcher thread plus the configured strategy workers.
     - Every thread creates a child logger like
       `nifty_multi_strategy_master_front_test_dhanhq.renko`.
     - Attaching handlers once at the root makes every child's output flow
@@ -1194,6 +1238,69 @@ CPR_ALGO3_LOGIC = load_module(
     "master_cpr_algo3_signal_generator",
     ROOT_DIR / "Signal Generators" / "CPR Strategy" / "Nifty CPR Algo 3 Signal Generator.py",
 )
+
+# CPR Codex AI modules are loaded from a directory whose name contains spaces,
+# so their sibling imports temporarily use bare names. The collision guard below
+# refuses to replace an unrelated module that already owns one of those names.
+# SDK code remains lazy and runs in a sanitized subprocess; importing the master
+# therefore does not authenticate Codex. Any failure restores the previous
+# module table and disables only this optional worker.
+CPR_AI_AVAILABLE = False
+CPR_AI_IMPORT_ERROR = ""
+_cpr_ai_sibling_names: tuple[str, ...] = ()
+_cpr_ai_previous_modules: dict[str, object] = {}
+try:
+    _cpr_ai_dir = ROOT_DIR / "Signal Generators" / "CPR AI Agent"
+    _cpr_ai_sibling_names = tuple(
+        path.stem for path in _cpr_ai_dir.glob("cpr_ai_*.py")
+    )
+    _cpr_ai_previous_modules = {}
+    for _cpr_ai_name in _cpr_ai_sibling_names:
+        _existing_cpr_ai_module = sys.modules.get(_cpr_ai_name)
+        if _existing_cpr_ai_module is None:
+            continue
+        _existing_cpr_ai_file = getattr(_existing_cpr_ai_module, "__file__", "")
+        try:
+            _existing_is_ours = (
+                Path(_existing_cpr_ai_file).resolve().parent
+                == _cpr_ai_dir.resolve()
+            )
+        except (OSError, TypeError, ValueError):
+            _existing_is_ours = False
+        if not _existing_is_ours:
+            _cpr_ai_previous_modules[_cpr_ai_name] = _existing_cpr_ai_module
+    if _cpr_ai_previous_modules:
+        # A bare sibling name already belongs to another importer. Loading our
+        # space-containing directory would silently bind against or replace it.
+        # Disable only this optional worker instead of shadowing that module.
+        raise ImportError("CPR AI sibling module-name collision")
+    CPR_AI_AGENT_LOGIC = load_module(
+        "master_cpr_ai_agent", _cpr_ai_dir / "cpr_ai_agent.py"
+    )
+    CPR_AI_SIGNALS_LOGIC = load_module(
+        "master_cpr_ai_signals", _cpr_ai_dir / "cpr_ai_signals.py"
+    )
+    CPR_AI_CONTEXT_LOGIC = load_module(
+        "master_cpr_ai_context", _cpr_ai_dir / "cpr_ai_context.py"
+    )
+    CPR_AI_DECISION_LOGIC = load_module(
+        "master_cpr_ai_decision_log", _cpr_ai_dir / "cpr_ai_decision_log.py"
+    )
+    CPR_AI_AVAILABLE = True
+except Exception as _cpr_ai_import_exc:  # optional strategy, never fatal
+    for _cpr_ai_name in _cpr_ai_sibling_names:
+        if _cpr_ai_name not in _cpr_ai_previous_modules:
+            sys.modules.pop(_cpr_ai_name, None)
+    sys.modules.update(_cpr_ai_previous_modules)
+    CPR_AI_AGENT_LOGIC = None
+    CPR_AI_SIGNALS_LOGIC = None
+    CPR_AI_CONTEXT_LOGIC = None
+    CPR_AI_DECISION_LOGIC = None
+    CPR_AI_IMPORT_ERROR = type(_cpr_ai_import_exc).__name__
+    logging.getLogger(LOGGER_NAME).warning(
+        "CPR AI agent modules unavailable (%s); optional worker disabled.",
+        CPR_AI_IMPORT_ERROR,
+    )
 
 # -----------------------------------------------------------------------------
 # Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
@@ -9220,6 +9327,1186 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# CPR CODEX AI WORKER (optional independent SRSI/VWAP policy worker)
+# =============================================================================
+@dataclass
+class CPRAITradeState:
+    """Keep CPR-specific risk memory beside, not inside, the generic position.
+
+    :class:`PaperPosition` remains authoritative for the locked option contract,
+    primary quantity, primary fill, and broker ledger.  This sidecar remembers
+    only the accepted spot geometry, premise/regime, monotonic trailing state,
+    and the optional equal-size role-A add.  Separating them lets the shared
+    execution code stay generic while CPR exits remain fully mechanical.
+
+    ``original_*`` values never move.  ``current_hard_stop`` may ratchet only
+    toward profit.  A live add keeps its own :class:`LiveLegState` so partial or
+    unknown exposure is reconciled instead of being invented as a paper fill.
+    """
+
+    original_entry_price: float
+    original_risk_points: float
+    original_protective_stop: float
+    current_hard_stop: float
+    first_milestone: float
+    following_milestone: float
+    final_target: float
+    premise: str
+    accepted_regime: str | None
+    initial_filled_quantity: int
+    trailing_stage: str = "NONE"
+    trail_armed: bool = False
+    prior_completed_close: float | None = None
+    scale_in_used: bool = False
+    add_quantity: int = 0
+    add_entry_trade_price: float = 0.0
+    add_entry_price_quality: str = PRICE_QUALITY_UNKNOWN
+    add_live_leg: LiveLegState | None = None
+
+    @property
+    def aggregate_quantity(self) -> int:
+        """Return the primary fill plus the accounted add-on fill.
+
+        Indeterminate live risk uses the ledger's conservative quantity in MTM
+        paths instead; this property represents confirmed/paper accounting only.
+        """
+
+        return self.initial_filled_quantity + self.add_quantity
+
+    @property
+    def aggregate_entry_price(self) -> float:
+        """Return the quantity-weighted option entry across primary and add.
+
+        The spot entry used for CPR risk geometry is deliberately unrelated to
+        this option-premium average, which exists only for trade accounting.
+        """
+
+        total = self.aggregate_quantity
+        if total <= 0:
+            return 0.0
+        # The caller supplies the primary price separately when no add exists;
+        # this property is finalized by ``set_primary_entry_trade_price``.
+        primary_total = self._primary_entry_trade_price * self.initial_filled_quantity
+        return (primary_total + self.add_entry_trade_price * self.add_quantity) / total
+
+    _primary_entry_trade_price: float = 0.0
+
+    def set_primary_entry_trade_price(self, price: float) -> None:
+        """Remember the primary option fill used in weighted P&L accounting."""
+
+        self._primary_entry_trade_price = float(price)
+
+
+class CPRAIWorker(AtmSingleLegStrategyWorker):
+    """Run the independent five-minute CPR context through one optional agent.
+
+    The worker deliberately starts from the generic ATM execution base rather
+    than an older CPR worker. Market evidence comes only from the independent
+    CPR/SRSI/VWAP context package. Codex can classify regime/setup and may veto
+    or request a documented action; this host owns completed-bar cadence,
+    lifecycle/market-health checks, authoritative prices, the pre-entry audit
+    hook,
+    contract resolution, paper/live execution, trailing exits, and broker
+    reconciliation.
+
+    Mechanical risk is evaluated on every configured poll and does not wait for
+    a model call. New exposure stops at 15:00, premise exits may continue through
+    15:15, and the standard double gate controls whether confirmed orders are
+    paper or live.
+    """
+
+    strategy_name = "CPR AI"
+    timeframe = "1"
+    poll_seconds = CPR_AI_POLL_SECONDS
+    lots = CPR_AI_LOTS
+    max_loss = CPR_AI_MAX_LOSS
+    trading_start_hour = CPR_AI_TRADING_START_HOUR
+    trading_start_minute = CPR_AI_TRADING_START_MINUTE
+    square_off_hour = CPR_AI_SQUARE_OFF_HOUR
+    square_off_minute = CPR_AI_SQUARE_OFF_MINUTE
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+        *,
+        agent=None,
+        decision_logger=None,
+    ) -> None:
+        """Create the worker without authenticating Codex during construction.
+
+        Tests inject a fake agent/logger. Production constructs the lightweight
+        host objects here, but subscription authentication remains lazy inside
+        the first isolated turn. ``_prior_accepted_regime`` is advisory memory;
+        ``_cpr_state`` exists only while a position is open.
+        """
+
+        super().__init__(store, stop_event, broker)
+        if agent is None:
+            if not CPR_AI_AVAILABLE:
+                raise RuntimeError("The optional CPR AI runtime is unavailable.")
+            agent = CPR_AI_AGENT_LOGIC.CPRAgent(
+                model=CPR_AI_MODEL,
+                reasoning_effort=CPR_AI_REASONING_EFFORT,
+                timeout_seconds=CPR_AI_SDK_TIMEOUT_SECONDS,
+            )
+        if decision_logger is None:
+            if not CPR_AI_AVAILABLE:
+                raise RuntimeError("The optional CPR AI audit logger is unavailable.")
+            decision_logger = CPR_AI_DECISION_LOGIC.CPRDecisionLogger(
+                CPR_AI_DECISION_LOG_PATH,
+                enabled=CPR_AI_DECISION_LOGGING_ENABLED,
+            )
+        self.agent = agent
+        self.decision_logger = decision_logger
+        self._latest_one_minute_frame = pd.DataFrame()
+        self._latest_context_as_of: datetime | None = None
+        self._last_agent_bar_identity: str | None = None
+        self._prior_accepted_regime: str | None = None
+        self._cpr_state: CPRAITradeState | None = None
+
+    def minimum_source_rows(self) -> int:
+        """Delegate history sufficiency to the independent context builder.
+
+        Returning one prevents the generic base from applying another
+        strategy's warm-up rule. The context refuses missing session/bar history;
+        indicators that are not warmed up remain explicit ``None`` facts, so the
+        host rejects any entry that requires them.
+        """
+
+        return 1
+
+    def minimum_strategy_rows(self) -> int:
+        """Allow the cadence layer to inspect any non-empty completed-bar frame."""
+
+        return 1
+
+    def build_strategy_frame(
+        self,
+        ohlc: pd.DataFrame,
+        *,
+        as_of: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Cache raw minutes and return only clock-complete five-minute bars.
+
+        The raw copy is later frozen into the four-tool context. ``as_of`` pins
+        both resampling and freezing to one clock boundary so a forming websocket
+        minute cannot enter one path but not the other.
+        """
+
+        self._latest_one_minute_frame = ohlc.copy(deep=True)
+        self._latest_context_as_of = as_of or _ist_now()
+        return CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(
+            ohlc,
+            as_of=self._latest_context_as_of,
+        )
+
+    @staticmethod
+    def _completed_bar_signature(strategy_frame: pd.DataFrame) -> str:
+        """Hash the newest bar's timestamp and content for freshness checks.
+
+        Unlike bucket identity, this signature changes when an official REST
+        true-up revises OHLC. A slow Codex result is therefore rejected if its
+        frozen content is no longer the current completed-bar content.
+        """
+
+        signature = build_last_row_signature(strategy_frame)
+        return "" if signature is None else repr(signature)
+
+    def _completed_bar_identity(self, strategy_frame: pd.DataFrame) -> str:
+        """Identify the session/bucket independently of later OHLC revisions.
+
+        The identity is consumed before inference and remains stable across a
+        REST true-up. This guarantees one turn per nominal five-minute bucket,
+        while the separate content signature still detects a stale response.
+        """
+
+        if strategy_frame.empty or "timestamp" not in strategy_frame.columns:
+            # Production context bars always have a timestamp.  This fallback
+            # keeps synthetic host tests and defensive callers fail-closed on
+            # their existing content signature rather than inventing a bucket.
+            return self._completed_bar_signature(strategy_frame)
+        timestamp = pd.Timestamp(strategy_frame.iloc[-1]["timestamp"])
+        if pd.isna(timestamp):
+            return ""
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.tz_convert(IST_TIMEZONE).tz_localize(None)
+        return f"{timestamp.date()}|{timestamp.isoformat()}"
+
+    def _position_state_payload(self) -> dict[str, object]:
+        """Expose allowlisted premise/risk facts, never execution capabilities.
+
+        Codex can see direction, original risk, current protection, trail stage,
+        milestones, and whether the single add remains eligible. It cannot see
+        symbol, quantity, broker, venue, order IDs, or a mutable position handle.
+        """
+
+        if not self.pos.active:
+            return {"is_flat": True}
+        state = self._cpr_state
+        if state is None:
+            return {"is_flat": False, "direction": self.pos.direction}
+        return {
+            "is_flat": False,
+            "direction": self.pos.direction,
+            "original_entry_price": state.original_entry_price,
+            "original_risk_points": state.original_risk_points,
+            "original_protective_stop": state.original_protective_stop,
+            "current_protective_stop": state.current_hard_stop,
+            "trailing_stage": state.trailing_stage,
+            "milestone_price": state.first_milestone,
+            "final_target_price": state.final_target,
+            "premise": state.premise,
+            "setup": state.premise,
+            "scale_in_eligible": bool(
+                self.pos.direction == "LONG"
+                and state.premise.startswith("TRENDING_")
+                and not state.scale_in_used
+            ),
+            "scale_in_count": 1 if state.scale_in_used else 0,
+        }
+
+    def _latest_frozen_context(self) -> dict[str, dict[str, object]]:
+        """Freeze one four-tool snapshot with advisory prior-regime memory.
+
+        The returned deep copy is the single source shared by the host audit,
+        policy validator, and MCP tools for this turn.
+        """
+
+        registry = CPR_AI_SIGNALS_LOGIC.freeze_cpr_context(
+            self._latest_one_minute_frame,
+            position_state=self._position_state_payload(),
+            prior_accepted_regime=self._prior_accepted_regime,
+            as_of=self._latest_context_as_of,
+        )
+        return registry.snapshot_payload()
+
+    def _current_completed_spot_signature(self) -> str:
+        """Rebuild and sign fresh shared data when the agent finishes thinking."""
+
+        snapshot = self.store.get(self.timeframe)
+        if snapshot is None or snapshot.frame.empty:
+            return ""
+        completed = CPR_AI_CONTEXT_LOGIC.build_completed_five_minute_bars(
+            snapshot.frame,
+            as_of=self._latest_context_as_of,
+        )
+        return self._completed_bar_signature(completed)
+
+    @staticmethod
+    def _tool_log_payload(tool_evidence) -> list[dict[str, object]]:
+        """Convert read-only tool-call records into JSON-friendly audit data."""
+
+        return [
+            dict(vars(record)) if hasattr(record, "__dict__") else dict(record)
+            for record in tool_evidence
+        ]
+
+    @staticmethod
+    def _crossed(direction: str, value: float, threshold: float) -> bool:
+        """Apply one favorable-threshold comparison to either trade direction."""
+
+        return value >= threshold if direction == "LONG" else value <= threshold
+
+    def _set_hard_stop(self, candidate: float) -> None:
+        """Ratchet protection toward profit without ever loosening the stop.
+
+        Long protection can only rise and short protection can only fall.  The
+        generic position copy is updated at the same time so every intrabar
+        safety path sees the same authoritative stop.
+        """
+
+        state = self._cpr_state
+        if state is None:
+            return
+        if self.pos.direction == "LONG":
+            state.current_hard_stop = max(state.current_hard_stop, float(candidate))
+        else:
+            state.current_hard_stop = min(state.current_hard_stop, float(candidate))
+        self.pos.stop_underlying = state.current_hard_stop
+
+    def _check_cpr_spot_boundaries(self, spot: float) -> bool:
+        """Apply the spot hard stop and buffered R2/S2 exit on every poll.
+
+        These are intrabar mechanical boundaries. They run independently of
+        completed-bar cadence and Codex availability, and return ``True`` when
+        an exit was attempted so the caller stops further work that poll.
+        """
+
+        state = self._cpr_state
+        if not self.pos.active or state is None or spot <= 0:
+            return False
+        stopped = (
+            spot <= state.current_hard_stop
+            if self.pos.direction == "LONG"
+            else spot >= state.current_hard_stop
+        )
+        if stopped:
+            self.exit_position("CPR_AI_HARD_STOP")
+            return True
+        final_hit = self._crossed(self.pos.direction, spot, state.final_target)
+        if final_hit:
+            self.exit_position("CPR_AI_FINAL_TARGET")
+            return True
+        return False
+
+    def _run_prebar_safety(self) -> bool:
+        """Run load-bearing risk checks before any bar or model work.
+
+        Ordering is intentionally risk-first: requested shutdown, aggregate
+        max-loss, 15:15 square-off, stale/unhealthy feed handling, then fresh
+        spot stop/target. For an already-open position, the same sequence is
+        repeated after a slow inference before HOLD or scale-in completes. A
+        flat entry instead uses the narrower post-inference exposure gate for
+        stop/lifecycle/feed/time changes before ``enter_position`` runs.
+        """
+
+        if self._run_shutdown_cycle_if_requested():
+            return True
+        breached, total_pnl, open_pnl = self.is_max_loss_breached()
+        if breached:
+            self.handle_max_loss_and_stop(total_pnl, open_pnl)
+            return True
+        if is_after_time(self.square_off_hour, self.square_off_minute):
+            self.handle_square_off_and_stop()
+            return True
+        if self._handle_market_data_health():
+            return True
+        spot = self._get_underlying_spot(fallback=0.0)
+        return self._check_cpr_spot_boundaries(spot)
+
+    def _manage_completed_bar(self, frozen_context: dict[str, object]) -> bool:
+        """Run SRSI reversal, staged ratchets, then prior-close trailing.
+
+        A contrary SRSI cross exits first.  Normal/sideways/continuation trades
+        move to breakeven and arm the prior-close trail at 1R or the next CPR
+        milestone. Reversal trades move to breakeven at stage one, then lock 1R
+        and arm the trail at 2R or the following milestone.
+
+        The arming bar becomes the first reference. Each later completed close
+        is compared with the immediately preceding accepted close; a favorable
+        or flat close advances the reference. Hard-stop ratchets use
+        :meth:`_set_hard_stop`, so no stage can loosen protection.
+        """
+
+        state = self._cpr_state
+        if not self.pos.active or state is None:
+            return False
+        momentum = frozen_context["momentum_vwap"]
+        srsi = momentum["stochastic_rsi"]
+        bearish = self.pos.direction == "LONG" and srsi.get("cross_down") is True
+        bullish = self.pos.direction == "SHORT" and srsi.get("cross_up") is True
+        if bearish or bullish:
+            self.exit_position("CPR_AI_SRSI_REVERSAL")
+            return True
+        close = float(momentum["candle"]["close"])
+
+        # A completed-bar reversal in the close sequence is checked before
+        # advancing the reference; otherwise the losing close would erase the
+        # very threshold it is supposed to break.
+        if state.trail_armed and state.prior_completed_close is not None:
+            trail_exit = (
+                close < state.prior_completed_close
+                if self.pos.direction == "LONG"
+                else close > state.prior_completed_close
+            )
+            if trail_exit:
+                self.exit_position("CPR_AI_PRIOR_CLOSE_TRAIL")
+                return True
+
+        # Reversal trades get the approved two-stage ratchet. All other setups
+        # use the simpler breakeven-plus-prior-close trail at stage one.
+        if state.premise == "TRENDING_VWAP_REVERSAL":
+            if state.trailing_stage == "NONE" and self._crossed(
+                self.pos.direction, close, state.first_milestone
+            ):
+                self._set_hard_stop(state.original_entry_price)
+                state.trailing_stage = "BREAKEVEN"
+            if state.trailing_stage == "BREAKEVEN" and self._crossed(
+                self.pos.direction, close, state.following_milestone
+            ):
+                locked = (
+                    state.original_entry_price + state.original_risk_points
+                    if self.pos.direction == "LONG"
+                    else state.original_entry_price - state.original_risk_points
+                )
+                self._set_hard_stop(locked)
+                state.trailing_stage = "R1_LOCKED"
+                state.trail_armed = True
+                state.prior_completed_close = close
+        elif state.trailing_stage == "NONE" and self._crossed(
+            self.pos.direction, close, state.first_milestone
+        ):
+            self._set_hard_stop(state.original_entry_price)
+            state.trailing_stage = "TRAILING"
+            state.trail_armed = True
+            state.prior_completed_close = close
+
+        if state.trail_armed:
+            state.prior_completed_close = close
+        return False
+
+    def _at_or_after_entry_cutoff(self) -> bool:
+        """Return whether new entries/adds are barred at 15:00 IST.
+
+        This is not a square-off: open positions still receive mechanical and
+        premise-exit handling until the independent 15:15 cutoff.
+        """
+
+        return is_after_time(CPR_AI_ENTRY_CUTOFF_HOUR, CPR_AI_ENTRY_CUTOFF_MINUTE)
+
+    def _get_open_position_pnl(self) -> float:
+        """Aggregate primary MTM with conservative paper/live add exposure.
+
+        For partial or unknown broker results, ``risk_quantity`` assumes the
+        ambiguous remainder may be live.  Omitting it could hide losses from the
+        aggregate max-loss kill switch.
+        """
+
+        if not self.pos.active:
+            return 0.0
+        live = self._get_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+            fallback=self.pos.entry_trade_price,
+        )
+        primary = (live - self.pos.entry_trade_price) * self.pos.quantity
+        state = self._cpr_state
+        if state is None:
+            return primary
+        if isinstance(state.add_live_leg, LiveLegState):
+            # ``risk_quantity`` deliberately rounds indeterminate opening
+            # exposure up. Max-loss must assume the ambiguous remainder filled,
+            # never omit it merely because the broker response was incomplete.
+            add_quantity = int(state.add_live_leg.risk_quantity)
+        else:
+            add_quantity = int(state.add_quantity)
+        if add_quantity <= 0:
+            return primary
+        add_entry = self._add_entry_accounting_price(state)
+        return primary + (live - add_entry) * add_quantity
+
+    def _add_entry_accounting_price(self, state: CPRAITradeState) -> float:
+        """Return a conservative nonzero add basis for MTM and realized P&L.
+
+        Broker average fill is strongest, the saved submission mark is next,
+        and the same-contract primary fill is the final fallback.  A zero basis
+        would incorrectly turn an ambiguous add into artificial profit.
+        """
+
+        if isinstance(state.add_live_leg, LiveLegState):
+            ledger_price = float(state.add_live_leg.entry_average_fill_price)
+            if ledger_price > 0:
+                return ledger_price
+        if state.add_entry_trade_price > 0:
+            return float(state.add_entry_trade_price)
+        # Unknown exposure without a priced broker fill still needs a
+        # conservative, nonzero basis for MTM. The primary is the same locked
+        # option contract, so its actual fill is the safest available fallback.
+        return float(self.pos.entry_trade_price)
+
+    def _position_execution_mode(self) -> str:
+        """Classify the basket from actual ledger state, not requested mode.
+
+        ``PAPER_FALLBACK`` means live was enabled but an explicit zero-fill
+        rejection left only a paper position. ``LIVE_INDETERMINATE`` means
+        partial/unknown exposure may still exist and must not be reported as a
+        clean live fill.
+        """
+
+        state = self._cpr_state
+        live_states = tuple(
+            leg_state
+            for leg_state in (
+                self.pos.live_leg,
+                state.add_live_leg if state is not None else None,
+            )
+            if isinstance(leg_state, LiveLegState)
+        )
+        if any(
+            leg_state.exposure_indeterminate
+            or (leg_state.exposure_possible and not leg_state.entry_complete)
+            for leg_state in live_states
+        ):
+            return "LIVE_INDETERMINATE"
+        if any(leg_state.exposure_possible for leg_state in live_states):
+            return "LIVE"
+        return "PAPER_FALLBACK" if self.live_trading else "PAPER"
+
+    def _entry_execution_mode(self, submitted: bool) -> str:
+        """Classify entry provenance from the adopted or orphan live ledger.
+
+        A failed local adoption can still leave broker exposure in the orphan
+        reconciliation list, so ``submitted=False`` is not automatically paper
+        or harmless.
+        """
+
+        orphan_states = tuple(
+            leg.get("live_leg")
+            for leg in self._orphan_live_legs
+            if isinstance(leg.get("live_leg"), LiveLegState)
+        )
+        if any(state.exposure_possible for state in orphan_states):
+            return "LIVE_INDETERMINATE"
+        if submitted and self.pos.active:
+            return self._position_execution_mode()
+        return "NOT_SUBMITTED"
+
+    @staticmethod
+    def _exit_execution_mode(before_exit: str, *, position_still_active: bool) -> str:
+        """Preserve pre-exit provenance after successful state cleanup.
+
+        The live ledger is intentionally cleared after confirmed flat, so audit
+        classification must be captured before calling ``exit_position``.
+        """
+
+        if position_still_active and before_exit == "LIVE":
+            # The final status separately says EXIT_UNCONFIRMED.  Conservatively
+            # retain possible live exposure rather than claiming a live close.
+            return "LIVE_INDETERMINATE"
+        return before_exit
+
+    def _execute_scale_in(self) -> bool:
+        """Attempt the one equal-size R1 add in the locked primary contract.
+
+        Quantity is the original filled quantity, not the configured lot count,
+        and symbol/strike/expiry come from the existing position. Both paper and
+        live adds must pass current spread/liquidity checks. Paper bookkeeping is
+        atomic; live marks the opportunity used before submission because a
+        PARTIAL or UNKNOWN response may already represent real exposure and must
+        never be retried or converted into an invented paper fill.
+        """
+
+        state = self._cpr_state
+        if (
+            state is None
+            or not self.pos.active
+            or state.scale_in_used
+            or self._at_or_after_entry_cutoff()
+        ):
+            return False
+        quantity = int(state.initial_filled_quantity)
+        if quantity <= 0:
+            return False
+        mark, mark_is_fresh = self._get_dealable_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+        )
+        primary_is_live = isinstance(self.pos.live_leg, LiveLegState)
+        if mark <= 0 or (primary_is_live and not mark_is_fresh):
+            return False
+        # An add increases exposure in the same locked contract, so it must pass
+        # the same current market-quality checks as the original entry. Keep the
+        # one-use flag untouched when either gate rejects; a later completed bar
+        # may reconsider the still-unused add after market quality recovers.
+        if not self._spread_gate_allows_entry(
+            self.pos.direction,
+            self.pos.symbol,
+            self.pos.option_strike,
+            self.pos.option_right,
+            self.pos.option_expiry,
+        ):
+            return False
+        if not self._liquidity_gate_allows_entry(
+            self.pos.direction,
+            self.pos.symbol,
+            self.pos.option_expiry,
+        ):
+            return False
+        if not primary_is_live:
+            # Paper has no ambiguous submission. Consume the one add only when
+            # a real mark exists and the bookkeeping can be completed. This
+            # includes a live-enabled worker whose primary explicitly rejected
+            # with zero fill and therefore fell back to paper.
+            state.scale_in_used = True
+            state.set_primary_entry_trade_price(self.pos.entry_trade_price)
+            state.add_quantity = quantity
+            state.add_entry_trade_price = float(mark)
+            state.add_entry_price_quality = (
+                PRICE_QUALITY_PAPER_FRESH_MARK
+                if mark_is_fresh
+                else PRICE_QUALITY_STALE_MARK
+            )
+            return True
+
+        leg = {
+            "option_type": self.pos.option_right,
+            "strike": self.pos.option_strike,
+            "expiry": self.pos.option_expiry,
+            "quantity": quantity,
+            "dhan_symbol": self.pos.symbol,
+            "role": "A",
+        }
+        # Live consumes the add immediately before its first broker submission.
+        # PARTIAL/UNKNOWN responses may already represent real exposure, so the
+        # same scale-in can never be retried as though nothing happened.
+        state.scale_in_used = True
+        # Preserve the submission-time mark as a nonzero accounting fallback.
+        # A partial/unknown ledger result will replace it with its broker entry
+        # average as soon as the broker reports priced fills.
+        state.add_entry_trade_price = float(mark)
+        state.add_entry_price_quality = PRICE_QUALITY_MARK_FALLBACK
+        result = self._place_real_leg("BUY", leg, opens_exposure=True)
+        live_state = leg.get("live_leg")
+        if isinstance(live_state, LiveLegState):
+            state.add_live_leg = live_state
+        if result.status is not OrderStatus.FILLED or not isinstance(
+            live_state, LiveLegState
+        ) or not live_state.entry_complete:
+            return False
+        add_price, quality = self._accounting_price(
+            live_state,
+            mark,
+            mark_is_fresh=mark_is_fresh,
+            phase="ENTRY",
+        )
+        state.add_quantity = int(live_state.filled_quantity)
+        state.add_entry_trade_price = float(add_price)
+        state.add_entry_price_quality = quality
+        return state.add_quantity > 0
+
+    @staticmethod
+    def _directional_earlier(direction: str, first: float, second: float) -> float:
+        """Choose whichever favorable milestone is reached first by direction."""
+
+        return min(first, second) if direction == "LONG" else max(first, second)
+
+    @staticmethod
+    def _following_buffered_milestone(
+        direction: str,
+        first_milestone: float,
+        final_target: float,
+        frozen_context: dict[str, object],
+    ) -> float:
+        """Return the next buffered CPR level beyond the first milestone.
+
+        If no intermediate level remains, the buffered final target is used.
+        This gives reversal trades a deterministic second-stage alternative to
+        2R without inventing a new price.
+        """
+
+        ordered = (
+            frozen_context.get("session_levels", {})
+            .get("next_levels", {})
+            .get("ordered", [])
+        )
+        candidates: list[float] = []
+        for item in ordered:
+            if not isinstance(item, dict) or not isinstance(
+                item.get("price"), (int, float)
+            ):
+                continue
+            raw = float(item["price"])
+            buffered = (
+                raw - CPR_AI_LEVEL_BUFFER_POINTS
+                if direction == "LONG"
+                else raw + CPR_AI_LEVEL_BUFFER_POINTS
+            )
+            if (direction == "LONG" and buffered > first_milestone) or (
+                direction == "SHORT" and buffered < first_milestone
+            ):
+                candidates.append(buffered)
+        if not candidates:
+            return final_target
+        return min(candidates) if direction == "LONG" else max(candidates)
+
+    def _initialize_trade_state(self, outcome, frozen_context: dict[str, object]) -> None:
+        """Freeze host-derived spot geometry immediately after an adopted entry.
+
+        The first stage is the earlier of 1R and the next buffered CPR level.
+        Reversal stage two is the earlier of 2R and the following CPR level. The
+        actual primary option fill/quantity are copied from the adopted position,
+        never from Codex or configuration assumptions.
+        """
+
+        direction = self.pos.direction
+        entry = float(outcome.entry_price)
+        risk = float(outcome.risk_points)
+        one_r = entry + risk if direction == "LONG" else entry - risk
+        two_r = entry + 2 * risk if direction == "LONG" else entry - 2 * risk
+        first = self._directional_earlier(
+            direction, one_r, float(outcome.milestone_price)
+        )
+        following_cpr = self._following_buffered_milestone(
+            direction,
+            float(outcome.milestone_price),
+            float(outcome.final_target_price),
+            frozen_context,
+        )
+        following = self._directional_earlier(
+            direction, two_r, following_cpr
+        )
+        self._cpr_state = CPRAITradeState(
+            original_entry_price=entry,
+            original_risk_points=risk,
+            original_protective_stop=float(outcome.stop_price),
+            current_hard_stop=float(outcome.stop_price),
+            first_milestone=first,
+            following_milestone=following,
+            final_target=float(outcome.final_target_price),
+            premise=str(outcome.proposal.setup),
+            accepted_regime=outcome.accepted_regime,
+            initial_filled_quantity=int(self.pos.quantity),
+        )
+        self._cpr_state.set_primary_entry_trade_price(self.pos.entry_trade_price)
+
+    def exit_position(self, reason: str) -> None:
+        """Close primary and add-on legs, retaining state until both are flat.
+
+        Paper legs need no broker call. Every live ledger leg is closed through
+        the shared execution path using its conservative risk quantity. Local
+        position/state, subscriptions, and realized P&L are cleared only after
+        *both* live ledgers report broker-confirmed flat; otherwise exits remain
+        retryable and reconciliation retains the possible exposure.
+        """
+
+        state = self._cpr_state
+        if not self.pos.active or state is None:
+            super().exit_position(reason)
+            return
+        closed = self.pos
+        mark, mark_is_fresh = self._get_dealable_option_ltp(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+        )
+        if mark <= 0:
+            mark, mark_is_fresh = closed.entry_trade_price, False
+
+        primary_leg = {
+            "option_type": closed.option_right,
+            "strike": closed.option_strike,
+            "expiry": closed.option_expiry,
+            "quantity": closed.quantity,
+            "dhan_symbol": closed.symbol,
+            "role": "N",
+            "live_leg": closed.live_leg,
+        }
+        add_close_quantity = state.initial_filled_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_close_quantity = max(1, int(state.add_live_leg.risk_quantity))
+        elif state.add_quantity > 0:
+            add_close_quantity = int(state.add_quantity)
+        add_leg = {
+            "option_type": closed.option_right,
+            "strike": closed.option_strike,
+            "expiry": closed.option_expiry,
+            "quantity": add_close_quantity,
+            "dhan_symbol": closed.symbol,
+            "role": "A",
+            "live_leg": state.add_live_leg,
+        }
+        # Role N is the normal entry and role A is the optional add. They share
+        # a contract but keep independent ledgers because either close can be
+        # partial, rejected, or unknown.
+        for leg, is_live in (
+            (primary_leg, closed.live_leg is not None),
+            (add_leg, state.add_live_leg is not None),
+        ):
+            if not is_live:
+                continue
+            self._place_real_leg("SELL", leg, opens_exposure=False)
+
+        primary_state = primary_leg.get("live_leg")
+        add_state = add_leg.get("live_leg")
+        if isinstance(primary_state, LiveLegState):
+            closed.live_leg = primary_state
+        if isinstance(add_state, LiveLegState):
+            state.add_live_leg = add_state
+        live_states = tuple(
+            leg_state
+            for leg_state in (closed.live_leg, state.add_live_leg)
+            if isinstance(leg_state, LiveLegState)
+        )
+        # Never erase a ledger merely because a SELL was submitted. Only broker
+        # confirmation that both quantities are flat authorizes local cleanup.
+        if any(not leg_state.broker_confirmed_flat for leg_state in live_states):
+            self.log.error(
+                "CPR AI exit retained local state: both execution-ledger legs "
+                "are not yet broker-confirmed flat."
+            )
+            return
+
+        primary_exit, primary_quality = self._accounting_price(
+            closed.live_leg,
+            mark,
+            mark_is_fresh=mark_is_fresh,
+            phase="EXIT",
+        )
+        primary_pnl = (
+            primary_exit - closed.entry_trade_price
+        ) * state.initial_filled_quantity
+        add_quantity = state.add_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_quantity = int(state.add_live_leg.filled_quantity)
+        add_pnl = 0.0
+        add_exit = primary_exit
+        add_quality = primary_quality
+        add_entry = self._add_entry_accounting_price(state)
+        if add_quantity > 0:
+            add_exit, add_quality = self._accounting_price(
+                state.add_live_leg,
+                mark,
+                mark_is_fresh=mark_is_fresh,
+                phase="EXIT",
+            )
+            add_pnl = (add_exit - add_entry) * add_quantity
+        pnl = primary_pnl + add_pnl
+        self.realized_pnl += pnl
+        self.completed_trades += 1
+        self.log.info(
+            "CPR AI EXIT %s | reason=%s primary_qty=%s add_qty=%s pnl=%.2f",
+            closed.direction,
+            reason,
+            state.initial_filled_quantity,
+            add_quantity,
+            pnl,
+        )
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "mode": "LIVE" if live_states else "PAPER",
+                "direction": closed.direction,
+                "reason": reason,
+                "quantity": state.initial_filled_quantity + add_quantity,
+                "pnl": pnl,
+                "legs": [
+                    {
+                        "symbol": closed.symbol,
+                        "side": "SELL",
+                        "right": closed.option_right,
+                        "strike": closed.option_strike,
+                        "entry_price": closed.entry_trade_price,
+                        "exit_price": primary_exit,
+                        "exit_price_quality": primary_quality,
+                    },
+                    {
+                        "symbol": closed.symbol,
+                        "side": "SELL",
+                        "right": closed.option_right,
+                        "strike": closed.option_strike,
+                        "entry_price": add_entry,
+                        "exit_price": add_exit,
+                        "exit_price_quality": add_quality,
+                        "quantity": add_quantity,
+                    },
+                ],
+            }
+        )
+        self.store.unregister_option_subscription(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+            owner_id=self._execution_owner_id,
+        )
+        self.after_exit(closed, reason)
+        self.pos = PaperPosition()
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        """Clear the CPR sidecar only after the combined exit is confirmed flat."""
+
+        del closed_position, reason
+        self._cpr_state = None
+
+    def _write_final_execution(
+        self,
+        frozen_context: dict[str, object],
+        outcome,
+        execution: dict[str, object],
+    ) -> None:
+        """Best-effort append actual post-action provenance to the decision log.
+
+        The pre-action audit hook is attempted before increasing exposure. When
+        decision logging is enabled, a raised write failure blocks entry/add;
+        when explicitly disabled, the logger is a configured no-op. This second
+        row enriches the attempt with what execution really did: PAPER, LIVE,
+        PAPER_FALLBACK, LIVE_INDETERMINATE, or NOT_SUBMITTED. A logging failure
+        here cannot undo an exit or interrupt mechanical risk handling.
+        """
+
+        try:
+            self.decision_logger.write(
+                frozen_context=frozen_context,
+                proposal=outcome.proposal,
+                outcome=outcome,
+                latency_ms=outcome.latency_ms,
+                token_usage=outcome.token_usage,
+                tool_evidence=self._tool_log_payload(outcome.tool_evidence),
+                execution=execution,
+            )
+        except Exception as exc:  # noqa: BLE001 - the pre-action audit still exists
+            self.log.error(
+                "CPR AI final execution audit failed (%s).", type(exc).__name__
+            )
+
+    def _post_inference_exposure_block_reason(self) -> str:
+        """Recheck mutable host gates after a potentially slow model turn.
+
+        Stop requests, lifecycle state, feed health, 15:15 square-off, and the
+        15:00 entry cutoff can all change during inference. Entries and adds fail
+        closed when any gate changed; risk-reducing EXIT is intentionally handled
+        before this exposure-only check.
+        """
+
+        if self.stop_event.is_set():
+            return "stop_event"
+        lifecycle = self.lifecycle.snapshot()
+        if (
+            lifecycle.state is not LifecycleState.RUNNING
+            or not lifecycle.entry_allowed
+        ):
+            return "worker_not_running"
+        if not self._market_data_entries_allowed():
+            return "market_data_unhealthy"
+        if is_after_time(self.square_off_hour, self.square_off_minute):
+            return "square_off_cutoff"
+        if self._at_or_after_entry_cutoff():
+            return "entry_cutoff"
+        return ""
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """Evaluate one completed bucket through mechanics, Codex, and host gates.
+
+        Flat workers skip new turns after 15:00; open workers continue for
+        premise exits. Bucket identity is consumed before inference, while the
+        content signature protects against true-ups. Completed-bar SRSI/trailing
+        exits run before Codex. After the turn, position identity and the audit
+        hook are checked first. Every entry/add then rechecks stop requests,
+        lifecycle, feed health, and time cutoffs; an open position additionally
+        reruns max-loss and fresh spot stop/target safety before an add.
+        """
+
+        if not self.pos.active and self._at_or_after_entry_cutoff():
+            return
+        bar_identity = self._completed_bar_identity(strategy_frame)
+        if not bar_identity or bar_identity == self._last_agent_bar_identity:
+            return
+        # Consume immutable bucket identity before the optional call.  A timeout,
+        # malformed response, or later REST true-up cannot repeat this inference.
+        self._last_agent_bar_identity = bar_identity
+        # Content remains separate: a true-up while inference is running must
+        # still make the eventual output stale at the agent boundary.
+        bar_signature = self._completed_bar_signature(strategy_frame)
+        if not bar_signature:
+            return
+        frozen_context = self._latest_frozen_context()
+        if self.pos.active and self._manage_completed_bar(frozen_context):
+            return
+        # Keep the exact position objects that the frozen context described.
+        # Reconciliation may complete on another thread while inference waits;
+        # in that case its eventual response belongs to an obsolete position.
+        inference_position = self.pos if self.pos.active else None
+        inference_trade_state = self._cpr_state if self.pos.active else None
+        outcome = self.agent.decide(
+            frozen_context,
+            bar_signature=bar_signature,
+            current_signature=self._current_completed_spot_signature,
+        )
+        # Another thread may reconcile/replace the position during inference.
+        # In that case the response is audited as stale but cannot mutate regime
+        # memory, exit the replacement, or add to it.
+        stale_position_response = inference_position is not None and (
+            self.pos is not inference_position
+            or not self.pos.active
+            or self._cpr_state is not inference_trade_state
+        )
+        if not stale_position_response and outcome.accepted_regime is not None:
+            # A response belongs to the exact open position that was frozen.
+            # Closing or replacing that position makes every part stale,
+            # including accepted-regime memory used by the next model turn.
+            self._prior_accepted_regime = outcome.accepted_regime
+        # Invoke the configured audit hook before increasing exposure. When
+        # logging is enabled, a raised disk/logger failure blocks entry/add; an
+        # explicitly disabled logger is a deliberate no-op. An already-open EXIT
+        # remains a risk-reducing decision and is still honored below.
+        audit_ok = True
+        try:
+            self.decision_logger.write(
+                frozen_context=frozen_context,
+                proposal=outcome.proposal,
+                outcome=outcome,
+                latency_ms=outcome.latency_ms,
+                token_usage=outcome.token_usage,
+                tool_evidence=self._tool_log_payload(outcome.tool_evidence),
+                execution={
+                    "mode": "LIVE" if self.live_trading else "PAPER",
+                    "submitted": False,
+                    "status": (
+                        "STALE_POSITION_RESPONSE"
+                        if stale_position_response
+                        else "AUDITED_BEFORE_EXECUTION"
+                    ),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - entries fail closed; exits continue
+            audit_ok = False
+            self.log.error("CPR AI decision audit failed (%s).", type(exc).__name__)
+
+        if stale_position_response:
+            return
+        if not outcome.accepted:
+            if inference_position is not None:
+                if (
+                    self.pos is not inference_position
+                    or not self.pos.active
+                    or self._cpr_state is not inference_trade_state
+                ):
+                    return
+                # Even a rejected/failed model turn took wall-clock time. Reuse
+                # the normal safety path so shutdown, max-loss, square-off,
+                # stale-feed liquidation, and fresh spot boundaries run now.
+                self._run_prebar_safety()
+            return
+        if self.pos.active:
+            if inference_position is None or (
+                self.pos is not inference_position
+                or self._cpr_state is not inference_trade_state
+            ):
+                return
+            # EXIT is evaluated before exposure-only gates. If the position is
+            # still the one Codex saw, reducing risk remains available even when
+            # audit or entry health has deteriorated during the turn.
+            if outcome.action == "EXIT":
+                before_exit_mode = self._position_execution_mode()
+                self.exit_position("CPR_AI_PREMISE_EXIT")
+                self._write_final_execution(
+                    frozen_context,
+                    outcome,
+                    {
+                        "mode": self._exit_execution_mode(
+                            before_exit_mode,
+                            position_still_active=self.pos.active,
+                        ),
+                        "submitted": True,
+                        "status": "EXIT_CONFIRMED" if not self.pos.active else "EXIT_UNCONFIRMED",
+                    },
+                )
+                return
+            if outcome.action == "SCALE_IN" and audit_ok:
+                blocked_reason = self._post_inference_exposure_block_reason()
+                if blocked_reason:
+                    self._write_final_execution(
+                        frozen_context,
+                        outcome,
+                        {
+                            "mode": self._position_execution_mode(),
+                            "submitted": False,
+                            "status": "SCALE_IN_BLOCKED",
+                            "blocked_reason": blocked_reason,
+                        },
+                    )
+                    # A closed exposure gate prevents the add immediately. The
+                    # normal safety pass also performs any associated lifecycle,
+                    # square-off, or stale-feed flattening before this turn ends.
+                    self._run_prebar_safety()
+                    return
+            # Inference may take up to the configured timeout. Run the normal
+            # mechanical safety sequence again with fresh shared-market facts
+            # before honoring HOLD or any exposure-increasing scale-in.
+            if self._run_prebar_safety():
+                return
+            if outcome.action == "SCALE_IN" and audit_ok:
+                confirmed = self._execute_scale_in()
+                self._write_final_execution(
+                    frozen_context,
+                    outcome,
+                    {
+                        "mode": self._position_execution_mode(),
+                        "submitted": bool(
+                            self._cpr_state and self._cpr_state.scale_in_used
+                        ),
+                        "status": (
+                            "SCALE_IN_CONFIRMED"
+                            if confirmed
+                            else "SCALE_IN_UNCONFIRMED"
+                        ),
+                    },
+                )
+            return
+        if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
+            return
+        # A flat entry reaches this boundary only after the configured audit
+        # hook returned without error. Re-read all mutable gates now; the
+        # pre-inference checks may be up to the configured SDK timeout old.
+        blocked_reason = self._post_inference_exposure_block_reason()
+        if blocked_reason:
+            self._write_final_execution(
+                frozen_context,
+                outcome,
+                {
+                    "mode": "NOT_SUBMITTED",
+                    "submitted": False,
+                    "status": "ENTRY_BLOCKED",
+                    "blocked_reason": blocked_reason,
+                },
+            )
+            return
+        direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
+        submitted = self.enter_position(
+            direction,
+            float(outcome.entry_price),
+            float(outcome.stop_price),
+            float(outcome.final_target_price),
+        )
+        if submitted:
+            self._initialize_trade_state(outcome, frozen_context)
+        entry_mode = self._entry_execution_mode(bool(submitted))
+        self._write_final_execution(
+            frozen_context,
+            outcome,
+            {
+                "mode": entry_mode,
+                "submitted": bool(submitted),
+                "status": (
+                    "ENTRY_SUBMITTED"
+                    if submitted
+                    else "ENTRY_UNCONFIRMED"
+                    if entry_mode == "LIVE_INDETERMINATE"
+                    else "ENTRY_BLOCKED"
+                ),
+            },
+        )
+
+    def run(self) -> None:
+        """Poll mechanical safety at the configured interval and infer per bucket.
+
+        The worker starts decisions at 09:30 but safety runs even before then.
+        Shared one-minute data is resampled with the current IST clock so forming
+        websocket minutes are excluded. Any single poll failure is logged and
+        retried; it does not terminate future hard-stop or square-off handling.
+        """
+
+        self.log.info("Starting %s strategy worker.", self.strategy_name)
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
+            try:
+                if self._run_prebar_safety():
+                    self.wait_for_next_poll()
+                    continue
+                if is_before_time(self.trading_start_hour, self.trading_start_minute):
+                    if not self.preopen_wait_logged:
+                        self.log.info("Before CPR AI 09:30 start; waiting.")
+                        self.preopen_wait_logged = True
+                    self.wait_for_next_poll()
+                    continue
+                self.preopen_wait_logged = False
+                snapshot = self.store.get(self.timeframe)
+                if snapshot is None or snapshot.frame.empty:
+                    self.wait_for_next_poll()
+                    continue
+                completed = self.build_strategy_frame(
+                    snapshot.frame,
+                    as_of=_ist_now(),
+                )
+                if completed.empty:
+                    self.wait_for_next_poll()
+                    continue
+                self.process_strategy_frame(completed)
+            except Exception as exc:  # noqa: BLE001 - one turn must not kill safety
+                self.log.exception("CPR AI worker poll failed: %s", exc)
+            self.wait_for_next_poll()
+        self.log.info("%s strategy worker exited.", self.strategy_name)
+
+
+# =============================================================================
 # SUPERTREND BULLISH WORKER (3-min, hedged PE spread)
 # =============================================================================
 class SupertrendBullishWorker(BasePaperStrategyWorker):
@@ -13064,6 +14351,7 @@ STRATEGY_ENV_PREFIX = {
     "OpeningStrike": "OPENING_STRIKE",
     "CPR": "CPR",
     "CPRAlgo3": "CPR_ALGO3",
+    "CPR AI": "CPR_AI",
     "SupertrendBullish": "BULLISH",
     "DonchianBearish": "BEARISH",
     "Delta20Hedged": "DELTA20",
@@ -13190,8 +14478,8 @@ if SL_HUNTING_AVAILABLE:
         # 5-min default. NOTE: the agent makes one LLM/subscription call PER completed bar,
         # so 1-min is ~5x the calls/usage of 5-min — raise this if usage/cost is a concern.
         derived_timeframe_minutes = _env_int("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", 1)
-        # Stop opening NEW positions at/after this time (default 12:00), mirroring the
-        # manual "no fresh trades after noon" rule. This does NOT square off open
+        # Stop opening NEW positions at/after this time (default 10:30), mirroring the
+        # manual no-fresh-entry cutoff. This does NOT square off open
         # positions -- only the existing square_off_* gate (15:15) force-closes; exits
         # (stop/target, AI exit, max-loss) keep working. See process_strategy_frame.
         no_new_entry_hour = _env_int("SL_HUNTING_NO_NEW_ENTRY_HOUR", 10)
@@ -14186,7 +15474,7 @@ if SL_HUNTING_AVAILABLE:
                             self.exit_position(hit)
                         return
 
-            # No NEW positions at/after the entry cutoff (default 12:00). If we are FLAT
+            # No NEW positions at/after the entry cutoff (default 10:30). If we are FLAT
             # past the cutoff, don't consult the agent at all -- it could only ENTER, and
             # skipping it also saves the per-bar LLM call all afternoon. An OPEN position
             # is unaffected: the per-poll stop/target above, a discretionary AI exit
@@ -14795,6 +16083,10 @@ _PNL_SHEET_ROW_LABELS = {
     "OpeningStrike": "Opening Strike PCR VWAP ATR Strategy",
     "CPR": "CPR Strategy",
     "CPRAlgo3": "CPR Algo 3 Strategy",
+    # CPR AI uses three physical rows: this base label for PAPER plus the
+    # automatically suffixed ``[LIVE]`` and ``[MIXED]`` rows. Keeping modes
+    # separate prevents broker-backed results from contaminating paper history.
+    "CPR AI": "CPR AI Agent Strategy",
     "SMA Crossover": "SMA Crossover Strategy",
     "Bollinger Bands": "Bollinger Bands Strategy",
     "Keltner Squeeze": "Keltner Squeeze Strategy",
@@ -14813,7 +16105,7 @@ _PNL_SHEET_ROW_LABELS = {
     "DonchianBearish": "Donchian Bearish Strategy",
     "Delta20Hedged": "Delta 0.2 Hedged Spread Strategy",
     "LongStrangle": "Long Strangle Strategy",
-    # Optional opt-in 27th worker (SL_HUNTING_ENABLED); maps only when it runs.
+    # Optional SL Hunting agent; this label is mapped only when the agent runs.
     "SL Hunting AI": "SL Hunting AI Agent Strategy",
 }
 
@@ -15201,6 +16493,41 @@ def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
     if not prefix:
         return True
     return _env_bool(f"{prefix}_VIRTUAL_TRADING", True)
+
+
+def _cpr_ai_startup_errors() -> tuple[str, ...]:
+    """Return every reason the optional CPR AI worker must be omitted at startup.
+
+    The function collects all problems in one pass so the operator can fix the
+    complete configuration instead of discovering one error per restart. An
+    empty tuple means construction is allowed; the normal startup exposure
+    audit and per-strategy double gate separately decide live mode. Existing
+    CPR workers are intentionally not conflicts because this strategy has its
+    own inputs, calculations, position, and P&L.
+    """
+
+    if not _env_bool("CPR_AI_ENABLED", False):
+        return ()
+    errors: list[str] = []
+    if not CPR_AI_AVAILABLE:
+        detail = f" ({CPR_AI_IMPORT_ERROR})" if CPR_AI_IMPORT_ERROR else ""
+        errors.append(f"CPR AI optional dependencies are unavailable{detail}.")
+    else:
+        # Keep the SDK import lazy, but preflight its module spec at startup so a
+        # missing optional stack omits this worker instead of logging one HOLD
+        # on every five-minute bar all day.
+        missing = [
+            package
+            for package in ("openai_codex", "mcp", "pydantic")
+            if importlib.util.find_spec(package) is None
+        ]
+        if missing:
+            errors.append(
+                "CPR AI optional runtime is incomplete; missing: "
+                + ", ".join(missing)
+                + "."
+            )
+    return tuple(errors)
 
 
 _RISK_BUDGET_PREFIXES = frozenset(
@@ -16009,9 +17336,9 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) + 27 consumers (23 ATM single-leg + 2 Hedged +
-    # 1 Delta-0.2 + 1 Long Strangle), plus the optional SL Hunting AI agent
-    # (appended below when SL_HUNTING_ENABLED). The producer class comes from
+    # One producer (fetcher) serves the approximately 27 core consumers plus
+    # independently opt-in SL Hunting and CPR Codex AI agents. Per-strategy
+    # virtual gates determine the final consumer set. The producer class comes from
     # MARKET_DATA_SOURCE: REST polling (default) or the Dhan websocket feed;
     # unknown values fail closed to REST inside the selector.
     fetcher_cls = _select_market_data_fetcher_class()
@@ -16076,6 +17403,29 @@ def main() -> None:
                 exc,
                 exc_info=True,
             )
+
+    # ----- CPR Codex AI agent (optional): independent five-minute worker.
+    # Ordinary CPR, CPR Algo 3, and Regime Adaptive remain independently
+    # constructible and may run beside it; the shared startup audit and
+    # per-strategy gates apply normally. Construction failures are isolated so
+    # a missing SDK/auth prerequisite cannot stop deterministic workers or their
+    # mechanical exits.
+    if _env_bool("CPR_AI_ENABLED", False):
+        cpr_ai_errors = _cpr_ai_startup_errors()
+        if cpr_ai_errors:
+            logger.error(
+                "CPR AI worker omitted due to invalid configuration | %s",
+                "; ".join(cpr_ai_errors),
+            )
+        else:
+            try:
+                workers.append(CPRAIWorker(store, stop_event, broker))
+            except Exception as exc:  # noqa: BLE001 - optional strategy, never fatal
+                logger.error(
+                    "CPR AI worker could not be created (%s); continuing without it.",
+                    type(exc).__name__,
+                    exc_info=True,
+                )
 
     # -------------------------------------------------------------------------
     # Per-strategy virtual (paper) trading gate.

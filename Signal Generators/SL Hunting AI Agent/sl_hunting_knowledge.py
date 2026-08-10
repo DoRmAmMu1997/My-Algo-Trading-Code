@@ -69,6 +69,71 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   off an EXACT closing-price touch right after a huge gap-up) is unsustainable —
   fade it. Corollary: an EXACT touch-and-bounce at a level is fragile; small,
   partial rejections at the level are the go-with tell instead.
+- WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET MANUFACTURES MORE (v4c). The
+  rest of this section is about FINDING a crowd that is already trapped. That
+  supply is finite: "for a time we have positional buyers'/sellers' SLs available,
+  which the market targets for momentum. But once those SLs are exhausted, the
+  market has to CREATE stop-losses." Where it creates them is not arbitrary — it
+  goes to whichever zone can activate the MOST participants, because that is where
+  the most new stops come from. So the read has two phases:
+    1. Is there existing trapped inventory? Hunt that (everything above).
+    2. If it has already been taken, stop looking for a victim and ask instead
+       WHERE THE NEXT CROWD WILL BE BUILT — the zone of highest demand/supply.
+  The operator's incentive is an ordinary business one: profit is made where
+  volume is high, not where it is thin.
+- AMBIGUITY SUPPRESSES SIZE; BREAKING A LEVEL REMOVES IT (v4c). This is WHY a
+  level gets broken, and it is the most useful mechanism in the lecture. While
+  price hovers under a level, nobody commits: sellers stay small because it looks
+  like support is holding, buyers stay small because the tape looks negative —
+  "so buyers and sellers both work in SMALL quantity there". The break is what
+  resolves the doubt, and the moment it resolves, size goes up: "when he felt the
+  breakout was happening and the market was going to move up... that greed is
+  created, demand and supply are kept high so that as many people as possible can
+  participate. And as soon as they participated, the next day they became the
+  target."
+  Read a breakout as a RECRUITMENT DEVICE first and a directional signal second.
+  The question is not "is this break real" but "who just committed size because of
+  it, and where are their stops now".
+- A FAILED BREAKOUT IS THE NORMAL OUTCOME, NOT A MALFUNCTION (v4c). It follows
+  directly: if a break's function is to recruit, the recruits must then be taken,
+  which means the break reverses. "That is why you will repeatedly see breakouts
+  and breakdowns in the market, and they often appear as FAILURES." Do not treat
+  a failed break as the market misbehaving or as evidence your level was wrong.
+- ROUND NUMBERS AMPLIFY RECRUITMENT, not just support and resistance (v4c).
+  Elsewhere a round number is a level price is attracted to. Here it is a force
+  MULTIPLIER on a break: "there is a round number of 58,000 available. What
+  happens? More buyers activate. More buyers activate, so it gets more SLs." A
+  break AT or THROUGH a round number therefore builds a DENSER stop cluster than
+  the same break elsewhere — which makes the subsequent reversal both more likely
+  and worth a larger target (see A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER
+  TARGET for the other half of that sizing judgement).
+- THE POST-GAP BOUNCE IS THE TRAP DEEPENING, NOT THE SETUP FAILING (v4b). After a
+  gap that puts a seated crowd underwater, the bounce back toward their entry is
+  the most commonly MISREAD event on the chart. It is not your thesis breaking:
+    * A gap that fell straight down would let the trapped crowd out "in two or
+      three minutes" at a small loss. That is the operator's worst outcome, not
+      yours only.
+    * The bounce exists so they feel the market "can go up again". That hope is
+      what makes them HOLD, and often AVERAGE DOWN, instead of cutting — which is
+      what converts a small trapped loss into a large one.
+  So the sequence adverse-gap -> bounce -> stall near the old level is the trap
+  working as designed. Expect it, and do not read it as invalidation. What WOULD
+  invalidate is price actually RECLAIMING the level (previous close / round
+  number) rather than approaching and failing at it — name that level in advance
+  and let it, not the bounce, be your evidence (see NAME THE ONE WAY THIS TRADE
+  FAILS and A REJECTION BEFORE THE FLUSH IS NOISE).
+- REGIME MEMORY DECIDES WHO SHOWS UP AT A LEVEL (v4b). A level does not attract
+  participants by geometry; it attracts whoever the recent past has left willing
+  to act there. After a stretch where one side was repeatedly punished, that side
+  stops arriving even at the price where textbook logic says it should:
+    "They will not be able to sell here. Most traders who sold did it earlier in
+    this chart and had to suffer losses again and again. Now everyone's focus is
+    on where to BUY, because their mindset has formed that the market keeps going
+    up. Nobody is even paying attention to the resistance."
+  Practical use: before assuming a resistance will recruit fresh sellers (or a
+  support fresh buyers), ask who has been PAID and who has been PUNISHED over the
+  last several sessions. A level in front of a beaten side is thin, which is
+  exactly why price can lean on it and still fall.
 - SECOND-DAY RECRUITMENT — one adverse day does NOT seat a crowd, the SECOND one
   does (v4a). This is the counterpart to THE MISSING RIP IS THE TELL, and together
   they date the inventory. Day one of a fall after a positive stretch recruits
@@ -807,6 +872,39 @@ RISK DISCIPLINE
   becomes the fuel for a move AGAINST you — the same mechanism you were trying to
   exploit, pointed the other way. Company at a level is a warning, not comfort:
   the break should come promptly, "from about here", or the edge has inverted.
+- A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET (v4b). This is the
+  counterpart to A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, and the two together
+  are how you SIZE a target from crowd behaviour rather than from a fixed
+  percentage:
+    * Freshly recruited, no averaging -> shallow stop cluster -> SMALL target,
+      fast move.
+    * Baited into averaging down -> the same traders now hold MORE size at a WORSE
+      average, and their pain threshold sits FURTHER away -> the flush runs
+      further -> a LARGER target is justified.
+  IH's own reasoning for enlarging the target mid-trade: "Why could we make the
+  target bigger here? Because those who average get a little courage from the
+  market — 'go on, wait' — and then it targets them. So their SLs would have been
+  hit." Two supporting reads for enlarging: all THREE indices moving together
+  ("achieving the target will be easy"), and a visible averaging/hope phase
+  earlier in the move.
+- CROWD SIZE IS THE THIRD TARGET INPUT (v4c). Alongside how recently the crowd was
+  recruited (v4a) and whether it has averaged down (v4b), HOW MANY are seated
+  scales the move available against them — and for a reason worth knowing: a
+  heavily seated side does not cut quickly. "In a positive market more buyers are
+  seated, so you will get a little extra momentum... those seated buyers will
+  WAIT, and because they wait you get more momentum." A thin side, by contrast,
+  is hit immediately and gives a short move: "when selling comes into a positive
+  chart, few can even participate, and those sellers who did come were hit
+  straight away."
+- EXPECT A SECOND LEG AFTER THE PAUSE, THEN BOOK (v4b). When a flush stalls
+  mid-move, the stall is usually the LAST bait rather than the end: the market
+  gives the trapped side "a little hope that the breakdown is not going to
+  happen", they hold rather than cut, and one further leg takes them out. So a
+  pause after a working flush predicts ONE more move, and that move is where the
+  target gets booked — not where a new position gets added. This is a refinement
+  of A REJECTION BEFORE THE FLUSH IS NOISE for the phase AFTER a flush has begun;
+  it does not extend to a position that is offside, and it never overrides the
+  stop, the max loss, or premise-invalidation.
 - A REJECTION BEFORE THE FLUSH IS NOISE; A REJECTION AFTER IT IS THE EXIT (v4a).
   When you are positioned against a seated crowd, the trade has TWO phases and
   they take opposite handling:
@@ -1121,6 +1219,17 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   about the LEADER failing to lead, not about momentum speed in general — a genuine
   leader-led move that grinds on in small candles is still the sustainable kind
   described in RISK.)
+- THE HIERARCHY IS ASYMMETRIC: BankNIFTY DECIDES EXITS, THE LAGGARDS GATE ENTRIES
+  (v4b). The major index leading is enough to CLOSE on (see the next bullet), but
+  it is NOT enough to OPEN on. IH, with a textbook BankNIFTY setup in front of
+  him: "Looking at BankNIFTY it seems the trade should be taken right now. But
+  let us wait a little, according to Sensex and NIFTY." He entered only once the
+  other two agreed, and said plainly which one was the risk: "BankNIFTY's chart is
+  completely right; it is Sensex and NIFTY where we could have trouble."
+  The asymmetry is deliberate and matches the risk: entering on the leader alone
+  buys a move the other two may never join (that is LAGGARDS NEVER JOINED, seen
+  from the front), while exiting on the leader alone only costs you a trade.
+  Be slow to enter on BankNIFTY alone; be fast to leave on it.
 - INDEX HIERARCHY ON THE WAY OUT — the indices are NOT equal when a position is
   going against you (v3y). NIFTY and Sensex drifting against the trade is
   TOLERABLE; that is handleable noise and does not by itself end the trade.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import unittest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from Dependencies.market_data_health import (
     MarketDataHealth,
     MarketDataValidationError,
     complete_minute_bucket_mask,
+    market_hours_between,
     newest_completed_minute_timestamp,
     validate_ohlc_frame,
 )
@@ -181,6 +183,52 @@ class TestCompletedMinuteTimestamp(unittest.TestCase):
             newest_completed_minute_timestamp(frame, now=now),
             datetime(2026, 7, 16, 9, 59, tzinfo=IST),
         )
+
+
+class TestMarketHoursElapsed(unittest.TestCase):
+    """Bar staleness is counted in MARKET time, not wall-clock time.
+
+    A completed bar carries an EXCHANGE timestamp, so the hours in which no bar
+    could possibly have been produced must not count against it. Before this,
+    starting the runner at 08:30 reported the previous session's last bar as
+    ~61,000s stale -- true, and not a fault.
+    """
+
+    def test_inside_the_session_it_equals_wall_clock(self) -> None:
+        """The property that matters most: LIVE behaviour must be unchanged."""
+        start = datetime(2026, 8, 7, 10, 0, 0, tzinfo=IST)
+        for seconds in (1, 60, 150, 3600):
+            end = start + timedelta(seconds=seconds)
+            self.assertAlmostEqual(market_hours_between(start, end), float(seconds))
+
+    def test_overnight_gap_counts_only_the_traded_minutes(self) -> None:
+        # Thursday 15:29 bar, read at Friday 08:30 pre-open. Only 15:29->15:30
+        # is market time; the whole night counts for nothing.
+        bar = datetime(2026, 8, 6, 15, 29, 0, tzinfo=IST)
+        pre_open = datetime(2026, 8, 7, 8, 30, 0, tzinfo=IST)
+        self.assertAlmostEqual(market_hours_between(bar, pre_open), 60.0)
+        # Wall-clock would have called the same bar ~61,000s old.
+        self.assertGreater((pre_open - bar).total_seconds(), 60_000)
+
+    def test_weekend_contributes_nothing(self) -> None:
+        friday_close = datetime(2026, 8, 7, 15, 29, 0, tzinfo=IST)
+        monday_pre_open = datetime(2026, 8, 10, 8, 30, 0, tzinfo=IST)
+        self.assertAlmostEqual(market_hours_between(friday_close, monday_pre_open), 60.0)
+
+    def test_it_still_arms_shortly_after_the_open(self) -> None:
+        """A genuinely dead feed must trip on schedule once trading starts."""
+        bar = datetime(2026, 8, 6, 15, 29, 0, tzinfo=IST)
+        # 09:16 -> 1 market minute yesterday + 1 today = 120s, under the 150s cap.
+        self.assertLess(market_hours_between(bar, datetime(2026, 8, 7, 9, 16, tzinfo=IST)), 150.0)
+        # 09:20 -> 60 + 300 = 360s, comfortably over it.
+        self.assertGreater(market_hours_between(bar, datetime(2026, 8, 7, 9, 20, tzinfo=IST)), 150.0)
+
+    def test_degenerate_and_far_past_inputs(self) -> None:
+        now = datetime(2026, 8, 7, 10, 0, tzinfo=IST)
+        self.assertEqual(market_hours_between(now, now), 0.0)
+        self.assertEqual(market_hours_between(now, now - timedelta(hours=1)), 0.0)
+        # Bounded walk: anything ancient is infinitely stale rather than slow.
+        self.assertEqual(market_hours_between(now - timedelta(days=400), now), math.inf)
 
 
 class TestMarketDataHealth(unittest.TestCase):
