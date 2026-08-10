@@ -2,9 +2,10 @@
 
 Stopping a worker thread is not the same as safely stopping a live trading
 process.  Once shutdown begins, new entries must stay blocked while the runner
-closes every tracked leg and asks the broker whether the account is flat.  A
-failed close keeps the process alive in reconciliation instead of allowing it
-to report a clean shutdown.
+closes every tracked leg and reconciles its own execution ledger to confirmed
+flat.  A failed close keeps the process alive in reconciliation instead of
+allowing it to report a clean shutdown.  The separate account-wide audit is
+advisory because the operator may also hold manual positions in that account.
 
 This module deliberately performs no broker calls and never sleeps.  The
 runner drives each transition and can inspect :meth:`retry_due` from its normal

@@ -10,11 +10,13 @@
 ## 1. Responsibility
 
 One worker = one strategy = one thread. A worker owns its own positions, its own
-P&L, its own risk knobs and its own poll cadence. Workers never talk to each
-other; the only things they share are the market-data store and the broker lock.
+P&L, its own risk knobs and its own poll cadence. Workers never call one another.
+They share the market-data and execution-safety aggregate, lifecycle/shutdown
+signals, and—when enabled—the Telegram event queue; each boundary is explicitly
+synchronized.
 
-That isolation is the reason a strategy can be added, disabled or blown up
-without touching another one.
+That separation is why a strategy can be added or disabled without coupling its
+position and decision state to another worker.
 
 ---
 

@@ -15,7 +15,8 @@ up and go down. Its contract:
 1. Nothing that can place an order starts before configuration is validated and
    the broker book is proven clean.
 2. Nothing reports a clean shutdown until every tracked leg is closed and the
-   broker agrees the account is flat.
+   runner's execution ledger is broker-reconciled flat. A separate account-wide
+   audit then warns about manual or otherwise untracked exposure.
 
 Everything between those two statements is supervision.
 
@@ -97,7 +98,7 @@ shutdown requested (end of day, max loss, operator, or fatal supervision event)
   │     └─ a REJECTED exit does NOT count as closed
   │
   3. _wait_for_shutdown_account_flat(...)
-  │     └─ ask the broker whether the account is flat
+  │     └─ despite the legacy function name, reconcile the RUNNER'S tracked ledger
   │        ├─ flat      ──► continue
   │        └─ not flat  ──► stay alive in RECONCILIATION; do NOT report clean
   │
@@ -115,7 +116,8 @@ shutdown requested (end of day, max loss, operator, or fatal supervision event)
 Step 3 is the one that matters. "Stopping the threads" and "safely stopping a
 live trading process" are different things, and `Dependencies/trading_lifecycle.py`
 exists to keep them separate: the process refuses to claim a clean exit while a
-leg it opened is still open.
+leg it opened is still open. Step 4 is deliberately advisory because an
+account-wide position may belong to the operator rather than this runner.
 
 ---
 
