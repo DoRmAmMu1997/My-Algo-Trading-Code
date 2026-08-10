@@ -21,6 +21,21 @@ from typing import Any
 
 _REQUEST_KEYS = {"snapshot_path", "model", "reasoning_effort", "prompt", "output_schema"}
 _EXPECTED_TOOLS = ("session_levels", "momentum_vwap", "market_structure", "position_state")
+# ``build_system_prompt()`` contains durable role, tool, and safety policy.  The
+# actual turn request stays short so those rules are stated once at the SDK's
+# stronger developer-instruction layer instead of being repeated as user text.
+_TURN_REQUEST = "Evaluate the current frozen CPR context and return one decision."
+_ALLOWED_TURN_ITEM_TYPES = frozenset(
+    {
+        # The SDK records the prompt submitted through ``Thread.run`` as a
+        # completed user-message item.  This is input bookkeeping, not a tool or
+        # capability used by Codex, so it is safe to ignore during action checks.
+        "userMessage",
+        "agentMessage",
+        "reasoning",
+        "mcpToolCall",
+    }
+)
 
 
 def build_isolated_thread_config(snapshot_path: str, python_executable: str = sys.executable) -> dict[str, Any]:
@@ -154,12 +169,16 @@ def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
             model=str(request["model"]),
             config=config,
             cwd=runtime_directory,
+            # The modular CPR prompt is policy for every turn, not merely the
+            # user's one-off task.  Passing it through the SDK's dedicated
+            # field makes the intended instruction hierarchy explicit.
+            developer_instructions=str(request["prompt"]),
             ephemeral=True,
             sandbox=Sandbox.read_only,
             approval_mode=ApprovalMode.deny_all,
         )
         result = thread.run(
-            str(request["prompt"]),
+            _TURN_REQUEST,
             approval_mode=ApprovalMode.deny_all,
             output_schema=request["output_schema"],
             effort=request["reasoning_effort"],
@@ -174,7 +193,7 @@ def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
         "unexpected_actions": [
             str(_item_value(_root_item(item), "type", "unknown"))
             for item in _item_value(result, "items", ())
-            if _item_value(_root_item(item), "type", "") not in {"agentMessage", "reasoning", "mcpToolCall"}
+            if _item_value(_root_item(item), "type", "") not in _ALLOWED_TURN_ITEM_TYPES
         ],
     }
 
