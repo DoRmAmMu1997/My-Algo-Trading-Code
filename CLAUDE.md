@@ -79,8 +79,9 @@ One process, cooperating threads:
 ```
 Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
-test_nifty_multi_strategy_master.py                # unittest suite for the master
-test_market_data_health.py                         # unittest suite for the shared feed-health gates
+Tests/                                             # EVERY test, mirroring the source tree (docs/adr/0010)
+  test_nifty_multi_strategy_master.py              #   unittest suite for the master
+  test_market_data_health.py                       #   unittest suite for the shared feed-health gates
 requirements.txt                                   # exact core runtime dependencies
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
 requirements-ai.txt                                # exact optional Claude Agent SDK stack
@@ -98,12 +99,13 @@ Dependencies/
   check_env_config.py                              # `algo.py check-env` config-drift audit (read-only)
   Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
-  Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py,
-                    test_flattrade_execution.py
-  Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py, test_dhan_execution.py
+  Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py
+  Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 scripts/check_coverage_thresholds.py               # branch-coverage policy gate
+docs/                                              # committed architecture set: hld/, lld/, adr/
+                                                   #   (docs/superpowers/ is a session scratchpad, gitignored)
 Backtest Outputs/                                  # generated CSVs/logs (gitignored)
 ```
 
@@ -175,15 +177,20 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   `Dependencies/.env` against `env.example` and against the keys the code's `_env_*` calls actually
   read, reporting settings missing from `.env` (an unseen in-code default is in force), mistyped or
   stale keys, and knobs missing from the template. Read-only, and it prints key NAMES only — never a
-  value out of `.env` — so its output is safe to share. `test_repository_policy.py` imports the same
+  value out of `.env` — so its output is safe to share. `Tests/Dependencies/test_repository_policy.py` imports the same
   helpers so CI fails when a new `_env_*` key lands without an `env.example` entry.
-- **Tests:** `python -m unittest test_nifty_multi_strategy_master` (loads the master via `importlib`,
-  mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Signal-generator tests live
-  under `Signal Generators/`.
+- **Tests:** EVERY suite lives under `Tests/`, mirroring the source tree — the test for
+  `Signal Generators/<X>` sits at `Tests/Signal Generators/<X>`. Run the master suite with
+  `python -m unittest Tests.test_nifty_multi_strategy_master` (loads the master via `importlib`,
+  mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Two rules when adding
+  a test: put it at the mirrored path, and keep its FILENAME unique repository-wide (pytest keys
+  modules by basename — there are no `__init__.py` files). A `Tests/` folder mirroring a
+  spaced-name source folder carries a `conftest.py` that puts the SOURCE folder on `sys.path`,
+  never the test folder, so tests exercise the same import resolution production uses.
 - **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):**
-  `python -m unittest test_nifty_multi_strategy_master`,
-  `python -m unittest test_market_data_health`,
-  `python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q`,
+  `python -m unittest Tests.test_nifty_multi_strategy_master`,
+  `python -m unittest Tests.test_market_data_health`,
+  `python -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q`,
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,

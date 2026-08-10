@@ -1,0 +1,27 @@
+"""Guard the package boundary between the new agent and legacy CPR strategies.
+
+This intentionally simple source-level regression scans only CPR AI runtime
+modules. It catches accidental reintroduction of the old Algo 1/2/3 arbiter or
+its ``CPRToolResult`` contract before master-worker behavior is considered.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def test_task_two_runtime_does_not_import_the_legacy_cpr_strategy_package():
+    """Runtime modules must stay independent before the master wires execution."""
+
+    # Tests/Signal Generators/CPR AI Agent/<this file> -> the SOURCE agent
+    # folder lives three levels up, under "Signal Generators/".
+    agent_directory = (
+        Path(__file__).resolve().parents[3] / "Signal Generators" / "CPR AI Agent"
+    )
+    runtime_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in agent_directory.glob("cpr_ai_*.py")
+    )
+
+    assert "cpr_strategy_logic" not in runtime_sources
+    assert "CPRToolResult" not in runtime_sources

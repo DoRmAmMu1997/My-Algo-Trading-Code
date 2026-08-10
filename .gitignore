@@ -39,3 +39,7 @@ htmlcov/
 # reports here. They describe one development session rather than the product,
 # so keep the complete workspace-private directory out of source control.
 .superpowers/
+# Same reasoning for the plans/specs Superpowers writes under docs/: they are a
+# per-session working record, not product documentation. docs/ itself is the
+# committed architecture set (hld/, lld/, adr/) -- only this subtree is ignored.
+docs/superpowers/

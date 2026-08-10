@@ -39,8 +39,10 @@ external = ["BLE"]
 [tool.ruff.lint.per-file-ignores]
 # B017: tests intentionally assert on bare Exception for defensive paths.
 # RUF012: test fakes use mutable class attributes as fixtures.
+# Every suite lives under Tests/ (mirroring the source tree); the glob covers
+# them all, and the master suite is named explicitly for discoverability.
 "**/test_*.py" = ["B017", "RUF012"]
-"test_nifty_multi_strategy_master.py" = ["B017", "RUF012"]
+"Tests/test_nifty_multi_strategy_master.py" = ["B017", "RUF012"]
 # Reference-only backtests keep the deliberate sys.path-before-import pattern.
 "My Backtest Files (For Reference)/**" = ["E402"]
 
@@ -164,6 +166,12 @@ relative_files = true
 concurrency = ["thread"]
 source = ["."]
 omit = [
+    # Every suite now lives under Tests/ (mirroring the source tree). Both
+    # patterns are listed because Coverage.py's `*` does not cross a path
+    # separator: the first catches Tests/test_x.py, the second the nested
+    # Tests/<Component>/... suites.
+    "Tests/*",
+    "Tests/**/*",
     "*/test_*.py",
     "*/tests/*",
     "Backtest Outputs/*",
