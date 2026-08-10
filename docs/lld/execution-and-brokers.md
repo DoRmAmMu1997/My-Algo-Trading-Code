@@ -102,12 +102,18 @@ or flattens. If either read shows exposure, live workers do not start.
 
 **Shutdown** — `Dependencies/trading_lifecycle.py` blocks new entries the moment
 shutdown begins, then requires every tracked leg to be closed and the broker to
-confirm flat before the session may be called clean. A failed close keeps the
-process alive in reconciliation.
+reconcile the runner's ledger flat before the session may be called clean. A
+failed close keeps the process alive in reconciliation.
 
-Both boundaries are measured against **the runner's own ledger**, because the
-operator trades manually in the same account. A non-flat *account* is advisory;
-a non-flat *ledger* is an error.
+The two boundaries intentionally use different scopes:
+
+- Startup is **account-wide** because a fresh process has no trustworthy local
+  ledger yet. Any open order or relevant index-option position blocks live
+  startup and requires an operator decision.
+- Shutdown is **runner-owned** because the in-process ledger identifies the legs
+  this run opened. Those legs must be broker-reconciled flat. Once they are, a
+  separate account-wide audit is advisory because remaining exposure may belong
+  to the operator's manual trading.
 
 ---
 

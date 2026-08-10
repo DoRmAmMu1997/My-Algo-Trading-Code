@@ -85,9 +85,11 @@ Why **no-argument** tools:
 
 Indicator settings are fixed and documented: RSI 14 / Stochastic 14 / K 3 / D 3,
 zones 20 and 80; one equal-size add; 30-NIFTY-point and 2-NIFTY-point geometry
-constants; 0.40 threshold. These live in `env.example` and are asserted by
-`Tests/Dependencies/test_repository_policy.py` so the operator-facing
-explanation cannot drift from the code.
+constants; 0.40 threshold. These are deliberately **code-owned invariants**, not
+`.env` knobs: indicator calculations live in `cpr_ai_context.py`, while the host
+worker owns entry geometry and risk enforcement. The focused CPR AI context and
+master-worker tests assert their behaviour. `env.example` contains only the
+operator-selectable CPR AI settings listed in §7.
 
 ---
 

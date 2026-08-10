@@ -45,7 +45,7 @@ trues its bars up against official REST candles (see §5.2).
 | F2 | Each strategy independently decides entry/exit on NIFTY ATM options (some on multi-leg baskets). |
 | F3 | Execute on paper by default; execute live only when explicitly enabled for both the process and the strategy. |
 | F4 | Support more than one broker behind one interface, switchable by configuration. |
-| F5 | Never lose track of live exposure — including across partial fills, lost responses, and restarts. |
+| F5 | Track live exposure conservatively within a running process, including partial fills and lost responses. After a restart, refuse live startup when the broker account is not clean and require operator reconciliation. |
 | F6 | Report every entry/exit to Telegram, and per-strategy end-of-day P&L to a Google Sheet. |
 | F7 | Be entirely configuration-driven from one file; nothing hard-coded per run. |
 
@@ -251,14 +251,22 @@ the month can be backfilled from the same log.
 | Telegram worker | 1 (if enabled) | Drain the event queue |
 | Main | 1 | Start, supervise, shut down |
 
-**Shared mutable state is exactly two objects**, and both are lock-guarded:
+Shared state is kept behind a small, explicit set of synchronization boundaries:
 
-1. `SharedMarketDataStore` — many readers, one writer.
-2. The broker session behind `ExecutionSafetyCoordinator` — many writers, serialized.
+1. `SharedMarketDataStore` owns the lock-guarded OHLC, LTP and option-subscription
+   maps. It also aggregates the independently synchronized `MarketDataHealth`,
+   `ExecutionSafetyCoordinator` and `ExecutionLedger` safety components.
+2. Broker-session access is serialized so workers cannot submit through the
+   shared client concurrently.
+3. `TradingLifecycle` plus shutdown events coordinate process-wide and
+   worker-local stopping without interrupting a thread during an order.
+4. The optional Telegram `queue.Queue` is the thread-safe hand-off between
+   strategy workers and the reporting worker.
 
-Everything else a worker touches is its own. This is what makes a
-thread-per-strategy model tractable for one maintainer: the concurrency review
-surface is two objects, not thirty (see [ADR-0001](../adr/0001-single-process-thread-per-strategy.md)).
+Positions, realised P&L and strategy decisions remain worker-local. The design
+is tractable because every cross-thread path has a named owner and synchronization
+rule—not because the process literally contains only two mutable objects (see
+[ADR-0001](../adr/0001-single-process-thread-per-strategy.md)).
 
 The GIL is not a problem here because the workload is overwhelmingly I/O-bound
 (HTTP calls and sleeps) and the CPU work per bar is small pandas operations on
@@ -292,7 +300,7 @@ The recurring shape: **an ambiguous state is treated as the dangerous state.**
 
 | Decision | What we gain | What we pay | ADR |
 |---|---|---|---|
-| One process, thread per strategy | Two lock-guarded objects to reason about; trivial deployment; one log | No horizontal scale; one crash stops everything; GIL caps CPU-bound work | [0001](../adr/0001-single-process-thread-per-strategy.md) |
+| One process, thread per strategy | A small set of explicit in-process synchronization boundaries; trivial deployment; one log | No horizontal scale; one crash stops everything; GIL caps CPU-bound work | [0001](../adr/0001-single-process-thread-per-strategy.md) |
 | Broker-agnostic contract | Swap brokers by config; one execution path to test | Every adapter must contain its broker's quirks rather than leak them | [0002](../adr/0002-broker-agnostic-execution-contract.md) |
 | Typed outcomes + quantity ledger | Cannot mistake an ack for a fill | More states for callers to handle; `UNKNOWN` needs an operator | [0003](../adr/0003-acknowledgement-is-not-a-fill.md) |
 | Paper by default, two flags for live | A single flag can never be enough to risk money | Two places to change; easy to think you are live when you are not | [0004](../adr/0004-paper-by-default-double-gate.md) |
