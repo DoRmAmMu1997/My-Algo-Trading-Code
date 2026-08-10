@@ -56,14 +56,15 @@ jobs:
         run: python -m pre_commit validate-config .pre-commit-config.yaml
 
       - name: Run branch-enabled test coverage
-        # The master is importlib-loaded because its filename has spaces. Append
-        # every suite into one branch-enabled runtime report, then enforce the
-        # 54.7% repository baseline plus the stricter per-safety/broker budgets.
+        # Every suite lives under Tests/, mirroring the source tree. The master is
+        # importlib-loaded because its filename has spaces. Append every suite into
+        # one branch-enabled runtime report, then enforce the 54.7% repository
+        # baseline plus the stricter per-safety/broker budgets.
         run: |
           python -m coverage erase
-          python -m coverage run -m unittest test_nifty_multi_strategy_master
-          python -m coverage run --append -m unittest test_market_data_health
-          python -m coverage run --append -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+          python -m coverage run -m unittest Tests.test_nifty_multi_strategy_master
+          python -m coverage run --append -m unittest Tests.test_market_data_health
+          python -m coverage run --append -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q
           python -m coverage json -o coverage.json
           python -m coverage report
           python scripts/check_coverage_thresholds.py coverage.json
@@ -123,6 +124,6 @@ jobs:
       - name: Run broker contract and adapter suites
         run: >
           python -m pytest
-          "Dependencies/test_broker_contract.py"
-          "Dependencies/Flattrade API/test_flattrade_execution.py"
+          "Tests/Dependencies/test_broker_contract.py"
+          "Tests/Dependencies/Flattrade API/test_flattrade_execution.py"
           -q

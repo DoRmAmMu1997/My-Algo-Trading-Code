@@ -30,7 +30,7 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - **SL Hunting AI Agent — BankNIFTY mirror basket + newer knowledge (v3c–v3e).** The agent now trades Intraday Hunter's multi-index style: every NIFTY entry is mirrored with an **equal-lot BankNIFTY ATM** leg (`SL_HUNTING_BNF_MIRROR`, default true). The two legs are **tied for hard risk** (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's **premise independently** and can cut one alone via the EXIT `exit_leg` selector (`NIFTY` | `BNF` | `BOTH`). Entry stays NIFTY-only (the mirror copies it). Its knowledge also grew several distilled-from-video layers — a scoped **gap-up opening-drive**, a **2-week verbatim transcript sweep**, and a **live-day match** against the agent's own journal (details in `Signal Generators/SL Hunting AI Agent/README.md`).
 - **Optional LLM trading agent — the "SL Hunting AI Agent" (opt-in worker).** A Claude agent (via the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk/) on your Claude subscription — **no API key**) trades the discretionary *SL Hunting* price-action method on NIFTY ATM options. Once per completed 1-min bar (the method's native timeframe) it reads the NIFTY chart (with **BankNIFTY cross-confirmation**) and — only on a confirmed setup at a real level — acts through the SAME tested `enter_position`/`exit_position` path as every other worker. Position sizing floors affordable whole lots, never exceeds `SL_HUNTING_RISK_BUDGET`, skips one-lot-over-budget setups, and caps at `SL_HUNTING_MAX_LOTS` (default 5); the equal-lot BankNIFTY mirror can roughly double basket risk. It **stops opening new positions after 10:30** (`SL_HUNTING_NO_NEW_ENTRY_HOUR`/`_MINUTE`, default 10:30) — *not* a square-off: open positions, their stops/targets, and the 15:15 square-off are unaffected. Its post-exit cooldown starts only when the whole NIFTY/BankNIFTY basket is confirmed flat, so an independently surviving or partly closed leg cannot run the timer down; exits never consult this guard, while unreadable guard state rejects new live entries. It is **off by default** (`SL_HUNTING_ENABLED`), trades **paper** unless both `LIVE_TRADING_ENABLED` and `SL_HUNTING_LIVE_TRADING` are set, and is **fail-soft** — any agent/SDK error becomes a safe HOLD while its separate mechanical risk loop keeps checking stop, target, max-loss, stale data, and square-off. It can also **learn from its own trades** through a tool-free, schema-validated reflection coach with digest-bound human approval (paper-first, off by default). Install the exact optional stack with `pip install -r requirements-ai.txt` and run one-time `claude setup-token` (keep `ANTHROPIC_API_KEY` **UNSET** so it bills your Claude plan, not per-token API). Full details — knowledge, tools, safety model, the learning loop — are in `Signal Generators/SL Hunting AI Agent/README.md`. It joins the configuration-dependent worker roster only when enabled.
 - **CPR Algo 3 (multi-instrument) is now wired into the front test.** A new `CPRAlgo3StrategyWorker` runs the "CPR basic setup" strategy, which watches THREE charts at once — the NIFTY spot plus a ~ITM CE and a ~ITM PE of the current-week expiry — and only fires when VWAP and the CPR band align across all three (RSI/ARSI on spot). The two ITM options are **observation only**: a signal still BUYS the ATM CE/PE of the next-next expiry through the same tested path as the other directional workers, so it shares CPR's risk knobs (tunable via `CPR_ALGO3_*` in `.env`, including `CPR_ALGO3_ITM_OFFSET`). It fetches the two option 1-min OHLC feeds on demand and drives its own spot target/stop exit. It belongs to the core roster, while the enabled total remains configuration-dependent. (The standalone Algo 3 signal generator + its unit tests live under `Signal Generators/CPR Strategy/`.)
-- **Code-quality pass.** Added a `requirements.txt`; gave every Shoonya broker HTTP call a timeout (a hung call could otherwise stall a worker thread and the shared broker lock); removed hardcoded credentials from the vendored Shoonya client; routed the execution layer's status/errors through `logging` instead of `print()`; and ported the master test suite into the repo (`test_nifty_multi_strategy_master.py` — see Tests below).
+- **Code-quality pass.** Added a `requirements.txt`; gave every Shoonya broker HTTP call a timeout (a hung call could otherwise stall a worker thread and the shared broker lock); removed hardcoded credentials from the vendored Shoonya client; routed the execution layer's status/errors through `logging` instead of `print()`; and ported the master test suite into the repo (`Tests/test_nifty_multi_strategy_master.py` — see Tests below).
 - **Live broker execution is broker-selectable (Kotak Neo, Shoonya, or Flattrade).** `LIVE_BROKER` picks `KOTAK`, `SHOONYA`, or `FLATTRADE`, and every real order goes through one generic `execution_client`. The global `LIVE_TRADING_ENABLED` kill-switch and each strategy's `<PREFIX>_LIVE_TRADING` flag must both be true; unknown broker names fail closed to paper. Each broker folder contains an execution client and a read-only diagnostic with an optional, typed-`YES`, round-trip test order. Flattrade uses its official Pi v2 browser-token flow, exact NFO index scrip master, documented request limits, market-order protection, and `SingleOrdHist` fill confirmation. Everything still defaults to paper. (Shoonya's legacy QuickAuth endpoint is being decommissioned by Finvasia.)
 - **End-of-day P&L is now written to a Google Sheet.** When all workers exit on a clean end of day, the master parses the run's log for each strategy's realised P&L and writes it into a tracker sheet — one row per strategy, one column per calendar day — overwriting today's cell and backfilling any blank earlier-this-month cells from the (append-mode) log. Auth is OAuth user-token via `gspread`; configure `GSHEET_ID` + an OAuth client in `.env` (see Setup). It's a safe no-op when unconfigured, so it never disturbs shutdown.
 - **13 TradingBot signal-generator ports.** Thirteen ATM single-leg strategies were ported into `Signal Generators/` (SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, RSI Reversal, Stochastic, Supertrend, Volatility Breakout), all sharing `misc_strategy_common.py` and the mandatory TA-Lib 0.6.8 indicator backend. They're wired through the shared `AtmSingleLegStrategyWorker` factory and each is tunable from `.env` by its own prefix. ML Ensemble needs `scikit-learn`.
@@ -49,6 +49,8 @@ You might have to adjust the import addresses from which the files are to be imp
 ├── Data Extractors/                                   # 1m OHLC downloaders + shared helper
 ├── My Backtest Files (For Reference)/                 # backtesting.py-based backtests
 ├── Signal Generators/                                 # strategy / signal logic modules
+├── Tests/                                             # EVERY test, mirroring the tree above
+├── docs/                                              # architecture docs: hld/, lld/, adr/
 └── Dependencies/                                      # shared config + live-execution layer
     ├── env.example                                    # copy to Dependencies/.env and fill in
     ├── dhan_token_setup.py                            # one-time DhanHQ OAuth token setup
@@ -137,11 +139,15 @@ Run `python algo.py --help`, or `python algo.py <command> --help`, for the detai
 The `Backtest Outputs/` folder is `.gitignore`-d, so generated CSVs/logs stay local.
 
 # Tests
+**Every test in this repository lives under `Tests/`, mirroring the source tree** — the tests for `Signal Generators/SL Hunting AI Agent/` are at `Tests/Signal Generators/SL Hunting AI Agent/`, and so on. Runtime folders contain only runtime code.
+
 The front-test master has a unittest suite — env toggles, broker paper/live routing and the fail-closed `LIVE_BROKER` switch, order fill-confirmation, and symbol resolution. Run it from the repo root:
 ```
-python -m unittest test_nifty_multi_strategy_master
+python -m unittest Tests.test_nifty_multi_strategy_master
 ```
-Broker/SDK-specific cases skip automatically when optional dependencies are absent, and all broker HTTP/browser/order behaviour is mocked. Signal generators, execution/reconciliation primitives, data extractors, and repository-policy checks have focused suites under their respective folders. CI runs the whole quality gate on every push/PR — see "Quality gates & CI" below.
+Broker/SDK-specific cases skip automatically when optional dependencies are absent, and all broker HTTP/browser/order behaviour is mocked. Signal generators, execution/reconciliation primitives, data extractors, and repository-policy checks have focused suites at their mirrored paths. CI runs the whole quality gate on every push/PR — see "Quality gates & CI" below.
+
+Adding a test? Put it at the mirrored path, and give it a filename that is unique across the repository — pytest keys modules by basename (there are no `__init__.py` files). Where a `Tests/` folder mirrors a source folder whose name contains spaces, it carries a `conftest.py` that puts the **source** folder on `sys.path`, so tests resolve imports exactly the way the runner does. The reasoning is in [`docs/adr/0010-tests-in-a-mirrored-tests-tree.md`](docs/adr/0010-tests-in-a-mirrored-tests-tree.md).
 
 # Quality gates & CI
 A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs on every push and pull request across Python 3.12 and 3.13. Locally, the same gate is:
@@ -149,13 +155,13 @@ A GitHub Actions workflow (`.github/workflows/quality-and-security.yml`) runs on
 pip install -r requirements-dev.txt
 pip install -r requirements-ai.txt
 pip install -r requirements-codex-ai.txt
-python -m unittest test_nifty_multi_strategy_master
-python -m unittest test_market_data_health
-python -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+python -m unittest Tests.test_nifty_multi_strategy_master
+python -m unittest Tests.test_market_data_health
+python -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q
 python -m coverage erase
-python -m coverage run -m unittest test_nifty_multi_strategy_master
-python -m coverage run --append -m unittest test_market_data_health
-python -m coverage run --append -m pytest "Signal Generators" "Dependencies" "Data Extractors" -q
+python -m coverage run -m unittest Tests.test_nifty_multi_strategy_master
+python -m coverage run --append -m unittest Tests.test_market_data_health
+python -m coverage run --append -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q
 python -m coverage json -o coverage.json
 python scripts/check_coverage_thresholds.py coverage.json
 python -m pip_audit -r requirements.txt --no-deps --progress-spinner off

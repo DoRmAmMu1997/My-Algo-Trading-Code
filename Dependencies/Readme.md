@@ -49,8 +49,9 @@ log), the nightly-refreshed `all_instrument <date>.csv` Dhan instrument master (
 for option-contract resolution by the runner and the Dhan adapter), and the Google
 Sheets OAuth token cache when the EOD sheet writer is enabled.
 
-(`test_market_data_health.py` lives at the repo root next to the master's own suite;
-everything else in this folder is tested right here.)
+(Tests for everything in this folder live at the mirrored path under `Tests/Dependencies/`,
+alongside `Tests/test_market_data_health.py` and the master's own suite. See
+`docs/adr/0010-tests-in-a-mirrored-tests-tree.md` for why.)
 
 ## Keeping `.env` honest
 Configuration drifts in three directions at once: your `.env`, the committed
