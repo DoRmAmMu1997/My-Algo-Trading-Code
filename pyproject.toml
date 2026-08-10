@@ -180,10 +180,16 @@ omit = [
 ]
 
 [tool.coverage.report]
-# MAT-110 measured the branch-enabled runtime baseline before installing this
-# gate. Per-module 90%/80% budgets are enforced from coverage.json by the small
-# policy script because Coverage.py has only one global fail-under setting.
-fail_under = 54.7
+# MAT-110 measured the branch-enabled runtime baseline (54.7%) before installing
+# this gate. Coverage has grown well past it since, so the floor was raised to 70
+# against a measured 71.4% -- a floor 17 points below actual stops nothing. Per-
+# module 90%/80% budgets are enforced from coverage.json by the small policy
+# script because Coverage.py has only one global fail-under setting.
+#
+# Raising this is deliberate and one-way: only move it UP, and only after a run
+# shows real headroom. Lowering it to make a red build pass defeats the gate --
+# fix the tests instead.
+fail_under = 70.0
 precision = 1
 show_missing = true
 skip_covered = false
