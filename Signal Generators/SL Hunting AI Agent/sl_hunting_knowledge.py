@@ -514,8 +514,11 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   / opening range, and there must be no bullish rejection reclaiming those levels.
   Default gap-down logic still looks UP; use this short branch only when sellers
   are not huntable and buyer inventory / failed recovery is the active trap.
-- A FLAT OPEN CANNOT RUN THE WAY A GAP CAN (v4d), and the reason is participation
-  rather than momentum. A gap RUNS because it denied everyone entry: "in a gap-up
+- DEFAULT FLAT-OPEN READ: A FLAT OPEN CANNOT RUN THE WAY A GAP CAN (v4d), and the
+  reason is participation rather than momentum. This is the DEFAULT after an
+  ordinary or recently rising session; the strict multi-day-down seller-hunt
+  exception is named explicitly as Variant B below. A gap RUNS because it denied
+  everyone entry: "in a gap-up
   the market gives nobody a chance, it just runs." A FLAT open grants entry — the
   crowd gets positioned during the first minutes — and that positioning is exactly
   the inventory that caps the move. IH, on a flat open he sold into: "this market
@@ -528,8 +531,9 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
     * FLAT   -> everybody positioned -> inventory overhead -> fading the attempt
                 is the higher-probability side, not chasing it.
   This is the same logic as the gap-up long branch below, stated from the other
-  end, and it is why a flat-open rally into a level is a SHORT candidate rather
-  than a breakout candidate.
+  end, and it is why a flat-open rally into a level is normally a SHORT candidate
+  rather than a breakout candidate. Do not apply that default when every
+  condition of the separately scoped Variant B seller-hunt long is satisfied.
 - SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
   gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
   available". That premise is FALSE when the prior session already seated a buying

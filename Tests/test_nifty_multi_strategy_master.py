@@ -3111,19 +3111,21 @@ class TestGoogleSheetRetry(unittest.TestCase):
                          return_value=([(1, 1, 123.0)], [])),
             patch.object(master_file.time, "sleep"),   # retries must not slow tests
         ):
-            master_file._update_pnl_google_sheet()
+            return master_file._update_pnl_google_sheet()
 
     def test_transient_failure_is_retried_then_writes(self):
         fake, calls = self._fake_gspread(fail_times=1)
-        self._run_writer(fake)
+        published = self._run_writer(fake)
         self.assertEqual(calls["oauth"], 2)            # failed once, then succeeded
         self.assertEqual(len(calls["updates"]), 1)     # the day's P&L was written
+        self.assertTrue(published)
 
     def test_persistent_failure_stays_bounded_and_nonfatal(self):
         fake, calls = self._fake_gspread(fail_times=99)
-        self._run_writer(fake)                          # must not raise
+        published = self._run_writer(fake)              # must not raise
         self.assertEqual(calls["oauth"], 3)             # bounded attempts
         self.assertEqual(calls["updates"], [])
+        self.assertFalse(published)
 
 
 class TestExecutionModeResults(unittest.TestCase):
@@ -9384,6 +9386,7 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
             )
 
         self.assertTrue(finalized)
+        self.assertTrue(finalized.results_published)
         self.assertEqual(client.logout_calls, 1)
         summary.assert_called_once()
         sheet.assert_called_once_with()
@@ -9437,10 +9440,31 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
             )
 
         self.assertTrue(finalized)
+        self.assertFalse(finalized.results_published)
         self.assertEqual(client.logout_calls, 1)
         summary.assert_not_called()
         sheet.assert_not_called()
         refresh.assert_called_once_with()
+
+    def test_sheet_failure_keeps_results_marked_unpublished(self):
+        """Flat exposure and a successful Sheet export are separate facts."""
+
+        client = self._ShutdownClient([self._flat_books()])
+        with (
+            patch.object(master_file, "_publish_eod_summary"),
+            patch.object(master_file, "_update_pnl_google_sheet", return_value=False),
+            patch.object(master_file, "_refresh_instrument_master_for_next_day"),
+        ):
+            finalized = master_file._finalize_flat_session(
+                [MagicMock()],
+                master_file.SharedMarketDataStore(),
+                client,
+                trade_event_queue=None,
+                natural_eod=True,
+            )
+
+        self.assertTrue(finalized)
+        self.assertFalse(finalized.results_published)
 
 
 class TestCPRAIWorkerFoundation(unittest.TestCase):
@@ -11332,7 +11356,9 @@ class TestSessionStatePersistence(unittest.TestCase):
             lambda _self: (_ for _ in ()).throw(RuntimeError("boom"))
         )
         snapshots = master_file._session_state_snapshots([broken, self.worker])
-        self.assertEqual([s["strategy"] for s in snapshots], ["Renko"])
+        self.assertEqual([s["strategy"] for s in snapshots], ["Broken", "Renko"])
+        self.assertFalse(snapshots[0]["snapshot_valid"])
+        self.assertTrue(snapshots[1]["snapshot_valid"])
 
     # -- resume ----------------------------------------------------------
     def test_position_record_round_trips_through_the_file(self):
@@ -11359,6 +11385,48 @@ class TestSessionStatePersistence(unittest.TestCase):
         ):
             with self.subTest(broken=broken), self.assertRaises(ValueError):
                 master_file._paper_position_from_record(broken)
+
+    def test_nonfunctional_position_contract_is_rejected_before_resume(self):
+        """A record needs executable risk and contract data, not merely a size."""
+
+        valid = master_file.serialize_position(self._open_position())
+        self.assertIsNotNone(valid)
+        invalid_mutations = (
+            ("direction", ""),
+            ("direction", "SIDEWAYS"),
+            ("symbol", ""),
+            ("option_exchange_segment", ""),
+            ("option_right", "XX"),
+            ("option_expiry", None),
+            ("option_strike", 0),
+            ("option_lot_size", 0),
+            ("entry_underlying", 0),
+            ("stop_underlying", 0),
+            ("target_underlying", 0),
+        )
+        for key, value in invalid_mutations:
+            with self.subTest(key=key, value=value):
+                broken = dict(valid)
+                broken[key] = value
+                with self.assertRaises(ValueError):
+                    master_file._paper_position_from_record(broken)
+
+        for direction, right, stop, target in (
+            ("BULLISH", "CE", 24600.0, 24700.0),
+            ("BEARISH", "PE", 24400.0, 24300.0),
+            ("BULLISH", "PE", 24500.0, 24700.0),
+            ("BEARISH", "CE", 24700.0, 24500.0),
+        ):
+            with self.subTest(direction=direction, right=right, stop=stop, target=target):
+                broken = dict(valid)
+                broken.update(
+                    direction=direction,
+                    option_right=right,
+                    stop_underlying=stop,
+                    target_underlying=target,
+                )
+                with self.assertRaises(ValueError):
+                    master_file._paper_position_from_record(broken)
 
     def _write_state(self, tmpdir, *, live=False, clean=False, session_date=None):
         record = master_file.serialize_position(
@@ -11403,6 +11471,53 @@ class TestSessionStatePersistence(unittest.TestCase):
             for sub in self.store.snapshot_option_subscriptions()
         }
         self.assertIn(("NSE_FNO", 43210), subscribed)
+
+    def test_bookkeeping_restores_even_when_strategy_is_flat(self):
+        """A restart cannot grant a fresh daily loss budget to a flat worker."""
+
+        state = {
+            "schema_version": 1,
+            "session_date": datetime.now(master_file.IST_TIMEZONE).date().isoformat(),
+            "clean_shutdown": False,
+            "strategies": {
+                "Renko": {
+                    "recorded_pnl": -1550.0,
+                    "recorded_trades": 3,
+                    # Deliberately stale snapshot values: event-derived totals win.
+                    "realized_pnl": -1000.0,
+                    "completed_trades": 2,
+                }
+            },
+            "trades": [],
+        }
+
+        restored = master_file._restore_session_bookkeeping([self.worker], state)
+
+        self.assertEqual(restored, 1)
+        self.assertEqual(self.worker.realized_pnl, -1550.0)
+        self.assertEqual(self.worker.completed_trades, 3)
+        self.assertFalse(self.worker.pos.active)
+
+    def test_bookkeeping_restore_is_safe_for_a_live_enabled_worker(self):
+        """The broker owns exposure; the local file still owns today's loss total."""
+
+        self.worker.live_trading = True
+        state = {
+            "schema_version": 1,
+            "session_date": datetime.now(master_file.IST_TIMEZONE).date().isoformat(),
+            "clean_shutdown": False,
+            "strategies": {
+                "Renko": {"recorded_pnl": -700.0, "recorded_trades": 1}
+            },
+            "trades": [],
+        }
+
+        self.assertEqual(
+            master_file._restore_session_bookkeeping([self.worker], state), 1
+        )
+        self.assertEqual(self.worker.realized_pnl, -700.0)
+        self.assertEqual(self.worker.completed_trades, 1)
+        self.assertFalse(self.worker.pos.active)
 
     def test_resume_refuses_a_live_enabled_worker(self):
         """The broker account, not this file, decides what is open in live."""

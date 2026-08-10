@@ -43,6 +43,10 @@ current **during** the session.
   contract identifiers and a `last_mark_ltp` read from the shared LTP cache.
 - **Resume is opt-in, paper-only, and single-leg-only**
   (`SESSION_STATE_RESUME_ENABLED`, default false).
+- **Restart rollover is lossless.** The exact old file is first moved to a
+  timestamped recovery archive. Compatible same-day event/P&L bookkeeping seeds
+  the replacement session, while old exposure remains archive-only unless it
+  passes the explicit resume gate.
 
 ## Options considered
 
@@ -53,8 +57,9 @@ already publishes an event on each entry and exit — 25 call sites funnelling
 into one method that is already `try/except`-wrapped so it can never disturb
 trading.
 **Pros:** one insertion point in live-money code; new worker families are
-covered automatically; the method's existing contract ("never raises, never
-blocks") is exactly the contract persistence needs.
+covered automatically; failures remain exception-isolated. The durability write
+is intentionally synchronous through `fsync`, so unlike the Telegram queue it
+may briefly block the caller; writes over 250ms produce an operational warning.
 **Cons:** the record is the notification event, so its shape is driven by what
 Telegram wanted rather than by what a recovery wants.
 
@@ -88,16 +93,17 @@ open, and the runner already reconciles against it at startup
 worse than no file: it would invent exposure the broker does not hold, or mask
 exposure it does.
 
-Restoring the realized-P&L **bookkeeping** carries no such hazard and is done in
-both modes — but only when resume is enabled, so one switch has one meaning.
+Restoring realized-P&L **bookkeeping** carries no such hazard and is therefore
+done for every matching same-day worker in both modes. The resume switch controls
+open paper exposure only.
 
 ## Trade-off analysis
 
 The snapshot cadence is the real trade-off. Marks are refreshed every 30s, so a
 crash loses at most 30 seconds of *mark* movement on an open position. Trade
-events are not subject to this — they are written the instant they happen — so
-**realized** P&L is never lost, which is the half that was expensive to rebuild
-by hand.
+events are not subject to this — their durable write starts the instant they
+happen. Every prior file is archived before replacement, so a restart cannot
+erase the realized-P&L journal that was expensive to rebuild by hand.
 
 Writing from the supervisor thread rather than from a new thread is deliberate:
 that loop is already awake once a second, never trades, and holds the canonical
@@ -129,8 +135,10 @@ input to the Sheet writer rather than as an operator-facing recovery record.
 
 - [x] `Dependencies/session_state.py`, atomic writes, thread-safe, date-scoped.
 - [x] Hook `publish_trade_event`; snapshot from the supervisor loop.
-- [x] `mark_clean_shutdown()` after results publish, so an unclean file is the
-      recovery signal.
+- [x] Record local `clean_shutdown` separately from `results_published`, because
+      a flat Ctrl+C or a Google outage is orderly but not exported.
+- [x] Archive the prior file before replacement and always carry same-day
+      realized-P&L bookkeeping forward independently of exposure resume.
 - [x] Paper-only, opt-in resume with an explicit refusal log per skipped record.
 - [x] 90% data-safety coverage budget in `scripts/check_coverage_thresholds.py`
       (measured 94.6%).

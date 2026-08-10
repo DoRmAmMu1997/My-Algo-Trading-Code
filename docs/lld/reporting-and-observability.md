@@ -119,12 +119,16 @@ whole morning's books plus thirteen open positions, all rebuilt by hand.
 | Every trade event | Immediately, from `publish_trade_event` | Realized P&L is what a crash makes expensive to rebuild |
 | Per-strategy rollup (`recorded_pnl` / `recorded_trades`) | With each `EXIT` event | Answers "what had banked" without re-summing the events |
 | Open positions | Every `SESSION_STATE_SNAPSHOT_SECONDS` (30s) from the supervisor loop | Entry fill price, stop, target, quantity, contract ids and `last_mark_ltp` — everything a resume needs |
-| `clean_shutdown: true` | After results publish | Its **absence** is the crash signal |
+| `clean_shutdown: true` | After runner exposure is proven flat and local shutdown completes | Its **absence** is the crash signal for open-position recovery |
+| `results_published: true` | Only after a real Google Sheet cell batch succeeds | Distinguishes local cleanup from external reporting success |
 
 Properties that make it trustworthy:
 
 - **Atomic** — `.tmp` + `flush` + `fsync` + `os.replace`. A reader never sees a
   partial document.
+- **Restart-safe** — an existing file is moved to a timestamped recovery archive
+  before the replacement run writes anything. Compatible same-day trades and
+  P&L totals seed the new session; old exposure never carries implicitly.
 - **Never raises** — every entry point swallows and logs. Persistence failing is
   a reporting problem; the first failure logs loudly, then stays quiet.
 - **Cache-only marks** — `_position_leg_marks` reads the shared LTP cache and
@@ -135,9 +139,10 @@ Properties that make it trustworthy:
   positions are never restored: the broker account is the authority there and
   the runner already reconciles against it. Everything refused is logged by name.
 
-Resume also carries the day's `realized_pnl` / `completed_trades` forward, so a
-restarted worker inherits the loss it already took rather than getting a fresh
-full-size risk budget for the same day.
+Same-day `recorded_pnl` / `recorded_trades` bookkeeping is always carried into
+matching workers, in paper and live modes, so a restart cannot grant a fresh
+daily max-loss budget. `SESSION_STATE_RESUME_ENABLED` controls only whether an
+eligible open paper position is reconstructed.
 
 See [ADR-0012](../adr/0012-crash-durable-session-state.md). The file is
 gitignored — it holds live position and P&L detail.
@@ -153,6 +158,7 @@ gitignored — it holds live position and P&L detail.
 | Sheet row label unmatched | That strategy is skipped with a warning; nothing is written to a guessed row. |
 | Log file unwritable | Console logging continues; the EOD sheet loses its source for that session. |
 | Session state file unwritable | None. First failure logs loudly; trading continues without crash recovery for that session. |
+| Session state durable write exceeds 250ms | Trading still waits for that `fsync` so the event is genuinely durable; a warning identifies local-disk latency for operator action. |
 | Session state file corrupt on read | Ignored, logged; the run starts with no recovery rather than refusing to start. |
 
 ---

@@ -82,6 +82,12 @@ SCHEMA_VERSION = 1
 # dropped first because the newest ones are the ones a recovery needs.
 DEFAULT_MAX_TRADE_RECORDS = 5000
 
+# A durable write is deliberately synchronous: returning before ``fsync``
+# would re-introduce the exact hard-kill window this module closes.  Local-disk
+# writes normally finish in milliseconds, so crossing this threshold is an
+# operational warning that the storage device may be delaying a trading worker.
+SLOW_WRITE_WARNING_SECONDS = 0.25
+
 # Position attributes that are deliberately never written out. ``live_leg`` is
 # broker exposure state (see the module docstring); the private/dunder filter
 # below removes bookkeeping attributes that are not part of the position shape.
@@ -226,6 +232,13 @@ class SessionStateStore:
     across the file write too: the writes are small and infrequent, and letting
     two threads publish different snapshots concurrently would be a far worse
     trade than a few milliseconds of contention.
+
+    Constructing a replacement store never destroys the prior run.  If the
+    configured path already exists, its exact bytes are first moved to a
+    timestamped ``*.recovery.json`` sibling.  Compatible same-day trade and P&L
+    bookkeeping is then copied into the new in-memory session, while prior open
+    positions stay only in ``previous_state`` and the archive until the runner
+    explicitly validates and resumes them.
     """
 
     def __init__(
@@ -243,6 +256,11 @@ class SessionStateStore:
         self.max_trade_records = max(1, int(max_trade_records))
         self.log = log or logger
 
+        # Read and move the old file before creating any new state.  If the
+        # move fails, construction raises and main() disables this optional
+        # subsystem; importantly, it does NOT overwrite the recovery evidence.
+        self.previous_state, self.archive_path = self._archive_previous_file()
+
         self._lock = threading.Lock()
         # Monotonic, not wall-clock: the throttle must be immune to a clock
         # correction (NTP step, DST) landing mid-session.
@@ -259,9 +277,77 @@ class SessionStateStore:
             # Flipped true only by mark_clean_shutdown(). A file still showing
             # false is the signature of the crash this module exists for.
             "clean_shutdown": False,
+            # A clean process exit and a successful external Sheet write are
+            # separate facts.  Keeping both avoids calling an orderly Ctrl+C
+            # shutdown "published" when no EOD export actually happened.
+            "results_published": False,
             "strategies": {},
             "trades": [],
         }
+        self._carry_forward_same_day_bookkeeping()
+
+    def _archive_previous_file(self) -> tuple[dict[str, Any] | None, Path | None]:
+        """Move an existing state file aside and return its parsed document.
+
+        ``os.replace`` is used rather than copy-then-delete.  A crash between
+        this move and the first write of the replacement session therefore
+        leaves the complete old file in the recovery archive, never half in
+        each location.
+        """
+
+        if not self.path.exists():
+            return None, None
+        if not self.path.is_file():
+            # Leave an invalid target (for example, a directory at the file
+            # path) untouched.  The first write will fail through the normal
+            # best-effort path and set the degraded-persistence warning.
+            return None, None
+
+        previous = load_session_state(self.path)
+        timestamp = _now_ist().strftime("%Y%m%dT%H%M%S%f")
+        suffix = self.path.suffix
+        stem = self.path.name[: -len(suffix)] if suffix else self.path.name
+        archive = self.path.with_name(f"{stem}.{timestamp}.recovery{suffix}")
+        os.replace(self.path, archive)
+        self.log.warning(
+            "Archived the previous session state before starting a new file: %s",
+            archive,
+        )
+        return previous, archive
+
+    def _carry_forward_same_day_bookkeeping(self) -> None:
+        """Seed today's new session with durable trades, but no old exposure."""
+
+        previous = self.previous_state
+        if not isinstance(previous, Mapping):
+            return
+        if int(previous.get("schema_version", -1)) != SCHEMA_VERSION:
+            return
+        if str(previous.get("session_date", "")) != self.session_date.isoformat():
+            return
+
+        old_trades = previous.get("trades")
+        if isinstance(old_trades, list):
+            copied_trades = _jsonable(old_trades)
+            if isinstance(copied_trades, list):
+                self._state["trades"] = copied_trades[-self.max_trade_records :]
+
+        old_strategies = previous.get("strategies")
+        if not isinstance(old_strategies, Mapping):
+            return
+        for strategy, raw_entry in old_strategies.items():
+            if not isinstance(raw_entry, Mapping):
+                continue
+            copied_entry = _jsonable(dict(raw_entry))
+            if not isinstance(copied_entry, dict):
+                continue
+            # Exposure never carries implicitly.  The runner validates the old
+            # record separately and its first successful snapshot writes back
+            # only positions that genuinely resumed.
+            copied_entry.pop("open_position", None)
+            copied_entry.pop("snapshot_valid", None)
+            copied_entry.pop("snapshot_error_at", None)
+            self._state["strategies"][str(strategy)] = copied_entry
 
     # ------------------------------------------------------------------
     # Writing
@@ -340,6 +426,15 @@ class SessionStateStore:
                     if not strategy:
                         continue
                     entry = self._state["strategies"].setdefault(strategy, {})
+                    snapshot_valid = bool(snapshot.get("snapshot_valid", True))
+                    entry["snapshot_valid"] = snapshot_valid
+                    if not snapshot_valid:
+                        # Preserve the last record for human forensics, but mark
+                        # it unsafe so resume cannot mistake stale state for a
+                        # current worker observation.
+                        entry["snapshot_error_at"] = _now_ist().isoformat()
+                        continue
+                    entry.pop("snapshot_error_at", None)
                     for key in (
                         "completed_trades",
                         "realized_pnl",
@@ -365,18 +460,19 @@ class SessionStateStore:
             self._log_write_failure("update worker snapshot")
             return False
 
-    def mark_clean_shutdown(self) -> None:
+    def mark_clean_shutdown(self, *, results_published: bool = False) -> None:
         """Record that the session ended normally.
 
         A state file whose ``clean_shutdown`` is still false is the signal that
         the process died unexpectedly -- which is what makes the open positions
-        in it worth looking at.  Called after the end-of-day results have been
-        published, so a file marked clean is one whose figures already reached
-        the Sheet.
+        in it worth looking at.  ``results_published`` is recorded separately:
+        orderly flattening can succeed during Ctrl+C even though the EOD Sheet
+        export was intentionally skipped or failed.
         """
         try:
             with self._lock:
                 self._state["clean_shutdown"] = True
+                self._state["results_published"] = bool(results_published)
                 self._flush_locked()
         except Exception:  # noqa: BLE001 - reporting must never break shutdown
             self._log_write_failure("mark clean shutdown")
@@ -391,6 +487,7 @@ class SessionStateStore:
         published-but-empty file -- precisely the outcome this module exists to
         prevent.
         """
+        started_at = time.monotonic()
         self._state["updated_at"] = _now_ist().isoformat()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.path.with_name(self.path.name + ".tmp")
@@ -399,6 +496,14 @@ class SessionStateStore:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, self.path)
+        elapsed = time.monotonic() - started_at
+        if elapsed >= SLOW_WRITE_WARNING_SECONDS:
+            self.log.warning(
+                "Session state durable write took %.3fs (path=%s); the local disk "
+                "is delaying the caller's trading loop.",
+                elapsed,
+                self.path,
+            )
 
     def _log_write_failure(self, action: str) -> None:
         """Log the first persistence failure loudly, then stay quiet."""
@@ -486,6 +591,13 @@ def resumable_open_positions(
         return {}
     for strategy, entry in strategies.items():
         if not isinstance(entry, Mapping):
+            continue
+        if entry.get("snapshot_valid", True) is False:
+            logger.warning(
+                "Not resuming %s: its last worker snapshot failed, so the persisted "
+                "open position may be stale.",
+                strategy,
+            )
             continue
         position = entry.get("open_position")
         if not isinstance(position, Mapping) or not position.get("active"):

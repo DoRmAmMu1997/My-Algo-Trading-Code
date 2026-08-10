@@ -25,6 +25,9 @@ Dependencies/all_instrument*.csv
 # P&L detail, so it is operational data and never belongs in the repository)
 Dependencies/session_state.json
 Dependencies/session_state.json.tmp
+# Exact prior-run files are rotated here before a replacement session starts.
+# They remain operational P&L/position evidence and must stay out of Git too.
+Dependencies/session_state.*.recovery.json
 
 # IDE / OS
 .vscode/

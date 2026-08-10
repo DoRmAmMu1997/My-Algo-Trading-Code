@@ -298,6 +298,7 @@ from Dependencies.secret_redaction import (
     install_redaction_filter,
     redact_text,
 )
+from Dependencies.session_state import SCHEMA_VERSION as SESSION_STATE_SCHEMA_VERSION
 from Dependencies.session_state import (
     SessionStateStore,
     load_session_state,
@@ -5770,10 +5771,12 @@ class BasePaperStrategyWorker(threading.Thread):
         Best-effort hand-off of a trade event to the Telegram notifier queue.
 
         Used by every worker (single-leg and hedged) on each entry/exit. It
-        never raises and never blocks: trading must continue even if the queue
-        is absent (notifications off), full, or otherwise unhappy. The consumer
-        (TelegramMessageWorker) owns all formatting and network I/O, so the
-        trading threads are never exposed to Telegram latency or failures.
+        never raises, and the Telegram hand-off never blocks: trading must
+        continue even if the queue is absent (notifications off), full, or
+        otherwise unhappy.  Crash-state persistence is the deliberate
+        exception to the non-blocking rule: its small local-file write waits for
+        ``fsync`` so an event reported as durable really survives a hard kill.
+        The state store warns when that local write is unexpectedly slow.
         """
         try:
             event.setdefault("strategy", self.strategy_name)
@@ -16282,27 +16285,29 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
     return updates, sorted(unmatched)
 
 
-def _update_pnl_google_sheet() -> None:
+def _update_pnl_google_sheet() -> bool:
     """
     End-of-day: write each strategy's realised P&L into the current month's tab of
     the tracker Google Sheet (today's column, plus blank earlier-this-month cells
     backfilled from the log).
 
     Guarded no-op: if GSHEET_ID is unset, gspread is missing, the log has no
-    figures, or anything goes wrong, it logs a warning and returns without
-    disturbing the shutdown sequence.
+    figures, or anything goes wrong, it logs a warning and returns ``False``
+    without disturbing shutdown.  ``True`` means a real batch of cells reached
+    the configured Sheet; callers use that separate fact in session-state
+    metadata rather than treating every orderly process exit as "published".
     """
     # Step 1: bail out early (and quietly) when the feature isn't configured.
     sheet_id = _env_str("GSHEET_ID", "")
     if not sheet_id:
         logger.info("Google Sheet P&L update skipped (GSHEET_ID not set in .env).")
-        return
+        return False
 
     # Step 2: turn the log into {day: {strategy: pnl}}. No figures -> nothing to do.
     pnl_by_day = _parse_eod_pnl_by_day(LOG_FILE)
     if not pnl_by_day:
         logger.info("Google Sheet P&L update skipped (no per-strategy P&L found in the log).")
-        return
+        return False
 
     # Step 3: gspread is an optional dependency, so import it lazily and treat a
     # missing install as a skip rather than a crash.
@@ -16313,9 +16318,9 @@ def _update_pnl_google_sheet() -> None:
             "Google Sheet P&L update skipped: gspread not installed "
             "(pip install gspread). The figures are still in the log."
         )
-        return
+        return False
 
-    def _attempt() -> None:
+    def _attempt() -> bool:
         # Step 4: authenticate with the cached OAuth user token. The very first
         # run opens a browser for consent and writes the token file; later runs
         # reuse (and silently refresh) it.
@@ -16346,7 +16351,7 @@ def _update_pnl_google_sheet() -> None:
                 "(add a tab for the new month).",
                 month_tab,
             )
-            return
+            return False
         values = worksheet.get_all_values()
         today_str = datetime.now().strftime("%Y-%m-%d")
         # Step 6: work out the exact cells to write (no network I/O in here).
@@ -16360,7 +16365,7 @@ def _update_pnl_google_sheet() -> None:
             )
         if not updates:
             logger.info("Google Sheet P&L update: nothing to write.")
-            return
+            return False
         # Step 7: gspread's Cell is 1-based, our tuples are 0-based, so add 1 to
         # each. One batched update_cells call is far fewer API hits than writing
         # cells one by one; USER_ENTERED makes Sheets store the value as a number.
@@ -16369,6 +16374,7 @@ def _update_pnl_google_sheet() -> None:
         logger.info(
             "Google Sheet P&L updated: %d cell(s) written (today=%s).", len(cells), today_str
         )
+        return True
 
     # OPS-001: one transient Google/network hiccup used to skip the day's write
     # entirely. Take a few slow attempts (this runs AFTER the session, so a
@@ -16379,8 +16385,7 @@ def _update_pnl_google_sheet() -> None:
     retry_delay_seconds = 5.0
     for attempt in range(1, attempts + 1):
         try:
-            _attempt()
-            return
+            return _attempt()
         except Exception as exc:
             if attempt < attempts:
                 logger.warning(
@@ -16397,6 +16402,7 @@ def _update_pnl_google_sheet() -> None:
             logger.warning(
                 "Google Sheet P&L update failed (non-fatal): %r", exc, exc_info=True
             )
+    return False
 
 
 def _strategy_virtual_trading_enabled(strategy_name: str) -> bool:
@@ -16884,7 +16890,16 @@ def _position_leg_marks(position: object, store: SharedMarketDataStore) -> dict[
             continue
         try:
             ltp = store.get_ltp_by_secid(str(segment), int(security_id), fallback=0.0)
-        except Exception:  # noqa: BLE001 - a mark is reporting, never trading
+        except Exception as exc:  # noqa: BLE001 - one bad mark must not hide peers
+            # Reporting can continue without one cached mark, but retain a
+            # DEBUG breadcrumb instead of silently swallowing the exception.
+            # The log level keeps a transient cache race out of normal output.
+            logger.debug(
+                "Could not read cached session-state mark for %s/%s: %s",
+                segment,
+                security_id,
+                exc,
+            )
             continue
         if ltp > 0:
             marks[prefix.rstrip("_") or "leg"] = float(ltp)
@@ -16900,6 +16915,7 @@ def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
     """
     snapshot: dict = {
         "strategy": worker.strategy_name,
+        "snapshot_valid": True,
         "completed_trades": int(getattr(worker, "completed_trades", 0) or 0),
         "realized_pnl": round(float(getattr(worker, "realized_pnl", 0.0) or 0.0), 2),
         "live_trading": bool(getattr(worker, "live_trading", False)),
@@ -16930,22 +16946,80 @@ def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
 
 
 def _session_state_snapshots(workers: list[BasePaperStrategyWorker]) -> list[dict]:
-    """Snapshot every worker, skipping (and logging) any that misbehaves."""
+    """Snapshot every worker and mark failures explicitly as unsafe.
+
+    Omitting a broken worker used to leave its previous ``open_position`` in
+    the incremental JSON document.  A later restart could then resume that
+    stale record as a ghost paper trade.  The failure marker preserves the old
+    record for forensics while making it ineligible for automatic resume.
+    """
     snapshots = []
     for worker in workers:
         try:
             snapshots.append(_worker_session_state_snapshot(worker))
         except Exception:  # noqa: BLE001 - one worker must not blind the rest
+            strategy = str(getattr(worker, "strategy_name", type(worker).__name__))
             logger.exception(
                 "Could not snapshot session state for %s; other strategies unaffected.",
-                getattr(worker, "strategy_name", type(worker).__name__),
+                strategy,
             )
+            snapshots.append({"strategy": strategy, "snapshot_valid": False})
     return snapshots
+
+
+def _restore_session_bookkeeping(
+    workers: list[BasePaperStrategyWorker],
+    state: dict | None,
+) -> int:
+    """Restore today's realized P&L independently of position recovery.
+
+    Exposure and bookkeeping answer different questions.  The broker remains
+    authoritative for live exposure, and only explicitly eligible paper
+    positions may resume, but every worker must inherit losses already realized
+    today so a process restart cannot grant it a fresh max-loss budget.
+
+    Event-derived ``recorded_pnl`` / ``recorded_trades`` values are preferred
+    because they are flushed on every exit.  The slower worker snapshot is only
+    a fallback for an older record that has no event roll-up.
+    """
+
+    if not isinstance(state, dict):
+        return 0
+    if int(state.get("schema_version", -1)) != SESSION_STATE_SCHEMA_VERSION:
+        return 0
+    if str(state.get("session_date", "")) != datetime.now(IST_TIMEZONE).date().isoformat():
+        return 0
+    strategies = state.get("strategies")
+    if not isinstance(strategies, dict):
+        return 0
+
+    restored = 0
+    for worker in workers:
+        entry = strategies.get(worker.strategy_name)
+        if not isinstance(entry, dict):
+            continue
+        pnl_raw = entry.get("recorded_pnl", entry.get("realized_pnl"))
+        trades_raw = entry.get("recorded_trades", entry.get("completed_trades"))
+        if not isinstance(pnl_raw, int | float) or not math.isfinite(float(pnl_raw)):
+            continue
+        if not isinstance(trades_raw, int | float) or int(trades_raw) < 0:
+            continue
+        worker.realized_pnl = float(pnl_raw)
+        worker.completed_trades = int(trades_raw)
+        restored += 1
+        logger.warning(
+            "RESTORED %s same-day bookkeeping | RealizedPnL=%.2f Trades=%d | "
+            "position recovery remains a separate safety decision.",
+            worker.strategy_name,
+            worker.realized_pnl,
+            worker.completed_trades,
+        )
+    return restored
 
 
 def _resume_open_positions(
     workers: list[BasePaperStrategyWorker],
-    state_path: str,
+    state_source: dict | str,
 ) -> int:
     """Restore yesterday's-crash state into today's flat workers. Opt-in.
 
@@ -16969,9 +17043,12 @@ def _resume_open_positions(
 
     Returns the number of positions actually restored.
     """
-    state = load_session_state(state_path)
+    state = state_source if isinstance(state_source, dict) else load_session_state(state_source)
     if state is None:
         return 0
+    # Bookkeeping is always safe to recover and must not depend on whether any
+    # exposure record below is eligible.  This is intentionally idempotent.
+    _restore_session_bookkeeping(workers, state)
     candidates = resumable_open_positions(
         state,
         session_date=datetime.now(IST_TIMEZONE).date(),
@@ -16982,7 +17059,6 @@ def _resume_open_positions(
 
     restored = 0
     workers_by_name = {worker.strategy_name: worker for worker in workers}
-    recorded = state.get("strategies", {}) if isinstance(state.get("strategies"), dict) else {}
     for strategy, record in candidates.items():
         worker = workers_by_name.get(strategy)
         if worker is None:
@@ -17018,13 +17094,6 @@ def _resume_open_positions(
                 ),
                 owner_id=worker._execution_owner_id,
             )
-            # Carry the day's books forward too. This is not cosmetic: the
-            # max-loss kill-switch reads `realized_pnl`, so a restarted worker
-            # must inherit the loss it already took rather than get a fresh
-            # full-size risk budget for the same day.
-            entry = recorded.get(strategy, {}) if isinstance(recorded, dict) else {}
-            worker.realized_pnl = float(entry.get("realized_pnl", 0.0) or 0.0)
-            worker.completed_trades = int(entry.get("completed_trades", 0) or 0)
             restored += 1
             logger.warning(
                 "RESUMED %s from session state | %s %s | Qty=%s | EntryOptPx=%.2f | "
@@ -17052,23 +17121,65 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
     """
     expiry_raw = record.get("option_expiry")
     expiry = date.fromisoformat(str(expiry_raw)) if expiry_raw else None
+    direction = str(record.get("direction", "")).strip().upper()
+    symbol = str(record.get("symbol", "")).strip()
     quantity = int(record.get("quantity", 0) or 0)
     entry_trade_price = float(record.get("entry_trade_price", 0.0) or 0.0)
+    entry_underlying = float(record.get("entry_underlying", 0.0) or 0.0)
+    stop_underlying = float(record.get("stop_underlying", 0.0) or 0.0)
+    target_underlying = float(record.get("target_underlying", 0.0) or 0.0)
     security_id = int(record.get("option_security_id", 0) or 0)
-    if quantity <= 0 or entry_trade_price <= 0 or security_id <= 0:
+    exchange_segment = str(record.get("option_exchange_segment", "")).strip()
+    option_right = str(record.get("option_right", "")).strip().upper()
+    option_strike = float(record.get("option_strike", 0.0) or 0.0)
+    option_lot_size = int(record.get("option_lot_size", 0) or 0)
+
+    missing_or_invalid = (
+        direction not in {"BULLISH", "BEARISH"}
+        or not symbol
+        or quantity <= 0
+        or entry_trade_price <= 0
+        or entry_underlying <= 0
+        or stop_underlying <= 0
+        or target_underlying <= 0
+        or security_id <= 0
+        or not exchange_segment
+        or option_right not in {"CE", "PE"}
+        or option_strike <= 0
+        or expiry is None
+        or option_lot_size <= 0
+        or quantity % option_lot_size != 0
+    )
+    direction_contract_mismatch = (
+        (direction == "BULLISH" and option_right != "CE")
+        or (direction == "BEARISH" and option_right != "PE")
+    )
+    invalid_geometry = (
+        direction == "BULLISH"
+        and not (stop_underlying < entry_underlying < target_underlying)
+    ) or (
+        direction == "BEARISH"
+        and not (target_underlying < entry_underlying < stop_underlying)
+    )
+    if missing_or_invalid or direction_contract_mismatch or invalid_geometry:
         raise ValueError(
-            f"incomplete persisted position (quantity={quantity}, "
-            f"entry_trade_price={entry_trade_price}, security_id={security_id})"
+            "incomplete or unsafe persisted position "
+            f"(direction={direction!r}, symbol={symbol!r}, quantity={quantity}, "
+            f"entry_trade_price={entry_trade_price}, entry_underlying={entry_underlying}, "
+            f"stop={stop_underlying}, target={target_underlying}, "
+            f"security_id={security_id}, segment={exchange_segment!r}, "
+            f"right={option_right!r}, strike={option_strike}, expiry={expiry}, "
+            f"lot_size={option_lot_size})"
         )
     return PaperPosition(
         active=True,
-        direction=str(record.get("direction", "")),
-        symbol=str(record.get("symbol", "")),
+        direction=direction,
+        symbol=symbol,
         quantity=quantity,
         entry_order_id=str(record.get("entry_order_id", "")),
-        entry_underlying=float(record.get("entry_underlying", 0.0) or 0.0),
-        stop_underlying=float(record.get("stop_underlying", 0.0) or 0.0),
-        target_underlying=float(record.get("target_underlying", 0.0) or 0.0),
+        entry_underlying=entry_underlying,
+        stop_underlying=stop_underlying,
+        target_underlying=target_underlying,
         rr_armed=bool(record.get("rr_armed", False)),
         trailing_active=bool(record.get("trailing_active", False)),
         pending_trailing_exit=bool(record.get("pending_trailing_exit", False)),
@@ -17076,11 +17187,11 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         entry_trade_price=entry_trade_price,
         entry_price_quality=str(record.get("entry_price_quality", "UNKNOWN")),
         option_security_id=security_id,
-        option_exchange_segment=str(record.get("option_exchange_segment", "")),
-        option_right=str(record.get("option_right", "")),
-        option_strike=float(record.get("option_strike", 0.0) or 0.0),
+        option_exchange_segment=exchange_segment,
+        option_right=option_right,
+        option_strike=option_strike,
         option_expiry=expiry,
-        option_lot_size=int(record.get("option_lot_size", 0) or 0),
+        option_lot_size=option_lot_size,
         # Never restored: broker exposure is not this file's to assert, and
         # resume is paper-only anyway (see the module docstring).
         live_leg=None,
@@ -17378,6 +17489,25 @@ def _wait_for_shutdown_account_flat(
             )
 
 
+@dataclass(frozen=True)
+class SessionFinalizationOutcome:
+    """Two independent facts produced by end-of-session finalization.
+
+    ``finalized`` means this runner proved its exposure flat and completed the
+    local shutdown sequence.  ``results_published`` means an actual Google
+    Sheet cell batch succeeded.  Keeping them separate prevents a Ctrl+C or a
+    non-fatal Sheet outage from being mislabeled as already exported.
+    """
+
+    finalized: bool
+    results_published: bool = False
+
+    def __bool__(self) -> bool:
+        """Preserve the existing ``if finalized`` call sites and tests."""
+
+        return self.finalized
+
+
 def _finalize_flat_session(
     workers: list[BasePaperStrategyWorker],
     store: SharedMarketDataStore,
@@ -17385,7 +17515,7 @@ def _finalize_flat_session(
     *,
     trade_event_queue: queue.Queue | None,
     natural_eod: bool,
-) -> bool:
+) -> SessionFinalizationOutcome:
     """Write results, logout, and refresh once the RUNNER's exposure is flat.
 
     The hard gate is the execution ledger (this process's own tracked
@@ -17401,20 +17531,21 @@ def _finalize_flat_session(
             "Final runner-flat proof is still in progress; interrupt ignored and "
             "session finalization remains blocked."
         )
-        return False
+        return SessionFinalizationOutcome(finalized=False)
     if not audit.safe_to_enable_live:
         logger.error(
             "SESSION FINALIZATION BLOCKED | the runner's tracked exposure is not "
             "confirmed flat | %s",
             " ".join((*audit.reasons, *audit.evidence)),
         )
-        return False
+        return SessionFinalizationOutcome(finalized=False)
 
     _warn_if_account_not_flat(store, client, trade_event_queue)
 
+    results_published = False
     if natural_eod:
         _publish_eod_summary(workers, trade_event_queue)
-        _update_pnl_google_sheet()
+        results_published = _update_pnl_google_sheet()
 
     if client is not None and getattr(client, "is_logged_in", False) is True:
         try:
@@ -17425,7 +17556,10 @@ def _finalize_flat_session(
 
     _refresh_instrument_master_for_next_day()
     logger.info("Flat session finalization completed.")
-    return True
+    return SessionFinalizationOutcome(
+        finalized=True,
+        results_published=results_published,
+    )
 
 
 # =============================================================================
@@ -17670,19 +17804,12 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # Wired AFTER the live-trading decision so each worker's recorded mode is
     # the real one, and after the startup audit so a resumed position can never
-    # precede the broker-flat proof. Optional resume runs first (it needs the
-    # PREVIOUS file), then the store is created, which overwrites that file with
-    # this session's own state.
+    # precede the broker-flat proof.  Store construction first archives the
+    # exact previous file and exposes its parsed document as ``previous_state``.
+    # Same-day P&L bookkeeping is always restored; open paper exposure remains
+    # opt-in and passes the narrower validation below.
     session_state = None
     if SESSION_STATE_ENABLED:
-        if SESSION_STATE_RESUME_ENABLED:
-            resumed = _resume_open_positions(workers, SESSION_STATE_FILE)
-            if resumed:
-                logger.warning(
-                    "SESSION RESUME: restored %d open paper position(s) from %s. "
-                    "Verify each against your own records before trusting the day's P&L.",
-                    resumed, SESSION_STATE_FILE,
-                )
         try:
             session_state = SessionStateStore(
                 SESSION_STATE_FILE,
@@ -17690,6 +17817,23 @@ def main() -> None:
                 snapshot_interval_seconds=SESSION_STATE_SNAPSHOT_SECONDS,
                 log=logger,
             )
+            previous_state = session_state.previous_state
+            carried = _restore_session_bookkeeping(workers, previous_state)
+            if carried:
+                logger.warning(
+                    "SESSION BOOKKEEPING: carried same-day realized P&L into %d "
+                    "worker(s) before entries were allowed.",
+                    carried,
+                )
+            if SESSION_STATE_RESUME_ENABLED and previous_state is not None:
+                resumed = _resume_open_positions(workers, previous_state)
+                if resumed:
+                    logger.warning(
+                        "SESSION RESUME: restored %d open paper position(s) from %s. "
+                        "Verify each against your own records before trusting the position.",
+                        resumed,
+                        session_state.archive_path or SESSION_STATE_FILE,
+                    )
             for worker in workers:
                 worker.session_state = session_state
             # One immediate write so the file exists (and is stamped with this
@@ -17725,26 +17869,35 @@ def main() -> None:
         execution_client,
         event_queue=trade_event_queue,
     )
-    while not _finalize_flat_session(
+    finalization = _finalize_flat_session(
         workers,
         store,
         execution_client,
         trade_event_queue=trade_event_queue,
         natural_eod=natural_eod,
-    ):
+    )
+    while not finalization:
         _wait_for_shutdown_account_flat(
             store,
             execution_client,
             event_queue=trade_event_queue,
         )
+        finalization = _finalize_flat_session(
+            workers,
+            store,
+            execution_client,
+            trade_event_queue=trade_event_queue,
+            natural_eod=natural_eod,
+        )
 
-    # Results are published and every book is proven flat, so this session's
-    # figures have reached the Sheet. Marking the state file clean is what
-    # tells the NEXT run that its open positions were squared off deliberately
-    # rather than lost to a crash -- an unclean file is the recovery signal.
+    # Every runner-owned book is proven flat, so open positions must not resume.
+    # Sheet publication is a separate flag: a Ctrl+C shutdown or Google outage
+    # can be locally clean while its figures still need export/reconciliation.
     if session_state is not None:
         session_state.update_worker_snapshot(_session_state_snapshots(workers), force=True)
-        session_state.mark_clean_shutdown()
+        session_state.mark_clean_shutdown(
+            results_published=finalization.results_published,
+        )
 
     # Only a fully finalized flat session may release the fetcher/notifier.
     stop_event.set()

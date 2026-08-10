@@ -268,8 +268,95 @@ def test_mark_clean_shutdown_flips_the_flag(state_path: Path):
     store = _store(state_path)
     store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
     assert load_session_state(state_path)["clean_shutdown"] is False
-    store.mark_clean_shutdown()
-    assert load_session_state(state_path)["clean_shutdown"] is True
+    store.mark_clean_shutdown(results_published=False)
+    state = load_session_state(state_path)
+    assert state["clean_shutdown"] is True
+    assert state["results_published"] is False
+
+
+def test_restart_archives_old_file_and_carries_same_day_trade_book(state_path: Path):
+    """A normal restart must not erase the crash evidence it was built to save.
+
+    The first store represents a process that banked a loss and then died with
+    a paper position open.  Constructing the replacement store is the exact
+    startup boundary that used to replace that file with an empty document.
+    """
+
+    crashed = _store(state_path)
+    crashed.record_trade_event(
+        {"action": "EXIT", "strategy": "Renko", "pnl": -1250.0}
+    )
+    crashed.update_worker_snapshot(
+        [
+            {
+                "strategy": "Renko",
+                "realized_pnl": -1250.0,
+                "completed_trades": 1,
+                "open_position": serialize_position(_FakePosition()),
+            }
+        ],
+        force=True,
+    )
+
+    replacement = _store(state_path)
+    replacement.update_worker_snapshot(
+        [{"strategy": "Renko", "realized_pnl": -1250.0, "completed_trades": 1}],
+        force=True,
+    )
+
+    current = load_session_state(state_path)
+    assert current is not None
+    assert recorded_realized_pnl(current) == {"Renko": -1250.0}
+    assert [trade["pnl"] for trade in current["trades"]] == [-1250.0]
+    # An old open position is forensic evidence, not an automatically invented
+    # position in the replacement process.  The exact old document is archived.
+    assert "open_position" not in current["strategies"]["Renko"]
+    assert replacement.previous_state is not None
+    assert replacement.archive_path is not None
+    archived = load_session_state(replacement.archive_path)
+    assert archived is not None
+    assert archived["strategies"]["Renko"]["open_position"]["active"] is True
+
+
+def test_restart_does_not_carry_a_different_trading_days_book(state_path: Path):
+    old = _store(state_path)
+    old.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": -50.0})
+
+    replacement = SessionStateStore(
+        state_path,
+        session_date=date(2026, 8, 11),
+    )
+
+    assert replacement.previous_state is not None
+    assert replacement.archive_path is not None
+    assert replacement.snapshot()["trades"] == []
+    assert replacement.snapshot()["strategies"] == {}
+
+
+def test_failed_snapshot_marks_old_position_unsafe_to_resume(state_path: Path):
+    """A stale position may remain for forensics but can never be resumed."""
+
+    store = _store(state_path)
+    store.update_worker_snapshot(
+        [
+            {
+                "strategy": "Renko",
+                "live_trading": False,
+                "execution_mode": "PAPER",
+                "open_position": serialize_position(_FakePosition()),
+            }
+        ],
+        force=True,
+    )
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "snapshot_valid": False}],
+        force=True,
+    )
+
+    state = store.snapshot()
+    assert "open_position" in state["strategies"]["Renko"]
+    assert state["strategies"]["Renko"]["snapshot_valid"] is False
+    assert resumable_open_positions(state, session_date=TODAY) == {}
 
 
 # ---------------------------------------------------------------------------
