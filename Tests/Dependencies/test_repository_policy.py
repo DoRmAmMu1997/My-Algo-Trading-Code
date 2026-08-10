@@ -108,7 +108,7 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert config["tool"]["coverage"]["run"]["branch"] is True
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 70.0
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 68.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():

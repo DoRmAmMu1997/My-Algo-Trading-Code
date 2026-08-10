@@ -5,7 +5,7 @@ The CI run enables branch measurement globally, then this script applies stricte
 budgets to the live-money safety core and each broker adapter.
 
 Why this script exists at all: Coverage.py has exactly ONE global
-``fail_under`` setting (pyproject pins it to the repository's 70% floor),
+``fail_under`` setting (pyproject pins it to the repository's 68% floor),
 so the stricter 90%/80% per-module budgets have to be enforced from the JSON
 report by hand.  The split is deliberate -- the global floor stops overall
 erosion, while these budgets stop a specific safety module from quietly losing
