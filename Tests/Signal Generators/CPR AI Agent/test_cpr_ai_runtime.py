@@ -496,6 +496,10 @@ def test_agent_validates_positive_timeout_and_passes_it_to_the_runtime():
 
     assert outcome.validation_code == "accepted_hold"
     assert observed["timeout_seconds"] == 17.5
+    assert "model_used must exactly equal gpt-5.6-terra" in observed["prompt"]
+    confidence_schema = observed["output_schema"]["properties"]["confidence"]
+    assert confidence_schema["minimum"] == 0
+    assert confidence_schema["maximum"] == 10
 
 
 def test_timeout_returns_before_a_late_sdk_thread_finishes():
@@ -712,6 +716,10 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
                 {"approval_mode": approval_mode, "output_schema": output_schema, "effort": effort},
             )
             items = [
+                # The real SDK includes the submitted turn input in
+                # ``TurnResult.items``.  It is bookkeeping, not a capability
+                # used by Codex, so the host must not classify it as an action.
+                SimpleNamespace(root=SimpleNamespace(type="userMessage")),
                 SimpleNamespace(root=SimpleNamespace(type="agentMessage")),
                 SimpleNamespace(root=SimpleNamespace(type="reasoning")),
                 *[
@@ -754,6 +762,8 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
 
     assert observed["start"]["config"] == codex_child.build_isolated_thread_config(str(tmp_path / "snapshot.json"))
     assert observed["start"]["approval_mode"] == "deny"
+    assert observed["start"]["developer_instructions"] == "prompt"
+    assert observed["run"][0] == "Evaluate the current frozen CPR context and return one decision."
     assert observed["run"][1] == {"approval_mode": "deny", "output_schema": {"type": "object"}, "effort": "medium"}
     assert [call["tool"] for call in response["tool_calls"]] == list(EXPECTED_TOOL_NAMES)
     assert [call["status"] for call in response["tool_calls"]] == ["completed"] * 4
@@ -763,6 +773,7 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
         "total_tokens": 5,
         "model_context_window": 128000,
     }
+    assert response["unexpected_actions"] == []
     assert all(value is False for value in observed["start"]["config"]["features"].values())
     assert set(observed["start"]["config"]["features"]) >= {
         "shell_tool",

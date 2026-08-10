@@ -8,7 +8,7 @@ without burying safety instructions inside runtime orchestration code.
 
 from __future__ import annotations
 
-CPR_AI_PROMPT_VERSION = "cpr-srsi-vwap-context-v1"
+CPR_AI_PROMPT_VERSION = "cpr-srsi-vwap-context-v2"
 
 _ROLE = """ROLE AND BOUNDARY
 You are an advisory CPR context analyst. Assess only complete five-minute bars.
@@ -32,15 +32,30 @@ premise, use EXIT with PREMISE_EXIT. Use the long-only R1_SCALE_IN at most once,
 only when market_structure reports its eligible R1 candidate. Prefer HOLD/NONE
 whenever evidence conflicts or is incomplete."""
 
-_OUTPUT = f"""STRICT STRUCTURED OUTPUT
+def _output_rules(model_used: str) -> str:
+    """Build output rules that echo the host's configured model exactly.
+
+    ``model_used`` is dynamic configuration, so it cannot live in a fixed
+    module-level paragraph.  Including it here keeps all prompt prose inside
+    the prompt builder instead of scattering instructions through SDK runtime
+    code.
+    """
+
+    return f"""STRICT STRUCTURED OUTPUT
 Return only CPRAgentDecision with exactly action, regime, setup, confidence,
 reasoning, model_used, and prompt_version. Valid actions are HOLD, ENTER_LONG,
-ENTER_SHORT, EXIT, SCALE_IN. prompt_version must be {CPR_AI_PROMPT_VERSION}.
-Never include entry, stop, target, trail, lots, quantity, symbol, expiry, broker,
-venue, order, or any execution field."""
+ENTER_SHORT, EXIT, SCALE_IN. confidence must be an integer from 0 through 10.
+model_used must exactly equal {model_used}. prompt_version must be
+{CPR_AI_PROMPT_VERSION}. Never include entry, stop, target, trail, lots,
+quantity, symbol, expiry, broker, venue, order, or any execution field."""
 
 
-def build_system_prompt(*, operator_approved_knowledge: str = "", discretionary_context: str = "") -> str:
+def build_system_prompt(
+    *,
+    model_used: str = "gpt-5.6-terra",
+    operator_approved_knowledge: str = "",
+    discretionary_context: str = "",
+) -> str:
     """Return one prompt while keeping future knowledge visibly separated.
 
     ``discretionary_context`` is a harmless compatibility alias while later
@@ -57,7 +72,7 @@ def build_system_prompt(*, operator_approved_knowledge: str = "", discretionary_
     # show exactly what changed without mixing it into permanent safety text.
     if knowledge:
         sections.append("FUTURE OPERATOR-APPROVED KNOWLEDGE\n" + knowledge)
-    sections.append(_OUTPUT)
+    sections.append(_output_rules(model_used))
     return "\n".join(section.strip() for section in sections) + "\n"
 
 

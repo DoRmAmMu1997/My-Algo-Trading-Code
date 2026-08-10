@@ -496,12 +496,17 @@ def test_mcp_server_exposes_exactly_four_no_argument_frozen_context_tools(tmp_pa
 def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam():
     """The prompt must guide judgment while reserving execution for the host."""
 
-    prompt = build_system_prompt(operator_approved_knowledge="Only after human approval.")
+    prompt = build_system_prompt(
+        model_used="configured-test-model",
+        operator_approved_knowledge="Only after human approval.",
+    )
 
     assert all(name in prompt for name in EXPECTED_TOOL_NAMES)
     assert "SIDEWAYS" in prompt and "TRENDING" in prompt and "UNDECIDED" in prompt
     assert "breakout" in prompt.lower() and "breakdown" in prompt.lower()
     assert "SRSI" in prompt and "VWAP" in prompt and "PREMISE_EXIT" in prompt
     assert "host-owned" in prompt.lower()
+    assert "confidence" in prompt and "0 through 10" in prompt
+    assert "model_used" in prompt and "configured-test-model" in prompt
     assert "FUTURE OPERATOR-APPROVED KNOWLEDGE" in prompt
     assert CPR_AI_PROMPT_VERSION in prompt
