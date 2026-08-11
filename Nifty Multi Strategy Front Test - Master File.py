@@ -1272,8 +1272,9 @@ CPR_ALGO3_LOGIC = load_module(
 )
 
 # CPR Codex AI modules are loaded from a directory whose name contains spaces,
-# so their sibling imports temporarily use bare names. The collision guard below
-# refuses to replace an unrelated module that already owns one of those names.
+# so their cross-file imports use bare ``cpr_ai_*`` sibling names. The collision
+# guard below refuses to replace an unrelated module that already owns one of
+# those names.
 # SDK code remains lazy and runs in a sanitized subprocess; importing the master
 # therefore does not authenticate Codex. Any failure restores the previous
 # module table and disables only this optional worker.
@@ -1318,6 +1319,21 @@ try:
     CPR_AI_DECISION_LOGIC = load_module(
         "master_cpr_ai_decision_log", _cpr_ai_dir / "cpr_ai_decision_log.py"
     )
+    # ``load_module`` exposes a spaced directory only while one file executes.
+    # CPR AI intentionally delays importing its prompt, schema, and Codex runner
+    # until the first completed bar, so removing that directory afterwards made
+    # those production-only imports fail even though the standalone smoke test
+    # could see its own script folder.  The collision guard above has already
+    # proved that every ``cpr_ai_*`` bare name is either unused or belongs here,
+    # so retaining this one narrow source directory is safe and intentional.
+    if str(_cpr_ai_dir) not in sys.path:
+        sys.path.insert(0, str(_cpr_ai_dir))
+
+    # The delayed runner imports ``cpr_ai_agent`` by its sibling name.  Point
+    # that name at the exact module the master already loaded; otherwise Python
+    # would execute the agent file a second time and create incompatible copies
+    # of its result dataclasses.
+    sys.modules["cpr_ai_agent"] = CPR_AI_AGENT_LOGIC
     CPR_AI_AVAILABLE = True
 except Exception as _cpr_ai_import_exc:  # optional strategy, never fatal
     for _cpr_ai_name in _cpr_ai_sibling_names:
