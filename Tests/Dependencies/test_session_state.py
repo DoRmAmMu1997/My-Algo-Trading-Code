@@ -26,6 +26,7 @@ import pytest
 from session_state import (
     SCHEMA_VERSION,
     SessionStateStore,
+    _marks_path_for,
     load_session_state,
     recorded_realized_pnl,
     resumable_open_positions,
@@ -508,3 +509,181 @@ def test_end_to_end_crash_then_recover(state_path: Path):
     assert resumable["Renko"]["entry_trade_price"] == 112.35
     assert resumable["Renko"]["last_mark_ltp"] == 98.1
     assert os.path.exists(state_path)
+
+
+# ---------------------------------------------------------------------------
+# Durable / marks split -- the fsync-contention fix
+# ---------------------------------------------------------------------------
+# The supervisor rewrote the whole document every 30s WITH fsync, which on
+# 2026-08-11 produced 210 slow-write warnings (median 0.83s, max 8.73s) against
+# 13 on trading threads. Dropping fsync from that path is only safe if the
+# snapshot stops touching the durable document at all: `os.replace` is atomic
+# for the NAME but not the DATA, so a hard kill during an un-fsynced rewrite can
+# publish a present-but-garbage file -- which would destroy the trades and the
+# P&L rollup that ADR-0012 exists to protect.
+
+
+def test_trade_events_fsync_but_snapshots_do_not(state_path: Path, monkeypatch):
+    """The whole point of the split: one path pays fsync, the other never does."""
+    calls: list[str] = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(
+        "session_state.os.fsync", lambda fd: (calls.append("fsync"), real_fsync(fd))[1]
+    )
+
+    store = _store(state_path)
+    calls.clear()  # construction establishes the durable file; ignore that write.
+
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    assert calls == [], "the 30s snapshot loop must never fsync"
+
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": -929.5})
+    assert calls == ["fsync"], "a realized-P&L event must be durable before returning"
+
+
+def test_a_snapshot_never_rewrites_the_durable_file(state_path: Path):
+    """The safety property. A torn snapshot must not be able to eat the books."""
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": -929.5})
+    durable_before = state_path.read_bytes()
+    mtime_before = state_path.stat().st_mtime_ns
+
+    for _ in range(5):
+        store.update_worker_snapshot(
+            [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+            force=True,
+        )
+
+    assert state_path.read_bytes() == durable_before
+    assert state_path.stat().st_mtime_ns == mtime_before
+    # ...and the marks landed in their own file.
+    assert _marks_path_for(state_path).exists()
+
+
+def test_durable_file_exists_from_construction(state_path: Path):
+    """A session that dies before its first trade must still leave a document.
+
+    Without this the session date, the shutdown flags and any trade book carried
+    forward from a same-day restart would all be missing from recovery.
+    """
+    _store(state_path)
+    state = load_session_state(state_path)
+    assert state is not None
+    assert state["session_date"] == "2026-08-10"
+    assert state["clean_shutdown"] is False
+
+
+def test_positions_and_pnl_merge_back_into_one_document(state_path: Path):
+    """Readers keep seeing the single-document shape they always have."""
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": -929.5})
+    store.update_worker_snapshot(
+        [
+            {
+                "strategy": "Renko",
+                "realized_pnl": -929.5,
+                "completed_trades": 1,
+                "live_trading": False,
+                "execution_mode": "PAPER",
+                "open_position": serialize_position(
+                    _FakePosition(), leg_marks={"option": 98.1}
+                ),
+            }
+        ],
+        force=True,
+    )
+
+    merged = load_session_state(state_path)
+    assert merged is not None
+    assert recorded_realized_pnl(merged) == {"Renko": -929.5}
+    entry = merged["strategies"]["Renko"]
+    assert entry["completed_trades"] == 1          # from marks
+    assert entry["recorded_pnl"] == -929.5         # from durable
+    assert entry["open_position"]["entry_trade_price"] == 112.35
+    assert resumable_open_positions(merged, session_date=TODAY)["Renko"]
+
+
+def test_a_corrupt_marks_file_costs_positions_but_never_the_pnl(state_path: Path):
+    """The asymmetry that justifies skipping fsync on the marks path."""
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": -929.5})
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+    # Simulate the torn write that skipping fsync makes possible.
+    _marks_path_for(state_path).write_text("{ not json", encoding="utf-8")
+
+    recovered = load_session_state(state_path)
+    assert recovered is not None
+    assert recorded_realized_pnl(recovered) == {"Renko": -929.5}
+    assert resumable_open_positions(recovered, session_date=TODAY) == {}
+
+
+def test_a_missing_marks_file_is_not_an_error(state_path: Path):
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 5.0})
+    _marks_path_for(state_path).unlink(missing_ok=True)
+
+    recovered = load_session_state(state_path)
+    assert recovered is not None
+    assert recorded_realized_pnl(recovered) == {"Renko": 5.0}
+
+
+def test_marks_from_another_session_are_ignored(state_path: Path):
+    """A stale marks file must never graft yesterday's positions onto today."""
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 5.0})
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+    stale = json.loads(_marks_path_for(state_path).read_text(encoding="utf-8"))
+    stale["session_date"] = "2020-01-01"
+    _marks_path_for(state_path).write_text(json.dumps(stale), encoding="utf-8")
+
+    recovered = load_session_state(state_path)
+    assert recovered is not None
+    assert recorded_realized_pnl(recovered) == {"Renko": 5.0}
+    assert resumable_open_positions(recovered, session_date=TODAY) == {}
+
+
+def test_a_corrupt_durable_file_is_still_a_total_loss(state_path: Path):
+    """Unchanged contract: the durable half has no fallback, which is why it fsyncs."""
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 5.0})
+    state_path.write_text("{ not json", encoding="utf-8")
+    assert load_session_state(state_path) is None
+
+
+def test_restart_archives_both_files_under_one_timestamp(state_path: Path):
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": -100.0})
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+
+    replacement = _store(state_path)
+    archive = replacement.archive_path
+    assert archive is not None and archive.exists()
+    assert _marks_path_for(archive).exists(), "the marks file must be archived too"
+    # The live marks path was moved aside rather than left pointing at old state.
+    assert not _marks_path_for(state_path).exists()
+    # Same-day P&L still carried into the replacement session.
+    assert recorded_realized_pnl(replacement.snapshot()) == {"Renko": -100.0}
+
+
+def test_slow_marks_write_warns_about_supervision_not_trading(state_path: Path, caplog):
+    """The old message blamed the trading loop for a supervisor-thread write."""
+    import session_state as module
+
+    store = _store(state_path)
+    with caplog.at_level("WARNING"), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(module, "SLOW_MARKS_WRITE_WARNING_SECONDS", 0.0)
+        store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("marks write took" in m and "not a trading decision" in m for m in messages)
+    # And it must not blame the trading loop, which was the old message's error.
+    assert not any("delaying the caller's trading loop" in m for m in messages)

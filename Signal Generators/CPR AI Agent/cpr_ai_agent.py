@@ -201,16 +201,38 @@ class CPRHostPolicy:
         Continuation and reversal use different frozen VWAP sequences, but
         both require at least 40 percent of the entry body on the trade side,
         directional RSI, ordered/sloping EMAs, and the completed candle extreme
-        as stop.  Model reasoning cannot waive any of these conditions.
+        as stop.  A continuation also cannot chase a long above R2 or a short
+        below S2.  Model reasoning cannot waive any of these conditions.
         """
 
         if proposal.regime != "TRENDING":
             return _hold("trending_regime_rejected", "VWAP entries require the TRENDING regime.", proposal)
+        long = direction == "LONG"
+        if proposal.setup == "TRENDING_VWAP_CONTINUATION":
+            levels = self._mapping(context, "session_levels")
+            level_map = self._mapping(levels, "levels")
+            entry = levels.get("current_close")
+            boundary_name = "r2" if long else "s2"
+            boundary = level_map.get(boundary_name)
+
+            # The comparison is deliberately strict: the new knowledge says
+            # "above R2" and "below S2." Existing reward/target geometry still
+            # decides whether an entry exactly at or near a level is practical.
+            outside_boundary = (
+                isinstance(entry, (int, float))
+                and isinstance(boundary, (int, float))
+                and ((long and entry > boundary) or (not long and entry < boundary))
+            )
+            if outside_boundary:
+                return _hold(
+                    "continuation_outside_r2_s2",
+                    "Trend continuation cannot enter long above R2 or short below S2.",
+                    proposal,
+                )
         momentum = self._mapping(context, "momentum_vwap")
         vwap = self._mapping(momentum, "vwap")
         sequence = self._mapping(vwap, "sequence_evidence")
         body = self._mapping(vwap, "entry_candle")
-        long = direction == "LONG"
         sequence_key = (
             "all_recent_above"
             if proposal.setup == "TRENDING_VWAP_CONTINUATION" and long

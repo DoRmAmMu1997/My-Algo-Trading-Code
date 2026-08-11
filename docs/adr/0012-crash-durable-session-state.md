@@ -84,6 +84,45 @@ is a few dozen events and tens of KB.
 recovery logic; and the per-strategy rollup would have to be recomputed on every
 read. Rejected: the write volume never justified it.
 
+#### Amendment (2026-08-11): split into a durable document and a marks sibling
+
+The first live session measured what the single-document design actually costs.
+223 writes crossed the 250 ms warning threshold — **210 of them on the supervisor
+thread** (median 0.830 s, max **8.732 s**, 85 over one second) against 13 on
+trading threads (median 0.414 s). The file was only 79 KB, so this is disk
+contention, not payload size; no amount of shrinking the document would fix it.
+
+The obvious fix — stop calling `fsync` on the 30-second snapshot — is **not safe
+on its own**. `os.replace` is atomic for the *name*, not for the *data*: a hard
+kill during an un-fsynced rewrite can publish a present-but-garbage file. Since
+that one document also held `trades[]` and the P&L rollup, a single torn
+*snapshot* could destroy the record this ADR exists to protect, turning a
+performance fix into a reintroduction of the original incident.
+
+So the state is now **two files**:
+
+| File | Contents | Written by | fsync |
+|---|---|---|---|
+| `session_state.json` | schema, session date, shutdown flags, `recorded_pnl` / `recorded_trades`, `trades[]` | trade events, clean shutdown, and once at construction | **yes** |
+| `session_state.marks.json` | per-strategy live counters and `open_position` with `last_mark_ltp` | the 30 s supervisor snapshot | no |
+
+The durable file is now touched *only* by durable writes, so the snapshot loop
+cannot corrupt it however it fails. Losing the marks file costs at most one
+snapshot interval of mark data, which this ADR already documented as acceptable.
+
+`load_session_state` merges the pair back into the single-document shape every
+existing reader expects, so `resumable_open_positions`, `recorded_realized_pnl`
+and the runner's resume path were unchanged. The merge is deliberately
+asymmetric: a corrupt **durable** file means no recovery and returns `None`; a
+corrupt or missing **marks** file returns the P&L anyway and simply offers no
+positions for resume.
+
+Rejected alongside it: moving the trade-event write to a queue and a writer
+thread. It would remove the remaining 13 stalls, but only by weakening
+durability from "guaranteed before the call returns" to a sub-second window —
+which is the guarantee this ADR was written to provide. At a 0.414 s median,
+13 times a session, that trade is not worth making.
+
 ### Whether resume may restore a LIVE position
 
 **Rejected.** In live trading the **broker account** is the authority on what is
@@ -102,8 +141,13 @@ open paper exposure only.
 The snapshot cadence is the real trade-off. Marks are refreshed every 30s, so a
 crash loses at most 30 seconds of *mark* movement on an open position. Trade
 events are not subject to this — their durable write starts the instant they
-happen. Every prior file is archived before replacement, so a restart cannot
-erase the realized-P&L journal that was expensive to rebuild by hand.
+happen. Every prior file is archived before replacement (both halves, under one
+timestamp), so a restart cannot erase the realized-P&L journal that was
+expensive to rebuild by hand.
+
+That cadence trade-off is also what licenses the durable/marks split above: the
+marks file may skip `fsync` precisely because its contents were already declared
+losable, while the trades and P&L never were.
 
 Writing from the supervisor thread rather than from a new thread is deliberate:
 that loop is already awake once a second, never trades, and holds the canonical

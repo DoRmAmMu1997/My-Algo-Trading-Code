@@ -22,12 +22,13 @@ Backtest Outputs/
 # DhanHQ instrument master dump (regenerated daily by the runner; auto-swept)
 Dependencies/all_instrument*.csv
 # Crash-durable session state (rewritten every session; holds live position and
-# P&L detail, so it is operational data and never belongs in the repository)
-Dependencies/session_state.json
-Dependencies/session_state.json.tmp
-# Exact prior-run files are rotated here before a replacement session starts.
-# They remain operational P&L/position evidence and must stay out of Git too.
-Dependencies/session_state.*.recovery.json
+# P&L detail, so it is operational data and never belongs in the repository).
+# Two files: the durable trades/P&L document, and the best-effort `.marks.`
+# sibling holding open positions -- plus the `.recovery.` copies of each that a
+# replacement session rotates aside. One glob covers every variant, so a future
+# sidecar cannot be committed by accident.
+Dependencies/session_state*.json
+Dependencies/session_state*.json.tmp
 
 # IDE / OS
 .vscode/

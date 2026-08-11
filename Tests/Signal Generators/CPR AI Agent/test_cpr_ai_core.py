@@ -94,6 +94,53 @@ def test_long_continuation_rejects_each_independent_hard_gate(change, code):
 
 
 @pytest.mark.parametrize(
+    ("action", "entry", "boundary_name", "boundary", "expected_code"),
+    [
+        ("ENTER_LONG", 121.0, "r2", 120.0, "continuation_outside_r2_s2"),
+        ("ENTER_SHORT", 79.0, "s2", 80.0, "continuation_outside_r2_s2"),
+    ],
+)
+def test_trend_continuation_rejects_closes_beyond_the_final_cpr_boundary(
+    action,
+    entry,
+    boundary_name,
+    boundary,
+    expected_code,
+):
+    """A continuation cannot chase price above R2 or sell below S2.
+
+    The literal entry and boundary pairs independently encode the two strict
+    inequalities.  This test expects a dedicated policy rejection rather than
+    relying on the later reward/target geometry to reject the trade by accident.
+    """
+
+    context = _context()
+    context["session_levels"]["current_close"] = entry
+    context["session_levels"]["levels"][boundary_name] = boundary
+    if action == "ENTER_SHORT":
+        # Keep every other short continuation fact valid so the new S2 boundary
+        # is the first and only host-policy reason for rejecting this proposal.
+        context["momentum_vwap"].update(
+            {
+                "rsi14": 60.0,
+                "ema": {"order": "EMA5_BELOW_EMA20", "ema5_slope": -1.0, "ema20_slope": -0.5},
+                "candle": {"low": 75.0, "high": 84.0},
+            }
+        )
+        context["momentum_vwap"]["vwap"] = {
+            "sequence_evidence": {"all_recent_below": True},
+            "entry_candle": {"body_fraction_below": 0.5},
+        }
+
+    outcome = CPRHostPolicy().validate(
+        context,
+        _proposal(action, "TRENDING", "TRENDING_VWAP_CONTINUATION"),
+    )
+
+    assert outcome.validation_code == expected_code
+
+
+@pytest.mark.parametrize(
     ("setup", "sequence", "code"),
     [
         ("TRENDING_VWAP_CONTINUATION", {"all_recent_above": True}, "accepted_entry"),

@@ -1,4 +1,5 @@
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
@@ -9465,6 +9466,50 @@ class TestCoordinatedShutdownSupervisor(unittest.TestCase):
 
         self.assertTrue(finalized)
         self.assertFalse(finalized.results_published)
+
+
+class TestCPRAIMasterImportBoundary(unittest.TestCase):
+    """Exercise lazy CPR imports exactly as the master exposes them at runtime.
+
+    The focused CPR tests permanently add the spaced source directory to
+    ``sys.path`` through their local ``conftest.py``.  Production does not run
+    that test hook, so these checks belong in the master suite and deliberately
+    use the module objects created while the master itself was imported.
+    """
+
+    def test_master_loaded_agent_can_resolve_lazy_prompt_and_schema(self):
+        """A completed-bar turn must reach an injected runner after startup."""
+
+        sentinel = object()
+        captured: dict[str, object] = {}
+
+        def fake_runner(**kwargs):
+            """Capture advisory inputs without starting Codex or an MCP server."""
+
+            captured.update(kwargs)
+            return sentinel
+
+        agent = master_file.CPR_AI_AGENT_LOGIC.CPRAgent(runner=fake_runner)
+
+        result = agent._run_turn({}, "production-loader-regression")
+
+        self.assertIs(result, sentinel)
+        self.assertIn("prompt", captured)
+        self.assertIn("output_schema", captured)
+
+    def test_lazy_codex_runner_reuses_the_master_agent_result_types(self):
+        """Delayed runner imports must not create a second agent module copy."""
+
+        runner_module = importlib.import_module("cpr_ai_codex_runner")
+
+        self.assertIs(
+            runner_module.CPRAgentRunResult,
+            master_file.CPR_AI_AGENT_LOGIC.CPRAgentRunResult,
+        )
+        self.assertIs(
+            runner_module.CPRToolCallRecord,
+            master_file.CPR_AI_AGENT_LOGIC.CPRToolCallRecord,
+        )
 
 
 class TestCPRAIWorkerFoundation(unittest.TestCase):

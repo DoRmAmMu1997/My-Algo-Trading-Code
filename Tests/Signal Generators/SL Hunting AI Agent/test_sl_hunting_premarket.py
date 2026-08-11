@@ -201,17 +201,18 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_11_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 10 Aug transcript.
+def test_shipped_note_matches_august_12_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 11 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    The distinguishing fact this time is a FAILED BREAKDOWN: NIFTY sold, broke
-    down, and immediately turned back up and held. That flips the whole
-    conditional relative to 10 Aug -- a flat open now wants BUYS, where the day
-    before it wanted SELLS -- so the assertion below is deliberately exact about
-    which side each gap branch takes. It is also an EXPIRY session.
+    Two things make this one distinctive. The seller crowd is described as
+    already SPENT -- BankNIFTY's recovery hit the stops of sellers who joined on
+    the retracement -- so there is little left to hunt on that side. And it
+    carries the series' second explicit ESCAPE HATCH: a large gap-up voids the
+    plan outright, which the note records as stand-aside rather than inventing
+    the branch he does not state.
     """
     import os
 
@@ -220,31 +221,33 @@ def test_shipped_note_matches_august_11_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-11"
-    assert "cOvPKZFervw" in note.source
-    # The distinguishing fact: the breakdown failed and the market held above.
-    assert "BREAKDOWN FAILED" in note.context
-    # The plan must be the INVERSE of the previous session's, so assert the
-    # direction of each branch rather than merely that a plan exists.
-    assert note.plan[0].startswith("FLAT to GAP-UP: identify BUY-side setups")
-    assert note.plan[1].startswith("GAP-DOWN: identify SELL-side setups")
-    assert any("EXPIRY DAY" in line for line in note.plan)
-    assert any("INVERTS yesterday's plan" in line for line in note.plan)
-    assert len(note.plan) == 8
+    assert note.for_date == "2026-08-12"
+    assert "CoxS77NfnsI" in note.source
+    # The distinguishing facts: no follow-through, and no overnight short carry.
+    assert "never crossed the round number" in note.context
+    assert note.plan[0].startswith("FLAT to GAP-DOWN: identify SELL-side setups")
+    # The escape hatch must survive verbatim -- it is the one branch he refuses
+    # to specify, and inventing it is exactly the failure this test guards.
+    assert any("LARGE gap-up VOIDS the plan" in line for line in note.plan)
+    assert any("Stand aside" in line for line in note.plan)
+    # The ambiguity is recorded, not smoothed away.
+    assert any("AMBIGUITY, recorded rather than resolved" in line for line in note.plan)
+    assert any("SPENT, not available to hunt" in line for line in note.plan)
+    assert len(note.plan) == 7
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24610.0, 24670.0],
-            "support": [24440.0, 24360.0],
+            "resistance": [24560.0, 24610.0],
+            "support": [24430.0, 24345.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57800.0, 58000.0],
-            "support": [57340.0, 57150.0],
+            "resistance": [57650.0, 57800.0],
+            "support": [57100.0, 56960.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78640.0, 78920.0],
-            "support": [78200.0, 78000.0],
+            "resistance": [78475.0, 78640.0],
+            "support": [78046.0, 77810.0],
         },
     ]

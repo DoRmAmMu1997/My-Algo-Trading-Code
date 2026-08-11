@@ -10,6 +10,7 @@ import importlib.util
 import re
 import sys
 import tomllib
+import urllib.parse
 from pathlib import Path
 
 import yaml
@@ -271,6 +272,10 @@ def test_current_architecture_docs_distinguish_core_from_optional_agents():
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
         ROOT / "Nifty Multi Strategy Front Test - Master File.py",
+        # The committed HLD is a whole-system overview, so the same rule applies:
+        # a reader must be able to see both optional agents and must not mistake
+        # the core count for the enabled total (docs/adr/0011 follow-up).
+        ROOT / "docs/hld/system-overview.md",
     )
     failures: list[str] = []
     for path in architecture_files:
@@ -326,6 +331,97 @@ def test_agent_architecture_docs_stay_in_sync_and_cover_the_optional_cpr_agent()
     assert "cpr codex ai agent" in lower
     assert "four frozen" in lower
     assert "double gate" in lower
+
+
+def _committed_design_documents() -> list[Path]:
+    """Every tracked design document under docs/, excluding the scratchpad.
+
+    ``docs/superpowers/`` is gitignored session working material, not product
+    documentation, so it is deliberately outside every gate here (docs/adr/0011).
+    """
+
+    return sorted(
+        path
+        for folder in ("adr", "lld")
+        for path in (ROOT / "docs" / folder).glob("*.md")
+        if path.is_file()
+    )
+
+
+def test_every_committed_design_document_is_linked_from_the_docs_index():
+    """A new ADR or LLD must reach the index, and the index must not rot.
+
+    ``docs/README.md`` is the only navigation surface for the committed
+    architecture set. A document that never gets linked is invisible -- it will
+    not be read, will not be maintained, and will quietly go stale. The reverse
+    is just as bad: a link left behind by a renamed or deleted file sends a
+    reader to a 404 and makes the whole index untrustworthy.
+
+    Checked in BOTH directions for that reason.
+    """
+
+    index_path = ROOT / "docs/README.md"
+    index = index_path.read_text(encoding="utf-8")
+
+    linked = {
+        match.group(1)
+        for match in re.finditer(r"\((?:\./)?((?:adr|lld)/[^)#]+\.md)[^)]*\)", index)
+    }
+    on_disk = {
+        path.relative_to(ROOT / "docs").as_posix() for path in _committed_design_documents()
+    }
+
+    unlinked = sorted(on_disk - linked)
+    assert not unlinked, (
+        "these design documents exist but are not linked from docs/README.md: "
+        + ", ".join(unlinked)
+    )
+
+    dangling = sorted(linked - on_disk)
+    assert not dangling, (
+        "docs/README.md links these documents, which do not exist: " + ", ".join(dangling)
+    )
+
+
+def test_relative_links_inside_the_committed_docs_resolve():
+    """No broken cross-reference anywhere in the committed docs set.
+
+    The HLD, the LLDs and the ADRs reference each other and the source tree
+    constantly. Renaming a file is the normal way those break, and a broken link
+    is invisible until somebody follows it -- so it is checked mechanically
+    rather than by review.
+
+    Only relative targets are resolved. External URLs are not fetched: this
+    suite must stay network-free.
+    """
+
+    docs_root = ROOT / "docs"
+    link_pattern = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+    broken: list[str] = []
+
+    for document in sorted(docs_root.rglob("*.md")):
+        # The Superpowers scratchpad is gitignored and may reference paths that
+        # only existed during one session.
+        if "superpowers" in document.parts:
+            continue
+        for line_number, line in enumerate(
+            document.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            for target in link_pattern.findall(line):
+                target = target.strip()
+                if target.startswith(("http://", "https://", "mailto:", "#")):
+                    continue
+                # Strip any "#section" anchor, then undo the %20 escaping the
+                # spaced-name folders need in markdown links.
+                relative = urllib.parse.unquote(target.split("#", maxsplit=1)[0])
+                if not relative:
+                    continue
+                if not (document.parent / relative).resolve().exists():
+                    broken.append(
+                        f"{document.relative_to(ROOT).as_posix()}:{line_number} -> {target}"
+                    )
+
+    assert not broken, "broken relative links in the committed docs:\n" + "\n".join(broken)
 
 
 def test_every_env_setting_the_code_reads_is_documented_in_env_example():

@@ -505,6 +505,11 @@ def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam(
     assert "SIDEWAYS" in prompt and "TRENDING" in prompt and "UNDECIDED" in prompt
     assert "breakout" in prompt.lower() and "breakdown" in prompt.lower()
     assert "SRSI" in prompt and "VWAP" in prompt and "PREMISE_EXIT" in prompt
+    # This is model-facing safety knowledge, so both directional boundaries
+    # must be visible in the fully assembled prompt that Codex actually sees.
+    assert "bullish trend-continuation" in prompt.lower() and "above R2" in prompt
+    assert "bearish trend-continuation" in prompt.lower() and "below S2" in prompt
+    assert "HOLD" in prompt and "NONE" in prompt
     assert "host-owned" in prompt.lower()
     assert "confidence" in prompt and "0 through 10" in prompt
     assert "model_used" in prompt and "configured-test-model" in prompt

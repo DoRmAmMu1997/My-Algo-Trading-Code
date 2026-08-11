@@ -866,6 +866,48 @@ def test_target_sizing_inputs_are_all_present_and_distinct():
     assert "a property of YOU" in prompt
 
 
+def test_system_prompt_has_v4e_recruitment_and_losing_session_knowledge():
+    """v4e (11 Aug live session): IH's LOSS, which is why it is worth encoding.
+
+    He named the disqualifying fact himself -- no stops seated on either side --
+    then traded a FORECAST of who would arrive, and the market simply kept
+    selling. The session also refines v4d: a gap-down recruits POSITIONAL
+    sellers, a flat open only INTRADAY ones, so the same-shaped trap is smaller
+    and more perishable after a flat open.
+    """
+    prompt = build_system_prompt()
+    assert "WHICH CROWD THE OPEN RECRUITS DECIDES HOW BIG THE TRAP IS" in prompt
+    assert "A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED" in prompt
+    assert "A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT" in prompt
+    assert "NAME THE LAST POINT, NOT ONLY THE STOP" in prompt
+    assert "DISCIPLINE IS ASYMMETRIC BETWEEN WINNERS AND LOSERS" in prompt
+    # The recruitment distinction is the point; both halves must be present.
+    assert "recruits POSITIONAL sellers" in prompt
+    assert "recruits INTRADAY sellers only" in prompt
+
+
+def test_v4e_empty_book_is_a_no_trade_not_a_forecasting_licence():
+    """The v4e lesson must not be readable as "predict the crowd instead".
+
+    The whole method rests on hunting inventory that already exists. If this
+    rule ever drifted into permitting a trade built on who is LIKELY to arrive,
+    it would license exactly the loss it was distilled from.
+    """
+    prompt = build_system_prompt()
+    section = prompt[prompt.index("A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE"):]
+    section = section[: section.index("\n- ")] if "\n- " in section else section
+    assert "the correct output is HOLD" in section
+    assert "not an invitation to forecast one into existence" in section
+    # It must also reconcile with v4c rather than silently contradicting it.
+    assert "MANUFACTURES MORE" in section
+
+    # And the bait prior must stay a tie-breaker, never a standalone premise.
+    bait = prompt[prompt.index("A SHARP FIRST SLIDE BAITS"):]
+    bait = bait[: bait.index("\n- ")] if "\n- " in bait else bait
+    assert "weak prior" in bait
+    assert "never as the premise of a trade on its own" in bait
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 

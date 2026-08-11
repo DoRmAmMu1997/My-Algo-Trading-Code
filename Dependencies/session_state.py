@@ -88,6 +88,26 @@ DEFAULT_MAX_TRADE_RECORDS = 5000
 # operational warning that the storage device may be delaying a trading worker.
 SLOW_WRITE_WARNING_SECONDS = 0.25
 
+# The marks file is written from the supervisor thread and never fsyncs, so a
+# slow one delays shutdown supervision rather than a trading decision.  It gets
+# a looser threshold on purpose: warning at the durable threshold produced 210
+# lines in one session (2026-08-11) and buried the 13 that actually mattered.
+SLOW_MARKS_WRITE_WARNING_SECONDS = 2.0
+
+# Per-strategy keys that live in the MARKS file rather than the durable one.
+# All of them are refreshed wholesale by every snapshot, so losing the newest
+# 30 seconds of them in a crash is the documented trade-off (ADR-0012); none is
+# needed to answer "what had this strategy banked when the process died".
+_MARKS_ONLY_KEYS = (
+    "open_position",
+    "snapshot_valid",
+    "snapshot_error_at",
+    "completed_trades",
+    "realized_pnl",
+    "execution_mode",
+    "live_trading",
+)
+
 # Position attributes that are deliberately never written out. ``live_leg`` is
 # broker exposure state (see the module docstring); the private/dunder filter
 # below removes bookkeeping attributes that are not part of the position shape.
@@ -251,6 +271,14 @@ class SessionStateStore:
         log: logging.Logger | None = None,
     ) -> None:
         self.path = Path(path)
+        # Open positions and their marks live in a SEPARATE file, written on the
+        # snapshot cadence without fsync. They are deliberately not in the
+        # durable document: the supervisor rewrites them every 30 seconds, and
+        # `os.replace` is atomic for the NAME but not for the DATA -- a hard kill
+        # during an un-fsynced rewrite can publish a present-but-garbage file. If
+        # that file also held the trades and the P&L rollup, one torn snapshot
+        # would destroy the very record ADR-0012 exists to protect.
+        self.marks_path = _marks_path_for(self.path)
         self.session_date = session_date or _now_ist().date()
         self.snapshot_interval_seconds = max(1.0, float(snapshot_interval_seconds))
         self.max_trade_records = max(1, int(max_trade_records))
@@ -285,6 +313,16 @@ class SessionStateStore:
             "trades": [],
         }
         self._carry_forward_same_day_bookkeeping()
+        # Establish the durable file immediately. Everything else only writes it
+        # on a trade event or at shutdown, so without this a session that dies
+        # before its first trade would leave NO durable document -- losing the
+        # session date, the shutdown flags and any trade book carried forward
+        # from a same-day restart, all of which a recovery needs.
+        try:
+            with self._lock:
+                self._flush_durable_locked()
+        except Exception:  # noqa: BLE001 - persistence must never stop a session
+            self._log_write_failure("establish the durable state file")
 
     def _archive_previous_file(self) -> tuple[dict[str, Any] | None, Path | None]:
         """Move an existing state file aside and return its parsed document.
@@ -309,6 +347,18 @@ class SessionStateStore:
         stem = self.path.name[: -len(suffix)] if suffix else self.path.name
         archive = self.path.with_name(f"{stem}.{timestamp}.recovery{suffix}")
         os.replace(self.path, archive)
+        # The marks file is archived alongside it under the SAME timestamp, so a
+        # recovery pair stays identifiable. Its absence is normal (a session that
+        # died before its first snapshot has none), so this never fails the move.
+        if self.marks_path.is_file():
+            marks_archive = _marks_path_for(archive)
+            try:
+                os.replace(self.marks_path, marks_archive)
+            except OSError:
+                self.log.warning(
+                    "Could not archive the previous marks file at %s; it will be "
+                    "overwritten by this session.", self.marks_path,
+                )
         self.log.warning(
             "Archived the previous session state before starting a new file: %s",
             archive,
@@ -372,7 +422,7 @@ class SessionStateStore:
                     # Drop oldest first -- a recovery cares about the newest.
                     del trades[: len(trades) - self.max_trade_records]
                 self._apply_pnl_bearing_event_locked(record)
-                self._flush_locked()
+                self._flush_durable_locked()
         except Exception:  # noqa: BLE001 - reporting must never break trading
             self._log_write_failure("record trade event")
 
@@ -454,7 +504,9 @@ class SessionStateStore:
                         # A closed position must be REMOVED, not left behind --
                         # a stale record here would look resumable.
                         entry.pop("open_position", None)
-                self._flush_locked()
+                # Marks only: the snapshot loop must never rewrite the durable
+                # document, or one torn write could destroy the day's books.
+                self._flush_marks_locked()
             return True
         except Exception:  # noqa: BLE001 - reporting must never break trading
             self._log_write_failure("update worker snapshot")
@@ -473,36 +525,108 @@ class SessionStateStore:
             with self._lock:
                 self._state["clean_shutdown"] = True
                 self._state["results_published"] = bool(results_published)
-                self._flush_locked()
+                # Both halves: the shutdown flags are crash-critical, and the
+                # final marks write leaves the pair consistent for a reader.
+                self._flush_durable_locked()
+                self._flush_marks_locked()
         except Exception:  # noqa: BLE001 - reporting must never break shutdown
             self._log_write_failure("mark clean shutdown")
 
-    def _flush_locked(self) -> None:
-        """Publish the in-memory state atomically. Caller must hold the lock.
+    def _write_document(self, target: Path, document: Mapping[str, Any], *, durable: bool) -> float:
+        """Atomically publish one document. Returns the elapsed seconds.
 
         Writes a sibling ``.tmp`` then :func:`os.replace`s it over the target,
-        so a reader (or a crash) can only ever see a complete file.  ``flush``
-        plus ``fsync`` before the replace matter here: without them the rename
-        can reach the disk before the data does, which on a power cut leaves a
-        published-but-empty file -- precisely the outcome this module exists to
-        prevent.
+        so a reader can only ever see a complete file under normal operation.
+
+        ``durable`` adds ``flush`` + ``fsync`` before the replace, and that is
+        the whole difference between the two files. Without it the rename can
+        reach the disk before the data does, so a hard kill can publish a
+        present-but-garbage file. The durable document therefore always pays the
+        fsync; the marks document never does, because re-deriving it costs at
+        most one snapshot interval and it is written 200+ times a session.
         """
         started_at = time.monotonic()
-        self._state["updated_at"] = _now_ist().isoformat()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(self.path.name + ".tmp")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_name(target.name + ".tmp")
         with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(self._state, handle, indent=2, sort_keys=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, self.path)
-        elapsed = time.monotonic() - started_at
+            json.dump(document, handle, indent=2, sort_keys=False)
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.replace(tmp_path, target)
+        return time.monotonic() - started_at
+
+    def _durable_document_locked(self) -> dict[str, Any]:
+        """The crash-critical half: everything except the volatile marks."""
+        document = {
+            key: value for key, value in self._state.items() if key != "strategies"
+        }
+        strategies: dict[str, Any] = {}
+        for strategy, entry in self._state.get("strategies", {}).items():
+            if isinstance(entry, Mapping):
+                strategies[str(strategy)] = {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in _MARKS_ONLY_KEYS
+                }
+        document["strategies"] = strategies
+        return document
+
+    def _marks_document_locked(self) -> dict[str, Any]:
+        """The volatile half: open positions, their marks, and live counters."""
+        strategies: dict[str, Any] = {}
+        for strategy, entry in self._state.get("strategies", {}).items():
+            if not isinstance(entry, Mapping):
+                continue
+            carried = {
+                key: value for key, value in entry.items() if key in _MARKS_ONLY_KEYS
+            }
+            if carried:
+                strategies[str(strategy)] = carried
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "session_date": self._state.get("session_date"),
+            "updated_at": self._state.get("updated_at"),
+            "strategies": strategies,
+        }
+
+    def _flush_durable_locked(self) -> None:
+        """Publish the durable document with fsync. Caller must hold the lock.
+
+        Called only from the trade-event and shutdown paths -- a few dozen times
+        a session -- so the fsync cost is paid rarely and always for a record
+        that a crash would otherwise make expensive to rebuild by hand.
+        """
+        self._state["updated_at"] = _now_ist().isoformat()
+        elapsed = self._write_document(
+            self.path, self._durable_document_locked(), durable=True
+        )
         if elapsed >= SLOW_WRITE_WARNING_SECONDS:
             self.log.warning(
                 "Session state durable write took %.3fs (path=%s); the local disk "
                 "is delaying the caller's trading loop.",
                 elapsed,
                 self.path,
+            )
+
+    def _flush_marks_locked(self) -> None:
+        """Publish the marks document without fsync. Caller must hold the lock.
+
+        Runs on the supervisor thread, which never trades, and skips fsync
+        because a torn marks file costs one snapshot interval of mark data and
+        nothing else -- the trades and the P&L rollup are in the durable file
+        this method does not touch.
+        """
+        self._state["updated_at"] = _now_ist().isoformat()
+        elapsed = self._write_document(
+            self.marks_path, self._marks_document_locked(), durable=False
+        )
+        if elapsed >= SLOW_MARKS_WRITE_WARNING_SECONDS:
+            self.log.warning(
+                "Session state marks write took %.3fs (path=%s); this delays "
+                "supervision, not a trading decision.",
+                elapsed,
+                self.marks_path,
             )
 
     def _log_write_failure(self, action: str) -> None:
@@ -526,26 +650,83 @@ class SessionStateStore:
             return json.loads(json.dumps(self._state))
 
 
+def _marks_path_for(path: str | Path) -> Path:
+    """Sibling marks path for a durable state path (``x.json`` -> ``x.marks.json``)."""
+    state_path = Path(path)
+    suffix = state_path.suffix
+    stem = state_path.name[: -len(suffix)] if suffix else state_path.name
+    return state_path.with_name(f"{stem}.marks{suffix}")
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    """Read one JSON object, or ``None`` if it is missing or unusable."""
+    if not path.exists():
+        return None
+    with open(path, encoding="utf-8") as handle:
+        document = json.load(handle)
+    if not isinstance(document, dict):
+        logger.warning("Session state at %s is not a JSON object; ignoring it.", path)
+        return None
+    return document
+
+
 def load_session_state(path: str | Path) -> dict[str, Any] | None:
-    """Read a state file back, or return ``None`` when it is unusable.
+    """Read a session back as ONE merged document, or ``None`` if unusable.
+
+    The state is stored as two files -- a durable one holding the trades and the
+    P&L rollup, and a best-effort ``*.marks.json`` holding open positions and
+    their last marks (see :class:`SessionStateStore`).  This merges them so that
+    every reader (`resumable_open_positions`, `recorded_realized_pnl`, the
+    runner's resume path) sees the same single-document shape it always has.
 
     Deliberately forgiving: a missing file is the normal first-run case, and a
-    truncated or hand-edited file must not stop the runner from starting.  Both
-    are reported as ``None`` and the caller simply proceeds without recovery.
+    truncated or hand-edited one must not stop the runner from starting.
+
+    The asymmetry is the point.  A corrupt DURABLE file means no recovery, and
+    is reported as ``None``.  A corrupt or missing MARKS file costs only the
+    open positions: the P&L is still returned, because that is the record whose
+    loss motivated ADR-0012 and it was never written by the snapshot loop.
     """
     try:
         state_path = Path(path)
-        if not state_path.exists():
+        state = _read_json_object(state_path)
+        if state is None:
             return None
-        with open(state_path, encoding="utf-8") as handle:
-            state = json.load(handle)
-        if not isinstance(state, dict):
-            logger.warning("Session state at %s is not a JSON object; ignoring it.", state_path)
-            return None
-        return state
     except Exception:  # noqa: BLE001 - a bad state file must not stop startup
         logger.exception("Could not read session state from %s; continuing without recovery.", path)
         return None
+
+    try:
+        marks = _read_json_object(_marks_path_for(state_path))
+    except Exception:  # noqa: BLE001 - marks are best-effort by design
+        logger.exception(
+            "Could not read the session marks beside %s; continuing with P&L only "
+            "(no open positions will be offered for resume).", state_path,
+        )
+        return state
+
+    if marks is None:
+        return state
+    if str(marks.get("session_date", "")) != str(state.get("session_date", "")):
+        logger.warning(
+            "Session marks at %s are from a different session than the durable "
+            "state; ignoring them.", _marks_path_for(state_path),
+        )
+        return state
+
+    mark_strategies = marks.get("strategies")
+    if not isinstance(mark_strategies, Mapping):
+        return state
+    strategies = state.setdefault("strategies", {})
+    if not isinstance(strategies, dict):
+        return state
+    for strategy, entry in mark_strategies.items():
+        if not isinstance(entry, Mapping):
+            continue
+        target = strategies.setdefault(str(strategy), {})
+        if isinstance(target, dict):
+            target.update(entry)
+    return state
 
 
 def resumable_open_positions(
