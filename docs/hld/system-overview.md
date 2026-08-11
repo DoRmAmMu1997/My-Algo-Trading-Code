@@ -14,6 +14,19 @@ concurrently against one shared market-data feed, decides entries and exits per
 strategy, and executes those decisions either on paper (default) or through a
 real broker (explicitly enabled, per strategy).
 
+The two optional agents sit **outside** that core roster and are enabled
+independently of each other, so neither the configured nor the running worker
+total can be read off the core number:
+
+| Optional agent | Provider | Default | Detail |
+|---|---|---|---|
+| **SL Hunting AI Agent** | Claude (`claude-agent-sdk`) | off (`SL_HUNTING_ENABLED`) | [`lld/sl-hunting-ai-agent.md`](../lld/sl-hunting-ai-agent.md) |
+| **CPR Codex AI Agent** | Codex (subprocess + MCP) | off (`CPR_AI_ENABLED`) | [`lld/cpr-codex-ai-agent.md`](../lld/cpr-codex-ai-agent.md) |
+
+With both enabled the configured roster reaches about 29 workers, while the
+per-strategy enable and virtual-trading gates keep the *running* roster
+configuration-dependent.
+
 It has been running live since May 2026. Every design decision in this document
 is weighted by that: **the system is allowed to miss a trade; it is not allowed
 to lose track of a position.**

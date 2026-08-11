@@ -185,12 +185,27 @@ runtime. It asserts, without contacting any network:
   sanity check that the AST walk still works);
 - `CLAUDE.md` and `AGENTS.md` share one identical runtime section;
 - architecture docs make both optional agents visible and carry no stale
-  worker-roster claims.
+  worker-roster claims;
+- every committed ADR and LLD is linked from `docs/README.md`, and the index
+  links nothing that does not exist;
+- every relative link inside `docs/` resolves.
 
-That last group is a **documentation staleness gate**. It currently covers
-`README.md`, `Signal Generators/Readme.md`, `AGENTS.md`, `CLAUDE.md` and the
-master file. Extending it to `docs/hld/` is an open follow-up recorded in
-[ADR-0011](../adr/0011-committed-docs-untracked-superpowers.md).
+The last three are the **documentation staleness gate**, and they answer three
+different ways docs rot:
+
+| Failure | Caught by |
+|---|---|
+| A doc describes a roster or agent set the code no longer has | `test_current_architecture_docs_distinguish_core_from_optional_agents` — covers `README.md`, `Signal Generators/Readme.md`, `AGENTS.md`, `CLAUDE.md`, the master file, **and `docs/hld/system-overview.md`** |
+| A new ADR/LLD lands unlinked, or the index points at a deleted file | `test_every_committed_design_document_is_linked_from_the_docs_index` (checked in both directions) |
+| A rename breaks a cross-reference between documents | `test_relative_links_inside_the_committed_docs_resolve` |
+
+`docs/superpowers/` is excluded from all three: it is gitignored session working
+material, not product documentation ([ADR-0011](../adr/0011-committed-docs-untracked-superpowers.md)).
+
+Each of these was verified to **fail** on a deliberate mutation before being
+committed — an unlinked ADR, a dangling index link, a renamed cross-reference,
+and an agent dropped from the HLD. A policy test that cannot fail is worse than
+no test, because it reads like coverage.
 
 ---
 

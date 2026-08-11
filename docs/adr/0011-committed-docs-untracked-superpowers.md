@@ -106,12 +106,25 @@ from a guess about it.
 **Harder:** ~24 more files to keep current. The mitigation is convention, not
 tooling.
 
-**To revisit when:** the docs are observed to be stale. The existing repository
-already has precedent for enforcing documentation freshness in CI —
-`test_repository_policy.py` fails the build on stale worker-roster claims in
-`README.md`, `CLAUDE.md`, `AGENTS.md` and the master file. Extending that gate
-to cover `docs/hld/` is a reasonable follow-up; it is deliberately **not** done
-in this change, to keep the restructure surgical.
+**To revisit when:** the docs are observed to be stale in a way the gate below
+does not catch — most likely an LLD whose *prose* drifts from its component
+while every link still resolves. No mechanical check can catch that; only
+changing the LLD in the same commit as the code can.
+
+**Update (2026-08-11):** the follow-up recorded here has been done. The
+documentation staleness gate now covers this docs set in three ways, all in
+`Tests/Dependencies/test_repository_policy.py`:
+
+1. `docs/hld/system-overview.md` joined the architecture gate, so the HLD must
+   keep both optional agents visible and must not let the core roster count
+   masquerade as the enabled total.
+2. Every committed ADR and LLD must be linked from `docs/README.md`, and the
+   index must not link a file that does not exist — checked in both directions,
+   because an orphaned doc and a dangling link are equally corrosive.
+3. Every relative link inside `docs/` must resolve, which is what catches a
+   rename breaking a cross-reference.
+
+Each was verified to fail on a deliberate mutation before being committed.
 
 ## Action items
 
@@ -121,5 +134,7 @@ in this change, to keep the restructure surgical.
 - [x] `docs/hld/system-overview.md`.
 - [x] 12 LLDs under `docs/lld/`.
 - [x] 11 ADRs under `docs/adr/`.
-- [ ] **Follow-up:** consider adding `docs/hld/system-overview.md` to the
-      architecture-staleness gate in `Tests/Dependencies/test_repository_policy.py`.
+- [x] **Follow-up (done 2026-08-11):** `docs/hld/system-overview.md` added to
+      the architecture-staleness gate, plus index-integrity and link-resolution
+      gates over the whole committed docs set, in
+      `Tests/Dependencies/test_repository_policy.py`.
