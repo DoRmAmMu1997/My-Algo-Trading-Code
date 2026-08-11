@@ -534,6 +534,45 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   end, and it is why a flat-open rally into a level is normally a SHORT candidate
   rather than a breakout candidate. Do not apply that default when every
   condition of the separately scoped Variant B seller-hunt long is satisfied.
+- WHICH CROWD THE OPEN RECRUITS DECIDES HOW BIG THE TRAP IS (v4e). v4d established
+  THAT a flat open seats people. This names WHO, and it changes the size and the
+  durability of the inventory:
+    * GAP-DOWN -> recruits POSITIONAL sellers. They enter at the close and hold
+      overnight, so the inventory is large, committed, and worth hunting the next
+      day. IH: "if the market really had to create positional sellers' stop
+      losses, it would have given a straight GAP-DOWN... in a gap-down everyone
+      comfortably makes a positional trade and sits."
+    * FLAT -> recruits INTRADAY sellers only. "In a flat open the positional
+      trader will not take an entry yet. Here the INTRADAY traders come." They are
+      fewer, they are already looking to book, and they will be flat by the close.
+  Consequence: a flat-open hunt is aimed at a SMALLER and more perishable crowd
+  than a gap-down hunt of the same shape. Size and target accordingly (this is the
+  participation form of CROWD SIZE IS THE THIRD TARGET INPUT), and do not expect a
+  flat-open trap to pay like a gap-down one.
+- A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e). The single
+  most expensive error available in this method, recorded from a LOSING IH session
+  (11 Aug 2026) so it is not learned the hard way. He stated the disqualifying fact
+  himself, twice, before entering: "around here neither the BUYER's stop losses are
+  available nor the SELLER's" and "here not many traders were seated." He then
+  built the trade on a PREDICTION instead — that a sharp early sell-off would tempt
+  intraday sellers in, and the market would rise to take them out. It did not; the
+  selling simply continued and he cut for a loss.
+  The rule: this method hunts inventory that ALREADY EXISTS and is OBSERVABLE. A
+  chain of reasoning about who is likely to arrive, however sound, is a different
+  and much weaker class of evidence. When the honest read is "nobody is seated on
+  either side", the correct output is HOLD — an empty book is a no-trade condition,
+  not an invitation to forecast one into existence. Note this does NOT contradict
+  v4c's WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET MANUFACTURES MORE:
+  manufacturing is what the market does over time, but it may not complete inside
+  your holding period, and you cannot bank on being early to it.
+- A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT (v4e). IH's read of the opening
+  move, stated as a prior: "if it had fallen SLOWLY I would even have accepted that
+  the market might produce a big move. But the selling was SHARP — the market
+  suddenly offered greed", i.e. an abrupt drop looks engineered to recruit sellers,
+  whereas a grinding one looks like genuine supply. Treat this as a weak prior and
+  nothing more: on the very session that produced it, the sharp slide was followed
+  by continuous selling and the bait read was WRONG. Use it to break a tie between
+  two otherwise-equal reads, never as the premise of a trade on its own.
 - SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
   gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
   available". That premise is FALSE when the prior session already seated a buying
@@ -939,6 +978,25 @@ RISK DISCIPLINE
   than a feeling, and it is what lets A REJECTION BEFORE THE FLUSH IS NOISE be
   applied without it becoming an excuse: a wobble inside the band is noise, and
   one well beyond it is the read being wrong even if the stop has not been hit.
+- NAME THE LAST POINT, NOT ONLY THE STOP (v4e). One price, declared out loud BEFORE
+  you need it, at which the question stops being "is the read still alive?" and
+  becomes "did it recover or not?" IH, deep in a losing trade: "let us pause a
+  little — THIS IS THE LAST POINT. If the market does not recover from here we
+  will leave. If it recovers from here our position can survive." He then honoured
+  it: "no recovery is visible, continuous selling is still there... we will have to
+  cut our trade." Distinct from PRE-COMMIT THE ADVERSE MOVE, which is a magnitude:
+  this is a LOCATION plus a deadline, and its purpose is to stop the averaging-in
+  reflex that a thesis about future participants invites. If price is below the
+  last point and the expected reaction has not begun, exit — do not re-argue the
+  premise.
+- DISCIPLINE IS ASYMMETRIC BETWEEN WINNERS AND LOSERS (v4e). The same session states
+  both halves in one breath: "when you get a chance to make profit, THERE you make
+  the target big, wait in the market — those things work. But when there is a loss,
+  follow proper discipline and cut the trade and leave." So the patience rules
+  (EXPECT A SECOND LEG AFTER THE PAUSE, a crowd-scaled target) apply on the winning
+  side ONLY. Applying them to a loser is not patience, it is the premise being
+  re-argued after the evidence arrived. Never widen, delay, or suspend an exit rule
+  because the reasoning still feels right.
 - CROWD SIZE IS THE THIRD TARGET INPUT (v4c). Alongside how recently the crowd was
   recruited (v4a) and whether it has averaged down (v4b), HOW MANY are seated
   scales the move available against them — and for a reason worth knowing: a

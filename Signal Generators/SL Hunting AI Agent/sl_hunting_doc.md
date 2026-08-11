@@ -2912,3 +2912,124 @@ with full precision. Advisory candidate levels only, as always.
 Test updated: `test_shipped_note_matches_august_11_intraday_hunter_plan`
 replaces the 10 Aug equivalent and asserts the branch DIRECTIONS explicitly,
 because an inverted plan is the specific failure mode a copy-forward would cause.
+
+---
+
+## Video addendum - the 11 Aug LIVE SESSION (v4e)
+
+**Source:** Intraday Hunter live session, 11 Aug 2026 (`_JXirKMmI58`, 9:25). A
+**LOSS**, and encoded precisely because it is one. Every prior addendum in this
+series distilled a winning session; a losing one shows which part of the method
+was load-bearing and which part was rationalisation.
+
+### He named the disqualifying fact, then traded against it
+
+The plan came from his own pre-open note (`cOvPKZFervw`, shipped as the 11 Aug
+note): flat-to-gap-up wants the buying side. The open was flat across all three
+indices and a sharp sell-off followed. He then said, twice, that the setup's
+precondition was absent:
+
+> "Around here neither the BUYER's stop losses are available nor the SELLER's."
+> "Here not many traders were seated."
+
+And traded anyway, on a forecast of who *would* arrive: a sharp drop tempts
+intraday sellers in, so the market should rise to take them out. He bought calls
+on BankNIFTY (1170 qty, 57400 CE), Sensex (900) and NIFTY (1430, expiry day).
+The loss began immediately and widened; the expected recovery never started; he
+cut at his pre-declared level.
+
+That is the whole lesson, and it is the most expensive error this method makes
+available: **hunting inventory that exists is the strategy; predicting inventory
+that might arrive is a different and much weaker activity wearing the same
+vocabulary.** When the honest read is "nobody is seated on either side", the
+output is HOLD.
+
+### The refinement that survives the loss
+
+His reasoning was not worthless - one part of it is a genuine advance on v4d,
+independent of the outcome:
+
+| Open | Who it recruits | Trap quality |
+|---|---|---|
+| GAP-DOWN | **positional** sellers - they enter at the close and hold overnight | large, committed, worth hunting next day |
+| FLAT | **intraday** sellers only - "positional will not take an entry yet" | small, perishable, gone by the close |
+
+> "If the market really had to create positional sellers' stop losses, it would
+> have given a straight GAP-DOWN."
+
+v4d established *that* a flat open seats people. This names *who*, and it
+explains why a flat-open hunt should be sized and targeted more modestly than
+the identical shape after a gap-down.
+
+### Knowledge changes (v4e, all prose)
+
+- `OPENING_DRIVE`: WHICH CROWD THE OPEN RECRUITS DECIDES HOW BIG THE TRAP IS;
+  A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED; A SHARP FIRST
+  SLIDE BAITS; A SLOW ONE MEANS IT.
+- `RISK`: NAME THE LAST POINT, NOT ONLY THE STOP; DISCIPLINE IS ASYMMETRIC
+  BETWEEN WINNERS AND LOSERS.
+- The sharp-slide rule is deliberately encoded as a **weak prior with its own
+  counter-example attached** - it is the read that lost him the session, so it
+  is recorded as a tie-breaker and explicitly barred from being a trade premise.
+- Test markers: `test_system_prompt_has_v4e_recruitment_and_losing_session_knowledge`
+  and `test_v4e_empty_book_is_a_no_trade_not_a_forecasting_licence`. The second
+  is a drift guard: it asserts the forecasting rule still resolves to HOLD and
+  still reconciles with v4c's MANUFACTURES MORE, so a later edit cannot quietly
+  turn it into a licence to predict a crowd.
+- Prompt size 96,627 -> 101,087 chars (headroom 18,913).
+
+### How our agent traded the same session
+
+**Provisional - the session was still running when this was written** (last log
+line 13:07; market closes 15:30). Realized so far, from the runner log:
+
+| Strategy | Legs | Realized |
+|---|---|---|
+| SL Hunting AI | 7 | -2,647.75 |
+| Parabolic SAR | 5 | -1,478.75 |
+| RSI Reversal | 1 | -731.25 |
+| Long Strangle | 5 | -542.75 |
+| Heikin Ashi | 11 | -484.25 |
+| EMA | 1 | +191.75 |
+| Mean Reversion Z-Score | 4 | +789.75 |
+| CPR Algo 3 | 1 | +874.25 |
+| Renko | 2 | +2,190.50 |
+| **Total** | **37** | **-1,838.50** |
+
+SL Hunting's figure is cross-checked against its own `Result summary` line
+(-2,647.75, Trades=4) and matches exactly. Note the mirror legs log as
+`MIRROR EXIT`, not `EXIT`; a first pass that grepped for `| EXIT ` under-counted
+the agent by 948.00.
+
+**The agent got the direction right and lost anyway.** It was SHORT all morning
+- the opposite of IH's call-side trade, and correct: NIFTY fell from a 24576
+open through the 24500 round number toward the 24440 support named in the
+pre-open note. IH was wrong about direction and the agent was right about it.
+
+The agent still lost more than any other strategy, because it took **four short
+entries in 47 minutes** and cut each one almost immediately:
+
+| Entry | Setup | Exit | Held |
+|---|---|---|---|
+| 09:40 | runaway_trend_continuation_short | 09:52 profit_book_stall_cross_index_veto | 12 min |
+| 10:02 | trendline_rejection_shooting_star | 10:04 profit_booking_stall_reversal_bias | **2 min** |
+| 10:09 | double_top_rejection_bearish_engulfing (target 24400) | 10:18 premise_stall_theta_exit | 9 min |
+| 10:27 | fibo_61_bearish_inside_bar_breakdown | 10:28 index_hierarchy_bnf_exit | **1 min** |
+
+Three of the four exits are *stall* judgements rather than stops, and the fourth
+is the BankNIFTY hierarchy rule firing one minute after entry. The 10:09 trade
+had a 24400 target and was released at 24469-24492 having never been stopped.
+
+So the failure is not the read - it is that **the premise-stall exit is firing
+faster than the premise can resolve**, converting one correct directional call
+into four round-trips on an expiry day, when spread and theta punish churn
+hardest. This is the exact inverse of the failure v3y guards against: v3y stops
+the agent holding a loser because it feels right; nothing currently stops it
+releasing a winner because the tape paused.
+
+v4e's two RISK rules speak directly to this - DISCIPLINE IS ASYMMETRIC puts the
+patience on the winning side, and NAME THE LAST POINT replaces "has it stalled?"
+with a pre-declared level and deadline. Whether that is enough, or whether
+`premise_stall` needs a minimum-hold or a bar-count floor before it may fire, is
+a **candidate for the lessons loop** rather than something to encode as IH
+knowledge - it is a property of our agent, not of the method.
