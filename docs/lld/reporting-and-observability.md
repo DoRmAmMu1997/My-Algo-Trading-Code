@@ -122,10 +122,29 @@ whole morning's books plus thirteen open positions, all rebuilt by hand.
 | `clean_shutdown: true` | After runner exposure is proven flat and local shutdown completes | Its **absence** is the crash signal for open-position recovery |
 | `results_published: true` | Only after a real Google Sheet cell batch succeeds | Distinguishes local cleanup from external reporting success |
 
+It is **two files**, split by how much their loss costs:
+
+| File | Contents | Written by | fsync |
+|---|---|---|---|
+| `session_state.json` | session date, shutdown flags, `recorded_pnl` / `recorded_trades`, `trades[]` | trade events, clean shutdown, once at construction | **yes** |
+| `session_state.marks.json` | live counters and `open_position` with `last_mark_ltp` | the 30 s supervisor snapshot | no |
+
+The supervisor never touches the durable file. That is a safety property, not an
+optimisation: `os.replace` is atomic for the *name* but not the *data*, so a
+hard kill during an un-fsynced rewrite can publish a present-but-garbage file —
+and if that file also held the trades, one torn snapshot would destroy the books.
+The 2026-08-11 session measured 210 supervisor writes over the 250 ms threshold
+(max 8.7 s) against 13 on trading threads, which is what forced the split.
+
+`load_session_state` merges the pair back into one document, so every reader sees
+the shape it always has. The merge is asymmetric on purpose: a corrupt **durable**
+file means no recovery (`None`); a corrupt or missing **marks** file still
+returns the P&L and simply offers no positions for resume.
+
 Properties that make it trustworthy:
 
-- **Atomic** — `.tmp` + `flush` + `fsync` + `os.replace`. A reader never sees a
-  partial document.
+- **Atomic** — `.tmp` + `os.replace` for both files, plus `flush` + `fsync`
+  before the replace on the durable one. A reader never sees a partial document.
 - **Restart-safe** — an existing file is moved to a timestamped recovery archive
   before the replacement run writes anything. Compatible same-day trades and
   P&L totals seed the new session; old exposure never carries implicitly.
@@ -159,7 +178,9 @@ gitignored — it holds live position and P&L detail.
 | Log file unwritable | Console logging continues; the EOD sheet loses its source for that session. |
 | Session state file unwritable | None. First failure logs loudly; trading continues without crash recovery for that session. |
 | Session state durable write exceeds 250ms | Trading still waits for that `fsync` so the event is genuinely durable; a warning identifies local-disk latency for operator action. |
-| Session state file corrupt on read | Ignored, logged; the run starts with no recovery rather than refusing to start. |
+| Session state marks write exceeds 2s | Warned separately, and the message says so: this delays supervision, not a trading decision. |
+| Session state marks file corrupt or missing | P&L is still recovered from the durable file; only open positions are lost, so nothing is offered for resume. |
+| Session state durable file corrupt on read | Ignored, logged; the run starts with no recovery rather than refusing to start. |
 
 ---
 
