@@ -3033,3 +3033,55 @@ with a pre-declared level and deadline. Whether that is enough, or whether
 `premise_stall` needs a minimum-hold or a bar-count floor before it may fire, is
 a **candidate for the lessons loop** rather than something to encode as IH
 knowledge - it is a property of our agent, not of the method.
+
+---
+
+### Pre-open note for 2026-08-12 (Wednesday)
+
+**Source:** Intraday Hunter, "Prediction For 12 AUG 2026" (`CoxS77NfnsI`,
+uploaded 2026-08-11, 2:00). Note-only; no knowledge version attached.
+
+**The seller crowd is described as SPENT rather than seated**, which is a
+different starting condition from every note in this series so far. He does not
+say sellers are sitting there waiting to be hunted; he says the market has
+already taken them out:
+
+> "When the selling came and a retracement happened, sellers would certainly
+> have entered there. But the market would have hit their SLs. So if it has
+> already taken the sellers out, we can go WITH the market."
+
+That pairs directly with **v4e's WHICH CROWD THE OPEN RECRUITS**: he then
+explains why nobody is carrying size overnight either —
+
+> "It did not cross the round number, so not many people would have held their
+> selling quantity."
+> "One momentum came and after that not many people held short positions."
+
+No round-number breach, no follow-through, therefore no overnight inventory. The
+result is a session that starts with thin positioning on **both** sides.
+
+**The second explicit escape hatch in the series.** 10 Aug had one for a large
+gap-down; this one is for a large gap-up:
+
+> "If a big gap-up opens, maybe the market has just made a TRAP. In a big gap-up
+> we cannot make such a plan for now... there the market can start making a
+> DIFFERENT type of trap."
+
+Recorded as stand-aside, not as a guessed branch — the same treatment the 10 Aug
+note gave its missing branch.
+
+**One genuine ambiguity, left unresolved on purpose.** The sell-side conditional
+is stated cleanly for all three indices, but on NIFTY he also says a mild gap-up
+can be followed *with* the market "if not many sellers are seated, the market may
+not find SLs". Read one way that is a long; read another it is a reason to expect
+no upward pull at all. The note records the tension rather than picking a side,
+which is what v4e's A FORECAST OF WHO WILL ARRIVE rule demands of an unclear read.
+
+**Transcription caveat:** one BankNIFTY support arrived as "5710", read as 57100
+alongside 56960 — the same dropped-trailing-zero artefact seen on 4, 7 and
+10 Aug. Advisory candidate levels only.
+
+Test updated: `test_shipped_note_matches_august_12_intraday_hunter_plan`
+replaces the 11 Aug equivalent. It asserts the escape hatch and the ambiguity
+line survive verbatim, because those are the two things a copy-forward or a
+tidy-up would silently remove.
