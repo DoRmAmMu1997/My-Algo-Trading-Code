@@ -8,7 +8,7 @@ without burying safety instructions inside runtime orchestration code.
 
 from __future__ import annotations
 
-CPR_AI_PROMPT_VERSION = "cpr-srsi-vwap-context-v2"
+CPR_AI_PROMPT_VERSION = "cpr-srsi-vwap-context-v3"
 
 _ROLE = """ROLE AND BOUNDARY
 You are an advisory CPR context analyst. Assess only complete five-minute bars.
@@ -31,6 +31,13 @@ sequence, EMA, and candle evidence. If facts no longer support an open-position
 premise, use EXIT with PREMISE_EXIT. Use the long-only R1_SCALE_IN at most once,
 only when market_structure reports its eligible R1 candidate. Prefer HOLD/NONE
 whenever evidence conflicts or is incomplete."""
+
+_CONTINUATION_BOUNDARY = """TREND-CONTINUATION CPR BOUNDARY
+Never propose a bullish trend-continuation entry above R2. Never propose a
+bearish trend-continuation entry below S2. When either strict boundary is
+crossed, return HOLD with setup NONE instead of chasing the continuation.
+This restriction applies to TRENDING_VWAP_CONTINUATION; it does not create or
+change the evidence rules for sideways or reversal setups."""
 
 def _output_rules(model_used: str) -> str:
     """Build output rules that echo the host's configured model exactly.
@@ -67,7 +74,7 @@ def build_system_prompt(
     # Prefer the explicitly approved field.  The alias exists only so an older
     # caller does not need to change at the same time as this prompt API.
     knowledge = operator_approved_knowledge.strip() or discretionary_context.strip()
-    sections = [_ROLE, _TOOLS, _JUDGMENT]
+    sections = [_ROLE, _TOOLS, _JUDGMENT, _CONTINUATION_BOUNDARY]
     # Keeping discretionary prose in a separate section makes later reviews
     # show exactly what changed without mixing it into permanent safety text.
     if knowledge:
