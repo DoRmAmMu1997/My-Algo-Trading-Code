@@ -201,18 +201,16 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_12_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 11 Aug transcript.
+def test_shipped_note_matches_august_13_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 12 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    Two things make this one distinctive. The seller crowd is described as
-    already SPENT -- BankNIFTY's recovery hit the stops of sellers who joined on
-    the retracement -- so there is little left to hunt on that side. And it
-    carries the series' second explicit ESCAPE HATCH: a large gap-up voids the
-    plan outright, which the note records as stand-aside rather than inventing
-    the branch he does not state.
+    What distinguishes this one is that the seated crowd has FLIPPED to buyers,
+    and the gap-up branch is a follow rather than a fade -- justified by where
+    the stops sit relative to the round number. Both directions are asserted
+    explicitly because a copy-forward would silently keep the previous day's.
     """
     import os
 
@@ -221,33 +219,35 @@ def test_shipped_note_matches_august_12_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-12"
-    assert "CoxS77NfnsI" in note.source
-    # The distinguishing facts: no follow-through, and no overnight short carry.
-    assert "never crossed the round number" in note.context
+    assert note.for_date == "2026-08-13"
+    assert "PfthlsdW2E8" in note.source
+    # The distinguishing fact: buyers, not sellers, are the seated crowd now.
+    assert "BUYERS, not sellers, are now the seated crowd" in note.context
     assert note.plan[0].startswith("FLAT to GAP-DOWN: identify SELL-side setups")
-    # The escape hatch must survive verbatim -- it is the one branch he refuses
-    # to specify, and inventing it is exactly the failure this test guards.
-    assert any("LARGE gap-up VOIDS the plan" in line for line in note.plan)
-    assert any("Stand aside" in line for line in note.plan)
-    # The ambiguity is recorded, not smoothed away.
-    assert any("AMBIGUITY, recorded rather than resolved" in line for line in note.plan)
-    assert any("SPENT, not available to hunt" in line for line in note.plan)
+    assert note.plan[1].startswith("GAP-UP above the round number")
+    # The round-number stop-location reasoning is the whole justification for
+    # following a gap-up instead of fading it; it must survive verbatim.
+    assert any("BELOW the round number" in line for line in note.plan)
+    assert any("not huntable" in line for line in note.plan)
+    assert any("SENSEX EXPIRY" in line for line in note.plan)
     assert len(note.plan) == 7
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24560.0, 24610.0],
-            "support": [24430.0, 24345.0],
+            # Only ONE support: the transcript's second NIFTY support arrived as
+            # "2476" and could not be resolved, so it is omitted rather than
+            # guessed. A missing advisory level is safer than a wrong one.
+            "resistance": [24500.0, 24600.0],
+            "support": [24260.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57650.0, 57800.0],
-            "support": [57100.0, 56960.0],
+            "resistance": [58000.0, 58300.0],
+            "support": [57500.0, 57310.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78475.0, 78640.0],
-            "support": [78046.0, 77810.0],
+            "resistance": [78145.0, 78500.0],
+            "support": [77500.0, 77200.0],
         },
     ]

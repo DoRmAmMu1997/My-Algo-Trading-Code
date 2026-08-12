@@ -3210,3 +3210,55 @@ The agent instead read the drop as a continuation and shorted into the recovery.
 Encouragingly, the deterministic strategies had a strong day on the same tape:
 SMA Crossover alone made more than the whole basket lost, and only four of
 fourteen finished negative.
+
+---
+
+### Pre-open note for 2026-08-13 (Thursday, SENSEX expiry)
+
+**Source:** Intraday Hunter, "Prediction For 13 AUG 2026" (`PfthlsdW2E8`,
+uploaded 2026-08-12, 2:13). Note-only; no knowledge version attached.
+
+**The seated crowd has flipped to BUYERS.** Yesterday's note described a spent
+seller crowd and thin positioning on both sides. Today the sellers are spent for
+a specific, observable reason, and buyers have taken their place:
+
+> "Good selling came, but the market took support EXACTLY at the round number
+> and gave a positive momentum. So those sitting short would have been chased
+> out on the retracement — it has already chased the sellers out."
+
+BankNIFTY is where the buyers actually are: *"this chart has been positive from
+the start... a retracement and then overall positive momentum."* That is the
+crowd a gap-down would hunt.
+
+**The gap-up branch is a FOLLOW, and the reason is stop LOCATION.** This is the
+most transferable part of the note, and it is a sharper statement of the
+round-number idea than the series has had:
+
+> "Buyers' SLs should be BELOW the round number. If the market is above the
+> round number, the buyers are not going to give their SLs — so we go WITH the
+> market."
+
+So the conditional is not symmetric guesswork. A gap-down puts price *into* the
+buyers' stop zone and makes them huntable; a gap-up above the round number puts
+price *away* from it, leaves nothing to hunt, and the correct move is to follow.
+That pairs directly with v4c's ROUND NUMBERS AMPLIFY RECRUITMENT and with v4f's
+AN EMPTY BOOK MEANS A TRAP IS COMING — here the book is not empty, so the read is
+about geometry rather than about waiting for confirmation.
+
+**Sensex expiry** tomorrow, flagged explicitly, so the Sensex leg carries the
+usual pinning and premium distortion. NIFTY is the weakest of the three reads —
+*"selling was seen but some recovery is also visible"* — and the note says so
+rather than granting it the same confidence as BankNIFTY.
+
+**Transcription caveats, two this time.** NIFTY's resistance pair arrived as
+"246 and 24500", read as 24600/24500 (the dropped-trailing-zero artefact seen on
+4, 7, 10 and 12 Aug). NIFTY's SECOND support arrived as "2476" and could not be
+resolved to a plausible level at all, so it is **omitted** rather than guessed —
+a missing advisory level is safer than a wrong one, and the test asserts NIFTY
+carries exactly one support so a later "tidy-up" cannot invent the second.
+Sensex's 78145 resistance is recorded as heard.
+
+Test updated: `test_shipped_note_matches_august_13_intraday_hunter_plan`
+replaces the 12 Aug equivalent and asserts both branch directions plus the
+round-number stop-location reasoning, because an inverted plan and a smoothed-
+away justification are the two failures a copy-forward would produce.

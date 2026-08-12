@@ -1,31 +1,31 @@
 {
-  "for_date": "2026-08-12",
-  "source": "Intraday Hunter, 'Prediction For 12 AUG 2026' (CoxS77NfnsI, uploaded 2026-08-11)",
-  "context": "NIFTY and Sensex sold hard but produced no follow-through and never crossed the round number, so few carried shorts overnight. BankNIFTY sold then recovered, hitting the stops of sellers who joined on the retracement.",
+  "for_date": "2026-08-13",
+  "source": "Intraday Hunter, 'Prediction For 13 AUG 2026' (PfthlsdW2E8, uploaded 2026-08-12)",
+  "context": "Sensex sold hard, then took support EXACTLY at the round number and rallied, chasing out everyone who was short. BankNIFTY has been positive from the start. NIFTY sold but is recovering. BUYERS, not sellers, are now the seated crowd.",
   "plan": [
-    "FLAT to GAP-DOWN: identify SELL-side setups. He states this separately for all three indices -- NIFTY, BankNIFTY and Sensex each get the same conditional.",
-    "A MODERATE gap-up keeps broadly the same plan; he says 'same plan' for Sensex and names the sell side for BankNIFTY in the same breath as the gap-up case.",
-    "A LARGE gap-up VOIDS the plan: 'if a big gap-up opens, maybe the market has just made a TRAP -- in a big gap-up we cannot make such a plan for now.' Stand aside; do not guess the missing branch.",
-    "The seller crowd is SPENT, not available to hunt. On BankNIFTY: sellers who entered on the retracement had their stops hit by the recovery, so the market has already taken them out.",
-    "Nobody carried size short overnight -- the move never crossed the round number and produced no follow-through, so overnight inventory is thin on BOTH sides.",
-    "AMBIGUITY, recorded rather than resolved: on NIFTY he also says a mild gap-up can be followed WITH the market, 'if not many sellers are seated the market may not find SLs.' That cuts against the sell-side line; do not force a reading.",
-    "11 Aug was expiry and gave one move then nothing. Today is an ordinary Wednesday session, so expiry distortion is not a factor."
+    "FLAT to GAP-DOWN: identify SELL-side setups. Stated for all three indices, and on BankNIFTY the reason is explicit -- target the BUYERS who are now seated.",
+    "GAP-UP above the round number: go WITH the market and identify BUY-side setups. Do NOT try to hunt the buyers there.",
+    "The reason is WHERE the stops sit: 'buyers' SLs should be BELOW the round number.' A gap-up above it leaves their stops far away, so they are not huntable and following beats fading.",
+    "The seller crowd is SPENT. Sensex took support at the round number and the recovery chased shorts out on the retracement -- the same spent-seller condition as 12 Aug.",
+    "BankNIFTY is the index where buyers are genuinely seated: positive from the open, a retracement, then more upside. That is the crowd a gap-down would hunt.",
+    "SENSEX EXPIRY tomorrow, flagged explicitly. Expect expiry pinning and premium distortion on the Sensex read specifically.",
+    "NIFTY is the least committed of the three: selling, but 'some recovery is also visible'. Treat its conditional as weaker than BankNIFTY's."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24560, 24610],
-      "support": [24430, 24345]
+      "resistance": [24500, 24600],
+      "support": [24260]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57650, 57800],
-      "support": [57100, 56960]
+      "resistance": [58000, 58300],
+      "support": [57500, 57310]
     },
     {
       "index": "SENSEX",
-      "resistance": [78475, 78640],
-      "support": [78046, 77810]
+      "resistance": [78145, 78500],
+      "support": [77500, 77200]
     }
   ]
 }
