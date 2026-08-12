@@ -4,6 +4,32 @@
 # [project] section: this file centralizes ruff + mypy configuration, mirroring
 # the Streamlit Scanner App's setup (the house pattern for CI quality gates).
 
+[tool.pytest.ini_options]
+# Pytest wraps every test in `catch_warnings()` + `simplefilter("always")`, which
+# RESETS `warnings.filters` and throws away anything a module installed at import
+# time. Only the entries below are re-applied inside that context, so the master
+# file's own `warnings.filterwarnings(...)` call is invisible to pytest and the
+# ignore has to be repeated here or the warning reappears in every test run.
+#
+# NOTE the format differs from the Python API: in `-W`/ini strings the message
+# and module fields are `re.escape`d by `warnings._setoption`, so these are
+# LITERALS, not regexes -- the message matches as a prefix and the module is
+# anchored exactly. That is why the two dhanhq modules need one line each rather
+# than the master file's `dhanhq\.(marketfeed|fulldepth)` alternation.
+#
+# Scope is deliberately narrow: only dhanhq 2.2.0's pinned, unactionable
+# per-tick `utcfromtimestamp()` deprecation. A deprecation from our own code, or
+# from any other dependency, must still surface in the test output.
+#
+# There is deliberately NO leading "default"/"error" entry: that would reset the
+# baseline for EVERY warning and change what the suite surfaces beyond the one
+# thing being fixed. These two lines are applied on top of pytest's own defaults,
+# so every other warning behaves exactly as it did before.
+filterwarnings = [
+    "ignore:datetime.datetime.utcfromtimestamp() is deprecated:DeprecationWarning:dhanhq.marketfeed",
+    "ignore:datetime.datetime.utcfromtimestamp() is deprecated:DeprecationWarning:dhanhq.fulldepth",
+]
+
 [tool.ruff]
 # Measured against this codebase: at 100 columns there are ~455 long lines, at
 # 120 there are ~57 (mostly deliberate log/docstring lines). The code was

@@ -3085,3 +3085,180 @@ Test updated: `test_shipped_note_matches_august_12_intraday_hunter_plan`
 replaces the 11 Aug equivalent. It asserts the escape hatch and the ambiguity
 line survive verbatim, because those are the two things a copy-forward or a
 tidy-up would silently remove.
+
+---
+
+## Video addendum - the 12 Aug LIVE SESSION (v4f)
+
+**Source:** Intraday Hunter live session, 12 Aug 2026 (`CV_Fs3TFF5I`, 6:46,
+published 10:29 IST). A **WIN**, taken from the *same* opening condition that
+produced the 11 Aug loss. That pairing is the whole value of this addendum.
+
+### The same empty book, two opposite outcomes
+
+Both sessions opened flat, sold off immediately, and had IH saying — in almost
+identical words — that nobody was positioned:
+
+| | 11 Aug (v4e, LOSS) | 12 Aug (v4f, WIN) |
+|---|---|---|
+| Opening read | flat, sharp sell-off | flat, sharp sell-off |
+| Book | "neither the BUYER's SLs nor the SELLER's" | "neither many buyers nor many sellers" |
+| What he did | **predicted** who would arrive, entered on that | **waited** for the recovery to actually begin |
+| Result | cut at his last point | booked a good target |
+
+So an empty book is not simply a no-trade condition, as v4e recorded it. It is a
+statement that the market **must manufacture a trap**, because it has nothing
+else to work with. What it does not tell you is which side the trap points at —
+and the difference between the two days is whether he guessed that or waited to
+be shown:
+
+> "Here there are neither many buyers nor many sellers... so some kind of TRAP
+> will definitely form here. We were waiting for exactly that."
+
+The confirmation he waited for was concrete: a sharp recovery off a drop that had
+just trapped the sellers who chased it, led by one index. *"The trap somewhere
+seemed to have been made FOR THE SELLERS."*
+
+### The new idea: a repeated chart is a trap, not a trend
+
+The reason he expected a trap at all is the sameness of the two days:
+
+> "Normally the market does NOT repeat the chart."
+> "Yesterday it opened flat and directly started falling. Here too flat open,
+> directly fell... so some kind of trap will definitely form."
+
+A shape everyone watched yesterday is a shape everyone is ready for today, and a
+move nobody has to be tricked into paying for is not a move the market needs to
+make. Note this is distinct from v4a's SECOND-DAY RECRUITMENT, which is about a
+crowd built across two days and then hunted; this is about the **path** being
+identical, which is what makes the copy a trap.
+
+### The move that denied him entry
+
+He wanted to sell — the pre-open note said sell-side — and never got in:
+
+> "If it had gone a bit slow, or given us a slight up move first, we would have
+> had a chance to sell... but the momentum was very sharp. **Everything happened
+> in ONE MINUTE.**"
+
+That is v4d's gap logic at intraday scale: a move that completes before anyone can
+join it recruits nobody, creates no inventory, and leaves nothing behind it to
+hunt. The correct response is not to chase it but to ask what the market must do
+next to trap somebody.
+
+### Exit: the profit stopped growing
+
+He held while it paid — *"momentum is very fast, it will not stop easily, the
+target may be BIG"* — and closed on a change in rate, not in price:
+
+> "Now see, the profit has started REDUCING. So let us book. The more smoothly
+> the profit comes, the better."
+> "Especially if we have ALREADY SEEN a good target, after that we should not be
+> greedy... we had already captured one momentum."
+
+### Knowledge changes (v4f, all prose)
+
+- `OPENING_DRIVE`: THE CHART DOES NOT REPEAT TWO DAYS RUNNING; A MOVE THAT DENIED
+  YOU ENTRY WAS NOT YOUR MOVE; AN EMPTY BOOK MEANS A TRAP IS COMING — WAIT FOR IT
+  TO REVEAL ITS DIRECTION; THE SHARPEST RECOVERY NAMES THE LEADING INDEX, AND
+  SIZE FOLLOWS IT.
+- `RISK`: BOOK WHEN THE PROFIT STOPS GROWING, NOT WHEN IT REVERSES.
+- Test markers: `test_system_prompt_has_v4f_repeat_chart_and_confirmation_knowledge`,
+  plus two drift guards. `test_v4f_confirmation_rule_does_not_reopen_the_v4e_forecasting_hole`
+  is the important one: v4e and v4f are a matched pair, and v4f read alone would
+  license exactly the forecast v4e forbids, so the test asserts the confirmation
+  requirement and v4e's HOLD both survive together.
+- Prompt size 101,087 -> 105,933 chars (headroom 14,067).
+
+### How our agent traded the same session
+
+**Provisional — the runner was still live at 14:15** (market closes 15:30).
+
+| Strategy | Legs | Realized |
+|---|---|---|
+| SMA Crossover | 1 | +8,911.50 |
+| Renko | 3 | +5,427.50 |
+| Donchian Bearish | 1 | +3,406.00 |
+| CPR Algo 3 | 2 | +3,272.75 |
+| Regime Adaptive | 2 | +575.25 |
+| Long Strangle | 10 | +565.50 |
+| Bollinger Bands | 1 | +481.00 |
+| EMA | 2 | -331.50 |
+| Heikin Ashi | 9 | -728.00 |
+| SL Hunting AI | 2 | -1,034.25 |
+| Parabolic SAR | 2 | -1,056.25 |
+| RSI Reversal | 1 | -1,160.25 |
+| Supertrend Bullish | 1 | -2,093.00 |
+| Mean Reversion Z-Score | 2 | -2,717.00 |
+| **Total** | **39** | **+13,519.25** |
+
+SL Hunting cross-checks exactly against its own `Result summary` (-1,034.25,
+Trades=1).
+
+**The agent took one trade and it was the wrong side.** At 10:30 it entered SHORT
+on `double_top_shooting_star_reversal` — one minute after IH had gone long on the
+recovery — and cut at 10:31 on `per_leg_index_hierarchy_cut`. So the index
+hierarchy rule (v3y) did its job and stopped a bad trade inside sixty seconds;
+the entry itself was the error.
+
+That entry is precisely what v4f is meant to prevent. The market had opened flat,
+sold off in one minute, and begun recovering sharply — a repeated chart, a move
+that denied entry, and an empty book. v4f says all three of those argue against
+selling the drop and for waiting to see which way the manufactured trap points.
+The agent instead read the drop as a continuation and shorted into the recovery.
+
+Encouragingly, the deterministic strategies had a strong day on the same tape:
+SMA Crossover alone made more than the whole basket lost, and only four of
+fourteen finished negative.
+
+---
+
+### Pre-open note for 2026-08-13 (Thursday, SENSEX expiry)
+
+**Source:** Intraday Hunter, "Prediction For 13 AUG 2026" (`PfthlsdW2E8`,
+uploaded 2026-08-12, 2:13). Note-only; no knowledge version attached.
+
+**The seated crowd has flipped to BUYERS.** Yesterday's note described a spent
+seller crowd and thin positioning on both sides. Today the sellers are spent for
+a specific, observable reason, and buyers have taken their place:
+
+> "Good selling came, but the market took support EXACTLY at the round number
+> and gave a positive momentum. So those sitting short would have been chased
+> out on the retracement — it has already chased the sellers out."
+
+BankNIFTY is where the buyers actually are: *"this chart has been positive from
+the start... a retracement and then overall positive momentum."* That is the
+crowd a gap-down would hunt.
+
+**The gap-up branch is a FOLLOW, and the reason is stop LOCATION.** This is the
+most transferable part of the note, and it is a sharper statement of the
+round-number idea than the series has had:
+
+> "Buyers' SLs should be BELOW the round number. If the market is above the
+> round number, the buyers are not going to give their SLs — so we go WITH the
+> market."
+
+So the conditional is not symmetric guesswork. A gap-down puts price *into* the
+buyers' stop zone and makes them huntable; a gap-up above the round number puts
+price *away* from it, leaves nothing to hunt, and the correct move is to follow.
+That pairs directly with v4c's ROUND NUMBERS AMPLIFY RECRUITMENT and with v4f's
+AN EMPTY BOOK MEANS A TRAP IS COMING — here the book is not empty, so the read is
+about geometry rather than about waiting for confirmation.
+
+**Sensex expiry** tomorrow, flagged explicitly, so the Sensex leg carries the
+usual pinning and premium distortion. NIFTY is the weakest of the three reads —
+*"selling was seen but some recovery is also visible"* — and the note says so
+rather than granting it the same confidence as BankNIFTY.
+
+**Transcription caveats, two this time.** NIFTY's resistance pair arrived as
+"246 and 24500", read as 24600/24500 (the dropped-trailing-zero artefact seen on
+4, 7, 10 and 12 Aug). NIFTY's SECOND support arrived as "2476" and could not be
+resolved to a plausible level at all, so it is **omitted** rather than guessed —
+a missing advisory level is safer than a wrong one, and the test asserts NIFTY
+carries exactly one support so a later "tidy-up" cannot invent the second.
+Sensex's 78145 resistance is recorded as heard.
+
+Test updated: `test_shipped_note_matches_august_13_intraday_hunter_plan`
+replaces the 12 Aug equivalent and asserts both branch directions plus the
+round-number stop-location reasoning, because an inverted plan and a smoothed-
+away justification are the two failures a copy-forward would produce.

@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 import warnings
 from contextlib import ExitStack
@@ -1356,6 +1358,28 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
         except RuntimeError:
             self.fail("refresh_index_and_option_ltps should swallow broker errors")
 
+    def test_rest_fetcher_marks_its_newest_candle_as_official(self):
+        """Pure REST mode must satisfy the same watermark contract as true-up."""
+
+        latest = pd.Timestamp("2026-08-12 09:29:00")
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [latest],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+            }
+        )
+        self.broker.fetch_ltp_map.return_value = {}
+
+        # Stop after one real fetcher cycle.  Only the waiting primitive is
+        # replaced; OHLC publication and SharedMarketDataStore remain real.
+        self.stop_event.wait = MagicMock(side_effect=lambda _seconds: self.stop_event.set())
+        self.fetcher.run()
+
+        self.assertEqual(self.store.get("1").official_candle_ts, latest)
+
 
 # =============================================================================
 # TEST SUITE: MARKET DATA SOURCE SELECTOR
@@ -1633,8 +1657,10 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
             }
         )
         self.fetcher._run_true_up("test", now_ist=datetime(2026, 5, 15, 10, 17, 40))
-        frame = self.store.get("1").frame
+        snapshot = self.store.get("1")
+        frame = snapshot.frame
         self.assertEqual(len(frame), 3)
+        self.assertEqual(snapshot.official_candle_ts, completed)
         by_ts = frame.set_index("timestamp")
         # Completed minute now carries the OFFICIAL candle...
         self.assertEqual(by_ts.loc[completed]["open"], 100.0)
@@ -1904,6 +1930,98 @@ class TestDhanhqDeprecationWarningFilter(unittest.TestCase):
         self.assertIn(sdk_message, messages)
         self.assertIn("some other deprecation", messages)
 
+    def test_filter_covers_both_dhanhq_modules_that_call_utcfromtimestamp(self):
+        """`dhanhq/__init__` imports marketfeed AND fulldepth, and both ship the
+        same `utc_time` helper (marketfeed.py:523, fulldepth.py:391).
+
+        The runner only subscribes MarketFeed, so the fulldepth call site should
+        never fire -- but it is one regex branch and the module is imported, so
+        covering it costs nothing and removes a latent surprise.
+        """
+        pattern = next(
+            entry[3].pattern
+            for entry in warnings.filters
+            if entry[0] == "ignore"
+            and entry[2] is DeprecationWarning
+            and entry[1] is not None
+            and "utcfromtimestamp" in entry[1].pattern
+        )
+        compiled = re.compile(pattern)
+        self.assertTrue(compiled.match("dhanhq.marketfeed"), pattern)
+        self.assertTrue(compiled.match("dhanhq.fulldepth"), pattern)
+        # Still scoped -- it must not swallow the same message from our own code.
+        self.assertFalse(compiled.match("master_file"), pattern)
+
+
+class TestPytestReappliesTheDhanhqWarningFilter(unittest.TestCase):
+    """The master's import-time filter is INVISIBLE to pytest, so it must be
+    repeated in `[tool.pytest.ini_options] filterwarnings`.
+
+    Pytest wraps every test in `catch_warnings()` + `simplefilter("always")`,
+    which resets `warnings.filters` and discards anything installed at import
+    time; only its own `-W`/ini entries are re-applied inside that context.
+    That is why the warning kept appearing in test output for weeks while the
+    runner itself was silent, and why `test_filter_suppresses_only_the_sdk_warning`
+    above never caught it -- that test re-installs the filter by hand, which is
+    exactly the step pytest does NOT do for us.
+    """
+
+    @staticmethod
+    def _ini_filters():
+        with open(REPO_ROOT / "pyproject.toml", "rb") as handle:
+            config = tomllib.load(handle)
+        return config["tool"]["pytest"]["ini_options"]["filterwarnings"]
+
+    def test_ini_entries_exist_for_both_modules(self):
+        entries = self._ini_filters()
+        for module in ("dhanhq.marketfeed", "dhanhq.fulldepth"):
+            self.assertTrue(
+                any(
+                    item.startswith("ignore:datetime.datetime.utcfromtimestamp()")
+                    and item.endswith(module)
+                    for item in entries
+                ),
+                f"pyproject filterwarnings must silence {module}: {entries}",
+            )
+
+    def test_ini_entries_actually_suppress_the_sdk_warning(self):
+        """Assert the STRINGS work, not merely that they are present.
+
+        The ini format is not the Python API: `warnings._setoption` `re.escape`s
+        the message and module fields, so these are literals rather than the
+        regex the master file uses. A plausible-looking entry can silently match
+        nothing, so this feeds the committed strings through the same parser
+        pytest uses and then triggers the real SDK helper.
+        """
+        sdk_message = (
+            "datetime.datetime.utcfromtimestamp() is deprecated and "
+            "scheduled for removal in a future version."
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")  # what pytest does to us
+            for item in self._ini_filters():
+                warnings._setoption(item)  # how pytest parses -W / ini strings
+            for module, lineno in (("dhanhq.marketfeed", 523), ("dhanhq.fulldepth", 391)):
+                warnings.warn_explicit(
+                    sdk_message,
+                    DeprecationWarning,
+                    filename=module.replace(".", "/") + ".py",
+                    lineno=lineno,
+                    module=module,
+                )
+            # An unrelated deprecation from the same module must still surface.
+            warnings.warn_explicit(
+                "some other deprecation",
+                DeprecationWarning,
+                filename="dhanhq/marketfeed.py",
+                lineno=1,
+                module="dhanhq.marketfeed",
+            )
+
+        messages = [str(item.message) for item in caught]
+        self.assertNotIn(sdk_message, messages, messages)
+        self.assertIn("some other deprecation", messages)
+
 
 # =============================================================================
 # TEST SUITE: ADDITIONAL DATACLASS COVERAGE
@@ -1927,6 +2045,35 @@ class TestAdditionalDataclasses(unittest.TestCase):
         self.assertEqual(snap.timeframe, "1")
         self.assertEqual(snap.frame.iloc[-1]["close"], 100.5)
         self.assertIsNotNone(snap.candle_signature)
+
+    def test_shared_store_snapshot_carries_an_optional_official_candle_watermark(self):
+        """Consumers can distinguish official REST history from provisional ticks."""
+
+        frame = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-08-12 09:29:00")],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+            }
+        )
+        store = master_file.SharedMarketDataStore()
+
+        snapshot = store.update("1", frame)
+        copied = store.get("1")
+
+        self.assertTrue(hasattr(snapshot, "official_candle_ts"))
+        self.assertIsNone(snapshot.official_candle_ts)
+        self.assertIsNone(copied.official_candle_ts)
+
+        watermark = pd.Timestamp("2026-08-12 09:29:00")
+        self.assertIn(
+            "official_candle_ts",
+            inspect.signature(store.update).parameters,
+        )
+        store.update("1", frame, official_candle_ts=watermark)
+        self.assertEqual(store.get("1").official_candle_ts, watermark)
 
     def test_ltp_snapshot(self):
         """LTPSnapshot identifies a leg and its latest price + fetched time."""
@@ -9789,6 +9936,65 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         minutes.loc[4, ["high", "close"]] = [112.0, 111.0]
         corrected = worker.build_strategy_frame(minutes, as_of=at_close)
         worker.process_strategy_frame(corrected)
+        self.assertEqual(agent.decide.call_count, 1)
+
+    def test_run_waits_for_the_bucket_final_minute_to_be_official_before_inference(self):
+        """A clock-complete tick bucket cannot race its minute-close REST true-up.
+
+        At 10:00 the 09:55 five-minute bucket is clock-complete, but its final
+        09:59 minute is initially still tick-owned.  The first real worker poll
+        must leave the bucket identity unconsumed.  Once the same atomic store
+        snapshot says REST covers 09:59, the next poll may infer exactly once.
+        """
+
+        worker, agent, _logger = self._worker()
+        worker._run_prebar_safety = MagicMock(return_value=False)
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {"prior_accepted_regime": None},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        start = pd.Timestamp("2026-08-03 09:55:00")
+        minutes = pd.DataFrame(
+            [
+                {
+                    "timestamp": start + pd.Timedelta(minutes=offset),
+                    "open": 100.0 + offset,
+                    "high": 101.0 + offset,
+                    "low": 99.0 + offset,
+                    "close": 100.5 + offset,
+                }
+                for offset in range(5)
+            ]
+        )
+        worker.store.update(
+            "1",
+            minutes,
+            official_candle_ts=pd.Timestamp("2026-08-03 09:58:00"),
+        )
+        poll_count = 0
+
+        def advance_true_up_then_stop():
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                self.assertEqual(agent.decide.call_count, 0)
+                self.assertIsNone(worker._last_agent_bar_identity)
+                worker.store.update(
+                    "1",
+                    minutes,
+                    official_candle_ts=pd.Timestamp("2026-08-03 09:59:00"),
+                )
+                return
+            self.assertEqual(agent.decide.call_count, 1)
+            raise StopIteration("test completed two worker polls")
+
+        worker.wait_for_next_poll = advance_true_up_then_stop
+
+        with self.assertRaisesRegex(StopIteration, "two worker polls"):
+            worker.run()
+
         self.assertEqual(agent.decide.call_count, 1)
 
     def test_bucket_identity_is_stable_while_content_signature_detects_true_up(self):

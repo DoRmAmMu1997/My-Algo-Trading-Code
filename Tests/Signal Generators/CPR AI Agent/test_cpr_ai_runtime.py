@@ -162,6 +162,51 @@ def test_agent_rejects_incomplete_or_unexpected_four_tool_evidence(missing, fail
     assert outcome.action == "HOLD"
 
 
+@pytest.mark.parametrize(
+    "first_attempt_calls",
+    [
+        (),
+        _calls(failed="position_state"),
+    ],
+    ids=["missing-all-tools", "failed-one-tool"],
+)
+def test_agent_retries_one_incomplete_frozen_tool_attempt_within_the_same_deadline(first_attempt_calls):
+    """A transient MCP-evidence miss gets one same-snapshot retry, never authority.
+
+    The first local result models the two production failure shapes: Codex may
+    skip every MCP read, or one MCP read may fail.  The second result is valid.
+    A regression that removes the retry, changes the frozen bar between
+    attempts, or resets the configured deadline will fail this test.
+    """
+
+    attempts = []
+
+    def runner(**kwargs):
+        attempts.append(kwargs)
+        calls = first_attempt_calls if len(attempts) == 1 else _calls()
+        return CPRAgentRunResult(
+            final_response=_proposal("HOLD", "UNDECIDED", "NONE").model_dump_json(),
+            tool_calls=tuple(calls),
+            token_usage={"total_tokens": 10 + len(attempts)},
+        )
+
+    frozen = _context()
+    outcome = CPRAgent(runner=runner, timeout_seconds=17.5).decide(
+        frozen,
+        bar_signature="same-frozen-bar",
+    )
+
+    assert outcome.validation_code == "accepted_hold"
+    assert outcome.inference_attempts == 2
+    assert outcome.token_usage == {"total_tokens": 23}
+    assert len(attempts) == 2
+    assert attempts[0]["context"] is frozen
+    assert attempts[1]["context"] is frozen
+    assert attempts[0]["bar_signature"] == "same-frozen-bar"
+    assert attempts[1]["bar_signature"] == "same-frozen-bar"
+    assert 0 < attempts[1]["timeout_seconds"] <= attempts[0]["timeout_seconds"] <= 17.5
+
+
 def test_runtime_configuration_is_read_only_and_sanitizes_credentials(tmp_path):
     """A child gets no execution surface or trading/API credentials."""
 
@@ -567,6 +612,7 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
     row = json.loads(raw)
     assert "secret" not in raw
     assert row["validation"]["code"] == "accepted_hold"
+    assert row["inference_attempts"] == 1
     assert row["frozen_context"]["session_levels"]["next_levels"]["ordered"] == [
         {"name": "r1", "price": 110.0}
     ]
@@ -763,7 +809,11 @@ def test_child_uses_one_authoritative_config_and_public_sdk_item_contract(monkey
     assert observed["start"]["config"] == codex_child.build_isolated_thread_config(str(tmp_path / "snapshot.json"))
     assert observed["start"]["approval_mode"] == "deny"
     assert observed["start"]["developer_instructions"] == "prompt"
-    assert observed["run"][0] == "Evaluate the current frozen CPR context and return one decision."
+    assert observed["run"][0] == (
+        "Before deciding, call each frozen MCP tool exactly once: session_levels, "
+        "momentum_vwap, market_structure, and position_state. Wait for all four "
+        "calls to complete, then evaluate the frozen CPR context and return one decision."
+    )
     assert observed["run"][1] == {"approval_mode": "deny", "output_schema": {"type": "object"}, "effort": "medium"}
     assert [call["tool"] for call in response["tool_calls"]] == list(EXPECTED_TOOL_NAMES)
     assert [call["status"] for call in response["tool_calls"]] == ["completed"] * 4

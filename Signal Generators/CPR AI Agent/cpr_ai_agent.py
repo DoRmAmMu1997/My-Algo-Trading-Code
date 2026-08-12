@@ -7,9 +7,10 @@ boundary: it first proves the model read the exact frozen evidence, then parses
 the strict schema, verifies model/prompt identity and freshness, and finally
 recalculates every executable field from deterministic facts.
 
-Any missing tool call, stale bar, malformed response, optional SDK problem, or
-contradictory market fact becomes ``HOLD``.  Open-position mechanical safety
-and order execution remain outside this module in the master worker.
+Tool evidence that remains incomplete after one same-snapshot retry, a stale
+bar, malformed response, optional SDK problem, or contradictory market fact
+becomes ``HOLD``.  Open-position mechanical safety and order execution remain
+outside this module in the master worker.
 """
 
 from __future__ import annotations
@@ -22,6 +23,11 @@ from time import monotonic
 from typing import Any
 
 from cpr_ai_tools import EXPECTED_TOOL_NAMES
+
+# Missing/failed reads are safe to retry because all four tools are read-only
+# views of the exact same immutable snapshot.  Capability violations are never
+# retried: they indicate that the turn left the allowlisted contract.
+_RETRIABLE_TOOL_EVIDENCE_CODES = frozenset({"missing_tool_call", "failed_tool_call"})
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,7 @@ class CPRAgentOutcome:
     latency_ms: int = 0
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_evidence: tuple[CPRToolCallRecord, ...] = ()
+    inference_attempts: int = 1
 
 
 def _hold(code: str, reason: str, proposal: Any | None = None, *, regime: str | None = None) -> CPRAgentOutcome:
@@ -418,10 +425,12 @@ class CPRAgent:
     ) -> CPRAgentOutcome:
         """Run one turn and return only contemporaneous host-owned permission.
 
-        A bar signature is consumed before inference starts, so failures and
-        timeouts are not retried on the same market bar.  ``current_signature``
-        lets the host suppress a result when fresher completed evidence arrived
-        while Codex was thinking.
+        A bar signature is consumed before inference starts, so a failed host
+        decision is never started again by the next worker poll.  Inside this
+        single decision only, incomplete read-only tool evidence may receive one
+        retry against the same frozen snapshot and total deadline.
+        ``current_signature`` lets the host suppress a result when fresher
+        completed evidence arrived while Codex was thinking.
         """
 
         with self._lock:
@@ -434,9 +443,15 @@ class CPRAgent:
         executor = ThreadPoolExecutor(max_workers=1)
         release_when_finished = False
         try:
-            future = executor.submit(self._run_turn, context, bar_signature)
+            future = executor.submit(
+                self._run_turn_with_tool_retry,
+                context,
+                bar_signature,
+            )
             try:
-                result = future.result(timeout=self.timeout_seconds)
+                result, inference_attempts, combined_usage = future.result(
+                    timeout=self.timeout_seconds
+                )
             except TimeoutError:
                 # Python cannot safely kill an already running SDK call.  Do
                 # not wait for it during shutdown and never retain its future,
@@ -454,11 +469,82 @@ class CPRAgent:
         latency_ms = int((monotonic() - started) * 1000)
         outcome = self._validate_run(result, context, bar_signature, current_signature)
         outcome.latency_ms = latency_ms
-        outcome.token_usage = dict(result.token_usage)
+        outcome.token_usage = combined_usage
         outcome.tool_evidence = result.tool_calls
+        outcome.inference_attempts = inference_attempts
         return outcome
 
-    def _run_turn(self, context: Mapping[str, Any], bar_signature: str) -> CPRAgentRunResult:
+    def _run_turn_with_tool_retry(
+        self,
+        context: Mapping[str, Any],
+        bar_signature: str,
+    ) -> tuple[CPRAgentRunResult, int, dict[str, int]]:
+        """Retry incomplete frozen-tool evidence once inside one total deadline.
+
+        Both attempts receive the same in-memory context and bar signature.  A
+        retry therefore cannot silently move to newer market facts.  The second
+        attempt receives only the wall-clock budget left after the first one,
+        so this recovery path never doubles the configured SDK timeout.
+        """
+
+        deadline = monotonic() + self.timeout_seconds
+        results: list[CPRAgentRunResult] = []
+        for attempt_index in range(2):
+            if attempt_index == 0:
+                # Preserve the configured value exactly on the normal path.  It
+                # is useful operator evidence and keeps existing runner behavior
+                # unchanged when no retry is required.
+                attempt_timeout = self.timeout_seconds
+            else:
+                attempt_timeout = deadline - monotonic()
+                if attempt_timeout <= 0:
+                    break
+            result = self._run_turn(
+                context,
+                bar_signature,
+                timeout_seconds=attempt_timeout,
+            )
+            results.append(result)
+            evidence_error = self._tool_evidence_error(result)
+            if (
+                evidence_error is None
+                or evidence_error[0] not in _RETRIABLE_TOOL_EVIDENCE_CODES
+            ):
+                break
+
+        # The first call either produced a result or raised to ``decide()``, so
+        # this list cannot be empty.  Keeping the assertion documents that local
+        # invariant without converting an SDK exception into trusted evidence.
+        assert results
+        return results[-1], len(results), self._combined_token_usage(results)
+
+    @staticmethod
+    def _combined_token_usage(
+        results: list[CPRAgentRunResult],
+    ) -> dict[str, int]:
+        """Aggregate billed counters while retaining one context-window size.
+
+        A retry is a second model turn and its tokens must remain visible in the
+        JSONL audit.  ``model_context_window`` describes capacity rather than
+        consumption, so it uses the largest reported value instead of a sum.
+        """
+
+        combined: dict[str, int] = {}
+        for result in results:
+            for key, value in result.token_usage.items():
+                if key == "model_context_window":
+                    combined[key] = max(combined.get(key, 0), int(value))
+                else:
+                    combined[key] = combined.get(key, 0) + int(value)
+        return combined
+
+    def _run_turn(
+        self,
+        context: Mapping[str, Any],
+        bar_signature: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> CPRAgentRunResult:
         """Build prompt/schema lazily and pass only advisory inputs to the child.
 
         The bar signature is cadence metadata; the frozen context is the only
@@ -480,7 +566,14 @@ class CPRAgent:
             reasoning_effort=self.reasoning_effort,
             prompt_version=self.prompt_version or CPR_AI_PROMPT_VERSION,
             output_schema=CPRAgentDecision.model_json_schema(),
-            timeout_seconds=self.timeout_seconds,
+            # Direct diagnostic callers historically used this helper without
+            # an explicit deadline.  Normal and retry paths pass their exact
+            # per-attempt budget; the fallback preserves that diagnostic API.
+            timeout_seconds=(
+                self.timeout_seconds
+                if timeout_seconds is None
+                else timeout_seconds
+            ),
         )
 
     def _validate_run(
