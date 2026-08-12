@@ -28,8 +28,12 @@ deep-copy views of the same frozen completed-bar context:
   `HOLD`, premise `EXIT`, or the one permitted `SCALE_IN` request.
 
 The snapshot contains no order surface, account, credential, broker, venue, or
-execution object. A missing or failed tool call, a duplicate/unapproved tool,
-or any unexpected agent action invalidates the turn.
+execution object. The immediate turn request repeats the four exact tool names
+in addition to the developer prompt. If the first isolated turn still omits a
+tool, or one tool reports failure, the host permits one retry against the same
+immutable snapshot using only the time left in the original SDK deadline. A
+second incomplete result, a duplicate/unapproved tool, or any unexpected agent
+action invalidates the turn and produces `HOLD`.
 
 ## Decision contract and host gates
 
@@ -74,8 +78,14 @@ host then enforces the selected framework:
 - It polls mechanical safety every five seconds and calls Codex at most once for
   each newly completed five-minute candle. A start-stamped one-minute candle is
   not complete until the next minute begins, and all five exact minute slots
-  must exist once; websocket revisions and later REST true-ups cannot create a
-  second call for the same bucket.
+  must exist once.
+- In websocket mode, clock completeness alone is not enough. Every shared OHLC
+  snapshot carries an atomic `official_candle_ts` watermark. A 09:55 five-minute
+  bucket waits until the REST source covers its final 09:59 one-minute candle,
+  even when Dhan's true-up takes longer than its normal five-second delay. This
+  is a condition check rather than a hard-coded sleep. A later official revision
+  can still invalidate an in-flight result, but it cannot create a second model
+  call for an already-consumed bucket.
 - At 15:00 IST new entries and adds stop; management and exits continue.
 - At 15:15 IST the host square-off closes exposure and stops the worker.
 
@@ -136,7 +146,8 @@ missing row with a warning; the labels remain separate from legacy CPR workers.
 With `CPR_AI_DECISION_LOGGING_ENABLED=true`, the host appends sanitized JSONL to
 `Backtest Outputs/cpr_ai_decisions.jsonl` by default. Each row records the frozen
 context, proposal, accepted regime, validation code/reason, authoritative host
-geometry, execution outcome, latency, token usage, and tool-call evidence.
+geometry, execution outcome, latency, inference-attempt count, aggregate token
+usage across a retry, and final tool-call evidence.
 Credential-like mapping fields are removed recursively before serialization.
 Logging never makes a proposal executable, and an enabled log must succeed
 before an entry or add may be submitted.

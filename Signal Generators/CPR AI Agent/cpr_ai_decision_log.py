@@ -161,6 +161,11 @@ class CPRDecisionLogger:
                 },
                 "execution": execution or {"mode": "ORDER_FREE", "submitted": False},
                 "latency_ms": latency_ms,
+                # A value of two means the first isolated turn did not provide
+                # complete frozen-tool evidence and the host used its one safe,
+                # same-snapshot retry.  Recording it keeps latency and token
+                # totals understandable during later operational review.
+                "inference_attempts": int(getattr(outcome, "inference_attempts", 1)),
                 "token_usage": token_usage,
                 "tool_evidence": tool_evidence,
             }

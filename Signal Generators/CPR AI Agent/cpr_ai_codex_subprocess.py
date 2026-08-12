@@ -21,10 +21,15 @@ from typing import Any
 
 _REQUEST_KEYS = {"snapshot_path", "model", "reasoning_effort", "prompt", "output_schema"}
 _EXPECTED_TOOLS = ("session_levels", "momentum_vwap", "market_structure", "position_state")
-# ``build_system_prompt()`` contains durable role, tool, and safety policy.  The
-# actual turn request stays short so those rules are stated once at the SDK's
-# stronger developer-instruction layer instead of being repeated as user text.
-_TURN_REQUEST = "Evaluate the current frozen CPR context and return one decision."
+# ``build_system_prompt()`` remains the durable policy authority.  Repeating the
+# four reads in the immediate turn request is intentional defense in depth: a
+# production turn occasionally returned structured HOLD text without consulting
+# MCP even though the developer prompt said those calls were mandatory.
+_TURN_REQUEST = (
+    "Before deciding, call each frozen MCP tool exactly once: session_levels, "
+    "momentum_vwap, market_structure, and position_state. Wait for all four "
+    "calls to complete, then evaluate the frozen CPR context and return one decision."
+)
 _ALLOWED_TURN_ITEM_TYPES = frozenset(
     {
         # The SDK records the prompt submitted through ``Thread.run`` as a

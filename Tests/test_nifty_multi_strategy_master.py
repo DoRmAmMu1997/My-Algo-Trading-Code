@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -1356,6 +1357,28 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
         except RuntimeError:
             self.fail("refresh_index_and_option_ltps should swallow broker errors")
 
+    def test_rest_fetcher_marks_its_newest_candle_as_official(self):
+        """Pure REST mode must satisfy the same watermark contract as true-up."""
+
+        latest = pd.Timestamp("2026-08-12 09:29:00")
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [latest],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+            }
+        )
+        self.broker.fetch_ltp_map.return_value = {}
+
+        # Stop after one real fetcher cycle.  Only the waiting primitive is
+        # replaced; OHLC publication and SharedMarketDataStore remain real.
+        self.stop_event.wait = MagicMock(side_effect=lambda _seconds: self.stop_event.set())
+        self.fetcher.run()
+
+        self.assertEqual(self.store.get("1").official_candle_ts, latest)
+
 
 # =============================================================================
 # TEST SUITE: MARKET DATA SOURCE SELECTOR
@@ -1633,8 +1656,10 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
             }
         )
         self.fetcher._run_true_up("test", now_ist=datetime(2026, 5, 15, 10, 17, 40))
-        frame = self.store.get("1").frame
+        snapshot = self.store.get("1")
+        frame = snapshot.frame
         self.assertEqual(len(frame), 3)
+        self.assertEqual(snapshot.official_candle_ts, completed)
         by_ts = frame.set_index("timestamp")
         # Completed minute now carries the OFFICIAL candle...
         self.assertEqual(by_ts.loc[completed]["open"], 100.0)
@@ -1927,6 +1952,35 @@ class TestAdditionalDataclasses(unittest.TestCase):
         self.assertEqual(snap.timeframe, "1")
         self.assertEqual(snap.frame.iloc[-1]["close"], 100.5)
         self.assertIsNotNone(snap.candle_signature)
+
+    def test_shared_store_snapshot_carries_an_optional_official_candle_watermark(self):
+        """Consumers can distinguish official REST history from provisional ticks."""
+
+        frame = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-08-12 09:29:00")],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+            }
+        )
+        store = master_file.SharedMarketDataStore()
+
+        snapshot = store.update("1", frame)
+        copied = store.get("1")
+
+        self.assertTrue(hasattr(snapshot, "official_candle_ts"))
+        self.assertIsNone(snapshot.official_candle_ts)
+        self.assertIsNone(copied.official_candle_ts)
+
+        watermark = pd.Timestamp("2026-08-12 09:29:00")
+        self.assertIn(
+            "official_candle_ts",
+            inspect.signature(store.update).parameters,
+        )
+        store.update("1", frame, official_candle_ts=watermark)
+        self.assertEqual(store.get("1").official_candle_ts, watermark)
 
     def test_ltp_snapshot(self):
         """LTPSnapshot identifies a leg and its latest price + fetched time."""
@@ -9789,6 +9843,65 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         minutes.loc[4, ["high", "close"]] = [112.0, 111.0]
         corrected = worker.build_strategy_frame(minutes, as_of=at_close)
         worker.process_strategy_frame(corrected)
+        self.assertEqual(agent.decide.call_count, 1)
+
+    def test_run_waits_for_the_bucket_final_minute_to_be_official_before_inference(self):
+        """A clock-complete tick bucket cannot race its minute-close REST true-up.
+
+        At 10:00 the 09:55 five-minute bucket is clock-complete, but its final
+        09:59 minute is initially still tick-owned.  The first real worker poll
+        must leave the bucket identity unconsumed.  Once the same atomic store
+        snapshot says REST covers 09:59, the next poll may infer exactly once.
+        """
+
+        worker, agent, _logger = self._worker()
+        worker._run_prebar_safety = MagicMock(return_value=False)
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {"prior_accepted_regime": None},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        start = pd.Timestamp("2026-08-03 09:55:00")
+        minutes = pd.DataFrame(
+            [
+                {
+                    "timestamp": start + pd.Timedelta(minutes=offset),
+                    "open": 100.0 + offset,
+                    "high": 101.0 + offset,
+                    "low": 99.0 + offset,
+                    "close": 100.5 + offset,
+                }
+                for offset in range(5)
+            ]
+        )
+        worker.store.update(
+            "1",
+            minutes,
+            official_candle_ts=pd.Timestamp("2026-08-03 09:58:00"),
+        )
+        poll_count = 0
+
+        def advance_true_up_then_stop():
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                self.assertEqual(agent.decide.call_count, 0)
+                self.assertIsNone(worker._last_agent_bar_identity)
+                worker.store.update(
+                    "1",
+                    minutes,
+                    official_candle_ts=pd.Timestamp("2026-08-03 09:59:00"),
+                )
+                return
+            self.assertEqual(agent.decide.call_count, 1)
+            raise StopIteration("test completed two worker polls")
+
+        worker.wait_for_next_poll = advance_true_up_then_stop
+
+        with self.assertRaisesRegex(StopIteration, "two worker polls"):
+            worker.run()
+
         self.assertEqual(agent.decide.call_count, 1)
 
     def test_bucket_identity_is_stable_while_content_signature_detects_true_up(self):
