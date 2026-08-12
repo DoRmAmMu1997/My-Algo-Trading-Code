@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 import warnings
 from contextlib import ExitStack
@@ -1927,6 +1928,98 @@ class TestDhanhqDeprecationWarningFilter(unittest.TestCase):
         messages = [str(item.message) for item in caught]
         self.assertEqual(len(messages), 2, messages)
         self.assertIn(sdk_message, messages)
+        self.assertIn("some other deprecation", messages)
+
+    def test_filter_covers_both_dhanhq_modules_that_call_utcfromtimestamp(self):
+        """`dhanhq/__init__` imports marketfeed AND fulldepth, and both ship the
+        same `utc_time` helper (marketfeed.py:523, fulldepth.py:391).
+
+        The runner only subscribes MarketFeed, so the fulldepth call site should
+        never fire -- but it is one regex branch and the module is imported, so
+        covering it costs nothing and removes a latent surprise.
+        """
+        pattern = next(
+            entry[3].pattern
+            for entry in warnings.filters
+            if entry[0] == "ignore"
+            and entry[2] is DeprecationWarning
+            and entry[1] is not None
+            and "utcfromtimestamp" in entry[1].pattern
+        )
+        compiled = re.compile(pattern)
+        self.assertTrue(compiled.match("dhanhq.marketfeed"), pattern)
+        self.assertTrue(compiled.match("dhanhq.fulldepth"), pattern)
+        # Still scoped -- it must not swallow the same message from our own code.
+        self.assertFalse(compiled.match("master_file"), pattern)
+
+
+class TestPytestReappliesTheDhanhqWarningFilter(unittest.TestCase):
+    """The master's import-time filter is INVISIBLE to pytest, so it must be
+    repeated in `[tool.pytest.ini_options] filterwarnings`.
+
+    Pytest wraps every test in `catch_warnings()` + `simplefilter("always")`,
+    which resets `warnings.filters` and discards anything installed at import
+    time; only its own `-W`/ini entries are re-applied inside that context.
+    That is why the warning kept appearing in test output for weeks while the
+    runner itself was silent, and why `test_filter_suppresses_only_the_sdk_warning`
+    above never caught it -- that test re-installs the filter by hand, which is
+    exactly the step pytest does NOT do for us.
+    """
+
+    @staticmethod
+    def _ini_filters():
+        with open(REPO_ROOT / "pyproject.toml", "rb") as handle:
+            config = tomllib.load(handle)
+        return config["tool"]["pytest"]["ini_options"]["filterwarnings"]
+
+    def test_ini_entries_exist_for_both_modules(self):
+        entries = self._ini_filters()
+        for module in ("dhanhq.marketfeed", "dhanhq.fulldepth"):
+            self.assertTrue(
+                any(
+                    item.startswith("ignore:datetime.datetime.utcfromtimestamp()")
+                    and item.endswith(module)
+                    for item in entries
+                ),
+                f"pyproject filterwarnings must silence {module}: {entries}",
+            )
+
+    def test_ini_entries_actually_suppress_the_sdk_warning(self):
+        """Assert the STRINGS work, not merely that they are present.
+
+        The ini format is not the Python API: `warnings._setoption` `re.escape`s
+        the message and module fields, so these are literals rather than the
+        regex the master file uses. A plausible-looking entry can silently match
+        nothing, so this feeds the committed strings through the same parser
+        pytest uses and then triggers the real SDK helper.
+        """
+        sdk_message = (
+            "datetime.datetime.utcfromtimestamp() is deprecated and "
+            "scheduled for removal in a future version."
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")  # what pytest does to us
+            for item in self._ini_filters():
+                warnings._setoption(item)  # how pytest parses -W / ini strings
+            for module, lineno in (("dhanhq.marketfeed", 523), ("dhanhq.fulldepth", 391)):
+                warnings.warn_explicit(
+                    sdk_message,
+                    DeprecationWarning,
+                    filename=module.replace(".", "/") + ".py",
+                    lineno=lineno,
+                    module=module,
+                )
+            # An unrelated deprecation from the same module must still surface.
+            warnings.warn_explicit(
+                "some other deprecation",
+                DeprecationWarning,
+                filename="dhanhq/marketfeed.py",
+                lineno=1,
+                module="dhanhq.marketfeed",
+            )
+
+        messages = [str(item.message) for item in caught]
+        self.assertNotIn(sdk_message, messages, messages)
         self.assertIn("some other deprecation", messages)
 
 

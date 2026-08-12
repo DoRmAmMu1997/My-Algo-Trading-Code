@@ -334,17 +334,30 @@ except ImportError:  # pragma: no cover - optional dependency
 # DeprecationWarning onto the operator's console for every feed connection.
 # The SDK version is policy-pinned (DEPS-001 in requirements.txt), so until a
 # deliberate bump moves past that call we silence EXACTLY that message from
-# EXACTLY that module: deprecation warnings raised by our own code, or by any
+# EXACTLY those modules: deprecation warnings raised by our own code, or by any
 # other library, still reach the console.  The warning fires per tick at
 # runtime (never at import), so installing the filter here -- at module load,
-# long before any feed thread starts -- covers every code path; and because
-# `filterwarnings` PREPENDS, it also wins over any blanket -W /
-# PYTHONWARNINGS setting on the host.
+# long before any feed thread starts -- covers every runtime code path.
+#
+# `dhanhq/__init__.py` imports BOTH `marketfeed` and `fulldepth`, and each ships
+# the same `utc_time` helper (marketfeed.py:523, fulldepth.py:391).  The runner
+# only subscribes MarketFeed, so the fulldepth call site should never fire; it is
+# covered anyway because the cost is one regex branch and the alternative is a
+# surprise on the day something reaches for full-depth data.
+#
+# This filter does NOT cover pytest.  Pytest wraps every test in
+# `catch_warnings()` + `simplefilter("always")`, which RESETS `warnings.filters`
+# and discards anything a module installed at import time; only pytest's own
+# `-W` / `[tool.pytest.ini_options] filterwarnings` entries are re-applied
+# inside that context.  The matching ini entries live in `pyproject.toml` and
+# `Tests/Dependencies/test_repository_policy.py` asserts the two stay in step --
+# without them this exact warning reappears in every pytest run even though the
+# runner itself is silent.
 warnings.filterwarnings(
     "ignore",
     message=r"datetime\.datetime\.utcfromtimestamp\(\) is deprecated",
     category=DeprecationWarning,
-    module=r"dhanhq\.marketfeed",
+    module=r"dhanhq\.(marketfeed|fulldepth)",
 )
 
 
