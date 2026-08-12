@@ -573,6 +573,53 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   nothing more: on the very session that produced it, the sharp slide was followed
   by continuous selling and the bait read was WRONG. Use it to break a tie between
   two otherwise-equal reads, never as the premise of a trade on its own.
+- THE CHART DOES NOT REPEAT TWO DAYS RUNNING (v4f). When today's open reproduces
+  yesterday's shape — same flat open, same immediate drop, same indices — that
+  SAMENESS is itself the tell, and it argues AGAINST the continuation everyone
+  else is taking. IH, watching an exact repeat of the prior session: "normally the
+  market does not repeat the chart... if it makes the same chart today" then "some
+  kind of TRAP will definitely form here. We were waiting for exactly that."
+  The mechanism is participation again: a shape everyone watched yesterday is a
+  shape everyone is ready for today, and a move nobody has to be tricked into
+  paying for is not a move the market needs to make. So a second-day carbon copy
+  raises the probability of a REVERSAL against the copied direction, not of a
+  continuation along it. Note the asymmetry with SECOND-DAY RECRUITMENT (v4a):
+  that rule is about a crowd built over two days and then hunted; this one is
+  about the PATH being identical, which is what makes the second day a trap.
+- A MOVE THAT DENIED YOU ENTRY WAS NOT YOUR MOVE (v4f). The clean intraday form of
+  v4d's gap logic. IH wanted to sell and never got the chance: "if it had gone a
+  bit slow, or given us a slight up move first, we would have had a chance to
+  sell... but the momentum was very sharp — everything happened in ONE MINUTE."
+  A move that completes before anyone can join it has recruited nobody, so it has
+  created no inventory and there is nothing behind it to hunt. Practical rule: if
+  the move you wanted is already over, do NOT chase it late and do NOT assume it
+  continues. Ask instead what the market must do next to trap somebody, because a
+  one-minute move leaves it with the same empty book it started with.
+- AN EMPTY BOOK MEANS A TRAP IS COMING — WAIT FOR IT TO REVEAL ITS DIRECTION (v4f).
+  This is the reconciliation of v4e's most expensive rule, and the two sessions
+  that produced them are worth holding side by side. BOTH days opened with IH
+  saying nobody was seated: "here there are neither many buyers nor many sellers."
+  On 11 Aug he PREDICTED who would arrive, entered on that forecast, and lost. On
+  12 Aug he waited for the market to SHOW him, entered only once a sharp recovery
+  had actually begun, and won.
+  So an empty book is not merely a no-trade condition (v4e) — it is a statement
+  that the market MUST manufacture a trap, because it has nothing else to work
+  with. What it does not tell you is which side the trap is aimed at. The rule is
+  therefore: on an empty book, form the hypothesis but wait for
+  CONFIRMATION IN PRICE before acting. IH's confirmation was explicit — a sharp
+  recovery, led by one index, off a drop that had trapped the sellers who chased
+  it: "the trap somewhere seemed to have been made FOR THE SELLERS." Waiting cost
+  him the first part of the move and still produced the day's profit; forecasting
+  cost him the whole of the previous session.
+- THE SHARPEST RECOVERY NAMES THE LEADING INDEX, AND SIZE FOLLOWS IT (v4f). When
+  the three indices turn together but at different speeds, the fastest one is not
+  merely confirming — it is where the move is actually being made, and it should
+  carry the most size. IH: "NIFTY and Sensex recovery is not as visible, but
+  BankNIFTY was recovering very SHARPLY... and if we need more quantity in
+  BankNIFTY, the benefit comes from there." He also used the laggards as the
+  target case rather than the entry case: "gradually Sensex and NIFTY will try to
+  cover themselves, so we will get our target." Read alongside INDEX HIERARCHY:
+  the hierarchy decides who must AGREE, this decides who to WEIGHT.
 - SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
   gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
   available". That premise is FALSE when the prior session already seated a buying
@@ -997,6 +1044,23 @@ RISK DISCIPLINE
   side ONLY. Applying them to a loser is not patience, it is the premise being
   re-argued after the evidence arrived. Never widen, delay, or suspend an exit rule
   because the reasoning still feels right.
+- BOOK WHEN THE PROFIT STOPS GROWING, NOT WHEN IT REVERSES (v4f). The exit trigger
+  is the RATE at which the position is still gaining, not a price level and not a
+  loss. IH held while the move was paying — "momentum is very fast, it will not
+  stop easily, so the target may be BIG... we are not exiting now" — and closed
+  the moment that changed: "now see, the profit has started REDUCING. So let us
+  book. The more smoothly the profit comes, the better."
+  Two supports he gives for it, both worth keeping:
+    * "Especially if we have ALREADY SEEN a good target, after that we should not
+      be greedy." A target that has been printed on the screen counts as reached,
+      even if you did not take it there.
+    * "We had already captured one momentum... if any retracement becomes a bit
+      too big it becomes a problem for us." One captured leg is a complete trade;
+      the second leg is a new trade needing its own premise, not a continuation
+      of this one's entitlement.
+  This is the general form of BOOK BEFORE THE ROUND NUMBER (v4d): that rule names
+  WHERE the late crowd's targets sit, this one names WHEN your own edge has been
+  spent regardless of where price is.
 - CROWD SIZE IS THE THIRD TARGET INPUT (v4c). Alongside how recently the crowd was
   recruited (v4a) and whether it has averaged down (v4b), HOW MANY are seated
   scales the move available against them — and for a reason worth knowing: a

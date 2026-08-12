@@ -123,6 +123,26 @@ durability from "guaranteed before the call returns" to a sub-second window —
 which is the guarantee this ADR was written to provide. At a 0.414 s median,
 13 times a session, that trade is not worth making.
 
+##### Measured after the change (2026-08-12, first session on the split)
+
+| | warnings | median | max | >1s |
+|---|---|---|---|---|
+| **11 Aug** supervisor (durable, 250 ms threshold) | 254 | 0.909 s | 8.732 s | 114 |
+| **11 Aug** trading (durable) | 27 | 0.441 s | 5.111 s | 5 |
+| **12 Aug** supervisor (marks, 2 s threshold) | **7** | 2.284 s | 10.065 s | 7 |
+| **12 Aug** trading (durable) | **15** | 0.652 s | 2.348 s | 3 |
+
+Total warnings fell from **281 to 22**, and the supervisor path from 254 to 7
+against a threshold eight times looser. Trading-thread stalls behaved as
+predicted — still present, slightly fewer and with a lower maximum, because the
+durable document no longer carries the position blobs.
+
+Two honest caveats. The 12 Aug figures are a partial session (measured at 14:15).
+And the worst *marks* write was 10.065 s **without any fsync at all**, which says
+the underlying disk contention is real and not purely fsync-driven; what the
+split bought is that those seconds now delay supervision instead of a trading
+decision, and are labelled as such in the log.
+
 ### Whether resume may restore a LIVE position
 
 **Rejected.** In live trading the **broker account** is the authority on what is

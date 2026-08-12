@@ -908,6 +908,61 @@ def test_v4e_empty_book_is_a_no_trade_not_a_forecasting_licence():
     assert "never as the premise of a trade on its own" in bait
 
 
+def test_system_prompt_has_v4f_repeat_chart_and_confirmation_knowledge():
+    """v4f (12 Aug live session): a WIN taken from the same empty book that lost.
+
+    The session repeated the previous day's shape exactly -- flat open, immediate
+    drop -- and IH read that SAMENESS as the tell that a trap was forming rather
+    than a continuation. He then waited for the recovery to actually start before
+    entering, which is the whole difference from the 11 Aug loss.
+    """
+    prompt = build_system_prompt()
+    assert "THE CHART DOES NOT REPEAT TWO DAYS RUNNING" in prompt
+    assert "A MOVE THAT DENIED YOU ENTRY WAS NOT YOUR MOVE" in prompt
+    assert "AN EMPTY BOOK MEANS A TRAP IS COMING" in prompt
+    assert "THE SHARPEST RECOVERY NAMES THE LEADING INDEX" in prompt
+    assert "BOOK WHEN THE PROFIT STOPS GROWING" in prompt
+
+
+def test_v4f_confirmation_rule_does_not_reopen_the_v4e_forecasting_hole():
+    """The two rules are a matched pair and must stay one.
+
+    v4e says an empty book is a no-trade; v4f says an empty book means a trap is
+    coming. Read alone, v4f would license exactly the forecast v4e forbids. The
+    reconciliation is CONFIRMATION IN PRICE, and both halves have to survive
+    together or the pair becomes permission to guess.
+    """
+    prompt = build_system_prompt()
+    section = prompt[prompt.index("AN EMPTY BOOK MEANS A TRAP IS COMING"):]
+    section = section[: section.index("\n- ")] if "\n- " in section else section
+
+    # It must demand confirmation, not merely a hypothesis...
+    assert "CONFIRMATION IN PRICE" in section
+    # ...and it must name what it does NOT tell you.
+    assert "which side the trap is aimed at" in section
+    # The v4e rule it reconciles with must still be present and still say HOLD.
+    assert "A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED" in prompt
+    forecast = prompt[prompt.index("A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE"):]
+    forecast = forecast[: forecast.index("\n- ")] if "\n- " in forecast else forecast
+    assert "the correct output is HOLD" in forecast
+
+
+def test_v4f_exit_rule_stays_on_the_winning_side_only():
+    """"Book when profit stops growing" must never become "cut a loser early".
+
+    It is a profit-taking rule. If it drifted into the loss branch it would
+    contradict DISCIPLINE IS ASYMMETRIC, which puts the patience on winners and
+    the mechanical exit on losers.
+    """
+    prompt = build_system_prompt()
+    section = prompt[prompt.index("BOOK WHEN THE PROFIT STOPS GROWING"):]
+    section = section[: section.index("\n- ")] if "\n- " in section else section
+    assert "not a price level and not a" in section  # "...not a loss."
+    assert "already captured one momentum" in section.lower() or "captured one momentum" in section
+    # The asymmetry rule it builds on must still be there.
+    assert "DISCIPLINE IS ASYMMETRIC BETWEEN WINNERS AND LOSERS" in prompt
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
