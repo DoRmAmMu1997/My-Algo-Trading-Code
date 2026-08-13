@@ -17344,7 +17344,7 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
 def _emit_supervisor_heartbeat(
     session_state: SessionStateStore,
     started_workers: list[BasePaperStrategyWorker],
-    last_heartbeat_at: float,
+    last_heartbeat_at: float | None,
 ) -> float:
     """Log one supervisor liveness line per interval; return the new stamp.
 
@@ -17359,11 +17359,20 @@ def _emit_supervisor_heartbeat(
     presence shows the loop is turning, and the gap between the last heartbeat
     and the crash localises where it stopped.
 
+    ``last_heartbeat_at`` is ``None`` until the first line is emitted, and that
+    sentinel matters: `time.monotonic()` has an arbitrary origin, so a plain 0.0
+    means "long ago" on a Windows box whose counter is machine uptime and "just
+    now" in a freshly booted Linux container. CI caught exactly that -- the first
+    heartbeat fired locally and was suppressed for five minutes on the runner.
+
     Never raises: a diagnostic that can take the supervisor down is worse than
     no diagnostic at all.
     """
     now = time.monotonic()
-    if (now - last_heartbeat_at) < SESSION_STATE_HEARTBEAT_SECONDS:
+    if (
+        last_heartbeat_at is not None
+        and (now - last_heartbeat_at) < SESSION_STATE_HEARTBEAT_SECONDS
+    ):
         return last_heartbeat_at
     try:
         report = session_state.health()
@@ -17403,10 +17412,12 @@ def _start_and_supervise_runtime_threads(
 
     started_workers: list[BasePaperStrategyWorker] = []
     shutdown_reason = ""
-    # Monotonic so an NTP step cannot silence or spam the heartbeat. Starting at
-    # 0.0 makes the first supervised tick emit one, which proves the loop was
-    # entered at all -- the 2026-08-12 freeze left no such evidence.
-    last_heartbeat_at = 0.0
+    # Monotonic so an NTP step cannot silence or spam the heartbeat. None means
+    # "never emitted", so the first supervised tick always logs one and proves
+    # the loop was entered at all -- the 2026-08-12 freeze left no such evidence.
+    # It must NOT be 0.0: monotonic()'s origin is arbitrary, so 0.0 reads as
+    # "long ago" on Windows and "just now" in a fresh Linux container.
+    last_heartbeat_at: float | None = None
     try:
         fetcher.start()
         if telegram_worker is not None:

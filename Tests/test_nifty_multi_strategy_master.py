@@ -11638,16 +11638,34 @@ class TestSessionStatePersistence(unittest.TestCase):
             "marks_writes": 12, "marks_age_seconds": 9000.0, "open_positions": 11,
             "trades_recorded": 108, "write_failures_logged": False,
         }
-        master_file._emit_supervisor_heartbeat(state, [self.worker], 0.0)
+        master_file._emit_supervisor_heartbeat(state, [self.worker], None)
         state.warn_if_marks_stalled.assert_called_once()
 
     def test_heartbeat_never_breaks_supervision(self):
         """A diagnostic that can kill the supervisor is worse than none."""
         state = MagicMock()
         state.health.side_effect = RuntimeError("boom")
-        stamp = master_file._emit_supervisor_heartbeat(state, [self.worker], 0.0)
+        before = time.monotonic()
+        stamp = master_file._emit_supervisor_heartbeat(state, [self.worker], None)
         # It still advances the stamp, so a broken health() cannot spin the log.
-        self.assertGreater(stamp, 0.0)
+        self.assertGreaterEqual(stamp, before)
+
+    def test_first_heartbeat_always_fires_regardless_of_the_monotonic_origin(self):
+        """`None` means "never emitted"; 0.0 would be platform-dependent.
+
+        `time.monotonic()` has an arbitrary origin -- machine uptime on Windows,
+        near zero in a freshly booted Linux container. Seeding the stamp with
+        0.0 therefore reads as "long ago" on one and "just now" on the other,
+        which is exactly how this slipped through locally and failed in CI: the
+        first heartbeat fired here and was suppressed for five minutes there.
+        """
+        state = MagicMock()
+        state.health.return_value = {
+            "marks_writes": 0, "marks_age_seconds": 0.0, "open_positions": 0,
+            "trades_recorded": 0, "write_failures_logged": False,
+        }
+        master_file._emit_supervisor_heartbeat(state, [self.worker], None)
+        state.health.assert_called_once()
 
     # -- resume ----------------------------------------------------------
     def test_position_record_round_trips_through_the_file(self):
