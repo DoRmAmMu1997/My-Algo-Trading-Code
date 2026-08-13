@@ -9987,6 +9987,50 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
         logger.write.assert_called_once()
 
+    def test_worker_marks_pre_and_post_audits_with_one_frozen_coverage_snapshot(self):
+        """An entry blocked after inference must still retain both distinct audit stages.
+
+        The bar/coverage evidence belongs to the inference snapshot, so a later
+        execution outcome must not rebuild or silently alter it.
+        """
+
+        worker, agent, logger = self._worker()
+        outcome = agent.decide.return_value
+        outcome.action = "ENTER_LONG"
+        outcome.accepted = True
+        outcome.entry_price = 100.0
+        outcome.stop_price = 95.0
+        outcome.final_target_price = 118.0
+        outcome.validation_current_signature = "validated-0930"
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        worker._completed_bar_signature = lambda _frame: "frozen-0930"
+        worker._current_completed_spot_signature = lambda: "validated-0930"
+        worker._post_inference_exposure_block_reason = lambda: "entry_cutoff"
+        metadata = {
+            "bar_timestamp": "2026-08-13T09:30:00+05:30",
+            "frozen_signature": "frozen-0930",
+            "required_official_minutes": ["one", "two", "three", "four", "five"],
+            "present_official_minutes": ["one", "two", "three", "four", "five"],
+            "official_coverage": True,
+        }
+
+        worker.process_strategy_frame(
+            pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-13 09:30"), "close": 100.0}]),
+            audit_metadata=metadata,
+        )
+
+        self.assertEqual(logger.write.call_count, 2)
+        pre_action, post_action = logger.write.call_args_list
+        self.assertEqual(pre_action.kwargs["audit_stage"], "PRE_ACTION")
+        self.assertEqual(post_action.kwargs["audit_stage"], "POST_ACTION")
+        self.assertEqual(pre_action.kwargs["bar_metadata"], metadata)
+        self.assertEqual(post_action.kwargs["bar_metadata"], metadata)
+
     def test_forming_websocket_minute_waits_for_close_and_true_up_never_repeats_bucket(self):
         """Model forming websocket revisions and an official REST correction.
 

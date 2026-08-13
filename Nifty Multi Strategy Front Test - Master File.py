@@ -9758,6 +9758,59 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         )
         return required_minutes.issubset(official_minutes)
 
+    def _completed_bar_audit_metadata(
+        self,
+        snapshot: MarketSnapshot | None,
+        strategy_frame: pd.DataFrame,
+        frozen_signature: str,
+    ) -> dict[str, object]:
+        """Capture exact official-minute coverage once for both audit records.
+
+        The worker already proved this coverage before inference in ``run``.
+        Keeping the same small, JSON-ready mapping through pre- and post-action
+        logging makes the two rows comparable without re-reading a market store
+        that may have advanced while Codex or execution was running.  Direct
+        unit/diagnostic callers may not have a snapshot; they receive an empty,
+        explicitly false coverage record rather than invented evidence.
+        """
+
+        bucket_start = (
+            None
+            if strategy_frame.empty or "timestamp" not in strategy_frame.columns
+            else self._naive_ist_timestamp(strategy_frame.iloc[-1]["timestamp"])
+        )
+        required_minutes = frozenset(
+            bucket_start + pd.Timedelta(minutes=offset)
+            for offset in range(5)
+        ) if bucket_start is not None else frozenset()
+        official_minutes = frozenset(
+            timestamp
+            for value in (
+                () if snapshot is None else snapshot.official_completed_minutes
+            )
+            if (timestamp := self._naive_ist_timestamp(value)) is not None
+        )
+
+        def ist_iso(timestamp: pd.Timestamp) -> str:
+            """Represent internal naive-IST timestamps unambiguously in JSONL."""
+
+            return timestamp.tz_localize(IST_TIMEZONE).isoformat()
+
+        return {
+            "bar_timestamp": None if bucket_start is None else ist_iso(bucket_start),
+            "frozen_signature": frozen_signature,
+            "required_official_minutes": [
+                ist_iso(timestamp) for timestamp in sorted(required_minutes)
+            ],
+            "present_official_minutes": [
+                ist_iso(timestamp)
+                for timestamp in sorted(required_minutes & official_minutes)
+            ],
+            "official_coverage": bool(required_minutes) and required_minutes.issubset(
+                official_minutes
+            ),
+        }
+
     def _position_state_payload(self) -> dict[str, object]:
         """Expose allowlisted premise/risk facts, never execution capabilities.
 
@@ -10436,6 +10489,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         frozen_context: dict[str, object],
         outcome,
         execution: dict[str, object],
+        bar_metadata: dict[str, object],
     ) -> None:
         """Best-effort append actual post-action provenance to the decision log.
 
@@ -10456,6 +10510,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 token_usage=outcome.token_usage,
                 tool_evidence=self._tool_log_payload(outcome.tool_evidence),
                 execution=execution,
+                audit_stage="POST_ACTION",
+                bar_metadata=bar_metadata,
             )
         except Exception as exc:  # noqa: BLE001 - the pre-action audit still exists
             self.log.error(
@@ -10487,7 +10543,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             return "entry_cutoff"
         return ""
 
-    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+    def process_strategy_frame(
+        self,
+        strategy_frame: pd.DataFrame,
+        *,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None:
         """Evaluate one completed bucket through mechanics, Codex, and host gates.
 
         Flat workers skip new turns after 15:00; open workers continue for
@@ -10512,6 +10573,13 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         bar_signature = self._completed_bar_signature(strategy_frame)
         if not bar_signature:
             return
+        if audit_metadata is None:
+            # Tests and direct diagnostics can invoke this method outside the
+            # normal ``run`` loop. Capture a conservative local snapshot once
+            # so every row still has explicit, non-invented coverage facts.
+            audit_metadata = self._completed_bar_audit_metadata(
+                self.store.get(self.timeframe), strategy_frame, bar_signature
+            )
         frozen_context = self._latest_frozen_context()
         if self.pos.active and self._manage_completed_bar(frozen_context):
             return
@@ -10560,6 +10628,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                         else "AUDITED_BEFORE_EXECUTION"
                     ),
                 },
+                audit_stage="PRE_ACTION",
+                bar_metadata=audit_metadata,
             )
         except Exception as exc:  # noqa: BLE001 - entries fail closed; exits continue
             audit_ok = False
@@ -10603,6 +10673,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                         "submitted": True,
                         "status": "EXIT_CONFIRMED" if not self.pos.active else "EXIT_UNCONFIRMED",
                     },
+                    audit_metadata,
                 )
                 return
             if outcome.action == "SCALE_IN" and audit_ok:
@@ -10617,6 +10688,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                             "status": "SCALE_IN_BLOCKED",
                             "blocked_reason": blocked_reason,
                         },
+                        audit_metadata,
                     )
                     # A closed exposure gate prevents the add immediately. The
                     # normal safety pass also performs any associated lifecycle,
@@ -10644,6 +10716,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                             else "SCALE_IN_UNCONFIRMED"
                         ),
                     },
+                    audit_metadata,
                 )
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
@@ -10662,6 +10735,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     "status": "ENTRY_BLOCKED",
                     "blocked_reason": blocked_reason,
                 },
+                audit_metadata,
             )
             return
         direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
@@ -10688,6 +10762,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     else "ENTRY_BLOCKED"
                 ),
             },
+            audit_metadata,
         )
 
     def run(self) -> None:
@@ -10740,7 +10815,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     self.wait_for_next_poll()
                     continue
                 self._waiting_for_official_bar_identity = None
-                self.process_strategy_frame(completed)
+                audit_metadata = self._completed_bar_audit_metadata(
+                    snapshot,
+                    completed,
+                    self._completed_bar_signature(completed),
+                )
+                self.process_strategy_frame(completed, audit_metadata=audit_metadata)
             except Exception as exc:  # noqa: BLE001 - one turn must not kill safety
                 self.log.exception("CPR AI worker poll failed: %s", exc)
             self.wait_for_next_poll()

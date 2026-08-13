@@ -79,13 +79,16 @@ host then enforces the selected framework:
   each newly completed five-minute candle. A start-stamped one-minute candle is
   not complete until the next minute begins, and all five exact minute slots
   must exist once.
-- In websocket mode, clock completeness alone is not enough. Every shared OHLC
-  snapshot carries an atomic `official_candle_ts` watermark. A 09:55 five-minute
-  bucket waits until the REST source covers its final 09:59 one-minute candle,
-  even when Dhan's true-up takes longer than its normal five-second delay. This
-  is a condition check rather than a hard-coded sleep. A later official revision
-  can still invalidate an in-flight result, but it cannot create a second model
-  call for an already-consumed bucket.
+- In websocket mode, clock completeness alone is not enough. The REST producer
+  records only a stable generation: a source minute is eligible exactly when
+  its timestamp is strictly before `floor(request_started_at - true_up_delay)`.
+  Every shared OHLC snapshot atomically carries that exact immutable set as
+  `official_completed_minutes`. A 09:55 five-minute bucket needs all five exact
+  source minutes, 09:55 through 09:59; the final watermark alone is insufficient
+  because an intermediate REST hole must still block inference. This is a
+  condition check rather than a hard-coded sleep. A later official revision can
+  still invalidate an in-flight result, but it cannot create a second model call
+  for an already-consumed bucket.
 - At 15:00 IST new entries and adds stop; management and exits continue.
 - At 15:15 IST the host square-off closes exposure and stops the worker.
 
@@ -144,13 +147,27 @@ missing row with a warning; the labels remain separate from legacy CPR workers.
 ## Decision audit
 
 With `CPR_AI_DECISION_LOGGING_ENABLED=true`, the host appends sanitized JSONL to
-`Backtest Outputs/cpr_ai_decisions.jsonl` by default. Each row records the frozen
-context, proposal, accepted regime, validation code/reason, authoritative host
-geometry, execution outcome, latency, inference-attempt count, aggregate token
-usage across a retry, and final tool-call evidence.
-Credential-like mapping fields are removed recursively before serialization.
-Logging never makes a proposal executable, and an enabled log must succeed
-before an entry or add may be submitted.
+`Backtest Outputs/cpr_ai_decisions.jsonl` by default. Each row has an IST
+`recorded_at` timestamp and an `audit_stage`: `PRE_ACTION` is the host record
+before an entry/add may increase exposure, and `POST_ACTION` records the actual
+submission/confirmation result afterward. Direct diagnostic callers retain the
+safe `DIRECT` stage.
+
+The `bar` object records the start timestamp, frozen signature, the one
+validation-time current signature retained by the outcome, all five required
+official minute stamps, the required stamps present in the inference snapshot,
+and the resulting exact coverage boolean. Each `attempt_evidence` item records
+only its request kind (`normal` or the fixed `tool_repair`), typed evidence
+result, safe tool name/status records, and token usage. The corrective retry is
+allowed once only for missing/failed frozen-tool evidence, uses the same frozen
+snapshot, and receives only the time remaining from the original total deadline;
+any terminal failure remains a fail-closed HOLD.
+
+Credential-like mapping fields are removed recursively before serialization, and
+the logger deliberately omits model reasoning/final responses, auth data, local
+paths, broker/order/venue details, symbols, quantities, and SDK error text.
+Logging never makes a proposal executable, and an enabled log must succeed before
+an entry or add may be submitted.
 
 ## Zero-order smoke commands
 

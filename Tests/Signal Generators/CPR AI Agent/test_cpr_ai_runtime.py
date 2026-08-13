@@ -375,6 +375,136 @@ def test_normal_runner_timeout_error_records_typed_timeout_without_raw_exception
     assert outcome.token_usage == {}
 
 
+@pytest.mark.parametrize(
+    ("kind", "runner", "expected_code", "expected_attempts"),
+    [
+        pytest.param(
+            "outer_timeout",
+            None,
+            "timeout",
+            [(CPRTurnRequestKind.NORMAL, "timeout", (), {})],
+            id="outer-timeout",
+        ),
+        pytest.param(
+            "inner_timeout",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                subprocess.TimeoutExpired(cmd="private timeout path", timeout=1.0)
+            ),
+            "timeout",
+            [(CPRTurnRequestKind.NORMAL, "timeout", (), {})],
+            id="inner-timeout",
+        ),
+        pytest.param(
+            "first_runtime",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("credential private response")),
+            "runtime_error",
+            [(CPRTurnRequestKind.NORMAL, "runtime_error", (), {})],
+            id="first-runtime",
+        ),
+    ],
+)
+def test_terminal_first_attempt_outcomes_capture_one_validation_signature(
+    kind, runner, expected_code, expected_attempts
+):
+    """Terminal first-turn outcomes audit one host signature without raw errors."""
+
+    release = threading.Event()
+    started = threading.Event()
+    if kind == "outer_timeout":
+
+        def runner(**_kwargs):
+            started.set()
+            release.wait(timeout=0.3)
+            return CPRAgentRunResult("{}", (), {})
+
+        agent = CPRAgent(runner=runner, timeout_seconds=0.01)
+    else:
+        agent = CPRAgent(runner=runner)
+    signature_samples = []
+
+    try:
+        outcome = agent.decide(
+            _context(),
+            bar_signature="frozen",
+            current_signature=lambda: signature_samples.append("terminal-current") or "terminal-current",
+        )
+    finally:
+        release.set()
+
+    assert outcome.validation_code == expected_code
+    assert outcome.validation_current_signature == "terminal-current"
+    assert signature_samples == ["terminal-current"]
+    assert [
+        (item.request_kind, item.evidence_code, item.tool_records, item.token_usage)
+        for item in outcome.attempt_evidence
+    ] == expected_attempts
+    assert "private" not in outcome.validation_reason
+
+
+@pytest.mark.parametrize("repair_error", [TimeoutError(), RuntimeError("broker secret path")])
+def test_terminal_repair_failures_capture_one_validation_signature(repair_error):
+    """A repair terminal result retains its one final host-generation sample."""
+
+    calls = []
+
+    def runner(**_kwargs):
+        calls.append("attempt")
+        if len(calls) == 1:
+            return CPRAgentRunResult(
+                _proposal("HOLD", "SIDEWAYS", "NONE").model_dump_json(),
+                _calls(missing="market_structure"),
+                {"total_tokens": 3},
+            )
+        raise repair_error
+
+    samples = []
+    current_signatures = iter(("frozen", "repair-current"))
+    outcome = CPRAgent(runner=runner).decide(
+        _context(),
+        bar_signature="frozen",
+        current_signature=lambda: samples.append(next(current_signatures)) or samples[-1],
+    )
+
+    assert outcome.validation_code == ("timeout" if isinstance(repair_error, TimeoutError) else "runtime_error")
+    assert outcome.validation_current_signature == "repair-current"
+    assert samples == ["frozen", "repair-current"]
+    assert [(item.request_kind, item.evidence_code) for item in outcome.attempt_evidence] == [
+        (CPRTurnRequestKind.NORMAL, "missing_tool_call"),
+        (CPRTurnRequestKind.TOOL_REPAIR, outcome.validation_code),
+    ]
+
+
+def test_decision_log_drops_untrusted_tool_and_status_text_from_every_evidence_shape(tmp_path):
+    """Only canonical tool/status pairs may enter final or per-attempt JSONL."""
+
+    unsafe = "C:/private auth broker order venue symbol quantity response"
+    outcome = CPRHostPolicy().validate(_context(), _proposal("HOLD", "SIDEWAYS", "NONE"))
+    outcome.attempt_evidence = (
+        cpr_ai_agent.CPRAttemptEvidence(
+            attempt_number=1,
+            request_kind=CPRTurnRequestKind.NORMAL,
+            evidence_code="unexpected_agent_action",
+            tool_records=(CPRToolCallRecord(tool=unsafe, status=unsafe),),
+            token_usage={},
+        ),
+    )
+    path = tmp_path / "decisions.jsonl"
+    CPRDecisionLogger(str(path)).write(
+        frozen_context=_context(),
+        proposal=None,
+        outcome=outcome,
+        latency_ms=1,
+        token_usage={},
+        tool_evidence=[{"tool": unsafe, "status": unsafe}],
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    row = json.loads(raw)
+    assert unsafe not in raw
+    assert row["tool_evidence"] == []
+    assert row["attempt_evidence"][0]["tool_records"] == []
+
+
 @pytest.mark.parametrize("first_calls", [_calls(missing="market_structure"), _calls(failed="position_state")])
 def test_second_incomplete_tool_repair_remains_hold_after_exactly_two_attempts(first_calls):
     """A repair may not cascade into a third inference or a permissive result."""
@@ -938,6 +1068,244 @@ def test_decision_log_removes_plural_sensitive_keys_but_keeps_near_matches(tmp_p
         "ordered": [{"name": "r1", "price": 110.0}],
         "authoritative_geometry": {"preserved": True},
     }
+
+
+def test_decision_log_records_ist_bar_coverage_and_typed_attempt_evidence_without_secrets(tmp_path):
+    """An audit row must preserve host facts without retaining unsafe model text.
+
+    Removing the timestamp, a bar-generation field, retry evidence, or the
+    recursive redaction of a nested diagnostic must make this test fail.  The
+    expected values are hand-authored so this does not mirror logger helpers.
+    """
+
+    calls = iter(
+        [
+            CPRAgentRunResult(
+                _proposal("HOLD", "SIDEWAYS", "NONE").model_dump_json(),
+                _calls(missing="market_structure"),
+                {"input_tokens": 3, "total_tokens": 5},
+            ),
+            CPRAgentRunResult(
+                _proposal("HOLD", "SIDEWAYS", "NONE").model_dump_json(),
+                _calls(),
+                {"output_tokens": 2, "total_tokens": 4},
+            ),
+        ]
+    )
+    validation_signatures = iter(["frozen-0930", "frozen-0930"])
+    outcome = CPRAgent(runner=lambda **_kwargs: next(calls)).decide(
+        _context(),
+        bar_signature="frozen-0930",
+        current_signature=lambda: next(validation_signatures),
+    )
+    path = tmp_path / "decisions.jsonl"
+    metadata = {
+        "bar_timestamp": "2026-08-13T09:30:00+05:30",
+        "frozen_signature": "frozen-0930",
+        "required_official_minutes": [
+            "2026-08-13T09:30:00+05:30",
+            "2026-08-13T09:31:00+05:30",
+            "2026-08-13T09:32:00+05:30",
+            "2026-08-13T09:33:00+05:30",
+            "2026-08-13T09:34:00+05:30",
+        ],
+        "present_official_minutes": [
+            "2026-08-13T09:30:00+05:30",
+            "2026-08-13T09:31:00+05:30",
+            "2026-08-13T09:32:00+05:30",
+            "2026-08-13T09:33:00+05:30",
+            "2026-08-13T09:34:00+05:30",
+        ],
+        "official_coverage": True,
+        "nested": {
+            "auth": "DO-NOT-LOG-AUTH",
+            "local_path": "C:/private/decision.jsonl",
+            "broker": "DO-NOT-LOG-BROKER",
+            "order": "DO-NOT-LOG-ORDER",
+            "venue": "DO-NOT-LOG-VENUE",
+            "symbol": "DO-NOT-LOG-SYMBOL",
+            "quantity": "DO-NOT-LOG-QUANTITY",
+        },
+    }
+    logger = CPRDecisionLogger(str(path))
+    logger.write(
+        frozen_context=_context(),
+        proposal=_proposal("HOLD", "SIDEWAYS", "NONE"),
+        outcome=outcome,
+        latency_ms=12,
+        token_usage=outcome.token_usage,
+        tool_evidence=[record.__dict__ for record in outcome.tool_evidence],
+        audit_stage="PRE_ACTION",
+        bar_metadata=metadata,
+    )
+    logger.write(
+        frozen_context=_context(),
+        proposal=_proposal("HOLD", "SIDEWAYS", "NONE"),
+        outcome=outcome,
+        latency_ms=12,
+        token_usage=outcome.token_usage,
+        tool_evidence=[record.__dict__ for record in outcome.tool_evidence],
+        audit_stage="POST_ACTION",
+        bar_metadata=metadata,
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in raw.splitlines()]
+    assert outcome.validation_current_signature == "frozen-0930"
+    assert [row["audit_stage"] for row in rows] == ["PRE_ACTION", "POST_ACTION"]
+    assert all(
+        __import__("datetime").datetime.fromisoformat(row["recorded_at"]).utcoffset().total_seconds() == 19800
+        for row in rows
+    )
+    assert rows[0]["bar"] == {
+        "bar_timestamp": "2026-08-13T09:30:00+05:30",
+        "frozen_signature": "frozen-0930",
+        "validation_current_signature": "frozen-0930",
+        "required_official_minutes": metadata["required_official_minutes"],
+        "present_official_minutes": metadata["present_official_minutes"],
+        "official_coverage": True,
+        "nested": {},
+    }
+    assert rows[0]["attempt_evidence"] == [
+        {
+            "attempt_number": 1,
+            "request_kind": "normal",
+            "evidence_code": "missing_tool_call",
+            "tool_records": [
+                {"tool": "session_levels", "status": "completed"},
+                {"tool": "momentum_vwap", "status": "completed"},
+                {"tool": "position_state", "status": "completed"},
+            ],
+            "token_usage": {"input_tokens": 3, "total_tokens": 5},
+        },
+        {
+            "attempt_number": 2,
+            "request_kind": "tool_repair",
+            "evidence_code": None,
+            "tool_records": [
+                {"tool": name, "status": "completed"} for name in EXPECTED_TOOL_NAMES
+            ],
+            "token_usage": {"output_tokens": 2, "total_tokens": 4},
+        },
+    ]
+    assert "Synthetic test proposal." not in raw
+    assert "DO-NOT-LOG" not in raw
+
+
+def test_decision_log_direct_call_keeps_a_safe_default_stage_and_disabled_logging_is_a_noop(tmp_path):
+    """Legacy direct callers must remain append-compatible and optional logging inert."""
+
+    path = tmp_path / "decisions.jsonl"
+    outcome = CPRHostPolicy().validate(_context(), _proposal("HOLD", "SIDEWAYS", "NONE"))
+    CPRDecisionLogger(str(path)).write(
+        frozen_context=_context(),
+        proposal=_proposal("HOLD", "SIDEWAYS", "NONE"),
+        outcome=outcome,
+        latency_ms=1,
+        token_usage={},
+        tool_evidence=[],
+    )
+    CPRDecisionLogger(str(tmp_path / "disabled.jsonl"), enabled=False).write(
+        frozen_context=_context(),
+        proposal=None,
+        outcome=outcome,
+        latency_ms=1,
+        token_usage={},
+        tool_evidence=[],
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["audit_stage"] == "DIRECT"
+    assert not (tmp_path / "disabled.jsonl").exists()
+
+
+@pytest.mark.parametrize(
+    ("calls", "signatures", "code", "expected_signature"),
+    [
+        pytest.param(
+            _calls(missing="position_state"),
+            ("new-before-retry", "new-at-validation"),
+            "missing_tool_call",
+            "new-at-validation",
+            id="missing-tool",
+        ),
+        pytest.param(
+            _calls(),
+            ("new-at-validation",),
+            "stale_bar_signature",
+            "new-at-validation",
+            id="stale-bar",
+        ),
+    ],
+)
+def test_agent_retains_the_exact_validation_signature_for_nonexecuting_outcomes(
+    calls, signatures, code, expected_signature
+):
+    """The audit must use the validation sample, not an earlier retry check."""
+
+    samples = iter(signatures)
+    outcome = CPRAgent(
+        runner=_runner(_proposal("HOLD", "SIDEWAYS", "NONE"), calls=calls)
+    ).decide(
+        _context(),
+        bar_signature="frozen",
+        current_signature=lambda: next(samples),
+    )
+
+    assert outcome.validation_code == code
+    assert outcome.validation_current_signature == expected_signature
+
+
+def test_decision_log_keeps_normal_and_failed_repair_attempt_evidence_parseable(tmp_path):
+    """Every attempt shape remains useful when recovery still fails closed."""
+
+    normal = CPRAgent(runner=_runner(_proposal("HOLD", "SIDEWAYS", "NONE"))).decide(
+        _context(), bar_signature="normal-only"
+    )
+    attempts = iter(
+        [
+            CPRAgentRunResult(
+                _proposal("HOLD", "SIDEWAYS", "NONE").model_dump_json(),
+                _calls(missing="market_structure"),
+                {"total_tokens": 3},
+            ),
+            CPRAgentRunResult(
+                _proposal("HOLD", "SIDEWAYS", "NONE").model_dump_json(),
+                _calls(failed="position_state"),
+                {"total_tokens": 4},
+            ),
+        ]
+    )
+    failed_repair = CPRAgent(runner=lambda **_kwargs: next(attempts)).decide(
+        _context(), bar_signature="failed-repair", current_signature=lambda: "failed-repair"
+    )
+    path = tmp_path / "decisions.jsonl"
+    logger = CPRDecisionLogger(str(path))
+    for outcome in (normal, failed_repair):
+        logger.write(
+            frozen_context=_context(),
+            proposal=_proposal("HOLD", "SIDEWAYS", "NONE"),
+            outcome=outcome,
+            latency_ms=1,
+            token_usage=outcome.token_usage,
+            tool_evidence=[],
+        )
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["attempt_evidence"] == [
+        {
+            "attempt_number": 1,
+            "request_kind": "normal",
+            "evidence_code": None,
+            "tool_records": [
+                {"tool": name, "status": "completed"} for name in EXPECTED_TOOL_NAMES
+            ],
+            "token_usage": {"total_tokens": 17},
+        }
+    ]
+    assert [(item["request_kind"], item["evidence_code"]) for item in rows[1]["attempt_evidence"]] == [
+        ("normal", "missing_tool_call"),
+        ("tool_repair", "failed_tool_call"),
+    ]
 
 
 def test_geometry_uses_next_directional_level_not_hard_coded_r1_s1():
