@@ -29,7 +29,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from cpr_ai_agent import CPRAgentRunResult, CPRToolCallRecord
+from cpr_ai_agent import CPRAgentRunResult, CPRToolCallRecord, CPRTurnRequestKind
 from cpr_ai_codex_subprocess import build_isolated_thread_config
 
 _PROCESS_CODEX_HOME_LOCK = threading.Lock()
@@ -171,6 +171,9 @@ def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:
     context = kwargs.get("context")
     if not isinstance(context, Mapping):
         raise ValueError("Codex turn requires a frozen CPR context mapping.")
+    request_kind = kwargs.get("request_kind", CPRTurnRequestKind.NORMAL)
+    if not isinstance(request_kind, CPRTurnRequestKind):
+        raise ValueError("Codex turn request kind must be a CPRTurnRequestKind enum value.")
     timeout_seconds = float(kwargs.get("timeout_seconds", 90.0))
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0.0:
         raise ValueError("Codex subprocess timeout must be a positive finite number.")
@@ -198,6 +201,10 @@ def run_codex_turn(**kwargs: Any) -> CPRAgentRunResult:
             "reasoning_effort": kwargs.get("reasoning_effort"),
             "prompt": kwargs.get("prompt"),
             "output_schema": kwargs.get("output_schema"),
+            # This enum is the only parent-to-child authority for selecting a
+            # turn request.  The child maps it to one constant; arbitrary text
+            # can never become a repair prompt.
+            "request_kind": request_kind.value,
         }
         completed = subprocess.run(
             [sys.executable, str(script)],

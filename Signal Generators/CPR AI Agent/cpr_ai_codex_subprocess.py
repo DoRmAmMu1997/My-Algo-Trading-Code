@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-_REQUEST_KEYS = {"snapshot_path", "model", "reasoning_effort", "prompt", "output_schema"}
+_REQUEST_KEYS = {"snapshot_path", "model", "reasoning_effort", "prompt", "output_schema", "request_kind"}
 _EXPECTED_TOOLS = ("session_levels", "momentum_vwap", "market_structure", "position_state")
 # ``build_system_prompt()`` remains the durable policy authority.  Repeating the
 # four reads in the immediate turn request is intentional defense in depth: a
@@ -30,6 +30,16 @@ _TURN_REQUEST = (
     "momentum_vwap, market_structure, and position_state. Wait for all four "
     "calls to complete, then evaluate the frozen CPR context and return one decision."
 )
+# This deliberately constant repair request is selected solely by the parent
+# enum.  It supplies feedback about evidence rejection without allowing either
+# a caller or the first model response to inject a new instruction.
+_TOOL_REPAIR_TURN_REQUEST = (
+    "The prior attempt was rejected because required frozen-tool evidence was missing or failed. "
+    "Before returning JSON, call each frozen MCP tool exactly once: session_levels, momentum_vwap, "
+    "market_structure, and position_state. Wait for all four calls to complete, then evaluate the same frozen "
+    "CPR context and return one decision."
+)
+_TURN_REQUESTS = {"normal": _TURN_REQUEST, "tool_repair": _TOOL_REPAIR_TURN_REQUEST}
 _ALLOWED_TURN_ITEM_TYPES = frozenset(
     {
         # The SDK records the prompt submitted through ``Thread.run`` as a
@@ -166,6 +176,9 @@ def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
 
     from openai_codex import ApprovalMode, Codex, Sandbox
 
+    request_kind = request.get("request_kind")
+    if not isinstance(request_kind, str) or request_kind not in _TURN_REQUESTS:
+        raise ValueError("Invalid isolated Codex request kind.")
     snapshot_path = str(request["snapshot_path"])
     runtime_directory = str(Path(snapshot_path).parent)
     config = build_isolated_thread_config(snapshot_path)
@@ -183,7 +196,7 @@ def _run_request(request: Mapping[str, Any]) -> dict[str, Any]:
             approval_mode=ApprovalMode.deny_all,
         )
         result = thread.run(
-            _TURN_REQUEST,
+            _TURN_REQUESTS[request_kind],
             approval_mode=ApprovalMode.deny_all,
             output_schema=request["output_schema"],
             effort=request["reasoning_effort"],
@@ -213,7 +226,11 @@ def main() -> int:
 
     try:
         request = json.load(sys.stdin)
-        if not isinstance(request, Mapping) or set(request) != _REQUEST_KEYS:
+        if (
+            not isinstance(request, Mapping)
+            or set(request) != _REQUEST_KEYS
+            or request.get("request_kind") not in _TURN_REQUESTS
+        ):
             raise ValueError("Invalid isolated Codex request.")
         response = _run_request(request)
     except (ImportError, KeyError, TypeError, ValueError, RuntimeError) as error:
