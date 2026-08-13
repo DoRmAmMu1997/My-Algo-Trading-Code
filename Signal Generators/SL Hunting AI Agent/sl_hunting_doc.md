@@ -3382,3 +3382,62 @@ what v4g's FEAR IS NOT A SIGNAL demands and what the stall-churn lacked.
 One caveat against reading too much into it: two trades is a small sample, and
 the deterministic strategies had a poor day on the same tape (Renko -4,127.50 over
 six trades), so the basket is deeply negative regardless.
+
+---
+
+### Pre-open note for 2026-08-14 (Friday)
+
+**Source:** Intraday Hunter, "Prediction For 14 AUG 2026" (`MhmlrlUEUGI`,
+uploaded 2026-08-13, 2:14). Note-only; no knowledge version attached.
+
+**Neither side is seated, and he says so for two of the three indices.** This is
+the empty-book condition v4f describes, stated more plainly than the series has
+had it before:
+
+> BankNIFTY: "we did not see much momentum... buyers and sellers would be sitting
+> at the SAME price level. Not many people held their positions."
+> Sensex: "momentum on both sides remained -- a bit of rejection, a bit of
+> buying. So to say more sellers are seated, or more buyers are seated, would be
+> WRONG."
+
+That matters because v4e's expensive lesson was forecasting a crowd into
+existence on exactly this condition, and v4f's answer was to wait for
+confirmation. The note records the absence rather than smoothing it into a
+direction.
+
+**His mechanism for trading a thin book** is the line worth keeping:
+
+> "If they did not hold positions, then WHERE THE CROWD IS THIN, THAT IS WHERE
+> THE MARKET TRIES TO MAKE MOMENTUM."
+
+Thin is not dead: the move goes where there is least resistance, which is a
+different claim from "no crowd means no trade" and sits alongside v4f's
+AN EMPTY BOOK MEANS A TRAP IS COMING rather than against it.
+
+**He prefers a gap to a flat open, explicitly.** New for the series as a stated
+preference rather than an inference:
+
+> "Better that it is NOT flat -- either a gap-up or a gap-down would be better,
+> because in flat it keeps extracting a small momentum and going away. It does
+> not make any special momentum."
+
+That is v4d's participation reading turned into an operational preference: a
+flat open grants everyone entry, so it produces chop rather than a move.
+
+Plan: SELL-side on flat-to-gap-down (on Sensex explicitly to target the buyers
+sitting on support since yesterday), BUY-side and follow on a gap-up, where "the
+buyer becomes safe" and there is nothing left to hunt. On BankNIFTY he notes
+there is little pressure on the sellers, so that branch is a **follow of the
+drift rather than a seller hunt** -- a distinction the note keeps.
+
+**Transcription caveat, and a repeat one.** NIFTY's second support arrived as the
+same unresolvable "2476" token as the 13 Aug video, so it is **omitted** again.
+Twice in two days makes it a consistent ASR failure on one specific number
+rather than random noise; the test asserts NIFTY carries exactly one support so
+a later tidy-up cannot invent it. Sensex's levels are unchanged from yesterday
+(78500/78145, 77500/77200), which is consistent with a session that went nowhere.
+
+Test updated: `test_shipped_note_matches_august_14_intraday_hunter_plan`
+replaces the 13 Aug equivalent and asserts both branch directions plus the
+thin-crowd mechanism and the gap-over-flat preference, because those two are
+what a summarising edit would drop first.
