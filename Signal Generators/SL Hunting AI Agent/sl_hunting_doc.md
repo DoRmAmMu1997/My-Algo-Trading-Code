@@ -3258,6 +3258,12 @@ a missing advisory level is safer than a wrong one, and the test asserts NIFTY
 carries exactly one support so a later "tidy-up" cannot invent the second.
 Sensex's 78145 resistance is recorded as heard.
 
+> **Corrected 2026-08-13 (see the 14 Aug entry):** "2476" was **24,176**, read
+> directly off the 1080p chart frame. Omitting was the right call given only the
+> caption, but reading the frame is better still, and is now the standard step
+> whenever a level does not parse — the chart is authoritative, the auto-caption
+> is not.
+
 Test updated: `test_shipped_note_matches_august_13_intraday_hunter_plan`
 replaces the 12 Aug equivalent and asserts both branch directions plus the
 round-number stop-location reasoning, because an inverted plan and a smoothed-
@@ -3430,12 +3436,30 @@ buyer becomes safe" and there is nothing left to hunt. On BankNIFTY he notes
 there is little pressure on the sellers, so that branch is a **follow of the
 drift rather than a seller hunt** -- a distinction the note keeps.
 
-**Transcription caveat, and a repeat one.** NIFTY's second support arrived as the
-same unresolvable "2476" token as the 13 Aug video, so it is **omitted** again.
-Twice in two days makes it a consistent ASR failure on one specific number
-rather than random noise; the test asserts NIFTY carries exactly one support so
-a later tidy-up cannot invent it. Sensex's levels are unchanged from yesterday
-(78500/78145, 77500/77200), which is consistent with a session that went nowhere.
+**The garbled level was RECOVERED FROM THE VIDEO, and this replaces omitting.**
+NIFTY's second support arrived as the same "2476" token as the 13 Aug video —
+twice in two days, so a consistent ASR failure on one number rather than noise.
+Instead of dropping it again, the frame at 2:04 was read directly: force the
+player to 1080p (`setPlaybackQualityRange`), seek, draw the `<video>` element to
+a canvas, crop the right-hand price-axis band and upscale it ~3x, then read the
+labels. TradingView draws each line's exact price in a tag on the axis, so the
+numbers are legible once the source is 1920x1080 rather than the 854x480 the
+player defaults to.
+
+What it showed, every value matching what he speaks:
+
+| | chart label | spoken |
+|---|---|---|
+| resistance | 24,540.85 | "24540" |
+| resistance | 24,443.85 | "24440" |
+| spot | 24,395.85 | — |
+| support | 24,275.25 | "24275" |
+| support | **24,176.20** | "2476" ← the garbled one |
+
+So the 13 Aug note's omitted support was **24176** as well; the level simply did
+not move. **Prefer this method to omitting a level** — the chart is authoritative
+and the auto-caption is not. Sensex's levels are unchanged from yesterday
+(78500/78145, 77500/77200), consistent with a session that went nowhere.
 
 Test updated: `test_shipped_note_matches_august_14_intraday_hunter_plan`
 replaces the 13 Aug equivalent and asserts both branch directions plus the

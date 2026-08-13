@@ -235,12 +235,13 @@ def test_shipped_note_matches_august_14_intraday_hunter_plan():
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # One support again: the transcript's second NIFTY support arrived as
-            # the same unresolvable "2476" token as 13 Aug, so it is omitted
-            # rather than guessed. Twice in two days makes it a consistent ASR
-            # failure on one number, not random noise.
+            # 24176 was READ OFF THE CHART, not inferred. The auto-caption
+            # rendered it "2476" on both 13 and 14 Aug; a 1080p frame at 2:04
+            # shows the teal support line labelled 24,176.20, alongside
+            # 24,275.25 and resistances at 24,443.85 / 24,540.85 -- every one
+            # matching what he speaks. Prefer this method over omitting a level.
             "resistance": [24440.0, 24540.0],
-            "support": [24275.0],
+            "support": [24275.0, 24176.0],
         },
         {
             "index": "BANKNIFTY",
