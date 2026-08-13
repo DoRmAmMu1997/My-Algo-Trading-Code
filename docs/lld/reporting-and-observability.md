@@ -152,6 +152,21 @@ Properties that make it trustworthy:
   a reporting problem; the first failure logs loudly, then stays quiet.
 - **Cache-only marks** — `_position_leg_marks` reads the shared LTP cache and
   never the broker, because it runs on the supervisor thread.
+- **Observable liveness** — the supervisor logs a heartbeat every
+  `SESSION_STATE_HEARTBEAT_SECONDS` (default 300) with workers alive, completed
+  marks writes, marks age, open positions and trades recorded. MainThread is
+  otherwise silent through a healthy session, which is why the 2026-08-12
+  snapshot freeze (writes stopped at 12:30, trading continued to 15:10) left no
+  evidence beyond a file mtime found hours later. `SessionStateStore.health()`
+  supplies the numbers; `warn_if_marks_stalled()` raises one ERROR per stall
+  episode once the marks age exceeds `MARKS_STALL_INTERVALS` × the interval.
+- **Stale marks are never resumable** — `load_session_state` records
+  `marks_age_seconds` from the two documents' timestamps, and
+  `resumable_open_positions` refuses everything when that lag exceeds
+  `MAX_RESUMABLE_MARKS_AGE_SECONDS` (300s) **or cannot be determined**. On
+  2026-08-12 the marks described 11 positions where 23 were genuinely open;
+  restoring them would have invented exposure that was closed and omitted
+  exposure that was opened. Realized P&L is unaffected by this refusal.
 - **Resume is opt-in and narrow** — `SESSION_STATE_RESUME_ENABLED` (default
   false), and a record is offered back only if it is from **today**, from an
   **unclean** shutdown, **paper**, and a single-leg `PaperPosition`. Live
@@ -180,6 +195,8 @@ gitignored — it holds live position and P&L detail.
 | Session state durable write exceeds 250ms | Trading still waits for that `fsync` so the event is genuinely durable; a warning identifies local-disk latency for operator action. |
 | Session state marks write exceeds 2s | Warned separately, and the message says so: this delays supervision, not a trading decision. |
 | Session state marks file corrupt or missing | P&L is still recovered from the durable file; only open positions are lost, so nothing is offered for resume. |
+| Snapshot loop stops writing marks | One ERROR per episode naming the age and last write; the heartbeat keeps reporting it. Trading and realized P&L are unaffected; open-position recovery is degraded and resume refuses. |
+| Marks lag the durable file by >300s | No position is offered for resume, logged with the measured lag. An unknown lag is treated the same way — it fails closed. |
 | Session state durable file corrupt on read | Ignored, logged; the run starts with no recovery rather than refusing to start. |
 
 ---

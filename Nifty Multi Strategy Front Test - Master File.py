@@ -652,6 +652,12 @@ SESSION_STATE_SNAPSHOT_SECONDS = _env_float("SESSION_STATE_SNAPSHOT_SECONDS", 30
 # and the runner already reconciles against it; a JSON file that disagrees with
 # the account is worse than no file at all. See `_resume_open_positions`.
 SESSION_STATE_RESUME_ENABLED = _env_bool("SESSION_STATE_RESUME_ENABLED", False)
+# How often the supervisor logs a liveness line. MainThread is otherwise silent
+# through a healthy session, so when the snapshot loop stopped on 2026-08-12 its
+# silence carried no information and the freeze was only found hours later from
+# a file mtime. Five minutes is ~75 lines a session -- cheap enough to keep on
+# always, frequent enough to localise a stall to a few minutes.
+SESSION_STATE_HEARTBEAT_SECONDS = _env_float("SESSION_STATE_HEARTBEAT_SECONDS", 300.0)
 
 # Telegram trade-notification settings. See Dependencies/.env for the one-time
 # bot/channel setup. When disabled (or token/chat blank) the notifier thread is
@@ -17335,6 +17341,51 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
     )
 
 
+def _emit_supervisor_heartbeat(
+    session_state: SessionStateStore,
+    started_workers: list[BasePaperStrategyWorker],
+    last_heartbeat_at: float,
+) -> float:
+    """Log one supervisor liveness line per interval; return the new stamp.
+
+    Why this exists: on 2026-08-12 the snapshot loop stopped writing marks at
+    12:30 while workers traded on until 15:10. There was no exception, no
+    partial file and no log line, so the only evidence was a file mtime found
+    hours later -- and it was impossible to tell afterwards whether MainThread
+    had blocked, the loop had exited, or writes were failing silently.
+
+    MainThread otherwise logs nothing during a healthy session, so its silence
+    carried no information. A periodic line fixes that in both directions: its
+    presence shows the loop is turning, and the gap between the last heartbeat
+    and the crash localises where it stopped.
+
+    Never raises: a diagnostic that can take the supervisor down is worse than
+    no diagnostic at all.
+    """
+    now = time.monotonic()
+    if (now - last_heartbeat_at) < SESSION_STATE_HEARTBEAT_SECONDS:
+        return last_heartbeat_at
+    try:
+        report = session_state.health()
+        # An actual stall is an ERROR in its own right, logged once per episode
+        # by the store rather than repeated on every heartbeat.
+        session_state.warn_if_marks_stalled()
+        logger.info(
+            "Supervisor heartbeat | workers_alive=%d/%d | marks_writes=%d | "
+            "marks_age=%.0fs | open_positions=%d | trades_recorded=%d%s",
+            sum(1 for worker in started_workers if worker.is_alive()),
+            len(started_workers),
+            report["marks_writes"],
+            report["marks_age_seconds"],
+            report["open_positions"],
+            report["trades_recorded"],
+            " | PERSISTENCE DEGRADED" if report["write_failures_logged"] else "",
+        )
+    except Exception:  # noqa: BLE001 - a heartbeat must never stop supervision
+        logger.exception("Supervisor heartbeat failed; supervision continues.")
+    return now
+
+
 def _start_and_supervise_runtime_threads(
     fetcher: CentralMarketDataFetcher,
     telegram_worker: TelegramMessageWorker | None,
@@ -17352,6 +17403,10 @@ def _start_and_supervise_runtime_threads(
 
     started_workers: list[BasePaperStrategyWorker] = []
     shutdown_reason = ""
+    # Monotonic so an NTP step cannot silence or spam the heartbeat. Starting at
+    # 0.0 makes the first supervised tick emit one, which proves the loop was
+    # entered at all -- the 2026-08-12 freeze left no such evidence.
+    last_heartbeat_at = 0.0
     try:
         fetcher.start()
         if telegram_worker is not None:
@@ -17371,6 +17426,9 @@ def _start_and_supervise_runtime_threads(
             # immediately by publish_trade_event.
             if session_state is not None:
                 session_state.update_worker_snapshot(_session_state_snapshots(started_workers))
+                last_heartbeat_at = _emit_supervisor_heartbeat(
+                    session_state, started_workers, last_heartbeat_at
+                )
         return True
     except KeyboardInterrupt:
         shutdown_reason = "KEYBOARD_INTERRUPT"

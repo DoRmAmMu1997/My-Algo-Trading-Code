@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ import pytest
 # Bare import: this folder's conftest.py puts the SOURCE `Dependencies/` on
 # sys.path, which is the same resolution the runtime performs.
 from session_state import (
+    MAX_RESUMABLE_MARKS_AGE_SECONDS,
     SCHEMA_VERSION,
     SessionStateStore,
     _marks_path_for,
@@ -387,6 +389,9 @@ def _crashed_state(**overrides) -> dict:
         "schema_version": SCHEMA_VERSION,
         "session_date": "2026-08-10",
         "clean_shutdown": False,
+        # A real merged document always carries this (load_session_state computes
+        # it from the two files' timestamps). Fresh marks = no lag.
+        "marks_age_seconds": 0.0,
         "strategies": {
             "Renko": {
                 "live_trading": False,
@@ -687,3 +692,108 @@ def test_slow_marks_write_warns_about_supervision_not_trading(state_path: Path, 
     assert any("marks write took" in m and "not a trading decision" in m for m in messages)
     # And it must not blame the trading loop, which was the old message's error.
     assert not any("delaying the caller's trading loop" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot-loop liveness and the stale-marks guard
+# ---------------------------------------------------------------------------
+# On 2026-08-12 the supervisor stopped writing marks at 12:30 while trading ran
+# to 15:10. No exception, no partial file, no log line -- the freeze was only
+# found by comparing file mtimes hours later. The marks on disk described 11
+# positions where 23 were genuinely open, and nothing would have stopped a
+# resume from restoring that stale set as a current book.
+
+
+def test_health_reports_a_live_snapshot_loop(state_path: Path):
+    store = _store(state_path, snapshot_interval_seconds=1.0)
+    before = store.health()
+    assert before["marks_writes"] == 0
+
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+    after = store.health()
+    assert after["marks_writes"] == 1
+    assert after["marks_age_seconds"] < 5
+    assert after["marks_stalled"] is False
+    assert after["open_positions"] == 1
+
+
+def test_health_flags_a_stalled_snapshot_loop(state_path: Path, monkeypatch):
+    """The exact 2026-08-12 signature: writes simply stop, silently."""
+    store = _store(state_path, snapshot_interval_seconds=30.0)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    assert store.health()["marks_stalled"] is False
+
+    # Jump the monotonic clock past MARKS_STALL_INTERVALS * interval.
+    import session_state as module
+
+    base = time.monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: base + 30.0 * 4 + 1)
+    assert store.health()["marks_stalled"] is True
+
+
+def test_marks_stall_warns_once_per_episode(state_path: Path, monkeypatch, caplog):
+    import session_state as module
+
+    store = _store(state_path, snapshot_interval_seconds=30.0)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+
+    base = time.monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: base + 200.0)
+    with caplog.at_level("ERROR"):
+        assert store.warn_if_marks_stalled() is True
+        assert store.warn_if_marks_stalled() is True  # still stalled...
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("have not been written" in m for m in messages) == 1, "must log once"
+    # The message must be clear about what IS still safe.
+    assert any("Realized P&L is unaffected" in m for m in messages)
+
+
+def test_a_successful_write_clears_the_stall_latch(state_path: Path, monkeypatch, caplog):
+    import session_state as module
+
+    store = _store(state_path, snapshot_interval_seconds=30.0)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    base = time.monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: base + 200.0)
+    store.warn_if_marks_stalled()
+
+    monkeypatch.undo()
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    assert store.health()["marks_stalled"] is False
+    with caplog.at_level("ERROR"):
+        assert store.warn_if_marks_stalled() is False
+
+
+def test_load_records_how_far_the_marks_lag_the_durable_file(state_path: Path):
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 5.0})
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+    merged = load_session_state(state_path)
+    assert merged is not None
+    assert merged["marks_age_seconds"] is not None
+    assert abs(float(merged["marks_age_seconds"])) < 30
+
+
+def test_stale_marks_are_never_resumable(state_path: Path):
+    """The 2026-08-12 scenario end to end: a book that is hours out of date."""
+    state = _crashed_state(marks_age_seconds=2.0 * 60 * 60 + 40 * 60)  # 2h40m
+    assert resumable_open_positions(state, session_date=TODAY) == {}
+
+
+def test_marks_lag_just_inside_the_limit_still_resumes():
+    state = _crashed_state(marks_age_seconds=MAX_RESUMABLE_MARKS_AGE_SECONDS - 1)
+    assert set(resumable_open_positions(state, session_date=TODAY)) == {"Renko"}
+
+
+def test_unknown_marks_lag_fails_closed():
+    """An unparseable or absent timestamp must refuse, not assume zero."""
+    state = _crashed_state(marks_age_seconds=None)
+    assert resumable_open_positions(state, session_date=TODAY) == {}
+    del state["marks_age_seconds"]
+    assert resumable_open_positions(state, session_date=TODAY) == {}

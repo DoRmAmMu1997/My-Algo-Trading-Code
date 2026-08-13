@@ -123,6 +123,37 @@ durability from "guaranteed before the call returns" to a sub-second window —
 which is the guarantee this ADR was written to provide. At a 0.414 s median,
 13 times a session, that trade is not worth making.
 
+#### Amendment (2026-08-13): the snapshot loop must be observable
+
+The split's first session exposed a second, independent hole. The supervisor
+stopped writing marks at **12:30** while workers traded on to **15:10** — no
+exception, no partial file, no log line. It was found hours later by comparing
+file mtimes, and even then the cause could not be determined: MainThread emits
+nothing during a healthy session, so its silence carried no information.
+
+Worse, the marks left on disk described **11 open positions where 23 were
+genuinely open**. Had resume been enabled, it would have restored that
+2h40m-stale set as a current book — inventing exposure that had been closed and
+omitting exposure that had been opened, which is the exact failure this ADR
+exists to prevent, arriving through the file it created.
+
+Two additions:
+
+- **A supervisor heartbeat** (`SESSION_STATE_HEARTBEAT_SECONDS`, default 300s)
+  logging workers alive, completed marks writes, marks age, open positions and
+  trades recorded. Its presence proves the loop is turning; the gap between the
+  last heartbeat and a crash localises where it stopped. `health()` supplies the
+  counters and `warn_if_marks_stalled()` raises one ERROR per stall episode.
+- **A stale-marks guard.** `load_session_state` records `marks_age_seconds` from
+  the two documents' `updated_at` stamps, and `resumable_open_positions` refuses
+  every position when that lag exceeds `MAX_RESUMABLE_MARKS_AGE_SECONDS` (300s)
+  or cannot be determined. Fail-closed on an unknown lag is deliberate: a book
+  of unknown age is not a book.
+
+Note what is NOT guarded: the durable half needs none of this. Trade events are
+written by the trading threads themselves, so a frozen supervisor cannot affect
+realized P&L — which is why the 12 Aug reconciliation was still exact.
+
 ##### Measured after the change (2026-08-12, first session on the split)
 
 | | warnings | median | max | >1s |

@@ -11611,6 +11611,44 @@ class TestSessionStatePersistence(unittest.TestCase):
         self.assertFalse(snapshots[0]["snapshot_valid"])
         self.assertTrue(snapshots[1]["snapshot_valid"])
 
+    # -- supervisor heartbeat -------------------------------------------
+    def test_heartbeat_is_throttled_to_its_interval(self):
+        """~75 lines a session, not one per supervised tick."""
+        state = MagicMock()
+        state.health.return_value = {
+            "marks_writes": 3, "marks_age_seconds": 4.0, "open_positions": 1,
+            "trades_recorded": 7, "write_failures_logged": False,
+        }
+        now = time.monotonic()
+        # A heartbeat emitted moments ago must NOT produce another...
+        fresh = master_file._emit_supervisor_heartbeat(state, [self.worker], now)
+        self.assertEqual(fresh, now, "must not re-emit inside the interval")
+        state.health.assert_not_called()
+
+        # ...but one from long ago must.
+        stale = now - master_file.SESSION_STATE_HEARTBEAT_SECONDS - 1
+        emitted = master_file._emit_supervisor_heartbeat(state, [self.worker], stale)
+        self.assertGreater(emitted, stale)
+        state.health.assert_called_once()
+
+    def test_heartbeat_checks_for_a_stalled_snapshot_loop(self):
+        """The heartbeat is also where the 2026-08-12 stall would surface."""
+        state = MagicMock()
+        state.health.return_value = {
+            "marks_writes": 12, "marks_age_seconds": 9000.0, "open_positions": 11,
+            "trades_recorded": 108, "write_failures_logged": False,
+        }
+        master_file._emit_supervisor_heartbeat(state, [self.worker], 0.0)
+        state.warn_if_marks_stalled.assert_called_once()
+
+    def test_heartbeat_never_breaks_supervision(self):
+        """A diagnostic that can kill the supervisor is worse than none."""
+        state = MagicMock()
+        state.health.side_effect = RuntimeError("boom")
+        stamp = master_file._emit_supervisor_heartbeat(state, [self.worker], 0.0)
+        # It still advances the stamp, so a broken health() cannot spin the log.
+        self.assertGreater(stamp, 0.0)
+
     # -- resume ----------------------------------------------------------
     def test_position_record_round_trips_through_the_file(self):
         original = self._open_position()
@@ -11679,16 +11717,38 @@ class TestSessionStatePersistence(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     master_file._paper_position_from_record(broken)
 
-    def _write_state(self, tmpdir, *, live=False, clean=False, session_date=None):
+    def _write_state(
+        self, tmpdir, *, live=False, clean=False, session_date=None, marks_lag_seconds=0.0
+    ):
+        """Write the PAIR of files the store really produces.
+
+        The state is split across a durable document and a `.marks.` sibling, and
+        `load_session_state` derives the marks lag from their two `updated_at`
+        stamps. Writing only the durable half here would leave the lag unknown,
+        which the stale-marks guard correctly refuses -- so the fixture has to
+        mirror the real on-disk shape. `marks_lag_seconds` ages the marks file to
+        exercise that guard.
+        """
         record = master_file.serialize_position(
             self._open_position(), leg_marks={"option": 98.1}
         )
-        state = {
+        day = (
+            session_date or datetime.now(master_file.IST_TIMEZONE).date()
+        ).isoformat()
+        durable_at = datetime.now(master_file.IST_TIMEZONE)
+        marks_at = durable_at - timedelta(seconds=float(marks_lag_seconds))
+        durable = {
             "schema_version": 1,
-            "session_date": (
-                session_date or datetime.now(master_file.IST_TIMEZONE).date()
-            ).isoformat(),
+            "session_date": day,
+            "updated_at": durable_at.isoformat(),
             "clean_shutdown": clean,
+            "strategies": {"Renko": {"recorded_pnl": -929.5, "recorded_trades": 2}},
+            "trades": [],
+        }
+        marks = {
+            "schema_version": 1,
+            "session_date": day,
+            "updated_at": marks_at.isoformat(),
             "strategies": {
                 "Renko": {
                     "live_trading": live,
@@ -11698,11 +11758,25 @@ class TestSessionStatePersistence(unittest.TestCase):
                     "open_position": record,
                 }
             },
-            "trades": [],
         }
         path = Path(tmpdir) / "session_state.json"
-        path.write_text(json.dumps(state), encoding="utf-8")
+        path.write_text(json.dumps(durable), encoding="utf-8")
+        Path(str(path).replace(".json", ".marks.json")).write_text(
+            json.dumps(marks), encoding="utf-8"
+        )
         return str(path)
+
+    def test_resume_refuses_a_stale_marks_file(self):
+        """The 2026-08-12 freeze: marks 2h40m behind the durable trade log.
+
+        Restoring that set would invent exposure that had been closed and omit
+        exposure that had been opened -- 11 positions against 23 truly open.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_state(tmpdir, marks_lag_seconds=2 * 3600 + 40 * 60)
+            restored = master_file._resume_open_positions([self.worker], path)
+        self.assertEqual(restored, 0)
+        self.assertFalse(self.worker.pos.active)
 
     def test_resume_restores_position_pnl_and_the_ltp_subscription(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -11798,27 +11872,28 @@ class TestSessionStatePersistence(unittest.TestCase):
             path = self._write_state(tmpdir)
             self.assertEqual(master_file._resume_open_positions([], path), 0)
 
+    def _patch_marks(self, path, **fields):
+        """Open positions live in the `.marks.` sibling, not the durable file."""
+        marks_path = Path(str(path).replace(".json", ".marks.json"))
+        marks = json.loads(marks_path.read_text(encoding="utf-8"))
+        marks["strategies"]["Renko"]["open_position"].update(fields)
+        marks_path.write_text(json.dumps(marks), encoding="utf-8")
+
     def test_resume_leaves_the_worker_flat_when_the_record_is_unusable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "session_state.json"
-            state = json.loads(Path(self._write_state(tmpdir)).read_text(encoding="utf-8"))
-            state["strategies"]["Renko"]["open_position"]["quantity"] = 0
-            path.write_text(json.dumps(state), encoding="utf-8")
-            restored = master_file._resume_open_positions([self.worker], str(path))
+            path = self._write_state(tmpdir)
+            self._patch_marks(path, quantity=0)
+            restored = master_file._resume_open_positions([self.worker], path)
 
         self.assertEqual(restored, 0)
         self.assertFalse(self.worker.pos.active)
 
     def test_resume_refuses_an_unsupported_position_shape(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "session_state.json"
-            state = json.loads(Path(self._write_state(tmpdir)).read_text(encoding="utf-8"))
-            state["strategies"]["Renko"]["open_position"]["position_type"] = (
-                "HedgedPaperPosition"
-            )
-            path.write_text(json.dumps(state), encoding="utf-8")
+            path = self._write_state(tmpdir)
+            self._patch_marks(path, position_type="HedgedPaperPosition")
             self.assertEqual(
-                master_file._resume_open_positions([self.worker], str(path)), 0
+                master_file._resume_open_positions([self.worker], path), 0
             )
         self.assertFalse(self.worker.pos.active)
 
