@@ -1695,7 +1695,11 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
         self.assertEqual(by_ts.loc[forming]["close"], 100.6)
 
     def test_true_up_before_grace_keeps_just_closed_minute_tick_owned(self):
-        """A reconnect before grace cannot let REST replace a forming tick bar."""
+        """A clock-closed REST row stays provisional until the grace boundary.
+
+        Although 10:16 has closed by the clock, its REST row must not overwrite
+        the tick-built candle until a later request proves that row final.
+        """
 
         stable = pd.Timestamp("2026-05-15 10:15:00")
         just_closed = pd.Timestamp("2026-05-15 10:16:00")
@@ -2146,7 +2150,12 @@ class TestAdditionalDataclasses(unittest.TestCase):
         self.assertEqual(store.get("1").official_candle_ts, watermark)
 
     def test_shared_store_publishes_frame_exact_official_set_and_watermark_together(self):
-        """CPR readers must receive one immutable official-data generation."""
+        """Publish the immutable official-minute set and its watermark together.
+
+        The immutable object is the exact minute-identity set. The DataFrame is
+        still defensively copied for readers; this test does not claim that a
+        pandas frame itself is immutable.
+        """
 
         frame = pd.DataFrame(
             {
@@ -10011,6 +10020,9 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._completed_bar_signature = lambda _frame: "frozen-0930"
         worker._current_completed_spot_signature = lambda: "validated-0930"
         worker._post_inference_exposure_block_reason = lambda: "entry_cutoff"
+        # These sentinels stand for the exact five one-minute REST rows that
+        # produced the decided 09:30 bucket. PRE_ACTION and POST_ACTION must
+        # retain this same frozen list instead of resampling a newer store.
         metadata = {
             "bar_timestamp": "2026-08-13T09:30:00+05:30",
             "frozen_signature": "frozen-0930",

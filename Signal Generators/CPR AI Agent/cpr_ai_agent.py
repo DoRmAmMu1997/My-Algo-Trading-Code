@@ -72,11 +72,14 @@ class CPRAgentRunResult:
 
 @dataclass(frozen=True)
 class CPRAttemptEvidence:
-    """Auditable result of one isolated model attempt within a bar deadline.
+    """Auditable record for one isolated turn slot within a bar deadline.
 
-    This records only request mode, tool coverage, and numeric usage.  It does
-    not keep chain-of-thought, returned MCP payloads, authentication data, or
-    any execution capability.
+    Most records describe a child turn that returned. A record can instead be
+    a conservative pre-launch/timeout marker when the shared deadline expires
+    before usable child evidence comes back. Empty tool records and token usage
+    then mean "nothing was returned and proved," not "the child proved it used
+    zero tokens." The audit never keeps chain-of-thought, returned MCP payloads,
+    authentication data, or any execution capability.
     """
 
     attempt_number: int
@@ -113,9 +116,10 @@ class CPRAgentOutcome:
     tool_evidence: tuple[CPRToolCallRecord, ...] = ()
     inference_attempts: int = 1
     attempt_evidence: tuple[CPRAttemptEvidence, ...] = ()
-    # This is the single signature sample the host used while validating the
-    # child result.  Keeping it on the outcome prevents a later audit writer
-    # from accidentally observing a newer shared-market generation.
+    # This is the single current-signature sample captured when the host
+    # finalizes either normal validation or a terminal fail-closed outcome.
+    # Keeping it on the outcome prevents a later audit writer from accidentally
+    # observing a newer shared-market generation.
     validation_current_signature: str | None = None
 
 
@@ -545,8 +549,10 @@ class CPRAgent:
 
         Both attempts receive the same in-memory context and bar signature.  A
         retry therefore cannot silently move to newer market facts.  The second
-        attempt receives only the wall-clock budget left after the first one,
-        so this recovery path never doubles the configured SDK timeout.
+        attempt receives only the wall-clock budget left after the first one.
+        That shared budget includes parent/child process setup as well as the
+        SDK turn itself, so this recovery path never doubles the configured
+        CPR inference timeout.
         """
 
         results: list[CPRAgentRunResult] = []
@@ -577,10 +583,11 @@ class CPRAgent:
                 if attempt_index == 0
                 else CPRTurnRequestKind.TOOL_REPAIR
             )
-            # Install a conservative no-evidence timeout diagnostic before the
-            # optional runtime starts.  If the parent deadline wins the race,
-            # this proves which turn began while never inventing tool calls or
-            # usage that the child did not return.
+            # Install a conservative no-evidence marker before the optional
+            # runtime starts. If the parent deadline wins the race, this still
+            # records which turn slot was selected. Empty tool/usage fields mean
+            # the child returned no provable evidence; they are not an assertion
+            # that a launched child consumed exactly zero tokens.
             diagnostic_index = len(attempt_evidence)
             attempt_evidence.append(
                 CPRAttemptEvidence(
@@ -664,7 +671,15 @@ class CPRAgent:
 
     @staticmethod
     def _terminal_failure_reason(code: str) -> str:
-        """Return a safe generic reason for a repair failure audit outcome."""
+        """Return a credential-safe reason for a terminal Codex-turn outcome.
+
+        Both the initial turn and an optional repair use this helper. The
+        historical human-readable text uses the word ``corrective`` for either
+        path, so ``attempt_evidence.request_kind`` is the authoritative field
+        when an operator needs to distinguish ``normal`` from ``tool_repair``.
+        The reason itself never includes exception text, child output, command
+        arguments, or local paths.
+        """
 
         if code == "timeout":
             return "The corrective Codex turn exhausted the original deadline."
@@ -678,9 +693,11 @@ class CPRAgent:
     ) -> CPRAgentOutcome:
         """Build a terminal HOLD with its one retained host signature sample.
 
-        These paths never reach ``_validate_run`` because the optional child
-        timed out or failed. Capture one signature here rather than leaving a
-        JSONL row ambiguous or calling the mutable shared-data getter later.
+        These paths never reach ``_validate_run`` because the initial or repair
+        child timed out or failed. Capture one signature here rather than
+        leaving a JSONL row ambiguous or calling the mutable shared-data getter
+        later. The call happens once during finalization, so the audit describes
+        this decision even if the market store advances immediately afterward.
         """
 
         recorded_attempts = tuple(attempt_evidence)

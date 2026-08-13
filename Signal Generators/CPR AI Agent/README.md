@@ -29,11 +29,13 @@ deep-copy views of the same frozen completed-bar context:
 
 The snapshot contains no order surface, account, credential, broker, venue, or
 execution object. The immediate turn request repeats the four exact tool names
-in addition to the developer prompt. If the first isolated turn still omits a
-tool, or one tool reports failure, the host permits one retry against the same
-immutable snapshot using only the time left in the original SDK deadline. A
-second incomplete result, a duplicate/unapproved tool, or any unexpected agent
-action invalidates the turn and produces `HOLD`.
+in addition to the developer prompt. A repair is considered only when a missing
+or failed required tool is the sole remaining defect: the first response must
+also still match the current bar, strict schema, configured model/prompt, and
+deterministic host policy. The repair uses the same immutable snapshot and only
+the time left in the original CPR turn wall-clock deadline, including isolated
+child-process overhead. A second incomplete result, a duplicate/unapproved
+tool, or any unexpected agent action invalidates the turn and produces `HOLD`.
 
 ## Decision contract and host gates
 
@@ -153,15 +155,17 @@ before an entry/add may increase exposure, and `POST_ACTION` records the actual
 submission/confirmation result afterward. Direct diagnostic callers retain the
 safe `DIRECT` stage.
 
-The `bar` object records the start timestamp, frozen signature, the one
-validation-time current signature retained by the outcome, all five required
-official minute stamps, the required stamps present in the inference snapshot,
-and the resulting exact coverage boolean. Each `attempt_evidence` item records
-only its request kind (`normal` or the fixed `tool_repair`), typed evidence
-result, safe tool name/status records, and token usage. The corrective retry is
-allowed once only for missing/failed frozen-tool evidence, uses the same frozen
-snapshot, and receives only the time remaining from the original total deadline;
-any terminal failure remains a fail-closed HOLD.
+The `bar` object records the start timestamp, frozen signature, the one current
+signature captured when the host finalizes validation or a terminal fail-closed
+outcome, all five required official minute stamps, the required stamps present
+in the inference snapshot, and the resulting exact coverage boolean.
+
+Each `attempt_evidence` item records only its request kind (`normal` or the fixed
+`tool_repair`), typed evidence result, safe tool name/status records, and token
+usage. A provisional timeout marker can appear when a turn was selected but no
+child evidence returned before the shared deadline; empty tool/usage fields do
+not claim that a launched child consumed zero tokens. Any terminal failure
+remains a fail-closed HOLD.
 
 Credential-like mapping fields are removed recursively before serialization, and
 the logger deliberately omits model reasoning/final responses, auth data, local

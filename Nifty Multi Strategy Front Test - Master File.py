@@ -3929,9 +3929,11 @@ class WebSocketMarketDataFetcher(threading.Thread):
       the full desired instrument set by construction.
 
     Bar semantics: the published frame is always
-    ``merge_official_and_tick_frames(official REST history, tick bars)`` --
-    official candles win for completed minutes, the forming minute is always
-    tick-built, and every publish still goes through `store.update()` and its
+    ``merge_official_and_tick_frames(official REST history, tick bars)``.
+    Official REST candles win only for minutes proved final at the REST
+    request's start. The forming minute and a newly closed minute still inside
+    the grace period remain tick-built until a later true-up proves them final.
+    Every publish still goes through `store.update()` and its
     `validate_ohlc_frame` net. Consumers are untouched: same store, same
     snapshot shape, same health gates.
     """
@@ -4267,10 +4269,13 @@ class WebSocketMarketDataFetcher(threading.Thread):
 
     def _run_true_up(self, reason: str, now_ist: datetime | None = None) -> None:
         """
-        Replace completed candles with Dhan's official ones (tick bars stay
-        for anything REST does not cover, most importantly the forming
-        minute). A REST failure keeps serving tick bars and retries on the
-        next minute -- the tick feed remains the live source of truth.
+        Replace only REST minutes proved final at the request-start boundary.
+
+        Tick bars remain in charge of the forming minute and any newer row that
+        is still inside the grace period. An older hole in stable REST history
+        stays fail-closed until a later REST response fills it; we do not keep a
+        provisional tick candle as if it were official. After a REST failure,
+        the next active minute with fresh ticks creates another true-up chance.
         """
         if now_ist is None:
             now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
@@ -9792,6 +9797,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         that may have advanced while Codex or execution was running.  Direct
         unit/diagnostic callers may not have a snapshot; they receive an empty,
         explicitly false coverage record rather than invented evidence.
+
+        ``required_official_minutes`` lists the five one-minute source rows
+        needed to build this bucket. ``present_official_minutes`` is only the
+        intersection of those five rows with the frozen official set -- not all
+        REST history in the store. ``official_coverage`` is true only when that
+        intersection contains all five required rows.
         """
 
         bucket_start = (

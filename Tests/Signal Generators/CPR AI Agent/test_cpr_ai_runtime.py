@@ -289,6 +289,8 @@ def test_repair_runtime_error_preserves_completed_first_attempt_audit_without_ex
 def test_repair_deadline_exhaustion_preserves_completed_first_attempt_audit(monkeypatch):
     """A spent total deadline records a second repair timeout without inventing evidence."""
 
+    # The first sample starts the shared five-second budget. The second shows
+    # that budget fully consumed before a repair child can be launched.
     clock = itertools.chain((100.0, 105.0), itertools.repeat(105.0))
     monkeypatch.setattr(cpr_ai_agent, "monotonic", lambda: next(clock))
     calls = []
@@ -766,8 +768,8 @@ def test_real_runner_uses_a_sanitized_subprocess_and_parses_only_structured_evid
     assert tuple(call.tool for call in result.tool_calls) == EXPECTED_TOOL_NAMES
 
 
-def test_parent_serializes_fixed_normal_or_tool_repair_kind_without_arbitrary_request_text(monkeypatch, tmp_path):
-    """The parent can select only the enum-backed repair mode for the child boundary."""
+def test_parent_serializes_enum_backed_tool_repair_kind_without_arbitrary_request_text(monkeypatch, tmp_path):
+    """A closed enum -- never caller prose -- selects the fixed repair request."""
 
     requests = []
 

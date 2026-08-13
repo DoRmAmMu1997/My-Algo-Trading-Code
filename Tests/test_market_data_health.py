@@ -210,8 +210,8 @@ class TestStableOfficialMinutes(unittest.TestCase):
 
         self.assertEqual(stable, frozenset({pd.Timestamp("2026-08-13 09:28:00")}))
 
-    def test_certifies_just_closed_minute_after_grace_and_keeps_empty_empty(self) -> None:
-        """Strictly-before boundary admits 09:29 only after 09:30:05 IST."""
+    def test_certifies_just_closed_minute_after_grace_and_returns_empty_set_for_empty_frame(self) -> None:
+        """After grace, 09:29 is official; an empty REST frame proves no minutes."""
 
         frame = validate_ohlc_frame(
             _frame([datetime(2026, 8, 13, 9, 28), datetime(2026, 8, 13, 9, 29)]),
