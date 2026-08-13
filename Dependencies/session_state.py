@@ -94,6 +94,20 @@ SLOW_WRITE_WARNING_SECONDS = 0.25
 # lines in one session (2026-08-11) and buried the 13 that actually mattered.
 SLOW_MARKS_WRITE_WARNING_SECONDS = 2.0
 
+# How far the marks file may lag the durable document before its open positions
+# stop being trustworthy.  This exists because of 2026-08-12: the snapshot loop
+# silently stopped at 12:30 while trading continued to 15:10, so the marks on
+# disk described a 2h40m-old book -- 11 positions where 23 were actually open.
+# Nothing warned, and nothing would have stopped a resume from restoring that
+# stale set as if it were current, which is precisely the "invent exposure"
+# failure ADR-0012 exists to prevent.
+MAX_RESUMABLE_MARKS_AGE_SECONDS = 300.0
+
+# How long the supervisor may go without a successful marks write before the
+# store says so.  Deliberately a multiple of the snapshot interval rather than a
+# fixed number, so a slow disk that merely delays a write does not cry wolf.
+MARKS_STALL_INTERVALS = 4
+
 # Per-strategy keys that live in the MARKS file rather than the durable one.
 # All of them are refreshed wholesale by every snapshot, so losing the newest
 # 30 seconds of them in a crash is the documented trade-off (ADR-0012); none is
@@ -297,6 +311,24 @@ class SessionStateStore:
         # permissions, missing drive) logs one error instead of one per trade.
         self._write_failure_logged = False
 
+        # Liveness bookkeeping for the supervisor heartbeat and the stall guard.
+        # `_marks_writes` counts SUCCESSFUL marks publishes; the two timestamps
+        # are monotonic (immune to a clock step) and wall-clock (readable in a
+        # log line) views of the newest one. They start at construction so a loop
+        # that never runs at all still reports a growing age rather than None.
+        self._marks_writes = 0
+        self._last_marks_write_monotonic = time.monotonic()
+        self._last_marks_write_at = _now_ist()
+        self._marks_stall_logged = False
+
+        # Optional off-thread durable writer (see start_durable_writer). While
+        # `_writer` is None every trade event is persisted synchronously by the
+        # calling trading thread, which is the original ADR-0012 contract.
+        self._writer: threading.Thread | None = None
+        self._writer_stopping = False
+        self._durable_dirty = False
+        self._durable_wakeup = threading.Event()
+
         self._state: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "session_date": self.session_date.isoformat(),
@@ -422,9 +454,109 @@ class SessionStateStore:
                     # Drop oldest first -- a recovery cares about the newest.
                     del trades[: len(trades) - self.max_trade_records]
                 self._apply_pnl_bearing_event_locked(record)
-                self._flush_durable_locked()
+                if self._writer is None:
+                    # Synchronous: the caller does not continue until the event
+                    # is on the platter. Costs the caller the whole fsync.
+                    self._flush_durable_locked()
+                    return
+                # Asynchronous: the in-memory state is already updated, so the
+                # writer thread will persist THIS event and any that arrive
+                # while it works, in one coalesced write.
+                self._durable_dirty = True
+            self._durable_wakeup.set()
         except Exception:  # noqa: BLE001 - reporting must never break trading
             self._log_write_failure("record trade event")
+
+    # ------------------------------------------------------------------
+    # Optional off-thread durable writer
+    # ------------------------------------------------------------------
+    # Why this exists: the synchronous write blocks the TRADING thread that
+    # published the event.  On the operator's hardware that is a median 0.65s
+    # and up to 2.3s per event, and the stalls are not merely latency -- on
+    # 2026-08-11, 86% of the websocket feed disconnects (25 of 29) landed within
+    # 20s of a session-state write stall, with `keepalive ping timeout` the
+    # dominant error.  A blocked event loop drops the market feed.
+    #
+    # What it costs: a hard kill can lose events that are queued but not yet
+    # written, where the synchronous path loses only the one in flight.  Note
+    # the data does NOT land later -- the write takes the same time either way,
+    # so it reaches the platter at the same wall-clock moment; the difference is
+    # that the trading thread is not frozen meanwhile.  The `EXIT` log line is
+    # also emitted BEFORE publish_trade_event, so a lost queued event still has
+    # a log record, which is the same source the EOD Sheet parses.
+    #
+    # Coalescing makes the exposure smaller than it first appears: the document
+    # is a full rewrite, so a burst of queued events becomes ONE write.  That
+    # reduces total fsyncs as well as moving them off the trading path.
+    def start_durable_writer(self) -> None:
+        """Begin persisting trade events on a background thread."""
+        with self._lock:
+            if self._writer is not None:
+                return
+            self._writer_stopping = False
+            self._writer = threading.Thread(
+                target=self._durable_writer_loop,
+                name="SessionStateWriter",
+                daemon=True,
+            )
+        self._writer.start()
+        self.log.info(
+            "Session state durable writes are ASYNCHRONOUS: trade events are "
+            "persisted by a background writer, so a trading thread is never "
+            "blocked by fsync. A hard kill can lose events queued in the last "
+            "write cycle; their log lines survive."
+        )
+
+    def stop_durable_writer(self, timeout: float = 10.0) -> bool:
+        """Drain and stop the writer. Returns True when everything was written.
+
+        Called at shutdown BEFORE results are published, so an orderly end of
+        day is exactly as durable as the synchronous path.
+        """
+        with self._lock:
+            writer = self._writer
+            if writer is None:
+                return True
+            self._writer_stopping = True
+        self._durable_wakeup.set()
+        writer.join(timeout=timeout)
+        drained = not writer.is_alive()
+        with self._lock:
+            self._writer = None
+            pending = self._durable_dirty
+        if pending:
+            # Last resort: persist synchronously on the caller's thread rather
+            # than leave a recorded trade unwritten.
+            try:
+                with self._lock:
+                    self._flush_durable_locked()
+                    self._durable_dirty = False
+            except Exception:  # noqa: BLE001 - shutdown must still complete
+                self._log_write_failure("drain the durable writer")
+                return False
+        return drained
+
+    def _durable_writer_loop(self) -> None:
+        """Coalesce pending trade events into one atomic write at a time."""
+        while True:
+            self._durable_wakeup.wait(timeout=1.0)
+            self._durable_wakeup.clear()
+            try:
+                with self._lock:
+                    stopping = self._writer_stopping
+                    dirty = self._durable_dirty
+                    if dirty:
+                        # Clear BEFORE writing: events arriving during the write
+                        # re-set the flag and earn their own next cycle, so none
+                        # is silently folded into a write that already started.
+                        self._durable_dirty = False
+                        self._flush_durable_locked()
+            except Exception:  # noqa: BLE001 - the writer must never die quietly
+                self._log_write_failure("write session state from the writer thread")
+                with self._lock:
+                    self._durable_dirty = True
+            if stopping and not dirty:
+                return
 
     def _apply_pnl_bearing_event_locked(self, record: Mapping[str, Any]) -> None:
         """Fold a realized-P&L event into that strategy's running totals.
@@ -621,6 +753,13 @@ class SessionStateStore:
         elapsed = self._write_document(
             self.marks_path, self._marks_document_locked(), durable=False
         )
+        # Only a COMPLETED publish counts. The 2026-08-12 freeze produced no
+        # error and no partial file, so "did a write finish" is the only signal
+        # that distinguishes a healthy loop from a stopped one.
+        self._marks_writes += 1
+        self._last_marks_write_monotonic = time.monotonic()
+        self._last_marks_write_at = _now_ist()
+        self._marks_stall_logged = False
         if elapsed >= SLOW_MARKS_WRITE_WARNING_SECONDS:
             self.log.warning(
                 "Session state marks write took %.3fs (path=%s); this delays "
@@ -648,6 +787,56 @@ class SessionStateStore:
         """Return a deep-ish copy of the current state, for tests/diagnostics."""
         with self._lock:
             return json.loads(json.dumps(self._state))
+
+    def health(self) -> dict[str, Any]:
+        """Liveness of the snapshot loop, for the supervisor heartbeat.
+
+        `marks_stalled` is the question 2026-08-12 could not answer: the loop
+        stopped writing at 12:30 while trading ran to 15:10, with no exception,
+        no partial file and no log line. Counting completed publishes and how
+        long ago the newest one was makes a stopped loop observable within a few
+        minutes instead of at end-of-day.
+        """
+        with self._lock:
+            age = time.monotonic() - self._last_marks_write_monotonic
+            open_positions = sum(
+                1
+                for entry in self._state.get("strategies", {}).values()
+                if isinstance(entry, Mapping) and entry.get("open_position")
+            )
+            return {
+                "marks_writes": self._marks_writes,
+                "marks_age_seconds": round(age, 1),
+                "marks_last_write_at": self._last_marks_write_at.isoformat(),
+                "marks_stalled": age > (self.snapshot_interval_seconds * MARKS_STALL_INTERVALS),
+                "trades_recorded": len(self._state.get("trades", [])),
+                "open_positions": open_positions,
+                "write_failures_logged": self._write_failure_logged,
+            }
+
+    def warn_if_marks_stalled(self) -> bool:
+        """Log ONCE per stall episode that the snapshot loop has gone quiet.
+
+        Returns True when a stall is currently detected (whether or not this
+        call did the logging). Kept here rather than in the runner so the
+        threshold and the one-shot latch live beside the counters they read.
+        """
+        report = self.health()
+        if not report["marks_stalled"]:
+            return False
+        if not self._marks_stall_logged:
+            self._marks_stall_logged = True
+            self.log.error(
+                "Session state marks have not been written for %.0fs (expected every "
+                "%.0fs, last at %s, %d writes so far). Open-position recovery for this "
+                "session is DEGRADED: the marks file describes an older book than the "
+                "durable trade log. Realized P&L is unaffected.",
+                report["marks_age_seconds"],
+                self.snapshot_interval_seconds,
+                report["marks_last_write_at"],
+                report["marks_writes"],
+            )
+        return True
 
 
 def _marks_path_for(path: str | Path) -> Path:
@@ -714,6 +903,11 @@ def load_session_state(path: str | Path) -> dict[str, Any] | None:
         )
         return state
 
+    # How far the marks lag the durable document. The durable file is stamped on
+    # every trade event, so this is a direct measure of "how much trading
+    # happened after the last snapshot" -- which on 2026-08-12 was 2h40m.
+    state["marks_age_seconds"] = _document_lag_seconds(state, marks)
+
     mark_strategies = marks.get("strategies")
     if not isinstance(mark_strategies, Mapping):
         return state
@@ -727,6 +921,22 @@ def load_session_state(path: str | Path) -> dict[str, Any] | None:
         if isinstance(target, dict):
             target.update(entry)
     return state
+
+
+def _document_lag_seconds(
+    state: Mapping[str, Any], marks: Mapping[str, Any]
+) -> float | None:
+    """Seconds by which the marks document trails the durable one.
+
+    ``None`` when either timestamp is missing or unparseable — the caller treats
+    an unknown lag as untrustworthy rather than as zero.
+    """
+    try:
+        durable_at = datetime.fromisoformat(str(state.get("updated_at", "")))
+        marks_at = datetime.fromisoformat(str(marks.get("updated_at", "")))
+    except ValueError:
+        return None
+    return round((durable_at - marks_at).total_seconds(), 1)
 
 
 def resumable_open_positions(
@@ -764,6 +974,23 @@ def resumable_open_positions(
     if str(state.get("session_date", "")) != session_date.isoformat():
         return {}
     if bool(state.get("clean_shutdown", False)):
+        return {}
+
+    # STALE MARKS ARE NOT A BOOK. The positions live in the best-effort marks
+    # file; if the snapshot loop stopped while trading continued, that file
+    # describes an older set of positions than actually existed. Restoring it
+    # would invent exposure that was closed and omit exposure that was opened --
+    # exactly what happened on 2026-08-12, where a 2h40m-stale file held 11
+    # positions against 23 genuinely open. Refuse rather than half-restore.
+    lag = state.get("marks_age_seconds")
+    if lag is None or float(lag) > MAX_RESUMABLE_MARKS_AGE_SECONDS:
+        logger.warning(
+            "Not resuming any position: the marks file lags the durable trade log "
+            "by %s (limit %.0fs), so its open positions are not a current book. "
+            "Realized P&L is unaffected; square off manually against the broker.",
+            "an unknown amount" if lag is None else f"{float(lag):.0f}s",
+            MAX_RESUMABLE_MARKS_AGE_SECONDS,
+        )
         return {}
 
     resumable: dict[str, dict[str, Any]] = {}

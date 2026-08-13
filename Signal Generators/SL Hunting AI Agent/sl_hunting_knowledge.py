@@ -620,6 +620,37 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   target case rather than the entry case: "gradually Sensex and NIFTY will try to
   cover themselves, so we will get our target." Read alongside INDEX HIERARCHY:
   the hierarchy decides who must AGREE, this decides who to WEIGHT.
+- A COMPLETED STOP-HUNT ENDS THAT DIRECTION (v4g). The sharpest single idea in
+  the series, and it inverts the naive reading. When a move has just finished
+  taking out one side's stops, that move has SPENT its fuel — it does not
+  continue, it turns. IH on a flat open after the prior session's late bounce:
+  "yesterday the market gave good selling, then took support EXACTLY at the 500
+  level and gave a retracement. Because of that retracement, whoever was selling
+  got chased out... so the chances of going DIRECTLY UP are LOW."
+  The up-move existed to clear the shorts. With the shorts gone there is nobody
+  left to squeeze, so the path of least resistance is back down. He states the
+  operating rule plainly: "if it has chased the sellers out, we try to follow
+  THAT SAME DIRECTION" — meaning the direction the market was in BEFORE the
+  clearing bounce, not the bounce itself.
+  Practical form: after a retracement that visibly cleared one side, do NOT
+  chase the retracement. Trade the original direction, and treat the bounce's
+  end as the entry. The one thing that voids this is a fresh large gap, which
+  recruits a new crowd and restarts the question (see the gap branches above).
+- THE ROUND NUMBER IS WHERE THE THESIS DIES, NOT JUST WHERE IT PAYS (v4g).
+  Earlier versions used round numbers to locate targets (v4d BOOK BEFORE THE
+  ROUND NUMBER) and recruitment (v4c ROUND NUMBERS AMPLIFY RECRUITMENT). This
+  adds the third and most operational use: the round number is the level at
+  which the trade is WRONG, declared before entry. IH, opening a short: "until
+  the market crosses the round number — as we see in NIFTY, the 24,500 level —
+  until Sensex crosses that resistance, we will not have much problem." And on
+  the BankNIFTY buyers he intended to hunt: "when is there no danger to these
+  buyers? If the market goes above 58,000, or gives a direct gap-up — then
+  whether buyers are seated or not, we cannot target them."
+  So each index carries its own named invalidation, and it is a ROUND number
+  rather than an indicator level. Name it with the entry, not after the trade
+  starts hurting, and treat a decisive cross as the read failing even if the
+  arithmetic stop has not been touched (this is the concrete form of v4d's
+  PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES).
 - SEATED-BUYER TEST — run this BEFORE the long branch fires (v3y). The whole
   gap-up-long premise is "a gap-up leaves nobody trapped, so there is no hunt
   available". That premise is FALSE when the prior session already seated a buying
@@ -1061,6 +1092,47 @@ RISK DISCIPLINE
   This is the general form of BOOK BEFORE THE ROUND NUMBER (v4d): that rule names
   WHERE the late crowd's targets sit, this one names WHEN your own edge has been
   spent regardless of where price is.
+- FEAR IS NOT A SIGNAL — NEVER CONVERT IT INTO AN EXIT (v4g). The single most
+  important guard on the rule directly above, and the two must be read together:
+  BOOK WHEN THE PROFIT STOPS GROWING is a MEASUREMENT (the rate of accrual has
+  fallen); this rule forbids the same action when the input is an EMOTION.
+  IH, with an open winner approaching target: "before the target is hit there is
+  a fear — should I book here, what if the market turns? ... Fear is not a big
+  deal, I feel it too. The target is almost about to hit and I feel it. But do
+  NOT convert that fear into ACTION. Feeling fear is fine; do not make a mistake
+  in handling your position because of it."
+  He also gives the mechanism for why cutting early is corrosive rather than
+  merely suboptimal: "if you cut early it gradually becomes a HABIT. Then you
+  cut small profits and leave, and when there is a loss you wait a long time to
+  save the position and take a BIG loss. That is why most traders never become
+  profitable." So an early book is not a small cost paid once — it trains the
+  asymmetry that destroys the account.
+  Operationally: an exit needs a NAMED, checkable reason — stop, target, the
+  profit rate falling, the premise invalidated, the round number crossed, the
+  time cutoff. "It might turn" is not on that list.
+- TIME SPENT IN THE TRADE SHRINKS THE ACHIEVABLE TARGET (v4g). Elapsed time is a
+  cost in its own right, separate from price. A trade that stalls and round-trips
+  does not merely return to where it started — it returns with less of the
+  session left to pay you. IH, after a near-target winner reversed and came back:
+  "the market turned and wasted our TIME... because time was spent we will have
+  to wait extra. Maybe we get the target only after the breakdown now." The
+  position that had shown a full target was booked for roughly half: "only half
+  the profit is showing, where earlier it showed double."
+  So when a trade consumes materially more time than the read assumed, SHRINK
+  the target rather than extending the wait — especially on an expiry session,
+  where premium is draining while you wait.
+- NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS PRINTED (v4g). Once meaningful open
+  profit has actually appeared on the screen, the floor for that trade stops
+  being breakeven and becomes "some profit". IH, booking a reduced winner: "we
+  book here, because if this profit also reduces we will have to exit at
+  zero-zero — and we do not want to exit zero-zero after having SEEN a good
+  profit." Note this is NOT the fear rule above in disguise: the trigger is the
+  observed fact that the move has stopped working ("the momentum is not
+  happening, the market went a bit down, a bit up"), and the printed profit only
+  sets the FLOOR for what an acceptable exit looks like once that fact is
+  established. It pairs with v4d's YOUR ENTRY PRICE IS THE FOURTH TARGET INPUT:
+  that one says a poor fill shrinks the target, this one says a good unrealised
+  print raises the minimum acceptable outcome.
 - CROWD SIZE IS THE THIRD TARGET INPUT (v4c). Alongside how recently the crowd was
   recruited (v4a) and whether it has averaged down (v4b), HOW MANY are seated
   scales the move available against them — and for a reason worth knowing: a

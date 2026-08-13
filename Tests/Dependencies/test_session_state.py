@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ import pytest
 # Bare import: this folder's conftest.py puts the SOURCE `Dependencies/` on
 # sys.path, which is the same resolution the runtime performs.
 from session_state import (
+    MAX_RESUMABLE_MARKS_AGE_SECONDS,
     SCHEMA_VERSION,
     SessionStateStore,
     _marks_path_for,
@@ -387,6 +389,9 @@ def _crashed_state(**overrides) -> dict:
         "schema_version": SCHEMA_VERSION,
         "session_date": "2026-08-10",
         "clean_shutdown": False,
+        # A real merged document always carries this (load_session_state computes
+        # it from the two files' timestamps). Fresh marks = no lag.
+        "marks_age_seconds": 0.0,
         "strategies": {
             "Renko": {
                 "live_trading": False,
@@ -687,3 +692,249 @@ def test_slow_marks_write_warns_about_supervision_not_trading(state_path: Path, 
     assert any("marks write took" in m and "not a trading decision" in m for m in messages)
     # And it must not blame the trading loop, which was the old message's error.
     assert not any("delaying the caller's trading loop" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot-loop liveness and the stale-marks guard
+# ---------------------------------------------------------------------------
+# On 2026-08-12 the supervisor stopped writing marks at 12:30 while trading ran
+# to 15:10. No exception, no partial file, no log line -- the freeze was only
+# found by comparing file mtimes hours later. The marks on disk described 11
+# positions where 23 were genuinely open, and nothing would have stopped a
+# resume from restoring that stale set as a current book.
+
+
+def test_health_reports_a_live_snapshot_loop(state_path: Path):
+    store = _store(state_path, snapshot_interval_seconds=1.0)
+    before = store.health()
+    assert before["marks_writes"] == 0
+
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+    after = store.health()
+    assert after["marks_writes"] == 1
+    assert after["marks_age_seconds"] < 5
+    assert after["marks_stalled"] is False
+    assert after["open_positions"] == 1
+
+
+def test_health_flags_a_stalled_snapshot_loop(state_path: Path, monkeypatch):
+    """The exact 2026-08-12 signature: writes simply stop, silently."""
+    store = _store(state_path, snapshot_interval_seconds=30.0)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    assert store.health()["marks_stalled"] is False
+
+    # Jump the monotonic clock past MARKS_STALL_INTERVALS * interval.
+    import session_state as module
+
+    base = time.monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: base + 30.0 * 4 + 1)
+    assert store.health()["marks_stalled"] is True
+
+
+def test_marks_stall_warns_once_per_episode(state_path: Path, monkeypatch, caplog):
+    import session_state as module
+
+    store = _store(state_path, snapshot_interval_seconds=30.0)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+
+    base = time.monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: base + 200.0)
+    with caplog.at_level("ERROR"):
+        assert store.warn_if_marks_stalled() is True
+        assert store.warn_if_marks_stalled() is True  # still stalled...
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("have not been written" in m for m in messages) == 1, "must log once"
+    # The message must be clear about what IS still safe.
+    assert any("Realized P&L is unaffected" in m for m in messages)
+
+
+def test_a_successful_write_clears_the_stall_latch(state_path: Path, monkeypatch, caplog):
+    import session_state as module
+
+    store = _store(state_path, snapshot_interval_seconds=30.0)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    base = time.monotonic()
+    monkeypatch.setattr(module.time, "monotonic", lambda: base + 200.0)
+    store.warn_if_marks_stalled()
+
+    monkeypatch.undo()
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    assert store.health()["marks_stalled"] is False
+    with caplog.at_level("ERROR"):
+        assert store.warn_if_marks_stalled() is False
+
+
+def test_load_records_how_far_the_marks_lag_the_durable_file(state_path: Path):
+    store = _store(state_path)
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 5.0})
+    store.update_worker_snapshot(
+        [{"strategy": "Renko", "open_position": serialize_position(_FakePosition())}],
+        force=True,
+    )
+    merged = load_session_state(state_path)
+    assert merged is not None
+    assert merged["marks_age_seconds"] is not None
+    assert abs(float(merged["marks_age_seconds"])) < 30
+
+
+def test_stale_marks_are_never_resumable(state_path: Path):
+    """The 2026-08-12 scenario end to end: a book that is hours out of date."""
+    state = _crashed_state(marks_age_seconds=2.0 * 60 * 60 + 40 * 60)  # 2h40m
+    assert resumable_open_positions(state, session_date=TODAY) == {}
+
+
+def test_marks_lag_just_inside_the_limit_still_resumes():
+    state = _crashed_state(marks_age_seconds=MAX_RESUMABLE_MARKS_AGE_SECONDS - 1)
+    assert set(resumable_open_positions(state, session_date=TODAY)) == {"Renko"}
+
+
+def test_unknown_marks_lag_fails_closed():
+    """An unparseable or absent timestamp must refuse, not assume zero."""
+    state = _crashed_state(marks_age_seconds=None)
+    assert resumable_open_positions(state, session_date=TODAY) == {}
+    del state["marks_age_seconds"]
+    assert resumable_open_positions(state, session_date=TODAY) == {}
+
+
+# ---------------------------------------------------------------------------
+# Optional off-thread durable writer
+# ---------------------------------------------------------------------------
+# The synchronous write blocks the trading thread that published the event. On
+# 2026-08-11, 86% of websocket feed disconnects landed within 20s of a write
+# stall (`keepalive ping timeout` dominant) -- a blocked event loop drops the
+# market feed. These tests pin the contract of moving it off-thread.
+
+
+def _slow_store(state_path: Path, delay: float = 0.25):
+    """A store whose durable write is artificially slow, like the real disk."""
+    store = _store(state_path)
+    real = store._write_document
+
+    def slow(target, document, *, durable):
+        if durable:
+            time.sleep(delay)
+        return real(target, document, durable=durable)
+
+    store._write_document = slow  # type: ignore[method-assign]
+    return store
+
+
+def test_record_returns_immediately_once_the_writer_is_running(state_path: Path):
+    """The whole point: a trading thread must not wait on fsync."""
+    store = _slow_store(state_path, delay=0.4)
+    store.start_durable_writer()
+    try:
+        began = time.monotonic()
+        store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 1.0})
+        elapsed = time.monotonic() - began
+        assert elapsed < 0.2, f"caller blocked for {elapsed:.3f}s"
+    finally:
+        assert store.stop_durable_writer(timeout=10.0) is True
+
+    on_disk = load_session_state(state_path)
+    assert on_disk is not None
+    assert on_disk["strategies"]["Renko"]["recorded_pnl"] == 1.0
+
+
+def test_synchronous_path_is_unchanged_without_a_writer(state_path: Path):
+    """Default behaviour must remain the original ADR-0012 contract."""
+    store = _slow_store(state_path, delay=0.3)
+    began = time.monotonic()
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 1.0})
+    elapsed = time.monotonic() - began
+    assert elapsed >= 0.3, "without a writer the caller must pay the fsync"
+    assert load_session_state(state_path)["strategies"]["Renko"]["recorded_pnl"] == 1.0
+
+
+def test_a_burst_is_coalesced_into_fewer_writes(state_path: Path):
+    """Coalescing is what makes the queued-loss window small AND cuts fsyncs."""
+    store = _slow_store(state_path, delay=0.15)
+    writes = []
+    real = store._write_document
+
+    def counting(target, document, *, durable):
+        if durable:
+            writes.append(1)
+        return real(target, document, durable=durable)
+
+    store._write_document = counting  # type: ignore[method-assign]
+    store.start_durable_writer()
+    try:
+        for i in range(12):
+            store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 1.0, "n": i})
+    finally:
+        assert store.stop_durable_writer(timeout=10.0) is True
+
+    # Every event must be present...
+    state = load_session_state(state_path)
+    assert len(state["trades"]) == 12
+    assert state["strategies"]["Renko"]["recorded_trades"] == 12
+    # ...but they must NOT have cost 12 separate durable writes.
+    assert len(writes) < 12, f"no coalescing happened ({len(writes)} writes)"
+
+
+def test_stop_drains_everything_recorded(state_path: Path):
+    """An orderly shutdown must be exactly as durable as the sync path."""
+    store = _slow_store(state_path, delay=0.05)
+    store.start_durable_writer()
+    for i in range(6):
+        store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 2.0, "n": i})
+    assert store.stop_durable_writer(timeout=10.0) is True
+
+    state = load_session_state(state_path)
+    assert len(state["trades"]) == 6
+    assert state["strategies"]["Renko"]["recorded_pnl"] == 12.0
+
+
+def test_stop_is_idempotent_and_safe_without_a_writer(state_path: Path):
+    store = _store(state_path)
+    assert store.stop_durable_writer() is True  # never started
+    store.start_durable_writer()
+    assert store.stop_durable_writer(timeout=10.0) is True
+    assert store.stop_durable_writer() is True  # already stopped
+
+
+def test_starting_twice_does_not_spawn_a_second_writer(state_path: Path):
+    store = _store(state_path)
+    store.start_durable_writer()
+    first = store._writer
+    store.start_durable_writer()
+    try:
+        assert store._writer is first
+    finally:
+        store.stop_durable_writer(timeout=10.0)
+
+
+def test_a_failing_write_does_not_kill_the_writer_or_lose_the_event(state_path: Path):
+    """A transient disk error must be retried, not swallowed silently."""
+    store = _store(state_path)
+    real = store._write_document
+    calls = {"n": 0}
+
+    def flaky(target, document, *, durable):
+        if durable:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("disk hiccup")
+        return real(target, document, durable=durable)
+
+    store._write_document = flaky  # type: ignore[method-assign]
+    store.start_durable_writer()
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 7.0})
+    try:
+        # The writer re-marks the state dirty, so a later cycle persists it.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            state = load_session_state(state_path)
+            if state and state.get("strategies", {}).get("Renko", {}).get("recorded_pnl") == 7.0:
+                break
+            time.sleep(0.05)
+    finally:
+        store.stop_durable_writer(timeout=10.0)
+
+    state = load_session_state(state_path)
+    assert state["strategies"]["Renko"]["recorded_pnl"] == 7.0
+    assert calls["n"] >= 2, "the failed write must have been retried"

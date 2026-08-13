@@ -123,6 +123,74 @@ durability from "guaranteed before the call returns" to a sub-second window —
 which is the guarantee this ADR was written to provide. At a 0.414 s median,
 13 times a session, that trade is not worth making.
 
+#### Amendment (2026-08-13): off-thread durable writes, offered but not imposed
+
+The split amendment above **rejected** moving trade-event writes to a writer
+thread, on the grounds that a 0.414 s median stall did not justify weakening
+durability. That reasoning was incomplete, and the correction is worth stating
+plainly: the stalls do not merely add latency, **they drop the market feed**.
+
+On 2026-08-11, **86% of the websocket disconnects (25 of 29) landed within 20
+seconds of a session-state write stall**, and `keepalive ping timeout` is the
+dominant feed error across the whole log — the signature of a blocked event
+loop. Pre-feature days show 1–18 reconnects with zero write stalls. After the
+durable/marks split cut stalls from 281 to 36, correlated errors fell from 25 to
+3 and total reconnects halved. The remaining stalls are the ~15 trade-event
+writes still on trading threads.
+
+Two things about the trade that were previously mis-stated:
+
+- **The data does not land later.** The write takes the same time either way, so
+  it reaches the platter at the same wall-clock moment. What changes is that the
+  publishing thread is not frozen meanwhile — and it was frozen for precisely
+  that interval before, unable to act on anything.
+- **A lost queued event still has its log line.** `publish_trade_event` is called
+  *after* the `EXIT` log record is emitted, and that log is what
+  `_parse_eod_pnl_by_day` reads for the Sheet. The fallback is the same one the
+  system used before this module existed.
+
+What genuinely changes: a hard kill can lose events queued in the last write
+cycle rather than only the one in flight. Coalescing bounds that — the document
+is a full rewrite, so a burst becomes ONE write, which also reduces total fsyncs.
+
+**Decision: implement it, default OFF** (`SESSION_STATE_ASYNC_WRITES`). This is
+a genuine reduction of the guarantee this ADR was written to provide, so it is
+the operator's call rather than a silent default change — the same treatment
+`SESSION_STATE_RESUME_ENABLED` got. `stop_durable_writer()` drains before the
+clean-shutdown flag is written, so an orderly end of day is exactly as durable
+as the synchronous path.
+
+#### Amendment (2026-08-13): the snapshot loop must be observable
+
+The split's first session exposed a second, independent hole. The supervisor
+stopped writing marks at **12:30** while workers traded on to **15:10** — no
+exception, no partial file, no log line. It was found hours later by comparing
+file mtimes, and even then the cause could not be determined: MainThread emits
+nothing during a healthy session, so its silence carried no information.
+
+Worse, the marks left on disk described **11 open positions where 23 were
+genuinely open**. Had resume been enabled, it would have restored that
+2h40m-stale set as a current book — inventing exposure that had been closed and
+omitting exposure that had been opened, which is the exact failure this ADR
+exists to prevent, arriving through the file it created.
+
+Two additions:
+
+- **A supervisor heartbeat** (`SESSION_STATE_HEARTBEAT_SECONDS`, default 300s)
+  logging workers alive, completed marks writes, marks age, open positions and
+  trades recorded. Its presence proves the loop is turning; the gap between the
+  last heartbeat and a crash localises where it stopped. `health()` supplies the
+  counters and `warn_if_marks_stalled()` raises one ERROR per stall episode.
+- **A stale-marks guard.** `load_session_state` records `marks_age_seconds` from
+  the two documents' `updated_at` stamps, and `resumable_open_positions` refuses
+  every position when that lag exceeds `MAX_RESUMABLE_MARKS_AGE_SECONDS` (300s)
+  or cannot be determined. Fail-closed on an unknown lag is deliberate: a book
+  of unknown age is not a book.
+
+Note what is NOT guarded: the durable half needs none of this. Trade events are
+written by the trading threads themselves, so a frozen supervisor cannot affect
+realized P&L — which is why the 12 Aug reconciliation was still exact.
+
 ##### Measured after the change (2026-08-12, first session on the split)
 
 | | warnings | median | max | >1s |

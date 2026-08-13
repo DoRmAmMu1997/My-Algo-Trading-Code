@@ -19,6 +19,7 @@ import math
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass, field
+from enum import StrEnum
 from time import monotonic
 from typing import Any
 
@@ -28,6 +29,18 @@ from cpr_ai_tools import EXPECTED_TOOL_NAMES
 # views of the exact same immutable snapshot.  Capability violations are never
 # retried: they indicate that the turn left the allowlisted contract.
 _RETRIABLE_TOOL_EVIDENCE_CODES = frozenset({"missing_tool_call", "failed_tool_call"})
+
+
+class CPRTurnRequestKind(StrEnum):
+    """Name the only two fixed turn requests allowed across the child boundary.
+
+    The parent controls this enum.  In particular, no model response or caller
+    string can become a follow-up instruction, which keeps the corrective turn
+    limited to re-reading the four already-frozen facts.
+    """
+
+    NORMAL = "normal"
+    TOOL_REPAIR = "tool_repair"
 
 
 @dataclass(frozen=True)
@@ -57,6 +70,25 @@ class CPRAgentRunResult:
     unexpected_actions: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class CPRAttemptEvidence:
+    """Auditable record for one isolated turn slot within a bar deadline.
+
+    Most records describe a child turn that returned. A record can instead be
+    a conservative pre-launch/timeout marker when the shared deadline expires
+    before usable child evidence comes back. Empty tool records and token usage
+    then mean "nothing was returned and proved," not "the child proved it used
+    zero tokens." The audit never keeps chain-of-thought, returned MCP payloads,
+    authentication data, or any execution capability.
+    """
+
+    attempt_number: int
+    request_kind: CPRTurnRequestKind
+    evidence_code: str | None
+    tool_records: tuple[CPRToolCallRecord, ...]
+    token_usage: dict[str, int]
+
+
 @dataclass
 class CPRAgentOutcome:
     """Host-owned outcome separating advice from executable geometry.
@@ -83,6 +115,12 @@ class CPRAgentOutcome:
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_evidence: tuple[CPRToolCallRecord, ...] = ()
     inference_attempts: int = 1
+    attempt_evidence: tuple[CPRAttemptEvidence, ...] = ()
+    # This is the single current-signature sample captured when the host
+    # finalizes either normal validation or a terminal fail-closed outcome.
+    # Keeping it on the outcome prevents a later audit writer from accidentally
+    # observing a newer shared-market generation.
+    validation_current_signature: str | None = None
 
 
 def _hold(code: str, reason: str, proposal: Any | None = None, *, regime: str | None = None) -> CPRAgentOutcome:
@@ -442,14 +480,21 @@ class CPRAgent:
         started = monotonic()
         executor = ThreadPoolExecutor(max_workers=1)
         release_when_finished = False
+        # The parent may reach its wall-clock deadline while the child thread is
+        # still unwinding.  This shared, append-only audit lets that fail-closed
+        # path retain every completed attempt rather than returning a blank HOLD.
+        attempt_evidence: list[CPRAttemptEvidence] = []
         try:
             future = executor.submit(
                 self._run_turn_with_tool_retry,
                 context,
                 bar_signature,
+                started + self.timeout_seconds,
+                current_signature,
+                attempt_evidence,
             )
             try:
-                result, inference_attempts, combined_usage = future.result(
+                result, recorded_attempts, combined_usage, terminal_code = future.result(
                     timeout=self.timeout_seconds
                 )
             except TimeoutError:
@@ -459,35 +504,57 @@ class CPRAgent:
                 future.cancel()
                 release_when_finished = True
                 future.add_done_callback(lambda _future: self._inference_lock.release())
-                return _hold("timeout", "Codex did not finish inside the configured deadline.")
+                return self._terminal_hold_with_attempt_evidence(
+                    "timeout", attempt_evidence, current_signature
+                )
         except Exception as error:  # optional SDK failure must disable this agent only
-            return _hold("runtime_error", f"Optional Codex runtime failed: {type(error).__name__}.")
+            # Timeout-class errors retain their conservative pre-launch audit.
+            # Other first-turn runtime errors keep the established generic
+            # runtime outcome and never expose an exception message.
+            if self._is_timeout_error(error):
+                return self._terminal_hold_with_attempt_evidence(
+                    "timeout", attempt_evidence, current_signature
+                )
+            return self._terminal_hold_with_attempt_evidence(
+                "runtime_error", attempt_evidence, current_signature
+            )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
             if not release_when_finished:
                 self._inference_lock.release()
         latency_ms = int((monotonic() - started) * 1000)
-        outcome = self._validate_run(result, context, bar_signature, current_signature)
+        outcome = (
+            self._terminal_hold_with_attempt_evidence(
+                terminal_code, list(recorded_attempts), current_signature
+            )
+            if terminal_code is not None
+            else self._validate_run(result, context, bar_signature, current_signature)
+        )
         outcome.latency_ms = latency_ms
         outcome.token_usage = combined_usage
         outcome.tool_evidence = result.tool_calls
-        outcome.inference_attempts = inference_attempts
+        outcome.inference_attempts = len(recorded_attempts)
+        outcome.attempt_evidence = recorded_attempts
         return outcome
 
     def _run_turn_with_tool_retry(
         self,
         context: Mapping[str, Any],
         bar_signature: str,
-    ) -> tuple[CPRAgentRunResult, int, dict[str, int]]:
+        deadline: float,
+        current_signature: Callable[[], str] | None,
+        attempt_evidence: list[CPRAttemptEvidence],
+    ) -> tuple[CPRAgentRunResult, tuple[CPRAttemptEvidence, ...], dict[str, int], str | None]:
         """Retry incomplete frozen-tool evidence once inside one total deadline.
 
         Both attempts receive the same in-memory context and bar signature.  A
         retry therefore cannot silently move to newer market facts.  The second
-        attempt receives only the wall-clock budget left after the first one,
-        so this recovery path never doubles the configured SDK timeout.
+        attempt receives only the wall-clock budget left after the first one.
+        That shared budget includes parent/child process setup as well as the
+        SDK turn itself, so this recovery path never doubles the configured
+        CPR inference timeout.
         """
 
-        deadline = monotonic() + self.timeout_seconds
         results: list[CPRAgentRunResult] = []
         for attempt_index in range(2):
             if attempt_index == 0:
@@ -498,17 +565,90 @@ class CPRAgent:
             else:
                 attempt_timeout = deadline - monotonic()
                 if attempt_timeout <= 0:
-                    break
-            result = self._run_turn(
-                context,
-                bar_signature,
-                timeout_seconds=attempt_timeout,
+                    # The repair was selected but no wall-clock budget remains.
+                    # Record that fact explicitly without inventing a tool call
+                    # or token count for a child process that never launched.
+                    attempt_evidence.append(
+                        CPRAttemptEvidence(
+                            attempt_number=2,
+                            request_kind=CPRTurnRequestKind.TOOL_REPAIR,
+                            evidence_code="timeout",
+                            tool_records=(),
+                            token_usage={},
+                        )
+                    )
+                    return results[-1], tuple(attempt_evidence), self._combined_token_usage(results), "timeout"
+            request_kind = (
+                CPRTurnRequestKind.NORMAL
+                if attempt_index == 0
+                else CPRTurnRequestKind.TOOL_REPAIR
             )
+            # Install a conservative no-evidence marker before the optional
+            # runtime starts. If the parent deadline wins the race, this still
+            # records which turn slot was selected. Empty tool/usage fields mean
+            # the child returned no provable evidence; they are not an assertion
+            # that a launched child consumed exactly zero tokens.
+            diagnostic_index = len(attempt_evidence)
+            attempt_evidence.append(
+                CPRAttemptEvidence(
+                    attempt_number=attempt_index + 1,
+                    request_kind=request_kind,
+                    evidence_code="timeout",
+                    tool_records=(),
+                    token_usage={},
+                )
+            )
+            try:
+                result = self._run_turn(
+                    context,
+                    bar_signature,
+                    request_kind=request_kind,
+                    timeout_seconds=attempt_timeout,
+                )
+            except Exception as error:
+                # Preserve the usual first-turn exception behavior.  Once the
+                # normal result proved a repair was needed, however, a failed
+                # repair must retain that completed first audit trail.
+                if attempt_index == 0:
+                    if not self._is_timeout_error(error):
+                        # A normal child failed before returning any evidence.
+                        # Keep one typed record without inventing tools, usage,
+                        # or an exception string for the operator audit.
+                        attempt_evidence[diagnostic_index] = CPRAttemptEvidence(
+                            attempt_number=1,
+                            request_kind=CPRTurnRequestKind.NORMAL,
+                            evidence_code="runtime_error",
+                            tool_records=(),
+                            token_usage={},
+                        )
+                    raise
+                terminal_code = "timeout" if self._is_timeout_error(error) else "runtime_error"
+                attempt_evidence[diagnostic_index] = (
+                    CPRAttemptEvidence(
+                        attempt_number=2,
+                        request_kind=CPRTurnRequestKind.TOOL_REPAIR,
+                        evidence_code=terminal_code,
+                        tool_records=(),
+                        token_usage={},
+                    )
+                )
+                return results[-1], tuple(attempt_evidence), self._combined_token_usage(results), terminal_code
             results.append(result)
             evidence_error = self._tool_evidence_error(result)
-            if (
-                evidence_error is None
-                or evidence_error[0] not in _RETRIABLE_TOOL_EVIDENCE_CODES
+            completed_evidence = CPRAttemptEvidence(
+                attempt_number=attempt_index + 1,
+                request_kind=request_kind,
+                evidence_code=None if evidence_error is None else evidence_error[0],
+                tool_records=result.tool_calls,
+                token_usage=dict(result.token_usage),
+            )
+            attempt_evidence[diagnostic_index] = completed_evidence
+            if not self._retry_is_allowed(
+                result,
+                context,
+                bar_signature,
+                current_signature,
+                evidence_error,
             ):
                 break
 
@@ -516,7 +656,114 @@ class CPRAgent:
         # this list cannot be empty.  Keeping the assertion documents that local
         # invariant without converting an SDK exception into trusted evidence.
         assert results
-        return results[-1], len(results), self._combined_token_usage(results)
+        return results[-1], tuple(attempt_evidence), self._combined_token_usage(results), None
+
+    @staticmethod
+    def _is_timeout_error(error: Exception) -> bool:
+        """Recognize local deadline exceptions without retaining their details.
+
+        The optional adapter may surface either the standard library's
+        ``TimeoutExpired`` or the executor's ``TimeoutError``.  The host stores
+        only the safe classification, never a potentially sensitive message.
+        """
+
+        return isinstance(error, TimeoutError) or type(error).__name__ == "TimeoutExpired"
+
+    @staticmethod
+    def _terminal_failure_reason(code: str) -> str:
+        """Return a credential-safe reason for a terminal Codex-turn outcome.
+
+        Both the initial turn and an optional repair use this helper. The
+        historical human-readable text uses the word ``corrective`` for either
+        path, so ``attempt_evidence.request_kind`` is the authoritative field
+        when an operator needs to distinguish ``normal`` from ``tool_repair``.
+        The reason itself never includes exception text, child output, command
+        arguments, or local paths.
+        """
+
+        if code == "timeout":
+            return "The corrective Codex turn exhausted the original deadline."
+        return "The optional corrective Codex runtime failed."
+
+    def _terminal_hold_with_attempt_evidence(
+        self,
+        code: str,
+        attempt_evidence: list[CPRAttemptEvidence],
+        current_signature: Callable[[], str] | None,
+    ) -> CPRAgentOutcome:
+        """Build a terminal HOLD with its one retained host signature sample.
+
+        These paths never reach ``_validate_run`` because the initial or repair
+        child timed out or failed. Capture one signature here rather than
+        leaving a JSONL row ambiguous or calling the mutable shared-data getter
+        later. The call happens once during finalization, so the audit describes
+        this decision even if the market store advances immediately afterward.
+        """
+
+        recorded_attempts = tuple(attempt_evidence)
+        outcome = _hold(code, self._terminal_failure_reason(code))
+        outcome.inference_attempts = len(recorded_attempts)
+        outcome.attempt_evidence = recorded_attempts
+        outcome.token_usage = self._combined_attempt_token_usage(recorded_attempts)
+        outcome.tool_evidence = next(
+            (record.tool_records for record in reversed(recorded_attempts) if record.tool_records),
+            (),
+        )
+        return self._with_validation_current_signature(
+            outcome,
+            current_signature() if current_signature is not None else None,
+        )
+
+    @staticmethod
+    def _combined_attempt_token_usage(
+        attempts: tuple[CPRAttemptEvidence, ...],
+    ) -> dict[str, int]:
+        """Combine retained attempt counters with the same context-window rule."""
+
+        combined: dict[str, int] = {}
+        for attempt in attempts:
+            for key, value in attempt.token_usage.items():
+                if key == "model_context_window":
+                    combined[key] = max(combined.get(key, 0), int(value))
+                else:
+                    combined[key] = combined.get(key, 0) + int(value)
+        return combined
+
+    def _retry_is_allowed(
+        self,
+        result: CPRAgentRunResult,
+        context: Mapping[str, Any],
+        bar_signature: str,
+        current_signature: Callable[[], str] | None,
+        evidence_error: tuple[str, str] | None,
+    ) -> bool:
+        """Allow the one repair only for otherwise-valid missing/failed reads.
+
+        A repair exists to recover an incomplete observation of immutable MCP
+        facts.  It must not hide a stale bar, bad schema/model/prompt echo, or
+        deterministic host-policy rejection behind a second model attempt.
+        """
+
+        if evidence_error is None or evidence_error[0] not in _RETRIABLE_TOOL_EVIDENCE_CODES:
+            return False
+        if current_signature is not None and current_signature() != bar_signature:
+            return False
+        try:
+            from cpr_ai_schema import CPRAgentDecision
+
+            proposal = CPRAgentDecision.model_validate_json(result.final_response)
+        except Exception:
+            return False
+        if proposal.model_used != self.model:
+            return False
+        expected_prompt = self.prompt_version
+        if expected_prompt is None:
+            from cpr_ai_prompt import CPR_AI_PROMPT_VERSION
+
+            expected_prompt = CPR_AI_PROMPT_VERSION
+        if proposal.prompt_version != expected_prompt:
+            return False
+        return self.policy.validate(context, proposal).accepted
 
     @staticmethod
     def _combined_token_usage(
@@ -543,6 +790,7 @@ class CPRAgent:
         context: Mapping[str, Any],
         bar_signature: str,
         *,
+        request_kind: CPRTurnRequestKind = CPRTurnRequestKind.NORMAL,
         timeout_seconds: float | None = None,
     ) -> CPRAgentRunResult:
         """Build prompt/schema lazily and pass only advisory inputs to the child.
@@ -566,6 +814,7 @@ class CPRAgent:
             reasoning_effort=self.reasoning_effort,
             prompt_version=self.prompt_version or CPR_AI_PROMPT_VERSION,
             output_schema=CPRAgentDecision.model_json_schema(),
+            request_kind=request_kind,
             # Direct diagnostic callers historically used this helper without
             # an explicit deadline.  Normal and retry paths pass their exact
             # per-attempt budget; the fallback preserves that diagnostic API.
@@ -592,26 +841,49 @@ class CPRAgent:
         to place a trade.
         """
 
+        # Sample mutable market identity exactly once for this validation.  The
+        # audit row must describe this host decision, not a later poll that may
+        # have received an official-candle correction in the meantime.
+        validation_current_signature = (
+            current_signature() if current_signature is not None else None
+        )
         evidence_error = self._tool_evidence_error(result)
         if evidence_error is not None:
-            return _hold(*evidence_error)
-        if current_signature is not None and current_signature() != bar_signature:
-            return _hold("stale_bar_signature", "The frozen completed bar is no longer current.")
+            return self._with_validation_current_signature(
+                _hold(*evidence_error), validation_current_signature
+            )
+        if (
+            current_signature is not None
+            and validation_current_signature != bar_signature
+        ):
+            return self._with_validation_current_signature(
+                _hold("stale_bar_signature", "The frozen completed bar is no longer current."),
+                validation_current_signature,
+            )
         try:
             from cpr_ai_schema import CPRAgentDecision
 
             proposal = CPRAgentDecision.model_validate_json(result.final_response)
         except Exception:
-            return _hold("malformed_output", "Codex output did not match the strict decision schema.")
+            return self._with_validation_current_signature(
+                _hold("malformed_output", "Codex output did not match the strict decision schema."),
+                validation_current_signature,
+            )
         if proposal.model_used != self.model:
-            return _hold("model_mismatch", "Model echo does not match the configured model.", proposal)
+            return self._with_validation_current_signature(
+                _hold("model_mismatch", "Model echo does not match the configured model.", proposal),
+                validation_current_signature,
+            )
         expected_prompt = self.prompt_version
         if expected_prompt is None:
             from cpr_ai_prompt import CPR_AI_PROMPT_VERSION
 
             expected_prompt = CPR_AI_PROMPT_VERSION
         if proposal.prompt_version != expected_prompt:
-            return _hold("prompt_version_mismatch", "Prompt-version echo does not match the host prompt.", proposal)
+            return self._with_validation_current_signature(
+                _hold("prompt_version_mismatch", "Prompt-version echo does not match the host prompt.", proposal),
+                validation_current_signature,
+            )
         outcome = self.policy.validate(context, proposal)
         # The SDK boundary has proved that this was a contemporaneous, pinned
         # regime classification.  Preserve it even when hard execution gates
@@ -621,6 +893,18 @@ class CPRAgent:
             "invalid_frozen_context",
         }:
             outcome.accepted_regime = proposal.regime
+        return self._with_validation_current_signature(
+            outcome, validation_current_signature
+        )
+
+    @staticmethod
+    def _with_validation_current_signature(
+        outcome: CPRAgentOutcome,
+        validation_current_signature: str | None,
+    ) -> CPRAgentOutcome:
+        """Retain the one validation-time signature on every audited outcome."""
+
+        outcome.validation_current_signature = validation_current_signature
         return outcome
 
     @staticmethod
@@ -647,4 +931,12 @@ class CPRAgent:
         return None
 
 
-__all__ = ["CPRAgent", "CPRAgentOutcome", "CPRAgentRunResult", "CPRHostPolicy", "CPRToolCallRecord"]
+__all__ = [
+    "CPRAgent",
+    "CPRAgentOutcome",
+    "CPRAgentRunResult",
+    "CPRAttemptEvidence",
+    "CPRHostPolicy",
+    "CPRToolCallRecord",
+    "CPRTurnRequestKind",
+]

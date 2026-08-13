@@ -1380,6 +1380,32 @@ class TestCentralMarketDataFetcher(unittest.TestCase):
 
         self.assertEqual(self.store.get("1").official_candle_ts, latest)
 
+    def test_rest_publication_does_not_certify_a_provisional_final_minute(self):
+        """A 09:29 request cannot claim its 09:29 REST row is final evidence."""
+
+        request_started_at = datetime(2026, 8, 13, 9, 29, 59)
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-08-13 09:28"), pd.Timestamp("2026-08-13 09:29")],
+                "open": [100.0, 101.0],
+                "high": [101.0, 102.0],
+                "low": [99.0, 100.0],
+                "close": [100.5, 101.5],
+            }
+        )
+        self.broker.fetch_ltp_map.return_value = {}
+        self.stop_event.wait = MagicMock(side_effect=lambda _seconds: self.stop_event.set())
+
+        request_started_ist = request_started_at.replace(
+            tzinfo=master_file.IST_TIMEZONE
+        )
+        with patch.object(master_file, "_ist_now", return_value=request_started_ist):
+            self.fetcher.run()
+
+        snapshot = self.store.get("1")
+        self.assertEqual(snapshot.official_completed_minutes, frozenset({pd.Timestamp("2026-08-13 09:28")}))
+        self.assertEqual(snapshot.official_candle_ts, pd.Timestamp("2026-08-13 09:28"))
+
 
 # =============================================================================
 # TEST SUITE: MARKET DATA SOURCE SELECTOR
@@ -1667,6 +1693,54 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
         self.assertEqual(by_ts.loc[completed]["close"], 100.5)
         # ...while the forming minute keeps its tick-built values.
         self.assertEqual(by_ts.loc[forming]["close"], 100.6)
+
+    def test_true_up_before_grace_keeps_just_closed_minute_tick_owned(self):
+        """A clock-closed REST row stays provisional until the grace boundary.
+
+        Although 10:16 has closed by the clock, its REST row must not overwrite
+        the tick-built candle until a later request proves that row final.
+        """
+
+        stable = pd.Timestamp("2026-05-15 10:15:00")
+        just_closed = pd.Timestamp("2026-05-15 10:16:00")
+        self.fetcher.aggregator.add_tick(just_closed, 100.6)
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [stable, just_closed],
+                "open": [99.8, 100.0], "high": [100.4, 101.0],
+                "low": [99.6, 99.5], "close": [100.1, 100.5],
+            }
+        )
+
+        self.fetcher._run_true_up("reconnect", now_ist=datetime(2026, 5, 15, 10, 17, 3))
+
+        snapshot = self.store.get("1")
+        self.assertEqual(snapshot.official_completed_minutes, frozenset({stable}))
+        self.assertEqual(snapshot.frame.set_index("timestamp").loc[just_closed, "close"], 100.6)
+
+    def test_true_up_after_grace_uses_final_ohlc_and_prunes_only_stable_minutes(self):
+        """At 10:17:07 the 10:16 REST candle is final and may replace ticks."""
+
+        stable = pd.Timestamp("2026-05-15 10:15:00")
+        just_closed = pd.Timestamp("2026-05-15 10:16:00")
+        forming = pd.Timestamp("2026-05-15 10:17:00")
+        self.fetcher.aggregator.add_tick(just_closed, 100.6)
+        self.fetcher.aggregator.add_tick(forming, 100.8)
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {
+                "timestamp": [stable, just_closed, forming],
+                "open": [99.8, 100.0, 100.1], "high": [100.4, 101.0, 101.1],
+                "low": [99.6, 99.5, 99.7], "close": [100.1, 100.5, 100.2],
+            }
+        )
+
+        self.fetcher._run_true_up("minute-close", now_ist=datetime(2026, 5, 15, 10, 17, 7))
+
+        snapshot = self.store.get("1")
+        self.assertEqual(snapshot.official_completed_minutes, frozenset({stable, just_closed}))
+        self.assertEqual(snapshot.frame.set_index("timestamp").loc[just_closed, "close"], 100.5)
+        self.assertEqual(snapshot.frame.set_index("timestamp").loc[forming, "close"], 100.8)
+        self.assertEqual(self.fetcher.aggregator.tick_bars_frame()["timestamp"].tolist(), [forming])
 
     def test_true_up_prunes_trued_minutes_so_divergence_is_per_cycle(self):
         """Once official candles cover a minute, its tick bar must leave the
@@ -2074,6 +2148,41 @@ class TestAdditionalDataclasses(unittest.TestCase):
         )
         store.update("1", frame, official_candle_ts=watermark)
         self.assertEqual(store.get("1").official_candle_ts, watermark)
+
+    def test_shared_store_publishes_frame_exact_official_set_and_watermark_together(self):
+        """Publish the immutable official-minute set and its watermark together.
+
+        The immutable object is the exact minute-identity set. The DataFrame is
+        still defensively copied for readers; this test does not claim that a
+        pandas frame itself is immutable.
+        """
+
+        frame = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-08-13 09:25", periods=5, freq="1min"),
+                "open": [100.0] * 5,
+                "high": [101.0] * 5,
+                "low": [99.0] * 5,
+                "close": [100.5] * 5,
+            }
+        )
+        exact = frozenset(
+            {
+                pd.Timestamp("2026-08-13 09:25"),
+                pd.Timestamp("2026-08-13 09:27"),
+                pd.Timestamp("2026-08-13 09:29"),
+            }
+        )
+        store = master_file.SharedMarketDataStore()
+
+        snapshot = store.update("1", frame, official_completed_minutes=exact)
+        copied = store.get("1")
+
+        self.assertEqual(snapshot.official_completed_minutes, exact)
+        self.assertEqual(copied.official_completed_minutes, exact)
+        self.assertEqual(copied.official_candle_ts, pd.Timestamp("2026-08-13 09:29"))
+        with self.assertRaises(AttributeError):
+            copied.official_completed_minutes.add(pd.Timestamp("2026-08-13 09:26"))
 
     def test_ltp_snapshot(self):
         """LTPSnapshot identifies a leg and its latest price + fetched time."""
@@ -9887,6 +9996,53 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
         logger.write.assert_called_once()
 
+    def test_worker_marks_pre_and_post_audits_with_one_frozen_coverage_snapshot(self):
+        """An entry blocked after inference must still retain both distinct audit stages.
+
+        The bar/coverage evidence belongs to the inference snapshot, so a later
+        execution outcome must not rebuild or silently alter it.
+        """
+
+        worker, agent, logger = self._worker()
+        outcome = agent.decide.return_value
+        outcome.action = "ENTER_LONG"
+        outcome.accepted = True
+        outcome.entry_price = 100.0
+        outcome.stop_price = 95.0
+        outcome.final_target_price = 118.0
+        outcome.validation_current_signature = "validated-0930"
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        worker._completed_bar_signature = lambda _frame: "frozen-0930"
+        worker._current_completed_spot_signature = lambda: "validated-0930"
+        worker._post_inference_exposure_block_reason = lambda: "entry_cutoff"
+        # These sentinels stand for the exact five one-minute REST rows that
+        # produced the decided 09:30 bucket. PRE_ACTION and POST_ACTION must
+        # retain this same frozen list instead of resampling a newer store.
+        metadata = {
+            "bar_timestamp": "2026-08-13T09:30:00+05:30",
+            "frozen_signature": "frozen-0930",
+            "required_official_minutes": ["one", "two", "three", "four", "five"],
+            "present_official_minutes": ["one", "two", "three", "four", "five"],
+            "official_coverage": True,
+        }
+
+        worker.process_strategy_frame(
+            pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-13 09:30"), "close": 100.0}]),
+            audit_metadata=metadata,
+        )
+
+        self.assertEqual(logger.write.call_count, 2)
+        pre_action, post_action = logger.write.call_args_list
+        self.assertEqual(pre_action.kwargs["audit_stage"], "PRE_ACTION")
+        self.assertEqual(post_action.kwargs["audit_stage"], "POST_ACTION")
+        self.assertEqual(pre_action.kwargs["bar_metadata"], metadata)
+        self.assertEqual(post_action.kwargs["bar_metadata"], metadata)
+
     def test_forming_websocket_minute_waits_for_close_and_true_up_never_repeats_bucket(self):
         """Model forming websocket revisions and an official REST correction.
 
@@ -9971,7 +10127,10 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker.store.update(
             "1",
             minutes,
-            official_candle_ts=pd.Timestamp("2026-08-03 09:58:00"),
+            official_completed_minutes=frozenset(
+                pd.Timestamp("2026-08-03 09:55:00") + pd.Timedelta(minutes=offset)
+                for offset in range(4)
+            ),
         )
         poll_count = 0
 
@@ -9984,7 +10143,10 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 worker.store.update(
                     "1",
                     minutes,
-                    official_candle_ts=pd.Timestamp("2026-08-03 09:59:00"),
+                    official_completed_minutes=frozenset(
+                        pd.Timestamp("2026-08-03 09:55:00") + pd.Timedelta(minutes=offset)
+                        for offset in range(5)
+                    ),
                 )
                 return
             self.assertEqual(agent.decide.call_count, 1)
@@ -10023,6 +10185,58 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             worker._completed_bar_signature(original),
             worker._completed_bar_signature(corrected),
         )
+
+    def test_official_gate_requires_every_exact_source_minute_in_bucket(self):
+        """A final-minute watermark cannot hide an intermediate REST hole."""
+
+        worker, _agent, _logger = self._worker()
+        minutes = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-08-03 09:55", periods=5, freq="1min"),
+                "open": [100.0] * 5,
+                "high": [101.0] * 5,
+                "low": [99.0] * 5,
+                "close": [100.5] * 5,
+            }
+        )
+        completed = pd.DataFrame(
+            [{"timestamp": pd.Timestamp("2026-08-03 09:55"), "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}]
+        )
+        missing_intermediate = frozenset(
+            pd.Timestamp("2026-08-03 09:55") + pd.Timedelta(minutes=offset)
+            for offset in (0, 1, 3, 4)
+        )
+        worker.store.update("1", minutes, official_completed_minutes=missing_intermediate)
+
+        self.assertFalse(worker._official_snapshot_covers_completed_bar(worker.store.get("1"), completed))
+
+        all_five = frozenset(
+            pd.Timestamp("2026-08-03 09:55") + pd.Timedelta(minutes=offset)
+            for offset in range(5)
+        )
+        worker.store.update("1", minutes, official_completed_minutes=all_five)
+        self.assertTrue(worker._official_snapshot_covers_completed_bar(worker.store.get("1"), completed))
+
+    def test_later_official_correction_stays_stale_and_does_not_repeat_inference(self):
+        """One nominal bucket consumes one turn even when final OHLC is corrected."""
+
+        worker, agent, _logger = self._worker()
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {"prior_accepted_regime": None},
+            "momentum_vwap": {},
+            "market_structure": {},
+            "position_state": {"is_flat": True},
+        }
+        original = pd.DataFrame(
+            [{"timestamp": pd.Timestamp("2026-08-03 09:55"), "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5}]
+        )
+        corrected = original.copy(deep=True)
+        corrected.loc[0, "close"] = 100.75
+
+        worker.process_strategy_frame(original)
+        worker.process_strategy_frame(corrected)
+
+        self.assertEqual(agent.decide.call_count, 1)
 
     def test_final_entry_audit_uses_actual_broker_and_position_provenance(self):
         """Paper fallback and indeterminate live exposure cannot inherit the configured LIVE tag."""
@@ -11611,6 +11825,62 @@ class TestSessionStatePersistence(unittest.TestCase):
         self.assertFalse(snapshots[0]["snapshot_valid"])
         self.assertTrue(snapshots[1]["snapshot_valid"])
 
+    # -- supervisor heartbeat -------------------------------------------
+    def test_heartbeat_is_throttled_to_its_interval(self):
+        """~75 lines a session, not one per supervised tick."""
+        state = MagicMock()
+        state.health.return_value = {
+            "marks_writes": 3, "marks_age_seconds": 4.0, "open_positions": 1,
+            "trades_recorded": 7, "write_failures_logged": False,
+        }
+        now = time.monotonic()
+        # A heartbeat emitted moments ago must NOT produce another...
+        fresh = master_file._emit_supervisor_heartbeat(state, [self.worker], now)
+        self.assertEqual(fresh, now, "must not re-emit inside the interval")
+        state.health.assert_not_called()
+
+        # ...but one from long ago must.
+        stale = now - master_file.SESSION_STATE_HEARTBEAT_SECONDS - 1
+        emitted = master_file._emit_supervisor_heartbeat(state, [self.worker], stale)
+        self.assertGreater(emitted, stale)
+        state.health.assert_called_once()
+
+    def test_heartbeat_checks_for_a_stalled_snapshot_loop(self):
+        """The heartbeat is also where the 2026-08-12 stall would surface."""
+        state = MagicMock()
+        state.health.return_value = {
+            "marks_writes": 12, "marks_age_seconds": 9000.0, "open_positions": 11,
+            "trades_recorded": 108, "write_failures_logged": False,
+        }
+        master_file._emit_supervisor_heartbeat(state, [self.worker], None)
+        state.warn_if_marks_stalled.assert_called_once()
+
+    def test_heartbeat_never_breaks_supervision(self):
+        """A diagnostic that can kill the supervisor is worse than none."""
+        state = MagicMock()
+        state.health.side_effect = RuntimeError("boom")
+        before = time.monotonic()
+        stamp = master_file._emit_supervisor_heartbeat(state, [self.worker], None)
+        # It still advances the stamp, so a broken health() cannot spin the log.
+        self.assertGreaterEqual(stamp, before)
+
+    def test_first_heartbeat_always_fires_regardless_of_the_monotonic_origin(self):
+        """`None` means "never emitted"; 0.0 would be platform-dependent.
+
+        `time.monotonic()` has an arbitrary origin -- machine uptime on Windows,
+        near zero in a freshly booted Linux container. Seeding the stamp with
+        0.0 therefore reads as "long ago" on one and "just now" on the other,
+        which is exactly how this slipped through locally and failed in CI: the
+        first heartbeat fired here and was suppressed for five minutes there.
+        """
+        state = MagicMock()
+        state.health.return_value = {
+            "marks_writes": 0, "marks_age_seconds": 0.0, "open_positions": 0,
+            "trades_recorded": 0, "write_failures_logged": False,
+        }
+        master_file._emit_supervisor_heartbeat(state, [self.worker], None)
+        state.health.assert_called_once()
+
     # -- resume ----------------------------------------------------------
     def test_position_record_round_trips_through_the_file(self):
         original = self._open_position()
@@ -11679,16 +11949,38 @@ class TestSessionStatePersistence(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     master_file._paper_position_from_record(broken)
 
-    def _write_state(self, tmpdir, *, live=False, clean=False, session_date=None):
+    def _write_state(
+        self, tmpdir, *, live=False, clean=False, session_date=None, marks_lag_seconds=0.0
+    ):
+        """Write the PAIR of files the store really produces.
+
+        The state is split across a durable document and a `.marks.` sibling, and
+        `load_session_state` derives the marks lag from their two `updated_at`
+        stamps. Writing only the durable half here would leave the lag unknown,
+        which the stale-marks guard correctly refuses -- so the fixture has to
+        mirror the real on-disk shape. `marks_lag_seconds` ages the marks file to
+        exercise that guard.
+        """
         record = master_file.serialize_position(
             self._open_position(), leg_marks={"option": 98.1}
         )
-        state = {
+        day = (
+            session_date or datetime.now(master_file.IST_TIMEZONE).date()
+        ).isoformat()
+        durable_at = datetime.now(master_file.IST_TIMEZONE)
+        marks_at = durable_at - timedelta(seconds=float(marks_lag_seconds))
+        durable = {
             "schema_version": 1,
-            "session_date": (
-                session_date or datetime.now(master_file.IST_TIMEZONE).date()
-            ).isoformat(),
+            "session_date": day,
+            "updated_at": durable_at.isoformat(),
             "clean_shutdown": clean,
+            "strategies": {"Renko": {"recorded_pnl": -929.5, "recorded_trades": 2}},
+            "trades": [],
+        }
+        marks = {
+            "schema_version": 1,
+            "session_date": day,
+            "updated_at": marks_at.isoformat(),
             "strategies": {
                 "Renko": {
                     "live_trading": live,
@@ -11698,11 +11990,25 @@ class TestSessionStatePersistence(unittest.TestCase):
                     "open_position": record,
                 }
             },
-            "trades": [],
         }
         path = Path(tmpdir) / "session_state.json"
-        path.write_text(json.dumps(state), encoding="utf-8")
+        path.write_text(json.dumps(durable), encoding="utf-8")
+        Path(str(path).replace(".json", ".marks.json")).write_text(
+            json.dumps(marks), encoding="utf-8"
+        )
         return str(path)
+
+    def test_resume_refuses_a_stale_marks_file(self):
+        """The 2026-08-12 freeze: marks 2h40m behind the durable trade log.
+
+        Restoring that set would invent exposure that had been closed and omit
+        exposure that had been opened -- 11 positions against 23 truly open.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write_state(tmpdir, marks_lag_seconds=2 * 3600 + 40 * 60)
+            restored = master_file._resume_open_positions([self.worker], path)
+        self.assertEqual(restored, 0)
+        self.assertFalse(self.worker.pos.active)
 
     def test_resume_restores_position_pnl_and_the_ltp_subscription(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -11798,27 +12104,28 @@ class TestSessionStatePersistence(unittest.TestCase):
             path = self._write_state(tmpdir)
             self.assertEqual(master_file._resume_open_positions([], path), 0)
 
+    def _patch_marks(self, path, **fields):
+        """Open positions live in the `.marks.` sibling, not the durable file."""
+        marks_path = Path(str(path).replace(".json", ".marks.json"))
+        marks = json.loads(marks_path.read_text(encoding="utf-8"))
+        marks["strategies"]["Renko"]["open_position"].update(fields)
+        marks_path.write_text(json.dumps(marks), encoding="utf-8")
+
     def test_resume_leaves_the_worker_flat_when_the_record_is_unusable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "session_state.json"
-            state = json.loads(Path(self._write_state(tmpdir)).read_text(encoding="utf-8"))
-            state["strategies"]["Renko"]["open_position"]["quantity"] = 0
-            path.write_text(json.dumps(state), encoding="utf-8")
-            restored = master_file._resume_open_positions([self.worker], str(path))
+            path = self._write_state(tmpdir)
+            self._patch_marks(path, quantity=0)
+            restored = master_file._resume_open_positions([self.worker], path)
 
         self.assertEqual(restored, 0)
         self.assertFalse(self.worker.pos.active)
 
     def test_resume_refuses_an_unsupported_position_shape(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "session_state.json"
-            state = json.loads(Path(self._write_state(tmpdir)).read_text(encoding="utf-8"))
-            state["strategies"]["Renko"]["open_position"]["position_type"] = (
-                "HedgedPaperPosition"
-            )
-            path.write_text(json.dumps(state), encoding="utf-8")
+            path = self._write_state(tmpdir)
+            self._patch_marks(path, position_type="HedgedPaperPosition")
             self.assertEqual(
-                master_file._resume_open_positions([self.worker], str(path)), 0
+                master_file._resume_open_positions([self.worker], path), 0
             )
         self.assertFalse(self.worker.pos.active)
 

@@ -3258,7 +3258,210 @@ a missing advisory level is safer than a wrong one, and the test asserts NIFTY
 carries exactly one support so a later "tidy-up" cannot invent the second.
 Sensex's 78145 resistance is recorded as heard.
 
+> **Corrected 2026-08-13 (see the 14 Aug entry):** "2476" was **24,176**, read
+> directly off the 1080p chart frame. Omitting was the right call given only the
+> caption, but reading the frame is better still, and is now the standard step
+> whenever a level does not parse — the chart is authoritative, the auto-caption
+> is not.
+
 Test updated: `test_shipped_note_matches_august_13_intraday_hunter_plan`
 replaces the 12 Aug equivalent and asserts both branch directions plus the
 round-number stop-location reasoning, because an inverted plan and a smoothed-
 away justification are the two failures a copy-forward would produce.
+
+---
+
+## Video addendum - the 13 Aug LIVE SESSION (v4g)
+
+**Source:** Intraday Hunter live session, 13 Aug 2026 (`Vig9Kjab2T0`, 10:36,
+published 11:36 IST). A win, but a REDUCED one - the trade reached most of its
+target, reversed into a loss, recovered, and was booked for roughly half. That
+arc is what makes the session valuable: it produces the two structural ideas
+below and the most complete discipline block in the series.
+
+### A completed stop-hunt ends that direction
+
+The sharpest new idea, and it inverts the naive reading of a bounce:
+
+> "Yesterday the market gave good selling, then took support EXACTLY at the 500
+> level and gave a retracement. Because of that retracement, whoever was selling
+> got chased out... so the chances of going DIRECTLY UP are LOW."
+
+The up-move existed *to clear the shorts*. With the shorts gone there is nobody
+left to squeeze, so the bounce has spent its fuel. His operating rule:
+
+> "If it has chased the sellers out, we try to follow THAT SAME DIRECTION."
+
+- meaning the direction that preceded the clearing bounce, not the bounce. The
+escape hatch is explicit and is kept in the prose: a fresh large gap recruits a
+new crowd and restarts the question.
+
+### The round number is where the thesis DIES
+
+v4d used round numbers to place targets; v4c used them to explain recruitment.
+This adds the third and most operational use - the declared invalidation:
+
+> "Until the market crosses the round number - as we see in NIFTY, the 24,500
+> level - we will not have much problem."
+> "When is there no danger to these buyers? If the market goes above 58,000."
+
+Each index carries its own named level, decided before entry, and a decisive
+cross means the read has failed even if the arithmetic stop is untouched.
+
+### The discipline block, and why it needed a test
+
+> "Before the target is hit there is a fear - should I book here, what if the
+> market turns? **Fear is not a big deal, I feel it too.** But do NOT convert
+> that fear into ACTION."
+> "If you cut early it gradually becomes a HABIT. Then you cut small profits and
+> leave, and when there is a loss you wait a long time to save the position and
+> take a BIG loss. That is why most traders never become profitable."
+
+This sits directly on top of v4f's BOOK WHEN THE PROFIT STOPS GROWING, and the
+pair is the most dangerous in the prompt: read carelessly, v4g reads as "hold
+through everything" and disables v4f, while v4f licenses exactly the fear-driven
+exit v4g forbids. The distinction encoded in both directions is **measurement
+versus emotion** - the profit RATE falling is a measurement; "it might turn" is
+not. `test_v4g_fear_rule_and_v4f_book_rule_do_not_cancel_each_other` asserts
+both halves say so, and that the fear rule still enumerates the legitimate exit
+reasons rather than banning exits.
+
+Two more from the same arc: **time spent shrinks the achievable target** ("the
+market turned and wasted our TIME... only half the profit is showing, where
+earlier it showed double"), and **never exit at zero after a good profit has
+printed** - once real open profit has appeared, the floor stops being breakeven.
+
+### Knowledge changes (v4g, all prose)
+
+- `OPENING_DRIVE`: A COMPLETED STOP-HUNT ENDS THAT DIRECTION; THE ROUND NUMBER
+  IS WHERE THE THESIS DIES, NOT JUST WHERE IT PAYS.
+- `RISK`: FEAR IS NOT A SIGNAL - NEVER CONVERT IT INTO AN EXIT; TIME SPENT IN
+  THE TRADE SHRINKS THE ACHIEVABLE TARGET; NEVER EXIT AT ZERO AFTER A GOOD
+  PROFIT HAS PRINTED.
+- Test markers: `test_system_prompt_has_v4g_stop_hunt_completion_and_discipline_knowledge`
+  plus two drift guards - the fear/book pair above, and
+  `test_v4g_stop_hunt_rule_does_not_become_always_fade_the_bounce`, which keeps
+  the large-gap escape hatch alive so the rule cannot harden into "always fade".
+- Prompt size 105,933 -> 111,283 chars. **Headroom is now 8,717** - at the
+  recent ~5,000 chars per version that is roughly two more before the 120,000
+  cap, so the next pass should start pruning superseded prose rather than only
+  appending.
+
+### How our agent traded the same session
+
+**Provisional - the runner was still live at 14:13.** Realized so far:
+**-9,229.75** across 45 legs, and the shape is the exact inverse of 12 Aug.
+
+| Strategy | Legs | Realized |
+|---|---|---|
+| SL Hunting AI | 4 | **+2,727.00** |
+| Heikin Ashi | 6 | +2,431.00 |
+| Supertrend Bullish | 1 | +1,043.25 |
+| RSI Reversal | 1 | +994.50 |
+| SMA Crossover | 2 | +539.50 |
+| Long Strangle | 8 | +305.50 |
+| ... | | |
+| CPR Algo 3 | 1 | -2,158.00 |
+| Donchian Bearish | 1 | -2,567.50 |
+| Supertrend | 4 | -2,671.50 |
+| Opening Strike | 1 | -2,717.00 |
+| Renko | 6 | -4,127.50 |
+| **Total** | **45** | **-9,229.75** |
+
+**SL Hunting was the best strategy on the board**, cross-checked against its own
+`Result summary` (+2,727.00, Trades=2). Yesterday it was the worst.
+
+What changed is exactly what v4g and v4d describe. Both trades were SHORT off the
+flat open - the same side IH took - and **both exits keyed off the round number**:
+
+| Entry | Setup | Exit | Held |
+|---|---|---|---|
+| 09:29 | flat_open_pivot_breakdown_bearish_engulfing (stop 24353, target 24300) | 09:35 `profit_booking_round_number` | 6 min |
+| 10:06 | double_top_rejection_confirmed_bearish | 10:26 `profit_book_stall_near_round_number` | 20 min |
+
+Contrast with 12 Aug: four entries in 47 minutes, three released on premise-STALL
+judgements, one cut by the hierarchy rule after 60 seconds. Today: two entries in
+57 minutes, both booked on a NAMED level. The difference is not the read - it was
+short both days - it is that the exits had a checkable reason, which is precisely
+what v4g's FEAR IS NOT A SIGNAL demands and what the stall-churn lacked.
+
+One caveat against reading too much into it: two trades is a small sample, and
+the deterministic strategies had a poor day on the same tape (Renko -4,127.50 over
+six trades), so the basket is deeply negative regardless.
+
+---
+
+### Pre-open note for 2026-08-14 (Friday)
+
+**Source:** Intraday Hunter, "Prediction For 14 AUG 2026" (`MhmlrlUEUGI`,
+uploaded 2026-08-13, 2:14). Note-only; no knowledge version attached.
+
+**Neither side is seated, and he says so for two of the three indices.** This is
+the empty-book condition v4f describes, stated more plainly than the series has
+had it before:
+
+> BankNIFTY: "we did not see much momentum... buyers and sellers would be sitting
+> at the SAME price level. Not many people held their positions."
+> Sensex: "momentum on both sides remained -- a bit of rejection, a bit of
+> buying. So to say more sellers are seated, or more buyers are seated, would be
+> WRONG."
+
+That matters because v4e's expensive lesson was forecasting a crowd into
+existence on exactly this condition, and v4f's answer was to wait for
+confirmation. The note records the absence rather than smoothing it into a
+direction.
+
+**His mechanism for trading a thin book** is the line worth keeping:
+
+> "If they did not hold positions, then WHERE THE CROWD IS THIN, THAT IS WHERE
+> THE MARKET TRIES TO MAKE MOMENTUM."
+
+Thin is not dead: the move goes where there is least resistance, which is a
+different claim from "no crowd means no trade" and sits alongside v4f's
+AN EMPTY BOOK MEANS A TRAP IS COMING rather than against it.
+
+**He prefers a gap to a flat open, explicitly.** New for the series as a stated
+preference rather than an inference:
+
+> "Better that it is NOT flat -- either a gap-up or a gap-down would be better,
+> because in flat it keeps extracting a small momentum and going away. It does
+> not make any special momentum."
+
+That is v4d's participation reading turned into an operational preference: a
+flat open grants everyone entry, so it produces chop rather than a move.
+
+Plan: SELL-side on flat-to-gap-down (on Sensex explicitly to target the buyers
+sitting on support since yesterday), BUY-side and follow on a gap-up, where "the
+buyer becomes safe" and there is nothing left to hunt. On BankNIFTY he notes
+there is little pressure on the sellers, so that branch is a **follow of the
+drift rather than a seller hunt** -- a distinction the note keeps.
+
+**The garbled level was RECOVERED FROM THE VIDEO, and this replaces omitting.**
+NIFTY's second support arrived as the same "2476" token as the 13 Aug video —
+twice in two days, so a consistent ASR failure on one number rather than noise.
+Instead of dropping it again, the frame at 2:04 was read directly: force the
+player to 1080p (`setPlaybackQualityRange`), seek, draw the `<video>` element to
+a canvas, crop the right-hand price-axis band and upscale it ~3x, then read the
+labels. TradingView draws each line's exact price in a tag on the axis, so the
+numbers are legible once the source is 1920x1080 rather than the 854x480 the
+player defaults to.
+
+What it showed, every value matching what he speaks:
+
+| | chart label | spoken |
+|---|---|---|
+| resistance | 24,540.85 | "24540" |
+| resistance | 24,443.85 | "24440" |
+| spot | 24,395.85 | — |
+| support | 24,275.25 | "24275" |
+| support | **24,176.20** | "2476" ← the garbled one |
+
+So the 13 Aug note's omitted support was **24176** as well; the level simply did
+not move. **Prefer this method to omitting a level** — the chart is authoritative
+and the auto-caption is not. Sensex's levels are unchanged from yesterday
+(78500/78145, 77500/77200), consistent with a session that went nowhere.
+
+Test updated: `test_shipped_note_matches_august_14_intraday_hunter_plan`
+replaces the 13 Aug equivalent and asserts both branch directions plus the
+thin-crowd mechanism and the gap-over-flat preference, because those two are
+what a summarising edit would drop first.

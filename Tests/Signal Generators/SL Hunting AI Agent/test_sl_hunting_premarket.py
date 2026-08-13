@@ -201,16 +201,17 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_13_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 12 Aug transcript.
+def test_shipped_note_matches_august_14_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 13 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    What distinguishes this one is that the seated crowd has FLIPPED to buyers,
-    and the gap-up branch is a follow rather than a fade -- justified by where
-    the stops sit relative to the round number. Both directions are asserted
-    explicitly because a copy-forward would silently keep the previous day's.
+    What distinguishes this one is that NEITHER side is seated -- he says so for
+    both BankNIFTY ("the same price level") and Sensex ("would be WRONG" to
+    claim either). That is the empty-book condition v4f describes, so the note
+    carries his own mechanism for it (thin crowd -> that is where momentum
+    goes) rather than letting the agent infer a seated crowd that is not there.
     """
     import os
 
@@ -219,31 +220,33 @@ def test_shipped_note_matches_august_13_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-13"
-    assert "PfthlsdW2E8" in note.source
-    # The distinguishing fact: buyers, not sellers, are the seated crowd now.
-    assert "BUYERS, not sellers, are now the seated crowd" in note.context
+    assert note.for_date == "2026-08-14"
+    assert "MhmlrlUEUGI" in note.source
+    # The distinguishing fact: no decisive crowd on either side.
+    assert "SAME price level" in note.context
     assert note.plan[0].startswith("FLAT to GAP-DOWN: identify SELL-side setups")
-    assert note.plan[1].startswith("GAP-UP above the round number")
-    # The round-number stop-location reasoning is the whole justification for
-    # following a gap-up instead of fading it; it must survive verbatim.
-    assert any("BELOW the round number" in line for line in note.plan)
-    assert any("not huntable" in line for line in note.plan)
-    assert any("SENSEX EXPIRY" in line for line in note.plan)
-    assert len(note.plan) == 7
+    assert note.plan[1].startswith("GAP-UP: go WITH the market")
+    assert any("NOBODY IS DECISIVELY SEATED" in line for line in note.plan)
+    # The thin-crowd mechanism and the explicit preference for a gap over a flat
+    # open are the two ideas a summarising edit would drop first.
+    assert any("where the crowd is THIN" in line for line in note.plan)
+    assert any("PREFERS a gap to a flat open" in line for line in note.plan)
+    assert len(note.plan) == 6
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # Only ONE support: the transcript's second NIFTY support arrived as
-            # "2476" and could not be resolved, so it is omitted rather than
-            # guessed. A missing advisory level is safer than a wrong one.
-            "resistance": [24500.0, 24600.0],
-            "support": [24260.0],
+            # 24176 was READ OFF THE CHART, not inferred. The auto-caption
+            # rendered it "2476" on both 13 and 14 Aug; a 1080p frame at 2:04
+            # shows the teal support line labelled 24,176.20, alongside
+            # 24,275.25 and resistances at 24,443.85 / 24,540.85 -- every one
+            # matching what he speaks. Prefer this method over omitting a level.
+            "resistance": [24440.0, 24540.0],
+            "support": [24275.0, 24176.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [58000.0, 58300.0],
-            "support": [57500.0, 57310.0],
+            "resistance": [57890.0, 58000.0],
+            "support": [57500.0, 57320.0],
         },
         {
             "index": "SENSEX",
