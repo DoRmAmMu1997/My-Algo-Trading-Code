@@ -658,6 +658,20 @@ SESSION_STATE_RESUME_ENABLED = _env_bool("SESSION_STATE_RESUME_ENABLED", False)
 # a file mtime. Five minutes is ~75 lines a session -- cheap enough to keep on
 # always, frequent enough to localise a stall to a few minutes.
 SESSION_STATE_HEARTBEAT_SECONDS = _env_float("SESSION_STATE_HEARTBEAT_SECONDS", 300.0)
+# Persist trade events from a background writer instead of on the trading thread
+# that published them. OFF by default because it trades a small amount of the
+# durability ADR-0012 exists to provide: a hard kill can lose events queued in
+# the last write cycle, where the synchronous path loses only the one in flight.
+#
+# Turn it ON if disk stalls are costing you the market feed. On this operator's
+# hardware they are: on 2026-08-11, 86% of websocket disconnects (25 of 29)
+# landed within 20 seconds of a session-state write stall, with `keepalive ping
+# timeout` the dominant error -- a blocked event loop drops the feed. The data
+# still reaches the platter at the same moment either way (the write takes the
+# same time); what changes is that no trading thread waits for it. Lost queued
+# events also still have their `EXIT` log line, which is what the EOD Sheet
+# parses, so the fallback is the same one used before this module existed.
+SESSION_STATE_ASYNC_WRITES = _env_bool("SESSION_STATE_ASYNC_WRITES", False)
 
 # Telegram trade-notification settings. See Dependencies/.env for the one-time
 # bot/channel setup. When disabled (or token/chat blank) the notifier thread is
@@ -18045,9 +18059,15 @@ def main() -> None:
             # One immediate write so the file exists (and is stamped with this
             # session's date) even if the process dies before the first trade.
             session_state.update_worker_snapshot(_session_state_snapshots(workers), force=True)
+            if SESSION_STATE_ASYNC_WRITES:
+                # Started AFTER the first snapshot so the file exists before any
+                # background writing begins.
+                session_state.start_durable_writer()
             logger.info(
-                "Session state persistence ENABLED -> %s (snapshot every %.0fs, resume=%s).",
-                SESSION_STATE_FILE, SESSION_STATE_SNAPSHOT_SECONDS, SESSION_STATE_RESUME_ENABLED,
+                "Session state persistence ENABLED -> %s (snapshot every %.0fs, "
+                "resume=%s, async_writes=%s).",
+                SESSION_STATE_FILE, SESSION_STATE_SNAPSHOT_SECONDS,
+                SESSION_STATE_RESUME_ENABLED, SESSION_STATE_ASYNC_WRITES,
             )
         except Exception:  # noqa: BLE001 - reporting must never stop a session
             session_state = None
@@ -18100,6 +18120,15 @@ def main() -> None:
     # Sheet publication is a separate flag: a Ctrl+C shutdown or Google outage
     # can be locally clean while its figures still need export/reconciliation.
     if session_state is not None:
+        # Drain the background writer FIRST so an orderly end of day is exactly
+        # as durable as the synchronous path: every recorded trade must be on
+        # disk before the clean-shutdown flag claims the session finished well.
+        if not session_state.stop_durable_writer():
+            logger.error(
+                "Session state writer did not drain cleanly; the durable file may be "
+                "missing the last trade event(s). Their log lines remain, and the "
+                "EOD Sheet parses those."
+            )
         session_state.update_worker_snapshot(_session_state_snapshots(workers), force=True)
         session_state.mark_clean_shutdown(
             results_published=finalization.results_published,

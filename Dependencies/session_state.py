@@ -321,6 +321,14 @@ class SessionStateStore:
         self._last_marks_write_at = _now_ist()
         self._marks_stall_logged = False
 
+        # Optional off-thread durable writer (see start_durable_writer). While
+        # `_writer` is None every trade event is persisted synchronously by the
+        # calling trading thread, which is the original ADR-0012 contract.
+        self._writer: threading.Thread | None = None
+        self._writer_stopping = False
+        self._durable_dirty = False
+        self._durable_wakeup = threading.Event()
+
         self._state: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "session_date": self.session_date.isoformat(),
@@ -446,9 +454,109 @@ class SessionStateStore:
                     # Drop oldest first -- a recovery cares about the newest.
                     del trades[: len(trades) - self.max_trade_records]
                 self._apply_pnl_bearing_event_locked(record)
-                self._flush_durable_locked()
+                if self._writer is None:
+                    # Synchronous: the caller does not continue until the event
+                    # is on the platter. Costs the caller the whole fsync.
+                    self._flush_durable_locked()
+                    return
+                # Asynchronous: the in-memory state is already updated, so the
+                # writer thread will persist THIS event and any that arrive
+                # while it works, in one coalesced write.
+                self._durable_dirty = True
+            self._durable_wakeup.set()
         except Exception:  # noqa: BLE001 - reporting must never break trading
             self._log_write_failure("record trade event")
+
+    # ------------------------------------------------------------------
+    # Optional off-thread durable writer
+    # ------------------------------------------------------------------
+    # Why this exists: the synchronous write blocks the TRADING thread that
+    # published the event.  On the operator's hardware that is a median 0.65s
+    # and up to 2.3s per event, and the stalls are not merely latency -- on
+    # 2026-08-11, 86% of the websocket feed disconnects (25 of 29) landed within
+    # 20s of a session-state write stall, with `keepalive ping timeout` the
+    # dominant error.  A blocked event loop drops the market feed.
+    #
+    # What it costs: a hard kill can lose events that are queued but not yet
+    # written, where the synchronous path loses only the one in flight.  Note
+    # the data does NOT land later -- the write takes the same time either way,
+    # so it reaches the platter at the same wall-clock moment; the difference is
+    # that the trading thread is not frozen meanwhile.  The `EXIT` log line is
+    # also emitted BEFORE publish_trade_event, so a lost queued event still has
+    # a log record, which is the same source the EOD Sheet parses.
+    #
+    # Coalescing makes the exposure smaller than it first appears: the document
+    # is a full rewrite, so a burst of queued events becomes ONE write.  That
+    # reduces total fsyncs as well as moving them off the trading path.
+    def start_durable_writer(self) -> None:
+        """Begin persisting trade events on a background thread."""
+        with self._lock:
+            if self._writer is not None:
+                return
+            self._writer_stopping = False
+            self._writer = threading.Thread(
+                target=self._durable_writer_loop,
+                name="SessionStateWriter",
+                daemon=True,
+            )
+        self._writer.start()
+        self.log.info(
+            "Session state durable writes are ASYNCHRONOUS: trade events are "
+            "persisted by a background writer, so a trading thread is never "
+            "blocked by fsync. A hard kill can lose events queued in the last "
+            "write cycle; their log lines survive."
+        )
+
+    def stop_durable_writer(self, timeout: float = 10.0) -> bool:
+        """Drain and stop the writer. Returns True when everything was written.
+
+        Called at shutdown BEFORE results are published, so an orderly end of
+        day is exactly as durable as the synchronous path.
+        """
+        with self._lock:
+            writer = self._writer
+            if writer is None:
+                return True
+            self._writer_stopping = True
+        self._durable_wakeup.set()
+        writer.join(timeout=timeout)
+        drained = not writer.is_alive()
+        with self._lock:
+            self._writer = None
+            pending = self._durable_dirty
+        if pending:
+            # Last resort: persist synchronously on the caller's thread rather
+            # than leave a recorded trade unwritten.
+            try:
+                with self._lock:
+                    self._flush_durable_locked()
+                    self._durable_dirty = False
+            except Exception:  # noqa: BLE001 - shutdown must still complete
+                self._log_write_failure("drain the durable writer")
+                return False
+        return drained
+
+    def _durable_writer_loop(self) -> None:
+        """Coalesce pending trade events into one atomic write at a time."""
+        while True:
+            self._durable_wakeup.wait(timeout=1.0)
+            self._durable_wakeup.clear()
+            try:
+                with self._lock:
+                    stopping = self._writer_stopping
+                    dirty = self._durable_dirty
+                    if dirty:
+                        # Clear BEFORE writing: events arriving during the write
+                        # re-set the flag and earn their own next cycle, so none
+                        # is silently folded into a write that already started.
+                        self._durable_dirty = False
+                        self._flush_durable_locked()
+            except Exception:  # noqa: BLE001 - the writer must never die quietly
+                self._log_write_failure("write session state from the writer thread")
+                with self._lock:
+                    self._durable_dirty = True
+            if stopping and not dirty:
+                return
 
     def _apply_pnl_bearing_event_locked(self, record: Mapping[str, Any]) -> None:
         """Fold a realized-P&L event into that strategy's running totals.
