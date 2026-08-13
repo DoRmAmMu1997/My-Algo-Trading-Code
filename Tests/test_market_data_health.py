@@ -15,6 +15,7 @@ from Dependencies.market_data_health import (
     complete_minute_bucket_mask,
     market_hours_between,
     newest_completed_minute_timestamp,
+    stable_official_minutes,
     validate_ohlc_frame,
 )
 
@@ -182,6 +183,61 @@ class TestCompletedMinuteTimestamp(unittest.TestCase):
         self.assertEqual(
             newest_completed_minute_timestamp(frame, now=now),
             datetime(2026, 7, 16, 9, 59, tzinfo=IST),
+        )
+
+
+class TestStableOfficialMinutes(unittest.TestCase):
+    """REST rows become official only after the request-start grace boundary."""
+
+    def test_uses_request_start_and_normalizes_timestamp_representations(self) -> None:
+        """A slow response cannot certify a row that was forming when requested."""
+
+        frame = validate_ohlc_frame(
+            _frame(
+                [
+                    pd.Timestamp("2026-08-13 03:58:00+00:00"),
+                    pd.Timestamp("2026-08-13 03:59:00+00:00"),
+                ]
+            ),
+            now=datetime(2026, 8, 13, 15, 0, tzinfo=IST),
+        )
+
+        stable = stable_official_minutes(
+            frame,
+            request_started_at=datetime(2026, 8, 13, 9, 29, 59),
+            grace_seconds=5.0,
+        )
+
+        self.assertEqual(stable, frozenset({pd.Timestamp("2026-08-13 09:28:00")}))
+
+    def test_certifies_just_closed_minute_after_grace_and_keeps_empty_empty(self) -> None:
+        """Strictly-before boundary admits 09:29 only after 09:30:05 IST."""
+
+        frame = validate_ohlc_frame(
+            _frame([datetime(2026, 8, 13, 9, 28), datetime(2026, 8, 13, 9, 29)]),
+            now=datetime(2026, 8, 13, 10, 0, tzinfo=IST),
+        )
+
+        self.assertEqual(
+            stable_official_minutes(
+                frame,
+                request_started_at=datetime(2026, 8, 13, 9, 30, 7, tzinfo=IST),
+                grace_seconds=5.0,
+            ),
+            frozenset(
+                {
+                    pd.Timestamp("2026-08-13 09:28:00"),
+                    pd.Timestamp("2026-08-13 09:29:00"),
+                }
+            ),
+        )
+        self.assertEqual(
+            stable_official_minutes(
+                pd.DataFrame(columns=["timestamp", "open", "high", "low", "close"]),
+                request_started_at=datetime(2026, 8, 13, 9, 30, 7),
+                grace_seconds=5.0,
+            ),
+            frozenset(),
         )
 
 

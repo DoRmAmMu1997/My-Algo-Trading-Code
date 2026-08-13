@@ -253,6 +253,7 @@ import threading
 import time
 import uuid
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -289,6 +290,7 @@ from Dependencies.market_data_health import (
     MarketDataValidationError,
     complete_minute_bucket_mask,
     newest_completed_minute_timestamp,
+    stable_official_minutes,
     validate_ohlc_frame,
 )
 from Dependencies.next_open_entry import PendingNextOpenEntry
@@ -1924,8 +1926,10 @@ class MarketSnapshot:
     - `source_candle_ts` : timestamp of the latest candle in `frame`.
     - `candle_signature` : lightweight fingerprint of the latest row's state.
     - `fetched_at`       : wall-clock time when the fetch completed.
-    - `official_candle_ts`: newest row supplied by the REST/official source, or
-      ``None`` when the publisher has not proved any official coverage.
+    - `official_completed_minutes`: exact immutable REST minute stamps proven
+      final for this generation.
+    - `official_candle_ts`: compatibility maximum derived from that exact set,
+      or ``None`` when the publisher has not proved any official coverage.
 
     Why we keep both `source_candle_ts` and `candle_signature`:
     - During a live 1-minute candle, the timestamp does not change but the
@@ -1942,8 +1946,12 @@ class MarketSnapshot:
     candle_signature: tuple | None
     fetched_at: datetime
     # Websocket frames can contain a mix of official REST history and newer
-    # tick-built rows.  This watermark tells a five-minute consumer exactly how
-    # far the official portion reaches without changing the canonical OHLC data.
+    # tick-built rows.  CPR needs the exact REST minute identities, not merely a
+    # maximum: a missing 09:57 must block the 09:55 five-minute bucket even when
+    # official data already reaches 09:59.
+    official_completed_minutes: frozenset[pd.Timestamp] = frozenset()
+    # Compatibility view for existing non-CPR consumers. This is always derived
+    # from ``official_completed_minutes`` by SharedMarketDataStore.update().
     official_candle_ts: pd.Timestamp | None = None
 
 
@@ -2247,6 +2255,7 @@ class SharedMarketDataStore:
         timeframe: str,
         frame: pd.DataFrame,
         *,
+        official_completed_minutes: Iterable[pd.Timestamp | datetime] | None = None,
         official_candle_ts: pd.Timestamp | datetime | None = None,
     ) -> MarketSnapshot:
         """
@@ -2255,13 +2264,29 @@ class SharedMarketDataStore:
         The new snapshot is built BEFORE the lock is taken; only the swap
         happens under lock so the critical section stays small.
 
-        ``official_candle_ts`` is optional because a pure tick publisher has no
-        official coverage to claim.  REST-backed publishers pass their newest
-        source timestamp so conservative consumers can wait for official data.
+        ``official_completed_minutes`` is optional because a pure tick publisher
+        has no official coverage to claim. REST-backed publishers pass every
+        proven-final minute in the same update as the matching frame. The legacy
+        ``official_candle_ts`` argument remains a compatibility input for older
+        callers; it is converted to a one-element exact collection.
         """
         validated = validate_ohlc_frame(frame)
         source_candle_ts = pd.to_datetime(validated.iloc[-1]["timestamp"])
         candle_signature = build_last_row_signature(validated)
+        if official_completed_minutes is None:
+            raw_official_minutes = () if official_candle_ts is None else (official_candle_ts,)
+        else:
+            raw_official_minutes = official_completed_minutes
+        normalized_official_values: set[pd.Timestamp] = set()
+        for value in raw_official_minutes:
+            timestamp = pd.Timestamp(value)
+            if pd.isna(timestamp):
+                continue
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.tz_convert(ZoneInfo("Asia/Kolkata")).tz_localize(None)
+            normalized_official_values.add(timestamp)
+        normalized_official_minutes = frozenset(normalized_official_values)
+        derived_official_candle_ts = max(normalized_official_minutes, default=None)
 
         snapshot = MarketSnapshot(
             timeframe=str(timeframe),
@@ -2269,11 +2294,8 @@ class SharedMarketDataStore:
             source_candle_ts=source_candle_ts,
             candle_signature=candle_signature,
             fetched_at=datetime.now(ZoneInfo("Asia/Kolkata")),
-            official_candle_ts=(
-                None
-                if official_candle_ts is None
-                else pd.Timestamp(official_candle_ts)
-            ),
+            official_completed_minutes=normalized_official_minutes,
+            official_candle_ts=derived_official_candle_ts,
         )
         with self._lock:
             self._snapshots[str(timeframe)] = snapshot
@@ -2297,6 +2319,7 @@ class SharedMarketDataStore:
             source_candle_ts=snapshot.source_candle_ts,
             candle_signature=snapshot.candle_signature,
             fetched_at=snapshot.fetched_at,
+            official_completed_minutes=snapshot.official_completed_minutes,
             official_candle_ts=snapshot.official_candle_ts,
         )
 
@@ -3837,14 +3860,20 @@ class CentralMarketDataFetcher(threading.Thread):
                 if self.stop_event.is_set():
                     break
                 try:
+                    # The request-start time, not the response arrival time,
+                    # decides whether Dhan's final row was still forming.
+                    request_started_at = _ist_now()
                     frame = self.fetch_ohlc(timeframe)
-                    # This producer's entire frame came directly from REST, so
-                    # its newest timestamp is also the official-data watermark.
-                    # Websocket mode publishes the same metadata after true-up.
+                    validated = validate_ohlc_frame(frame)
+                    completed_minutes = stable_official_minutes(
+                        validated,
+                        request_started_at=request_started_at,
+                        grace_seconds=WS_TRUEUP_DELAY_SECONDS,
+                    )
                     snapshot = self.store.update(
                         timeframe,
-                        frame,
-                        official_candle_ts=pd.Timestamp(frame["timestamp"].max()),
+                        validated,
+                        official_completed_minutes=completed_minutes,
                     )
                     if self.last_logged_candle_ts.get(timeframe) != snapshot.source_candle_ts:
                         self.last_logged_candle_ts[timeframe] = snapshot.source_candle_ts
@@ -3941,10 +3970,10 @@ class WebSocketMarketDataFetcher(threading.Thread):
         # Latest REST history: warmup seed, then refreshed by every true-up.
         # Supervisor-owned; the pump never touches it.
         self.official_frame: pd.DataFrame = pd.DataFrame()
-        # The frame may later be merged with newer tick-built rows.  Keep the
-        # newest timestamp that came from REST as a separate watermark so a
-        # strategy can prove its completed bucket has been officially trued up.
-        self._official_candle_ts: pd.Timestamp | None = None
+        # The frame may later be merged with newer tick-built rows. Keep the
+        # exact REST minutes proved final for this generation so CPR can reject
+        # a five-minute bucket with an intermediate official-data hole.
+        self._official_completed_minutes: frozenset[pd.Timestamp] = frozenset()
 
         # Connection state shared between pump and supervisor.
         self._feed_lock = threading.Lock()
@@ -4035,17 +4064,28 @@ class WebSocketMarketDataFetcher(threading.Thread):
         index_key = (NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)
         while not self.stop_event.is_set():
             try:
+                request_started_at = _ist_now()
                 frame = self.broker.fetch_index_1m_ohlc(
                     security_id=NIFTY_INDEX_SECURITY_ID,
                     exchange_segment=NIFTY_INDEX_EXCHANGE_SEGMENT,
                     instrument_type=NIFTY_INDEX_INSTRUMENT_TYPE,
                 )
-                self.official_frame = frame
-                self._official_candle_ts = pd.Timestamp(frame["timestamp"].max())
+                validated = validate_ohlc_frame(frame)
+                completed_minutes = stable_official_minutes(
+                    validated,
+                    request_started_at=request_started_at,
+                    grace_seconds=WS_TRUEUP_DELAY_SECONDS,
+                )
+                # REST may include the live or grace-period minute. Leave those
+                # rows entirely tick-owned until a later request proves them final.
+                self.official_frame = validated.loc[
+                    validated["timestamp"].isin(completed_minutes)
+                ].reset_index(drop=True)
+                self._official_completed_minutes = completed_minutes
                 self.store.update(
                     "1",
-                    frame,
-                    official_candle_ts=self._official_candle_ts,
+                    self.official_frame,
+                    official_completed_minutes=completed_minutes,
                 )
                 self.log.info("Warmup history loaded | Rows=%s", len(frame))
                 return True
@@ -4176,7 +4216,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
             snapshot = self.store.update(
                 "1",
                 frame,
-                official_candle_ts=self._official_candle_ts,
+                official_completed_minutes=self._official_completed_minutes,
             )
             self._ohlc_ok = True
             if self.last_logged_candle_ts != snapshot.source_candle_ts:
@@ -4234,6 +4274,13 @@ class WebSocketMarketDataFetcher(threading.Thread):
         """
         if now_ist is None:
             now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        # Record the actual request boundary before any blocking HTTP work.
+        # Test callers pass ``now_ist`` as that deterministic request-start clock.
+        request_started_at = (
+            now_ist.replace(tzinfo=IST_TIMEZONE)
+            if now_ist is not None and now_ist.tzinfo is None
+            else now_ist or _ist_now()
+        )
         try:
             official = self.broker.fetch_index_1m_ohlc(
                 security_id=NIFTY_INDEX_SECURITY_ID,
@@ -4248,25 +4295,34 @@ class WebSocketMarketDataFetcher(threading.Thread):
         if official is None or official.empty:
             self.log.warning("True-up (%s) returned no official candles.", reason)
             return
+        validated = validate_ohlc_frame(official)
+        completed_minutes = stable_official_minutes(
+            validated,
+            request_started_at=request_started_at,
+            grace_seconds=WS_TRUEUP_DELAY_SECONDS,
+        )
+        stable_official = validated.loc[
+            validated["timestamp"].isin(completed_minutes)
+        ].reset_index(drop=True)
         stats = divergence_stats(
-            official,
+            stable_official,
             self.aggregator.tick_bars_frame(),
             forming_minute=pd.Timestamp(now_ist).floor("min"),
         )
-        newest_official = pd.Timestamp(official["timestamp"].max())
         # Update the official frame, its watermark, and the published merged
         # snapshot under one lock.  Without this atomic boundary, the supervisor
         # could publish new official OHLC with an older watermark (or vice versa)
         # and make a waiting CPR worker observe a mixed generation.
         with self._publish_lock:
-            self.official_frame = official
-            self._official_candle_ts = newest_official
+            self.official_frame = stable_official
+            self._official_completed_minutes = completed_minutes
             self._publish_frame_locked(force=True)
-        # Drop every tick bar the official history now covers. The merge would
-        # ignore them anyway (official wins), but keeping them makes the NEXT
-        # divergence report re-count this cycle's mismatches forever -- the
-        # stats above must describe only the minutes trued-up right now.
-        self.aggregator.prune_older_than(newest_official + pd.Timedelta(minutes=1))
+        newest_official = max(completed_minutes, default=None)
+        if newest_official is not None:
+            # Prune only through the newest stable official minute. A REST row
+            # still inside the grace period must remain tick-owned and available
+            # for the later, final true-up.
+            self.aggregator.prune_older_than(newest_official + pd.Timedelta(minutes=1))
         log_fn = (
             self.log.warning
             if stats.mismatched and stats.max_abs_delta > self.TRUEUP_DIVERGENCE_WARN_POINTS
@@ -4275,7 +4331,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
         log_fn(
             "True-up (%s) | OfficialRows=%s | Overlap=%s | Mismatched=%s | MaxAbsDelta=%.2f",
             reason,
-            len(official),
+            len(stable_official),
             stats.overlapping,
             stats.mismatched,
             stats.max_abs_delta,
@@ -9694,25 +9750,86 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         snapshot: MarketSnapshot,
         strategy_frame: pd.DataFrame,
     ) -> bool:
-        """Return true only when REST covers the bucket's final source minute.
+        """Return true only when REST covers every exact source minute.
 
         Five-minute candles are start-stamped.  A 09:55 candle therefore needs
-        the official one-minute source to cover 09:59 before Codex may freeze
-        it.  This condition-based gate naturally tolerates a slow Dhan response:
-        the normal worker poll simply checks the next atomic snapshot instead
-        of guessing how many seconds the REST true-up will take.
+        every official one-minute source from 09:55 through 09:59 before Codex
+        may freeze it. A maximum timestamp alone is unsafe because a REST hole
+        (for example missing 09:57) would otherwise authorize invented OHLC.
+        This exact-set gate naturally tolerates a slow Dhan response: the normal
+        worker poll simply checks the next atomic snapshot instead of guessing
+        how many seconds the REST true-up will take.
         """
 
         if strategy_frame.empty or "timestamp" not in strategy_frame.columns:
             return False
-        official_timestamp = self._naive_ist_timestamp(snapshot.official_candle_ts)
         bucket_start = self._naive_ist_timestamp(
             strategy_frame.iloc[-1]["timestamp"]
         )
-        if official_timestamp is None or bucket_start is None:
+        if bucket_start is None:
             return False
-        bucket_final_minute = bucket_start + pd.Timedelta(minutes=4)
-        return official_timestamp >= bucket_final_minute
+        required_minutes = frozenset(
+            bucket_start + pd.Timedelta(minutes=offset) for offset in range(5)
+        )
+        official_minutes = frozenset(
+            timestamp
+            for value in snapshot.official_completed_minutes
+            if (timestamp := self._naive_ist_timestamp(value)) is not None
+        )
+        return required_minutes.issubset(official_minutes)
+
+    def _completed_bar_audit_metadata(
+        self,
+        snapshot: MarketSnapshot | None,
+        strategy_frame: pd.DataFrame,
+        frozen_signature: str,
+    ) -> dict[str, object]:
+        """Capture exact official-minute coverage once for both audit records.
+
+        The worker already proved this coverage before inference in ``run``.
+        Keeping the same small, JSON-ready mapping through pre- and post-action
+        logging makes the two rows comparable without re-reading a market store
+        that may have advanced while Codex or execution was running.  Direct
+        unit/diagnostic callers may not have a snapshot; they receive an empty,
+        explicitly false coverage record rather than invented evidence.
+        """
+
+        bucket_start = (
+            None
+            if strategy_frame.empty or "timestamp" not in strategy_frame.columns
+            else self._naive_ist_timestamp(strategy_frame.iloc[-1]["timestamp"])
+        )
+        required_minutes = frozenset(
+            bucket_start + pd.Timedelta(minutes=offset)
+            for offset in range(5)
+        ) if bucket_start is not None else frozenset()
+        official_minutes = frozenset(
+            timestamp
+            for value in (
+                () if snapshot is None else snapshot.official_completed_minutes
+            )
+            if (timestamp := self._naive_ist_timestamp(value)) is not None
+        )
+
+        def ist_iso(timestamp: pd.Timestamp) -> str:
+            """Represent internal naive-IST timestamps unambiguously in JSONL."""
+
+            return timestamp.tz_localize(IST_TIMEZONE).isoformat()
+
+        return {
+            "bar_timestamp": None if bucket_start is None else ist_iso(bucket_start),
+            "frozen_signature": frozen_signature,
+            "required_official_minutes": [
+                ist_iso(timestamp) for timestamp in sorted(required_minutes)
+            ],
+            "present_official_minutes": [
+                ist_iso(timestamp)
+                for timestamp in sorted(required_minutes & official_minutes)
+            ],
+            "official_coverage": bool(required_minutes) and required_minutes.issubset(
+                official_minutes
+            ),
+        }
 
     def _position_state_payload(self) -> dict[str, object]:
         """Expose allowlisted premise/risk facts, never execution capabilities.
@@ -10392,6 +10509,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         frozen_context: dict[str, object],
         outcome,
         execution: dict[str, object],
+        bar_metadata: dict[str, object],
     ) -> None:
         """Best-effort append actual post-action provenance to the decision log.
 
@@ -10412,6 +10530,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 token_usage=outcome.token_usage,
                 tool_evidence=self._tool_log_payload(outcome.tool_evidence),
                 execution=execution,
+                audit_stage="POST_ACTION",
+                bar_metadata=bar_metadata,
             )
         except Exception as exc:  # noqa: BLE001 - the pre-action audit still exists
             self.log.error(
@@ -10443,7 +10563,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             return "entry_cutoff"
         return ""
 
-    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+    def process_strategy_frame(
+        self,
+        strategy_frame: pd.DataFrame,
+        *,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> None:
         """Evaluate one completed bucket through mechanics, Codex, and host gates.
 
         Flat workers skip new turns after 15:00; open workers continue for
@@ -10468,6 +10593,13 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         bar_signature = self._completed_bar_signature(strategy_frame)
         if not bar_signature:
             return
+        if audit_metadata is None:
+            # Tests and direct diagnostics can invoke this method outside the
+            # normal ``run`` loop. Capture a conservative local snapshot once
+            # so every row still has explicit, non-invented coverage facts.
+            audit_metadata = self._completed_bar_audit_metadata(
+                self.store.get(self.timeframe), strategy_frame, bar_signature
+            )
         frozen_context = self._latest_frozen_context()
         if self.pos.active and self._manage_completed_bar(frozen_context):
             return
@@ -10516,6 +10648,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                         else "AUDITED_BEFORE_EXECUTION"
                     ),
                 },
+                audit_stage="PRE_ACTION",
+                bar_metadata=audit_metadata,
             )
         except Exception as exc:  # noqa: BLE001 - entries fail closed; exits continue
             audit_ok = False
@@ -10559,6 +10693,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                         "submitted": True,
                         "status": "EXIT_CONFIRMED" if not self.pos.active else "EXIT_UNCONFIRMED",
                     },
+                    audit_metadata,
                 )
                 return
             if outcome.action == "SCALE_IN" and audit_ok:
@@ -10573,6 +10708,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                             "status": "SCALE_IN_BLOCKED",
                             "blocked_reason": blocked_reason,
                         },
+                        audit_metadata,
                     )
                     # A closed exposure gate prevents the add immediately. The
                     # normal safety pass also performs any associated lifecycle,
@@ -10600,6 +10736,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                             else "SCALE_IN_UNCONFIRMED"
                         ),
                     },
+                    audit_metadata,
                 )
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
@@ -10618,6 +10755,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     "status": "ENTRY_BLOCKED",
                     "blocked_reason": blocked_reason,
                 },
+                audit_metadata,
             )
             return
         direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
@@ -10644,6 +10782,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     else "ENTRY_BLOCKED"
                 ),
             },
+            audit_metadata,
         )
 
     def run(self) -> None:
@@ -10651,10 +10790,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         The worker starts decisions at 09:30 but safety runs even before then.
         Shared one-minute data is resampled with the current IST clock so forming
-        websocket minutes are excluded. A clock-complete bucket then waits until
-        the atomic REST watermark covers its fifth source minute. Any single poll
-        failure is logged and retried; it does not terminate future hard-stop or
-        square-off handling.
+        websocket minutes are excluded. A clock-complete bucket then waits for
+        all five exact official REST source minutes; an intermediate REST hole
+        keeps the bucket blocked. Any single poll failure is logged and retried;
+        it does not terminate future hard-stop or square-off handling.
         """
 
         self.log.info("Starting %s strategy worker.", self.strategy_name)
@@ -10689,14 +10828,19 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     if waiting_identity != self._waiting_for_official_bar_identity:
                         self._waiting_for_official_bar_identity = waiting_identity
                         self.log.info(
-                            "Completed CPR bucket %s is waiting for its final "
-                            "one-minute REST true-up.",
+                            "Completed CPR bucket %s is waiting for all five "
+                            "official source minutes (including any REST hole).",
                             waiting_identity,
                         )
                     self.wait_for_next_poll()
                     continue
                 self._waiting_for_official_bar_identity = None
-                self.process_strategy_frame(completed)
+                audit_metadata = self._completed_bar_audit_metadata(
+                    snapshot,
+                    completed,
+                    self._completed_bar_signature(completed),
+                )
+                self.process_strategy_frame(completed, audit_metadata=audit_metadata)
             except Exception as exc:  # noqa: BLE001 - one turn must not kill safety
                 self.log.exception("CPR AI worker poll failed: %s", exc)
             self.wait_for_next_poll()
