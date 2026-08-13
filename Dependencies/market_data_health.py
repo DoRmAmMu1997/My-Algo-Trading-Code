@@ -237,6 +237,40 @@ def newest_completed_minute_timestamp(
     return max(completed, default=None)
 
 
+def stable_official_minutes(
+    validated_frame: pd.DataFrame,
+    *,
+    request_started_at: datetime,
+    grace_seconds: float,
+) -> frozenset[pd.Timestamp]:
+    """Return REST minute stamps safely final at the request's start time.
+
+    Dhan may include the currently forming candle in a REST response.  A slow
+    HTTP response must not turn that provisional row into official evidence,
+    because the request might have started before the candle had closed.  The
+    request-start clock is therefore authoritative: a row is usable only when
+    its start stamp is strictly before ``floor(request_started_at - grace)``.
+
+    ``validated_frame`` is the normalized output of :func:`validate_ohlc_frame`.
+    Its timestamps are usually naive IST, but this helper deliberately accepts
+    aware values too so future adapters keep the same safety boundary.  Empty
+    frames remain empty because callers may use this pure helper before the
+    store's non-empty publication validation.
+    """
+
+    if validated_frame is None or validated_frame.empty or "timestamp" not in validated_frame:
+        return frozenset()
+    request_ist = _as_aware_ist(request_started_at)
+    boundary = pd.Timestamp(request_ist - timedelta(seconds=max(0.0, float(grace_seconds))))
+    boundary = boundary.floor("min").tz_localize(None)
+    stable: set[pd.Timestamp] = set()
+    for value in validated_frame["timestamp"]:
+        timestamp = pd.Timestamp(_as_aware_ist(value)).tz_localize(None)
+        if timestamp < boundary:
+            stable.add(timestamp)
+    return frozenset(stable)
+
+
 @dataclass(frozen=True)
 class MarketDataHealthSnapshot:
     """Immutable worker-facing view of the current feed safety state.
