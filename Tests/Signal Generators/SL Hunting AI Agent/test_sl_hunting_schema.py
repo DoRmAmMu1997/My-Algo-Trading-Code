@@ -963,6 +963,68 @@ def test_v4f_exit_rule_stays_on_the_winning_side_only():
     assert "DISCIPLINE IS ASYMMETRIC BETWEEN WINNERS AND LOSERS" in prompt
 
 
+def test_system_prompt_has_v4g_stop_hunt_completion_and_discipline_knowledge():
+    """v4g (13 Aug live session): a reduced win, and the richest discipline block.
+
+    Two structural ideas -- a completed stop-hunt marks the END of that
+    direction, and the round number is the declared invalidation rather than
+    only a target -- plus the psychology that guards the v4f exit rule.
+    """
+    prompt = build_system_prompt()
+    assert "A COMPLETED STOP-HUNT ENDS THAT DIRECTION" in prompt
+    assert "THE ROUND NUMBER IS WHERE THE THESIS DIES" in prompt
+    assert "FEAR IS NOT A SIGNAL" in prompt
+    assert "TIME SPENT IN THE TRADE SHRINKS THE ACHIEVABLE TARGET" in prompt
+    assert "NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS PRINTED" in prompt
+
+
+def test_v4g_fear_rule_and_v4f_book_rule_do_not_cancel_each_other():
+    """The most dangerous pair in the whole prompt, and the reason for this test.
+
+    v4f says BOOK WHEN THE PROFIT STOPS GROWING. v4g says never exit because you
+    are afraid it might turn. Read carelessly the second reads as "hold through
+    everything" and would disable the first; read carelessly the first licenses
+    exactly the fear-driven early exit the second forbids. The distinction is
+    MEASUREMENT versus EMOTION, and both halves have to say so explicitly.
+    """
+    prompt = build_system_prompt()
+
+    fear = prompt[prompt.index("FEAR IS NOT A SIGNAL"):]
+    fear = fear[: fear.index("\n- ")] if "\n- " in fear else fear
+    # It must name the measurement rule it is guarding, not contradict it...
+    assert "BOOK WHEN THE PROFIT STOPS GROWING" in fear
+    assert "MEASUREMENT" in fear
+    assert "EMOTION" in fear
+    # ...and it must require a checkable reason rather than banning exits.
+    assert "NAMED, checkable reason" in fear
+    for allowed in ("stop", "target", "premise invalidated", "time cutoff"):
+        assert allowed in fear, allowed
+
+    # The zero-zero floor must not become a second fear-driven exit: it triggers
+    # on an observed fact, and only then sets the floor.
+    floor = prompt[prompt.index("NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS PRINTED"):]
+    floor = floor[: floor.index("\n- ")] if "\n- " in floor else floor
+    assert "NOT the fear rule above in disguise" in floor
+    assert "the move has stopped working" in floor
+
+
+def test_v4g_stop_hunt_rule_does_not_become_always_fade_the_bounce():
+    """The completed-stop-hunt rule needs its escape hatch intact.
+
+    "Follow the original direction after a clearing retracement" is powerful and
+    would be dangerous as an unconditional rule, so the gap exception that voids
+    it must survive any later edit.
+    """
+    prompt = build_system_prompt()
+    section = prompt[prompt.index("A COMPLETED STOP-HUNT ENDS THAT DIRECTION"):]
+    section = section[: section.index("\n- ")] if "\n- " in section else section
+    assert "SPENT its fuel" in section
+    assert "do NOT" in section and "chase the retracement" in section
+    # The voiding condition.
+    assert "fresh large gap" in section
+    assert "recruits a new crowd" in section
+
+
 def test_reentry_gate_does_not_contradict_the_exit_rules():
     """The re-entry gate must never be readable as a reason to delay an EXIT.
 
