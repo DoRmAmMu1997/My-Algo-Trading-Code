@@ -565,14 +565,15 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   v4c's WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET MANUFACTURES MORE:
   manufacturing is what the market does over time, but it may not complete inside
   your holding period, and you cannot bank on being early to it.
-- A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT (v4e). IH's read of the opening
-  move, stated as a prior: "if it had fallen SLOWLY I would even have accepted that
-  the market might produce a big move. But the selling was SHARP — the market
-  suddenly offered greed", i.e. an abrupt drop looks engineered to recruit sellers,
-  whereas a grinding one looks like genuine supply. Treat this as a weak prior and
-  nothing more: on the very session that produced it, the sharp slide was followed
-  by continuous selling and the bait read was WRONG. Use it to break a tie between
-  two otherwise-equal reads, never as the premise of a trade on its own.
+- ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS (v4h). IH, entering a fall
+  he knew might reverse: "if the market turns it could go much higher — then we
+  would be wrong ACCORDING TO DIRECTION. We would NOT be wrong according to
+  ENTRY... if it is going to go up anyway, you could enter here, or here, or here
+  — in all three there would be a loss."
+  A loss decomposes into two independent errors needing different fixes: a bad
+  ENTRY means a better price existed and was missed (timing); a bad DIRECTION
+  means no entry price would have helped (read). Score them separately, and never
+  let a good entry launder a wrong read, or a wrong read condemn a good entry.
 - THE CHART DOES NOT REPEAT TWO DAYS RUNNING (v4f). When today's open reproduces
   yesterday's shape — same flat open, same immediate drop, same indices — that
   SAMENESS is itself the tell, and it argues AGAINST the continuation everyone
@@ -1110,6 +1111,17 @@ RISK DISCIPLINE
   Operationally: an exit needs a NAMED, checkable reason — stop, target, the
   profit rate falling, the premise invalidated, the round number crossed, the
   time cutoff. "It might turn" is not on that list.
+- THE LOSS LIMIT IS A PERMISSION TO WAIT, NOT ONLY A PLACE TO STOP (v4h). Read
+  this WITH v4e's DISCIPLINE IS ASYMMETRIC, not against it: that rule says cut a
+  loser mechanically, this one says cut it AT the limit and not before, because
+  cutting early is its own error. IH, deep in a drawdown that later paid: "in ANY
+  situation, do NOT cut the trade where you feel your position can still be saved.
+  If the position has gone wrong but the loss LIMIT is still pending, we wait...
+  many traders, when the opposite momentum comes, cut the loss BEFORE the limit."
+  Its two shapes: running after the breakout because surely nothing falls now, and
+  holding the first adverse leg but running on the SECOND. Same error, different
+  depths. So the limit is two-sided — it forbids holding past it, AND forbids
+  cutting inside it on feel. Only the rule below legitimately overrides it.
 - TIME SPENT IN THE TRADE SHRINKS THE ACHIEVABLE TARGET (v4g). Elapsed time is a
   cost in its own right, separate from price. A trade that stalls and round-trips
   does not merely return to where it started — it returns with less of the
@@ -1121,6 +1133,13 @@ RISK DISCIPLINE
   So when a trade consumes materially more time than the read assumed, SHRINK
   the target rather than extending the wait — especially on an expiry session,
   where premium is draining while you wait.
+  Extended (v4h): time does not merely shrink the payoff, it EXPIRES THE PREMISE.
+  "With more time the STRUCTURE changes — the seller/buyer situation changes", and
+  later, booking out: "time has become quite a lot, gradually other people will
+  start participating." The crowd you entered against is not the crowd still there
+  an hour on. This is what overrides the loss-limit patience above: waiting to the
+  limit is right while the premise holds, and elapsed time can retire the premise
+  before price ever reaches the limit.
 - NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS PRINTED (v4g). Once meaningful open
   profit has actually appeared on the screen, the floor for that trade stops
   being breakeven and becomes "some profit". IH, booking a reduced winner: "we
