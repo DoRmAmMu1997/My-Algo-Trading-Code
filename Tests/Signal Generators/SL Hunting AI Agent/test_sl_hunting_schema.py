@@ -878,7 +878,10 @@ def test_system_prompt_has_v4e_recruitment_and_losing_session_knowledge():
     prompt = build_system_prompt()
     assert "WHICH CROWD THE OPEN RECRUITS DECIDES HOW BIG THE TRAP IS" in prompt
     assert "A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED" in prompt
-    assert "A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT" in prompt
+    # v4e's A SHARP FIRST SLIDE BAITS was PRUNED in v4h: it shipped as a weak
+    # prior with its own counter-example attached, and v4h's warning-move rule
+    # covers the same ground with an observable mechanism. See the v4h addendum.
+    assert "A SHARP FIRST SLIDE BAITS" not in prompt
     assert "NAME THE LAST POINT, NOT ONLY THE STOP" in prompt
     assert "DISCIPLINE IS ASYMMETRIC BETWEEN WINNERS AND LOSERS" in prompt
     # The recruitment distinction is the point; both halves must be present.
@@ -901,11 +904,34 @@ def test_v4e_empty_book_is_a_no_trade_not_a_forecasting_licence():
     # It must also reconcile with v4c rather than silently contradicting it.
     assert "MANUFACTURES MORE" in section
 
-    # And the bait prior must stay a tie-breaker, never a standalone premise.
-    bait = prompt[prompt.index("A SHARP FIRST SLIDE BAITS"):]
-    bait = bait[: bait.index("\n- ")] if "\n- " in bait else bait
-    assert "weak prior" in bait
-    assert "never as the premise of a trade on its own" in bait
+
+def test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours():
+    """v4h (14 Aug live session): a win held through a full drawdown.
+
+    Two of its rules sit directly on top of earlier ones and would be dangerous
+    read alone, so both reconciliations are asserted here.
+    """
+    prompt = build_system_prompt()
+    # The prose is hard-wrapped, so a phrase this test cares about can straddle a
+    # line break. Collapse whitespace before asserting on wording -- otherwise the
+    # test breaks on a re-wrap that changed nothing about what the agent reads.
+    flat = " ".join(prompt.split())
+    assert "ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS" in flat
+    assert "THE LOSS LIMIT IS A PERMISSION TO WAIT" in flat
+
+    # The loss-limit rule must not read as "hold losers": it is bounded on BOTH
+    # sides, and it has to name the v4e rule it refines rather than contradict.
+    limit = prompt[prompt.index("THE LOSS LIMIT IS A PERMISSION TO WAIT"):]
+    limit = " ".join((limit[: limit.index("\n- ")] if "\n- " in limit else limit).split())
+    assert "DISCIPLINE IS ASYMMETRIC" in limit
+    assert "not against it" in limit
+    assert "forbids holding past it" in limit
+    assert "forbids" in limit and "cutting inside it" in limit
+
+    # Elapsed time is the one thing allowed to override that patience, and the
+    # time rule has to say so or the two become contradictory advice.
+    assert "EXPIRES THE PREMISE" in flat
+    assert "retire the premise before price ever reaches the limit" in flat
 
 
 def test_system_prompt_has_v4f_repeat_chart_and_confirmation_knowledge():

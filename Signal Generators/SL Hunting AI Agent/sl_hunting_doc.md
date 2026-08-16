@@ -3465,3 +3465,109 @@ Test updated: `test_shipped_note_matches_august_14_intraday_hunter_plan`
 replaces the 13 Aug equivalent and asserts both branch directions plus the
 thin-crowd mechanism and the gap-over-flat preference, because those two are
 what a summarising edit would drop first.
+
+---
+
+## Video addendum - the 14 Aug LIVE SESSION (v4h)
+
+**Source:** Intraday Hunter live session `H7RXIw5xbZk` (14 Aug 2026, 12:18).
+
+A WIN, and unusually it is a win **held through a full drawdown** rather than one
+that went straight to target. That is what makes it useful: every previous
+version in this series learned from either a clean win or a clean loss, so the
+prompt had no worked example of a correct trade that looked wrong in the middle.
+
+### The two rules that shipped
+
+**ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS.** A trade that ends green
+does not retroactively make its entry good, and a trade that goes immediately
+against you was not necessarily the wrong side. Without this split, the journal
+teaches the agent to grade its reads by their P&L, which is exactly the feedback
+loop that produces revenge entries after a stopped-out correct call.
+
+**THE LOSS LIMIT IS A PERMISSION TO WAIT.** This one is the reason the version
+exists, and it is also the most dangerous line in the prompt if read alone -
+"permission to wait" one careless paraphrase away from "hold losers". It is
+bounded on both sides in the prose and both bounds are test-asserted: the limit
+licenses patience *toward* the stop, never *past* it, and it forbids cutting
+inside it on feel. It explicitly names v4e's `DISCIPLINE IS ASYMMETRIC` as the
+rule it refines rather than overrides.
+
+The one thing allowed to override that patience is elapsed time, so v4g's
+time-shrinks-the-target rule was extended rather than left to contradict it:
+time does not merely shrink the payoff, it **EXPIRES THE PREMISE**. IH, booking
+out: "time has become quite a lot, gradually other people will start
+participating." Waiting to the limit is right while the premise holds; elapsed
+time can retire the premise before price ever reaches the limit.
+`test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours`
+asserts the reconciliation in both directions.
+
+### One rule was cut for budget, not for merit
+
+A third rule - **A SEATED CROWD IS WARNED BEFORE IT IS HUNTED, SO NO WARNING
+MEANS NO CROWD** - was written, tested, and then removed to fit the cap. IH:
+"if sellers WERE seated, the market would go up to target them - especially to
+give a WARNING... because the market kept making no momentum, sellers will not
+be seated, so it will not go up to warn." The mechanism is that an early adverse
+spike is the market shaking a seated crowd, so its *absence* confirms an empty
+book. It is the sharpest new idea in the session and it should be the first
+thing restored once a pruning pass frees room.
+
+### Knowledge changes (v4h, all prose)
+
+- `RISK`: ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS; THE LOSS LIMIT IS
+  A PERMISSION TO WAIT.
+- `RISK` (extended): TIME SPENT IN THE TRADE ... now also EXPIRES THE PREMISE.
+- **Pruned:** v4e's `A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT` - superseded
+  by v4f's confirmation rule, which covers the same tell with a checkable trigger.
+- Prompt size 111,283 -> 112,730 chars. **Assembled 114,021 against a 114,140
+  budget - 119 chars of headroom.** The cap is now the binding constraint on this
+  series: v4i cannot ship anything without pruning first. See below.
+
+### The budget is now the design constraint
+
+Worst-case runtime additions (12 lessons x 280 + a 2,500-char note) are already
+reserved, so the true ceiling for static prose is 114,140 assembled. At 119 chars
+of slack, the append-only rhythm this series has used since v3 is finished.
+Before v4i, someone should do a dedicated pruning pass over `OPENING_DRIVE` and
+`RISK` - both have accumulated rules that later versions restated with better
+triggers - and re-measure. That is a knowledge-quality task and deserves its own
+change, not a rushed trim at the end of a version.
+
+### How our agent traded the same session
+
+Realized: **-3,854.50** across 47 legs.
+
+| Strategy | Legs | Realized |
+|---|---|---|
+| SL Hunting AI | 2 | **+2,866.50** |
+| **Total** | **47** | **-3,854.50** |
+
+**SL Hunting was the best strategy on the board for the second consecutive day**,
+cross-checked against its own `Result summary` (+2,866.50, Trades=2).
+
+| Time | Decision | Reason |
+|---|---|---|
+| 10:04 | ENTER_LONG | `flush_reversal_hammer_confirmed` |
+| 10:07 | EXIT | `double_top_rejection_premise_fade` |
+| 10:20 | ENTER_SHORT | `double_top_bearish_engulfing_breakdown` |
+
+**Agent vs IH.** Both finished on the same side - IH put-side/short, the agent
+short from 10:20 - and both booked on a partial rather than a full target. The
+agent got there by a different route: it took a long first, released it three
+minutes later on a premise fade, and reversed. That reversal is the behaviour
+v4f's confirmation rule was written to produce, and it is worth noting that the
+10:07 exit was a *premise* exit on a trade that was not yet losing - which is the
+disciplined half of the rule v4h now bounds from the other side.
+
+Two trades is again a small sample, and the basket was negative regardless. The
+signal worth keeping is narrower than "the agent is good now": across 12, 13 and
+14 Aug, every SL Hunting exit had a **nameable** reason, and the two profitable
+days are the two where that was true.
+
+### Operational note
+
+The supervisor heartbeat shipped in the session-state work is confirmed working
+in production: **65 heartbeat lines** in the 14 Aug log. The 2026-08-12 failure
+mode - snapshot writes stopping silently at 12:30 while trading continued to
+15:10 - would now be visible within five minutes.

@@ -201,17 +201,15 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_14_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 13 Aug transcript.
+def test_shipped_note_matches_august_17_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 16 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    What distinguishes this one is that NEITHER side is seated -- he says so for
-    both BankNIFTY ("the same price level") and Sensex ("would be WRONG" to
-    claim either). That is the empty-book condition v4f describes, so the note
-    carries his own mechanism for it (thin crowd -> that is where momentum
-    goes) rather than letting the agent infer a seated crowd that is not there.
+    What distinguishes this session is the same sell-side search across gap-up,
+    flat, and gap-down opens, with an explicit extra-risk test for a gap-down:
+    fresh sellers or a large positive recovery can make the buyer hunt unsafe.
     """
     import os
 
@@ -220,37 +218,33 @@ def test_shipped_note_matches_august_14_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-14"
-    assert "MhmlrlUEUGI" in note.source
-    # The distinguishing fact: no decisive crowd on either side.
-    assert "SAME price level" in note.context
-    assert note.plan[0].startswith("FLAT to GAP-DOWN: identify SELL-side setups")
-    assert note.plan[1].startswith("GAP-UP: go WITH the market")
-    assert any("NOBODY IS DECISIVELY SEATED" in line for line in note.plan)
-    # The thin-crowd mechanism and the explicit preference for a gap over a flat
-    # open are the two ideas a summarising edit would drop first.
-    assert any("where the crowd is THIN" in line for line in note.plan)
-    assert any("PREFERS a gap to a flat open" in line for line in note.plan)
-    assert len(note.plan) == 6
+    assert note.for_date == "2026-08-17"
+    assert "4xfMmQW6x5I" in note.source
+    assert "buyers as the likely seated crowd" in note.context
+    assert note.plan == [
+        "GAP-UP or FLAT: identify confirmed SELL-side setups targeting the "
+        "buyers left seated after the prior recovery.",
+        "GAP-DOWN: retain the SELL-side search, but risk is higher because fresh "
+        "sellers may participate; the gap alone is not confirmation.",
+        "GAP-DOWN WITH POSITIVE MOMENTUM: a large recovery weakens the short plan. "
+        "Retain it only if the recovery stays limited and the normal setup confirms.",
+    ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # 24176 was READ OFF THE CHART, not inferred. The auto-caption
-            # rendered it "2476" on both 13 and 14 Aug; a 1080p frame at 2:04
-            # shows the teal support line labelled 24,176.20, alongside
-            # 24,275.25 and resistances at 24,443.85 / 24,540.85 -- every one
-            # matching what he speaks. Prefer this method over omitting a level.
             "resistance": [24440.0, 24540.0],
-            "support": [24275.0, 24176.0],
+            "support": [24300.0, 24210.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57890.0, 58000.0],
-            "support": [57500.0, 57320.0],
+            # The auto-caption garbles the second support. The chart frame at
+            # 0:44 labels the two selected teal levels 57,280 and 57,154.
+            "resistance": [57720.0, 57890.0],
+            "support": [57280.0, 57154.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78145.0, 78500.0],
-            "support": [77500.0, 77200.0],
+            "resistance": [78300.0, 78500.0],
+            "support": [77700.0, 77400.0],
         },
     ]
