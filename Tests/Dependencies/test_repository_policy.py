@@ -65,7 +65,22 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     assert "websockets==17.0.1" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
-    assert "claude-agent-sdk==0.2.132" in ai
+    #
+    # 0.2.132 -> 0.2.137 (2026-08-17, PR #125). Upstream flags a BREAKING change
+    # in 0.2.137: "the `Message` union was widened; exhaustive matching code
+    # needs updates" (a new `ConversationResetMessage`, plus an `origin` field on
+    # `UserMessage`/`ResultMessage` and two resume options). We are not exhaustive
+    # matchers -- `sl_hunting_agent._run_query` and `sl_hunting_coach` both walk
+    # the stream with an `isinstance(ResultMessage) / elif isinstance(
+    # AssistantMessage)` chain and no else-raise, so an unrecognised member is
+    # ignored rather than fatal. That is what makes this bump safe to take.
+    # 0.2.133-0.2.136 are bundled-CLI bumps only (2.1.224 -> 2.1.228).
+    #
+    # What CI still does NOT prove: the bundled CLI is what actually gets spawned
+    # per bar, and no test spawns it. Confirm on the next PAPER session that
+    # decisions still return (the log's "SLHuntingAgent decision cost ~$..."
+    # line is the cheap tell); if they stop, revert this pin first.
+    assert "claude-agent-sdk==0.2.137" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR agent is an optional, subscription-authenticated
