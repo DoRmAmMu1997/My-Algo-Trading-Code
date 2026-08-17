@@ -90,6 +90,51 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     assert all("==" in line or " @ git+" in line for line in brokers)
 
 
+def test_precommit_ruff_rev_matches_the_requirements_dev_pin():
+    """The commit hook must enforce the SAME ruff ruleset as the CI gate.
+
+    These are pinned in two unrelated files -- `.pre-commit-config.yaml` carries
+    a git TAG (`v0.16.2`) and `requirements-dev.txt` carries a PyPI version
+    (`ruff==0.16.2`) -- and nothing but a comment kept them together. They
+    drifted to v0.15.1 against a 0.16.2 pin, which is worse than having no hook
+    at all: ruff gains and changes rules every minor release, so a commit could
+    pass locally and still fail CI's `Run Ruff static checks` on a rule the hook
+    had never heard of. Dependabot bumps the requirement and cannot see the
+    hook, so this only stays fixed if a test says so.
+    """
+    config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    hook_revs = {
+        repo["repo"].rstrip("/").rsplit("/", maxsplit=1)[-1]: repo["rev"]
+        for repo in config["repos"]
+    }
+
+    pinned = [
+        line for line in _requirement_lines("requirements-dev.txt")
+        if line.startswith("ruff==")
+    ]
+    assert len(pinned) == 1, f"expected exactly one ruff pin, found {pinned}"
+    required_version = pinned[0].split("==", maxsplit=1)[1]
+
+    assert hook_revs["ruff-pre-commit"] == f"v{required_version}", (
+        f".pre-commit-config.yaml pins ruff-pre-commit at "
+        f"{hook_revs['ruff-pre-commit']} but requirements-dev.txt pins "
+        f"ruff=={required_version}. Bump BOTH together so the commit hook "
+        f"enforces the same ruleset as CI."
+    )
+
+
+def test_every_precommit_hook_rev_is_a_pinned_tag():
+    """No floating refs: a hook that tracks a branch is not a reproducible gate."""
+    config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+
+    for repo in config["repos"]:
+        rev = repo["rev"]
+        assert re.fullmatch(r"v?\d+\.\d+\.\d+", rev), (
+            f"{repo['repo']} is pinned to {rev!r}, which is not an exact "
+            f"version tag. Floating refs make the hook unreproducible."
+        )
+
+
 def test_ci_runs_audit_branch_coverage_and_every_exact_dependency_set():
     workflow = (ROOT / ".github/workflows/quality-and-security.yml").read_text(encoding="utf-8")
     parsed = yaml.safe_load(workflow)

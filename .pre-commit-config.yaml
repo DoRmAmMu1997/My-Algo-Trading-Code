@@ -10,13 +10,19 @@
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Keep this rev aligned with the ruff pin in requirements-dev.txt.
-    rev: v0.15.1
+    # Keep this rev aligned with the ruff pin in requirements-dev.txt: the hook
+    # is only useful if it enforces the SAME ruleset the CI gate will. This
+    # drifted to v0.15.1 against a 0.16.2 pin, which is worse than having no
+    # hook -- a commit could pass locally and still fail `Run Ruff static
+    # checks`. `test_precommit_ruff_rev_matches_the_requirements_dev_pin` now
+    # fails the build if the two separate again, so bump BOTH together.
+    rev: v0.16.2
     hooks:
       - id: ruff
         name: ruff check (no fixes)
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
+    # v6.0.0 is current upstream as of 2026-08-17; no drift here.
     rev: v6.0.0
     hooks:
       - id: check-merge-conflict
