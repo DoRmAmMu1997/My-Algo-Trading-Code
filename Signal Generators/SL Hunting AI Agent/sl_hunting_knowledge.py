@@ -861,6 +861,21 @@ confirmation must have ALREADY printed.
 - Invalidation: if the confirmation candle's wick pokes back through the pattern,
   it is a trap — no trade. A pattern formed "in between" (not AT the level) is not
   tradeable; the pattern must form at the very top/bottom of the level.
+- A DOUBLE BOTTOM INSIDE AN ESTABLISHED DOWNTREND SHAKES SHORTS OUT; IT DOES NOT
+  INVITE BUYERS IN (v4i). Read the pattern by WHO it is built to remove, not by the
+  shape's textbook name. IH, twice in one session while holding puts through it:
+  "this double bottom the market has made — it is not made to attract BUYERS. It is
+  made so that people do not SELL here", and later "there is no need to fear the
+  double bottom, because this double bottom is not built to attract buyers, it is
+  only to chase away those who are selling. Then the market keeps falling slowly."
+  So inside a trend that is already running, a textbook REVERSAL pattern against
+  that trend is more often a shake-out of the crowd riding it than a turn. This does
+  NOT license ignoring reversal patterns generally — it is scoped to a pattern that
+  forms AGAINST an established, already-moving trend, and the tell is that the
+  pattern produces no real momentum in its own direction. A double bottom that
+  actually recruits buyers goes UP; one built to scare sellers just stops falling
+  for a while. If you are already positioned WITH the trend, this is a reason to sit
+  rather than to cut; if you are flat, it is not an entry against the trend.
 - Behavioural confirmation COMPLEMENTS the candle rule (it does NOT replace it):
   at a level, how price behaves corroborates the setup — holding WITHOUT aggressive
   selling backs a long; failing to break out and STALLING backs a short. Use it to
@@ -937,6 +952,32 @@ RISK DISCIPLINE
   shows the mirror as its own leg with its own P&L; `unrealized_pnl` there is BASKET P&L
   (both legs) while `nifty_leg_pnl` and the `mirror` block give you each leg alone. When in
   doubt, EXIT BOTH.
+- THE LAGGING INDEX DECIDES THE BASKET'S EXIT, NOT THE LEADING ONE (v4i). When the
+  indices are moving together and one falls BEHIND, the laggard is where the
+  retracement starts and it caps what the basket can actually collect — so a trade
+  can be working on the leg you are watching and still be finished. IH, booking a
+  profitable three-index put basket for exactly this reason: "Sensex and NIFTY have
+  momentum, BankNIFTY is trying to hold itself back. So this can create a problem
+  for us. So we will have to book this profit and go... if BankNIFTY starts turning,
+  our quantity there is larger, so the problem becomes bigger for us." His closing
+  generalisation is the rule: "when two indices run far ahead, one index lags a
+  little behind, or sometimes tries to retrace a bit. So we had to book our profit."
+  How this maps onto YOUR basket, which is not shaped like his:
+  * He was size-weighted INTO BankNIFTY deliberately. Your mirror is EQUAL-LOT, which
+    is NOT equal-rupee: BankNIFTY travels further per unit of time than NIFTY, so the
+    mirror leg still carries the larger rupee swing. The laggard is structurally the
+    dangerous leg for you too, for a different reason than it was for him.
+  * Therefore: while holding, check whether BOTH indices are still confirming the
+    move, not just NIFTY. NIFTY running while BankNIFTY stalls is a BOOK signal for
+    the basket even when `nifty_leg_pnl` looks healthy — the mirror is quietly giving
+    back what the NIFTY leg is earning.
+  * You have a finer instrument than he did: `exit_leg` lets you cut the stalling
+    mirror alone and let the NIFTY leg run. Prefer that to a whole-basket exit WHEN
+    the NIFTY premise is genuinely intact and only the mirror has stopped confirming.
+    If the divergence instead says the MOVE is tiring, exit BOTH.
+  This is a cross-index refinement of v4f's book-when-the-profit-stops-growing rule:
+  that one watches the rate on your own P&L, this one names the leg that will stop it
+  first, usually before the basket total shows it.
 - OPTION-TIME-ADJUSTED REWARD/RISK: require a worthwhile and ATTAINABLE target at a
   real swing / pivot / fibo / psych level. Normally prefer approximately 1:2
   reward:risk to the next clear level. An approximately 1:1 trade is permitted only
@@ -1120,6 +1161,24 @@ RISK DISCIPLINE
   Operationally: an exit needs a NAMED, checkable reason — stop, target, the
   profit rate falling, the premise invalidated, the round number crossed, the
   time cutoff. "It might turn" is not on that list.
+- THE CROWD'S FEAR IS YOUR WINDOW, AND IT CLOSES WHEN THEY JOIN (v4i). The twin of
+  FEAR IS NOT A SIGNAL above: that rule governs YOUR fear, this one reads THEIRS.
+  When a move is fast, the people who would fade it are frightened of being caught,
+  and their hesitation is the reason the move keeps paying. IH, entering into an
+  immediate drawdown: "you think anyone can sell here — nobody will. Right now
+  everyone is afraid it might turn around, and while they stay afraid our work gets
+  done." He acts on it at the entry too: "before the other person applies their
+  mind, we should build our position." Two consequences:
+  * An empty book is a TEMPORARY state, and the clock on it is the crowd's nerve, not
+    the chart. "Slowly others may also participate, because the momentum is good" —
+    once they do, retracement and chop start.
+  * This is the MECHANISM under v4h's TIME EXPIRES THE PREMISE. Time retires a premise
+    because the frightened crowd eventually stops being frightened and joins; that is
+    the structural change, and it is why elapsed time can end a trade that price has
+    not yet ended.
+  It does NOT license entering merely because a move is fast and scary — you still
+  need a named crowd, a level and a pattern. It tells you the edge is perishable
+  once you have one.
 - THE LOSS LIMIT IS A PERMISSION TO WAIT, NOT ONLY A PLACE TO STOP (v4h). Read
   this WITH v4e's DISCIPLINE IS ASYMMETRIC, not against it: that rule says cut a
   loser mechanically, this one says cut it AT the limit and not before, because

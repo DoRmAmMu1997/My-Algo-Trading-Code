@@ -3607,3 +3607,143 @@ The supervisor heartbeat shipped in the session-state work is confirmed working
 in production: **65 heartbeat lines** in the 14 Aug log. The 2026-08-12 failure
 mode - snapshot writes stopping silently at 12:30 while trading continued to
 15:10 - would now be visible within five minutes.
+
+---
+
+## Video addendum - the 17 Aug LIVE SESSION (v4i)
+
+**Source:** Intraday Hunter live session `nozGFwXsdQg` (17 Aug 2026, 8:33).
+
+A three-index PUT basket, entered at the open and **booked while still
+profitable** because one index stopped confirming. That exit is the reason this
+version exists: it is the first session in the series that acts on cross-index
+divergence from the HOLDING side, and it lands directly on our BankNIFTY mirror.
+
+### The session
+
+He entered puts immediately on the open drive, across all three indices --
+BankNIFTY 57300 PE (1170 qty) and 57200 PE, Sensex 840 qty, NIFTY 1365 qty --
+with Sensex deliberately sized DOWN because its weekly-expiry timing made it the
+likely slow mover. Entry rationale was the familiar empty-book read: the market
+had been selling for days, had already given a retracement and closed, so
+"sellers are not seated here" and a direct upside retracement was unlikely.
+
+He then sat through an immediate drawdown, and booked into profit at the end.
+
+### The three rules
+
+**THE LAGGING INDEX DECIDES THE BASKET'S EXIT, NOT THE LEADING ONE.** He needed
+a breakdown in both indices and got it -- "Sensex needed the 500 level breakdown.
+It happened in both" -- but no fast momentum followed, and BankNIFTY held back
+while Sensex and NIFTY ran. That was the exit: "Sensex and NIFTY have momentum,
+BankNIFTY is trying to hold itself back. So this can create a problem for us. So
+we will have to book this profit and go... if BankNIFTY starts turning, our
+quantity there is larger, so the problem becomes bigger for us." His closing
+generalisation is the rule itself: "when two indices run far ahead, one index
+lags a little behind, or sometimes tries to retrace a bit. So we had to book."
+
+**A DOUBLE BOTTOM INSIDE AN ESTABLISHED DOWNTREND SHAKES SHORTS OUT; IT DOES NOT
+INVITE BUYERS IN.** Stated twice, once while holding through the pattern and once
+in review: "it is not made to attract BUYERS, it is made so that people do not
+SELL here", and "there is no need to fear the double bottom... it is only to
+chase away those who are selling. Then the market keeps falling slowly." Read the
+pattern by who it removes, not by its textbook name.
+
+**THE CROWD'S FEAR IS YOUR WINDOW, AND IT CLOSES WHEN THEY JOIN.** The twin of
+v4g's FEAR IS NOT A SIGNAL -- that rule governs the agent's own fear, this one
+reads the crowd's. "You think anyone can sell here - nobody will. Right now
+everyone is afraid it might turn around, and while they stay afraid our work gets
+done." Plus the entry corollary: "before the other person applies their mind, we
+should build our position."
+
+This last one is also the **mechanism under v4h's TIME EXPIRES THE PREMISE**: time
+retires a premise because the frightened crowd eventually stops being frightened
+and participates. The prose says so explicitly, so the two read as one idea rather
+than two pieces of timing advice.
+
+### Why the mapping to our basket needed spelling out
+
+IH was size-weighted INTO BankNIFTY on purpose. Our mirror is **equal-lot**, which
+is not equal-rupee -- BankNIFTY travels further per unit of time, so the mirror leg
+still carries the larger rupee swing. The laggard is the dangerous leg for us too,
+for a different reason than it was for him. The rule states that mapping rather
+than leaving the agent to assume his basket shape, and
+`test_v4i_lagging_index_rule_governs_the_basket_and_keeps_its_per_leg_escape`
+asserts both halves.
+
+It also keeps pointing at `exit_leg`: we have a finer instrument than he did and
+can cut the stalling mirror alone when the NIFTY premise is genuinely intact. A
+rule that always took the whole basket down would be strictly worse than the
+capability the host already exposes.
+
+### Knowledge changes (v4i, all prose)
+
+- `PATTERNS_AND_CONFIRMATION`: A DOUBLE BOTTOM INSIDE AN ESTABLISHED DOWNTREND
+  SHAKES SHORTS OUT.
+- `RISK`: THE LAGGING INDEX DECIDES THE BASKET'S EXIT (beside the BASKET NOTE);
+  THE CROWD'S FEAR IS YOUR WINDOW (beside v4g's FEAR IS NOT A SIGNAL).
+- Three new drift guards, each protecting the reading that would decay first: the
+  double-bottom rule must not generalise into "ignore reversal patterns" or become
+  a counter-trend entry licence; the lagging-index rule must keep its per-leg
+  escape; the crowd-fear rule must not read as an entry licence.
+- Adds a `_flat_rule` helper to the test module. Rule prose is hard-wrapped, so
+  asserting wording against the raw prompt breaks on a re-flow the agent never
+  sees -- the same brittleness that failed a v4h assertion.
+- Prompt size 113,461 -> 118,049 chars. Assembled 119,340 against a 154,140
+  budget: **34,800 chars of headroom.**
+
+Worth noting: at the old 120,000 cap this version would not have fitted at all
+(119,340 assembled against a 114,140 budget). The cap was raised earlier the same
+day -- see "The budget was never the design constraint" in the v4h addendum.
+
+### How our agent traded the same session
+
+**Provisional - the runner was still live at 12:12.** Realized so far: **+7,004.50**
+across 26 legs, a positive basket for a change.
+
+| Strategy | Legs | Realized |
+|---|---|---|
+| Renko | 5 | +3,016.00 |
+| **SL Hunting AI** | **2** | **+1,580.25** |
+| CPR Algo 3 | 2 | +1,560.00 |
+| EMA | 1 | +851.50 |
+| Heikin Ashi | 5 | +386.75 |
+| Long Strangle | 10 | -74.75 |
+| RSI Reversal | 1 | -315.25 |
+| **Total** | **26** | **+7,004.50** |
+
+One trade, cross-checked against its own `Result summary` (Trades=1,
+RealizedPnL=1580.25):
+
+| Time | Decision | Reason |
+|---|---|---|
+| 10:23 | ENTER_SHORT (conf=7) | `runaway_trend_continuation_short`, stop 24270, target 24200 |
+| 10:46 | EXIT (conf=8) | `book_before_round_number` - +2,565 unrealized, ~30pts from target, last several candles stalled |
+
+**Agent vs IH.** Same side, same structural read: both were short/put-side on a
+continuation of the existing selling rather than a reversal, and both booked on
+momentum stalling rather than at a target. The agent's stated exit reason -
+booking before the round number while the profit stopped growing - is v4g and v4d
+firing together, and it is a nameable reason, which now holds for four consecutive
+sessions.
+
+**The finding that matters is in the leg split:**
+
+| Leg | Realized |
+|---|---|
+| NIFTY | +2,115.75 |
+| BankNIFTY mirror | **-535.50** |
+| Net | +1,580.25 |
+
+The mirror LOST money while the NIFTY leg earned. That is precisely the divergence
+IH exited on, occurring in our own book on the same tape -- BankNIFTY lagging while
+NIFTY ran. The agent booked the whole basket at 10:46 and so closed the losing
+mirror too, but it got there for a NIFTY-side reason and never named the
+divergence. v4i is written so that next time the lag itself is a readable signal,
+and so that `exit_leg` is the considered response rather than an unused capability.
+
+One difference worth recording: IH entered at the open, the agent at 10:23 -- an
+hour into a move he had been riding since 9:15. The agent's no-new-entry cutoff
+then fired at 11:00 (`LIFECYCLE RUNNING -> ENTRY_BLOCKED | reason=TIME_CUTOFF`).
+On a day whose whole character was set in the first fifteen minutes, most of the
+move was already gone by the time the agent was willing to act.
