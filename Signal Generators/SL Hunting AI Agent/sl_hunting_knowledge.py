@@ -565,6 +565,15 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   v4c's WHEN THE TRAPPED INVENTORY IS SPENT, THE MARKET MANUFACTURES MORE:
   manufacturing is what the market does over time, but it may not complete inside
   your holding period, and you cannot bank on being early to it.
+- A SEATED CROWD IS WARNED BEFORE IT IS HUNTED, SO NO WARNING MEANS NO CROWD (v4h).
+  Rather than asking who is seated, watch for the move that would shake them. IH:
+  "if sellers WERE seated, the market would go up to target them — especially to
+  give a WARNING. That is why your entry has chances of being wrong. But because
+  the market kept making no momentum and holding above the 500 level, sellers will
+  not be seated, so it will not go up to warn." So an early adverse spike is the
+  market shaking a seated crowd, and its ABSENCE confirms an empty book; a drift
+  straight in your favour is the confirmation, an immediate sharp move against you
+  says somebody was there and the ENTRY was wrong, not only the direction.
 - ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS (v4h). IH, entering a fall
   he knew might reverse: "if the market turns it could go much higher — then we
   would be wrong ACCORDING TO DIRECTION. We would NOT be wrong according to
@@ -1708,7 +1717,23 @@ Emit ONLY this JSON object as your final answer."""
 # the next ordinary addendum would have tripped it. At ~4 characters per token
 # 120,000 is on the order of 30k tokens, comfortably inside the model's context
 # while still catching anything pathological.
-MAX_SYSTEM_PROMPT_CHARS = 120_000
+#
+# Raised again from 120,000 on 2026-08-17, for the same reason and by the same
+# reasoning. v4h landed with 119 characters to spare and was only made to fit by
+# dropping one of its own rules, which is precisely the "throttle ordinary
+# knowledge growth" outcome the paragraph above says this bound is NOT for. The
+# cost of the extra room was measured rather than guessed: the agent makes ~70-90
+# decisions a session at ~$0.23 each (2026-08-10..17 logs), so the prompt growth
+# this permits moves the input portion by single-digit rupees a day against a
+# strategy booking thousands. 160,000 is ~40k tokens -- still far inside context,
+# still small enough to catch a runaway lessons file or a malformed note, which
+# is the failure this guard actually exists to catch.
+#
+# The rule when this is next hit is the same: check whether the growth is
+# ordinary knowledge (raise the bound) or something pathological (fix the cause).
+# Pruning genuinely superseded prose is worth doing on its own merits, but it is
+# a knowledge-quality task -- never a way to buy space under this number.
+MAX_SYSTEM_PROMPT_CHARS = 160_000
 
 
 def build_system_prompt() -> str:

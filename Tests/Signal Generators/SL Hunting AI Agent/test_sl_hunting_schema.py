@@ -916,6 +916,7 @@ def test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours()
     # line break. Collapse whitespace before asserting on wording -- otherwise the
     # test breaks on a re-wrap that changed nothing about what the agent reads.
     flat = " ".join(prompt.split())
+    assert "A SEATED CROWD IS WARNED BEFORE IT IS HUNTED" in flat
     assert "ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS" in flat
     assert "THE LOSS LIMIT IS A PERMISSION TO WAIT" in flat
 

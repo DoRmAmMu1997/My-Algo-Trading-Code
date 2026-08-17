@@ -3502,7 +3502,7 @@ time can retire the premise before price ever reaches the limit.
 `test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours`
 asserts the reconciliation in both directions.
 
-### One rule was cut for budget, not for merit
+### One rule was cut for budget, then restored the same week
 
 A third rule - **A SEATED CROWD IS WARNED BEFORE IT IS HUNTED, SO NO WARNING
 MEANS NO CROWD** - was written, tested, and then removed to fit the cap. IH:
@@ -3510,8 +3510,10 @@ MEANS NO CROWD** - was written, tested, and then removed to fit the cap. IH:
 give a WARNING... because the market kept making no momentum, sellers will not
 be seated, so it will not go up to warn." The mechanism is that an early adverse
 spike is the market shaking a seated crowd, so its *absence* confirms an empty
-book. It is the sharpest new idea in the session and it should be the first
-thing restored once a pruning pass frees room.
+book.
+
+**It was restored on 2026-08-17 when the cap was raised to 160,000.** Cutting it
+was the wrong call: see "The budget was never the design constraint" below.
 
 ### Knowledge changes (v4h, all prose)
 
@@ -3520,19 +3522,53 @@ thing restored once a pruning pass frees room.
 - `RISK` (extended): TIME SPENT IN THE TRADE ... now also EXPIRES THE PREMISE.
 - **Pruned:** v4e's `A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT` - superseded
   by v4f's confirmation rule, which covers the same tell with a checkable trigger.
-- Prompt size 111,283 -> 112,730 chars. **Assembled 114,021 against a 114,140
-  budget - 119 chars of headroom.** The cap is now the binding constraint on this
-  series: v4i cannot ship anything without pruning first. See below.
+- Prompt size 111,283 -> 113,461 chars (after the 2026-08-17 restore).
+  **Assembled 114,752 against a 154,140 budget - 39,388 chars of headroom.**
 
-### The budget is now the design constraint
+### The budget was never the design constraint
 
-Worst-case runtime additions (12 lessons x 280 + a 2,500-char note) are already
-reserved, so the true ceiling for static prose is 114,140 assembled. At 119 chars
-of slack, the append-only rhythm this series has used since v3 is finished.
-Before v4i, someone should do a dedicated pruning pass over `OPENING_DRIVE` and
-`RISK` - both have accumulated rules that later versions restated with better
-triggers - and re-measure. That is a knowledge-quality task and deserves its own
-change, not a rushed trim at the end of a version.
+v4h originally shipped at 119 characters under the cap, having dropped one of its
+own rules to get there, and this document claimed the append-only rhythm was
+finished and v4i could not ship without a pruning pass first.
+
+**That was wrong, and the guard's own comment says so.** `MAX_SYSTEM_PROMPT_CHARS`
+is documented in `sl_hunting_knowledge.py` as:
+
+> a SANITY bound, not a budget to trade against. It exists so a runaway lessons
+> file or a malformed note cannot quietly inflate what is sent every bar; it is
+> not meant to throttle ordinary knowledge growth
+
+It had already been raised once for exactly this situation (75,000 -> 120,000 on
+2026-07-31, because "the next ordinary addendum would have tripped it"). Reading
+it as a fixed budget and deleting hard-won knowledge to fit inverted its purpose.
+
+On 2026-08-17 it was raised to **160,000** and the cut rule was restored. The
+cost of the extra room was measured, not guessed:
+
+| Session | Decisions | Mean cost | Session total |
+|---|---|---|---|
+| 2026-08-13 | 72 | $0.2278 | $16.40 |
+| 2026-08-14 | 73 | $0.2362 | $17.24 |
+| 2026-08-17 | 91 | $0.2333 | $21.23 |
+
+~70-90 decisions a session at ~$0.23. The prompt growth this permits moves the
+input portion by single-digit rupees a day, against a strategy that booked
++2,866.50 on 14 Aug and +1,580.25 on 17 Aug. That is not a trade worth deleting
+knowledge for.
+
+**The rule for next time:** when the cap is hit, ask whether the growth is
+ordinary knowledge (raise the bound) or something pathological - a runaway
+lessons file, a malformed note (fix the cause). Pruning genuinely superseded
+prose is still worth doing on its own merits; it is just never a way to buy space
+under this number.
+
+One real redundancy was found while looking, and is recorded here rather than
+acted on under time pressure: `NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS
+PRINTED` (v4g) overlaps `BOOK WHEN THE PROFIT STOPS GROWING` (v4f), whose first
+support bullet already says a printed target "counts as reached, even if you did
+not take it there". The two could merge into one rule. That is a knowledge-quality
+change and belongs in its own commit, judged on whether the merged rule reads
+better - not on the character count.
 
 ### How our agent traded the same session
 
