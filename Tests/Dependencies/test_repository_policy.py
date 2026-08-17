@@ -31,7 +31,6 @@ def _requirement_lines(name: str) -> list[str]:
 def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     core = _requirement_lines("requirements.txt")
     ai = _requirement_lines("requirements-ai.txt")
-    codex_ai = _requirement_lines("requirements-codex-ai.txt")
     brokers = _requirement_lines("requirements-brokers.txt")
 
     assert "requests==2.34.2" in core
@@ -83,15 +82,13 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     assert "claude-agent-sdk==0.2.137" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
-    # The independent CPR agent is an optional, subscription-authenticated
-    # runtime. Keep its small compatibility set exact and reviewable. Both AI
-    # agents run inside the same master process, so they must also agree on the
-    # one MCP package version that Python can install into that environment.
-    assert codex_ai == [
-        "openai-codex==0.144.4",
-        "mcp==1.29.0",
-        "pydantic==2.13.4",
-    ]
+    # The independent CPR Codex agent is an optional, subscription-authenticated
+    # runtime and now shares this file. Both AI agents run inside the SAME
+    # master process, so Python can only install one version of what they share
+    # -- which is exactly why the two sets were merged (PR #125). Keeping them
+    # apart meant `mcp` and `pydantic` were pinned twice and had to be kept
+    # equal by hand.
+    assert "openai-codex==0.144.4" in ai
     assert "mcp==1.29.0" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
@@ -157,7 +154,6 @@ def test_ci_runs_audit_branch_coverage_and_every_exact_dependency_set():
 
     assert set(parsed["jobs"]) == {"verify", "broker-dependencies"}
     assert "requirements-ai.txt" in workflow
-    assert "requirements-codex-ai.txt" in core_job
     assert "requirements-brokers.txt" in workflow
     assert "broker-dependencies:" in workflow
     assert "requirements-brokers.txt" not in core_job

@@ -137,10 +137,11 @@ Defaults live in `Dependencies/env.example` and are pinned by the policy test:
 | `CPR_AI_SQUARE_OFF_HOUR` / `_MINUTE` | 15:15 |
 | `CPR_AI_DECISION_LOGGING_ENABLED` / `_LOG_PATH` | true / `Backtest Outputs/cpr_ai_decisions.jsonl` |
 
-Install the exact optional set from `requirements-codex-ai.txt`. Both AI agents
-run inside the same process, so they must agree on one MCP package version —
-`mcp==1.29.0` appears in both `requirements-ai.txt` and `requirements-codex-ai.txt`,
-and the policy test asserts it.
+Install the exact optional set from `requirements-ai.txt`, which carries BOTH AI
+agents. They run inside the same process, so Python can only ever install one
+version of what they share — `mcp==1.29.0` and `pydantic==2.13.4`. That
+constraint is why the two files were merged (PR #125): keeping them apart meant
+pinning the shared packages twice and keeping them equal by hand.
 
 ---
 

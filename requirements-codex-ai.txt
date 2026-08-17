@@ -1,8 +1,0 @@
-# Exact optional runtime for the independent CPR SRSI/VWAP Codex agent.
-# It uses the operator's existing subscription-backed ChatGPT/Codex authentication;
-# no trading credential or OpenAI API key belongs in the isolated subprocess.
-# Keep MCP aligned with requirements-ai.txt because both optional agents may run
-# inside the same master-process environment.
-openai-codex==0.144.4
-mcp==1.29.0
-pydantic==2.13.4

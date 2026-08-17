@@ -95,7 +95,7 @@ Tests/                                             # EVERY test, mirroring the s
   test_market_data_health.py                       #   unittest suite for the shared feed-health gates
 requirements.txt                                   # exact core runtime dependencies
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
-requirements-ai.txt                                # exact optional Claude Agent SDK stack
+requirements-ai.txt                                # exact optional AI-agent stack (Claude + Codex)
 requirements-dev.txt                               # exact local/CI quality tools
 Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
@@ -212,7 +212,7 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   ~2 points high (CI measures 69.1%). The floor only ever moves UP, and only
   after a CI run shows headroom -- never lower it to make a red build pass.
 - **Dependencies:** install core with `pip install -r requirements.txt`; add
-  `requirements-ai.txt` for SL Hunting and `requirements-dev.txt` for local
+  `requirements-ai.txt` for BOTH AI agents and `requirements-dev.txt` for local
   gates. `requirements-brokers.txt` is the isolated upstream compatibility
   environment and must not be combined with core because Kotak pins older
   pandas/requests; use the safe per-broker commands in README. Kotak v2 comes
