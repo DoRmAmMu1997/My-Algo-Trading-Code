@@ -212,7 +212,7 @@ no test, because it reads like coverage.
 ## 7. Local gates
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 ```
 
 Then the same commands CI runs (§2 and §5). `.pre-commit-config.yaml` wires
