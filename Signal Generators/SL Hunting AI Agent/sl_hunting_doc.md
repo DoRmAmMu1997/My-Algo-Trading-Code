@@ -3502,7 +3502,7 @@ time can retire the premise before price ever reaches the limit.
 `test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours`
 asserts the reconciliation in both directions.
 
-### One rule was cut for budget, not for merit
+### One rule was cut for budget, then restored the same week
 
 A third rule - **A SEATED CROWD IS WARNED BEFORE IT IS HUNTED, SO NO WARNING
 MEANS NO CROWD** - was written, tested, and then removed to fit the cap. IH:
@@ -3510,8 +3510,10 @@ MEANS NO CROWD** - was written, tested, and then removed to fit the cap. IH:
 give a WARNING... because the market kept making no momentum, sellers will not
 be seated, so it will not go up to warn." The mechanism is that an early adverse
 spike is the market shaking a seated crowd, so its *absence* confirms an empty
-book. It is the sharpest new idea in the session and it should be the first
-thing restored once a pruning pass frees room.
+book.
+
+**It was restored on 2026-08-17 when the cap was raised to 160,000.** Cutting it
+was the wrong call: see "The budget was never the design constraint" below.
 
 ### Knowledge changes (v4h, all prose)
 
@@ -3520,19 +3522,53 @@ thing restored once a pruning pass frees room.
 - `RISK` (extended): TIME SPENT IN THE TRADE ... now also EXPIRES THE PREMISE.
 - **Pruned:** v4e's `A SHARP FIRST SLIDE BAITS; A SLOW ONE MEANS IT` - superseded
   by v4f's confirmation rule, which covers the same tell with a checkable trigger.
-- Prompt size 111,283 -> 112,730 chars. **Assembled 114,021 against a 114,140
-  budget - 119 chars of headroom.** The cap is now the binding constraint on this
-  series: v4i cannot ship anything without pruning first. See below.
+- Prompt size 111,283 -> 113,461 chars (after the 2026-08-17 restore).
+  **Assembled 114,752 against a 154,140 budget - 39,388 chars of headroom.**
 
-### The budget is now the design constraint
+### The budget was never the design constraint
 
-Worst-case runtime additions (12 lessons x 280 + a 2,500-char note) are already
-reserved, so the true ceiling for static prose is 114,140 assembled. At 119 chars
-of slack, the append-only rhythm this series has used since v3 is finished.
-Before v4i, someone should do a dedicated pruning pass over `OPENING_DRIVE` and
-`RISK` - both have accumulated rules that later versions restated with better
-triggers - and re-measure. That is a knowledge-quality task and deserves its own
-change, not a rushed trim at the end of a version.
+v4h originally shipped at 119 characters under the cap, having dropped one of its
+own rules to get there, and this document claimed the append-only rhythm was
+finished and v4i could not ship without a pruning pass first.
+
+**That was wrong, and the guard's own comment says so.** `MAX_SYSTEM_PROMPT_CHARS`
+is documented in `sl_hunting_knowledge.py` as:
+
+> a SANITY bound, not a budget to trade against. It exists so a runaway lessons
+> file or a malformed note cannot quietly inflate what is sent every bar; it is
+> not meant to throttle ordinary knowledge growth
+
+It had already been raised once for exactly this situation (75,000 -> 120,000 on
+2026-07-31, because "the next ordinary addendum would have tripped it"). Reading
+it as a fixed budget and deleting hard-won knowledge to fit inverted its purpose.
+
+On 2026-08-17 it was raised to **160,000** and the cut rule was restored. The
+cost of the extra room was measured, not guessed:
+
+| Session | Decisions | Mean cost | Session total |
+|---|---|---|---|
+| 2026-08-13 | 72 | $0.2278 | $16.40 |
+| 2026-08-14 | 73 | $0.2362 | $17.24 |
+| 2026-08-17 | 91 | $0.2333 | $21.23 |
+
+~70-90 decisions a session at ~$0.23. The prompt growth this permits moves the
+input portion by single-digit rupees a day, against a strategy that booked
++2,866.50 on 14 Aug and +1,580.25 on 17 Aug. That is not a trade worth deleting
+knowledge for.
+
+**The rule for next time:** when the cap is hit, ask whether the growth is
+ordinary knowledge (raise the bound) or something pathological - a runaway
+lessons file, a malformed note (fix the cause). Pruning genuinely superseded
+prose is still worth doing on its own merits; it is just never a way to buy space
+under this number.
+
+One real redundancy was found while looking, and is recorded here rather than
+acted on under time pressure: `NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS
+PRINTED` (v4g) overlaps `BOOK WHEN THE PROFIT STOPS GROWING` (v4f), whose first
+support bullet already says a printed target "counts as reached, even if you did
+not take it there". The two could merge into one rule. That is a knowledge-quality
+change and belongs in its own commit, judged on whether the merged rule reads
+better - not on the character count.
 
 ### How our agent traded the same session
 
@@ -3571,3 +3607,143 @@ The supervisor heartbeat shipped in the session-state work is confirmed working
 in production: **65 heartbeat lines** in the 14 Aug log. The 2026-08-12 failure
 mode - snapshot writes stopping silently at 12:30 while trading continued to
 15:10 - would now be visible within five minutes.
+
+---
+
+## Video addendum - the 17 Aug LIVE SESSION (v4i)
+
+**Source:** Intraday Hunter live session `nozGFwXsdQg` (17 Aug 2026, 8:33).
+
+A three-index PUT basket, entered at the open and **booked while still
+profitable** because one index stopped confirming. That exit is the reason this
+version exists: it is the first session in the series that acts on cross-index
+divergence from the HOLDING side, and it lands directly on our BankNIFTY mirror.
+
+### The session
+
+He entered puts immediately on the open drive, across all three indices --
+BankNIFTY 57300 PE (1170 qty) and 57200 PE, Sensex 840 qty, NIFTY 1365 qty --
+with Sensex deliberately sized DOWN because its weekly-expiry timing made it the
+likely slow mover. Entry rationale was the familiar empty-book read: the market
+had been selling for days, had already given a retracement and closed, so
+"sellers are not seated here" and a direct upside retracement was unlikely.
+
+He then sat through an immediate drawdown, and booked into profit at the end.
+
+### The three rules
+
+**THE LAGGING INDEX DECIDES THE BASKET'S EXIT, NOT THE LEADING ONE.** He needed
+a breakdown in both indices and got it -- "Sensex needed the 500 level breakdown.
+It happened in both" -- but no fast momentum followed, and BankNIFTY held back
+while Sensex and NIFTY ran. That was the exit: "Sensex and NIFTY have momentum,
+BankNIFTY is trying to hold itself back. So this can create a problem for us. So
+we will have to book this profit and go... if BankNIFTY starts turning, our
+quantity there is larger, so the problem becomes bigger for us." His closing
+generalisation is the rule itself: "when two indices run far ahead, one index
+lags a little behind, or sometimes tries to retrace a bit. So we had to book."
+
+**A DOUBLE BOTTOM INSIDE AN ESTABLISHED DOWNTREND SHAKES SHORTS OUT; IT DOES NOT
+INVITE BUYERS IN.** Stated twice, once while holding through the pattern and once
+in review: "it is not made to attract BUYERS, it is made so that people do not
+SELL here", and "there is no need to fear the double bottom... it is only to
+chase away those who are selling. Then the market keeps falling slowly." Read the
+pattern by who it removes, not by its textbook name.
+
+**THE CROWD'S FEAR IS YOUR WINDOW, AND IT CLOSES WHEN THEY JOIN.** The twin of
+v4g's FEAR IS NOT A SIGNAL -- that rule governs the agent's own fear, this one
+reads the crowd's. "You think anyone can sell here - nobody will. Right now
+everyone is afraid it might turn around, and while they stay afraid our work gets
+done." Plus the entry corollary: "before the other person applies their mind, we
+should build our position."
+
+This last one is also the **mechanism under v4h's TIME EXPIRES THE PREMISE**: time
+retires a premise because the frightened crowd eventually stops being frightened
+and participates. The prose says so explicitly, so the two read as one idea rather
+than two pieces of timing advice.
+
+### Why the mapping to our basket needed spelling out
+
+IH was size-weighted INTO BankNIFTY on purpose. Our mirror is **equal-lot**, which
+is not equal-rupee -- BankNIFTY travels further per unit of time, so the mirror leg
+still carries the larger rupee swing. The laggard is the dangerous leg for us too,
+for a different reason than it was for him. The rule states that mapping rather
+than leaving the agent to assume his basket shape, and
+`test_v4i_lagging_index_rule_governs_the_basket_and_keeps_its_per_leg_escape`
+asserts both halves.
+
+It also keeps pointing at `exit_leg`: we have a finer instrument than he did and
+can cut the stalling mirror alone when the NIFTY premise is genuinely intact. A
+rule that always took the whole basket down would be strictly worse than the
+capability the host already exposes.
+
+### Knowledge changes (v4i, all prose)
+
+- `PATTERNS_AND_CONFIRMATION`: A DOUBLE BOTTOM INSIDE AN ESTABLISHED DOWNTREND
+  SHAKES SHORTS OUT.
+- `RISK`: THE LAGGING INDEX DECIDES THE BASKET'S EXIT (beside the BASKET NOTE);
+  THE CROWD'S FEAR IS YOUR WINDOW (beside v4g's FEAR IS NOT A SIGNAL).
+- Three new drift guards, each protecting the reading that would decay first: the
+  double-bottom rule must not generalise into "ignore reversal patterns" or become
+  a counter-trend entry licence; the lagging-index rule must keep its per-leg
+  escape; the crowd-fear rule must not read as an entry licence.
+- Adds a `_flat_rule` helper to the test module. Rule prose is hard-wrapped, so
+  asserting wording against the raw prompt breaks on a re-flow the agent never
+  sees -- the same brittleness that failed a v4h assertion.
+- Prompt size 113,461 -> 118,049 chars. Assembled 119,340 against a 154,140
+  budget: **34,800 chars of headroom.**
+
+Worth noting: at the old 120,000 cap this version would not have fitted at all
+(119,340 assembled against a 114,140 budget). The cap was raised earlier the same
+day -- see "The budget was never the design constraint" in the v4h addendum.
+
+### How our agent traded the same session
+
+**Provisional - the runner was still live at 12:12.** Realized so far: **+7,004.50**
+across 26 legs, a positive basket for a change.
+
+| Strategy | Legs | Realized |
+|---|---|---|
+| Renko | 5 | +3,016.00 |
+| **SL Hunting AI** | **2** | **+1,580.25** |
+| CPR Algo 3 | 2 | +1,560.00 |
+| EMA | 1 | +851.50 |
+| Heikin Ashi | 5 | +386.75 |
+| Long Strangle | 10 | -74.75 |
+| RSI Reversal | 1 | -315.25 |
+| **Total** | **26** | **+7,004.50** |
+
+One trade, cross-checked against its own `Result summary` (Trades=1,
+RealizedPnL=1580.25):
+
+| Time | Decision | Reason |
+|---|---|---|
+| 10:23 | ENTER_SHORT (conf=7) | `runaway_trend_continuation_short`, stop 24270, target 24200 |
+| 10:46 | EXIT (conf=8) | `book_before_round_number` - +2,565 unrealized, ~30pts from target, last several candles stalled |
+
+**Agent vs IH.** Same side, same structural read: both were short/put-side on a
+continuation of the existing selling rather than a reversal, and both booked on
+momentum stalling rather than at a target. The agent's stated exit reason -
+booking before the round number while the profit stopped growing - is v4g and v4d
+firing together, and it is a nameable reason, which now holds for four consecutive
+sessions.
+
+**The finding that matters is in the leg split:**
+
+| Leg | Realized |
+|---|---|
+| NIFTY | +2,115.75 |
+| BankNIFTY mirror | **-535.50** |
+| Net | +1,580.25 |
+
+The mirror LOST money while the NIFTY leg earned. That is precisely the divergence
+IH exited on, occurring in our own book on the same tape -- BankNIFTY lagging while
+NIFTY ran. The agent booked the whole basket at 10:46 and so closed the losing
+mirror too, but it got there for a NIFTY-side reason and never named the
+divergence. v4i is written so that next time the lag itself is a readable signal,
+and so that `exit_leg` is the considered response rather than an unused capability.
+
+One difference worth recording: IH entered at the open, the agent at 10:23 -- an
+hour into a move he had been riding since 9:15. The agent's no-new-entry cutoff
+then fired at 11:00 (`LIFECYCLE RUNNING -> ENTRY_BLOCKED | reason=TIME_CUTOFF`).
+On a day whose whole character was set in the first fifteen minutes, most of the
+move was already gone by the time the agent was willing to act.

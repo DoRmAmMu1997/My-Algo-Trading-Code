@@ -201,15 +201,21 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_17_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 16 Aug transcript.
+def test_shipped_note_matches_august_18_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 17 Aug transcript.
 
     This catches a stale prior-session note, an inverted gap plan, or a mistyped
     chart level before the dated note is injected into the live prompt.
 
-    What distinguishes this session is the same sell-side search across gap-up,
-    flat, and gap-down opens, with an explicit extra-risk test for a gap-down:
-    fresh sellers or a large positive recovery can make the buyer hunt unsafe.
+    Two things distinguish this session and are asserted rather than summarised:
+
+    1. The direction INVERTS from 17 Aug. The breakdown trapped SELLERS and the
+       market recovered, so the plan is BUY side. A note that still reads
+       "sell-side" is the exact stale-note failure this test exists to catch.
+    2. The stand-aside branch is a LARGE GAP-UP -- and it is DEFINED (an open
+       above the first resistance), which is what makes it checkable at 09:15
+       instead of a judgement call. Losing that definition would quietly turn a
+       hard veto into an opinion.
     """
     import os
 
@@ -218,33 +224,40 @@ def test_shipped_note_matches_august_17_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-17"
-    assert "4xfMmQW6x5I" in note.source
-    assert "buyers as the likely seated crowd" in note.context
+    assert note.for_date == "2026-08-18"
+    assert "UAHKZbgRaJA" in note.source
+    # Expiry is session context the RISK rules already act on; it must survive.
+    assert "NIFTY EXPIRY DAY" in note.context
+    assert "seated crowd is short, not long" in note.context
     assert note.plan == [
-        "GAP-UP or FLAT: identify confirmed SELL-side setups targeting the "
-        "buyers left seated after the prior recovery.",
-        "GAP-DOWN: retain the SELL-side search, but risk is higher because fresh "
-        "sellers may participate; the gap alone is not confirmation.",
-        "GAP-DOWN WITH POSITIVE MOMENTUM: a large recovery weakens the short plan. "
-        "Retain it only if the recovery stays limited and the normal setup confirms.",
+        "SMALL GAP-UP, FLAT, or SLIGHT GAP-DOWN: identify confirmed BUY-side "
+        "setups and go with the market.",
+        "LARGE GAP-UP: NO PLAN, stand aside. A big gap makes others focus on "
+        "buying too, or at least stop selling, which removes the crowd the "
+        "trade needs.",
+        "A LARGE GAP-UP means an opening ABOVE the FIRST RESISTANCE; for "
+        "BANKNIFTY, an opening above the round number also cancels the plan.",
+        "The trapped crowd is the SELLERS from the breakdown; do not build the "
+        "trade around targeting buyers, who are already in profit and should "
+        "not hold big size.",
     ]
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
+            # Caption garbles the second resistance as "2440"; it is 24440,
+            # unchanged from the 17 Aug note and consistent with the pair he
+            # reads out ("24540, 24440").
             "resistance": [24440.0, 24540.0],
-            "support": [24300.0, 24210.0],
+            "support": [24210.0, 24270.0],
         },
         {
             "index": "BANKNIFTY",
-            # The auto-caption garbles the second support. The chart frame at
-            # 0:44 labels the two selected teal levels 57,280 and 57,154.
-            "resistance": [57720.0, 57890.0],
-            "support": [57280.0, 57154.0],
+            "resistance": [57800.0, 58000.0],
+            "support": [57120.0, 57400.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [78300.0, 78500.0],
-            "support": [77700.0, 77400.0],
+            "resistance": [78000.0, 78200.0],
+            "support": [77460.0, 77650.0],
         },
     ]

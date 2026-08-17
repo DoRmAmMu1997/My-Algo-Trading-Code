@@ -916,6 +916,7 @@ def test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours()
     # line break. Collapse whitespace before asserting on wording -- otherwise the
     # test breaks on a re-wrap that changed nothing about what the agent reads.
     flat = " ".join(prompt.split())
+    assert "A SEATED CROWD IS WARNED BEFORE IT IS HUNTED" in flat
     assert "ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS" in flat
     assert "THE LOSS LIMIT IS A PERMISSION TO WAIT" in flat
 
@@ -932,6 +933,78 @@ def test_v4h_entry_and_direction_and_the_loss_limit_pair_with_their_neighbours()
     # time rule has to say so or the two become contradictory advice.
     assert "EXPIRES THE PREMISE" in flat
     assert "retire the premise before price ever reaches the limit" in flat
+
+
+def _flat_rule(prompt: str, heading: str) -> str:
+    """Return one '- HEADING ...' bullet, whitespace-collapsed.
+
+    Rule prose is hard-wrapped, so asserting on wording against the raw prompt
+    breaks whenever a paragraph is re-flowed -- a change the agent never sees.
+    """
+    body = prompt[prompt.index(heading):]
+    if "\n- " in body:
+        body = body[: body.index("\n- ")]
+    return " ".join(body.split())
+
+
+def test_v4i_lagging_index_rule_governs_the_basket_and_keeps_its_per_leg_escape():
+    """v4i (17 Aug live session): a WORKING three-index basket booked on divergence.
+
+    This is the first rule that acts on the BankNIFTY mirror from the HOLDING
+    side, so two things have to survive edits: it must not collapse into "exit
+    whenever the indices disagree", and it must keep pointing at `exit_leg`
+    rather than always taking the whole basket down.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE LAGGING INDEX DECIDES THE BASKET'S EXIT")
+
+    # The mechanism: the laggard caps the basket, so a healthy NIFTY leg alone is
+    # not proof the trade is still working.
+    assert "nifty_leg_pnl" in rule
+    assert "BOOK signal" in rule
+
+    # The equal-lot mapping is the reason this transfers to our basket at all --
+    # IH was deliberately size-weighted into BankNIFTY and we are not.
+    assert "EQUAL-LOT" in rule
+    assert "NOT equal-rupee" in rule
+
+    # The per-leg escape hatch must stay, or the rule becomes strictly worse than
+    # the capability the host already exposes.
+    assert "exit_leg" in rule
+    assert "exit BOTH" in rule
+
+
+def test_v4i_double_bottom_rule_stays_scoped_to_countertrend_patterns():
+    """The shake-out reading must not generalise into "ignore reversal patterns".
+
+    Read carelessly this rule would cancel PATTERNS_AND_CONFIRMATION wholesale,
+    so the scope qualifier and the falsifier are asserted explicitly.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A DOUBLE BOTTOM INSIDE AN ESTABLISHED DOWNTREND")
+
+    assert "does NOT license ignoring reversal patterns generally" in rule
+    assert "AGAINST an established, already-moving trend" in rule
+    # The falsifier: a real reversal produces its own momentum.
+    assert "actually recruits buyers goes UP" in rule
+    # And it must not become a licence to enter counter-trend.
+    assert "it is not an entry against the trend" in rule
+
+
+def test_v4i_crowd_fear_rule_pairs_with_the_agent_fear_rule_and_the_time_rule():
+    """THEIR fear vs YOUR fear -- the two must not read as one contradictory rule."""
+    prompt = build_system_prompt()
+    flat = " ".join(prompt.split())
+    rule = _flat_rule(prompt, "THE CROWD'S FEAR IS YOUR WINDOW")
+
+    assert "FEAR IS NOT A SIGNAL" in flat
+    assert "FEAR IS NOT A SIGNAL above" in rule  # names the rule it sits beside
+    assert "governs YOUR fear" in rule and "reads THEIRS" in rule
+
+    # It explains v4h's time rule rather than competing with it.
+    assert "TIME EXPIRES THE PREMISE" in rule
+    # And it is not an entry licence.
+    assert "does NOT license entering merely because a move is fast" in rule
 
 
 def test_system_prompt_has_v4f_repeat_chart_and_confirmation_knowledge():
