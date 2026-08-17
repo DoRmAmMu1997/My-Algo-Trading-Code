@@ -31,7 +31,6 @@ def _requirement_lines(name: str) -> list[str]:
 def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     core = _requirement_lines("requirements.txt")
     ai = _requirement_lines("requirements-ai.txt")
-    codex_ai = _requirement_lines("requirements-codex-ai.txt")
     brokers = _requirement_lines("requirements-brokers.txt")
 
     assert "requests==2.34.2" in core
@@ -65,18 +64,31 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     assert "websockets==17.0.1" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
-    assert "claude-agent-sdk==0.2.132" in ai
+    #
+    # 0.2.132 -> 0.2.137 (2026-08-17, PR #125). Upstream flags a BREAKING change
+    # in 0.2.137: "the `Message` union was widened; exhaustive matching code
+    # needs updates" (a new `ConversationResetMessage`, plus an `origin` field on
+    # `UserMessage`/`ResultMessage` and two resume options). We are not exhaustive
+    # matchers -- `sl_hunting_agent._run_query` and `sl_hunting_coach` both walk
+    # the stream with an `isinstance(ResultMessage) / elif isinstance(
+    # AssistantMessage)` chain and no else-raise, so an unrecognised member is
+    # ignored rather than fatal. That is what makes this bump safe to take.
+    # 0.2.133-0.2.136 are bundled-CLI bumps only (2.1.224 -> 2.1.228).
+    #
+    # What CI still does NOT prove: the bundled CLI is what actually gets spawned
+    # per bar, and no test spawns it. Confirm on the next PAPER session that
+    # decisions still return (the log's "SLHuntingAgent decision cost ~$..."
+    # line is the cheap tell); if they stop, revert this pin first.
+    assert "claude-agent-sdk==0.2.137" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
-    # The independent CPR agent is an optional, subscription-authenticated
-    # runtime. Keep its small compatibility set exact and reviewable. Both AI
-    # agents run inside the same master process, so they must also agree on the
-    # one MCP package version that Python can install into that environment.
-    assert codex_ai == [
-        "openai-codex==0.144.4",
-        "mcp==1.29.0",
-        "pydantic==2.13.4",
-    ]
+    # The independent CPR Codex agent is an optional, subscription-authenticated
+    # runtime and now shares this file. Both AI agents run inside the SAME
+    # master process, so Python can only install one version of what they share
+    # -- which is exactly why the two sets were merged (PR #125). Keeping them
+    # apart meant `mcp` and `pydantic` were pinned twice and had to be kept
+    # equal by hand.
+    assert "openai-codex==0.144.4" in ai
     assert "mcp==1.29.0" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
@@ -94,8 +106,8 @@ def test_precommit_ruff_rev_matches_the_requirements_dev_pin():
     """The commit hook must enforce the SAME ruff ruleset as the CI gate.
 
     These are pinned in two unrelated files -- `.pre-commit-config.yaml` carries
-    a git TAG (`v0.16.2`) and `requirements-dev.txt` carries a PyPI version
-    (`ruff==0.16.2`) -- and nothing but a comment kept them together. They
+    a git TAG (`v0.16.3`) and `requirements.txt` carries a PyPI version
+    (`ruff==0.16.3`) -- and nothing but a comment kept them together. They
     drifted to v0.15.1 against a 0.16.2 pin, which is worse than having no hook
     at all: ruff gains and changes rules every minor release, so a commit could
     pass locally and still fail CI's `Run Ruff static checks` on a rule the hook
@@ -109,7 +121,7 @@ def test_precommit_ruff_rev_matches_the_requirements_dev_pin():
     }
 
     pinned = [
-        line for line in _requirement_lines("requirements-dev.txt")
+        line for line in _requirement_lines("requirements.txt")
         if line.startswith("ruff==")
     ]
     assert len(pinned) == 1, f"expected exactly one ruff pin, found {pinned}"
@@ -117,10 +129,31 @@ def test_precommit_ruff_rev_matches_the_requirements_dev_pin():
 
     assert hook_revs["ruff-pre-commit"] == f"v{required_version}", (
         f".pre-commit-config.yaml pins ruff-pre-commit at "
-        f"{hook_revs['ruff-pre-commit']} but requirements-dev.txt pins "
+        f"{hook_revs['ruff-pre-commit']} but requirements.txt pins "
         f"ruff=={required_version}. Bump BOTH together so the commit hook "
         f"enforces the same ruleset as CI."
     )
+
+
+def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
+    """requirements-dev.txt was merged into requirements.txt (PR #125).
+
+    Guards the merge in both directions: the runtime pins DEPS-001 protects
+    must still be there, and the dev toolchain must not quietly drift back out
+    into a second file that CI would then stop installing.
+    """
+    core = _requirement_lines("requirements.txt")
+
+    assert not (ROOT / "requirements-dev.txt").exists(), (
+        "requirements-dev.txt is back. If splitting it out again is deliberate, "
+        "update the CI install step, the README gate block, and this test "
+        "together -- CI installs requirements.txt only."
+    )
+    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8"):
+        assert runtime_pin in core
+    for tool_pin in ("pytest==9.1.1", "mypy==1.20.2", "bandit==1.9.4", "pip-audit==2.10.1"):
+        assert tool_pin in core
+    assert all("==" in line for line in core)
 
 
 def test_every_precommit_hook_rev_is_a_pinned_tag():
@@ -142,7 +175,6 @@ def test_ci_runs_audit_branch_coverage_and_every_exact_dependency_set():
 
     assert set(parsed["jobs"]) == {"verify", "broker-dependencies"}
     assert "requirements-ai.txt" in workflow
-    assert "requirements-codex-ai.txt" in core_job
     assert "requirements-brokers.txt" in workflow
     assert "broker-dependencies:" in workflow
     assert "requirements-brokers.txt" not in core_job

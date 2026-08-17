@@ -118,7 +118,7 @@ square-off state. Risk-reducing exits remain available if decision logging fails
 Install the exact optional stack separately from broker dependencies:
 
 ```powershell
-python -m pip install -r requirements-codex-ai.txt
+python -m pip install -r requirements-ai.txt
 ```
 
 Use the operator's existing subscription-backed Codex/ChatGPT authentication.

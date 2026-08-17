@@ -41,14 +41,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install \
             -r requirements.txt \
-            -r requirements-dev.txt \
-            -r requirements-ai.txt \
-            -r requirements-codex-ai.txt
+            -r requirements-ai.txt
           python -m pip check
 
       - name: Audit installed Python dependencies
         # The hosted runner starts clean, so --local audits exactly the core,
-        # developer, Claude AI, and Codex AI environment installed above rather
+        # developer, and combined AI-agent environment installed above rather
         # than unrelated packages from a developer's system Python.
         run: python -m pip_audit --local --progress-spinner off
 

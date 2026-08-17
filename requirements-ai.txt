@@ -1,10 +1,26 @@
-# Exact optional runtime set for the SL Hunting Claude agent.
+# Exact optional runtime set for BOTH in-process AI agents.
 #
 # These versions are the Python 3.12/3.13 set validated by the MAT safety stack.
-# The first three packages are the Claude Agent SDK's direct runtime dependencies;
-# pinning them prevents a fresh install from silently changing the agent transport.
-claude-agent-sdk==0.2.132
+# Both agents are independently opt-in and default-OFF (SL_HUNTING_ENABLED,
+# CPR_AI_ENABLED), but they run inside the SAME master process, so Python can
+# only ever install ONE version of the packages they share. Keeping them in one
+# file makes that constraint structural instead of a comment two files apart --
+# previously `mcp` and `pydantic` were pinned twice and had to be kept equal by
+# hand, which is a silent-breakage waiting to happen.
+
+# -- SL Hunting (Claude Agent SDK) --------------------------------------------
+# The first three are the SDK's direct runtime dependencies; pinning them
+# prevents a fresh install from silently changing the agent transport.
+claude-agent-sdk==0.2.137
 anyio==4.14.2
-mcp==1.29.0
 sniffio==1.3.1
+
+# -- CPR SRSI/VWAP (Codex) ----------------------------------------------------
+# Uses the operator's existing subscription-backed ChatGPT/Codex authentication;
+# no trading credential or OpenAI API key belongs in the isolated subprocess.
+openai-codex==0.144.4
+
+# -- Shared by both agents ----------------------------------------------------
+# These are the packages that forced the merge: one process, one version.
+mcp==1.29.0
 pydantic==2.13.4

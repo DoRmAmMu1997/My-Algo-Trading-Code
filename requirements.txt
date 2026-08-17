@@ -1,10 +1,24 @@
-# Core dependencies — data extractors, backtests, and the front-test runner.
+# Core runtime AND development/CI dependencies — data extractors, backtests,
+# the front-test runner, and the quality gates.
 #
-# DEPS-001: pinned to the exact versions verified together on the live runner
-# (pip freeze, 2026-07-07). This is live-money code — a reinstall must never
-# silently pick up a new pandas/dhanhq mid-week. Bump these deliberately in a
-# dependency-maintenance PR and re-run the full gate suite (CI installs this
-# file, so the gates always test the pinned set).
+# DEPS-001: the LIVE RUNTIME block below is pinned to the exact versions
+# verified together on the live runner (pip freeze, 2026-07-07). This is
+# live-money code — a reinstall must never silently pick up a new
+# pandas/dhanhq mid-week. Bump these deliberately in a dependency-maintenance
+# PR and re-run the full gate suite (CI installs this file, so the gates always
+# test the pinned set).
+#
+# The DEVELOPMENT block was merged in from requirements-dev.txt (PR #125) to
+# cut the number of requirement files. Two consequences to know about:
+#   * `pip install -r requirements.txt` on the live box now also installs the
+#     test/lint toolchain and its transitive tree. That is accepted, not an
+#     oversight — but it means this file is no longer a literal pip-freeze of
+#     the trading process, so read DEPS-001 as applying to the first block.
+#   * CI's `pip_audit --local` now sees the dev tooling too, so an advisory in
+#     e.g. bandit can fail the build. Judge such a finding on whether it
+#     touches the runtime block before treating it as a trading risk.
+
+# ---- LIVE RUNTIME (DEPS-001: the verified live-runner set) -------------------
 dhanhq==2.2.0
 pandas==3.0.5
 numpy==2.4.6
@@ -30,21 +44,41 @@ websocket-client==1.8.0
 websockets==17.0.1
 TA-Lib==0.6.8
 
+# ---- DEVELOPMENT / CI QUALITY GATES -----------------------------------------
+# Versions mirror the Streamlit Scanner App's verified set where shared.
+# `ruff` is pinned in TWO places: here and as the `ruff-pre-commit` rev in
+# .pre-commit-config.yaml. Bump both together — the hook is only useful if it
+# enforces the same ruleset as CI, and
+# `test_precommit_ruff_rev_matches_the_requirements_dev_pin` fails the build if
+# they separate.
+pytest==9.1.1
+ruff==0.16.3
+mypy==1.20.2
+bandit==1.9.4
+pre-commit==4.6.2
+coverage==7.15.4
+pytest-cov==7.1.0
+pip-audit==2.10.1
+# Type stubs for typed third-party usage in the mypy scope. pandas-stubs is
+# pinned so local and CI mypy see the exact same pandas typing (an out-of-band
+# stubs install once made local mypy fail while CI stayed green).
+# mypy and pandas-stubs majors are deliberately NOT auto-bumped (see
+# .github/dependabot.yml); take them as dedicated typing upgrades.
+types-requests==2.33.0.20260712
+pandas-stubs==2.3.3.260113
+
 # ---- Exact optional dependency sets -----------------------------------------
 # Live broker compatibility manifest:
 #   requirements-brokers.txt
 # Kotak's official v2.0.1 tag declares dependencies that conflict with this
-# audited core set, so do not install both files together. README.md gives the
+# audited set, so do not install both files together. README.md gives the
 # safe per-broker commands. Shoonya's NorenApi client remains vendored under
 # "Dependencies/Shoonya API/".
 #
-# SL Hunting AI Agent:
+# Both optional in-process AI agents (SL Hunting + CPR Codex):
 #   pip install -r requirements-ai.txt
-# This pins the Claude Agent SDK and the exact transitive SDK/schema stack
-# validated together. The strategy stays disabled when this set is absent.
-#
-# Development and CI:
-#   pip install -r requirements-dev.txt
+# This pins the Claude Agent SDK, the Codex runtime, and the MCP/schema stack
+# they share. Each strategy stays disabled when its half of the set is absent.
 #
 # ML Ensemble signal generator:
 #   scikit-learn==1.8.0
