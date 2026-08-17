@@ -1,27 +1,28 @@
 {
-  "for_date": "2026-08-17",
-  "source": "Intraday Hunter, 'Prediction For 17 AUG 2026' (4xfMmQW6x5I, uploaded 2026-08-16)",
-  "context": "All three indices recovered after sellers were removed or stopped out, leaving buyers as the likely seated crowd. The sell-side plan targets those buyers, but a gap-down can recruit fresh sellers and increase risk.",
+  "for_date": "2026-08-18",
+  "source": "Intraday Hunter, 'Prediction For 18 AUG 2026' (UAHKZbgRaJA, uploaded 2026-08-17)",
+  "context": "NIFTY EXPIRY DAY. The breakdown trapped sellers and the market recovered, so the seated crowd is short, not long. Buyers who are already well in profit are NOT a target. Plan is BUY side, with the market.",
   "plan": [
-    "GAP-UP or FLAT: identify confirmed SELL-side setups targeting the buyers left seated after the prior recovery.",
-    "GAP-DOWN: retain the SELL-side search, but risk is higher because fresh sellers may participate; the gap alone is not confirmation.",
-    "GAP-DOWN WITH POSITIVE MOMENTUM: a large recovery weakens the short plan. Retain it only if the recovery stays limited and the normal setup confirms."
+    "SMALL GAP-UP, FLAT, or SLIGHT GAP-DOWN: identify confirmed BUY-side setups and go with the market.",
+    "LARGE GAP-UP: NO PLAN, stand aside. A big gap makes others focus on buying too, or at least stop selling, which removes the crowd the trade needs.",
+    "A LARGE GAP-UP means an opening ABOVE the FIRST RESISTANCE; for BANKNIFTY, an opening above the round number also cancels the plan.",
+    "The trapped crowd is the SELLERS from the breakdown; do not build the trade around targeting buyers, who are already in profit and should not hold big size."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [24440, 24540],
-      "support": [24300, 24210]
+      "support": [24210, 24270]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57720, 57890],
-      "support": [57280, 57154]
+      "resistance": [57800, 58000],
+      "support": [57120, 57400]
     },
     {
       "index": "SENSEX",
-      "resistance": [78300, 78500],
-      "support": [77700, 77400]
+      "resistance": [78000, 78200],
+      "support": [77460, 77650]
     }
   ]
 }
