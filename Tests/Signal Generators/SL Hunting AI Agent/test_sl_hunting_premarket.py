@@ -201,21 +201,18 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_18_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 17 Aug transcript.
+def test_shipped_note_matches_august_19_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 18 Aug transcript.
 
-    This catches a stale prior-session note, an inverted gap plan, or a mistyped
-    chart level before the dated note is injected into the live prompt.
+    This one is structurally different from every prior note and the difference
+    is the point: there is NO directional thesis. IH opens with "the market must
+    have either a trend or momentum... right now there is neither, so a trader
+    builds a trade but cannot hold it", and concludes "we will ONLY follow the
+    market". Both branches are therefore live, and a summarising edit that picked
+    a side would invert half the plan.
 
-    Two things distinguish this session and are asserted rather than summarised:
-
-    1. The direction INVERTS from 17 Aug. The breakdown trapped SELLERS and the
-       market recovered, so the plan is BUY side. A note that still reads
-       "sell-side" is the exact stale-note failure this test exists to catch.
-    2. The stand-aside branch is a LARGE GAP-UP -- and it is DEFINED (an open
-       above the first resistance), which is what makes it checkable at 09:15
-       instead of a judgement call. Losing that definition would quietly turn a
-       hard veto into an opinion.
+    The SENSEX supports came through the auto-caption merged into one token
+    and were read off the chart by hand; see the assertion below.
     """
     import os
 
@@ -224,40 +221,38 @@ def test_shipped_note_matches_august_18_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-18"
-    assert "UAHKZbgRaJA" in note.source
-    # Expiry is session context the RISK rules already act on; it must survive.
-    assert "NIFTY EXPIRY DAY" in note.context
-    assert "seated crowd is short, not long" in note.context
-    assert note.plan == [
-        "SMALL GAP-UP, FLAT, or SLIGHT GAP-DOWN: identify confirmed BUY-side "
-        "setups and go with the market.",
-        "LARGE GAP-UP: NO PLAN, stand aside. A big gap makes others focus on "
-        "buying too, or at least stop selling, which removes the crowd the "
-        "trade needs.",
-        "A LARGE GAP-UP means an opening ABOVE the FIRST RESISTANCE; for "
-        "BANKNIFTY, an opening above the round number also cancels the plan.",
-        "The trapped crowd is the SELLERS from the breakdown; do not build the "
-        "trade around targeting buyers, who are already in profit and should "
-        "not hold big size.",
-    ]
+    assert note.for_date == "2026-08-19"
+    assert "_WvVlwJ6NqY" in note.source
+    assert "NO trend and NO momentum" in note.context
+    assert "no directional thesis" in note.context
+
+    # Both branches must survive, and in opposite directions.
+    buy_side = next(line for line in note.plan if line.startswith("FLAT or GAP-UP"))
+    sell_side = next(line for line in note.plan if line.startswith("GAP-DOWN"))
+    assert "BUY-side" in buy_side and "SELL-side" not in buy_side
+    assert "SELL-side" in sell_side and "BUY-side" not in sell_side
+    # The reason the gap-down branch cannot hunt sellers.
+    assert "already into profit" in sell_side
+
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # Caption garbles the second resistance as "2440"; it is 24440,
-            # unchanged from the 17 Aug note and consistent with the pair he
-            # reads out ("24540, 24440").
-            "resistance": [24440.0, 24540.0],
-            "support": [24210.0, 24270.0],
+            "resistance": [24230.0, 24360.0],
+            "support": [24000.0, 24100.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57800.0, 58000.0],
-            "support": [57120.0, 57400.0],
+            "resistance": [57460.0, 57800.0],
+            "support": [56960.0, 57120.0],
         },
         {
+            # The auto-caption ran BOTH Sensex supports together into one token,
+            # "776,800" -- which is 77,000 and 76,800 with the boundary lost.
+            # Read off the chart by the operator rather than inferred: the token
+            # is consistent with several splits and a guessed level in
+            # live-money knowledge is worse than no level at all.
             "index": "SENSEX",
-            "resistance": [78000.0, 78200.0],
-            "support": [77460.0, 77650.0],
+            "resistance": [77550.0, 77800.0],
+            "support": [76800.0, 77000.0],
         },
     ]

@@ -1,28 +1,28 @@
 {
-  "for_date": "2026-08-18",
-  "source": "Intraday Hunter, 'Prediction For 18 AUG 2026' (UAHKZbgRaJA, uploaded 2026-08-17)",
-  "context": "NIFTY EXPIRY DAY. The breakdown trapped sellers and the market recovered, so the seated crowd is short, not long. Buyers who are already well in profit are NOT a target. Plan is BUY side, with the market.",
+  "for_date": "2026-08-19",
+  "source": "Intraday Hunter, 'Prediction For 19 AUG 2026' (_WvVlwJ6NqY, uploaded 2026-08-18)",
+  "context": "NO trend and NO momentum: a trader can enter but cannot hold. So there is no directional thesis today - follow the market, and do not fight a good opening. Yesterday closed slightly negative, so a few sellers may be seated.",
   "plan": [
-    "SMALL GAP-UP, FLAT, or SLIGHT GAP-DOWN: identify confirmed BUY-side setups and go with the market.",
-    "LARGE GAP-UP: NO PLAN, stand aside. A big gap makes others focus on buying too, or at least stop selling, which removes the crowd the trade needs.",
-    "A LARGE GAP-UP means an opening ABOVE the FIRST RESISTANCE; for BANKNIFTY, an opening above the round number also cancels the plan.",
-    "The trapped crowd is the SELLERS from the breakdown; do not build the trade around targeting buyers, who are already in profit and should not hold big size."
+    "FLAT or GAP-UP: identify confirmed BUY-side setups. The thin seller crowd left by yesterday's negative close is the target; do not fight an opening that goes up.",
+    "GAP-DOWN: identify confirmed SELL-side setups and go WITH the market. Sellers are already into profit on a gap-down, so they cannot be the target.",
+    "This is a REACTIVE day, not a thesis day: the side is decided by the open, not before it. Neither branch is a reason to enter without the usual pattern and confirmation.",
+    "With no trend and no momentum, expect entries that cannot be held. Size the expectation down and book what the move actually gives."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24440, 24540],
-      "support": [24210, 24270]
+      "resistance": [24230, 24360],
+      "support": [24000, 24100]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57800, 58000],
-      "support": [57120, 57400]
+      "resistance": [57460, 57800],
+      "support": [56960, 57120]
     },
     {
       "index": "SENSEX",
-      "resistance": [78000, 78200],
-      "support": [77460, 77650]
+      "resistance": [77550, 77800],
+      "support": [76800, 77000]
     }
   ]
 }
