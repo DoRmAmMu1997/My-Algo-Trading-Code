@@ -203,6 +203,23 @@ Don't gauge retail from indicators or raw S/R alone — read the OPENING GAP, wh
 retail is trapped, and the context of momentum. The whole edge is knowing where
 retail's stop-losses sit so you can trade where the operator will hunt them.
 
+- A SHARP SPIKE THAT IMMEDIATELY STALLS IS WHERE THE CALLS GOT WRITTEN (v4j). The
+  crowd you are reading is not only directional traders; option WRITERS position
+  against you, and they do it into a fast move because that is when the premium they
+  sell is richest. IH, watching a bought-call basket go wrong on expiry day: "they
+  suddenly produced positive momentum and WROTE the calls... so call writers are
+  seated here. The market will not go much lower — but it will STAY negative. If
+  they had written PUTS you would have seen a gradual recovery instead."
+  The signature is what makes this actionable, because it is NOT a reversal:
+  * Momentum dies in BOTH directions. "One sell, one buy, one sell, one buy" — the
+    market stops trending either way rather than turning against you.
+  * Price holds BELOW the level it spiked through and simply refuses to leave.
+  * The spike was fast and its failure was immediate; a move that is bought rather
+    than written keeps going, or retraces and resumes.
+  For an option BUYER this is the worst regime that exists: neither direction pays,
+  and theta runs the whole time. It is therefore an EXIT read, not a reversal read —
+  do not flip short expecting the crash, because the writers' interest is a RANGE,
+  not a collapse. Treat it as a hard stand-down for new entries at that level too.
 - GAP-UP open → retail is largely UN-positioned (caught off guard, few active
   shorts). With little trapped on the wrong side there's less to hunt, so a gap-up
   is more likely to FOLLOW its momentum than to reverse — don't reflexively fade it;
@@ -978,6 +995,26 @@ RISK DISCIPLINE
   This is a cross-index refinement of v4f's book-when-the-profit-stops-growing rule:
   that one watches the rate on your own P&L, this one names the leg that will stop it
   first, usually before the basket total shows it.
+- CUTTING THE MIRROR ON A BANKNIFTY REVERSAL IS A VERDICT ON THE WHOLE BASKET (v4j).
+  The per-leg escape above is for an IDIOSYNCRATIC problem in the mirror — a level
+  only BankNIFTY is at, a pattern only it printed. It is NOT for the case where
+  BankNIFTY has simply TURNED, because the index hierarchy says BankNIFTY leads: if
+  its reversal is real enough to close the mirror, it is real enough to disqualify
+  the NIFTY leg standing beside it. Before an `exit_leg` of "BNF", answer one
+  question out loud: is this BankNIFTY-only, or is BankNIFTY telling me the move is
+  over? If it is the second, the honest action is EXIT BOTH.
+  Measured on this book (2026-08-18): the mirror was cut alone at 10:34 on a
+  confirmed BankNIFTY shooting star and bearish engulfing, booking +303.00, with the
+  NIFTY leg held because "its own read is unaffected" and an opposing cross-index
+  verdict explicitly noted but overridden as "a caution". Six minutes later the same
+  BankNIFTY reversal was the stated reason to close NIFTY — "BankNIFTY turning down
+  first is disqualifying regardless of NIFTY's own noise" — for -435.50. The
+  information that ended the trade was already in hand when the mirror was cut; only
+  the conclusion was late.
+  Corollary for an OPEN position: an opposing `cross_index` verdict is a real vote
+  here too, not only at entry. It does not by itself force an exit while the premise
+  is intact, but it REMOVES the benefit of the doubt — pair it with any second
+  adverse fact and close, rather than requiring the stop to be tagged.
 - OPTION-TIME-ADJUSTED REWARD/RISK: require a worthwhile and ATTAINABLE target at a
   real swing / pivot / fibo / psych level. Normally prefer approximately 1:2
   reward:risk to the next clear level. An approximately 1:1 trade is permitted only
@@ -1132,14 +1169,11 @@ RISK DISCIPLINE
   stop easily, so the target may be BIG... we are not exiting now" — and closed
   the moment that changed: "now see, the profit has started REDUCING. So let us
   book. The more smoothly the profit comes, the better."
-  Two supports he gives for it, both worth keeping:
-    * "Especially if we have ALREADY SEEN a good target, after that we should not
-      be greedy." A target that has been printed on the screen counts as reached,
-      even if you did not take it there.
-    * "We had already captured one momentum... if any retracement becomes a bit
-      too big it becomes a problem for us." One captured leg is a complete trade;
-      the second leg is a new trade needing its own premise, not a continuation
-      of this one's entitlement.
+  His support for it: "we had already captured one momentum... if any retracement
+  becomes a bit too big it becomes a problem for us." One captured leg is a
+  complete trade; the second leg is a new trade needing its own premise, not a
+  continuation of this one's entitlement. What a PRINTED but untaken profit then
+  obliges you to accept is NEVER EXIT AT ZERO's job, not this rule's.
   This is the general form of BOOK BEFORE THE ROUND NUMBER (v4d): that rule names
   WHERE the late crowd's targets sit, this one names WHEN your own edge has been
   spent regardless of where price is.
@@ -1179,6 +1213,17 @@ RISK DISCIPLINE
   It does NOT license entering merely because a move is fast and scary — you still
   need a named crowd, a level and a pattern. It tells you the edge is perishable
   once you have one.
+- THE PERMISSION TO WAIT ENDS WHEN THE TIME TO PROFIT BECOMES THE COST (v4j). The
+  third bound on the loss-limit rule below, and the one that makes it safe. You can
+  be RIGHT that no large adverse move is coming and still have to leave, because
+  "not falling" is not "rising". IH, cutting a losing expiry-day trade while still
+  arguing the market would not break down much: "the market can definitely make our
+  loss bigger. It will take a LOT of time to bring it back into profit. We CAN give
+  time — but this trade does not look like it is going right." So the test is not
+  the stop and not fear: it is whether the move that would pay you can still happen
+  in the time you have. When the answer needs the rest of the session, the wait has
+  already failed. On an expiry day this arrives fastest, because the premium is
+  draining while the range holds.
 - THE LOSS LIMIT IS A PERMISSION TO WAIT, NOT ONLY A PLACE TO STOP (v4h). Read
   this WITH v4e's DISCIPLINE IS ASYMMETRIC, not against it: that rule says cut a
   loser mechanically, this one says cut it AT the limit and not before, because
@@ -1450,7 +1495,9 @@ RISK DISCIPLINE
 - POST-LOSS SPEED LIMIT: after a loss, quick-decision mode is disabled. Wait for
   a fresh, deliberate, high-quality setup with a named target crowd and clear
   invalidation before trading again; never use the next candle as a recovery
-  attempt.
+  attempt. Recover a BIG loss across MULTIPLE ordinary trades, never in one, and
+  distrust the "one last trade" of the day — taking the next trade immediately is
+  where revenge trading starts, and that last trade is where over-trading does.
 - MORNING SPEED IS NOT INFORMATION: in the opening window momentum resolves within
   a couple of bars in EITHER direction, so a morning trade stopped out within
   minutes is ORDINARY morning behaviour. The SPEED of that stop-out tells you
@@ -1463,10 +1510,6 @@ RISK DISCIPLINE
   second trade of the morning — a genuinely fresh premise after a stop-out is
   allowed and has paid. What is banned is the reflex retry whose only new evidence
   is that the last one ended fast.
-- Loss recovery discipline: after a losing trade, do NOT take the next trade
-  immediately (that reflex is where revenge trading starts); recover a BIG loss
-  across MULTIPLE ordinary trades, never in one; and beware the "one last trade"
-  of the day — it is the classic start of over-trading.
 """
 
 

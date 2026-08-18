@@ -3747,3 +3747,181 @@ hour into a move he had been riding since 9:15. The agent's no-new-entry cutoff
 then fired at 11:00 (`LIFECYCLE RUNNING -> ENTRY_BLOCKED | reason=TIME_CUTOFF`).
 On a day whose whole character was set in the first fifteen minutes, most of the
 move was already gone by the time the agent was willing to act.
+
+---
+
+## Video addendum - the 18 Aug LIVE SESSION (v4j)
+
+**Source:** Intraday Hunter live session `sSgO_Jole74` (18 Aug 2026, 9:23).
+
+**A LOSING session, and the most useful one in the series so far** - because he
+diagnoses the loss mid-trade, names the mechanism, and cuts. Every prior version
+learned from a win or from a loss reviewed afterwards; this is the first where
+the post-mortem happens live and identifies a market participant the prompt had
+never modelled.
+
+### The session
+
+NIFTY expiry, large gap-down on all three indices. He deliberately suspended the
+plan until the open resolved - "if it stays a bit in buying we plan the positive
+side; if it stays in selling we can sell" - then read yesterday's breakdown plus
+the recovery as good traders seated LONG, making the gap-down "just a trap". He
+bought calls across BankNIFTY (57600 CE, 1170), Sensex (900) and NIFTY (1430).
+
+It did not recover. And the reason he gives is new to this document.
+
+### The three rules
+
+**A SHARP SPIKE THAT IMMEDIATELY STALLS IS WHERE THE CALLS GOT WRITTEN.** The
+crowd is not only directional traders. Option WRITERS position against you, and
+they do it into a fast move because that is when the premium is richest. IH at
+7:01: "they suddenly produced positive momentum and WROTE the calls... so call
+writers are seated here. The market will not go much lower - but it will STAY
+negative. If they had written PUTS you would have seen a gradual recovery."
+
+What makes it actionable is the signature, which is **not a reversal**: momentum
+dies in BOTH directions - "one sell, one buy, one sell, one buy" - and price
+holds below the level it spiked through. For an option buyer that is the worst
+regime that exists: neither direction pays and theta runs throughout. So it is an
+EXIT read, and explicitly **not** a licence to flip short: the writers' interest
+is a range, not a collapse. `test_v4j_call_writer_rule_stays_an_exit_read_and_not_a_reversal_trade`
+guards that, because "writers are seated above" reads like a short signal and
+is not one.
+
+**THE PERMISSION TO WAIT ENDS WHEN THE TIME TO PROFIT BECOMES THE COST.** The
+third bound on v4h's loss-limit rule, and the one that makes it safe. You can be
+RIGHT that no large adverse move is coming and still have to leave, because "not
+falling" is not "rising". IH, cutting while still arguing the market would not
+break down much: "the market can definitely make our loss bigger. It will take a
+LOT of time to bring it back into profit. We CAN give time - but this trade does
+not look like it is going right." The test is neither the stop nor fear; it is
+whether the move that would pay you can still happen in the time you have.
+
+**CUTTING THE MIRROR ON A BANKNIFTY REVERSAL IS A VERDICT ON THE WHOLE BASKET.**
+This one comes from our own book rather than the video - see below.
+
+### How our agent traded the same session
+
+**Provisional - the runner was still live at 14:11.** Basket **-3,498.75** across
+59 legs. SL Hunting: **+60.00** over 3 trades, cross-checked against its own
+`Result summary` (Trades=3, RealizedPnL=60.00).
+
+| Time | Leg | P&L |
+|---|---|---|
+| 09:33 | NIFTY short / BNF mirror | +182.00 / +15.00 |
+| 09:56 | NIFTY long / BNF mirror | +58.50 / -63.00 |
+| 10:34 | **BNF mirror cut ALONE** | **+303.00** |
+| 10:40 | **NIFTY leg** | **-435.50** |
+
+Three things worth recording.
+
+**1. The pre-open note worked exactly as its own framing says it should.** The
+note is injected as "a VOTE... if your own live read disagrees with it, your read
+wins". At 09:31 the agent went SHORT and said so explicitly: *"this contradicts
+the pre-open note's buy-side plan but the live confirmed rejection overrides
+it."* That was the day's best trade (+197.00). Both trades that FOLLOWED the
+note's buy-side plan lost. First hard evidence the advisory is being weighed
+rather than obeyed.
+
+**2. `exit_leg` was used for the first time - and it is the source of the third
+rule.** v4i merged the night before; today the agent cut the BankNIFTY mirror
+alone at 10:34 on a confirmed BNF shooting star and bearish engulfing, booking
+**+303.00**, and held NIFTY because "its own read is unaffected", explicitly
+noting an opposing `cross_index` verdict and overriding it as "a caution".
+
+Six minutes later it closed NIFTY for **-435.50**, giving as its reason the very
+same fact: *"BankNIFTY turning down first is disqualifying regardless of NIFTY's
+own noise."* The information that ended the trade was already in hand when the
+mirror was cut; only the conclusion was late. Hence the rule: the per-leg escape
+is for an IDIOSYNCRATIC problem in the mirror, not for the leading index simply
+TURNING - because the index hierarchy says BankNIFTY leads. Its corollary closes
+the other half of the gap: an opposing `cross_index` verdict on an OPEN position
+does not force an exit by itself, but it removes the benefit of the doubt.
+
+**3. Agent and IH were wrong the same way.** Both read "breakdown then recovery =
+good traders seated long" and bought; both lost on the long side; both were
+rescued only by cutting. The market did what IH diagnosed at 7:01 - the spike was
+where the calls got written, and momentum died in both directions rather than
+reversing. Our agent had no concept for that participant, which is why the rule
+is worth its characters.
+
+One smaller flaw, already covered by existing knowledge rather than needing a new
+rule: the 09:55 long was a **51-second round trip** (09:55:38 -> 09:56:29, net
+-4.50). Its own exit reasoning says a bearish engulfing "has kept grinding lower
+for 5 bars" - a structure already visible when it entered. v4a's PREMIUM
+NON-CONFIRMATION already warns that "a trade you abandon within a bar or two of
+entry pays the round-trip cost for no exposure to the move".
+
+### Knowledge changes (v4j, all prose)
+
+- `RETAIL_POSITIONING`: A SHARP SPIKE THAT IMMEDIATELY STALLS IS WHERE THE CALLS
+  GOT WRITTEN.
+- `RISK`: THE PERMISSION TO WAIT ENDS WHEN THE TIME TO PROFIT BECOMES THE COST
+  (beside v4h's loss limit); CUTTING THE MIRROR ON A BANKNIFTY REVERSAL IS A
+  VERDICT ON THE WHOLE BASKET (beside v4i's lagging-index rule).
+- Three drift guards, each protecting the reading that would decay first: the
+  call-writer rule must not become a short signal, the basket rule must not
+  delete `exit_leg`, and the time rule must not become "cut anything slow".
+- Prompt size 118,049 -> 121,817 chars. Assembled 123,108 against a 154,140
+  budget: **31,032 chars of headroom.**
+
+---
+
+## The prose pruning pass (2026-08-18)
+
+Promised when `MAX_SYSTEM_PROMPT_CHARS` was raised: pruning superseded prose is
+worth doing on its own merits, judged on whether the result reads better, never
+to buy space. This is that pass, done with 31,000 characters of headroom in hand
+so nothing was under pressure to go.
+
+**The headline finding is that there is very little to prune.** 115 bulleted
+rules across 12 sections, and the clusters that look redundant from a list of
+headings turn out to be deliberately paired. Two changes were made. Several
+obvious-looking candidates were examined and deliberately kept, which is the more
+useful result to record.
+
+### Examined and KEPT
+
+| Pair | Why it stays |
+|---|---|
+| `PRE-COMMIT THE ADVERSE MOVE` (v4d) vs `NAME THE LAST POINT` (v4e) | One is a MAGNITUDE, the other a LOCATION plus a deadline. v4e already says so in its own text. |
+| `A FORECAST OF WHO WILL ARRIVE` (v4e) vs `AN EMPTY BOOK MEANS A TRAP IS COMING` (v4f) | A deliberate dialectic from two real sessions — 11 Aug (predicted, lost) against 12 Aug (waited for confirmation, won). v4f is framed as the reconciliation of v4e. Deleting either destroys the lesson. |
+| `REPEATED-FAILURE INVENTORY RESET` vs `DIRECT-MOMENTUM / CURRENT-SESSION TRAP RESET` | Both "resets", different triggers: one is level-based (repeated reclaims evict sellers), one is time-based (the opening thrust supersedes yesterday's crowd). |
+| `NO INSTANT FLIP` / `MOVE-EXHAUSTION` / `POST-EXIT RE-ENTRY GATE` | Opposite-direction, same-direction, and the mechanical check. Each names the others; the gate's "a different pattern name on the same structure is not a new premise" is an anti-rationalisation guard worth its length on its own. |
+| `YOUR ENTRY PRICE IS THE FOURTH TARGET INPUT` / `CROWD SIZE IS THE THIRD` | A numbered series of distinct inputs, not restatements. |
+
+The reason for this is structural, and worth knowing before the next pass: **this
+series has reconciled every new rule against its neighbours as it landed.** The
+prose is full of "Distinct from X, which is...", "scopes the rule above", "this is
+the TEST that Y implies", "NOT the fear rule above in disguise". Those sentences
+are the redundancy check, already run, one version at a time. A future pass should
+expect to find little, and should treat a rule that does NOT reconcile itself
+against a neighbour as the suspicious one.
+
+### Changed
+
+**1. `POST-LOSS SPEED LIMIT` absorbed `Loss recovery discipline`.** These were one
+protocol split across two bullets 16 lines apart, and the shared half — do not
+take the next trade immediately after a loss — was stated in both. Merged, keeping
+the `POST-LOSS SPEED LIMIT` name because `NO INSTANT FLIP` defers to it by name.
+The recovery half (spread a big loss over several ordinary trades; distrust the
+day's "one last trade") survives intact.
+
+**2. `BOOK WHEN THE PROFIT STOPS GROWING` (v4f) gave up its first support bullet.**
+Both v4f and v4g's `NEVER EXIT AT ZERO` told the agent that a profit it merely SAW
+counts. The two rules themselves are distinct and both stay — v4f is the exit
+TRIGGER (the rate of gain), v4g is the FLOOR (what an acceptable exit looks like
+once profit has printed) — but the idea was written twice and owned by neither.
+v4f now states the trigger and points at v4g.
+
+Net effect on size: **-206 characters.** That is the correct order of magnitude for
+this pass and is not the point; the point is that two ideas now have one home each.
+
+### Also fixed: a test helper that could assert against the wrong rule
+
+`_flat_rule` located a rule with a bare `prompt.index(heading)`. Because rules cite
+each other by name, that could land on another rule's CROSS-REFERENCE and silently
+assert against the wrong prose — the new `POST-LOSS SPEED LIMIT` test failed this
+way and exposed it. It now anchors on the bullet (`"\n- " + heading`) and falls
+back to the bare heading. This is the same class of bug as the v4i locator
+collision, which suggests the pattern rather than the instance was the problem.

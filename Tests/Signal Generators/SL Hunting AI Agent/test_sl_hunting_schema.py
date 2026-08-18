@@ -940,8 +940,15 @@ def _flat_rule(prompt: str, heading: str) -> str:
 
     Rule prose is hard-wrapped, so asserting on wording against the raw prompt
     breaks whenever a paragraph is re-flowed -- a change the agent never sees.
+
+    Anchors on the BULLET ("\n- HEADING") in preference to a bare match, because
+    rules cite each other by name: a plain `.index(heading)` can land on another
+    rule's cross-reference and silently assert against the wrong prose. Falls
+    back to the bare heading so a non-bullet heading still resolves.
     """
-    body = prompt[prompt.index(heading):]
+    bullet = "\n- " + heading
+    start = prompt.find(bullet)
+    body = prompt[start + 1:] if start != -1 else prompt[prompt.index(heading):]
     if "\n- " in body:
         body = body[: body.index("\n- ")]
     return " ".join(body.split())
@@ -1163,3 +1170,123 @@ def test_runaway_trend_section_is_composed_into_the_prompt():
     assert RUNAWAY_TREND.strip() in prompt
     # It belongs with the other continuation exception, before the levels rules.
     assert prompt.index("RUNAWAY TREND —") > prompt.index("OPENING DRIVE —")
+
+
+def test_v4j_call_writer_rule_stays_an_exit_read_and_not_a_reversal_trade():
+    """v4j (18 Aug live session): IH's losing expiry-day trade, diagnosed.
+
+    The dangerous misreading is obvious and expensive: "writers are seated
+    above" sounds like a short signal. It is not -- their interest is a RANGE,
+    so flipping short expects a collapse the mechanism argues against. The
+    stand-down and the both-directions signature are what make it usable.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A SHARP SPIKE THAT IMMEDIATELY STALLS")
+
+    # The signature is dead momentum BOTH ways, not a turn against you.
+    assert "Momentum dies in BOTH directions" in rule
+    assert "NOT a reversal" in rule
+    # The trap this rule must never become.
+    assert "do not flip short" in rule
+    assert "RANGE, not a collapse" in rule
+    # Why an option BUYER specifically must leave rather than sit.
+    assert "theta runs" in rule
+    assert "EXIT read" in rule
+
+
+def test_v4j_per_leg_cut_rule_does_not_cancel_the_v4i_per_leg_escape():
+    """A BankNIFTY reversal is a basket verdict; a BankNIFTY-only problem is not.
+
+    Read carelessly this rule deletes `exit_leg` entirely, which would undo
+    v4i and throw away a real host capability. The idiosyncratic-vs-turned
+    distinction is the whole rule, so it is asserted directly -- along with the
+    measured evidence, since the numbers are what make it more than an opinion.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "CUTTING THE MIRROR ON A BANKNIFTY REVERSAL")
+
+    # The distinction that keeps v4i's escape hatch alive.
+    assert "IDIOSYNCRATIC" in rule
+    assert "is this BankNIFTY-only" in rule
+    assert "EXIT BOTH" in rule
+    # v4i's rule must still be present and still offer the per-leg cut.
+    lagging = _flat_rule(prompt, "THE LAGGING INDEX DECIDES THE BASKET'S EXIT")
+    assert "exit_leg" in lagging
+
+    # The measured 2026-08-18 sequence: +303.00 saved on the mirror, -435.50
+    # lost on the leg held six minutes longer on information already in hand.
+    assert "+303.00" in rule and "-435.50" in rule
+    assert "only the conclusion was late" in rule
+
+    # An opposing cross-index verdict on an OPEN position removes benefit of the
+    # doubt without becoming an automatic exit -- both halves must survive.
+    assert "It does not by itself force an exit while the premise" in rule
+    assert "REMOVES the benefit of the doubt" in rule
+
+
+def test_v4j_time_to_profit_rule_bounds_v4h_without_becoming_cut_everything():
+    """The third bound on THE LOSS LIMIT IS A PERMISSION TO WAIT.
+
+    Without it v4h reads as "sit until the stop"; with it read carelessly it
+    reads as "cut anything slow". The rule survives only if it keeps naming
+    what the test is NOT (the stop, and fear) alongside what it is.
+    """
+    prompt = build_system_prompt()
+    flat = " ".join(prompt.split())
+    rule = _flat_rule(prompt, "THE PERMISSION TO WAIT ENDS WHEN THE TIME TO PROFIT")
+
+    # It must sit with, and name, the rule it bounds.
+    assert "THE LOSS LIMIT IS A PERMISSION TO WAIT" in flat
+    assert "loss-limit rule below" in rule
+
+    # The counter-intuitive half: being right about direction is not enough.
+    assert '"not falling" is not "rising"' in rule
+    # It is neither the stop nor fear -- both exclusions must stay.
+    assert "not the stop and not fear" in rule
+    # And the concrete test that replaces them.
+    assert "in the time you have" in rule
+
+
+def test_post_loss_speed_limit_keeps_both_halves_and_the_name_others_cite():
+    """The post-loss protocol was two overlapping rules; it is now one.
+
+    Two things could regress silently. NO INSTANT FLIP defers to this rule BY
+    NAME, so a rename leaves a dangling pointer that no import or type check
+    would catch. And the merge folded in the recovery half -- spread a big loss
+    over several trades, distrust the day's "one last trade" -- which is the
+    part a future tightening pass would drop first, because it reads like a
+    restatement of the cooldown when it is actually about position sizing of
+    the recovery.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "POST-LOSS SPEED LIMIT")
+
+    # The name other rules cite.
+    assert "POST-LOSS SPEED LIMIT then governs" in " ".join(prompt.split())
+
+    # Half one: no fast re-entry.
+    assert "quick-decision mode is disabled" in rule
+    assert "never use the next candle as a recovery attempt" in rule
+    # Half two: how a big loss is recovered, and the end-of-day trap.
+    assert "MULTIPLE ordinary trades, never in one" in rule
+    assert "one last trade" in rule
+
+
+def test_printed_profit_obligation_is_owned_by_exactly_one_rule():
+    """v4f states the exit TRIGGER; v4g owns what a printed profit obliges.
+
+    Both rules stay -- they are a trigger and a floor -- but the "a target you
+    saw counts as reached" idea was written into both, so a reader met it twice
+    and neither rule owned it. v4f now points at v4g instead.
+    """
+    prompt = build_system_prompt()
+    book = _flat_rule(prompt, "BOOK WHEN THE PROFIT STOPS GROWING")
+    floor = _flat_rule(prompt, "NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS PRINTED")
+
+    # v4f keeps the trigger and defers the floor.
+    assert "the RATE at which the position is still gaining" in book
+    assert "NEVER EXIT AT ZERO's job, not this rule's" in book
+    assert "ALREADY SEEN a good target" not in book
+
+    # v4g still owns it.
+    assert "the floor for that trade stops being breakeven" in floor
