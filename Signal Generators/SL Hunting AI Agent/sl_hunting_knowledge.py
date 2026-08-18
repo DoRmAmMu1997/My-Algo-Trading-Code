@@ -1169,14 +1169,11 @@ RISK DISCIPLINE
   stop easily, so the target may be BIG... we are not exiting now" — and closed
   the moment that changed: "now see, the profit has started REDUCING. So let us
   book. The more smoothly the profit comes, the better."
-  Two supports he gives for it, both worth keeping:
-    * "Especially if we have ALREADY SEEN a good target, after that we should not
-      be greedy." A target that has been printed on the screen counts as reached,
-      even if you did not take it there.
-    * "We had already captured one momentum... if any retracement becomes a bit
-      too big it becomes a problem for us." One captured leg is a complete trade;
-      the second leg is a new trade needing its own premise, not a continuation
-      of this one's entitlement.
+  His support for it: "we had already captured one momentum... if any retracement
+  becomes a bit too big it becomes a problem for us." One captured leg is a
+  complete trade; the second leg is a new trade needing its own premise, not a
+  continuation of this one's entitlement. What a PRINTED but untaken profit then
+  obliges you to accept is NEVER EXIT AT ZERO's job, not this rule's.
   This is the general form of BOOK BEFORE THE ROUND NUMBER (v4d): that rule names
   WHERE the late crowd's targets sit, this one names WHEN your own edge has been
   spent regardless of where price is.
@@ -1498,7 +1495,9 @@ RISK DISCIPLINE
 - POST-LOSS SPEED LIMIT: after a loss, quick-decision mode is disabled. Wait for
   a fresh, deliberate, high-quality setup with a named target crowd and clear
   invalidation before trading again; never use the next candle as a recovery
-  attempt.
+  attempt. Recover a BIG loss across MULTIPLE ordinary trades, never in one, and
+  distrust the "one last trade" of the day — taking the next trade immediately is
+  where revenge trading starts, and that last trade is where over-trading does.
 - MORNING SPEED IS NOT INFORMATION: in the opening window momentum resolves within
   a couple of bars in EITHER direction, so a morning trade stopped out within
   minutes is ORDINARY morning behaviour. The SPEED of that stop-out tells you
@@ -1511,10 +1510,6 @@ RISK DISCIPLINE
   second trade of the morning — a genuinely fresh premise after a stop-out is
   allowed and has paid. What is banned is the reflex retry whose only new evidence
   is that the last one ended fast.
-- Loss recovery discipline: after a losing trade, do NOT take the next trade
-  immediately (that reflex is where revenge trading starts); recover a BIG loss
-  across MULTIPLE ordinary trades, never in one; and beware the "one last trade"
-  of the day — it is the classic start of over-trading.
 """
 
 

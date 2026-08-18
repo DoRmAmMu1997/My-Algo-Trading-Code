@@ -940,8 +940,15 @@ def _flat_rule(prompt: str, heading: str) -> str:
 
     Rule prose is hard-wrapped, so asserting on wording against the raw prompt
     breaks whenever a paragraph is re-flowed -- a change the agent never sees.
+
+    Anchors on the BULLET ("\n- HEADING") in preference to a bare match, because
+    rules cite each other by name: a plain `.index(heading)` can land on another
+    rule's cross-reference and silently assert against the wrong prose. Falls
+    back to the bare heading so a non-bullet heading still resolves.
     """
-    body = prompt[prompt.index(heading):]
+    bullet = "\n- " + heading
+    start = prompt.find(bullet)
+    body = prompt[start + 1:] if start != -1 else prompt[prompt.index(heading):]
     if "\n- " in body:
         body = body[: body.index("\n- ")]
     return " ".join(body.split())
@@ -1238,3 +1245,48 @@ def test_v4j_time_to_profit_rule_bounds_v4h_without_becoming_cut_everything():
     assert "not the stop and not fear" in rule
     # And the concrete test that replaces them.
     assert "in the time you have" in rule
+
+
+def test_post_loss_speed_limit_keeps_both_halves_and_the_name_others_cite():
+    """The post-loss protocol was two overlapping rules; it is now one.
+
+    Two things could regress silently. NO INSTANT FLIP defers to this rule BY
+    NAME, so a rename leaves a dangling pointer that no import or type check
+    would catch. And the merge folded in the recovery half -- spread a big loss
+    over several trades, distrust the day's "one last trade" -- which is the
+    part a future tightening pass would drop first, because it reads like a
+    restatement of the cooldown when it is actually about position sizing of
+    the recovery.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "POST-LOSS SPEED LIMIT")
+
+    # The name other rules cite.
+    assert "POST-LOSS SPEED LIMIT then governs" in " ".join(prompt.split())
+
+    # Half one: no fast re-entry.
+    assert "quick-decision mode is disabled" in rule
+    assert "never use the next candle as a recovery attempt" in rule
+    # Half two: how a big loss is recovered, and the end-of-day trap.
+    assert "MULTIPLE ordinary trades, never in one" in rule
+    assert "one last trade" in rule
+
+
+def test_printed_profit_obligation_is_owned_by_exactly_one_rule():
+    """v4f states the exit TRIGGER; v4g owns what a printed profit obliges.
+
+    Both rules stay -- they are a trigger and a floor -- but the "a target you
+    saw counts as reached" idea was written into both, so a reader met it twice
+    and neither rule owned it. v4f now points at v4g instead.
+    """
+    prompt = build_system_prompt()
+    book = _flat_rule(prompt, "BOOK WHEN THE PROFIT STOPS GROWING")
+    floor = _flat_rule(prompt, "NEVER EXIT AT ZERO AFTER A GOOD PROFIT HAS PRINTED")
+
+    # v4f keeps the trigger and defers the floor.
+    assert "the RATE at which the position is still gaining" in book
+    assert "NEVER EXIT AT ZERO's job, not this rule's" in book
+    assert "ALREADY SEEN a good target" not in book
+
+    # v4g still owns it.
+    assert "the floor for that trade stops being breakeven" in floor
