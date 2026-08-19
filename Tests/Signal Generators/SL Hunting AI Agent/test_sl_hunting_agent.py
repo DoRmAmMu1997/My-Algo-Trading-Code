@@ -1049,3 +1049,77 @@ def test_hung_call_gates_next_bars_then_resumes_when_it_finishes():
     assert d3.action == "HOLD"
     assert calls["n"] == 2
     assert agent._abandoned_call is None
+
+
+# --------------------------------------------------------------------------
+# SLH-010: an EXIT the model did not mean to send.
+#
+# On 2026-08-19 09:38 the agent called the order tool with action=EXIT and an
+# EMPTY reason, closing a live short. Its next pass reported: "analysis
+# supported PROFIT-HOLD ... but the order tool was called with EXIT instead of
+# intended HOLD". This was a MODEL error, not a host bug -- the tool call IS
+# the execution -- and two things made it easy to make and easy to miss.
+# --------------------------------------------------------------------------
+
+def test_order_tool_description_says_hold_means_not_calling_the_tool():
+    """The description offered three actions and never explained HOLD.
+
+    A model deliberating "HOLD vs EXIT" found no way to express HOLD through
+    the tool, and EXIT was the nearest available option. It must also learn
+    that an EXIT is unlike an entry: never validated, never rejected, and not
+    correctable within the pass.
+    """
+    from sl_hunting_tools import order_tool_description
+
+    text = order_tool_description("paper").lower()
+    assert "calling this tool is itself the action" in text
+    assert "do not call this tool at all" in text
+    assert "there is no hold action" in text
+    # The asymmetry that made this expensive: entries bounce, exits do not.
+    assert "never rejected" in text
+    assert "cannot be corrected or undone" in text
+
+
+def test_exit_with_no_reason_still_executes_but_warns_loudly(caplog):
+    """SLH-007 is NOT reversed: the exit goes through regardless of wording.
+
+    Blocking it would strand an open position, which the risk rules forbid.
+    What changes is that it stops being silent -- a deliberate exit always
+    carries a justification, so an empty one is the strongest signal available
+    that the call was unintended.
+    """
+    import logging
+
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    assert ctx.do_order("ENTER_SHORT", stop=25060, target=24950, reason="opening drive breakdown")["accepted"] is True
+
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    with caplog.at_level(logging.WARNING, logger="sl_hunting_tools"):
+        result = ctx.do_order("EXIT", stop=0, target=0, reason="")
+
+    # The exit is honoured.
+    assert result["accepted"] is True
+    assert ex.snapshot()["in_position"] is False
+
+    # ...and it is announced.
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "an EXIT with no reason must warn"
+    message = warnings[0].getMessage().lower()
+    assert "no reason" in message
+    assert "unintended" in message
+
+
+def test_exit_with_a_real_reason_does_not_warn(caplog):
+    """The guard must stay quiet on ordinary exits or it becomes noise."""
+    import logging
+
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    ctx.do_order("ENTER_SHORT", stop=25060, target=24950, reason="opening drive breakdown")
+
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    with caplog.at_level(logging.WARNING, logger="sl_hunting_tools"):
+        ctx.do_order("EXIT", stop=0, target=0, reason="double top rejection, premise gone")
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

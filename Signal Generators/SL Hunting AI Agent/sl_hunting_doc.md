@@ -4057,3 +4057,86 @@ entered at 09:43 near the level and was out three minutes later.
   support rule must keep both of its opposite consequences.
 - Prompt size 121,611 -> 125,054 chars. Assembled 126,345 against a 154,140
   budget: **27,795 chars of headroom.**
+
+---
+
+## SLH-010 - an EXIT the model did not mean to send (2026-08-19)
+
+### What happened
+
+At 09:38 the agent closed a live short. Its next pass reported:
+
+> Erroneous exit: analysis supported PROFIT-HOLD (short premise intact, steady
+> downtrend on both NIFTY and BankNIFTY, no opposing confirmation pattern, target
+> 24000 not yet reached, NIFTY leg +104), but the order tool was called with EXIT
+> instead of intended HOLD. Position is now flat as a result of this executed
+> order; reporting the actual action taken.
+
+### It was a MODEL error, and the log proves it
+
+The question worth settling first was whether the model emitted the wrong action
+or the host executed one the model never sent. SL Hunting is not a
+decide-then-execute design: the model calls `place_paper_order` (or the live
+equivalent) DIRECTLY during its reasoning, so **the tool call is the execution**.
+The final JSON is a report of what already happened, which is why that pass
+truthfully says EXIT.
+
+The executed order carries the detail that settles it:
+
+```
+09:38:21 | EXIT SHORT        | ... | Reason=AI_EXIT (no reason supplied by the model)
+09:38:21 | MIRROR EXIT SHORT | ... | Reason=AI_EXIT (no reason supplied by the model)
+```
+
+`AI_EXIT (no reason supplied by the model)` is `NO_REASON_SENTINEL`, substituted
+by `_safe_exit_reason` when the model passes nothing usable. So the model called
+the order tool with `action="EXIT"` **and an empty reason**. No host path
+fabricates an EXIT, and no mechanical exit uses that sentinel.
+
+### Two design gaps made it easy to make and easy to miss
+
+**1. The tool description never said what HOLD is.** It listed three actions --
+ENTER_LONG, ENTER_SHORT, EXIT -- and nowhere stated that holding means not
+calling the tool. A model deliberating "HOLD vs EXIT" had no way to express HOLD
+through the tool, and EXIT was the nearest available option. It also never said
+that an EXIT is unlike an entry: entries are validated three ways (levels, reason
+meaning, note check) and can be corrected inside the same pass, while an EXIT is
+executed immediately and never rejected.
+
+The description now says both, in the first sentences: calling the tool IS the
+action, there is no HOLD action and a decision to hold means not calling it at
+all, and an EXIT cannot be corrected or undone.
+
+**2. The strongest available signal was recorded at INFO.** A deliberate exit
+always carries a justification, because the description tells the model that
+string is the permanent record. An EXIT with nothing in it is therefore the best
+evidence available that the call was unintended -- and on 19 Aug that fact sat
+inside a long INFO trade line. It was noticed only because the model confessed on
+the next bar.
+
+`do_order` now logs a WARNING when an EXIT executes with the sentinel, naming it
+as a probable unintended order.
+
+### What was deliberately NOT changed
+
+**SLH-007 stands: an EXIT is still never refused over its wording.** Bouncing it
+would strand an open position, which the risk rules forbid, and that was an
+operator decision made for a good reason. The exit still executes; it just stops
+being silent. `test_exit_with_no_reason_still_executes_but_warns_loudly` asserts
+both halves so a later tightening cannot quietly turn the warning into a refusal.
+
+No confidence-based gate was added either. Confidence lives on the final decision
+schema and never reaches the order tool, so it is not available at the boundary
+where the order is placed -- a gate there would have to be built on a value the
+tool cannot see.
+
+### Residual risk
+
+The fix is preventative, not mechanical: a model that ignores the description can
+still send an unintended EXIT, and the host will still honour it. What is bounded
+is the cost -- the operator now learns the same session instead of by reading
+decision text days later. A mechanical fix would mean gating exits, which is the
+one thing this component must not do.
+
+The negative case was verified rather than assumed: with the warning branch
+disabled the test fails with "an EXIT with no reason must warn".
