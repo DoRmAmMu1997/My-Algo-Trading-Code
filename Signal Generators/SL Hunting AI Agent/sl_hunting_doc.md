@@ -3925,3 +3925,218 @@ assert against the wrong prose — the new `POST-LOSS SPEED LIMIT` test failed t
 way and exposed it. It now anchors on the bullet (`"\n- " + heading`) and falls
 back to the bare heading. This is the same class of bug as the v4i locator
 collision, which suggests the pattern rather than the instance was the problem.
+
+---
+
+## Video addendum - the 19 Aug LIVE SESSION (v4k)
+
+**Source:** Intraday Hunter live session `pSgclYI-_Ro` (19 Aug 2026, 11:05).
+
+A small win taken reluctantly out of a market he spends nine minutes saying is
+barely tradeable - "the situation is very bad, we cannot take any quick
+decision", "it is very difficult to build a trade here", "in a market that gives
+ONE burst of momentum and then stops you cannot make money, however long you wait
+and however good an entry you try to make."
+
+Almost flat open, immediate sharp selling in all three indices, so he stood aside
+first. The setup he eventually took was the familiar one: continuous selling
+across all three indices recruits intraday put-side traders, and those become the
+target. He bought calls (BankNIFTY 57000 CE, Sensex 900, NIFTY 1430) and booked
+into a partial recovery.
+
+### One new rule, two extensions
+
+Most of what this session teaches lands on rules that already exist, so it is
+recorded that way rather than as three new bullets - see the 2026-08-18 pruning
+pass for why that matters.
+
+**NEW - A SUPPORT EVERYONE CAN SEE RECRUITS NOBODY WHILE EVERY INDEX IS FALLING.**
+Asked directly whether other traders would buy the round-number support BankNIFTY
+had just held: "they do buy such a support - but only if the trend is a bit
+positive. Not in a market like this, especially when all three indices are
+selling. After a breakdown someone will certainly SELL, but he cannot bring
+himself to BUY at the support. It is not that he does not see it - he sees it
+perfectly well, but he cannot buy."
+
+The two consequences point opposite ways and both are kept: as EVIDENCE a held
+support is worthless in a three-index sell-off and must not feed a seated-buyer
+read; as a PLACE it is unusually clean, because nobody is queued there competing
+with you. He still waited for price to move AWAY from the level before buying -
+an entry sitting on it is one retracement from a breakdown.
+
+**EXTENDED - `Momentum quality while holding` gains its mechanism.** The existing
+bullet already said a fast spike invites a retracement. IH's reason today is
+different and sharper: when your thesis is a trapped crowd being squeezed, THEY
+are what pays you, so the speed of the move decides how long you get paid for.
+"If it runs fast the sellers will get out quickly, so we WANT it to go a little
+slow, so that they stay sitting in the market", and afterwards: "if it recovers
+fast, every seller here leaves in a single move, and then the market starts
+falling again." A fast move in your favour is therefore not extra confirmation,
+it is a shorter clock.
+
+This needed an explicit reconciliation with v3y's A SLOW GRIND AT THE LEVEL
+RECRUITS THE WRONG CROWD, which says slowness is BAD. That rule is about price
+stalling at your level BEFORE entry; this is about pace AFTER entry, in your
+favour. Read together without that sentence they contradict.
+
+**EXTENDED - v4i's lagging-index rule becomes direction-agnostic.** v4i named the
+BankNIFTY mirror lagging while NIFTY ran. Today was the mirror image: "the profit
+is coming ONLY from BankNIFTY - Sensex and NIFTY are still slightly negative...
+only BankNIFTY has momentum, so booking the trade was the right thing." One index
+paying alone is the book signal whichever index it is.
+
+### How our agent traded the same session
+
+**Provisional - the runner was still live at 14:17.** Basket **-2,139.75** across
+55 legs. SL Hunting: **-849.50** over 2 trades (`Result summary`: Trades=2,
+RealizedPnL=-849.50).
+
+| Time | Leg | P&L |
+|---|---|---|
+| 09:38 | NIFTY short / BNF mirror | +52.00 / **-519.00** |
+| 09:46 | NIFTY long / BNF mirror | -136.50 / -246.00 |
+
+**1. v4j changed the behaviour, one day later and by name.** Yesterday the agent
+cut the mirror alone at 10:34 and held NIFTY into -435.50, then closed it six
+minutes later citing BankNIFTY's reversal - the information it already had. Today
+at 09:46 it exited BOTH legs in one decision, with the setup label
+`basket_book_lagging_index_divergence` and the reasoning "per index-hierarchy
+rules the lagging/leading index turning against the trade is disqualifying
+regardless of NIFTY's own noise". That is the v4j rule, applied. It is one
+session and the trade still lost, so this is evidence the rule is being read, not
+that it is profitable.
+
+**2. An EXECUTION error, self-reported, and not a knowledge problem.** At 09:38
+the agent logged:
+
+> Erroneous exit: analysis supported PROFIT-HOLD (short premise intact, steady
+> downtrend on both NIFTY and BankNIFTY, no opposing confirmation pattern, target
+> 24000 not yet reached, NIFTY leg +104), but the order tool was called with EXIT
+> instead of intended HOLD. Position is now flat as a result of this executed
+> order; reporting the actual action taken.
+
+Its reasoning concluded HOLD and an EXIT was executed. No prose rule fixes that;
+it is being tracked separately as a code question - whether the model emitted the
+wrong action or the host executed one, and whether a host-side sanity gate is
+worth having. It is PAPER today, but the same path places real orders when both
+live gates are set.
+
+**3. The hold it intended would have been wrong anyway, for a reason v4i already
+gives.** It justified PROFIT-HOLD with "NIFTY leg +104" while the BankNIFTY
+mirror was **-519**, so the basket was roughly **-467**. The leg it cited as
+evidence the trade was working was the only part of it that was. v4i already says
+to read the basket rather than `nifty_leg_pnl`; what was missing was the blunt
+instruction, so the rule now carries it: when you justify a HOLD with a P&L
+number, quote the BASKET number.
+
+**4. The note-override pattern did NOT hold today, and that is worth recording.**
+On 17 and 18 Aug the trade that contradicted the pre-open note was the day's best
+and the ones following it lost. Today the agent again overrode the note at 09:36
+- "this contradicts the pre-open note's flat-open buy-side expectation, but that
+note assumed no momentum, and real confirmed momentum has since appeared", which
+is exactly the reasoning the note's framing invites - and the resulting basket was
+losing (-467) when the erroneous exit closed it. The 09:43 long that FOLLOWED the
+note also lost. So today neither branch worked, and three sessions is not a
+pattern to trade on.
+
+**5. Agent and IH shared the thesis; the difference was patience.** Both read
+continuous three-index selling as recruiting put-side traders and both went long
+against them. IH stood aside through the opening drop, waited for price to move
+away from the support, and took the small profit the market offered. The agent
+entered at 09:43 near the level and was out three minutes later.
+
+### Knowledge changes (v4k)
+
+- `RETAIL_POSITIONING`: A SUPPORT EVERYONE CAN SEE RECRUITS NOBODY WHILE EVERY
+  INDEX IS FALLING (new).
+- `RISK`: `Momentum quality while holding` extended with the crowd-flush
+  mechanism and the v3y reconciliation; THE LAGGING INDEX DECIDES THE BASKET'S
+  EXIT extended to be direction-agnostic and to demand the basket P&L number.
+- Three drift guards: the fast-move rule must keep its mechanism and its v3y
+  reconciliation, the lagging-index rule must keep both directions, and the
+  support rule must keep both of its opposite consequences.
+- Prompt size 121,611 -> 125,054 chars. Assembled 126,345 against a 154,140
+  budget: **27,795 chars of headroom.**
+
+---
+
+## SLH-010 - an EXIT the model did not mean to send (2026-08-19)
+
+### What happened
+
+At 09:38 the agent closed a live short. Its next pass reported:
+
+> Erroneous exit: analysis supported PROFIT-HOLD (short premise intact, steady
+> downtrend on both NIFTY and BankNIFTY, no opposing confirmation pattern, target
+> 24000 not yet reached, NIFTY leg +104), but the order tool was called with EXIT
+> instead of intended HOLD. Position is now flat as a result of this executed
+> order; reporting the actual action taken.
+
+### It was a MODEL error, and the log proves it
+
+The question worth settling first was whether the model emitted the wrong action
+or the host executed one the model never sent. SL Hunting is not a
+decide-then-execute design: the model calls `place_paper_order` (or the live
+equivalent) DIRECTLY during its reasoning, so **the tool call is the execution**.
+The final JSON is a report of what already happened, which is why that pass
+truthfully says EXIT.
+
+The executed order carries the detail that settles it:
+
+```
+09:38:21 | EXIT SHORT        | ... | Reason=AI_EXIT (no reason supplied by the model)
+09:38:21 | MIRROR EXIT SHORT | ... | Reason=AI_EXIT (no reason supplied by the model)
+```
+
+`AI_EXIT (no reason supplied by the model)` is `NO_REASON_SENTINEL`, substituted
+by `_safe_exit_reason` when the model passes nothing usable. So the model called
+the order tool with `action="EXIT"` **and an empty reason**. No host path
+fabricates an EXIT, and no mechanical exit uses that sentinel.
+
+### Two design gaps made it easy to make and easy to miss
+
+**1. The tool description never said what HOLD is.** It listed three actions --
+ENTER_LONG, ENTER_SHORT, EXIT -- and nowhere stated that holding means not
+calling the tool. A model deliberating "HOLD vs EXIT" had no way to express HOLD
+through the tool, and EXIT was the nearest available option. It also never said
+that an EXIT is unlike an entry: entries are validated three ways (levels, reason
+meaning, note check) and can be corrected inside the same pass, while an EXIT is
+executed immediately and never rejected.
+
+The description now says both, in the first sentences: calling the tool IS the
+action, there is no HOLD action and a decision to hold means not calling it at
+all, and an EXIT cannot be corrected or undone.
+
+**2. The strongest available signal was recorded at INFO.** A deliberate exit
+always carries a justification, because the description tells the model that
+string is the permanent record. An EXIT with nothing in it is therefore the best
+evidence available that the call was unintended -- and on 19 Aug that fact sat
+inside a long INFO trade line. It was noticed only because the model confessed on
+the next bar.
+
+`do_order` now logs a WARNING when an EXIT executes with the sentinel, naming it
+as a probable unintended order.
+
+### What was deliberately NOT changed
+
+**SLH-007 stands: an EXIT is still never refused over its wording.** Bouncing it
+would strand an open position, which the risk rules forbid, and that was an
+operator decision made for a good reason. The exit still executes; it just stops
+being silent. `test_exit_with_no_reason_still_executes_but_warns_loudly` asserts
+both halves so a later tightening cannot quietly turn the warning into a refusal.
+
+No confidence-based gate was added either. Confidence lives on the final decision
+schema and never reaches the order tool, so it is not available at the boundary
+where the order is placed -- a gate there would have to be built on a value the
+tool cannot see.
+
+### Residual risk
+
+The fix is preventative, not mechanical: a model that ignores the description can
+still send an unintended EXIT, and the host will still honour it. What is bounded
+is the cost -- the operator now learns the same session instead of by reading
+decision text days later. A mechanical fix would mean gating exits, which is the
+one thing this component must not do.
+
+The negative case was verified rather than assumed: with the warning branch
+disabled the test fails with "an EXIT with no reason must warn".

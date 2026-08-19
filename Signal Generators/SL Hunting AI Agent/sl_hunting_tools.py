@@ -31,6 +31,7 @@ names are namespaced ``mcp__<server>__<tool>``.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import threading
 import time
@@ -105,6 +106,8 @@ MAX_REASON_CHARS = MAX_ORDER_REASON_CHARS
 _PLACEHOLDER_REASONS = frozenset(
     {"placeholder", "n/a", "na", "tbd", "none", "-", "test", "todo", "reason", "exit", "entry"}
 )
+LOGGER = logging.getLogger(__name__)
+
 NO_REASON_SENTINEL = "AI_EXIT (no reason supplied by the model)"
 
 
@@ -117,7 +120,13 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
     """
     return (
         f"Place an SL-Hunting order on NIFTY ATM options via the {venue} venue (the "
-        "configuration chose this venue; you cannot change it). action is ENTER_LONG "
+        "configuration chose this venue; you cannot change it). CALLING THIS TOOL IS "
+        "ITSELF THE ACTION -- it places a real order at the moment you call it. There "
+        "is no HOLD action and there is no dry run: if your decision is to HOLD, or to "
+        "keep an open position, DO NOT CALL THIS TOOL AT ALL. Note especially that an "
+        "EXIT is executed immediately and is NEVER rejected -- unlike an entry it is "
+        "not validated and cannot be corrected or undone, so an EXIT sent by mistake "
+        "closes the position for good. action is ENTER_LONG "
         "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
         "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
         "BRACKET the current price on the correct side (LONG: stop below, target "
@@ -508,6 +517,24 @@ class SLHuntingToolContext:
             # explicit sentinel instead, so the journal and the coach are told plainly
             # that no justification was given rather than being handed a lie.
             exit_reason = _safe_exit_reason(reason)
+            if exit_reason == NO_REASON_SENTINEL:
+                # SLH-010: the exit still goes through -- SLH-007 above is not
+                # being reversed -- but a deliberate exit always carries a
+                # justification, because the tool description tells the model
+                # that string is the PERMANENT record. An EXIT with nothing in
+                # it is therefore the strongest signal available that the call
+                # was not intended, which is exactly what happened on
+                # 2026-08-19 09:38: the model later reported "the order tool
+                # was called with EXIT instead of intended HOLD". That day the
+                # fact sat at INFO inside a long trade line and was noticed
+                # only because the model confessed on the next bar. Say it
+                # plainly instead, so the operator sees it the same session.
+                LOGGER.warning(
+                    "SL Hunting: EXIT (leg=%s) executed with NO reason from the model. "
+                    "A deliberate exit always carries one, so treat this as a probable "
+                    "UNINTENDED order and check whether the position should have been held.",
+                    leg,
+                )
             def executor_call() -> dict[str, Any]:
                 return self.executor.exit(exit_reason, self.last_price, leg=leg)
         else:

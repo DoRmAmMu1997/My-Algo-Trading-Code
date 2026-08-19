@@ -203,6 +203,27 @@ Don't gauge retail from indicators or raw S/R alone — read the OPENING GAP, wh
 retail is trapped, and the context of momentum. The whole edge is knowing where
 retail's stop-losses sit so you can trade where the operator will hunt them.
 
+- A SUPPORT EVERYONE CAN SEE RECRUITS NOBODY WHILE EVERY INDEX IS FALLING (v4k).
+  A clean level — a round number, a prior swing — is normally where a buying crowd
+  forms, and that crowd is what makes the level tradeable from the long side. When
+  ALL THREE indices are selling together, it stops working that way: traders still
+  SEE the level and still will not act on it. IH, asked directly whether others
+  would buy the round-number support BankNIFTY had just held: "they do buy such a
+  support — but only if the trend is a bit positive. Not in a market like this,
+  especially when all three indices are selling. After a breakdown someone will
+  certainly SELL, but he cannot bring himself to BUY at the support. It is not that
+  he does not see it — he sees it perfectly well, but he cannot buy."
+  Two consequences, and they point opposite ways, so keep both:
+  * As EVIDENCE it is worthless — a held support in a three-index sell-off is NOT a
+    seated-buyer read, and AGGREGATE-INVENTORY / SEATED-BUYER conclusions must not
+    be drawn from it.
+  * As a PLACE it is unusually clean — nobody is queued there competing with you,
+    so if your entry comes from a different premise (the trapped SELLERS above it),
+    the level is a good spot to take it rather than a crowded one.
+  IH still waited for price to move AWAY from the level before buying, because an
+  entry sitting right on it is one small retracement from a breakdown that "makes
+  the problem bigger". The level is where you are safe FROM competition, not where
+  you are safe from the market.
 - A SHARP SPIKE THAT IMMEDIATELY STALLS IS WHERE THE CALLS GOT WRITTEN (v4j). The
   crowd you are reading is not only directional traders; option WRITERS position
   against you, and they do it into a fast move because that is when the premium they
@@ -995,6 +1016,17 @@ RISK DISCIPLINE
   This is a cross-index refinement of v4f's book-when-the-profit-stops-growing rule:
   that one watches the rate on your own P&L, this one names the leg that will stop it
   first, usually before the basket total shows it.
+  IT IS DIRECTION-AGNOSTIC (v4k): "only ONE index is paying" is the book signal
+  whichever index that is. IH, booking a three-index basket that was finally green:
+  "the profit is coming ONLY from BankNIFTY — Sensex and NIFTY are still slightly
+  negative... only BankNIFTY has momentum, so booking the trade was the right thing."
+  So read it both ways: the mirror lagging while NIFTY runs, and NIFTY lagging while
+  the mirror runs, are the same message.
+  PRACTICAL FORM: when you justify a HOLD with a P&L number, quote the BASKET number.
+  Measured on this book (2026-08-19): a short was held on the stated grounds that the
+  "NIFTY leg [is] +104" while the BankNIFTY mirror was -519 — the basket was roughly
+  -467 at that moment, so the leg cited as evidence the trade was working was the only
+  part of it that was.
 - CUTTING THE MIRROR ON A BANKNIFTY REVERSAL IS A VERDICT ON THE WHOLE BASKET (v4j).
   The per-leg escape above is for an IDIOSYNCRATIC problem in the mirror — a level
   only BankNIFTY is at, a pattern only it printed. It is NOT for the case where
@@ -1482,9 +1514,22 @@ RISK DISCIPLINE
   profit-taking cue.)
 - Momentum quality while holding: SLOW-but-CONTINUOUS with-trend momentum (small
   candles) is the sustainable kind — let it run; a FAST spike invites a retracement
-  — book into strength or tighten. After consecutive losing days, deliberately
-  reduce risk and prefer clearer setups: the urge for a "recovery trade" is itself
-  a bias the market exploits.
+  — book into strength or tighten.
+  WHY SLOW IS BETTER, AND IT IS NOT ONLY RETRACEMENT RISK (v4k): when your thesis
+  is that a trapped crowd will be squeezed, THEY are what pays you — so the speed
+  of the move decides how long you get paid for. IH, on a recovery that came in
+  faster than he wanted: "if it runs fast the sellers will get out quickly, so we
+  WANT it to go a little slow, so that they stay sitting in the market", and after
+  booking: "if it recovers fast, every seller here leaves in a single move, and
+  then the market starts falling again." A slow grind keeps them seated and even
+  invites them to average; a fast move flushes the whole crowd in one burst and
+  the fuel is spent. So a fast move in your favour is NOT extra confirmation, it
+  is a shorter clock — book earlier than the chart alone would suggest.
+  Do not confuse this with A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD:
+  that one is about price stalling at your level BEFORE you are in, which recruits
+  opponents; this is about the pace of the move AFTER you are in, in your favour.
+  After consecutive losing days, deliberately reduce risk and prefer clearer
+  setups: the urge for a "recovery trade" is itself a bias the market exploits.
 - SETUP STALENESS: a pending break must fire FAST — candles holding at the level
   INVITE the crowd, and a break that comes only after a long hold attracts
   followers and then reverses on them. If the level held a long time before

@@ -1290,3 +1290,69 @@ def test_printed_profit_obligation_is_owned_by_exactly_one_rule():
 
     # v4g still owns it.
     assert "the floor for that trade stops being breakeven" in floor
+
+
+def test_v4k_fast_move_rule_extends_momentum_quality_without_contradicting_v3y():
+    """v4k (19 Aug live session): speed in your favour is a clock, not a signal.
+
+    Two ways this decays. It can lose the MECHANISM and collapse back into the
+    retracement-risk line it extends, which is a weaker and different claim. And
+    it can be read against v3y's A SLOW GRIND AT THE LEVEL, which says slowness
+    is BAD -- that rule is about price stalling before entry, this one about pace
+    after entry, and the prose has to keep saying so.
+    """
+    prompt = build_system_prompt()
+    flat = " ".join(prompt.split())
+
+    # The mechanism: the trapped crowd is what pays, so speed decides duration.
+    assert "WHY SLOW IS BETTER, AND IT IS NOT ONLY RETRACEMENT RISK" in flat
+    assert "flushes the whole crowd in one burst" in flat
+    assert "is a shorter clock" in flat
+    # It must not read as "fast means it is working".
+    assert "NOT extra confirmation" in flat
+
+    # The reconciliation with v3y must survive verbatim enough to be findable.
+    assert "A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD" in flat
+    assert "BEFORE you are in" in flat and "AFTER you are in" in flat
+
+
+def test_v4k_only_one_index_paying_rule_is_direction_agnostic():
+    """v4i named the mirror lagging; v4k says it works whichever index lags.
+
+    The asymmetric reading is the failure mode: an agent that only checks
+    "is the mirror lagging?" misses the mirror carrying a basket whose NIFTY leg
+    has stalled, which is the same message.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE LAGGING INDEX DECIDES THE BASKET'S EXIT")
+
+    assert "IT IS DIRECTION-AGNOSTIC" in rule
+    assert "whichever index that is" in rule
+    # Both readings spelled out, so neither can be dropped as redundant.
+    assert "the mirror lagging while NIFTY runs" in rule
+    assert "NIFTY lagging while" in rule
+
+    # The practical instruction, and the measurement that earned it.
+    assert "quote the BASKET number" in rule
+    assert "-519" in rule and "-467" in rule
+
+
+def test_v4k_visible_support_rule_keeps_both_of_its_opposite_consequences():
+    """A held support in a three-index sell-off: bad EVIDENCE, good PLACE.
+
+    The two consequences point opposite ways, which is exactly why a tightening
+    pass would drop one. Losing the first turns it into a seated-buyer read
+    (the error it exists to prevent); losing the second turns a usable entry
+    location into a no-go zone.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A SUPPORT EVERYONE CAN SEE RECRUITS NOBODY")
+
+    # Worthless as evidence...
+    assert "As EVIDENCE it is worthless" in rule
+    assert "NOT a seated-buyer read" in rule
+    # ...but clean as a place.
+    assert "As a PLACE it is unusually clean" in rule
+    assert "nobody is queued there competing with you" in rule
+    # And the caveat that stops it becoming "the level is safe".
+    assert "safe FROM competition, not where" in rule
