@@ -1,28 +1,46 @@
 {
-  "for_date": "2026-08-19",
-  "source": "Intraday Hunter, 'Prediction For 19 AUG 2026' (_WvVlwJ6NqY, uploaded 2026-08-18)",
-  "context": "NO trend and NO momentum: a trader can enter but cannot hold. So there is no directional thesis today - follow the market, and do not fight a good opening. Yesterday closed slightly negative, so a few sellers may be seated.",
+  "for_date": "2026-08-20",
+  "source": "Intraday Hunter, 'Prediction For 20 AUG 2026' (yZh2LPi3Hjk, uploaded 2026-08-19)",
+  "context": "SENSEX expiry (not NIFTY). Today's sharp drop spiked put-writers' premiums and stopped them out, and momentum died once they were gone. The put writers are flushed; the crowd still seated is CALL writers, which points UP.",
   "plan": [
-    "FLAT or GAP-UP: identify confirmed BUY-side setups. The thin seller crowd left by yesterday's negative close is the target; do not fight an opening that goes up.",
-    "GAP-DOWN: identify confirmed SELL-side setups and go WITH the market. Sellers are already into profit on a gap-down, so they cannot be the target.",
-    "This is a REACTIVE day, not a thesis day: the side is decided by the open, not before it. Neither branch is a reason to enter without the usual pattern and confirmation.",
-    "With no trend and no momentum, expect entries that cannot be held. Size the expectation down and book what the move actually gives."
+    "FLAT or GAP-UP: identify confirmed BUY-side setups. The target crowd is the CALL writers still seated after today's move removed the put writers.",
+    "GAP-DOWN: the plan does NOT flip - still BUY-side. Risk is higher, so demand a cleaner confirmation, but a gap-down alone does not restore the put-writer crowd that was already stopped out.",
+    "A VERY LARGE gap either way is the exception he names: better if neither a big gap-up nor a big gap-down opens, because it changes who is seated before the session starts.",
+    "The read is about OPTION WRITERS, not directional traders: in a market like this, writers are more active than buyers, and a fast move that inflates their premiums and then stalls is what removes them."
   ],
   "levels": [
     {
       "index": "NIFTY",
-      "resistance": [24230, 24360],
-      "support": [24000, 24100]
+      "resistance": [
+        24160,
+        24230
+      ],
+      "support": [
+        23920,
+        24000
+      ]
     },
     {
       "index": "BANKNIFTY",
-      "resistance": [57460, 57800],
-      "support": [56960, 57120]
+      "resistance": [
+        57460,
+        57700
+      ],
+      "support": [
+        56800,
+        57000
+      ]
     },
     {
       "index": "SENSEX",
-      "resistance": [77550, 77800],
-      "support": [76800, 77000]
+      "resistance": [
+        77250,
+        77500
+      ],
+      "support": [
+        76500,
+        76800
+      ]
     }
   ]
 }
