@@ -310,8 +310,20 @@ def _session_levels(
     }
 
 
-def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
-    """Calculate SRSI, RSI, EMA, candle, and session VWAP evidence from bars.
+def _momentum_vwap(
+    session_bars: pd.DataFrame,
+    indicator_bars: pd.DataFrame,
+) -> dict[str, Any]:
+    """Combine continuous momentum indicators with session-reset VWAP facts.
+
+    ``indicator_bars`` contains every completed five-minute bar retained in the
+    frozen snapshot. RSI, Stochastic RSI, and EMA therefore arrive at the new
+    session already warmed, matching a continuous intraday chart. The overnight
+    move from the prior close to the current open remains part of that history.
+
+    ``session_bars`` contains only today's completed bars. VWAP, its recent
+    relationships, the current candle, and recent-candle evidence must reset at
+    the session boundary, so prior-day prices can never distort those facts.
 
     Volume is preferred when the feed supplies it.  This repository's index
     feed may carry no usable volume, so the deterministic fallback is the
@@ -320,6 +332,7 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
     """
 
     bars = session_bars.copy()
+    indicators = indicator_bars.copy()
     typical = (bars["high"] + bars["low"] + bars["close"]) / 3.0
     volume = bars["volume"].fillna(0.0).clip(lower=0.0)
     if float(volume.sum()) > 0.0:
@@ -330,8 +343,9 @@ def _momentum_vwap(session_bars: pd.DataFrame) -> dict[str, Any]:
         # reproducible, and exposes its limitation through ``vwap_method``.
         vwap = typical.expanding().mean()
         vwap_method = "equal_weight_typical_price"
-    rsi, k, d = _stochastic_rsi(bars["close"])
-    ema5, ema20 = bars["close"].ewm(span=5, adjust=False).mean(), bars["close"].ewm(span=20, adjust=False).mean()
+    rsi, k, d = _stochastic_rsi(indicators["close"])
+    ema5 = indicators["close"].ewm(span=5, adjust=False).mean()
+    ema20 = indicators["close"].ewm(span=20, adjust=False).mean()
     current = bars.iloc[-1]
     current_k, previous_k, current_d, previous_d = (
         _as_float(k.iloc[-1]),
@@ -577,7 +591,7 @@ def build_cpr_context(
     )
     return {
         "session_levels": levels,
-        "momentum_vwap": _momentum_vwap(session_bars),
+        "momentum_vwap": _momentum_vwap(session_bars, bars),
         "market_structure": _market_structure(session_bars, levels, swing_window=swing_window),
         "position_state": validate_position_state(position_state),
     }

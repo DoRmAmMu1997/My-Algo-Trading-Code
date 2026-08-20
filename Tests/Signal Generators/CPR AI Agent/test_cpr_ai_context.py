@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
+from cpr_ai_agent import CPRHostPolicy
 from cpr_ai_context import (
     _rsi_wilder,
     _stochastic_rsi,
@@ -51,6 +52,33 @@ def _minute_rows(start: datetime, closes: list[float], *, volume: float | None =
             }
         )
     return rows
+
+
+def _two_session_five_minute_frame(
+    closes: list[float],
+    *,
+    current_session_bars: int = 8,
+) -> pd.DataFrame:
+    """Expand continuous five-minute closes across two trading sessions.
+
+    The final eight bars represent 09:15 through 09:50 on the current day.
+    Everything before them belongs to the previous session and should warm
+    continuous indicators without entering session-reset calculations such as
+    VWAP. Repeating each intended close five times keeps resampling literal.
+    """
+
+    if len(closes) <= current_session_bars:
+        raise ValueError("The fixture needs prior-session and current-session bars.")
+    split_at = len(closes) - current_session_bars
+    previous_minutes = _minute_rows(
+        datetime(2026, 8, 1, 9, 15),
+        [close for close in closes[:split_at] for _ in range(5)],
+    )
+    current_minutes = _minute_rows(
+        datetime(2026, 8, 2, 9, 15),
+        [close for close in closes[split_at:] for _ in range(5)],
+    )
+    return pd.DataFrame(previous_minutes + current_minutes)
 
 
 def _two_session_frame() -> pd.DataFrame:
@@ -217,21 +245,18 @@ def test_momentum_contains_tradingview_srsi_and_equal_weight_vwap_fallback():
 def test_srsi_literal_crosses_report_their_direction_and_matching_zone_flags():
     """Known 14/14/3/3 outputs must preserve cross and zone semantics."""
 
-    previous = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30)
-
     def srsi_for_completed_bars(count: int) -> dict[str, object]:
-        """Expand literal five-minute closes into independent one-minute input.
+        """Split one continuous literal close series across two sessions.
 
-        Repeating each close five times makes the resampled close obvious while
-        still exercising the real completion and indicator pipeline.
+        The last eight bars deliberately land in the current session. Indicator
+        continuity must preserve the literal full-series result across that
+        boundary instead of restarting the 14/14/3/3 warm-up at 09:15.
         """
 
         five_minute_closes = [100.0 + 10.0 * sin(index * 0.65) for index in range(count)]
-        current_minutes = _minute_rows(
-            datetime(2026, 8, 2, 9, 15),
-            [close for close in five_minute_closes for _ in range(5)],
-        )
-        return build_cpr_context(pd.DataFrame(previous + current_minutes))["momentum_vwap"]["stochastic_rsi"]
+        return build_cpr_context(_two_session_five_minute_frame(five_minute_closes))["momentum_vwap"][
+            "stochastic_rsi"
+        ]
 
     # These values are literal results from the standard Wilder RSI(14),
     # Stoch(14), K SMA(3), D SMA(3) equations for the listed sine closes.
@@ -296,6 +321,107 @@ def test_momentum_exposes_rsi_ema_candle_and_deterministic_vwap_sequence_evidenc
     assert momentum["candle"]["range"] > momentum["candle"]["body"] > 0
     assert len(momentum["recent_candles"]) == 5
     assert len(momentum["vwap"]["sequence_evidence"]["relations"]) == 3
+
+
+def test_early_session_momentum_indicators_continue_across_prior_session_closes():
+    """The 09:50 bar receives continuous RSI, SRSI, and EMA history."""
+
+    closes = [100.0 + 10.0 * sin(index * 0.65) for index in range(40)]
+    context = build_cpr_context(_two_session_five_minute_frame(closes))
+    momentum = context["momentum_vwap"]
+    expected_rsi, expected_k, expected_d = _stochastic_rsi(pd.Series(closes, dtype=float))
+    expected_ema5 = pd.Series(closes, dtype=float).ewm(span=5, adjust=False).mean()
+    expected_ema20 = pd.Series(closes, dtype=float).ewm(span=20, adjust=False).mean()
+
+    assert momentum["rsi14"] == pytest.approx(expected_rsi.iloc[-1])
+    assert momentum["stochastic_rsi"]["current_k"] == pytest.approx(expected_k.iloc[-1])
+    assert momentum["stochastic_rsi"]["current_d"] == pytest.approx(expected_d.iloc[-1])
+    assert momentum["ema"]["ema5"] == pytest.approx(expected_ema5.iloc[-1])
+    assert momentum["ema"]["ema20"] == pytest.approx(expected_ema20.iloc[-1])
+    assert momentum["ema"]["ema5_slope"] == pytest.approx(expected_ema5.iloc[-1] - expected_ema5.iloc[-2])
+    assert momentum["ema"]["ema20_slope"] == pytest.approx(
+        expected_ema20.iloc[-1] - expected_ema20.iloc[-2]
+    )
+
+
+def test_early_session_vwap_excludes_prior_session_indicator_history():
+    """Previous-day warm-up prices cannot leak into current-session VWAP."""
+
+    previous_closes = [900.0 + index for index in range(35)]
+    current_closes = [100.0 + index for index in range(8)]
+    context = build_cpr_context(_two_session_five_minute_frame(previous_closes + current_closes))
+    vwap = context["momentum_vwap"]["vwap"]
+
+    # The synthetic OHLC envelope makes each completed bar's typical price
+    # equal its intended close, so this is an independent session-only result.
+    assert vwap["value"] == pytest.approx(sum(current_closes) / len(current_closes))
+    assert vwap["sequence_evidence"]["relations"] == ["ABOVE", "ABOVE", "ABOVE"]
+
+
+def test_prior_indicator_history_does_not_leak_into_session_structure_facts():
+    """Only indicator math may consume prior bars; session facts remain today's."""
+
+    previous_closes = [900.0 + index for index in range(35)]
+    current_closes = [100.0 + index for index in range(8)]
+    context = build_cpr_context(_two_session_five_minute_frame(previous_closes + current_closes))
+
+    opening = context["session_levels"]["opening"]["opening_corridor"]
+    recent = context["momentum_vwap"]["recent_candles"]
+    structure = context["market_structure"]
+    assert opening == {
+        "complete": True,
+        "minutes": 5,
+        "open": 99.5,
+        "high": 101.0,
+        "low": 99.0,
+        "close": 100.0,
+        "range": 2.0,
+    }
+    assert all(str(candle["timestamp"]).startswith("2026-08-02") for candle in recent)
+    assert structure["swings"] == {"highs": [], "lows": []}
+    assert structure["r1_scale_in_candidate"]["eligible"] is False
+
+
+def test_0950_trend_continuation_uses_prior_session_rsi_warmup():
+    """A valid early continuation is not rejected merely because the day is young."""
+
+    closes = [float(value) for value in range(90, 133)]
+    context = build_cpr_context(
+        _two_session_five_minute_frame(closes),
+        position_state={"is_flat": True},
+    )
+    proposal = CPRAgentDecision(
+        action="ENTER_LONG",
+        regime="TRENDING",
+        setup="TRENDING_VWAP_CONTINUATION",
+        confidence=7,
+        reasoning="Synthetic 09:50 regression fixture.",
+        model_used="gpt-5.6-terra",
+        prompt_version=CPR_AI_PROMPT_VERSION,
+    )
+
+    outcome = CPRHostPolicy().validate(context, proposal)
+
+    assert context["session_levels"]["current_close"] == 132.0
+    assert context["momentum_vwap"]["rsi14"] == 100.0
+    assert outcome.accepted is True
+    assert outcome.validation_code == "accepted_entry"
+    assert outcome.entry_price == 132.0
+    assert outcome.stop_price == 131.0
+    assert outcome.risk_points == 1.0
+
+
+def test_genuinely_short_total_history_keeps_indicators_unavailable():
+    """Fail closed when neither the current nor prior session can warm indicators."""
+
+    context = build_cpr_context(
+        _two_session_five_minute_frame([100.0, 101.0, 102.0, 103.0], current_session_bars=2)
+    )
+    momentum = context["momentum_vwap"]
+
+    assert momentum["rsi14"] is None
+    assert momentum["stochastic_rsi"]["current_k"] is None
+    assert momentum["stochastic_rsi"]["current_d"] is None
 
 
 def test_momentum_exposes_current_candle_body_fractions_on_each_vwap_side():
