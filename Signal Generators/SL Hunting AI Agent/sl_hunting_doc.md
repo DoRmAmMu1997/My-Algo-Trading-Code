@@ -4140,3 +4140,129 @@ one thing this component must not do.
 
 The negative case was verified rather than assumed: with the warning branch
 disabled the test fails with "an EXIT with no reason must warn".
+
+---
+
+## Video addendum - the 20 Aug LIVE SESSION (v4l)
+
+**Source:** Intraday Hunter live session `AuKnZ9i_rz4` (20 Aug 2026, 10:15).
+
+The pre-open call worked. Yesterday's note said the put writers had been flushed
+and the crowd still seated was CALL writers, so a gap-up should be followed; the
+market gapped up hard, he bought calls across all three indices within five
+minutes of the open, and booked a large winner. Most of the session is him
+explaining WHY, which is where the material is.
+
+### One new rule, one extension, one correction
+
+**NEW - ENTRY TIME IS A RISK DIAL, YOU GET THE MOMENTUM YOUR RISK BUYS.** "You can
+trade early, or you can wait a little - you should decide how much RISK you want
+to take. If you trade early and momentum suddenly comes against you, the loss can
+be big. If you wait until around 10 or 11, the momentum is slower than when we
+trade straight off the open... you will get momentum in proportion to the risk you
+take."
+
+The rule is the trade-off, not a preference: an early entry is not simply a better
+entry and a late one is not simply a safer one, because each buys a different
+distribution. He says plainly "it is not that a trade made right at the open will
+be better." The operational half is that an opening-window entry should size the
+EXPECTATION as well as the stop - you have bought the fast tail in both
+directions, so a target set for a 10:30 tape is the wrong target. Kept explicitly
+distinct from MORNING SPEED IS NOT INFORMATION, which governs what a fast stop-out
+means AFTER the fact rather than what you are choosing when you pick the hour.
+
+**EXTENDED - v4j's basket rule gains its general form: WHEN YOU CUT, CUT EVERY
+LEG.** IH states it twice as a rule of its own, after a post-mortem on hedged
+option writers: "either keep your trade COMPLETE, or cut both together", and "when
+you cut your trade, cut BOTH sides - you should not leave any leg."
+
+His mechanism is what makes it more than advice. The writer had short puts hedged
+with long puts; when the market fell he removed the short-put leg that was hurting
+and kept the long put he still believed in - "so the market first removed the
+put-write position and then did not let him profit on the put either, a loss on
+BOTH sides."
+
+The structural difference is recorded rather than glossed: his legs are a hedge on
+one underlying that offset each other, ours are two correlated directional legs on
+different indices. **The arithmetic does not transfer, but the failure does** - you
+cut the leg you can justify and keep the one you are hoping for. So the rule now
+says EXIT BOTH is the default and `exit_leg` is the exception, usable only when the
+surviving leg's premise is independently intact and you can say why, never merely
+because the other leg is the one currently hurting.
+
+**CORRECTED - v4k's "only one index is paying" test, one day after it shipped.**
+See below; the correction comes from our own numbers, not the video.
+
+### How our agent traded the same session
+
+**Provisional - the runner was still live at 14:38.** Basket **+6,423.75** across 46
+legs, a clearly positive day. SL Hunting: **+1,015.75** over 3 trades
+(`Result summary`: Trades=3, RealizedPnL=1015.75).
+
+| Time | Leg | P&L |
+|---|---|---|
+| 09:18 | NIFTY long / BNF mirror | +461.50 / +1,092.00 |
+| 09:27 | NIFTY short / BNF mirror | -39.00 / -1,113.00 |
+| 09:42 | NIFTY long / BNF mirror | +9.75 / +604.50 |
+
+**1. v4k was cited by name and applied, one day after shipping.** The 09:42 exit
+reads: "Basket was +631.5 but NIFTY has stalled forming a double top... NIFTY leg
+itself was flat (+19.5) while the BankNIFTY mirror carried nearly all the profit -
+a leg-divergence book signal (v4k) alongside profit-stopped-growing (v4f)." It
+also quoted the BASKET number, which is the practical instruction v4k added after
+19 Aug's "NIFTY leg +104" justification. Both halves of yesterday's change were
+used.
+
+**2. And that is exactly how the rule turned out to be wrong.** The mirror is
+EQUAL-LOT, not equal-rupee: a BankNIFTY option cost 578 against NIFTY's 127.70 on
+the first trade and travels further, so the mirror carries the larger rupee share
+even when both legs are working perfectly. Trade 1 split **+461.50 / +1,092.00** -
+a 70/30 split with BOTH legs working, which is arithmetic, not divergence. Applying
+"only one index is paying" to that would book a healthy trade.
+
+Trade 3 was genuine divergence, but for a different reason than rupee share: the
+NIFTY option moved **0.15 premium points** while the mirror moved **20.15**. So the
+test is whether a leg has stopped MOVING, never whether it is contributing less
+money. v4k now says so, with both measured cases kept so neither can be pruned as
+redundant.
+
+Worth noting as a pattern: a rule written from one session's arithmetic was applied
+to a differently-shaped session the next day and misfired. The agent reached the
+right action - booking was independently justified by the profit stall it also
+cited - through reasoning that does not generalise.
+
+**3. Following the note won; overriding it lost.** The 09:16 and 09:38 longs both
+took the note's gap-up buy-side branch and both made money. The 09:26 SHORT
+explicitly overrode it - "overriding the pre-open analyst's buy-side call-writer
+bias per live price action" - and lost **-1,152.00**, the day's only losing trade.
+That is the reverse of 17-18 Aug and confirms the caution recorded in v4k: three
+sessions was never a pattern, and there is now a fourth pointing the other way.
+
+**4. The same cross-index verdict was used as evidence and dismissed as stale
+within nine minutes.** At 09:18 "cross-index flipped to bias DOWN... directly
+opposing the long" was given as a reason to exit. At 09:27 "the cross_index
+'both_at_support/bias down' verdict is a stale mechanical read" was given as a
+reason to exit the opposite position. Both uses were inside the opening hour, so
+both are technically within the stale escape hatch's documented scope - but the
+signal was cited when it agreed and discounted when it did not, and in both cases
+the conclusion was to exit. No rule is proposed for this yet: one session is not
+enough, and the existing scope warning already says the hatch "is abused easily".
+Recorded so the next occurrence is the second data point rather than the first.
+
+**5. Agent and IH agreed on the read and differed on holding.** Both were long the
+gap-up on the flushed-put-writer thesis. IH held through a mid-trade rejection -
+"do not fear the rejection at all, this rejection has come to benefit you" -
+because he could name whom it removed, and booked a large move. The agent was in
+and out three times in 26 minutes, its best trade lasting two.
+
+### Knowledge changes (v4l)
+
+- `RISK`: ENTRY TIME IS A RISK DIAL (new); the basket rule extended with WHEN YOU
+  CUT, CUT EVERY LEG and its mechanism; v4k's one-index-paying test corrected to
+  judge MOVEMENT rather than rupee share.
+- Three drift guards: the cut-every-leg rule must keep both the EXIT BOTH default
+  and the narrow `exit_leg` exception, the divergence correction must keep both
+  measured cases, and the entry-time rule must stay a trade-off rather than
+  becoming "waiting is safer".
+- Prompt size 125,054 -> 128,303 chars. Assembled 129,594 against a 154,140
+  budget: **24,546 chars of headroom.**

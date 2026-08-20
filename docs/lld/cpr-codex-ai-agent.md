@@ -91,6 +91,13 @@ worker owns entry geometry and risk enforcement. The focused CPR AI context and
 master-worker tests assert their behaviour. `env.example` contains only the
 operator-selectable CPR AI settings listed in §7.
 
+The context builder deliberately maintains two five-minute views. Continuous
+completed history, including the overnight close-to-open change, warms RSI,
+Stochastic RSI, and EMA5/EMA20 before early-session decisions. A separate
+current-session view owns VWAP, opening facts, candle relationships, confirmed
+swings, and the R1 add pattern. This prevents both failure modes: an artificial
+morning indicator blackout and prior-day prices leaking into intraday VWAP.
+
 ---
 
 ## 5. Process isolation

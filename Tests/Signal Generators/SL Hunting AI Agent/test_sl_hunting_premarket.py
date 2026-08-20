@@ -201,19 +201,21 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_20_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 19 Aug transcript.
+def test_shipped_note_matches_august_21_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 20 Aug transcript.
 
-    This note is unusual in two ways that a summarising edit would flatten.
+    Three things a summarising edit would flatten, all asserted:
 
-    1. It is UNCONDITIONAL. Every branch -- gap-up, flat AND gap-down -- is
-       buy-side. Every prior note in this series flipped direction on the
-       gap-down branch, so an editor working from habit would "fix" it into an
-       inversion. The prose says the plan does NOT flip, and the test pins it.
-    2. The subject is OPTION WRITERS, not directional traders. The thesis is
-       that today's sharp drop inflated put-writers' premiums and stopped them
-       out, leaving CALL writers as the seated crowd -- the same participant
-       v4j introduced, used here as the entry thesis rather than an exit signal.
+    1. The direction INVERTS from 20 Aug, whose buy-side plan worked. A note
+       still reading buy-side is the stale-note failure this test exists for,
+       and "it paid yesterday" is the most tempting reason to leave it.
+    2. The stand-aside branch is a LARGE GAP-UP and it is DEFINED for
+       BankNIFTY -- an open above 57800, the first resistance. That number is
+       what makes the veto checkable at 09:15 rather than a judgement call.
+    3. He grades his own evidence. The buyers-trapped read is strong on
+       BankNIFTY but he says outright he is NOT targeting buyers on NIFTY and
+       Sensex, where the plan rests only on the gap-up possibly being a trap.
+       Dropping that leaves the agent believing a weak read is a strong one.
     """
     import os
 
@@ -222,46 +224,41 @@ def test_shipped_note_matches_august_20_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-20"
-    assert "yZh2LPi3Hjk" in note.source
-    # Expiry is SENSEX, not NIFTY -- the distinction matters because the agent
-    # trades NIFTY and the expiry RISK rules key off its own contract.
-    assert "SENSEX expiry (not NIFTY)" in note.context
-    assert "CALL writers" in note.context
+    assert note.for_date == "2026-08-21"
+    assert "nJqWQPOfWrM" in note.source
+    assert "trapping the buyers" in note.context
+    assert "INVERTS" in note.context
 
-    # Every branch is buy-side; none of them may say SELL.
-    assert all("SELL-side" not in line for line in note.plan)
-    buy_branches = [line for line in note.plan if "BUY-side" in line]
-    assert len(buy_branches) == 2, "the gap-up/flat and gap-down branches must both be buy-side"
-    gap_down = next(line for line in note.plan if line.startswith("GAP-DOWN"))
-    assert "does NOT flip" in gap_down
+    # Every branch is sell-side; none of them may say BUY-side.
+    assert all("BUY-side" not in line for line in note.plan)
+    sell = next(line for line in note.plan if line.startswith("SMALL GAP-UP"))
+    assert "SELL-side" in sell
 
-    # The one exception he names, and the mechanism the whole note rests on.
-    assert any("VERY LARGE gap" in line for line in note.plan)
-    assert any("OPTION WRITERS" in line for line in note.plan)
+    # The defined veto, with its number.
+    large = next(line for line in note.plan if line.startswith("LARGE GAP-UP"))
+    assert "NO PLAN" in large and "57800" in large
+
+    # The evidence gradation, which is the part most easily lost.
+    weak = next(line for line in note.plan if line.startswith("EVIDENCE IS WEAKER"))
+    assert "NOT targeting them" in weak
+    assert "gap-up itself having been a trap" in weak
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # Caption merged both supports into "2423920"; read off the chart by
-            # the operator rather than inferred, per the 2026-08-19 precedent.
             "index": "NIFTY",
-            "resistance": [24160.0, 24230.0],
-            "support": [23920.0, 24000.0],
+            "resistance": [24320.0, 24380.0],
+            "support": [24140.0, 24186.0],
         },
         {
-            # 57000 is called out as "an important round number", so it is a
-            # support in its own right rather than a rounding of 56800.
+            # 57800 doubles as the first resistance AND the stand-aside
+            # threshold above, so the two must not drift apart.
             "index": "BANKNIFTY",
-            "resistance": [57460.0, 57700.0],
-            "support": [56800.0, 57000.0],
+            "resistance": [57800.0, 58000.0],
+            "support": [57220.0, 57500.0],
         },
         {
-            # Resistance confirmed off the chart. The support pair is the
-            # caption reading ("76800 7650") and was not separately confirmed;
-            # Sensex is advisory-only here -- never traded, never mirrored -- so
-            # the exposure to a misread is limited to cross-index colour.
             "index": "SENSEX",
-            "resistance": [77250.0, 77500.0],
-            "support": [76500.0, 76800.0],
+            "resistance": [77800.0, 78000.0],
+            "support": [77160.0, 77370.0],
         },
     ]

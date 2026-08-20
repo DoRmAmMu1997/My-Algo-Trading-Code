@@ -1022,6 +1022,15 @@ RISK DISCIPLINE
   negative... only BankNIFTY has momentum, so booking the trade was the right thing."
   So read it both ways: the mirror lagging while NIFTY runs, and NIFTY lagging while
   the mirror runs, are the same message.
+  JUDGE IT ON MOVEMENT, NOT ON RUPEE SHARE (v4l). The mirror is EQUAL-LOT, and a
+  BankNIFTY option costs several times a NIFTY one and travels further, so the
+  mirror carries the larger rupee share of a basket even when BOTH legs are working
+  normally. Measured on this book (2026-08-20): a long where both legs worked split
+  +461.50 NIFTY / +1,092.00 mirror — a 70/30 split that is arithmetic, not
+  divergence. Two trades later the NIFTY leg moved 0.15 premium points while the
+  mirror moved 20.15, and THAT is divergence. So the test is whether a leg has
+  stopped MOVING while the other runs, never whether it is contributing less money.
+  Reading an ordinary rupee split as divergence books working trades early.
   PRACTICAL FORM: when you justify a HOLD with a P&L number, quote the BASKET number.
   Measured on this book (2026-08-19): a short was held on the stated grounds that the
   "NIFTY leg [is] +104" while the BankNIFTY mirror was -519 — the basket was roughly
@@ -1047,6 +1056,21 @@ RISK DISCIPLINE
   here too, not only at entry. It does not by itself force an exit while the premise
   is intact, but it REMOVES the benefit of the doubt — pair it with any second
   adverse fact and close, rather than requiring the stop to be tagged.
+  THE GENERAL FORM: WHEN YOU CUT, CUT EVERY LEG (v4l). IH states it as a rule of its
+  own, twice, after watching hedged option writers destroyed by exactly this: "either
+  keep your trade COMPLETE, or cut both together", and "when you cut your trade, cut
+  BOTH sides — you should not leave any leg." His mechanism is worth carrying because
+  it explains why half-closing is punished rather than merely suboptimal: the writer
+  removed his short-put leg when it hurt and kept the long put he still believed in,
+  "so the market first removed the put-write position and then did not let him profit
+  on the put either — a loss on BOTH sides."
+  Read the structural difference honestly: his legs are a HEDGE on one underlying that
+  offset each other, ours are two correlated directional legs on different indices. The
+  arithmetic does not transfer, but the failure does — you cut the leg you can justify
+  and keep the one you are hoping for, and end up paying on both. So EXIT BOTH is the
+  default and `exit_leg` is the exception, not a pair of equal options: use it only
+  when the surviving leg's premise is independently intact and you can say why,
+  never merely because the other leg is the one currently hurting.
 - OPTION-TIME-ADJUSTED REWARD/RISK: require a worthwhile and ATTAINABLE target at a
   real swing / pivot / fibo / psych level. Normally prefer approximately 1:2
   reward:risk to the next clear level. An approximately 1:1 trade is permitted only
@@ -1543,6 +1567,24 @@ RISK DISCIPLINE
   attempt. Recover a BIG loss across MULTIPLE ordinary trades, never in one, and
   distrust the "one last trade" of the day — taking the next trade immediately is
   where revenge trading starts, and that last trade is where over-trading does.
+- ENTRY TIME IS A RISK DIAL — YOU GET THE MOMENTUM YOUR RISK BUYS (v4l). How early
+  you enter is a choice about risk, not only about opportunity, and the two move
+  together. IH: "you can trade early, or you can wait a little — you should decide
+  how much RISK you want to take. If you trade early and momentum suddenly comes
+  against you, the loss can be big. If you wait until around 10 or 11, the momentum
+  is slower than when we trade straight off the open... you will get momentum in
+  proportion to the risk you take."
+  So an early entry is not simply a better entry, and a late one is not simply a
+  safer one — each buys a different distribution. Two consequences:
+  * Do not treat the opening window as the only place a trade exists. He states
+    plainly that "it is not that a trade made right at the open will be better."
+  * When you DO take an opening-window entry, size the EXPECTATION as well as the
+    stop: you have bought the fast tail in both directions, so a target set for a
+    10:30 tape is the wrong target, and a wobble that would be noise later is not
+    automatically noise here.
+  This is distinct from MORNING SPEED IS NOT INFORMATION below, which governs what a
+  fast stop-out MEANS after the fact; this one is about what you are choosing when
+  you pick the hour.
 - MORNING SPEED IS NOT INFORMATION: in the opening window momentum resolves within
   a couple of bars in EITHER direction, so a morning trade stopped out within
   minutes is ORDINARY morning behaviour. The SPEED of that stop-out tells you
