@@ -21,7 +21,10 @@ deep-copy views of the same frozen completed-bar context:
   current completed close, buffered next levels, and prior accepted regime.
 - `momentum_vwap`: TradingView-style Stoch RSI (RSI 14, stochastic 14, K 3,
   D 3, zones 20/80), RSI14, EMA5/EMA20 order and slopes, candle facts, and
-  deterministic VWAP sequence/body evidence.
+  deterministic VWAP sequence/body evidence. RSI/SRSI/EMA use continuous
+  completed five-minute history across sessions, including the overnight price
+  change, so they are already warmed near the open. VWAP, its recent sequence,
+  and candle evidence use only the current session and reset every trading day.
 - `market_structure`: confirmed swing highs/lows, HH/LH/HL/LL comparisons, and
   the host-computed long R1 add candidate.
 - `position_state`: an allowlist of market-position facts needed to judge
@@ -81,6 +84,8 @@ host then enforces the selected framework:
   each newly completed five-minute candle. A start-stamped one-minute candle is
   not complete until the next minute begins, and all five exact minute slots
   must exist once.
+- Retained prior-session bars warm RSI, Stoch RSI, and EMA calculations; they do
+  not enter current-session VWAP, opening-range, swing, or candle calculations.
 - In websocket mode, clock completeness alone is not enough. The REST producer
   records only a stable generation: a source minute is eligible exactly when
   its timestamp is strictly before `floor(request_started_at - true_up_delay)`.
