@@ -1,45 +1,45 @@
 {
-  "for_date": "2026-08-20",
-  "source": "Intraday Hunter, 'Prediction For 20 AUG 2026' (yZh2LPi3Hjk, uploaded 2026-08-19)",
-  "context": "SENSEX expiry (not NIFTY). Today's sharp drop spiked put-writers' premiums and stopped them out, and momentum died once they were gone. The put writers are flushed; the crowd still seated is CALL writers, which points UP.",
+  "for_date": "2026-08-21",
+  "source": "Intraday Hunter, 'Prediction For 21 AUG 2026' (nJqWQPOfWrM, uploaded 2026-08-20)",
+  "context": "Today's gap-up ran, stalled and slid into rejection. On a move like that only BUYERS keep arriving even into small rejections - nobody sells - so the market ended up trapping the buyers. Direction INVERTS from today: plan is SELL side.",
   "plan": [
-    "FLAT or GAP-UP: identify confirmed BUY-side setups. The target crowd is the CALL writers still seated after today's move removed the put writers.",
-    "GAP-DOWN: the plan does NOT flip - still BUY-side. Risk is higher, so demand a cleaner confirmation, but a gap-down alone does not restore the put-writer crowd that was already stopped out.",
-    "A VERY LARGE gap either way is the exception he names: better if neither a big gap-up nor a big gap-down opens, because it changes who is seated before the session starts.",
-    "The read is about OPTION WRITERS, not directional traders: in a market like this, writers are more active than buyers, and a fast move that inflates their premiums and then stalls is what removes them."
+    "SMALL GAP-UP, FLAT or GAP-DOWN: identify confirmed SELL-side setups. The trapped crowd is the buyers who kept arriving into today's stalling gap-up.",
+    "LARGE GAP-UP: NO PLAN, stand aside. For BANKNIFTY he defines it as an open ABOVE 57800, the first resistance - a slight gap-up is acceptable, more than that is not.",
+    "EVIDENCE IS WEAKER ON NIFTY AND SENSEX, and he says so: not many buyers are seated there and he is explicitly NOT targeting them. The sell-side plan rests on the gap-up itself having been a trap, so demand a cleaner confirmation.",
+    "This inverts today's buy-side plan, which worked. The buy thesis was spent once the move stalled and rolled over; do not carry it into tomorrow because it paid today."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24160,
-        24230
+        24320,
+        24380
       ],
       "support": [
-        23920,
-        24000
+        24140,
+        24186
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57460,
-        57700
+        57800,
+        58000
       ],
       "support": [
-        56800,
-        57000
+        57220,
+        57500
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77250,
-        77500
+        77800,
+        78000
       ],
       "support": [
-        76500,
-        76800
+        77160,
+        77370
       ]
     }
   ]
