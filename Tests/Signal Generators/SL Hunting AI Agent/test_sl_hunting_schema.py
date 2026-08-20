@@ -1356,3 +1356,71 @@ def test_v4k_visible_support_rule_keeps_both_of_its_opposite_consequences():
     assert "nobody is queued there competing with you" in rule
     # And the caveat that stops it becoming "the level is safe".
     assert "safe FROM competition, not where" in rule
+
+
+def test_v4l_cut_every_leg_raises_the_bar_on_exit_leg_without_removing_it():
+    """v4l (20 Aug live session): EXIT BOTH is the default, not a coin flip.
+
+    The danger runs both ways. Read strongly the rule deletes `exit_leg` and
+    throws away a host capability v4i added deliberately; read weakly it leaves
+    the per-leg cut as an equal option, which is the failure IH describes. The
+    prose has to keep BOTH the default and the narrow exception.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "CUTTING THE MIRROR ON A BANKNIFTY REVERSAL")
+
+    assert "WHEN YOU CUT, CUT EVERY LEG" in rule
+    # The mechanism -- why half-closing is punished, not merely suboptimal.
+    assert "a loss on BOTH sides" in rule
+    # The default/exception asymmetry, in both halves.
+    assert "EXIT BOTH is the default" in rule
+    assert "`exit_leg` is the exception" in rule
+    assert "independently intact" in rule
+    assert "never merely because the other leg is the one currently hurting" in rule
+
+    # The structural honesty: his legs hedge, ours do not.
+    assert "his legs are a HEDGE" in rule
+    assert "The arithmetic does not transfer, but the failure does" in rule
+
+
+def test_v4l_divergence_is_judged_on_movement_not_on_rupee_share():
+    """Corrects v4k the day after it shipped, using this book's own numbers.
+
+    The equal-lot mirror makes BankNIFTY carry the larger rupee share by
+    construction, so "the mirror is making most of the money" is the NORMAL
+    state. An agent applying v4k to a rupee split books working trades early.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE LAGGING INDEX DECIDES THE BASKET'S EXIT")
+
+    assert "JUDGE IT ON MOVEMENT, NOT ON RUPEE SHARE" in rule
+    # Both measured cases must stay: the ordinary split and the real divergence.
+    assert "+461.50 NIFTY / +1,092.00 mirror" in rule
+    assert "arithmetic, not" in rule
+    assert "0.15 premium points" in rule and "20.15" in rule
+    # The test itself, and the cost of getting it wrong.
+    assert "stopped MOVING" in rule
+    assert "books working trades early" in rule
+
+
+def test_v4l_entry_time_rule_is_a_tradeoff_not_a_preference_for_waiting():
+    """It must not collapse into "trade later, it is safer".
+
+    IH's claim is that the two move TOGETHER -- a later entry buys a slower
+    tape, not a free lunch -- and that the open is not automatically the best
+    place to be. Both halves are needed or the rule becomes a bias.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "ENTRY TIME IS A RISK DIAL")
+
+    assert "in proportion to the risk you take" in rule
+    # Neither end is presented as simply better.
+    assert "not simply a better entry" in rule
+    assert "not simply a safer one" in rule
+    # The opening window is not privileged...
+    assert "as the only place a trade exists" in rule
+    assert "a trade made right at the open will be better" in rule
+    # ...and an opening entry changes the TARGET, not just the stop.
+    assert "size the EXPECTATION as well as the" in rule
+    # Kept distinct from the rule it sits beside.
+    assert "MORNING SPEED IS NOT INFORMATION" in rule
