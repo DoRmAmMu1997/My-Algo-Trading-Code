@@ -4266,3 +4266,121 @@ and out three times in 26 minutes, its best trade lasting two.
   becoming "waiting is safer".
 - Prompt size 125,054 -> 128,303 chars. Assembled 129,594 against a 154,140
   budget: **24,546 chars of headroom.**
+
+---
+
+## Video addendum - the 21 Aug LIVE SESSION (v4m)
+
+**Source:** Intraday Hunter live session `yacw-NpZq30` (21 Aug 2026, 10:11).
+
+**Both IH and our agent lost, on the same side, for the same reason.** That
+alignment is rare and makes this the most directly comparable session in the
+series: the pre-open note said sell-side, IH bought puts across all three indices
+inside two minutes of the open, our agent shorted four times in 51 minutes, and
+neither got the move.
+
+### One precondition, named before the trade and missing all day
+
+The whole session turns on a single checkable gate. IH, mid-trade: "if momentum
+comes, we need the CLOSING PRICE breakdown - especially BankNIFTY's. If it breaks
+that, we get a good move." And then the property that makes it cheap to check:
+
+> All three indices have held it. It is not the case that it breaks in one and
+> stays in another: either the market falls in all three, or it stops. **If it
+> breaks in even ONE index it will break in all three; if it does not break in
+> even one, all three will sit and hold.**
+
+His post-mortem is the same sentence inverted: "no index broke the closing price,
+and until that level breaks no rejection could come." He also names his own error
+- "the gap-up was not large, rejection started right at the open, so we made our
+entry EARLY too."
+
+The existing `CLOSING-PRICE BREAKDOWN IS THE TRIGGER` rule already said the
+breakdown is the trigger and that sitting on the level is not breaking it, so this
+is recorded as an EXTENSION rather than a new bullet. What is new is the
+all-or-nothing property, the fact that the failure mode while it holds is CHOP
+rather than a clean loss - "the fear of a sideways market is there every day now"
+- and that a rejection at the open is a reason to WATCH the level, never a
+substitute for it breaking.
+
+### The loss limit is regime-conditional
+
+v4h says the limit is a permission to WAIT, bounded by elapsed time (v4j). Today
+adds a third bound: "when it is a momentum market we do sit, and we do let the
+loss grow a bit, because the next day gives a chance to cover it. But these days
+there is not much momentum, so there is no benefit in making the loss bigger
+here."
+
+So what buys the right to sit toward the limit is a market that still MOVES. The
+reconciliation matters more than the rule: read carelessly this becomes "cut early
+when it feels slow", which is precisely the error v4h exists to prevent. The prose
+keeps all three bounds naming an OBSERVABLE - the limit, the clock, the regime -
+and none of them licenses cutting on feel.
+
+### How our agent traded the same session
+
+**Complete session.** Basket **-12,912.00** across 68 legs, a bad day everywhere.
+SL Hunting: **-2,300.75** over 4 trades, its worst of the series and the worst
+single strategy on the board.
+
+| Time | Leg | P&L | Held |
+|---|---|---|---|
+| 09:28 | NIFTY short / BNF mirror | +419.25 / **-1,539.00** | 7 min |
+| 09:36 | NIFTY short / BNF mirror | -312.00 / -768.00 | 1m47s |
+| 10:00 | NIFTY short / BNF mirror | -240.50 / +48.00 | 1m51s |
+| 10:12 | NIFTY short / BNF mirror | +312.00 / -220.50 | 7 min |
+
+**1. Four shorts, and the leading index killed every one.** Each exit names it
+correctly - "per index hierarchy, BankNIFTY turning against the trade is
+disqualifying for the whole basket, not just the mirror leg" - and then the next
+entry is justified fresh on NIFTY patterns as though BankNIFTY had not just
+refused. The disqualifying fact was true of the SESSION, not of one position, and
+it never carried forward. That is the new rule, and this is the clearest example
+the journal has.
+
+**2. The stale hatch was used selectively, for the second session running.** At
+10:05 `cross_index` was dismissed - "'both at resistance/bias up' looks stale
+given the live rollover" - to justify an ENTRY. At 10:12, seven minutes later, the
+SAME verdict was cited as a reason to EXIT. The 20 Aug session did it at 09:18 and
+09:27. In every instance the re-rating favoured the action already chosen.
+
+v4l recorded the first occurrence with "noted so the next occurrence is the second
+data point rather than the first". It arrived the next day, so v4m legislates: the
+hatch stays open, but staleness must be judged from the verdict's age and
+anchoring, never from whether it agrees. The test the agent can actually run is
+"would I still call it stale if it AGREED with me right now?"
+
+**3. v4l's cut-every-leg rule was applied correctly and immediately.** Every one of
+the four exits closed BOTH legs, and two say why in v4l's own language - "exiting
+both legs since BankNIFTY structure confirms the same uptrend, not an idiosyncratic
+mirror-only issue". No per-leg cut was attempted. On the evidence the rule is being
+read and applied; it did not save the day, because the entries were the problem.
+
+**4. The 09:28 exit still described the trade by its healthy leg.** The reasoning
+reads "Booked the healthy NIFTY leg (+585) and closed the mirror together" while
+the mirror was **-1,539.00** and the basket about **-1,120**. The ACTION was right
+and cited the basket-exit rule; the characterisation was not. v4k already demands
+the basket number when justifying a HOLD - this was an EXIT, so no rule was broken,
+but the same habit of narrating by the favourable leg is visible and worth watching.
+
+**5. The note was followed four times and lost every time.** It said sell-side; all
+four entries were shorts citing it. It also carried an explicit warning - "EVIDENCE
+IS WEAKER ON NIFTY AND SENSEX... demand a cleaner confirmation" - which the entries
+cite as satisfied without engaging with the weakness. Across five sessions the
+note-versus-override record now points both ways with no pattern; the honest reading
+is that it is one vote, exactly as its own header says.
+
+### Knowledge changes (v4m)
+
+- `OPENING_DRIVE`: `CLOSING-PRICE BREAKDOWN IS THE TRIGGER` extended with the
+  all-or-nothing cross-index property, the sideways failure mode, and the
+  early-entry trap.
+- `RISK`: v4h's loss-limit permission extended with the regime condition; two new
+  rules - THE FACT THAT DISQUALIFIED YOUR LAST TRADE STILL HOLDS, and YOU MAY NOT
+  RE-RATE A SIGNAL TO SUIT THE DECISION YOU WANT.
+- Four drift guards: the closing-price rule must keep the binary property and the
+  early-entry trap, the regime bound must not license cutting on feel, the
+  session-fact rule must stay specific to the LEADING index, and the re-rating rule
+  must not read as closing the stale hatch.
+- Prompt size 128,303 -> 132,468 chars. Assembled 133,759 against a 154,140
+  budget: **20,381 chars of headroom.**

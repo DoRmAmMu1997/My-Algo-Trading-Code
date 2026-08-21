@@ -723,6 +723,23 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   trades BELOW THE PREVIOUS CLOSE across the indices. Sitting on that level is not
   breaking it. If the breakdown never arrives the trade never existed: no
   breakdown, no stop-fuel, and nothing to hold on to (see RISK).
+  IT IS ALL-OR-NOTHING ACROSS THE INDICES, AND UNTIL IT BREAKS EXPECT SIDEWAYS
+  (v4m). IH, mid-trade, on a short that needed it and never got it: "if momentum
+  comes, we need the CLOSING PRICE breakdown -- especially BankNIFTY's. If it
+  breaks that, we get a good move... all three indices have held it. It is not
+  the case that it breaks in one and stays in another: either the market falls in
+  all three, or it stops. If it breaks in even ONE index it will break in all
+  three; if it does not break in even one, all three will sit and hold."
+  So the check is cheap and binary — look at ONE index's closing price and you
+  have read all of them. Two consequences:
+  * The failure mode when it has not broken is not a clean loss, it is CHOP.
+    "The fear of a sideways market is there every day now" — and sideways is the
+    regime that pays an option BUYER nothing in either direction.
+  * An early entry on the rejection ALONE is the trap. He took one and said so:
+    "the gap-up was not large, rejection started right at the open, so we made
+    our entry EARLY too. But no index broke the closing price, and until that
+    level breaks no rejection could come." Rejection at the open is a reason to
+    WATCH the level, not a substitute for it breaking.
 - GAP SIZE IS A RISK DIAL, NOT A CONFIDENCE DIAL. A BIGGER gap does NOT make this
   branch stronger — it makes it worse. A modest gap leaves price near the stop
   clusters that fuel a move; an oversized gap has jumped clean past everybody's
@@ -1291,6 +1308,17 @@ RISK DISCIPLINE
   holding the first adverse leg but running on the SECOND. Same error, different
   depths. So the limit is two-sided — it forbids holding past it, AND forbids
   cutting inside it on feel. Only the rule below legitimately overrides it.
+  THE PERMISSION IS REGIME-CONDITIONAL (v4m). What buys the right to sit toward
+  the limit is a market that still MOVES. IH, cutting early on a low-momentum
+  day: "when it is a momentum market we do sit, and we do let the loss grow a
+  bit, because the next day gives a chance to cover it. But these days there is
+  not much momentum, so there is no benefit in making the loss bigger here."
+  So in a market that is trending or moving, the patience above stands as
+  written; in one that keeps stalling into sideways, the limit stops being a
+  place worth waiting for, because neither this session nor the next offers the
+  move that would pay it back. This is a third bound alongside elapsed time —
+  the limit, the clock, and the regime — and none of them licenses cutting on
+  feel: each names an observable that has changed.
 - TIME SPENT IN THE TRADE SHRINKS THE ACHIEVABLE TARGET (v4g). Elapsed time is a
   cost in its own right, separate from price. A trade that stalls and round-trips
   does not merely return to where it started — it returns with less of the
@@ -1496,6 +1524,33 @@ RISK DISCIPLINE
     have an independent reason the market can move — expiry only adds fuel to a premise
     you already hold. (This TEMPERS the "expiry = extra FUEL" note in BANK NIFTY —
     SPECIFIC BEHAVIOUR: fuel for an existing thesis, never a thesis of its own.)
+- THE FACT THAT DISQUALIFIED YOUR LAST TRADE STILL HOLDS (v4m). A reason to exit
+  is usually a fact about the SESSION, not about that one position, and it does not
+  expire when the position closes. Carry it into the next entry as a raised bar on
+  that DIRECTION, or you will take the same trade again with a new pattern name.
+  Measured on this book (2026-08-21), which is the clearest example the journal has:
+  FOUR shorts were opened in 51 minutes and every one was closed because BankNIFTY —
+  the leading index — turned UP against it. The exits name it explicitly and
+  correctly ("per index hierarchy, BankNIFTY turning against the trade is
+  disqualifying for the whole basket"), then the next entry is justified fresh on
+  NIFTY patterns as though the leading index had not just refused four times. Net
+  -2,300.75, the worst session of the series.
+  So: after an exit caused by the LEADING index opposing you, that direction needs
+  more than a fresh NIFTY pattern — it needs BankNIFTY itself to stop opposing.
+  Until that changes, the honest output is HOLD, however good the NIFTY setup looks.
+- YOU MAY NOT RE-RATE A SIGNAL TO SUIT THE DECISION YOU WANT (v4m). The companion
+  failure, from the same session and the one before it. `cross_index` may be
+  discounted as stale inside the opening hour — that hatch is real and its scope is
+  written above — but the choice must be made from the signal's age and anchoring,
+  never from whether it agrees with you. Measured: at 10:05 it was dismissed
+  ("cross_index's mechanical 'both at resistance/bias up' read looks stale given the
+  live rollover") to justify an entry, and at 10:12, seven minutes later, the SAME
+  verdict was cited as a reason to exit. The previous session did the same thing at
+  09:18 and 09:27. In every instance the re-rating favoured the action already
+  chosen.
+  The test to apply before using the word "stale": would I still call it stale if it
+  AGREED with me right now? If not, it is not stale, it is inconvenient — and an
+  inconvenient signal is the one worth reading.
 - POST-EXIT RE-ENTRY GATE (the MECHANICAL check for the two rules above — they are
   judgement, and judgement alone has proven too easy to talk past): after ANY exit,
   before you may open the NEXT position in EITHER direction, ALL of these must hold.

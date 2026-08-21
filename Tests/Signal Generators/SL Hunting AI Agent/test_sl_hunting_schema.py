@@ -1424,3 +1424,83 @@ def test_v4l_entry_time_rule_is_a_tradeoff_not_a_preference_for_waiting():
     assert "size the EXPECTATION as well as the" in rule
     # Kept distinct from the rule it sits beside.
     assert "MORNING SPEED IS NOT INFORMATION" in rule
+
+
+def test_v4m_closing_price_rule_gains_the_all_or_nothing_cross_index_property():
+    """v4m (21 Aug live session): IH lost on the same side our agent did.
+
+    The existing rule already said the breakdown is the trigger. What today
+    adds is that it is BINARY ACROSS INDICES -- so the check is cheap -- and
+    that the failure mode while it holds is CHOP rather than a clean loss. The
+    early-entry trap is asserted too, because it is the error IH made and the
+    one an opening rejection most invites.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "CLOSING-PRICE BREAKDOWN IS THE TRIGGER")
+
+    assert "ALL-OR-NOTHING ACROSS THE INDICES" in rule
+    assert "it will break in all three" in rule
+    assert "all three will sit and hold" in rule
+    # The regime it leaves you in, which is the part that costs an option buyer.
+    assert "it is CHOP" in rule
+    # And the trap: a rejection at the open is not the breakdown.
+    assert "not a substitute for it breaking" in rule
+
+
+def test_v4m_loss_limit_permission_is_regime_conditional_without_licensing_feel():
+    """The third bound on v4h, alongside the clock.
+
+    Read carelessly this becomes "cut early when it feels slow", which is the
+    exact error v4h exists to prevent. The prose has to keep naming an
+    OBSERVABLE, so the assertion checks the reconciliation survives.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE LOSS LIMIT IS A PERMISSION TO WAIT")
+
+    assert "THE PERMISSION IS REGIME-CONDITIONAL" in rule
+    assert "a market that still MOVES" in rule
+    # Both regimes must stay, or it collapses into a bias one way.
+    assert "the patience above stands as" in rule
+    assert "stalling into sideways" in rule
+    # It must not license cutting on feel -- the whole point of v4h.
+    assert "none of them licenses cutting on" in rule
+    assert "names an observable that has changed" in rule
+
+
+def test_v4m_disqualifying_fact_carries_into_the_next_entry():
+    """Four shorts, each killed by the leading index, each re-entered fresh.
+
+    The rule must stay about the LEADING index specifically -- a generic "do
+    not re-enter" duplicates the post-exit gate below it -- and must keep the
+    measured evidence, which is what makes it more than an opinion.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE FACT THAT DISQUALIFIED YOUR LAST TRADE")
+
+    assert "FOUR shorts" in rule and "51 minutes" in rule
+    assert "-2,300.75" in rule
+    # The specific bar it raises, and on what.
+    assert "it needs BankNIFTY itself to stop opposing" in rule
+    assert "the honest output is HOLD" in rule
+
+
+def test_v4m_stale_hatch_may_not_be_used_selectively():
+    """The companion failure: re-rating a signal to fit the chosen action.
+
+    This must NOT read as "the stale hatch is closed" -- v3 scoped it
+    deliberately and it is still valid inside the opening hour. What is banned
+    is choosing staleness by whether the verdict agrees.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "YOU MAY NOT RE-RATE A SIGNAL")
+
+    # The hatch survives...
+    assert "that hatch is real" in rule
+    # ...but the basis for using it is fixed.
+    assert "never from whether it agrees with you" in rule
+    # Both measured occurrences, so a later edit cannot reduce it to one anecdote.
+    assert "at 10:05" in rule and "at 10:12" in rule
+    assert "09:18 and 09:27" in rule
+    # The check the agent can actually run.
+    assert "would I still call it stale if it" in rule
+    assert "it is inconvenient" in rule
