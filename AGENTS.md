@@ -41,6 +41,8 @@ One process, cooperating threads:
   freezes completed-bar context behind four frozen no-argument MCP tools; Codex judges regime,
   setup, and premise exits, while the host owns deterministic entry/risk gates and execution. It is
   disabled by default, live-disabled by default, and uses the normal global-plus-strategy double gate.
+  Accepted SIDEWAYS setups sell naked current-expiry ATM premium (bullish PE, bearish CE); TRENDING
+  setups retain the existing option buys and expiry. Spot stops trigger exits but cannot guarantee fills.
   Ordinary CPR, CPR Algo 3, Regime Adaptive, and CPR AI may coexist with independent positions and P&L.
   Another **optional, opt-in** worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
   `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar

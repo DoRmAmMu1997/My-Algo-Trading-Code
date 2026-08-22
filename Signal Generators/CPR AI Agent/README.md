@@ -62,11 +62,16 @@ The agent may dynamically label a completed bar `SIDEWAYS`, `TRENDING`, or
 host then enforces the selected framework:
 
 - Sideways entries need a Stoch RSI K/D cross in the 20 or 80 zone and a
-  confirmed swing for the protective stop.
+  confirmed swing for the protective stop. The host expresses an accepted
+  bullish setup by selling the current-expiry ATM PE, and an accepted bearish
+  setup by selling the current-expiry ATM CE. These are naked short-premium
+  positions; Codex never chooses the right, side, strike, expiry, or quantity.
 - Trend continuation needs the directional three-bar VWAP sequence. Trend
   reversal needs a completed reclaim/loss of VWAP. Both require at least 0.40
   of the entry candle body on the trade side, directional RSI, EMA order and
-  slopes, and the completed candle extreme as stop.
+  slopes, and the completed candle extreme as stop. TRENDING entries remain the
+  existing option buys: bullish buys ATM CE and bearish buys ATM PE on the
+  worker's existing next-next expiry rule.
 - Open positions can receive a model-requested premise exit, while mechanical
   hard stops, SRSI reversals, max loss, stale-data handling, and square-off do
   not wait for model permission.
@@ -75,7 +80,8 @@ host then enforces the selected framework:
   Buffered R2 for longs or S2 for shorts is the final booking level.
 - Only a trending long may request one equal-size R1 add, after the host's
   bearish-touch/bullish-reclaim pattern. The cap is fixed at one and cannot be
-  raised by configuration. Shorts and sideways-origin positions cannot add.
+  raised by configuration. Shorts, sold-premium legs, and sideways-origin
+  positions cannot add.
 
 ## Session cadence
 
@@ -107,6 +113,12 @@ standard double gate: both global `LIVE_TRADING_ENABLED=true` and strategy-level
 `CPR_AI_LIVE_TRADING=true`, after normal startup exposure audit and configuration
 validation. CPR, CPR Algo 3, and CPR AI do not need to be disabled for one
 another; they may coexist as separate ledgers.
+
+The same double gate authorizes SIDEWAYS naked sells; there is no third short-
+premium switch. The spot stop is a strict host trigger, not a guaranteed fill:
+gaps, illiquidity, broker latency, or a rejected buy-to-close can exceed the
+planned loss. Max-loss, stale-feed liquidation, reconciliation, and square-off
+remain active, but they do not turn a naked option into defined-risk exposure.
 
 The one R1 add reuses the primary leg's exact option contract and initial filled
 quantity. A live add has a separate execution-ledger leg. Once a live add is
