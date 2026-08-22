@@ -1975,6 +1975,12 @@ class PaperPosition:
     flat, the object's `active` flag is False. When in a trade, the object
     holds the option leg's identifiers, the entry fill, and any extra
     strategy-specific bookkeeping (e.g. trailing flags for Profit Shooter).
+
+    ``direction`` describes the strategy's view of NIFTY spot; it is not an
+    order side. Most workers express LONG/SHORT by buying CE/PE, but CPR AI may
+    express a sideways LONG by selling PE or a sideways SHORT by selling CE.
+    ``option_opening_side`` records that separate execution fact so exit and
+    P&L code never has to infer it from direction or option right.
     """
 
     active: bool = False
@@ -7025,7 +7031,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
 
     @staticmethod
     def _option_close_side(opening_side: str) -> str:
-        """Return the only order side that reduces the tracked option leg."""
+        """Return the order that reduces, rather than reverses, one option leg.
+
+        A bought option is closed by SELL; a sold option is covered by BUY.
+        Economic direction cannot answer this question: both a bullish short PE
+        and a bearish short CE must BUY to close.
+        """
 
         return "BUY" if str(opening_side).upper() == "SELL" else "SELL"
 
@@ -7036,7 +7047,14 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         current_price: float,
         quantity: int,
     ) -> float:
-        """Mark one option leg using the sign implied by its opening order."""
+        """Calculate premium P&L from the position's actual opening side.
+
+        BUY leg: ``(current - entry) * quantity``.
+        SELL leg: ``(entry - current) * quantity``.
+
+        Keeping this formula in one helper prevents max-loss MTM and realized
+        exit P&L from accidentally assigning opposite signs to the same trade.
+        """
 
         change = float(current_price) - float(entry_price)
         signed_change = -change if str(opening_side).upper() == "SELL" else change
@@ -7300,6 +7318,11 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         supplies SELL, the opposite option-contract direction, and current expiry
         while keeping its LONG/SHORT spot direction unchanged.
 
+        ``option_contract_direction`` is used only by the resolver's established
+        LONG->CE / SHORT->PE mapping. ``use_current_expiry`` selects the first
+        listed expiry on or after today. Neither value changes stop, target,
+        sizing, lifecycle, or the economic direction stored in the position.
+
         Steps:
         1. Read the latest NIFTY spot from the central LTP cache.
         2. Resolve the ATM CE/PE for the target expiry.
@@ -7308,6 +7331,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         5. Persist all entry fields (including any strategy-specific flags
            like target/trailing for Profit Shooter) in `self.pos`.
         """
+        # Validate before resolving, subscribing, or routing. Guessing a side at
+        # this boundary could turn an intended close into new naked exposure.
         opening_side = str(option_opening_side).upper().strip()
         if opening_side not in {"BUY", "SELL"}:
             self.log.error(
@@ -7316,6 +7341,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 option_opening_side,
             )
             return False
+        # Contract direction chooses CE versus PE only. The original direction
+        # continues to own every spot-based risk comparison and audit field.
         contract_direction = str(option_contract_direction or direction).upper().strip()
         if not self._market_data_entries_allowed():
             return False
@@ -10128,7 +10155,9 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         For partial or unknown broker results, ``risk_quantity`` assumes the
         ambiguous remainder may be live.  Omitting it could hide losses from the
-        aggregate max-loss kill switch.
+        aggregate max-loss kill switch. Both primary and add use the persisted
+        opening side: rising premium hurts a SIDEWAYS sell, while it helps the
+        unchanged TRENDING buy.
         """
 
         if not self.pos.active:
@@ -10253,6 +10282,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         atomic; live marks the opportunity used before submission because a
         PARTIAL or UNKNOWN response may already represent real exposure and must
         never be retried or converted into an invented paper fill.
+
+        The early guard also requires a BUY opening side and a TRENDING premise.
+        Host policy already forbids SIDEWAYS adds; repeating the invariant here
+        prevents a malformed direct caller from increasing naked short exposure.
         """
 
         state = self._cpr_state
@@ -10434,7 +10467,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         """Close primary and add-on legs, retaining state until both are flat.
 
         Paper legs need no broker call. Every live ledger leg is closed through
-        the shared execution path using its conservative risk quantity. Local
+        the shared execution path using its conservative risk quantity. BUY
+        entries close with SELL; SIDEWAYS SELL entries close with BUY. Local
         position/state, subscriptions, and realized P&L are cleared only after
         *both* live ledgers report broker-confirmed flat; otherwise exits remain
         retryable and reconciliation retains the possible exposure.
@@ -17533,7 +17567,10 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
 
     Raises if the record is missing anything the position cannot function
     without -- the caller treats that as "start flat" rather than resuming a
-    half-populated trade whose stop or size would be wrong.
+    half-populated trade whose stop or size would be wrong. Records created
+    before side-aware execution did not contain ``option_opening_side`` and are
+    therefore interpreted as BUY, the only single-leg behavior that existed at
+    that time. Live exposure is still never restored from this file.
     """
     expiry_raw = record.get("option_expiry")
     expiry = date.fromisoformat(str(expiry_raw)) if expiry_raw else None
@@ -17570,6 +17607,9 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         or quantity % option_lot_size != 0
         or option_opening_side not in {"BUY", "SELL"}
     )
+    # Direction and option right form a different valid pair for bought versus
+    # sold premium. This matrix rejects a corrupted record instead of guessing
+    # whether BULLISH+PE means a short put or a mismatched bought contract.
     direction_contract_mismatch = (
         (
             option_opening_side == "BUY"

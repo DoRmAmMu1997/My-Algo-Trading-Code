@@ -54,6 +54,8 @@ class _FakePosition:
     option_strike: float = 24550.0
     option_expiry: date | None = date(2026, 8, 11)
     option_lot_size: int = 75
+    # The serializer is shape-driven, so this sentinel proves newly added public
+    # position fields survive without coupling session_state.py to PaperPosition.
     option_opening_side: str = "SELL"
     live_leg: object | None = None
 

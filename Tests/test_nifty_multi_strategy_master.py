@@ -2365,8 +2365,9 @@ class TestBasePaperStrategyWorker(unittest.TestCase):
 class TestAtmSingleLegStrategyWorker(unittest.TestCase):
     """
     Tests `enter_position` -> `_get_open_position_pnl` -> `exit_position`
-    end-to-end for an ATM single-leg paper trade. The contract resolver is
-    mocked to return a canned option contract so no CSV is needed.
+    end-to-end for ATM single-leg BUY and SELL trades. The contract resolver is
+    mocked to return a canned option contract so no CSV is needed; live tests
+    use a recording fake and never call a broker.
     """
 
     def setUp(self):
@@ -10030,7 +10031,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         Role ``N`` represents the primary leg and role ``A`` the one-time add.
         ``filled`` models opening fills, ``confirmed`` models remaining broker
         exposure after a close, and ``indeterminate`` exercises conservative
-        reconciliation/MTM behavior.
+        reconciliation/MTM behavior. ``opening_side`` defaults to the historical
+        BUY path; SIDEWAYS tests override it to prove BUY-to-close semantics.
         """
 
         target = 50
@@ -11424,7 +11426,12 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         )
 
     def test_entry_setup_maps_only_sideways_to_current_expiry_short_premium(self):
-        """Regime changes execution terms without changing economic direction."""
+        """Regime changes execution terms without changing economic direction.
+
+        The table covers both directions in each regime. An empty keyword map is
+        intentional for TRENDING: it proves those calls still use every legacy
+        BUY/right/expiry default rather than merely producing a similar contract.
+        """
 
         cases = (
             (
@@ -11639,6 +11646,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             initial_filled_quantity=50,
         )
         worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
+        # Broker-confirmed flat requires a terminal CLOSE attempt in addition to
+        # zero remaining quantity; an order acknowledgement alone is not proof.
         close_attempt = OrderAttempt(
             intent=master_file.OrderIntent.CLOSE,
             sequence=2,
