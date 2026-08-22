@@ -103,7 +103,7 @@ in a single overloaded method, every worker is explicit about which
 expiry rule it uses:
 
     if strategy belongs to the "Hedged Puts" family, is the Long Strangle,
-    or is SL Hunting's NIFTY leg (SLH-008)
+    is SL Hunting's NIFTY leg (SLH-008), or is a CPR AI SIDEWAYS entry
         -> use OptionsContractResolver.get_current_week_expiry()
            (the FIRST expiry on or after today)
     else
@@ -114,7 +114,7 @@ ATM workers select this via the `_entry_expiry()` hook, which returns None
 (= the resolver's next-next default) unless a subclass overrides it.
 
 (CPR Algo 3 is "else" -- it TRADES the next-next ATM -- even though its read-only
-observation legs use the current-week expiry.)
+observation legs use the current-week expiry. CPR AI TRENDING also remains "else".)
 
 One deliberate exception (BNF-001): the SL Hunting BankNIFTY MIRROR leg uses
 OptionsContractResolver.get_nearest_monthly_expiry() -- the NEAREST BankNIFTY
@@ -2008,6 +2008,9 @@ class PaperPosition:
     option_strike: float = 0.0
     option_expiry: date | None = None
     option_lot_size: int = 0
+    # BUY is the historical ATM-family default. CPR AI SIDEWAYS trades may use
+    # SELL, which makes both premium P&L and the eventual close side invert.
+    option_opening_side: str = "BUY"
     # Immutable quantity snapshot for the real broker leg. ``None`` means this
     # is paper (including an explicit zero-fill fallback). Exit attempts replace
     # this snapshot with the ledger's newest value; the ledger itself remains the
@@ -6999,11 +7002,11 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
     Concrete intermediate base for the eight ATM strategies.
 
     What this layer adds on top of `BasePaperStrategyWorker`:
-    - `enter_position(direction, ...)` that resolves the ATM CE/PE of the
-      next-next expiry and BUYS one paper leg.
-    - `exit_position(reason)` that SELLS the same leg back and realizes PnL.
-    - `_get_open_position_pnl()` that returns `(live - entry) * qty` for
-      the open BUY leg.
+    - `enter_position(direction, ...)` that normally resolves the ATM CE/PE of
+      the next-next expiry and BUYS one paper leg. Explicit keyword-only hooks
+      let the CPR AI worker choose a SELL leg without changing existing callers.
+    - `exit_position(reason)` that submits the opposite side and realizes PnL.
+    - `_get_open_position_pnl()` that applies BUY- or SELL-side premium math.
 
     Why this lives here and not on the base:
     - The two hedged workers below need a different position shape and
@@ -7020,12 +7023,32 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
     #: 0 disables it; see `_liquidity_gate_allows_entry`.
     min_liquidity_score: float = 0.0
 
+    @staticmethod
+    def _option_close_side(opening_side: str) -> str:
+        """Return the only order side that reduces the tracked option leg."""
+
+        return "BUY" if str(opening_side).upper() == "SELL" else "SELL"
+
+    @staticmethod
+    def _option_leg_pnl(
+        opening_side: str,
+        entry_price: float,
+        current_price: float,
+        quantity: int,
+    ) -> float:
+        """Mark one option leg using the sign implied by its opening order."""
+
+        change = float(current_price) - float(entry_price)
+        signed_change = -change if str(opening_side).upper() == "SELL" else change
+        return signed_change * int(quantity)
+
     def _get_open_position_pnl(self) -> float:
         """
-        MTM PnL for the open BUY leg.
+        MTM PnL for the open BUY or SELL option leg.
 
-        Every ATM paper trade is on the BUY side (CE for LONG, PE for SHORT)
-        so PnL is always (live - entry) * qty regardless of strategy direction.
+        Strategy direction remains an underlying-price idea. The separately
+        persisted opening side decides whether rising option premium is profit
+        (BUY) or loss (SELL).
         """
         if not self.pos.active:
             return 0.0
@@ -7034,7 +7057,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             self.pos.option_security_id,
             fallback=self.pos.entry_trade_price,
         )
-        return (live_price - self.pos.entry_trade_price) * self.pos.quantity
+        return self._option_leg_pnl(
+            self.pos.option_opening_side,
+            self.pos.entry_trade_price,
+            live_price,
+            self.pos.quantity,
+        )
 
     def _compute_entry_sizing(
         self,
@@ -7246,7 +7274,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
 
         SL Hunting overrides it (SLH-008): it holds positions for minutes, so a
         next-next contract is the wrong instrument, and Kotak's RMS refuses MIS
-        orders on it outright.
+        orders on it outright. CPR AI keeps this default for TRENDING entries and
+        uses the explicit current-expiry entry keyword for SIDEWAYS only.
         """
         return None
 
@@ -7258,10 +7287,18 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         target_underlying: float = 0.0,
         trailing_active: bool = False,
         pending_trailing_exit: bool = False,
+        *,
+        option_opening_side: str = "BUY",
+        option_contract_direction: str | None = None,
+        use_current_expiry: bool = False,
     ) -> bool:
         """
-        Open a new paper position on the ATM option of this worker's entry expiry
-        (`_entry_expiry`; the next-next expiry unless a subclass overrides it).
+        Open a new paper position on an ATM option selected by explicit terms.
+
+        Existing callers omit the keyword-only terms and retain the historical
+        BUY, economic-direction option right, and worker expiry. CPR AI SIDEWAYS
+        supplies SELL, the opposite option-contract direction, and current expiry
+        while keeping its LONG/SHORT spot direction unchanged.
 
         Steps:
         1. Read the latest NIFTY spot from the central LTP cache.
@@ -7271,6 +7308,15 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         5. Persist all entry fields (including any strategy-specific flags
            like target/trailing for Profit Shooter) in `self.pos`.
         """
+        opening_side = str(option_opening_side).upper().strip()
+        if opening_side not in {"BUY", "SELL"}:
+            self.log.error(
+                "Skipping %s entry because option opening side %r is invalid.",
+                direction,
+                option_opening_side,
+            )
+            return False
+        contract_direction = str(option_contract_direction or direction).upper().strip()
         if not self._market_data_entries_allowed():
             return False
         spot = self._get_underlying_spot(fallback=_safe_float(entry_underlying, 0.0))
@@ -7279,7 +7325,16 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             return False
 
         try:
-            contract = self.contract_resolver.get_atm_option(spot, direction, self._entry_expiry())
+            expiry = (
+                self.contract_resolver.get_current_week_expiry()
+                if use_current_expiry
+                else self._entry_expiry()
+            )
+            contract = self.contract_resolver.get_atm_option(
+                spot,
+                contract_direction,
+                expiry,
+            )
         except Exception as exc:
             self.log.warning("Skipping %s entry because ATM option resolution failed: %s", direction, exc)
             return False
@@ -7396,7 +7451,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
 
         lots_for_entry = sizing.lots
         quantity = sizing.quantity
-        entry_side = "BUY"  # Both LONG (CE) and SHORT (PE) open as BUY legs.
+        entry_side = opening_side
         order_id = self._next_paper_order_id(entry_side)
 
         # Only an explicit zero-fill rejection is safe to mirror in paper.  A
@@ -7462,6 +7517,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             option_strike=option_strike,
             option_expiry=expiry_date,
             option_lot_size=lot_size,
+            option_opening_side=entry_side,
         )
 
         expiry_txt = expiry_date.isoformat() if expiry_date else "NA"
@@ -7514,7 +7570,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
 
         Steps:
         1. Read the latest cached option LTP (fallback to direct fetch).
-        2. PnL = (exit - entry) * qty (always BUY side here).
+        2. Apply BUY or SELL premium PnL from the persisted opening side.
         3. Update realized PnL.
         4. Log the exit and unsubscribe the leg from the fetcher.
         5. Run any strategy-specific post-exit hook.
@@ -7524,7 +7580,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             return
 
         closed_position = self.pos
-        exit_side = "SELL"
+        exit_side = self._option_close_side(closed_position.option_opening_side)
         order_id = self._next_paper_order_id(exit_side)
         exit_trade_price, exit_mark_is_fresh = self._get_dealable_option_ltp(
             closed_position.option_exchange_segment,
@@ -7535,11 +7591,9 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             exit_mark_is_fresh = False
 
         # Real execution -- but ONLY when this position actually opened a real leg
-        # at the broker. A live entry that fell back to paper (rejected order or a
-        # symbol-master miss) recorded no live leg, so a SELL now would be a naked
-        # short of an option we never bought. In that case there is nothing to close
-        # at the broker: skip the order and treat the exit as paper so we flatten
-        # the books normally, exactly like paper mode. Mirrors
+        # at the broker. A live entry that fell back to paper recorded no live leg,
+        # so submitting either nominal close side could create fresh broker exposure.
+        # In that case there is nothing to close: flatten only the paper books. Mirrors
         # the HedgedPaperPosition.live_legs_open guard (PR #42 / HEDGE-001).
         had_live_leg = closed_position.live_leg is not None
         exit_leg = {
@@ -7606,7 +7660,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         )
         closed_position.exit_price_quality = exit_price_quality
 
-        pnl = (exit_trade_price - closed_position.entry_trade_price) * closed_position.quantity
+        pnl = self._option_leg_pnl(
+            closed_position.option_opening_side,
+            closed_position.entry_trade_price,
+            exit_trade_price,
+            closed_position.quantity,
+        )
 
         pnl_colored = self._color_pnl_text(pnl)
         self.completed_trades += 1
@@ -10079,7 +10138,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             self.pos.option_security_id,
             fallback=self.pos.entry_trade_price,
         )
-        primary = (live - self.pos.entry_trade_price) * self.pos.quantity
+        primary = self._option_leg_pnl(
+            self.pos.option_opening_side,
+            self.pos.entry_trade_price,
+            live,
+            self.pos.quantity,
+        )
         state = self._cpr_state
         if state is None:
             return primary
@@ -10093,7 +10157,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         if add_quantity <= 0:
             return primary
         add_entry = self._add_entry_accounting_price(state)
-        return primary + (live - add_entry) * add_quantity
+        return primary + self._option_leg_pnl(
+            self.pos.option_opening_side,
+            add_entry,
+            live,
+            add_quantity,
+        )
 
     def _add_entry_accounting_price(self, state: CPRAITradeState) -> float:
         """Return a conservative nonzero add basis for MTM and realized P&L.
@@ -10192,6 +10261,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             or not self.pos.active
             or state.scale_in_used
             or self._at_or_after_entry_cutoff()
+            or self.pos.option_opening_side != "BUY"
+            or not state.premise.startswith("TRENDING_")
         ):
             return False
         quantity = int(state.initial_filled_quantity)
@@ -10413,7 +10484,11 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         ):
             if not is_live:
                 continue
-            self._place_real_leg("SELL", leg, opens_exposure=False)
+            self._place_real_leg(
+                self._option_close_side(closed.option_opening_side),
+                leg,
+                opens_exposure=False,
+            )
 
         primary_state = primary_leg.get("live_leg")
         add_state = add_leg.get("live_leg")
@@ -10441,9 +10516,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             mark_is_fresh=mark_is_fresh,
             phase="EXIT",
         )
-        primary_pnl = (
-            primary_exit - closed.entry_trade_price
-        ) * state.initial_filled_quantity
+        primary_pnl = self._option_leg_pnl(
+            closed.option_opening_side,
+            closed.entry_trade_price,
+            primary_exit,
+            state.initial_filled_quantity,
+        )
         add_quantity = state.add_quantity
         if isinstance(state.add_live_leg, LiveLegState):
             add_quantity = int(state.add_live_leg.filled_quantity)
@@ -10458,7 +10536,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 mark_is_fresh=mark_is_fresh,
                 phase="EXIT",
             )
-            add_pnl = (add_exit - add_entry) * add_quantity
+            add_pnl = self._option_leg_pnl(
+                closed.option_opening_side,
+                add_entry,
+                add_exit,
+                add_quantity,
+            )
         pnl = primary_pnl + add_pnl
         self.realized_pnl += pnl
         self.completed_trades += 1
@@ -10481,7 +10564,9 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 "legs": [
                     {
                         "symbol": closed.symbol,
-                        "side": "SELL",
+                        "side": self._option_close_side(
+                            closed.option_opening_side
+                        ),
                         "right": closed.option_right,
                         "strike": closed.option_strike,
                         "entry_price": closed.entry_trade_price,
@@ -10490,7 +10575,9 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     },
                     {
                         "symbol": closed.symbol,
-                        "side": "SELL",
+                        "side": self._option_close_side(
+                            closed.option_opening_side
+                        ),
                         "right": closed.option_right,
                         "strike": closed.option_strike,
                         "entry_price": add_entry,
@@ -10770,12 +10857,29 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             )
             return
         direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
-        submitted = self.enter_position(
-            direction,
-            float(outcome.entry_price),
-            float(outcome.stop_price),
-            float(outcome.final_target_price),
-        )
+        if str(outcome.proposal.setup) == "SIDEWAYS_SRSI":
+            # Economic direction stays LONG/SHORT for every spot stop, target,
+            # trail, and premise check. Only the host-owned option expression
+            # changes: bullish sells PE, bearish sells CE, both on current expiry.
+            submitted = self.enter_position(
+                direction,
+                float(outcome.entry_price),
+                float(outcome.stop_price),
+                float(outcome.final_target_price),
+                option_opening_side="SELL",
+                option_contract_direction=(
+                    "SHORT" if direction == "LONG" else "LONG"
+                ),
+                use_current_expiry=True,
+            )
+        else:
+            # TRENDING keeps the historical BUY CE/PE and worker expiry path.
+            submitted = self.enter_position(
+                direction,
+                float(outcome.entry_price),
+                float(outcome.stop_price),
+                float(outcome.final_target_price),
+            )
         if submitted:
             self._initialize_trade_state(outcome, frozen_context)
         entry_mode = self._entry_execution_mode(bool(submitted))
@@ -17445,6 +17549,9 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
     option_right = str(record.get("option_right", "")).strip().upper()
     option_strike = float(record.get("option_strike", 0.0) or 0.0)
     option_lot_size = int(record.get("option_lot_size", 0) or 0)
+    option_opening_side = str(
+        record.get("option_opening_side", "BUY") or "BUY"
+    ).strip().upper()
 
     missing_or_invalid = (
         direction not in {"BULLISH", "BEARISH"}
@@ -17461,10 +17568,23 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         or expiry is None
         or option_lot_size <= 0
         or quantity % option_lot_size != 0
+        or option_opening_side not in {"BUY", "SELL"}
     )
     direction_contract_mismatch = (
-        (direction == "BULLISH" and option_right != "CE")
-        or (direction == "BEARISH" and option_right != "PE")
+        (
+            option_opening_side == "BUY"
+            and (
+                (direction == "BULLISH" and option_right != "CE")
+                or (direction == "BEARISH" and option_right != "PE")
+            )
+        )
+        or (
+            option_opening_side == "SELL"
+            and (
+                (direction == "BULLISH" and option_right != "PE")
+                or (direction == "BEARISH" and option_right != "CE")
+            )
+        )
     )
     invalid_geometry = (
         direction == "BULLISH"
@@ -17481,7 +17601,7 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
             f"stop={stop_underlying}, target={target_underlying}, "
             f"security_id={security_id}, segment={exchange_segment!r}, "
             f"right={option_right!r}, strike={option_strike}, expiry={expiry}, "
-            f"lot_size={option_lot_size})"
+            f"lot_size={option_lot_size}, opening_side={option_opening_side!r})"
         )
     return PaperPosition(
         active=True,
@@ -17504,6 +17624,7 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         option_strike=option_strike,
         option_expiry=expiry,
         option_lot_size=option_lot_size,
+        option_opening_side=option_opening_side,
         # Never restored: broker exposure is not this file's to assert, and
         # resume is paper-only anyway (see the module docstring).
         live_leg=None,

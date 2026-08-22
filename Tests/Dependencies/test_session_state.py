@@ -54,6 +54,7 @@ class _FakePosition:
     option_strike: float = 24550.0
     option_expiry: date | None = date(2026, 8, 11)
     option_lot_size: int = 75
+    option_opening_side: str = "SELL"
     live_leg: object | None = None
 
 
@@ -86,6 +87,7 @@ def test_serialize_position_keeps_the_entry_price_and_the_mark():
     assert record["stop_underlying"] == 24510.0
     assert record["target_underlying"] == 24640.0
     assert record["quantity"] == 75
+    assert record["option_opening_side"] == "SELL"
     assert record["position_type"] == "_FakePosition"
 
 
