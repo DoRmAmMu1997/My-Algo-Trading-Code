@@ -2365,8 +2365,9 @@ class TestBasePaperStrategyWorker(unittest.TestCase):
 class TestAtmSingleLegStrategyWorker(unittest.TestCase):
     """
     Tests `enter_position` -> `_get_open_position_pnl` -> `exit_position`
-    end-to-end for an ATM single-leg paper trade. The contract resolver is
-    mocked to return a canned option contract so no CSV is needed.
+    end-to-end for ATM single-leg BUY and SELL trades. The contract resolver is
+    mocked to return a canned option contract so no CSV is needed; live tests
+    use a recording fake and never call a broker.
     """
 
     def setUp(self):
@@ -2422,6 +2423,124 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
         # Subscription was registered with the fetcher.
         subs = self.store.snapshot_option_subscriptions()
         self.assertTrue(any(s.security_id == 49081 for s in subs))
+
+    def test_enter_position_supports_explicit_sell_open_on_current_expiry(self):
+        """The shared path can sell a PE while retaining bullish spot direction."""
+
+        parameters = inspect.signature(self.worker.enter_position).parameters
+        self.assertIn("option_opening_side", parameters)
+        self.assertIn("option_contract_direction", parameters)
+        self.assertIn("use_current_expiry", parameters)
+        current_expiry = date.today() + timedelta(days=2)
+        self.worker.contract_resolver.get_current_week_expiry.return_value = current_expiry
+        self.worker.contract_resolver.get_atm_option.return_value.update(
+            {
+                "trading_symbol": "NIFTY-22500-PE",
+                "custom_symbol": "NIFTY 22500 PE",
+                "option_type": "PE",
+                "expiry_date": current_expiry,
+                "days_to_expiry": 2,
+            }
+        )
+        self.worker.publish_trade_event = MagicMock()
+
+        with patch.object(
+            self.worker,
+            "_place_real_leg",
+            wraps=self.worker._place_real_leg,
+        ) as route_order:
+            result = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+                target_underlying=22700.0,
+                option_opening_side="SELL",
+                option_contract_direction="SHORT",
+                use_current_expiry=True,
+            )
+
+        self.assertTrue(result)
+        self.worker.contract_resolver.get_current_week_expiry.assert_called_once_with()
+        self.worker.contract_resolver.get_atm_option.assert_called_once_with(
+            22500.0,
+            "SHORT",
+            current_expiry,
+        )
+        route_order.assert_called_once()
+        self.assertEqual(route_order.call_args.args[0], "SELL")
+        self.assertTrue(route_order.call_args.kwargs["opens_exposure"])
+        self.assertEqual(self.worker.pos.direction, "LONG")
+        self.assertEqual(self.worker.pos.option_right, "PE")
+        self.assertEqual(self.worker.pos.option_opening_side, "SELL")
+        entry_event = self.worker.publish_trade_event.call_args.args[0]
+        self.assertEqual(entry_event["legs"][0]["side"], "SELL")
+
+    def test_sell_open_premium_pnl_and_paper_exit_are_side_aware(self):
+        """A cheaper short option is profit and its paper close is a BUY."""
+
+        self.assertIn(
+            "option_opening_side",
+            master_file.PaperPosition.__dataclass_fields__,
+        )
+        current_expiry = date.today() + timedelta(days=2)
+        self.worker.contract_resolver.get_current_week_expiry.return_value = current_expiry
+        self.worker.contract_resolver.get_atm_option.return_value.update(
+            {
+                "trading_symbol": "NIFTY-22500-PE",
+                "option_type": "PE",
+                "expiry_date": current_expiry,
+            }
+        )
+        self.worker.publish_trade_event = MagicMock()
+        self.assertTrue(
+            self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                stop_underlying=22400.0,
+                target_underlying=22700.0,
+                option_opening_side="SELL",
+                option_contract_direction="SHORT",
+                use_current_expiry=True,
+            )
+        )
+        quantity = self.worker.pos.quantity
+        self.store.update_ltp_map(
+            {(master_file.OPTION_EXCHANGE_SEGMENT, 49081): 80.0}
+        )
+
+        self.assertAlmostEqual(
+            self.worker._get_open_position_pnl(),
+            (100.0 - 80.0) * quantity,
+        )
+        self.worker.publish_trade_event.reset_mock()
+        self.worker.exit_position("TEST_SHORT_EXIT")
+
+        self.assertFalse(self.worker.pos.active)
+        self.assertAlmostEqual(
+            self.worker.realized_pnl,
+            (100.0 - 80.0) * quantity,
+        )
+        exit_event = self.worker.publish_trade_event.call_args.args[0]
+        self.assertEqual(exit_event["legs"][0]["side"], "BUY")
+
+    def test_invalid_option_opening_side_fails_before_subscription_or_order(self):
+        """An unknown side cannot guess whether entry increases long or short risk."""
+
+        self.assertIn(
+            "option_opening_side",
+            inspect.signature(self.worker.enter_position).parameters,
+        )
+        with patch.object(self.worker, "_place_real_leg") as route_order:
+            result = self.worker.enter_position(
+                direction="LONG",
+                entry_underlying=22500.0,
+                option_opening_side="HOLD",
+            )
+
+        self.assertFalse(result)
+        self.assertFalse(self.worker.pos.active)
+        self.assertFalse(self.store.snapshot_option_subscriptions())
+        route_order.assert_not_called()
 
     def test_spread_gate_blocks_a_real_entry_and_withdraws_its_subscription(self):
         """End-to-end: a wide book must stop `enter_position` AND leave no trace.
@@ -2495,6 +2614,72 @@ class TestAtmSingleLegStrategyWorker(unittest.TestCase):
             self.worker.exit_position("TEST")
 
         self.assertAlmostEqual(self.worker.realized_pnl, -10.0 * quantity)
+        self.assertFalse(self.worker.pos.active)
+
+    def test_live_sell_entry_registers_sell_and_exit_buys_to_close(self):
+        """The ledger and broker calls preserve a naked short's opening side."""
+
+        self.worker.live_trading = True
+        current_expiry = date.today() + timedelta(days=2)
+        self.worker.contract_resolver.get_current_week_expiry.return_value = current_expiry
+        self.worker.contract_resolver.get_atm_option.return_value.update(
+            {
+                "trading_symbol": "NIFTY-22500-PE",
+                "option_type": "PE",
+                "expiry_date": current_expiry,
+            }
+        )
+        client = _FakeShoonya(fill_prices=[10.0, 8.0])
+        with patch.object(master_file, "execution_client", client):
+            self.assertTrue(
+                self.worker.enter_position(
+                    direction="LONG",
+                    entry_underlying=22500.0,
+                    stop_underlying=22400.0,
+                    target_underlying=22700.0,
+                    option_opening_side="SELL",
+                    option_contract_direction="SHORT",
+                    use_current_expiry=True,
+                )
+            )
+            self.assertEqual(self.worker.pos.live_leg.spec.opening_side, "SELL")
+            quantity = self.worker.pos.quantity
+            self.worker.exit_position("TEST_LIVE_SHORT")
+
+        self.assertEqual([call[1] for call in client.calls], ["SELL", "BUY"])
+        self.assertEqual(self.worker.realized_pnl, 2.0 * quantity)
+        self.assertFalse(self.worker.pos.active)
+
+    def test_rejected_live_sell_falls_back_to_paper_without_phantom_buy_exit(self):
+        """A zero-fill rejection may paper-fallback, but BUY must not hit broker."""
+
+        self.worker.live_trading = True
+        current_expiry = date.today() + timedelta(days=2)
+        self.worker.contract_resolver.get_current_week_expiry.return_value = current_expiry
+        self.worker.contract_resolver.get_atm_option.return_value.update(
+            {
+                "trading_symbol": "NIFTY-22500-PE",
+                "option_type": "PE",
+                "expiry_date": current_expiry,
+            }
+        )
+        client = _FakeShoonya(result_status=OrderStatus.REJECTED)
+        with patch.object(master_file, "execution_client", client):
+            self.assertTrue(
+                self.worker.enter_position(
+                    direction="LONG",
+                    entry_underlying=22500.0,
+                    stop_underlying=22400.0,
+                    target_underlying=22700.0,
+                    option_opening_side="SELL",
+                    option_contract_direction="SHORT",
+                    use_current_expiry=True,
+                )
+            )
+            self.assertIsNone(self.worker.pos.live_leg)
+            self.worker.exit_position("PAPER_FALLBACK_SHORT")
+
+        self.assertEqual([call[1] for call in client.calls], ["SELL"])
         self.assertFalse(self.worker.pos.active)
 
     def test_enter_position_skips_when_spot_unavailable(self):
@@ -9839,13 +10024,15 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         latest_attempt=None,
         closing_started=False,
         close_price=0.0,
+        opening_side="BUY",
     ):
         """Build a live-leg ledger with controllable fill and close certainty.
 
         Role ``N`` represents the primary leg and role ``A`` the one-time add.
         ``filled`` models opening fills, ``confirmed`` models remaining broker
         exposure after a close, and ``indeterminate`` exercises conservative
-        reconciliation/MTM behavior.
+        reconciliation/MTM behavior. ``opening_side`` defaults to the historical
+        BUY path; SIDEWAYS tests override it to prove BUY-to-close semantics.
         """
 
         target = 50
@@ -9859,7 +10046,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             option_type="CE",
             strike=25000.0,
             expiry=date(2026, 8, 13),
-            opening_side="BUY",
+            opening_side=opening_side,
             target_quantity=target,
             owner_id="EFGH5678",
         )
@@ -11238,6 +11425,312 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             {"mode": "PAPER", "submitted": True, "status": "ENTRY_SUBMITTED"},
         )
 
+    def test_entry_setup_maps_only_sideways_to_current_expiry_short_premium(self):
+        """Regime changes execution terms without changing economic direction.
+
+        The table covers both directions in each regime. An empty keyword map is
+        intentional for TRENDING: it proves those calls still use every legacy
+        BUY/right/expiry default rather than merely producing a similar contract.
+        """
+
+        cases = (
+            (
+                "sideways_bullish",
+                "ENTER_LONG",
+                "SIDEWAYS",
+                "SIDEWAYS_SRSI",
+                "LONG",
+                {
+                    "option_opening_side": "SELL",
+                    "option_contract_direction": "SHORT",
+                    "use_current_expiry": True,
+                },
+            ),
+            (
+                "sideways_bearish",
+                "ENTER_SHORT",
+                "SIDEWAYS",
+                "SIDEWAYS_SRSI",
+                "SHORT",
+                {
+                    "option_opening_side": "SELL",
+                    "option_contract_direction": "LONG",
+                    "use_current_expiry": True,
+                },
+            ),
+            (
+                "trending_bullish",
+                "ENTER_LONG",
+                "TRENDING",
+                "TRENDING_VWAP_CONTINUATION",
+                "LONG",
+                {},
+            ),
+            (
+                "trending_bearish",
+                "ENTER_SHORT",
+                "TRENDING",
+                "TRENDING_VWAP_REVERSAL",
+                "SHORT",
+                {},
+            ),
+        )
+        for label, action, regime, setup, direction, expected_kwargs in cases:
+            with self.subTest(label=label):
+                worker, agent, _logger = self._worker()
+                worker._latest_frozen_context = lambda: {
+                    "session_levels": {},
+                    "momentum_vwap": {},
+                    "market_structure": {},
+                    "position_state": {"is_flat": True},
+                }
+                worker._completed_bar_signature = lambda _frame, value=label: value
+                worker._current_completed_spot_signature = lambda value=label: value
+                outcome = agent.decide.return_value
+                outcome.action = action
+                outcome.accepted = True
+                outcome.accepted_regime = regime
+                outcome.entry_price = 100.0
+                outcome.stop_price = 95.0 if direction == "LONG" else 105.0
+                outcome.milestone_price = 108.0 if direction == "LONG" else 92.0
+                outcome.final_target_price = 118.0 if direction == "LONG" else 82.0
+                outcome.risk_points = 5.0
+                outcome.proposal = SimpleNamespace(setup=setup)
+
+                def enter(*args, active_worker=worker, **kwargs):
+                    active_worker.pos = master_file.PaperPosition(
+                        active=True,
+                        direction=args[0],
+                        quantity=50,
+                        entry_underlying=args[1],
+                        stop_underlying=args[2],
+                        target_underlying=args[3],
+                        entry_trade_price=10.0,
+                        option_opening_side=kwargs.get(
+                            "option_opening_side",
+                            "BUY",
+                        ),
+                    )
+                    return True
+
+                worker.enter_position = MagicMock(side_effect=enter)
+                worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
+
+                call = worker.enter_position.call_args
+                self.assertEqual(
+                    call.args,
+                    (
+                        direction,
+                        100.0,
+                        95.0 if direction == "LONG" else 105.0,
+                        118.0 if direction == "LONG" else 82.0,
+                    ),
+                )
+                self.assertEqual(call.kwargs, expected_kwargs)
+
+    def test_sideways_short_premium_mtm_and_paper_exit_use_sell_math(self):
+        """CPR aggregate accounting treats falling sold premium as profit."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-CURRENT-PE",
+            quantity=50,
+            entry_underlying=100.0,
+            stop_underlying=95.0,
+            target_underlying=118.0,
+            entry_trade_price=10.0,
+            option_security_id=456,
+            option_exchange_segment="NSE_FNO",
+            option_right="PE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 27),
+            option_opening_side="SELL",
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="SIDEWAYS_SRSI",
+            accepted_regime="SIDEWAYS",
+            initial_filled_quantity=50,
+        )
+        worker._get_option_ltp = MagicMock(return_value=8.0)
+        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
+        worker.publish_trade_event = MagicMock()
+
+        self.assertEqual(worker._get_open_position_pnl(), 100.0)
+        worker.exit_position("SIDEWAYS_TARGET")
+
+        self.assertFalse(worker.pos.active)
+        self.assertEqual(worker.realized_pnl, 100.0)
+        event = worker.publish_trade_event.call_args.args[0]
+        self.assertEqual(event["direction"], "LONG")
+        self.assertEqual(event["legs"][0]["side"], "BUY")
+
+    def test_rising_sideways_short_premium_counts_toward_max_loss(self):
+        """A sold option getting dearer is an open loss, never hidden profit."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=456,
+            option_exchange_segment="NSE_FNO",
+            option_right="PE",
+            option_opening_side="SELL",
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="SIDEWAYS_SRSI",
+            accepted_regime="SIDEWAYS",
+            initial_filled_quantity=50,
+        )
+        worker._get_option_ltp = MagicMock(return_value=12.0)
+        worker.max_loss = 50.0
+
+        breached, total_pnl, open_pnl = worker.is_max_loss_breached()
+
+        self.assertTrue(breached)
+        self.assertEqual((total_pnl, open_pnl), (-100.0, -100.0))
+
+    def test_live_sideways_short_closes_with_buy_and_broker_fill_pnl(self):
+        """A confirmed live SELL leg is reduced only by a confirmed BUY fill."""
+
+        worker, _agent, _logger = self._worker()
+        worker.live_trading = True
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="SHORT",
+            symbol="NIFTY-CURRENT-CE",
+            quantity=50,
+            entry_underlying=100.0,
+            stop_underlying=105.0,
+            target_underlying=82.0,
+            entry_trade_price=10.0,
+            option_security_id=456,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 27),
+            option_opening_side="SELL",
+            live_leg=self._live_state(
+                "N",
+                entry_price=10.0,
+                opening_side="SELL",
+            ),
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=105.0,
+            current_hard_stop=105.0,
+            first_milestone=95.0,
+            following_milestone=90.0,
+            final_target=82.0,
+            premise="SIDEWAYS_SRSI",
+            accepted_regime="SIDEWAYS",
+            initial_filled_quantity=50,
+        )
+        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
+        # Broker-confirmed flat requires a terminal CLOSE attempt in addition to
+        # zero remaining quantity; an order acknowledgement alone is not proof.
+        close_attempt = OrderAttempt(
+            intent=master_file.OrderIntent.CLOSE,
+            sequence=2,
+            order_tag="SIDE-BUY",
+            requested_quantity=50,
+            filled_quantity=50,
+            remaining_quantity=0,
+            order_id="CLOSE-1",
+            status=master_file.OrderStatus.FILLED,
+            broker_state="COMPLETE",
+            reason="flat",
+            terminal=True,
+            average_fill_price=8.0,
+        )
+
+        def close(side, leg, *, opens_exposure):
+            self.assertEqual(side, "BUY")
+            self.assertFalse(opens_exposure)
+            leg["live_leg"] = self._live_state(
+                "N",
+                confirmed=0,
+                entry_price=10.0,
+                latest_attempt=close_attempt,
+                closing_started=True,
+                close_price=8.0,
+                opening_side="SELL",
+            )
+            return master_file.OrderResult(
+                order_id="CLOSE-1",
+                requested_quantity=50,
+                filled_quantity=50,
+                remaining_quantity=0,
+                status=master_file.OrderStatus.FILLED,
+                broker_state="FILLED",
+                reason="synthetic close",
+                average_fill_price=8.0,
+            )
+
+        worker._place_real_leg = MagicMock(side_effect=close)
+        worker.exit_position("SIDEWAYS_LIVE_EXIT")
+
+        worker._place_real_leg.assert_called_once()
+        self.assertFalse(worker.pos.active)
+        self.assertEqual(worker.realized_pnl, 100.0)
+
+    def test_short_premium_position_cannot_use_trending_scale_in_path(self):
+        """Defense in depth: a sold SIDEWAYS leg never reaches role-A submission."""
+
+        worker, _agent, _logger = self._worker()
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="LONG",
+            symbol="NIFTY-CURRENT-PE",
+            quantity=50,
+            entry_trade_price=10.0,
+            option_security_id=456,
+            option_exchange_segment="NSE_FNO",
+            option_right="PE",
+            option_strike=25000.0,
+            option_expiry=date(2026, 8, 27),
+            option_opening_side="SELL",
+        )
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=5.0,
+            original_protective_stop=95.0,
+            current_hard_stop=95.0,
+            first_milestone=105.0,
+            following_milestone=110.0,
+            final_target=118.0,
+            premise="SIDEWAYS_SRSI",
+            accepted_regime="SIDEWAYS",
+            initial_filled_quantity=50,
+        )
+        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
+        worker._spread_gate_allows_entry = MagicMock(return_value=True)
+        worker._liquidity_gate_allows_entry = MagicMock(return_value=True)
+        worker._place_real_leg = MagicMock()
+
+        self.assertFalse(worker._execute_scale_in())
+        self.assertFalse(worker._cpr_state.scale_in_used)
+        worker._place_real_leg.assert_not_called()
+
     def test_entry_cutoff_is_rechecked_after_inference_before_submission(self):
         """A turn accepted before 15:00 cannot enter after the clock crosses it."""
 
@@ -11895,8 +12388,20 @@ class TestSessionStatePersistence(unittest.TestCase):
         self.assertEqual(rebuilt.target_underlying, original.target_underlying)
         self.assertEqual(rebuilt.option_expiry, original.option_expiry)
         self.assertEqual(rebuilt.option_security_id, original.option_security_id)
+        self.assertEqual(getattr(rebuilt, "option_opening_side", None), "BUY")
         # Broker exposure is never asserted by this file.
         self.assertIsNone(rebuilt.live_leg)
+
+    def test_legacy_position_record_without_opening_side_defaults_to_buy(self):
+        """Marks written before side-aware positions remain safely resumable."""
+
+        record = master_file.serialize_position(self._open_position())
+        self.assertIsNotNone(record)
+        record.pop("option_opening_side", None)
+
+        rebuilt = master_file._paper_position_from_record(record)
+
+        self.assertEqual(getattr(rebuilt, "option_opening_side", None), "BUY")
 
     def test_incomplete_record_is_rejected_rather_than_half_restored(self):
         for broken in (

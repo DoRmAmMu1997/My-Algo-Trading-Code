@@ -201,21 +201,13 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_21_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 20 Aug transcript.
+def test_shipped_note_matches_august_24_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 23 Aug transcript.
 
-    Three things a summarising edit would flatten, all asserted:
-
-    1. The direction INVERTS from 20 Aug, whose buy-side plan worked. A note
-       still reading buy-side is the stale-note failure this test exists for,
-       and "it paid yesterday" is the most tempting reason to leave it.
-    2. The stand-aside branch is a LARGE GAP-UP and it is DEFINED for
-       BankNIFTY -- an open above 57800, the first resistance. That number is
-       what makes the veto checkable at 09:15 rather than a judgement call.
-    3. He grades his own evidence. The buyers-trapped read is strong on
-       BankNIFTY but he says outright he is NOT targeting buyers on NIFTY and
-       Sensex, where the plan rests only on the gap-up possibly being a trap.
-       Dropping that leaves the agent believing a weak read is a strong one.
+    This catches the three dangerous daily-note mutations: a stale date, an
+    inverted gap branch, or a level copied from the prior session. The holiday
+    context matters because IH still reads Friday's buyers as seated despite
+    the two-day carry gap; the note must not silently erase that evidence call.
     """
     import os
 
@@ -224,41 +216,34 @@ def test_shipped_note_matches_august_21_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-21"
-    assert "nJqWQPOfWrM" in note.source
-    assert "trapping the buyers" in note.context
-    assert "INVERTS" in note.context
-
-    # Every branch is sell-side; none of them may say BUY-side.
-    assert all("BUY-side" not in line for line in note.plan)
-    sell = next(line for line in note.plan if line.startswith("SMALL GAP-UP"))
-    assert "SELL-side" in sell
-
-    # The defined veto, with its number.
-    large = next(line for line in note.plan if line.startswith("LARGE GAP-UP"))
-    assert "NO PLAN" in large and "57800" in large
-
-    # The evidence gradation, which is the part most easily lost.
-    weak = next(line for line in note.plan if line.startswith("EVIDENCE IS WEAKER"))
-    assert "NOT targeting them" in weak
-    assert "gap-up itself having been a trap" in weak
+    assert note.for_date == "2026-08-24"
+    assert "rmmBLlHve1k" in note.source
+    assert "Friday likely left BUYERS seated" in note.context
+    assert "two-day holiday" in note.context
+    assert note.plan == [
+        "GAP-UP: do not target the seated buyers because their stops are too far "
+        "away. Follow the market and identify confirmed BUY-side setups.",
+        "FLAT or GAP-DOWN: target the seated buyers and identify confirmed "
+        "SELL-side setups.",
+        "Momentum has been limited for several sessions, but Monday may move "
+        "better; that is context only, not permission to enter without the live "
+        "pattern and confirmation.",
+    ]
 
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24320.0, 24380.0],
-            "support": [24140.0, 24186.0],
+            "resistance": [24320.0, 24270.0],
+            "support": [24186.0, 24140.0],
         },
         {
-            # 57800 doubles as the first resistance AND the stand-aside
-            # threshold above, so the two must not drift apart.
             "index": "BANKNIFTY",
             "resistance": [57800.0, 58000.0],
-            "support": [57220.0, 57500.0],
+            "support": [57500.0, 57220.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [77800.0, 78000.0],
-            "support": [77160.0, 77370.0],
+            "resistance": [77750.0, 78000.0],
+            "support": [77370.0, 77160.0],
         },
     ]

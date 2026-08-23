@@ -1,23 +1,22 @@
 {
-  "for_date": "2026-08-21",
-  "source": "Intraday Hunter, 'Prediction For 21 AUG 2026' (nJqWQPOfWrM, uploaded 2026-08-20)",
-  "context": "Today's gap-up ran, stalled and slid into rejection. On a move like that only BUYERS keep arriving even into small rejections - nobody sells - so the market ended up trapping the buyers. Direction INVERTS from today: plan is SELL side.",
+  "for_date": "2026-08-24",
+  "source": "Intraday Hunter, 'Prediction For 24 AUG 2026' (rmmBLlHve1k, uploaded 2026-08-23)",
+  "context": "All three indices held near their highs after the gap-up or recovery with only modest positive or sideways momentum. Despite the two-day holiday, Friday likely left BUYERS seated; he sees no seller crowd carried into Monday.",
   "plan": [
-    "SMALL GAP-UP, FLAT or GAP-DOWN: identify confirmed SELL-side setups. The trapped crowd is the buyers who kept arriving into today's stalling gap-up.",
-    "LARGE GAP-UP: NO PLAN, stand aside. For BANKNIFTY he defines it as an open ABOVE 57800, the first resistance - a slight gap-up is acceptable, more than that is not.",
-    "EVIDENCE IS WEAKER ON NIFTY AND SENSEX, and he says so: not many buyers are seated there and he is explicitly NOT targeting them. The sell-side plan rests on the gap-up itself having been a trap, so demand a cleaner confirmation.",
-    "This inverts today's buy-side plan, which worked. The buy thesis was spent once the move stalled and rolled over; do not carry it into tomorrow because it paid today."
+    "GAP-UP: do not target the seated buyers because their stops are too far away. Follow the market and identify confirmed BUY-side setups.",
+    "FLAT or GAP-DOWN: target the seated buyers and identify confirmed SELL-side setups.",
+    "Momentum has been limited for several sessions, but Monday may move better; that is context only, not permission to enter without the live pattern and confirmation."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
         24320,
-        24380
+        24270
       ],
       "support": [
-        24140,
-        24186
+        24186,
+        24140
       ]
     },
     {
@@ -27,19 +26,19 @@
         58000
       ],
       "support": [
-        57220,
-        57500
+        57500,
+        57220
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77800,
+        77750,
         78000
       ],
       "support": [
-        77160,
-        77370
+        77370,
+        77160
       ]
     }
   ]

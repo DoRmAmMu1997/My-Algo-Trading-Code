@@ -80,6 +80,8 @@ Why **no-argument** tools:
 | Premise exits | Level validation |
 | | Sizing (`CPR_AI_LOTS`, `CPR_AI_MAX_LOSS`, `CPR_AI_SIZE_MULTIPLIER`) |
 | | Time cutoffs (start 09:30, entry cutoff 15:00, square-off 15:15) |
+| | SIDEWAYS contract expression: naked SELL ATM PE for bullish, SELL ATM CE for bearish, current expiry |
+| | TRENDING contract expression: existing BUY ATM CE/PE and existing expiry |
 | | Lifecycle state (`CPRAITradeState`) |
 | | All execution |
 
@@ -97,6 +99,13 @@ Stochastic RSI, and EMA5/EMA20 before early-session decisions. A separate
 current-session view owns VWAP, opening facts, candle relationships, confirmed
 swings, and the R1 add pattern. This prevents both failure modes: an artificial
 morning indicator blackout and prior-day prices leaking into intraday VWAP.
+
+Economic direction remains LONG/SHORT in both regimes because spot stops,
+targets, trails, and premise checks are unchanged. The host separately persists
+the option opening side. BUY legs use `(mark - entry) * quantity`; SELL legs use
+`(entry - mark) * quantity` and close with BUY. The execution ledger already
+records opening side, so partial/unknown sell entries and buy-to-close exits keep
+the same quantity-aware reconciliation and live-entry freeze semantics.
 
 ---
 
