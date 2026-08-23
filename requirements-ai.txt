@@ -11,14 +11,14 @@
 # -- SL Hunting (Claude Agent SDK) --------------------------------------------
 # The first three are the SDK's direct runtime dependencies; pinning them
 # prevents a fresh install from silently changing the agent transport.
-claude-agent-sdk==0.2.137
+claude-agent-sdk==0.2.143
 anyio==4.14.2
 sniffio==1.3.1
 
 # -- CPR SRSI/VWAP (Codex) ----------------------------------------------------
 # Uses the operator's existing subscription-backed ChatGPT/Codex authentication;
 # no trading credential or OpenAI API key belongs in the isolated subprocess.
-openai-codex==0.144.4
+openai-codex==0.147.0
 
 # -- Shared by both agents ----------------------------------------------------
 # These are the packages that forced the merge: one process, one version.

@@ -23,7 +23,7 @@ dhanhq==2.2.0
 pandas==3.0.5
 numpy==2.4.6
 backtesting==0.6.6
-python-dotenv==1.2.2
+python-dotenv==1.2.3
 gspread==6.2.1
 # Timezone data. Bumping this is desirable in its own right: every trading-day
 # boundary, the 15:15 square-off and the pre-open note's date gate are computed
@@ -52,7 +52,7 @@ TA-Lib==0.6.8
 # `test_precommit_ruff_rev_matches_the_requirements_dev_pin` fails the build if
 # they separate.
 pytest==9.1.1
-ruff==0.16.3
+ruff==0.16.4
 mypy==1.20.2
 bandit==1.9.4
 pre-commit==4.6.2
