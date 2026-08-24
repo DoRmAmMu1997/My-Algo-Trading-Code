@@ -504,6 +504,7 @@ class SLHuntingToolContext:
             if note_problem:
                 return {"accepted": False, "reason": note_problem}
             entry_reason = bounded_reason(reason)
+            recorded_reason = entry_reason
             def executor_call() -> dict[str, Any]:
                 return self.executor.enter(
                     direction, stop, target, entry_reason, self.last_price
@@ -517,6 +518,7 @@ class SLHuntingToolContext:
             # explicit sentinel instead, so the journal and the coach are told plainly
             # that no justification was given rather than being handed a lie.
             exit_reason = _safe_exit_reason(reason)
+            recorded_reason = exit_reason
             if exit_reason == NO_REASON_SENTINEL:
                 # SLH-010: the exit still goes through -- SLH-007 above is not
                 # being reversed -- but a deliberate exit always carries a
@@ -561,7 +563,12 @@ class SLHuntingToolContext:
                 self.state = ToolContextState.EXPIRED
                 raise
             if bool(result.get("accepted")):
-                self._execution_result = dict(result)
+                # SLH-011: keep the model's OWN justification on the result. If this
+                # pass later fails to return a parseable decision, the journal can
+                # record why the order was placed rather than a placeholder -- and
+                # for an ENTRY that string is guaranteed meaningful, because
+                # `_reason_meaning_problem` above rejects placeholders on entries.
+                self._execution_result = {**result, "model_reason": recorded_reason}
                 self.state = ToolContextState.CONSUMED
             else:
                 # Rejected validation/execution may be corrected once within the

@@ -1123,3 +1123,108 @@ def test_exit_with_a_real_reason_does_not_warn(caplog):
         ctx.do_order("EXIT", stop=0, target=0, reason="double top rejection, premise gone")
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# --------------------------------------------------------------------------
+# SLH-011: an order executed by a pass that then returned nothing parseable.
+#
+# On 2026-08-24 09:17 an ENTRY was recorded as `conf=0, setup=tool_execution`
+# with the reasoning "The order tool accepted an action; its result is
+# authoritative." The ORDER handling was correct -- `_tool_authoritative`
+# records what actually executed rather than inventing a decision -- but the
+# journal the reflection coach reads carried a placeholder instead of a
+# rationale, and it logged at INFO, indistinguishable from a normal entry.
+# --------------------------------------------------------------------------
+
+def test_executed_order_without_parseable_decision_keeps_the_models_own_reason(caplog):
+    """The justification given to the order tool is a real one; use it.
+
+    On an ENTRY that string is guaranteed meaningful, because SLH-007 rejects
+    placeholder reasons on entries. Recording it beats a generic sentence, and
+    it is what the coach will later read as the trade's rationale.
+    """
+    import logging
+
+    async def _runner(prompt, *, system_prompt, model, max_turns, tool_context=None):
+        result = tool_context.do_order(
+            "ENTER_LONG", stop=25000, target=25080,
+            reason="pivot reclaim with confirmed hammer at the first-candle low",
+        )
+        assert result["accepted"] is True
+        return AgentRunResult(text="not json at all -- the model never closed its answer")
+
+    ex = StandaloneExecutor()
+    with caplog.at_level(logging.WARNING):
+        decision = SLHuntingAgent(model="test-model", runner=_runner).decide(_candles(), ex)
+
+    # The executed order is still the record, unchanged.
+    assert decision.action == "ENTER_LONG"
+    assert decision.stop == 25000 and decision.target == 25080
+    assert ex.snapshot()["in_position"] is True
+
+    # ...but it now carries the model's OWN words rather than a placeholder.
+    assert "pivot reclaim with confirmed hammer" in decision.reasoning
+    assert "its result is authoritative" not in decision.reasoning
+    # The honest gaps stay honest: no setup name and no confidence were given.
+    assert decision.setup == "tool_execution"
+    assert decision.confidence == 0
+
+    # And the operator is told, because this is otherwise invisible.
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("no parseable" in m and "UNREVIEWED" in m for m in warnings)
+
+
+def test_unexecuted_action_claim_warns_that_the_model_may_believe_it_traded(caplog):
+    """The other direction of the same mismatch.
+
+    Downgrading to HOLD is correct because nothing executed, but the model
+    believed it had acted -- worth seeing rather than silently correcting.
+    """
+    import logging
+
+    claimed = json.dumps(
+        {
+            "action": "ENTER_LONG",
+            "stop": 25000,
+            "target": 25080,
+            "confidence": 9,
+            "setup": "claimed_only",
+            "reasoning": "Claims an entry without calling the order tool.",
+        }
+    )
+    with caplog.at_level(logging.WARNING):
+        decision = SLHuntingAgent(model="test-model", runner=_FakeRunner(claimed)).decide(
+            _candles(), StandaloneExecutor()
+        )
+
+    assert decision.action == "HOLD"
+    assert decision.setup == "unexecuted_action"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("claimed ENTER_LONG" in m and "accepted nothing" in m for m in warnings)
+
+
+def test_a_normal_decision_does_not_warn(caplog):
+    """The guards must stay quiet on an ordinary pass or they become noise."""
+    import logging
+
+    async def _runner(prompt, *, system_prompt, model, max_turns, tool_context=None):
+        tool_context.do_order(
+            "ENTER_LONG", stop=25000, target=25080, reason="pivot bounce with confirmation"
+        )
+        return AgentRunResult(
+            text=json.dumps(
+                {
+                    "action": "ENTER_LONG",
+                    "stop": 25000,
+                    "target": 25080,
+                    "confidence": 7,
+                    "setup": "pivot_support_hammer",
+                    "reasoning": "Hammer at pivot with bullish confirmation.",
+                }
+            )
+        )
+
+    with caplog.at_level(logging.WARNING):
+        SLHuntingAgent(model="test-model", runner=_runner).decide(_candles(), StandaloneExecutor())
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

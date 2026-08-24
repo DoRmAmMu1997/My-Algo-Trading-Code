@@ -4515,3 +4515,75 @@ record still points both ways.
 - **Deliberately NOT added:** the leg-narration rule - see point 1 above.
 - Prompt size 132,468 -> 136,034 chars. Assembled 137,325 against a 154,140
   budget: **16,815 chars of headroom.**
+
+---
+
+## SLH-011 - an order executed by a pass that returned nothing parseable (2026-08-24)
+
+### What happened
+
+The 09:17:48 entry was recorded as:
+
+```
+SL Hunting AI: ENTER_LONG (conf=0, setup=tool_execution) stop=24271.1 target=24326.0
+  :: The order tool accepted an action; its result is authoritative.
+```
+
+The model called the order tool, the order was accepted, and the model then
+failed to return a parseable `SLHuntingDecision`. `_tool_authoritative` did
+exactly what it exists for: it recorded the EXECUTED action rather than
+inventing a decision or discarding a real position.
+
+### What was wrong with it
+
+Nothing in the order handling. Two things around it:
+
+1. **The journal carried a placeholder instead of a rationale.** The decision
+   journal is what `sl_hunting_coach.py` reads to work out what worked, and the
+   `reasoning` field is the trade's stated purpose. "The order tool accepted an
+   action; its result is authoritative" tells the coach nothing, and it is
+   indistinguishable from a real justification when read later.
+
+2. **It logged at INFO.** An entry with no reasoning, no setup and zero
+   confidence appeared in the log exactly like a normal one. It was found only
+   because a human happened to read the line.
+
+### The fix
+
+**Use the model's own words.** The justification the model passed to the order
+tool is a real one and was already validated: `_reason_meaning_problem` rejects
+placeholders on ENTRIES (SLH-007), so on an entry that string is guaranteed
+meaningful. `do_order` now carries it on the accepted result as `model_reason`,
+and `_tool_authoritative` prefers it over the generic sentence.
+
+On an EXIT the reason may legitimately be the `NO_REASON_SENTINEL`, which is
+itself the honest record and already raises its own SLH-010 warning.
+
+**Say it out loud.** A WARNING now names the case:
+
+> order ENTER_LONG executed but the model returned no parseable decision for that
+> bar. Recording the executed order; the journal entry carries the order tool's
+> own reason and no setup or confidence. Treat this decision as UNREVIEWED.
+
+**And the mirror case.** The other synthesised path - the final JSON claims an
+action no accepted order backs - was equally silent. Downgrading it to HOLD is
+correct because nothing executed, but it means the model believed it held a
+position it did not. That now warns too.
+
+### What deliberately did NOT change
+
+- **The recorded ACTION.** What executed is still what is recorded, unchanged.
+  Only the `reasoning` string and the log level of the surrounding event moved.
+- **`setup` stays `tool_execution` and `confidence` stays 0.** The model did not
+  supply either, and inventing them would make an unreviewed decision look
+  reviewed. The gaps are the signal.
+- **No new refusal.** Nothing is blocked; a position is never abandoned because
+  its decision failed to parse.
+
+### Verification
+
+Both guards were negative-tested rather than assumed. Removing the reason-carrying
+makes the test fail with `assert 'pivot reclaim with confirmed hammer' in 'The
+order tool accepted an action; its result is authoritative.'`, and disabling the
+claimed-action warning fails its own assertion. A third test asserts an ordinary
+pass produces NO warning, so the guards cannot decay into noise.
