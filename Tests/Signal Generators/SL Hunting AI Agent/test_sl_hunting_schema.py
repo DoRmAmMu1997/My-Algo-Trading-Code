@@ -1504,3 +1504,64 @@ def test_v4m_stale_hatch_may_not_be_used_selectively():
     # The check the agent can actually run.
     assert "would I still call it stale if it" in rule
     assert "it is inconvenient" in rule
+
+
+def test_v4n_do_not_think_through_a_loss_does_not_become_stop_observing():
+    """v4n (24 Aug live session): the thinking is what enlarges the loss.
+
+    This is the rule most likely to be mis-drafted into something dangerous.
+    Read too strongly it says ignore the chart while losing, which would
+    disable stops and named invalidations. It must keep BOTH the ban on
+    searching for a rescuing reading AND the licence to keep observing.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "DO NOT THINK YOUR WAY THROUGH A LOSS")
+
+    assert "APPLYING THOUGHT WHILE IN A LOSS IS THE THING THAT MAKES THE LOSS BIGGER" in rule
+    # The mechanism, aimed at what an LLM does by construction.
+    assert "generating another plausible reading of the chart is" in rule
+    assert "evidence about your discomfort" in rule
+    # Only pre-committed questions stay live.
+    assert "you had ALREADY committed to" in rule
+    # ...and the guard against over-reading it.
+    assert "It does NOT mean stop observing" in rule
+    assert "stop SEARCHING for a reading that rescues the position" in rule
+
+
+def test_v4n_distant_stop_crowd_rule_keeps_both_removal_mechanisms():
+    """Not every seated crowd is huntable; some are faded out instead.
+
+    The rule is only useful if it changes the ENTRY TRIGGER, so the
+    break-versus-fade distinction is asserted rather than the colour.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A CROWD WHOSE STOPS ARE TOO FAR AWAY")
+
+    assert "first let them SEE some profit, then reduce that profit" in rule
+    # A move their way is not evidence they were right.
+    assert "not evidence they were right" in rule
+    # The operational half: which trigger applies.
+    assert "waits for the BREAK" in rule and "waits for the FADE" in rule
+    assert "a break that this crowd was never going to produce" in rule
+
+
+def test_v4n_re_rating_rule_gains_a_procedure_after_being_broken():
+    """v4m's rule was violated 48 seconds apart on its first live session.
+
+    The addition is mechanical on purpose -- a disposition ("be consistent")
+    had already failed, so what is asserted here is the CHECK, and the
+    measured evidence that motivated it.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "YOU MAY NOT RE-RATE A SIGNAL")
+
+    # The original test survives.
+    assert "would I still call it stale if it" in rule
+    # The new procedure, and the fact that it is a procedure.
+    assert "STATE WHAT IT READ ON YOUR PREVIOUS DECISION" in rule
+    assert '"flipped" is not available to you' in rule
+    # The measured case, including the detail that makes it damning.
+    assert "It had not flipped" in rule
+    assert "forty-eight seconds later" in rule
+    # Overruling then citing the same verdict is the banned combination.
+    assert "citing it as support now is not permitted" in rule
