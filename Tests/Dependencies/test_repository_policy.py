@@ -34,7 +34,10 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     brokers = _requirement_lines("requirements-brokers.txt")
 
     assert "requests==2.34.2" in core
-    assert "python-dotenv==1.2.2" in core
+    # 1.2.2 -> 1.2.3 (2026-08-24, PR #135). Patch release on the .env loader;
+    # the runner reads every setting through it at startup, so a break would
+    # be immediate and total rather than subtle.
+    assert "python-dotenv==1.2.3" in core
     # The full quality job imports the vendored Shoonya client while measuring
     # broker-adapter coverage, so its import-time WebSocket dependency belongs
     # in the core test/runtime environment as well as the isolated broker set.
@@ -75,11 +78,23 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # ignored rather than fatal. That is what makes this bump safe to take.
     # 0.2.133-0.2.136 are bundled-CLI bumps only (2.1.224 -> 2.1.228).
     #
-    # What CI still does NOT prove: the bundled CLI is what actually gets spawned
-    # per bar, and no test spawns it. Confirm on the next PAPER session that
-    # decisions still return (the log's "SLHuntingAgent decision cost ~$..."
-    # line is the cheap tell); if they stop, revert this pin first.
-    assert "claude-agent-sdk==0.2.137" in ai
+    # 0.2.137 -> 0.2.143 (2026-08-24, PR #135). Five of the six releases are
+    # bundled-CLI bumps only (2.1.232 -> 2.1.238). The one with substance is
+    # 0.2.140, reviewed in three parts:
+    #   * It adds `ConversationResetMessage`, breaking EXHAUSTIVE matchers. We
+    #     are not one -- `_run_query` and `sl_hunting_coach` walk the stream with
+    #     an isinstance chain and no else-raise, so an unknown member is ignored.
+    #     Same reasoning that cleared 0.2.137.
+    #   * It WIDENS its MCP requirement to mcp>=1.23.0,<3.0.0. That is a
+    #     relaxation, and our shared pin (mcp==1.29.0, used by BOTH agents) sits
+    #     inside it. Nothing to do; do not chase MCP 2.x on this alone.
+    #   * It adds a `ResultError` exception. It cannot escape: `_run_query` ends
+    #     in a broad `except Exception` that converts any SDK failure into a
+    #     structured error, and the worker turns that into a fail-soft HOLD.
+    # Unchanged from before: CI never spawns the bundled CLI, so confirm on the
+    # next PAPER session that decisions still return ("SLHuntingAgent decision
+    # cost ~$..." in the log). If they stop, revert this pin first.
+    assert "claude-agent-sdk==0.2.143" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
@@ -88,7 +103,27 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # -- which is exactly why the two sets were merged (PR #125). Keeping them
     # apart meant `mcp` and `pydantic` were pinned twice and had to be kept
     # equal by hand.
-    assert "openai-codex==0.144.4" in ai
+    # 0.144.4 -> 0.147.0 (2026-08-24, PR #135). THE LEAST VERIFIABLE PIN IN THIS
+    # FILE, and the reason is structural rather than a judgement about the
+    # release: NOTHING in the automated gates can detect a break in it.
+    #   * `Tests/Signal Generators/CPR AI Agent/test_cpr_ai_runtime.py`
+    #     monkeypatches a FAKE `openai_codex` into sys.modules, so the runtime
+    #     tests exercise our code against a stub, never the SDK.
+    #   * mypy has ignore_missing_imports for `openai_codex.*` (pyproject).
+    #   * CI never runs the authenticated smoke command, by design.
+    #   * The import is lazy, inside `_run_isolated_turn`, so even importing the
+    #     module is not attempted until a real turn runs.
+    # What was reviewed by hand instead: our entire surface is three names and
+    # one call shape -- `Codex()`, `thread_start(model/config/cwd/
+    # developer_instructions/ephemeral/sandbox/approval_mode)`, `thread.run(
+    # prompt/approval_mode/output_schema/effort)`, and the result fields
+    # `final_response`, `items`, `usage`. 0.147.0 still declares only
+    # pydantic>=2.12 (our 2.13.4 satisfies it) and pins its own CLI binary.
+    # A three-minor jump on a young SDK could still rename a kwarg silently.
+    # CPR_AI_ENABLED is true and the worker trades paper daily, so a break
+    # surfaces as CPR AI errors in the next session -- that session, not this
+    # build, is the actual test.
+    assert "openai-codex==0.147.0" in ai
     assert "mcp==1.29.0" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers

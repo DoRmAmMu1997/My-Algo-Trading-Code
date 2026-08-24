@@ -16,7 +16,7 @@ repos:
     # hook -- a commit could pass locally and still fail `Run Ruff static
     # checks`. `test_precommit_ruff_rev_matches_the_requirements_dev_pin` now
     # fails the build if the two separate again, so bump BOTH together.
-    rev: v0.16.3
+    rev: v0.16.4
     hooks:
       - id: ruff
         name: ruff check (no fixes)
