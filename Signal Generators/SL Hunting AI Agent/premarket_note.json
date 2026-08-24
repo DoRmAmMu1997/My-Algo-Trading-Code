@@ -1,44 +1,44 @@
 {
-  "for_date": "2026-08-24",
-  "source": "Intraday Hunter, 'Prediction For 24 AUG 2026' (rmmBLlHve1k, uploaded 2026-08-23)",
-  "context": "All three indices held near their highs after the gap-up or recovery with only modest positive or sideways momentum. Despite the two-day holiday, Friday likely left BUYERS seated; he sees no seller crowd carried into Monday.",
+  "for_date": "2026-08-25",
+  "source": "Intraday Hunter, 'Prediction For 25 AUG 2026' (epBZSyUunIk, uploaded 2026-08-24)",
+  "context": "DOUBLE EXPIRY: both NIFTY and BankNIFTY expire today. Heavy selling yesterday, but the sellers who rode it down have already booked and left - momentum makes traders book rather than hold size - so they are NOT the target.",
   "plan": [
-    "GAP-UP: do not target the seated buyers because their stops are too far away. Follow the market and identify confirmed BUY-side setups.",
-    "FLAT or GAP-DOWN: target the seated buyers and identify confirmed SELL-side setups.",
-    "Momentum has been limited for several sessions, but Monday may move better; that is context only, not permission to enter without the live pattern and confirmation."
+    "FLAT or GAP-DOWN: identify confirmed SELL-side setups. This FOLLOWS the momentum rather than hunting a crowd - he says outright the sellers are not the target - and flat/gap-down is the only shape in which a trap can form.",
+    "GAP-UP: NO PLAN, stand aside. Unusually emphatic - on a gap-up you can follow neither the momentum nor the stop-losses, because whether the market wants to stay sideways or continue down becomes unreadable.",
+    "Both basket legs are on EXPIRY contracts today, so premium decays fastest and a target set for an ordinary session is the wrong target. The RISK rules on expiry apply in full."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24320,
-        24270
+        24270,
+        24320
       ],
       "support": [
-        24186,
-        24140
+        24000,
+        24080
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57800,
-        58000
+        57650,
+        57800
       ],
       "support": [
-        57500,
-        57220
+        56800,
+        57000
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77750,
-        78000
+        77520,
+        77750
       ],
       "support": [
-        77370,
-        77160
+        76800,
+        77050
       ]
     }
   ]

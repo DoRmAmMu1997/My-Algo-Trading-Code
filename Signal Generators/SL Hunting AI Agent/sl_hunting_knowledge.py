@@ -1170,6 +1170,23 @@ RISK DISCIPLINE
   becomes the fuel for a move AGAINST you — the same mechanism you were trying to
   exploit, pointed the other way. Company at a level is a warning, not comfort:
   the break should come promptly, "from about here", or the edge has inverted.
+- A CROWD WHOSE STOPS ARE TOO FAR AWAY IS REMOVED BY PROFIT-THEN-FADE, NOT BY A
+  STOP-HUNT (v4n). Seated inventory is not always huntable: when the crowd entered
+  at a level well away from price, reaching their stops would take a move too big
+  to be the day's business, so the market does not go and get them. It uses the
+  other method. IH, on buyers who bought a support two sessions earlier: "buyers
+  will certainly have come in, but their stops are going to sit at minimum below
+  the 500 level, so they cannot be targeted DIRECTLY. They can be targeted this
+  way instead — first let them SEE some profit, then reduce that profit. In that
+  they run away quickly."
+  Two consequences for reading a chart:
+  * A distant-stop crowd is a reason the market may drift TOWARD them first. A
+    move in their favour is not evidence they were right; it can be the setup for
+    taking it back, which is what actually removes them.
+  * It changes what counts as your entry trigger. Hunting a near-stop crowd waits
+    for the BREAK; hunting a distant-stop crowd waits for the FADE after a move
+    that went their way. Naming which of the two you are in stops you waiting for
+    a break that this crowd was never going to produce.
 - A CROWD THAT HAS AVERAGED DOWN EARNS A BIGGER TARGET (v4b). This is the
   counterpart to A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, and the two together
   are how you SIZE a target from crowd behaviour rather than from a fixed
@@ -1297,6 +1314,25 @@ RISK DISCIPLINE
   in the time you have. When the answer needs the rest of the session, the wait has
   already failed. On an expiry day this arrives fastest, because the premium is
   draining while the range holds.
+- DO NOT THINK YOUR WAY THROUGH A LOSS; THE THINKING IS WHAT ENLARGES IT (v4n).
+  The companion to the loss-limit rule below, and the one that makes its patience
+  safe rather than dangerous. Waiting to the limit is MECHANICAL waiting — it is
+  not a licence to keep re-deriving the situation. IH, sitting in a losing trade
+  he later cut: "there is no benefit in applying more thought here, because
+  APPLYING THOUGHT WHILE IN A LOSS IS THE THING THAT MAKES THE LOSS BIGGER", and
+  on what to do if his level broke: "then we are not to think about whether this
+  will happen or how we might escape — those things must not be brought into the
+  mind at all. Then we simply go according to the SL."
+  The failure this prevents is specific and is one you are built to commit: with
+  a position under water, generating another plausible reading of the chart is
+  effortless, and every one of them argues for staying. So once price is against
+  you and the invalidation is in view, the only questions still live are the ones
+  you had ALREADY committed to — the stop, the last point, the limit. New
+  analysis produced after the loss began is evidence about your discomfort, not
+  about the market.
+  It does NOT mean stop observing: a stop, a target or a named invalidation still
+  fires on what you see. It means stop SEARCHING for a reading that rescues the
+  position.
 - THE LOSS LIMIT IS A PERMISSION TO WAIT, NOT ONLY A PLACE TO STOP (v4h). Read
   this WITH v4e's DISCIPLINE IS ASYMMETRIC, not against it: that rule says cut a
   loser mechanically, this one says cut it AT the limit and not before, because
@@ -1551,6 +1587,18 @@ RISK DISCIPLINE
   The test to apply before using the word "stale": would I still call it stale if it
   AGREED with me right now? If not, it is not stale, it is inconvenient — and an
   inconvenient signal is the one worth reading.
+  THE RULE ABOVE WAS BROKEN ON THE DAY IT SHIPPED, SO HERE IS THE PROCEDURE (v4n).
+  2026-08-24, the first session carrying it: at 10:27 the verdict "both at
+  resistance / bias up" was dismissed as "stale relative to BankNIFTY's own live
+  structure" to justify a SHORT entry; at 10:28, forty-eight seconds later, the
+  exit reasoning said cross_index "FLIPPED to both_at_resistance/bias UP, directly
+  opposing the short". It had not flipped. It was the identical verdict, and the
+  word "flipped" made a signal that had been overruled sound like fresh evidence.
+  So, mechanically, before you describe a verdict as stale, new, or flipped:
+  STATE WHAT IT READ ON YOUR PREVIOUS DECISION. If you cannot recall it, you do
+  not know whether it changed, and "flipped" is not available to you. If it reads
+  the same as last time and you overruled it then, overruling it again needs a
+  reason that is also new — and citing it as support now is not permitted at all.
 - POST-EXIT RE-ENTRY GATE (the MECHANICAL check for the two rules above — they are
   judgement, and judgement alone has proven too easy to talk past): after ANY exit,
   before you may open the NEXT position in EITHER direction, ALL of these must hold.

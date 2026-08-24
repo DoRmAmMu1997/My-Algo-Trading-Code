@@ -689,11 +689,33 @@ class SLHuntingAgent:
             result = tool_context.execution_result
             if result is not None and bool(result.get("accepted")):
                 action = str(result.get("action", "")).upper()
+                if reported is None:
+                    # SLH-011: the model placed an order and then failed to return a
+                    # parseable decision. The ORDER is still the truthful record and
+                    # is kept exactly as executed -- but say so loudly, because this
+                    # entry is otherwise indistinguishable at INFO from a normal one,
+                    # and the reflection coach later reads its `reasoning` as the
+                    # trade's rationale.
+                    logger.warning(
+                        "SL Hunting: order %s executed but the model returned no parseable "
+                        "decision for that bar. Recording the executed order; the journal "
+                        "entry carries the order tool's own reason and no setup or "
+                        "confidence. Treat this decision as UNREVIEWED.",
+                        action or "?",
+                    )
                 base = reported or SLHuntingDecision(
                     action="HOLD",
                     confidence=0,
                     setup="tool_execution",
-                    reasoning="The order tool accepted an action; its result is authoritative.",
+                    # Prefer the justification the model gave the order tool over a
+                    # generic placeholder: on an ENTRY it is guaranteed meaningful
+                    # (SLH-007 rejects placeholders there), and on an EXIT it is at
+                    # worst the explicit no-reason sentinel, which is itself the
+                    # honest record.
+                    reasoning=(
+                        str(result.get("model_reason") or "").strip()
+                        or "The order tool accepted an action; its result is authoritative."
+                    ),
                     model_used=self._model,
                 )
                 if action in ("ENTER_LONG", "ENTER_SHORT"):
@@ -720,6 +742,16 @@ class SLHuntingAgent:
                         }
                     )
             if reported is not None and reported.action != "HOLD":
+                # SLH-011: the other direction of the same mismatch -- the final JSON
+                # claims an action no accepted order backs. Downgrading to HOLD is
+                # right (nothing was executed), but it means the model believed it had
+                # acted when it had not, which is worth seeing.
+                logger.warning(
+                    "SL Hunting: final output claimed %s but the order tool accepted "
+                    "nothing; holding. The model may believe it has a position it does "
+                    "not have.",
+                    reported.action,
+                )
                 return SLHuntingDecision(
                     action="HOLD",
                     confidence=0,

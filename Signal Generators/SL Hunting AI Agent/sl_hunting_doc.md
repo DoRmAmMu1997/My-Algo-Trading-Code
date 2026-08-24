@@ -4384,3 +4384,206 @@ is that it is one vote, exactly as its own header says.
   must not read as closing the stale hatch.
 - Prompt size 128,303 -> 132,468 chars. Assembled 133,759 against a 154,140
   budget: **20,381 chars of headroom.**
+
+---
+
+## Video addendum - the 24 Aug LIVE SESSION (v4n)
+
+**Source:** Intraday Hunter live session `9bTx_E3E95c` (24 Aug 2026, 10:19).
+
+**The first session where IH and our agent were on OPPOSITE sides, and the agent
+won.** IH bought calls into what he read as a range that had to break upward, the
+market fell instead, and he cut. Our agent shorted three of its four trades and
+finished +2,065.25. That divergence is worth more than another agreement, because
+it separates the method from the read.
+
+### Two new rules
+
+**DO NOT THINK YOUR WAY THROUGH A LOSS; THE THINKING IS WHAT ENLARGES IT.** The
+sharpest thing in the session and the one most specific to what we are building.
+IH, sitting under water: "there is no benefit in applying more thought here,
+because APPLYING THOUGHT WHILE IN A LOSS IS THE THING THAT MAKES THE LOSS BIGGER."
+And on what to do if his level broke: "then we are not to think about whether this
+will happen or how we might escape - those things must not be brought into the
+mind at all. Then we simply go according to the SL."
+
+This is the companion that makes v4h's permission-to-wait safe. Waiting to the
+limit is MECHANICAL waiting; it is not a licence to keep re-deriving the chart.
+The failure it prevents is one an LLM agent is built to commit: with a position
+under water, generating another plausible reading is effortless and every one of
+them argues for staying. So once price is against you and the invalidation is in
+view, the only live questions are the ones already committed to - the stop, the
+last point, the limit.
+
+It is bounded in the prose and in the test, because read too strongly it would
+disable stops: it does NOT mean stop observing, it means stop SEARCHING for a
+reading that rescues the position.
+
+**A CROWD WHOSE STOPS ARE TOO FAR AWAY IS REMOVED BY PROFIT-THEN-FADE, NOT BY A
+STOP-HUNT.** Seated inventory is not always huntable. IH on buyers who bought a
+support two sessions earlier: "their stops are going to sit at minimum below the
+500 level, so they cannot be targeted DIRECTLY. They can be targeted this way
+instead - first let them SEE some profit, then reduce that profit. In that they
+run away quickly."
+
+The operational half is that it changes the ENTRY TRIGGER: hunting a near-stop
+crowd waits for the BREAK, hunting a distant-stop crowd waits for the FADE after a
+move that went their way. Naming which one you are in stops you waiting for a
+break this crowd was never going to produce. It also warns that a move toward such
+a crowd is not evidence they were right - it can be the setup for taking it back.
+
+### One extension: v4m's re-rating rule was broken on the day it shipped
+
+v4m added YOU MAY NOT RE-RATE A SIGNAL TO SUIT THE DECISION YOU WANT after two
+sessions of `cross_index` being dismissed as stale when it disagreed and cited
+when it agreed. Today was the first session carrying that rule, and it happened
+again inside one minute:
+
+- **10:27** (entry): "This overrides the mechanical cross_index 'both at
+  resistance/bias up' read, which is stale relative to BankNIFTY's own live
+  structure."
+- **10:28** (exit): "cross_index flipped to both_at_resistance/bias UP, directly
+  opposing the short."
+
+**It had not flipped.** It was the identical verdict, forty-eight seconds later,
+and the word "flipped" made a signal that had just been overruled sound like fresh
+evidence.
+
+A disposition had already failed, so v4n adds a PROCEDURE instead: before
+describing a verdict as stale, new, or flipped, state what it read on your
+previous decision. If you cannot recall it you do not know whether it changed, and
+"flipped" is not available. If it reads the same as last time and you overruled it
+then, citing it as support now is not permitted at all.
+
+### How our agent traded the same session
+
+Basket **+1,096.75** across 51 legs. SL Hunting: **+2,065.25** over 4 trades - the
+best strategy on the board, in a session where the two biggest deterministic
+strategies lost over 3,000 each.
+
+| Time | Leg | P&L |
+|---|---|---|
+| 09:18 | NIFTY long / BNF mirror | +13.00 / +439.50 |
+| 09:48 | NIFTY short / BNF mirror | +156.00 / +2,700.00 |
+| 10:02 | NIFTY short / BNF mirror | -321.75 / -1,854.00 |
+| 10:28 | NIFTY short / BNF mirror | +227.50 / +705.00 |
+
+**1. The leg-narration habit has CORRECTED, and the pending v4n rule is therefore
+NOT being added.** The operator asked that this version add a rule against
+justifying a basket decision by the leg that flatters it, recorded after three
+occurrences on 19, 20 and 21 Aug. Today every decision quoted the BASKET figure -
+"+2221.5 basket profit", "-1872 unrealized", "+447.5" - and twice the agent
+volunteered that the NIFTY leg was the WEAK one: "the NIFTY leg alone was already
+negative (-42.25) despite spot being above entry, so the mirror was carrying the
+basket profit while the leader stalled", and "the NIFTY leg itself is flat (+97.5)
+with the mirror leg carrying almost all of the +2221.5 basket profit".
+
+That is the opposite of the recorded failure, and it applies v4l's
+movement-not-rupee-share test correctly. Adding a rule against a habit that two
+prior versions already fixed would be exactly the bloat the 2026-08-18 pruning
+pass warned about. Recorded here rather than silently dropped, so the decision is
+reviewable.
+
+**2. An ENTRY was placed with no rationale in the journal.** The 09:17:48 entry
+logged `conf=0, setup=tool_execution` with the reasoning "The order tool accepted
+an action; its result is authoritative." That is `_tool_authoritative` in
+`sl_hunting_agent.py` doing its job: the model called the order tool, the order was
+accepted, and the model then failed to return a parseable final decision, so the
+host recorded the EXECUTED action truthfully rather than inventing one.
+
+The order handling is correct. What is missing is observability, and it is the
+entry-side twin of SLH-010: a position was opened and the journal - which the
+reflection coach reads to work out what worked - carries a placeholder instead of
+a reason. It logs at INFO, indistinguishable from a normal entry. Not fixed here
+because it is a code question rather than a knowledge one.
+
+**3. The note was overridden twice and followed once, and the overrides won.** The
+09:41 short says so explicitly: "this overrides the pre-open note's default
+gap-up-long branch because live price action shows a genuine failed breakout". It
+made +2,856.00, the day's best trade. Across six sessions the note-versus-override
+record still points both ways.
+
+### Knowledge changes (v4n)
+
+- `RISK`: DO NOT THINK YOUR WAY THROUGH A LOSS (new, beside v4h's limit); v4m's
+  re-rating rule extended with the previous-verdict procedure.
+- `RETAIL_POSITIONING`: A CROWD WHOSE STOPS ARE TOO FAR AWAY IS REMOVED BY
+  PROFIT-THEN-FADE (new).
+- Three drift guards: the loss-thinking rule must not become "stop observing", the
+  distant-stop rule must keep the break-versus-fade trigger, and the re-rating
+  procedure must keep its measured case.
+- **Deliberately NOT added:** the leg-narration rule - see point 1 above.
+- Prompt size 132,468 -> 136,034 chars. Assembled 137,325 against a 154,140
+  budget: **16,815 chars of headroom.**
+
+---
+
+## SLH-011 - an order executed by a pass that returned nothing parseable (2026-08-24)
+
+### What happened
+
+The 09:17:48 entry was recorded as:
+
+```
+SL Hunting AI: ENTER_LONG (conf=0, setup=tool_execution) stop=24271.1 target=24326.0
+  :: The order tool accepted an action; its result is authoritative.
+```
+
+The model called the order tool, the order was accepted, and the model then
+failed to return a parseable `SLHuntingDecision`. `_tool_authoritative` did
+exactly what it exists for: it recorded the EXECUTED action rather than
+inventing a decision or discarding a real position.
+
+### What was wrong with it
+
+Nothing in the order handling. Two things around it:
+
+1. **The journal carried a placeholder instead of a rationale.** The decision
+   journal is what `sl_hunting_coach.py` reads to work out what worked, and the
+   `reasoning` field is the trade's stated purpose. "The order tool accepted an
+   action; its result is authoritative" tells the coach nothing, and it is
+   indistinguishable from a real justification when read later.
+
+2. **It logged at INFO.** An entry with no reasoning, no setup and zero
+   confidence appeared in the log exactly like a normal one. It was found only
+   because a human happened to read the line.
+
+### The fix
+
+**Use the model's own words.** The justification the model passed to the order
+tool is a real one and was already validated: `_reason_meaning_problem` rejects
+placeholders on ENTRIES (SLH-007), so on an entry that string is guaranteed
+meaningful. `do_order` now carries it on the accepted result as `model_reason`,
+and `_tool_authoritative` prefers it over the generic sentence.
+
+On an EXIT the reason may legitimately be the `NO_REASON_SENTINEL`, which is
+itself the honest record and already raises its own SLH-010 warning.
+
+**Say it out loud.** A WARNING now names the case:
+
+> order ENTER_LONG executed but the model returned no parseable decision for that
+> bar. Recording the executed order; the journal entry carries the order tool's
+> own reason and no setup or confidence. Treat this decision as UNREVIEWED.
+
+**And the mirror case.** The other synthesised path - the final JSON claims an
+action no accepted order backs - was equally silent. Downgrading it to HOLD is
+correct because nothing executed, but it means the model believed it held a
+position it did not. That now warns too.
+
+### What deliberately did NOT change
+
+- **The recorded ACTION.** What executed is still what is recorded, unchanged.
+  Only the `reasoning` string and the log level of the surrounding event moved.
+- **`setup` stays `tool_execution` and `confidence` stays 0.** The model did not
+  supply either, and inventing them would make an unreviewed decision look
+  reviewed. The gaps are the signal.
+- **No new refusal.** Nothing is blocked; a position is never abandoned because
+  its decision failed to parse.
+
+### Verification
+
+Both guards were negative-tested rather than assumed. Removing the reason-carrying
+makes the test fail with `assert 'pivot reclaim with confirmed hammer' in 'The
+order tool accepted an action; its result is authoritative.'`, and disabling the
+claimed-action warning fails its own assertion. A third test asserts an ordinary
+pass produces NO warning, so the guards cannot decay into noise.

@@ -201,13 +201,20 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_24_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 23 Aug transcript.
+def test_shipped_note_matches_august_25_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 24 Aug transcript.
 
-    This catches the three dangerous daily-note mutations: a stale date, an
-    inverted gap branch, or a level copied from the prior session. The holiday
-    context matters because IH still reads Friday's buyers as seated despite
-    the two-day carry gap; the note must not silently erase that evidence call.
+    Three things a summarising edit would flatten:
+
+    1. DOUBLE EXPIRY -- both NIFTY and BankNIFTY expire, so BOTH basket legs
+       are on expiry contracts. The agent trades NIFTY and mirrors BankNIFTY,
+       so this is the first note where the expiry RISK rules bind on both.
+    2. The sell-side plan does NOT hunt the sellers. He says outright they
+       booked and left, so the trade FOLLOWS momentum. A note read as
+       "sell-side, therefore target the sellers" inverts the premise while
+       keeping the direction, which is the subtlest way to get it wrong.
+    3. The GAP-UP branch is a stand-aside, and an unusually strong one:
+       neither the momentum nor the stop-losses can be followed there.
     """
     import os
 
@@ -216,34 +223,40 @@ def test_shipped_note_matches_august_24_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-24"
-    assert "rmmBLlHve1k" in note.source
-    assert "Friday likely left BUYERS seated" in note.context
-    assert "two-day holiday" in note.context
-    assert note.plan == [
-        "GAP-UP: do not target the seated buyers because their stops are too far "
-        "away. Follow the market and identify confirmed BUY-side setups.",
-        "FLAT or GAP-DOWN: target the seated buyers and identify confirmed "
-        "SELL-side setups.",
-        "Momentum has been limited for several sessions, but Monday may move "
-        "better; that is context only, not permission to enter without the live "
-        "pattern and confirmation.",
-    ]
+    assert note.for_date == "2026-08-25"
+    assert "epBZSyUunIk" in note.source
+    assert "DOUBLE EXPIRY" in note.context
+    assert "NOT the target" in note.context
+
+    sell = next(line for line in note.plan if line.startswith("FLAT or GAP-DOWN"))
+    assert "SELL-side" in sell
+    # The premise, not just the direction.
+    assert "FOLLOWS the momentum rather than hunting a crowd" in sell
+    assert "only shape in which a trap can form" in sell
+
+    gap_up = next(line for line in note.plan if line.startswith("GAP-UP"))
+    assert "NO PLAN" in gap_up
+    assert "neither the momentum nor the stop-losses" in gap_up
+
+    # Expiry is a plan line of its own because it binds on BOTH legs.
+    assert any("EXPIRY contracts" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
+            # Caption gave the first support as "2480", a dropped digit; read
+            # off the chart by the operator as 24080 rather than inferred.
             "index": "NIFTY",
-            "resistance": [24320.0, 24270.0],
-            "support": [24186.0, 24140.0],
+            "resistance": [24270.0, 24320.0],
+            "support": [24000.0, 24080.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57800.0, 58000.0],
-            "support": [57500.0, 57220.0],
+            "resistance": [57650.0, 57800.0],
+            "support": [56800.0, 57000.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [77750.0, 78000.0],
-            "support": [77370.0, 77160.0],
+            "resistance": [77520.0, 77750.0],
+            "support": [76800.0, 77050.0],
         },
     ]
