@@ -1,44 +1,44 @@
 {
-  "for_date": "2026-08-25",
-  "source": "Intraday Hunter, 'Prediction For 25 AUG 2026' (epBZSyUunIk, uploaded 2026-08-24)",
-  "context": "DOUBLE EXPIRY: both NIFTY and BankNIFTY expire today. Heavy selling yesterday, but the sellers who rode it down have already booked and left - momentum makes traders book rather than hold size - so they are NOT the target.",
+  "for_date": "2026-08-26",
+  "source": "Intraday Hunter, 'Prediction For 26 AUG 2026' (hFmttyfw5Io, uploaded 2026-08-25)",
+  "context": "The MONTHLY expiry is now complete, so the market may start working to the support it has built. After that selling, few people will have gone long even where price held - so there are few seated buyers and room above.",
   "plan": [
-    "FLAT or GAP-DOWN: identify confirmed SELL-side setups. This FOLLOWS the momentum rather than hunting a crowd - he says outright the sellers are not the target - and flat/gap-down is the only shape in which a trap can form.",
-    "GAP-UP: NO PLAN, stand aside. Unusually emphatic - on a gap-up you can follow neither the momentum nor the stop-losses, because whether the market wants to stay sideways or continue down becomes unreadable.",
-    "Both basket legs are on EXPIRY contracts today, so premium decays fastest and a target set for an ordinary session is the wrong target. The RISK rules on expiry apply in full."
+    "FLAT, GAP-UP or a SMALL GAP-DOWN: identify confirmed BUY-side setups. All three shapes share one plan; only a large gap-down changes it.",
+    "LARGE GAP-DOWN ONLY: flip to confirmed SELL-side setups and go WITH the market. The threshold is defined - for BANKNIFTY an opening BELOW its support (57200/57000); on a big gap-down the buyers' strength is not visible at all.",
+    "Both branches FOLLOW the market rather than hunt a crowd. He says so directly for the gap-down case, and the buy-side case rests on few buyers being seated rather than on a trapped crowd to squeeze."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24270,
-        24320
+        24320,
+        24380
       ],
       "support": [
-        24000,
-        24080
+        24080,
+        24180
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
         57650,
-        57800
+        58000
       ],
       "support": [
-        56800,
-        57000
+        57000,
+        57200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77520,
-        77750
+        77750,
+        78000
       ],
       "support": [
-        76800,
-        77050
+        76900,
+        77150
       ]
     }
   ]

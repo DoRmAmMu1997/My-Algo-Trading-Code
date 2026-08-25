@@ -201,20 +201,22 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_25_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 24 Aug transcript.
+def test_shipped_note_matches_august_26_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 25 Aug transcript.
 
     Three things a summarising edit would flatten:
 
-    1. DOUBLE EXPIRY -- both NIFTY and BankNIFTY expire, so BOTH basket legs
-       are on expiry contracts. The agent trades NIFTY and mirrors BankNIFTY,
-       so this is the first note where the expiry RISK rules bind on both.
-    2. The sell-side plan does NOT hunt the sellers. He says outright they
-       booked and left, so the trade FOLLOWS momentum. A note read as
-       "sell-side, therefore target the sellers" inverts the premise while
-       keeping the direction, which is the subtlest way to get it wrong.
-    3. The GAP-UP branch is a stand-aside, and an unusually strong one:
-       neither the momentum nor the stop-losses can be followed there.
+    1. THREE shapes share the buy-side branch -- flat, gap-up AND a small
+       gap-down. Every prior note split on the sign of the gap, so an editor
+       working from habit would move the small gap-down to the sell side and
+       invert a third of the plan.
+    2. The sell-side branch is gated on a DEFINED threshold (an open below
+       BankNIFTY's support), not on "gap-down". Losing the definition turns a
+       checkable veto into a judgement call at 09:15.
+    3. BOTH branches FOLLOW the market rather than hunt a crowd -- the same
+       reading v4o added to the knowledge hours earlier. A note read as
+       "buy-side, therefore hunt the sellers" keeps the direction and inverts
+       the premise, which is the subtlest way to be wrong.
     """
     import os
 
@@ -223,40 +225,41 @@ def test_shipped_note_matches_august_25_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-25"
-    assert "epBZSyUunIk" in note.source
-    assert "DOUBLE EXPIRY" in note.context
-    assert "NOT the target" in note.context
+    assert note.for_date == "2026-08-26"
+    assert "hFmttyfw5Io" in note.source
+    assert "MONTHLY expiry is now complete" in note.context
+    assert "few seated buyers" in note.context
 
-    sell = next(line for line in note.plan if line.startswith("FLAT or GAP-DOWN"))
+    buy = next(line for line in note.plan if line.startswith("FLAT, GAP-UP"))
+    assert "SMALL GAP-DOWN" in buy and "BUY-side" in buy
+    assert "only a large gap-down changes it" in buy
+
+    sell = next(line for line in note.plan if line.startswith("LARGE GAP-DOWN ONLY"))
     assert "SELL-side" in sell
-    # The premise, not just the direction.
-    assert "FOLLOWS the momentum rather than hunting a crowd" in sell
-    assert "only shape in which a trap can form" in sell
+    # The defined threshold, with the number that makes it checkable.
+    assert "BELOW its support" in sell and "57200" in sell
 
-    gap_up = next(line for line in note.plan if line.startswith("GAP-UP"))
-    assert "NO PLAN" in gap_up
-    assert "neither the momentum nor the stop-losses" in gap_up
-
-    # Expiry is a plan line of its own because it binds on BOTH legs.
-    assert any("EXPIRY contracts" in line for line in note.plan)
+    # The premise both branches share.
+    assert any("FOLLOW the market rather than hunt a crowd" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # Caption gave the first support as "2480", a dropped digit; read
-            # off the chart by the operator as 24080 rather than inferred.
             "index": "NIFTY",
-            "resistance": [24270.0, 24320.0],
-            "support": [24000.0, 24080.0],
+            "resistance": [24320.0, 24380.0],
+            "support": [24080.0, 24180.0],
         },
         {
+            # 57200/57000 doubles as the support pair AND the gap-down
+            # threshold in the plan above; the two must not drift apart.
             "index": "BANKNIFTY",
-            "resistance": [57650.0, 57800.0],
-            "support": [56800.0, 57000.0],
+            "resistance": [57650.0, 58000.0],
+            "support": [57000.0, 57200.0],
         },
         {
+            # Caption merged both resistances into "7800750"; confirmed off the
+            # chart by the operator as 77750/78000 rather than inferred.
             "index": "SENSEX",
-            "resistance": [77520.0, 77750.0],
-            "support": [76800.0, 77050.0],
+            "resistance": [77750.0, 78000.0],
+            "support": [76900.0, 77150.0],
         },
     ]
