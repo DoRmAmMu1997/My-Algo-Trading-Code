@@ -4587,3 +4587,134 @@ makes the test fail with `assert 'pivot reclaim with confirmed hammer' in 'The
 order tool accepted an action; its result is authoritative.'`, and disabling the
 claimed-action warning fails its own assertion. A third test asserts an ordinary
 pass produces NO warning, so the guards cannot decay into noise.
+
+---
+
+## Video addendum - the 25 Aug LIVE SESSION (v4o)
+
+**Source:** Intraday Hunter live session `-KpWuMvUgUQ` (25 Aug 2026, 8:24).
+
+Double expiry, both indices. IH bought puts, sat through a BankNIFTY move
+against him, and booked a good profit. Our agent shorted four times and made
+**+6,112.50**, its best session of the series. Same side, same read, both right -
+but the session's most useful material is a place where they DISAGREED and the
+disagreement is instructive rather than settled.
+
+### The headline: the method is not always a fade
+
+A method-level correction, in his own words:
+
+> You say that when we work according to SL HUNTING we always have to work
+> OPPOSITE the market. **That is NOT so.** If the sellers' stop-losses are not
+> visible, and the opening is fine, then we can work ACCORDING TO the market.
+
+Our whole prompt is built around finding seated inventory and fading it, so this
+is a real widening: hunting a trapped crowd is the method's BEST trade, not its
+only one.
+
+It is also the most dangerous addition in the series, because read loosely it
+licenses entering with no crowd read at all - which is exactly the 11 Aug loss v4e
+was written from. So it ships with both reconciliations attached:
+
+- **A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e)** bans
+  inventing a crowd and trading the prediction. Following momentum is not that: it
+  claims no crowd at all, so there is nothing to be wrong about.
+- **AN EMPTY BOOK MEANS A TRAP IS COMING (v4f)** still supplies the "opening is
+  fine" half - you follow a direction the session has ESTABLISHED, never one you
+  expect it to take.
+
+The operational half is honesty about which trade you are in, because the two are
+managed differently: a hunt ends when the crowd is flushed, a with-the-market
+trade ends when the MOVE stops. Reading a stall as "my crowd has not been squeezed
+yet" is how the second gets held like the first.
+
+### Where IH and the agent disagreed, and what separates them
+
+BankNIFTY ran hard against IH's put basket - "NIFTY and Sensex gave no positive
+momentum but BankNIFTY produced a tremendous move... because of that we had to see
+some loss" - and he did NOT exit. His stated test was a single pre-named level:
+"there is a last RESISTANCE of ours; if it goes above this level we cut the trade
+and leave." It never crossed, the move resumed, and he booked well: "see how well
+the resistance helped today - we saved a trade that was going wrong, purely
+because of the resistance."
+
+Our agent met a comparable move at 09:28 and cut, correctly citing the rule:
+"BankNIFTY mirrors the same recovery... which per the index hierarchy disqualifies
+the whole basket." That cost **-1,176.25**.
+
+**This is not evidence the rule is wrong.** The index-hierarchy disqualification
+has closed genuinely losing baskets, including on 18 and 21 Aug. What today shows
+is that "the leading index is moving against me" and "my invalidation has broken"
+are DIFFERENT observations, and only a level named BEFORE entry tells them apart.
+v4j's rule is therefore bounded rather than weakened, with an explicit fallback:
+if you cannot name the level, you do not get the exception and the
+disqualification stands.
+
+### Double expiry is a timing instruction
+
+"Today two indices have expiry - it gives one selling momentum, then one buying
+momentum, so MORE traps form", and "momentum on either side will not come easily
+today". His response was to wait rather than to pick a side, which is recorded
+that way: expect the small counter-trap BEFORE the move rather than reading it as
+invalidation.
+
+He also names the reason he waited at all - two consecutive losing days: "yesterday
+was a loss, Friday was a loss too, so we should avoid a LOSS STREAK." That part is
+already covered by the existing post-loss rules and is not re-legislated.
+
+### How our agent traded the same session
+
+Basket **-8,730.25** across 64 legs, a poor day everywhere except one strategy.
+SL Hunting: **+6,112.50** over 4 trades - the best strategy on the board by a wide
+margin, and its best session recorded.
+
+| Time | Leg | P&L |
+|---|---|---|
+| 09:28 | NIFTY short / BNF mirror | -178.75 / -997.50 |
+| 09:45 | NIFTY short / BNF mirror | **+2,190.50 / +3,714.00** |
+| 09:53 | NIFTY short / BNF mirror | -13.00 / +180.00 |
+| 10:16 | NIFTY short / BNF mirror | -204.75 / +1,422.00 |
+
+**1. The note's PREMISE was applied, not just its direction.** Yesterday's note
+said sell-side while stating the sellers were NOT the target. The agent carried
+that distinction into every entry: "follows momentum rather than hunting a crowd",
+and "fades the fresh buyers who chased the recovery, not the already-booked prior
+sellers." That was the subtlety the shipped-note test was written to protect, and
+it survived into live decisions.
+
+**2. v4m/v4n's re-rating discipline held.** The stale hatch was NOT abused. At
+10:08 the opposing verdict was called "a caution" with a substantive reason given
+rather than being dismissed as stale; at 10:16 the agent declined the hatch
+outright - "cross_index has turned to both_at_resistance/bias UP directly opposing
+the short over an hour into the session, **no longer dismissible as stale**" - and
+booked. That is the scope rule applied by the agent to itself, the failure v4m and
+v4n were written for two sessions running.
+
+**3. The basket figure was quoted in every decision** ("-991", "+5861 (NIFTY
++2327, mirror +3534)", "+438", "+1101.75"). The leg-narration habit stays
+corrected; v4n's decision not to add a fourth rule for it looks right so far.
+
+**4. Both dependency bumps validated in the session, as the pins predicted.**
+72 `SLHuntingAgent decision cost` lines confirm the bundled CLI 2.1.238 spawns
+under claude-agent-sdk 0.2.143, and CPR AI ran with zero error lines under
+openai-codex 0.147.0 - the pin whose comment says plainly that no automated gate
+can test it and the next session is the actual check.
+
+One flaw worth watching rather than legislating: the 09:52 trade was a **46-second
+round trip** (+167.00 realised against +438 unrealised at the decision). The exit
+reasoning is sound on its own terms - the mirror was not confirming - but v4a
+already warns that a trade abandoned within a bar or two pays the round trip for
+almost no exposure. Second occurrence in a week; a third makes it a pattern.
+
+### Knowledge changes (v4o)
+
+- `RETAIL_POSITIONING`: THE METHOD IS NOT ALWAYS A FADE (new), with its v4e and
+  v4f reconciliations.
+- `RISK`: v4j's basket rule bounded by MOVING AGAINST YOU IS NOT YOUR LEVEL
+  BREAKING; MOVE-EXHAUSTION gains TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS.
+- Three drift guards: the fade rule must keep both reconciliations and the
+  which-trade-am-I-in honesty, the level bound must keep the no-level fallback so
+  it cannot gut the index hierarchy, and the double-expiry rule must stay a timing
+  instruction rather than a bias.
+- Prompt size 136,034 -> 139,563 chars. Assembled 140,854 against a 154,140
+  budget: **13,286 chars of headroom.**

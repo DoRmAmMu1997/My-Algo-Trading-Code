@@ -1061,6 +1061,24 @@ RISK DISCIPLINE
   the NIFTY leg standing beside it. Before an `exit_leg` of "BNF", answer one
   question out loud: is this BankNIFTY-only, or is BankNIFTY telling me the move is
   over? If it is the second, the honest action is EXIT BOTH.
+  BUT MOVING AGAINST YOU IS NOT THE SAME AS YOUR LEVEL BREAKING (v4o). This rule
+  disqualifies on a BankNIFTY REVERSAL, not on BankNIFTY merely going the wrong
+  way while your named invalidation still holds. IH sat through exactly that:
+  BankNIFTY ran hard against a put basket — "NIFTY and Sensex gave no positive
+  momentum but BankNIFTY produced a tremendous move... because of that we had to
+  see some loss" — and he stayed in, on one stated test: "there is a last
+  RESISTANCE of ours; if it goes above this level we cut the trade and leave." It
+  never crossed, the move resumed, and he booked a good profit: "see how well the
+  resistance helped today — we saved a trade that was going wrong, purely because
+  of the resistance."
+  So the test is the LEVEL you named before entering, not the direction of the
+  last few candles. Both were visible on this book the same session (2026-08-25):
+  our 09:26 short was cut at 09:28 because "BankNIFTY mirrors the same recovery...
+  which per the index hierarchy disqualifies the whole basket", for -1,176.25 —
+  while IH held a comparable move because his level held. That is not proof he was
+  right and the agent wrong; it is proof the two readings are DIFFERENT, and only
+  the level distinguishes them. If you cannot name the level, you do not have this
+  exception and the disqualification stands.
   Measured on this book (2026-08-18): the mirror was cut alone at 10:34 on a
   confirmed BankNIFTY shooting star and bearish engulfing, booking +303.00, with the
   NIFTY leg held because "its own read is unaffected" and an opposing cross-index
@@ -1170,6 +1188,28 @@ RISK DISCIPLINE
   becomes the fuel for a move AGAINST you — the same mechanism you were trying to
   exploit, pointed the other way. Company at a level is a warning, not comfort:
   the break should come promptly, "from about here", or the edge has inverted.
+- THE METHOD IS NOT ALWAYS A FADE: WITH NO VISIBLE INVENTORY YOU MAY GO WITH THE
+  MARKET (v4o). Correcting a misreading of the whole method, in IH's own words:
+  "you say that when we work according to SL HUNTING we always have to work
+  OPPOSITE the market. That is NOT so. If the sellers' stop-losses are not
+  visible, and the opening is fine, then we can work ACCORDING TO the market."
+  Hunting a trapped crowd is the method's best trade, not its only one. When you
+  can see seated inventory, fade it; when you genuinely cannot, following the
+  established direction is a legitimate second option rather than a failure to
+  find the real trade.
+  RECONCILE IT CAREFULLY, because two existing rules look like they forbid this:
+  * A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e) bans
+    inventing a crowd and trading the prediction. Following momentum is not that
+    — it claims no crowd at all, so there is nothing to be wrong about.
+  * AN EMPTY BOOK MEANS A TRAP IS COMING (v4f) says wait for price to reveal the
+    trap's direction. Still true, and it is what supplies the "opening is fine"
+    half: you are following a direction the session has already ESTABLISHED, not
+    one you expect it to take.
+  The bar this sets is honesty about which trade you are in. Say plainly "no
+  huntable inventory, following the move" — because the two are managed
+  differently: a hunt is over when the crowd is flushed, whereas a
+  with-the-market trade is over when the MOVE stops, and reading a stall as
+  "my crowd has not been squeezed yet" is how the second gets held like the first.
 - A CROWD WHOSE STOPS ARE TOO FAR AWAY IS REMOVED BY PROFIT-THEN-FADE, NOT BY A
   STOP-HUNT (v4n). Seated inventory is not always huntable: when the crowd entered
   at a level well away from price, reaching their stops would take a move too big
@@ -1552,6 +1592,13 @@ RISK DISCIPLINE
   because "momentum has stalled", you may not re-enter into that same stall minutes
   later. A fresh trade needs a NEW named crowd trapped by NEW price action, not a
   leftover pattern from the move you already harvested.
+  * TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS (v4o). When NIFTY and BankNIFTY expire
+    on the SAME day, both basket legs sit on expiring contracts and the tape
+    alternates: "today two indices have expiry — it gives one selling momentum,
+    then one buying momentum, so MORE traps form", and "momentum on either side
+    will not come easily today". The response is timing, not direction: wait for
+    clarity rather than taking the first clean-looking pattern, and expect the
+    small counter-trap before the move rather than reading it as invalidation.
   * EXPIRY-DAY RANGE: on an expiry day this is sharpest — after the first real move the
     market frequently settles into a WIDE range (an upper and a lower point) and
     oscillates inside it, chopping both sides and paying no directional trade. Take the

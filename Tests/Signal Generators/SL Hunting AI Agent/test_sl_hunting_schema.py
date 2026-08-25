@@ -1565,3 +1565,60 @@ def test_v4n_re_rating_rule_gains_a_procedure_after_being_broken():
     assert "forty-eight seconds later" in rule
     # Overruling then citing the same verdict is the banned combination.
     assert "citing it as support now is not permitted" in rule
+
+
+def test_v4o_method_is_not_always_a_fade_reconciles_with_v4e_and_v4f():
+    """v4o (25 Aug live session): hunting is the best trade, not the only one.
+
+    This is the most dangerous addition in the series so far, because read
+    loosely it licenses entering with no crowd read at all -- which is the
+    exact loss v4e was written from. It survives only while it keeps BOTH
+    reconciliations and the honesty requirement about which trade you are in.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE METHOD IS NOT ALWAYS A FADE")
+
+    assert "That is NOT so" in rule
+    assert "If the sellers' stop-losses are not" in rule
+    # It must name BOTH rules that appear to forbid it, and answer each.
+    assert "A FORECAST OF WHO WILL ARRIVE" in rule
+    assert "it claims no crowd at all" in rule
+    assert "AN EMPTY BOOK MEANS A TRAP IS COMING" in rule
+    assert "already ESTABLISHED" in rule
+    # The management difference is the operational half.
+    assert "no huntable inventory, following the move" in rule
+    assert "a hunt is over when the crowd is flushed" in rule
+
+
+def test_v4o_level_not_direction_bound_does_not_gut_the_index_hierarchy():
+    """A leading index moving against you is not your invalidation breaking.
+
+    Read too strongly this cancels the index-hierarchy disqualification, which
+    has genuinely closed losing baskets. It is admissible ONLY when a level was
+    named in advance, so the no-level fallback is asserted explicitly.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "CUTTING THE MIRROR ON A BANKNIFTY REVERSAL")
+
+    # The original disqualification survives intact.
+    assert "the honest action is EXIT BOTH" in rule
+    # The bound, and what actually distinguishes the two readings.
+    assert "MOVING AGAINST YOU IS NOT THE SAME AS YOUR LEVEL BREAKING" in rule
+    assert "not the direction of the last few candles" in rule
+    # Both same-session observations are kept, and neither is claimed as proof.
+    assert "-1,176.25" in rule
+    assert "it is proof the two readings are DIFFERENT" in rule
+    # The fallback that stops this becoming a general excuse.
+    assert "If you cannot name the level, you do not have this" in rule
+
+
+def test_v4o_double_expiry_rule_answers_with_timing_not_direction():
+    """Two expiries on one day is a TIMING instruction, not a bias."""
+    prompt = build_system_prompt()
+    flat = " ".join(prompt.split())
+
+    assert "TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS" in flat
+    assert "one selling momentum, then one buying momentum" in flat
+    assert "The response is timing, not direction" in flat
+    # The specific misreading it prevents.
+    assert "expect the small counter-trap before the move rather than reading it as invalidation" in flat
