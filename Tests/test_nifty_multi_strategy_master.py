@@ -12642,6 +12642,95 @@ class TestSessionStatePersistence(unittest.TestCase):
             )
 
 
+# --------------------------------------------------------------------------
+# SLH-012: a stale inference pass that still left a position open.
+#
+# The generation guard exists so a decision computed against old market state
+# can never ACT. It was also dropping the bookkeeping, and that is not just a
+# missing log line: `_finalize_journal` returns early when `_open_trade_id is
+# None`, so a trade whose open row was skipped gets no close row either and is
+# absent from the per-trade journal the reflection coach reads.
+#
+# Measured on 2026-08-26: the 09:15 long executed through the locked tool
+# context, the pass was discarded as "stale generation 2", and that trade
+# (+842.25, closed by the mechanical stop) never reached the journal at all.
+# --------------------------------------------------------------------------
+
+class SLHuntingStaleGenerationJournalTests(unittest.TestCase):
+    """`_consume_agent_decision` is called unbound against a light stub.
+
+    Building a real worker would drag in the SDK, a broker and a data store to
+    exercise ten lines of bookkeeping; the method only touches the attributes
+    stubbed below, so this keeps the test honest about what it covers.
+    """
+
+    def _stub(self, *, generation, current_generation, position_open, was_active=False):
+        decision = SimpleNamespace(
+            action="ENTER_LONG", confidence=7, setup="stale_pass_setup",
+            stop=24338.0, target=24400.0, reasoning="opened during the pass",
+        )
+        stub = SimpleNamespace(
+            _agent_inference_lock=threading.Lock(),
+            _agent_inference_thread=SimpleNamespace(is_alive=lambda: False),
+            _agent_inference_result=(
+                generation, decision, was_active, pd.DataFrame(), None,
+            ),
+            _agent_generation=current_generation,
+            _journal=object(),
+            _open_trade_id=None,
+            _decisions_path=None,          # decision-journal append is skipped
+            pos=SimpleNamespace(active=position_open),
+            log=MagicMock(),
+        )
+        stub.opened_rows = []
+        stub._journal_open_row = lambda *a: stub.opened_rows.append(a)
+        return stub
+
+    def _consume(self, stub):
+        worker_cls = getattr(master_file, "SLHuntingAIWorker", None)
+        if worker_cls is None:
+            self.skipTest("SL Hunting agent deps not installed; worker class is None")
+        worker_cls._consume_agent_decision(stub)
+
+    def test_stale_pass_that_opened_a_position_is_journalled_and_warned(self):
+        stub = self._stub(generation=2, current_generation=3, position_open=True)
+        self._consume(stub)
+
+        # The trade reaches the journal instead of vanishing.
+        self.assertEqual(len(stub.opened_rows), 1)
+        # ...and the operator is told, at WARNING.
+        warned = " ".join(str(c) for c in stub.log.warning.call_args_list)
+        self.assertIn("stale generation", warned)
+        self.assertIn("OPEN", warned)
+        self.assertIn("NOT acted on", warned)
+
+    def test_stale_pass_that_opened_nothing_is_still_simply_dropped(self):
+        """The guard's ordinary case must not become noisy."""
+        stub = self._stub(generation=2, current_generation=3, position_open=False)
+        self._consume(stub)
+
+        self.assertEqual(stub.opened_rows, [])
+        self.assertEqual(stub.log.warning.call_count, 0)
+        info = " ".join(str(c) for c in stub.log.info.call_args_list)
+        self.assertIn("Discarding late SL Hunting result", info)
+
+    def test_a_fresh_pass_is_unaffected(self):
+        """Same generation: normal path, journalled, no warning."""
+        stub = self._stub(generation=4, current_generation=4, position_open=True)
+        self._consume(stub)
+
+        self.assertEqual(len(stub.opened_rows), 1)
+        self.assertEqual(stub.log.warning.call_count, 0)
+
+    def test_a_stale_pass_never_reopens_an_already_journalled_trade(self):
+        """`_open_trade_id` set means the row exists; do not write a second."""
+        stub = self._stub(generation=2, current_generation=3, position_open=True)
+        stub._open_trade_id = "already-open"
+        self._consume(stub)
+
+        self.assertEqual(stub.opened_rows, [])
+        self.assertEqual(stub.log.warning.call_count, 0)
+
 if __name__ == "__main__":
     # Use the custom runner so both `python file.py` and any other direct
     # invocation produce verbose per-test output PLUS the final summary.

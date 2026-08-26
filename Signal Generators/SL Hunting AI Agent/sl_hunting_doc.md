@@ -4826,3 +4826,81 @@ normally afterwards, so this is recorded as an observation rather than a fault.
 - **Deliberately NOT added:** the capital-size/execution-speed advice - see above.
 - Prompt size 139,563 -> 141,841 chars. Assembled 143,132 against a 154,140
   budget: **11,008 chars of headroom.**
+
+---
+
+## SLH-012 - a stale inference pass that still left a position open (2026-08-26)
+
+### What happened
+
+At 09:15:49 the agent placed a LONG through the locked tool context. The pass
+completed, and at 09:16:41 the worker logged:
+
+```
+Discarding late SL Hunting result for stale generation 2.
+```
+
+The trade was real: entered at 24347.55, closed by the mechanical stop at 09:16:31
+for a basket **+842.25**. It appears in the trade log, the Telegram alert and the
+session P&L.
+
+It does not appear in the decision journal, and it has **no journal row at all**.
+
+### Why that is more than a missing log line
+
+The generation guard is correct and its docstring is accurate - "a stale generation
+here only skips the bookkeeping, never an order". No order path is affected. But
+the `return` skipped three things, and the third is the expensive one:
+
+1. the `SL Hunting AI: ...` decision log line,
+2. `append_decision(...)` to the decision journal,
+3. `_journal_open_row(...)`.
+
+`_finalize_journal` begins `if self._journal is None or self._open_trade_id is
+None: return`. So a trade whose OPEN row was skipped never gets a CLOSE row
+either - it is absent from the per-trade journal entirely. That journal is what
+`sl_hunting_coach.py` reads to work out what worked, so the trade is invisible to
+the learning loop in both directions.
+
+This is the third path of the family, after the two SLH-011 closed. It did not
+trigger an SLH-011 warning because `reported` was not None: the decision existed
+and parsed perfectly well, it was simply dropped downstream.
+
+### The fix
+
+The guard is about ACTING, not record-keeping. When a stale pass left a position
+OPEN, `_consume_agent_decision` now records it - the journal row and the decision -
+and warns:
+
+> Late SL Hunting result for stale generation N left a position OPEN; recording its
+> journal row and decision so the trade is not invisible to the coach. The decision
+> is stale as guidance and was NOT acted on.
+
+Recording a stale decision is defensible precisely here: it is stale as GUIDANCE,
+but it is the accurate account of an order that really happened, and
+`_tool_authoritative` (SLH-011) has already forced the decision to match what
+executed. Nothing in this path places an order.
+
+The open-row gate is now computed once as `opened_a_position` and reused by both
+branches, so the stale recovery and the normal path can never drift apart.
+
+### What deliberately did NOT change
+
+- **The guard still refuses to act.** No order is placed here and none ever was;
+  the change is confined to bookkeeping.
+- **A stale pass that opened nothing is still simply dropped**, at INFO, exactly as
+  before. That is the ordinary case and making it noisy would bury the real signal.
+- **A pass whose trade is already journalled** (`_open_trade_id` set) writes
+  nothing and does not warn.
+
+### Verification
+
+Four tests, called against a light stub rather than a full worker, because the
+method touches ten attributes and building a real worker would drag in the SDK, a
+broker and a data store to cover ten lines. They skip when the agent deps are
+absent, per the repository convention.
+
+The recovery was negative-tested rather than assumed: reverting the branch to the
+old unconditional discard fails `test_stale_pass_that_opened_a_position_is_journalled_and_warned`
+with `AssertionError: 0 != 1`. Two of the four tests assert the QUIET cases, so the
+warning cannot decay into noise.

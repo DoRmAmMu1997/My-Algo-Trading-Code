@@ -15862,9 +15862,44 @@ if SL_HUNTING_AVAILABLE:
             if payload is None:
                 return
             generation, decision, was_active, strategy_frame, bnf_candles = payload
+            opened_a_position = (
+                self._journal is not None
+                and self._open_trade_id is None
+                and not was_active
+                and self.pos.active
+            )
             if generation != self._agent_generation:
-                self.log.info("Discarding late SL Hunting result for stale generation %s.", generation)
-                return
+                # SLH-012: the guard is about ACTING, not about record-keeping.
+                # A stale pass may still have executed a real order through the
+                # locked tool context before it went stale, and dropping the
+                # whole payload then loses the only record of WHY.
+                #
+                # That is not merely a missing log line. `_finalize_journal`
+                # returns early when `_open_trade_id is None`, so a trade whose
+                # open row was skipped here gets no close row either -- it is
+                # absent from the per-trade journal entirely, which is what the
+                # reflection coach reads. Measured on 2026-08-26: the 09:15 long
+                # executed, the pass was discarded as stale generation 2, and the
+                # trade (+842.25, closed by the mechanical stop) never reached the
+                # journal in any form.
+                #
+                # So when a stale pass left a position open, still record it --
+                # the decision is stale as GUIDANCE but it is the accurate
+                # account of an order that really happened, and
+                # `_tool_authoritative` has already forced it to match what
+                # executed. Nothing here acts: no order is placed, and a stale
+                # pass that opened nothing is still simply dropped.
+                if not opened_a_position:
+                    self.log.info(
+                        "Discarding late SL Hunting result for stale generation %s.", generation
+                    )
+                    return
+                self.log.warning(
+                    "Late SL Hunting result for stale generation %s left a position OPEN; "
+                    "recording its journal row and decision so the trade is not invisible to "
+                    "the coach. The decision is stale as guidance and was NOT acted on.",
+                    generation,
+                )
             if decision.action != "HOLD":
                 self.log.info(
                     "SL Hunting AI: %s (conf=%d, setup=%s) stop=%s target=%s :: %s",
@@ -15881,12 +15916,7 @@ if SL_HUNTING_AVAILABLE:
                     )
                 except Exception as exc:
                     self.log.warning("SL Hunting decision-log failed: %s", exc)
-            if (
-                self._journal is not None
-                and self._open_trade_id is None
-                and not was_active
-                and self.pos.active
-            ):
+            if opened_a_position:
                 self._journal_open_row(decision, strategy_frame, bnf_candles)
 
         def _start_agent_inference(
