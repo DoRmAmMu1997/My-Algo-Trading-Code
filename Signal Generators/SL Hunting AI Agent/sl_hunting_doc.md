@@ -4904,3 +4904,75 @@ The recovery was negative-tested rather than assumed: reverting the branch to th
 old unconditional discard fails `test_stale_pass_that_opened_a_position_is_journalled_and_warned`
 with `AssertionError: 0 != 1`. Two of the four tests assert the QUIET cases, so the
 warning cannot decay into noise.
+
+---
+
+## Pre-open note for 2026-08-27
+
+**Source:** Intraday Hunter, "Nifty & Bank nifty | SENSEX Analysis | Prediction For
+27 AUG 2026" (`auAi14O0HOk`, uploaded 2026-08-26, 1:38).
+
+### The plan
+
+**The branch inverted overnight.** Yesterday all three open shapes shared a
+BUY-side plan; tomorrow all three share a SELL-side one. He says it twice, once
+over the SENSEX chart and once over NIFTY, in the same words both times: on a
+gap-up, flat-to-gap-down open, identify SELLING-side setups - "and in flat and so
+on, our same plan remains."
+
+That last clause is the one worth protecting. FLAT sits on the SELL side. It is
+the same structural point as yesterday's note - the sign of the gap does not
+switch the branch - pointing the opposite way, which makes it exactly the thing a
+habit-driven edit gets wrong.
+
+**The premise is FOLLOW, not hunt, and he gives the reason.** Two of them: very
+few people here trade puts, so those sellers do not need to be targeted; and the
+market did not break the closing price, so sellers are not seated either. With
+nobody trapped on either side, the method is momentum-following rather than a
+squeeze. This is a clean second instance of v4o's THE METHOD IS NOT ALWAYS A FADE,
+arriving one session after that rule shipped.
+
+**BankNIFTY carries an explicit stand-aside.** On a gap-up, "until it crosses the
+round number we cannot do anything." If rejection shows at the open, the sell-side
+plan holds. If it starts running up - "no plan can be made there at all." A note
+that kept only the sell-side half would convert a no-trade instruction into a
+licence to short strength, so the test asserts the stand-aside survives as such.
+
+**Tomorrow is a SENSEX/BANKEX expiry day** (he says so over the SENSEX chart, and
+the other channels' titles for 27 Aug agree). Execution stays NIFTY-only; this is
+context for the cross-index read, which is noisier than usual on those days.
+
+### Levels
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 24320, 24380 | 24120, 24180 |
+| BANKNIFTY | 58000, 58200 | 57420, 57720 |
+| SENSEX | 77750, 78000 | 77000, 77250 |
+
+Two readings were confirmed by the operator off the chart rather than inferred:
+
+- **SENSEX resistance.** The caption merged the pair into the run-on "78000750",
+  the same failure as yesterday's "7800750". Confirmed as 77750/78000 - i.e.
+  UNCHANGED from yesterday, despite the gap-up. The test carries a comment saying
+  so, because the natural assumption on seeing a repeated pair is that the note
+  was copied from the previous day's file and needs "correcting".
+- **NIFTY first support.** The caption gave "24,187"; confirmed as 24180. He does
+  give precise levels in this same video (BankNIFTY 57720/57420), so the caption
+  was not obviously wrong and guessing would have been a coin flip.
+
+### An extraction note for future sessions
+
+**YouTube's `timedtext` endpoint no longer works.** It now answers HTTP 200 with a
+zero-length body for every format (plain, `fmt=json3`, `fmt=srv3`) without a POT
+token, so the caption-track URL lifted out of the watch-page HTML - the method used
+for previous notes - silently yields nothing rather than erroring.
+
+What works: open the transcript panel in the visible browser pane and scrape the
+DOM. The segment element is `transcript-segment-view-model` (not the older
+`ytd-transcript-segment-renderer`, which no longer exists), and the list is
+VIRTUALIZED - roughly 13 segments are rendered at a time, so a single query
+returns only what is on screen. Scroll the panel's scrollable ancestor in steps
+and accumulate segments keyed by timestamp until the count stops growing. This
+video was short enough that one screenful was the whole transcript, which would
+have made the virtualization easy to miss on a longer one.

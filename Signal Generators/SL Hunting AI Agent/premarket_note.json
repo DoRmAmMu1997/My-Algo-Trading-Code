@@ -1,11 +1,12 @@
 {
-  "for_date": "2026-08-26",
-  "source": "Intraday Hunter, 'Prediction For 26 AUG 2026' (hFmttyfw5Io, uploaded 2026-08-25)",
-  "context": "The MONTHLY expiry is now complete, so the market may start working to the support it has built. After that selling, few people will have gone long even where price held - so there are few seated buyers and room above.",
+  "for_date": "2026-08-27",
+  "source": "Intraday Hunter, 'Prediction For 27 AUG 2026' (auAi14O0HOk, uploaded 2026-08-26)",
+  "context": "Gap-up today, then a fall once a little strength showed; neither NIFTY nor BankNIFTY could cross its level. The market did not break the closing price, so no sellers are seated -- and few here trade puts, so no seller crowd to hunt.",
   "plan": [
-    "FLAT, GAP-UP or a SMALL GAP-DOWN: identify confirmed BUY-side setups. All three shapes share one plan; only a large gap-down changes it.",
-    "LARGE GAP-DOWN ONLY: flip to confirmed SELL-side setups and go WITH the market. The threshold is defined - for BANKNIFTY an opening BELOW its support (57200/57000); on a big gap-down the buyers' strength is not visible at all.",
-    "Both branches FOLLOW the market rather than hunt a crowd. He says so directly for the gap-down case, and the buy-side case rests on few buyers being seated rather than on a trapped crowd to squeeze."
+    "SELL-side on ALL THREE open shapes -- gap-up, flat or gap-down. He gives the same plan for a flat open as for the gapped ones, so the sign of the gap does NOT switch the branch tomorrow.",
+    "FOLLOW the momentum; do NOT hunt a crowd. His stated reason is that nobody is trapped: very few trade puts here so those sellers need not be targeted, and an unbroken closing price means sellers are not seated either.",
+    "BANKNIFTY GAP-UP IS AN EXPLICIT STAND-ASIDE: until it crosses the round number nothing can be done. Rejection at the open keeps the sell-side plan; if it starts running UP he says NO plan can be made there at all.",
+    "Tomorrow is a SENSEX/BANKEX expiry day. Execution stays NIFTY-only, but treat the cross-index read as noisier than usual."
   ],
   "levels": [
     {
@@ -15,19 +16,19 @@
         24380
       ],
       "support": [
-        24080,
+        24120,
         24180
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57650,
-        58000
+        58000,
+        58200
       ],
       "support": [
-        57000,
-        57200
+        57420,
+        57720
       ]
     },
     {
@@ -37,8 +38,8 @@
         78000
       ],
       "support": [
-        76900,
-        77150
+        77000,
+        77250
       ]
     }
   ]

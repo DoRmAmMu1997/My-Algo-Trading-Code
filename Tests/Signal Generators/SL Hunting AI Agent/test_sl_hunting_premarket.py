@@ -201,22 +201,26 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_26_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 25 Aug transcript.
+def test_shipped_note_matches_august_27_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 26 Aug transcript.
 
-    Three things a summarising edit would flatten:
+    Four things a summarising edit would flatten:
 
-    1. THREE shapes share the buy-side branch -- flat, gap-up AND a small
-       gap-down. Every prior note split on the sign of the gap, so an editor
-       working from habit would move the small gap-down to the sell side and
-       invert a third of the plan.
-    2. The sell-side branch is gated on a DEFINED threshold (an open below
-       BankNIFTY's support), not on "gap-down". Losing the definition turns a
-       checkable veto into a judgement call at 09:15.
-    3. BOTH branches FOLLOW the market rather than hunt a crowd -- the same
-       reading v4o added to the knowledge hours earlier. A note read as
-       "buy-side, therefore hunt the sellers" keeps the direction and inverts
-       the premise, which is the subtlest way to be wrong.
+    1. The branch INVERTED overnight. Yesterday all three open shapes shared a
+       BUY-side plan; today all three share a SELL-side one. An editor working
+       from the previous note rather than the transcript would keep the
+       direction and change only the levels, which is the whole plan wrong.
+    2. FLAT is on the sell side. He gives the same plan for a flat open as for
+       the gapped ones, so the sign of the gap does not switch the branch --
+       the same structural point as yesterday, opposite direction.
+    3. The premise is FOLLOW, not hunt, and it carries its reason: nobody is
+       trapped (few trade puts here, and the closing price was not broken).
+       "Sell-side, therefore hunt the buyers" keeps the direction and inverts
+       the premise, which is the subtlest way to be wrong -- and it is exactly
+       what v4o's THE METHOD IS NOT ALWAYS A FADE exists to prevent.
+    4. BankNIFTY carries an explicit STAND-ASIDE on a gap-up that runs. A note
+       that keeps only the sell-side half turns a no-trade instruction into a
+       licence to short strength.
     """
     import os
 
@@ -225,41 +229,47 @@ def test_shipped_note_matches_august_26_intraday_hunter_plan():
     note = load_premarket_note(shipped)
 
     assert note is not None
-    assert note.for_date == "2026-08-26"
-    assert "hFmttyfw5Io" in note.source
-    assert "MONTHLY expiry is now complete" in note.context
-    assert "few seated buyers" in note.context
+    assert note.for_date == "2026-08-27"
+    assert "auAi14O0HOk" in note.source
+    assert "neither NIFTY nor BankNIFTY could cross its level" in note.context
+    assert "no sellers are seated" in note.context
 
-    buy = next(line for line in note.plan if line.startswith("FLAT, GAP-UP"))
-    assert "SMALL GAP-DOWN" in buy and "BUY-side" in buy
-    assert "only a large gap-down changes it" in buy
+    sell = next(line for line in note.plan if line.startswith("SELL-side"))
+    assert "ALL THREE open shapes" in sell
+    assert "gap-up, flat or gap-down" in sell
+    # Flat sits on the sell side, and the gap's sign is explicitly not the gate.
+    assert "does NOT switch the branch" in sell
 
-    sell = next(line for line in note.plan if line.startswith("LARGE GAP-DOWN ONLY"))
-    assert "SELL-side" in sell
-    # The defined threshold, with the number that makes it checkable.
-    assert "BELOW its support" in sell and "57200" in sell
+    # The premise, with the reason that makes it checkable rather than a slogan.
+    follow = next(line for line in note.plan if line.startswith("FOLLOW the momentum"))
+    assert "do NOT hunt a crowd" in follow
+    assert "nobody is trapped" in follow
 
-    # The premise both branches share.
-    assert any("FOLLOW the market rather than hunt a crowd" in line for line in note.plan)
+    # The stand-aside must survive as a no-trade, not collapse into the plan.
+    bnf = next(line for line in note.plan if line.startswith("BANKNIFTY GAP-UP"))
+    assert "STAND-ASIDE" in bnf
+    assert "NO plan can be made" in bnf
+
+    assert any("SENSEX/BANKEX expiry" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
             "resistance": [24320.0, 24380.0],
-            "support": [24080.0, 24180.0],
+            "support": [24120.0, 24180.0],
         },
         {
-            # 57200/57000 doubles as the support pair AND the gap-down
-            # threshold in the plan above; the two must not drift apart.
             "index": "BANKNIFTY",
-            "resistance": [57650.0, 58000.0],
-            "support": [57000.0, 57200.0],
+            "resistance": [58000.0, 58200.0],
+            "support": [57420.0, 57720.0],
         },
         {
-            # Caption merged both resistances into "7800750"; confirmed off the
-            # chart by the operator as 77750/78000 rather than inferred.
+            # The caption merged both resistances again ("78000750"), as it did
+            # yesterday ("7800750"). Confirmed off the chart by the operator as
+            # 77750/78000 -- unchanged from yesterday, not a transcription of
+            # yesterday's file. Do not "correct" this to a moved level.
             "index": "SENSEX",
             "resistance": [77750.0, 78000.0],
-            "support": [76900.0, 77150.0],
+            "support": [77000.0, 77250.0],
         },
     ]
