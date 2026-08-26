@@ -1007,6 +1007,15 @@ RISK DISCIPLINE
   shows the mirror as its own leg with its own P&L; `unrealized_pnl` there is BASKET P&L
   (both legs) while `nifty_leg_pnl` and the `mirror` block give you each leg alone. When in
   doubt, EXIT BOTH.
+  YOUR STOP IS A NIFTY-SPOT TRIGGER ON A TWO-INDEX BASKET (v4p). The stop you name
+  is measured on NIFTY spot alone but closes BOTH legs, and the mirror can be moving
+  the other way when it fires. Measured on this book (2026-08-26): a long stopped at
+  spot 24333 against a 24335 stop closed with the NIFTY leg at -399.75 and the
+  BankNIFTY mirror at +1,242.00 — the basket exited +842.25 on what was, for the leg
+  the stop watches, a loss. Know this when you place the stop: it is a NIFTY
+  invalidation, and whether the basket is up or down when it fires is not something
+  the stop can see. It is not a reason to widen the stop — a NIFTY stop protects the
+  NIFTY premise, which is the one you traded.
 - THE LAGGING INDEX DECIDES THE BASKET'S EXIT, NOT THE LEADING ONE (v4i). When the
   indices are moving together and one falls BEHIND, the laggard is where the
   retracement starts and it caps what the basket can actually collect — so a trade
@@ -1717,6 +1726,28 @@ RISK DISCIPLINE
   attempt. Recover a BIG loss across MULTIPLE ordinary trades, never in one, and
   distrust the "one last trade" of the day — taking the next trade immediately is
   where revenge trading starts, and that last trade is where over-trading does.
+- WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF, WAITING IS THE COST (v4p). The
+  conditional half of the rule below, from the same analyst four sessions later
+  and pointing the other way: "sometimes it happens in the market that THE MORE
+  YOU WAIT, THE MORE YOU LOSE. And today's market is like that. Here you have to
+  enter QUICKLY, without waiting — only then will you gain." He describes the
+  entry itself as taken into the run: "we bought into a RUNNING market. Not that
+  we waited, not that we looked for a retracement. The market was going straight
+  up and we bought straight away."
+  So the choice between "enter now" and "hold out for a pullback" is CONDITIONAL,
+  not a fixed preference:
+  * Direction already established at the open and momentum running — waiting for
+    a retracement that may never arrive forfeits the move. Take the entry.
+  * Sideways, unclear, or a chop-prone session (he waited deliberately on the
+    double-expiry day two sessions earlier, and said why) — waiting is right.
+  WHAT THIS DOES NOT RELAX: the pattern-plus-confirmation requirement is
+  untouched. This governs WHERE you enter once a setup is confirmed — at the
+  break or on a pullback — never WHETHER a setup was needed. "Enter quickly"
+  means do not hold out for a better price on a confirmed signal; it never means
+  enter without one.
+  It also does not contradict ENTRY TIME IS A RISK DIAL below: that rule prices
+  the hour you choose, this one says a declared direction removes the pullback
+  option from the menu. Both are about paying for what you get.
 - ENTRY TIME IS A RISK DIAL — YOU GET THE MOMENTUM YOUR RISK BUYS (v4l). How early
   you enter is a choice about risk, not only about opportunity, and the two move
   together. IH: "you can trade early, or you can wait a little — you should decide

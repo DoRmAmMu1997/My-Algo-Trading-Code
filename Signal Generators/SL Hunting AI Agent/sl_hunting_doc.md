@@ -4718,3 +4718,261 @@ almost no exposure. Second occurrence in a week; a third makes it a pattern.
   instruction rather than a bias.
 - Prompt size 136,034 -> 139,563 chars. Assembled 140,854 against a 154,140
   budget: **13,286 chars of headroom.**
+
+---
+
+## Video addendum - the 26 Aug LIVE SESSION (v4p)
+
+**Source:** Intraday Hunter live session `H5g8T7xllLk` (26 Aug 2026, 7:34).
+
+Gap-up, bought immediately into the run, booked a good profit. Our agent was long
+the same open and finished **+3,634.25**, best on the board for the second session
+running. Both right, both bullish - and the session's most valuable content
+directly CONTRADICTS a rule shipped four days ago, which is why it earns a version
+of its own.
+
+### The headline: waiting is sometimes the cost
+
+> Sometimes it happens in the market that **THE MORE YOU WAIT, THE MORE YOU LOSE.**
+> And today's market is like that. Here you have to enter QUICKLY, without waiting -
+> only then will you gain.
+
+And on the entry itself: "we bought into a RUNNING market. Not that we waited, not
+that we looked for a retracement. The market was going straight up and we bought
+straight away."
+
+Two sessions earlier the same analyst waited deliberately and said why (two losing
+days, double expiry, traps forming both ways). So the instruction is not "be fast";
+it is that the choice between entering now and holding out for a pullback is
+CONDITIONAL on whether a direction has already declared itself. Both branches are
+in the prose, because a rule with only the fast half is a standing bias.
+
+**The scope limit matters more than the rule.** Read carelessly this says skip
+confirmation, which would gut the method. It governs WHERE you enter once a setup
+is confirmed - at the break or on a pullback - never WHETHER a setup was needed.
+The prose says so and `test_v4p_enter_quickly_rule_never_relaxes_the_confirmation_requirement`
+asserts it, because this is the single most dangerous misreading available in the
+knowledge base.
+
+It also does not contradict v4l's ENTRY TIME IS A RISK DIAL: that rule prices the
+hour you choose, this one says a declared direction removes the pullback option
+from the menu.
+
+### Deliberately NOT added
+
+He spends a full minute on capital size and execution speed - "keep capital as
+LOW as you need to, but trade so that you can enter smoothly", and "many traders
+know the momentum is coming but have so much capital committed that they cannot
+enter quickly, so the trade is missed."
+
+It is good advice for a human and does not transfer. This agent's size is computed
+mechanically to a ~Rs.2500 risk budget, it does not choose capital, and it does not
+hesitate. Adding it would be prompt weight against a failure the agent cannot
+commit. Recorded here rather than dropped silently.
+
+### How our agent traded the same session
+
+Basket **-13,236.50** across 73 legs, a poor day broadly. SL Hunting: **+3,634.25**
+over 3 trades, top of the board.
+
+| Time | Exit type | NIFTY / mirror | Net |
+|---|---|---|---|
+| 09:16 | **mechanical AI_STOP** | -399.75 / +1,242.00 | **+842.25** |
+| 09:26 | agent, round-number stall | +760.50 / +1,269.00 | +2,029.50 |
+| 10:23 | agent, premise invalidation | +474.50 / +288.00 | +762.50 |
+
+**1. A stop fired on NIFTY spot and closed a basket that was in PROFIT.** The 09:15
+long was stopped at spot 24333 against a 24335 stop - a loss on the leg the stop
+watches (-399.75) - while the BankNIFTY mirror was +1,242.00, so the basket exited
+**+842.25**. That is a structural fact about the basket rather than a mistake:
+the stop is a NIFTY invalidation measured on NIFTY alone, and it closes both legs.
+v4p records it in the BASKET NOTE, explicitly WITHOUT concluding that stops should
+be wider - a NIFTY stop protects the NIFTY premise, which is the one that was
+traded.
+
+**2. That trade has NO decision-journal entry, and nothing warned.** The order
+executed at 09:15:49 through the locked tool context, the pass completed, and at
+09:16:41 the worker logged "Discarding late SL Hunting result for stale generation
+2." The design is deliberate and the docstring is explicit - "a stale generation
+here only skips the bookkeeping, never an order" - and the order path is safe.
+
+But it is the THIRD path in which an executed order reaches the trade log while the
+decision journal gets nothing, after the two SLH-011 closed. The reflection coach
+reads that journal. No SLH-011 warning fired because `reported` was not None - the
+decision existed, it was simply discarded downstream. **Not fixed here** because
+this is a code question rather than a knowledge one, and it deserves the same
+treatment SLH-011 got rather than being bolted onto a knowledge PR.
+
+**3. A parsing note for future sessions.** SL Hunting exits appear under TWO logger
+names: `sl-hunting-sdk-call` for agent exits and `SL Hunting AIThread` for
+mechanical stop/target/square-off exits. A sweep on the first alone under-counts -
+it showed 2,792.00 against the true 3,634.25 here and hid the stopped trade
+entirely. This is the third variant of the same class of mistake in this journal
+(after `MIRROR EXIT` and the `sl-hunting-sdk-call` thread name); the reliable check
+remains the worker's own `Result summary` line.
+
+**4. The runner restarted three times before the open** (08:17, 08:23, 08:27, each
+with a zero-trade `Result summary`). No errors accompany them and the session ran
+normally afterwards, so this is recorded as an observation rather than a fault.
+
+### Knowledge changes (v4p)
+
+- `RISK`: WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF, WAITING IS THE COST (new,
+  beside v4l's entry-time rule); the BASKET NOTE gains YOUR STOP IS A NIFTY-SPOT
+  TRIGGER ON A TWO-INDEX BASKET.
+- Two drift guards: the enter-quickly rule must keep its scope limit and both
+  branches of the conditional, and the stop note must keep the explicit refusal to
+  argue for wider stops.
+- **Deliberately NOT added:** the capital-size/execution-speed advice - see above.
+- Prompt size 139,563 -> 141,841 chars. Assembled 143,132 against a 154,140
+  budget: **11,008 chars of headroom.**
+
+---
+
+## SLH-012 - a stale inference pass that still left a position open (2026-08-26)
+
+### What happened
+
+At 09:15:49 the agent placed a LONG through the locked tool context. The pass
+completed, and at 09:16:41 the worker logged:
+
+```
+Discarding late SL Hunting result for stale generation 2.
+```
+
+The trade was real: entered at 24347.55, closed by the mechanical stop at 09:16:31
+for a basket **+842.25**. It appears in the trade log, the Telegram alert and the
+session P&L.
+
+It does not appear in the decision journal, and it has **no journal row at all**.
+
+### Why that is more than a missing log line
+
+The generation guard is correct and its docstring is accurate - "a stale generation
+here only skips the bookkeeping, never an order". No order path is affected. But
+the `return` skipped three things, and the third is the expensive one:
+
+1. the `SL Hunting AI: ...` decision log line,
+2. `append_decision(...)` to the decision journal,
+3. `_journal_open_row(...)`.
+
+`_finalize_journal` begins `if self._journal is None or self._open_trade_id is
+None: return`. So a trade whose OPEN row was skipped never gets a CLOSE row
+either - it is absent from the per-trade journal entirely. That journal is what
+`sl_hunting_coach.py` reads to work out what worked, so the trade is invisible to
+the learning loop in both directions.
+
+This is the third path of the family, after the two SLH-011 closed. It did not
+trigger an SLH-011 warning because `reported` was not None: the decision existed
+and parsed perfectly well, it was simply dropped downstream.
+
+### The fix
+
+The guard is about ACTING, not record-keeping. When a stale pass left a position
+OPEN, `_consume_agent_decision` now records it - the journal row and the decision -
+and warns:
+
+> Late SL Hunting result for stale generation N left a position OPEN; recording its
+> journal row and decision so the trade is not invisible to the coach. The decision
+> is stale as guidance and was NOT acted on.
+
+Recording a stale decision is defensible precisely here: it is stale as GUIDANCE,
+but it is the accurate account of an order that really happened, and
+`_tool_authoritative` (SLH-011) has already forced the decision to match what
+executed. Nothing in this path places an order.
+
+The open-row gate is now computed once as `opened_a_position` and reused by both
+branches, so the stale recovery and the normal path can never drift apart.
+
+### What deliberately did NOT change
+
+- **The guard still refuses to act.** No order is placed here and none ever was;
+  the change is confined to bookkeeping.
+- **A stale pass that opened nothing is still simply dropped**, at INFO, exactly as
+  before. That is the ordinary case and making it noisy would bury the real signal.
+- **A pass whose trade is already journalled** (`_open_trade_id` set) writes
+  nothing and does not warn.
+
+### Verification
+
+Four tests, called against a light stub rather than a full worker, because the
+method touches ten attributes and building a real worker would drag in the SDK, a
+broker and a data store to cover ten lines. They skip when the agent deps are
+absent, per the repository convention.
+
+The recovery was negative-tested rather than assumed: reverting the branch to the
+old unconditional discard fails `test_stale_pass_that_opened_a_position_is_journalled_and_warned`
+with `AssertionError: 0 != 1`. Two of the four tests assert the QUIET cases, so the
+warning cannot decay into noise.
+
+---
+
+## Pre-open note for 2026-08-27
+
+**Source:** Intraday Hunter, "Nifty & Bank nifty | SENSEX Analysis | Prediction For
+27 AUG 2026" (`auAi14O0HOk`, uploaded 2026-08-26, 1:38).
+
+### The plan
+
+**The branch inverted overnight.** Yesterday all three open shapes shared a
+BUY-side plan; tomorrow all three share a SELL-side one. He says it twice, once
+over the SENSEX chart and once over NIFTY, in the same words both times: on a
+gap-up, flat-to-gap-down open, identify SELLING-side setups - "and in flat and so
+on, our same plan remains."
+
+That last clause is the one worth protecting. FLAT sits on the SELL side. It is
+the same structural point as yesterday's note - the sign of the gap does not
+switch the branch - pointing the opposite way, which makes it exactly the thing a
+habit-driven edit gets wrong.
+
+**The premise is FOLLOW, not hunt, and he gives the reason.** Two of them: very
+few people here trade puts, so those sellers do not need to be targeted; and the
+market did not break the closing price, so sellers are not seated either. With
+nobody trapped on either side, the method is momentum-following rather than a
+squeeze. This is a clean second instance of v4o's THE METHOD IS NOT ALWAYS A FADE,
+arriving one session after that rule shipped.
+
+**BankNIFTY carries an explicit stand-aside.** On a gap-up, "until it crosses the
+round number we cannot do anything." If rejection shows at the open, the sell-side
+plan holds. If it starts running up - "no plan can be made there at all." A note
+that kept only the sell-side half would convert a no-trade instruction into a
+licence to short strength, so the test asserts the stand-aside survives as such.
+
+**Tomorrow is a SENSEX/BANKEX expiry day** (he says so over the SENSEX chart, and
+the other channels' titles for 27 Aug agree). Execution stays NIFTY-only; this is
+context for the cross-index read, which is noisier than usual on those days.
+
+### Levels
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 24320, 24380 | 24120, 24180 |
+| BANKNIFTY | 58000, 58200 | 57420, 57720 |
+| SENSEX | 77750, 78000 | 77000, 77250 |
+
+Two readings were confirmed by the operator off the chart rather than inferred:
+
+- **SENSEX resistance.** The caption merged the pair into the run-on "78000750",
+  the same failure as yesterday's "7800750". Confirmed as 77750/78000 - i.e.
+  UNCHANGED from yesterday, despite the gap-up. The test carries a comment saying
+  so, because the natural assumption on seeing a repeated pair is that the note
+  was copied from the previous day's file and needs "correcting".
+- **NIFTY first support.** The caption gave "24,187"; confirmed as 24180. He does
+  give precise levels in this same video (BankNIFTY 57720/57420), so the caption
+  was not obviously wrong and guessing would have been a coin flip.
+
+### An extraction note for future sessions
+
+**YouTube's `timedtext` endpoint no longer works.** It now answers HTTP 200 with a
+zero-length body for every format (plain, `fmt=json3`, `fmt=srv3`) without a POT
+token, so the caption-track URL lifted out of the watch-page HTML - the method used
+for previous notes - silently yields nothing rather than erroring.
+
+What works: open the transcript panel in the visible browser pane and scrape the
+DOM. The segment element is `transcript-segment-view-model` (not the older
+`ytd-transcript-segment-renderer`, which no longer exists), and the list is
+VIRTUALIZED - roughly 13 segments are rendered at a time, so a single query
+returns only what is on screen. Scroll the panel's scrollable ancestor in steps
+and accumulate segments keyed by timestamp until the count stops growing. This
+video was short enough that one screenful was the whole transcript, which would
+have made the virtualization easy to miss on a longer one.
