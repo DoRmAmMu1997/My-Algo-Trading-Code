@@ -1622,3 +1622,50 @@ def test_v4o_double_expiry_rule_answers_with_timing_not_direction():
     assert "The response is timing, not direction" in flat
     # The specific misreading it prevents.
     assert "expect the small counter-trap before the move rather than reading it as invalidation" in flat
+
+
+def test_v4p_enter_quickly_rule_never_relaxes_the_confirmation_requirement():
+    """v4p (26 Aug live session): "the more you wait, the more you lose".
+
+    This is the rule most likely to be misread into skipping confirmation,
+    which would gut the method. It must keep BOTH the scope limit (it governs
+    WHERE you enter, not WHETHER a setup was needed) and the conditional -- he
+    waited deliberately two sessions earlier and the prose has to say so, or
+    "enter quickly" becomes a standing bias.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF")
+
+    assert "THE MORE YOU WAIT, THE MORE YOU LOSE" in rule
+    assert "we bought into a RUNNING market" in rule
+
+    # The scope limit -- the half that keeps the method intact.
+    assert "WHAT THIS DOES NOT RELAX" in rule
+    assert "pattern-plus-confirmation requirement is" in rule
+    assert "it never means enter without one" in rule
+
+    # Both branches of the conditional, so it cannot collapse into a bias.
+    assert "Direction already established at the open" in rule
+    assert "waiting is right" in rule
+
+    # And the reconciliation with the rule it sits beside.
+    assert "ENTRY TIME IS A RISK DIAL" in rule
+
+
+def test_v4p_stop_is_a_nifty_trigger_note_does_not_argue_for_wider_stops():
+    """The stop watches one index but closes two legs.
+
+    Stated as a FACT about the basket, with the tempting wrong conclusion
+    ruled out explicitly -- a rule that quietly licensed wider stops on a
+    live-money system would be the worst possible reading of it.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "BASKET NOTE (BankNIFTY mirror)")
+
+    assert "YOUR STOP IS A NIFTY-SPOT TRIGGER ON A TWO-INDEX BASKET" in rule
+    # The measured case, both legs.
+    assert "-399.75" in rule and "+1,242.00" in rule
+    assert "the basket exited +842.25" in rule
+    # The conclusion it must NOT support.
+    assert "not a reason to widen the stop" in rule
+    assert "protects the NIFTY premise" in rule

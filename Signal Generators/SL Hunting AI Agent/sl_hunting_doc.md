@@ -4718,3 +4718,111 @@ almost no exposure. Second occurrence in a week; a third makes it a pattern.
   instruction rather than a bias.
 - Prompt size 136,034 -> 139,563 chars. Assembled 140,854 against a 154,140
   budget: **13,286 chars of headroom.**
+
+---
+
+## Video addendum - the 26 Aug LIVE SESSION (v4p)
+
+**Source:** Intraday Hunter live session `H5g8T7xllLk` (26 Aug 2026, 7:34).
+
+Gap-up, bought immediately into the run, booked a good profit. Our agent was long
+the same open and finished **+3,634.25**, best on the board for the second session
+running. Both right, both bullish - and the session's most valuable content
+directly CONTRADICTS a rule shipped four days ago, which is why it earns a version
+of its own.
+
+### The headline: waiting is sometimes the cost
+
+> Sometimes it happens in the market that **THE MORE YOU WAIT, THE MORE YOU LOSE.**
+> And today's market is like that. Here you have to enter QUICKLY, without waiting -
+> only then will you gain.
+
+And on the entry itself: "we bought into a RUNNING market. Not that we waited, not
+that we looked for a retracement. The market was going straight up and we bought
+straight away."
+
+Two sessions earlier the same analyst waited deliberately and said why (two losing
+days, double expiry, traps forming both ways). So the instruction is not "be fast";
+it is that the choice between entering now and holding out for a pullback is
+CONDITIONAL on whether a direction has already declared itself. Both branches are
+in the prose, because a rule with only the fast half is a standing bias.
+
+**The scope limit matters more than the rule.** Read carelessly this says skip
+confirmation, which would gut the method. It governs WHERE you enter once a setup
+is confirmed - at the break or on a pullback - never WHETHER a setup was needed.
+The prose says so and `test_v4p_enter_quickly_rule_never_relaxes_the_confirmation_requirement`
+asserts it, because this is the single most dangerous misreading available in the
+knowledge base.
+
+It also does not contradict v4l's ENTRY TIME IS A RISK DIAL: that rule prices the
+hour you choose, this one says a declared direction removes the pullback option
+from the menu.
+
+### Deliberately NOT added
+
+He spends a full minute on capital size and execution speed - "keep capital as
+LOW as you need to, but trade so that you can enter smoothly", and "many traders
+know the momentum is coming but have so much capital committed that they cannot
+enter quickly, so the trade is missed."
+
+It is good advice for a human and does not transfer. This agent's size is computed
+mechanically to a ~Rs.2500 risk budget, it does not choose capital, and it does not
+hesitate. Adding it would be prompt weight against a failure the agent cannot
+commit. Recorded here rather than dropped silently.
+
+### How our agent traded the same session
+
+Basket **-13,236.50** across 73 legs, a poor day broadly. SL Hunting: **+3,634.25**
+over 3 trades, top of the board.
+
+| Time | Exit type | NIFTY / mirror | Net |
+|---|---|---|---|
+| 09:16 | **mechanical AI_STOP** | -399.75 / +1,242.00 | **+842.25** |
+| 09:26 | agent, round-number stall | +760.50 / +1,269.00 | +2,029.50 |
+| 10:23 | agent, premise invalidation | +474.50 / +288.00 | +762.50 |
+
+**1. A stop fired on NIFTY spot and closed a basket that was in PROFIT.** The 09:15
+long was stopped at spot 24333 against a 24335 stop - a loss on the leg the stop
+watches (-399.75) - while the BankNIFTY mirror was +1,242.00, so the basket exited
+**+842.25**. That is a structural fact about the basket rather than a mistake:
+the stop is a NIFTY invalidation measured on NIFTY alone, and it closes both legs.
+v4p records it in the BASKET NOTE, explicitly WITHOUT concluding that stops should
+be wider - a NIFTY stop protects the NIFTY premise, which is the one that was
+traded.
+
+**2. That trade has NO decision-journal entry, and nothing warned.** The order
+executed at 09:15:49 through the locked tool context, the pass completed, and at
+09:16:41 the worker logged "Discarding late SL Hunting result for stale generation
+2." The design is deliberate and the docstring is explicit - "a stale generation
+here only skips the bookkeeping, never an order" - and the order path is safe.
+
+But it is the THIRD path in which an executed order reaches the trade log while the
+decision journal gets nothing, after the two SLH-011 closed. The reflection coach
+reads that journal. No SLH-011 warning fired because `reported` was not None - the
+decision existed, it was simply discarded downstream. **Not fixed here** because
+this is a code question rather than a knowledge one, and it deserves the same
+treatment SLH-011 got rather than being bolted onto a knowledge PR.
+
+**3. A parsing note for future sessions.** SL Hunting exits appear under TWO logger
+names: `sl-hunting-sdk-call` for agent exits and `SL Hunting AIThread` for
+mechanical stop/target/square-off exits. A sweep on the first alone under-counts -
+it showed 2,792.00 against the true 3,634.25 here and hid the stopped trade
+entirely. This is the third variant of the same class of mistake in this journal
+(after `MIRROR EXIT` and the `sl-hunting-sdk-call` thread name); the reliable check
+remains the worker's own `Result summary` line.
+
+**4. The runner restarted three times before the open** (08:17, 08:23, 08:27, each
+with a zero-trade `Result summary`). No errors accompany them and the session ran
+normally afterwards, so this is recorded as an observation rather than a fault.
+
+### Knowledge changes (v4p)
+
+- `RISK`: WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF, WAITING IS THE COST (new,
+  beside v4l's entry-time rule); the BASKET NOTE gains YOUR STOP IS A NIFTY-SPOT
+  TRIGGER ON A TWO-INDEX BASKET.
+- Two drift guards: the enter-quickly rule must keep its scope limit and both
+  branches of the conditional, and the stop note must keep the explicit refusal to
+  argue for wider stops.
+- **Deliberately NOT added:** the capital-size/execution-speed advice - see above.
+- Prompt size 139,563 -> 141,841 chars. Assembled 143,132 against a 154,140
+  budget: **11,008 chars of headroom.**
