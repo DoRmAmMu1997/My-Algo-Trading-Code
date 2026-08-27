@@ -4976,3 +4976,135 @@ returns only what is on screen. Scroll the panel's scrollable ancestor in steps
 and accumulate segments keyed by timestamp until the count stops growing. This
 video was short enough that one screenful was the whole transcript, which would
 have made the virtualization easy to miss on a longer one.
+
+---
+
+## Video addendum - the 27 Aug LIVE SESSION (v4q)
+
+**Source:** Intraday Hunter live session `npth0OPyFSY` (27 Aug 2026, 6:29).
+
+A flat-to-small-gap-up open that sold off. IH shorted it at the open across
+BankNIFTY (58000 then 57900 PE), SENSEX (SENSEX expiry day, 1000 qty) and NIFTY
+(1365 qty), held through a pullback, and booked with the target over-achieved.
+Our agent was short the same open, twice, and finished **+549.00**.
+
+Most of this session CONFIRMS rules already in the corpus rather than adding to
+it - which is itself the finding, and is why v4q is small.
+
+### What was already there
+
+Three of the four candidates turned out to be covered:
+
+- **His two-condition test for when NOT to hunt** - stated twice as the doctrine
+  ("in SL hunting: either the trader is sitting in PROFIT, or the trader does not
+  have big QUANTITY - we target neither, and then we follow the chart"). The
+  profit half is `TARGET-BOOKED crowd test`; the quantity half is
+  `AGGREGATE-INVENTORY TEST`, which already ends "if neither side is likely
+  carrying meaningful size, follow the current momentum or HOLD rather than
+  inventing a hunt". Adding his single-sentence pairing would buy a formulation,
+  not a behaviour.
+- **Not booking into a fast leg** - "the profit had been more than this, but the
+  momentum was very fast there; there was no plan to exit. More momentum will
+  come, and in that we get the chance to make the exit plan." This is v4b's
+  `EXPECT A SECOND LEG AFTER THE PAUSE, THEN BOOK`. Deliberately not restated,
+  and not sharpened: on live money a rule that reads as "sit through a giving-back
+  of profit" is the dangerous direction, and it would have argued against the
+  agent's 09:35 exit, which was correct (below).
+- **The laggard timing the exit** - "SENSEX and NIFTY have done good momentum,
+  BankNIFTY still has a little left; after that we get the chance to book."
+  That is the FIFTH session to touch `THE LAGGING INDEX DECIDES THE BASKET'S
+  EXIT` (v4i, amended v4k, v4l, v4o). Recorded as confirmation and deliberately
+  NOT added as a fifth amendment - the standing note that this rule should be
+  re-read whole rather than extended again still applies.
+
+### What was net new (v4q)
+
+**1. The completed-stop-hunt test also gates the ENTRY.** `A COMPLETED STOP-HUNT
+ENDS THAT DIRECTION` (v4g) reads naturally as a reason to close, and that is how
+it gets used. It disqualifies an entry the same way, and the mechanical form is
+your own target: if the level you are about to name as the target has already
+printed this session, the move you are entering has already happened. Added as a
+sub-bullet on the existing rule rather than a new one, because it is the same
+idea applied at the other end of the trade.
+
+This was not taken from the video - it was taken from our own trade 2, below.
+
+**2. `THE HOLD IS LICENSED BY THE EARLY IMPULSE AND EXPIRES WHEN THE MOVE BECOMES
+OBVIOUS`.** A genuinely new exit trigger, keyed on participation rather than on
+price, rate or time: "the sitting was only up to the point where the momentum
+appeared in all two or three indices at the START. Now that a good deal of
+momentum has already happened... now other people can also participate. So
+before other people apply their minds, apply yours first, book the profit and get
+out." The licence to sit comes from being positioned before the crowd; once a
+late reader would take the same trade, the remaining participants are buyers of
+your position rather than fuel for it.
+
+The rule is written so it can never be read as permission to hold - v4f, the
+stop, the max loss and premise-invalidation are all ranked above it explicitly,
+and a drift guard asserts that ranking survives.
+
+### How our agent traded the same session
+
+Two shorts, both closed, flat well before the 10:30 no-new-entry cutoff.
+
+| Time | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|
+| 09:23 -> 09:35 | agent, flush exhaustion at support | +962.00 | -105.00 | **+857.00** |
+| 09:52 -> 09:54 | agent, premise invalidation | +52.00 | -360.00 | **-308.00** |
+| | | **+1,014.00** | **-465.00** | **+549.00** |
+
+**The pre-open note worked.** It injected (2,055 chars, the exact size measured
+when it was written) and was cited in the entry reasoning by its substance, not
+just its direction: "this matches the pre-open note's sell-side/follow-momentum
+branch (no seated seller crowd, closing price unbroken yesterday, so hunt is off
+and continuation is the trade)". The follow-not-hunt premise - the half most
+likely to be flattened - is the half it used.
+
+**Trade 1 was right, including the exit.** Entered short at spot 24227.95 on a
+confirmed evening star after the gap-up to 24297 was rejected; exited at 09:35
+when price stalled at 24200-24208 with a bullish morning star on NIFTY and a
+hammer plus full-body bull candle on BankNIFTY at its own 57800 support. The
+session's low to that point (24188) had printed at 09:32, and price then bounced
+to 24228 by 09:51. Booking there was `BOOK WHEN THE PROFIT STOPS GROWING` applied
+correctly. A lower low (~24156, i.e. trade 1's 24155 target) did print later in
+the morning, but only after that bounce and roughly an hour and a half later;
+`TIME SPENT IN THE TRADE SHRINKS THE ACHIEVABLE TARGET` covers why that is not a
+missed hold. (My log sampling of spot is too sparse to time that low to the
+minute; the value is solid, the minute is not.)
+
+**Trade 2 is the real error, and the agent diagnosed it itself two minutes
+late.** At 09:52 it re-shorted the bounce, naming a trapped dip-buyer crowd, with
+the target set at **24188.6 - a level the session had already tagged at 09:32**.
+At 09:54 it exited with: "the completed stop-hunt has spent its fuel". That is
+v4g, quoted almost verbatim - so the agent had the rule, and ran it as an exit
+check two minutes after an entry the same rule forbade. The cost was -308 on the
+basket and it is the reason for addition 1.
+
+**The mirror cost 465 today**, losing on both legs while NIFTY won both. That is
+the mirror image of 26 Aug, where the mirror turned a stopped-out NIFTY leg into
+a +842 basket. Two sessions, opposite signs, which is the honest summary of the
+mirror so far: it is variance, not edge. Nothing added to the knowledge for it -
+the basket economics belong in the operator's ledger, not the prompt.
+
+### A small observability note
+
+Trade 1's exit reasoning quotes its own P&L as "NIFTY leg +793, mirror -372, net
++421"; the fills were +962 / -105 / +857. The order tool executes DURING
+reasoning, so those numbers are computed from cached LTPs a few seconds before
+the fill - here the market moved favourably in between. Harmless, and not worth a
+rule, but worth knowing before anyone treats a decision's quoted P&L as the
+record. The trade log is the record.
+
+### Knowledge changes (v4q)
+
+- `A COMPLETED STOP-HUNT ENDS THAT DIRECTION` (v4g) gains a sub-bullet: run the
+  test before the ENTRY, with the already-printed-target form.
+- `RISK`: THE HOLD IS LICENSED BY THE EARLY IMPULSE AND EXPIRES WHEN THE MOVE
+  BECOMES OBVIOUS (new).
+- Two drift guards, both negative-tested: dropping the entry-side framing, the
+  already-printed mechanic, the hold rule's ranking guard, or its participation
+  framing each fail the suite.
+- **Deliberately NOT added:** the two-condition hunt test, the do-not-book-into-a-
+  fast-leg half, and a fifth amendment to the lagging-index rule - see above.
+- Prompt size 141,841 -> 143,854 chars. Assembled 145,147 against a 154,140
+  budget: **8,993 chars of headroom.**

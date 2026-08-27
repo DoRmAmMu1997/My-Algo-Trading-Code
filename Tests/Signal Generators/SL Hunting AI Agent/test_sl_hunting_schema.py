@@ -1669,3 +1669,64 @@ def test_v4p_stop_is_a_nifty_trigger_note_does_not_argue_for_wider_stops():
     # The conclusion it must NOT support.
     assert "not a reason to widen the stop" in rule
     assert "protects the NIFTY premise" in rule
+
+
+def test_v4q_completed_stop_hunt_test_also_gates_the_entry():
+    """v4q (27 Aug live session): the rule reads as an exit, but it disqualifies entries.
+
+    Measured the same morning: the agent cited "the completed stop-hunt has
+    spent its fuel" to EXIT trade 2 at 09:54 -- two minutes after opening it
+    with a target (24188.6) the session had already tagged at 09:32. It had
+    the rule and ran it in only one of the two places that matter.
+
+    The already-printed-target form is what makes it mechanical rather than a
+    judgement call, so it must survive verbatim.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A COMPLETED STOP-HUNT ENDS THAT DIRECTION")
+
+    assert "RUN THIS TEST BEFORE THE ENTRY, NOT ONLY AS AN EXIT CHECK" in rule
+
+    # The mechanical form. Without this the extension is just an exhortation.
+    assert (
+        "the level you are about to name as the target has ALREADY printed in "
+        "this session" in rule
+    )
+    assert "the move you are entering has already happened" in rule
+
+    # Why a bounce toward the entry is not a fresh trap.
+    assert "the completed hunt TURNING" in rule
+    assert "require a NEW trap rather than the exhausted one" in rule
+
+
+def test_v4q_obviousness_exit_never_becomes_a_licence_to_sit():
+    """v4q: an exit trigger keyed on who else can now see the trade.
+
+    Two ways this rule could go wrong, both asserted against:
+
+    1. It could be read as permission to HOLD (it arrives from a session where
+       IH held through a pullback), which on live money is the dangerous
+       direction. The prose must keep v4f, the stop, the max loss and
+       premise-invalidation ranked above it.
+    2. It could lose the reason -- that the edge was being positioned before
+       the crowd -- and decay into "exit when the move is big", which is a
+       price rule, not a participation one.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE HOLD IS LICENSED BY THE EARLY IMPULSE")
+
+    # It is about participation, not size or rate.
+    assert "WHO ELSE CAN NOW SEE THE TRADE" in rule
+    assert (
+        "before other people apply their minds, apply yours first, book the "
+        "profit and get out" in rule
+    )
+    assert "buyers of your position, not fuel for it" in rule
+
+    # Usable as a test at the moment of decision.
+    assert "a newcomer would now enter here" in rule
+
+    # And it must never outrank the rules that protect the account.
+    assert "It does NOT license sitting through a stall" in rule
+    assert "v4f still books when the rate of gain dies" in rule
+    assert "the stop, the max loss and premise-invalidation all outrank it" in rule

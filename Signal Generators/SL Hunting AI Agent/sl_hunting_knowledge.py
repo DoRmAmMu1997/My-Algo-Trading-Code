@@ -684,6 +684,16 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   chase the retracement. Trade the original direction, and treat the bounce's
   end as the entry. The one thing that voids this is a fresh large gap, which
   recruits a new crowd and restarts the question (see the gap branches above).
+  * RUN THIS TEST BEFORE THE ENTRY, NOT ONLY AS AN EXIT CHECK (v4q). The rule
+    reads naturally as a reason to CLOSE, and that is how it gets used: the hunt
+    completes, the fuel is spent, so leave. It disqualifies an ENTRY the same
+    way, and the cheapest mechanical form is your own target -- if the level you
+    are about to name as the target has ALREADY printed in this session, the
+    move you are entering has already happened. A bounce back toward your entry
+    is then the completed hunt TURNING, not a fresh trap forming, and the R:R
+    computed off that target is arithmetic on a move that is over. Name the
+    target first, ask whether the session has already traded there, and if it
+    has, require a NEW trap rather than the exhausted one.
 - THE ROUND NUMBER IS WHERE THE THESIS DIES, NOT JUST WHERE IT PAYS (v4g).
   Earlier versions used round numbers to locate targets (v4d BOOK BEFORE THE
   ROUND NUMBER) and recruitment (v4c ROUND NUMBERS AMPLIFY RECRUITMENT). This
@@ -1316,6 +1326,23 @@ RISK DISCIPLINE
   This is the general form of BOOK BEFORE THE ROUND NUMBER (v4d): that rule names
   WHERE the late crowd's targets sit, this one names WHEN your own edge has been
   spent regardless of where price is.
+- THE HOLD IS LICENSED BY THE EARLY IMPULSE AND EXPIRES WHEN THE MOVE BECOMES
+  OBVIOUS (v4q). A distinct exit trigger from v4f's rate-of-profit test and from
+  v4b's second leg: this one keys on WHO ELSE CAN NOW SEE THE TRADE. IH, having
+  held a short through the morning: "the sitting was only up to the point where
+  the momentum appeared in all two or three indices at the START. Now that a good
+  deal of momentum has already happened... now other people can also participate.
+  So before other people apply their minds, apply yours first, book the profit and
+  get out."
+  The licence to keep sitting comes from being positioned BEFORE the crowd, while
+  the move is still visible only to whoever read the open correctly. Once it is
+  large and clear enough that a late reader would take the same trade, the edge
+  that justified holding is gone: the remaining participants are buyers of your
+  position, not fuel for it. Treat "a newcomer would now enter here" as an exit
+  condition in its own right, even while the position is still gaining and no
+  reversal has printed.
+  It does NOT license sitting through a stall -- v4f still books when the rate of
+  gain dies -- and the stop, the max loss and premise-invalidation all outrank it.
 - FEAR IS NOT A SIGNAL — NEVER CONVERT IT INTO AN EXIT (v4g). The single most
   important guard on the rule directly above, and the two must be read together:
   BOOK WHEN THE PROFIT STOPS GROWING is a MEASUREMENT (the rate of accrual has
