@@ -5108,3 +5108,77 @@ record. The trade log is the record.
   fast-leg half, and a fifth amendment to the lagging-index rule - see above.
 - Prompt size 141,841 -> 143,854 chars. Assembled 145,147 against a 154,140
   budget: **8,993 chars of headroom.**
+
+---
+
+## Pre-open note for 2026-08-28
+
+**Source:** Intraday Hunter, "Nifty & Bank nifty | SENSEX Analysis | Prediction
+For 28 AUG 2026" (`IwYyOclpDR8`, uploaded 2026-08-27 21:25 IST, 1:55).
+
+### The plan
+
+**The premise flips to HUNT.** The last two notes both said follow the momentum
+because nobody was trapped. Three indices selling off all day has now seated a
+retail SELLER crowd, and tomorrow's plan targets it. This is the more dangerous
+of the two reversals to miss: an editor working from the previous notes would
+keep the follow premise, land on a plausible direction, and be right for the
+wrong reason - which is exactly the failure v4o's THE METHOD IS NOT ALWAYS A FADE
+names, running the other way.
+
+**The sign of the gap splits the branch this time.** The last two notes
+deliberately put a flat open on the same side as the gapped ones, and both carry
+a test asserting it. Here FLAT sits with GAP-UP on the buy side, and GAP-DOWN
+alone takes the sell side. The habit those two tests built is the wrong habit for
+this note, so the new test asserts the split explicitly.
+
+**Both branches are gated, and the gates are the checkable part.** He states the
+same mechanism twice, once per index:
+
+- On a flat open, the level must NOT break: "once the level breaks the sellers
+  come into confidence, and then targeting them will not be easy for us."
+- Generally: "we do not want any breakdown - as soon as a breakdown happens, any
+  seated selling trader will not cut his trade, so we will not get the SLs."
+
+A break VALIDATES the seated sellers. Validated sellers hold instead of cutting,
+so the stops the hunt feeds on never appear. Losing these two lines would turn a
+gated plan into a plain directional bias.
+
+The gap-down branch carries its own gate rather than the gap's sign: "on a
+gap-down the sellers can come into decent profit anyway, so we will have to walk
+with the market."
+
+**24,000 is named as NIFTY's psychological number**, with 23,920 as the second
+support beneath it.
+
+### It is today's doctrine, used as a forecast
+
+This note is the two-condition test from the 27 Aug live session applied
+prospectively: sellers seated and WRONG, so hunt them; sellers in profit on a
+gap-down, so follow instead. v4q declined to add that test as a new rule because
+both halves already exist (`TARGET-BOOKED crowd test` and `AGGREGATE-INVENTORY
+TEST`). Seeing IH use it as the whole basis of a forecast the same evening is
+good evidence that call was right - the agent already carries both halves, and
+what it needed was the day's specific reading, which is what the note supplies.
+
+### Levels
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 24200, 24270 | 23920, 24000 |
+| BANKNIFTY | 58000, 58200 | 57200, 57500 |
+| SENSEX | 77400, 77750 | 76550, 77000 |
+
+The SENSEX reading needed the operator again, and for a new reason: the caption
+gave the resistances cleanly but lost the second support between two transcript
+segments, leaving a single "77650" that would have sat ABOVE the 77400
+resistance. That impossibility is what made it catchable - an ordinary-looking
+wrong number would not have been. Confirmed off the chart as 77000/76550. The
+test carries a comment saying not to reconstruct it from the caption.
+
+### Verification
+
+19/19 on the premarket suite, and each new assertion negative-tested: flipping
+the premise back to follow, dropping the hunt framing, regating the gap-down
+branch on the gap's sign, softening either veto, or "correcting" the SENSEX
+support each fail the suite.

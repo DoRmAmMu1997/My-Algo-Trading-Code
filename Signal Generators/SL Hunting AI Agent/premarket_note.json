@@ -1,23 +1,24 @@
 {
-  "for_date": "2026-08-27",
-  "source": "Intraday Hunter, 'Prediction For 27 AUG 2026' (auAi14O0HOk, uploaded 2026-08-26)",
-  "context": "Gap-up today, then a fall once a little strength showed; neither NIFTY nor BankNIFTY could cross its level. The market did not break the closing price, so no sellers are seated -- and few here trade puts, so no seller crowd to hunt.",
+  "for_date": "2026-08-28",
+  "source": "Intraday Hunter, 'Prediction For 28 AUG 2026' (IwYyOclpDR8, uploaded 2026-08-27)",
+  "context": "All three indices sold off today, so retail SELLERS are now seated and become tomorrow's target. This is the first HUNT-the-crowd plan in three sessions -- the last two followed momentum precisely because nobody was trapped.",
   "plan": [
-    "SELL-side on ALL THREE open shapes -- gap-up, flat or gap-down. He gives the same plan for a flat open as for the gapped ones, so the sign of the gap does NOT switch the branch tomorrow.",
-    "FOLLOW the momentum; do NOT hunt a crowd. His stated reason is that nobody is trapped: very few trade puts here so those sellers need not be targeted, and an unbroken closing price means sellers are not seated either.",
-    "BANKNIFTY GAP-UP IS AN EXPLICIT STAND-ASIDE: until it crosses the round number nothing can be done. Rejection at the open keeps the sell-side plan; if it starts running UP he says NO plan can be made there at all.",
-    "Tomorrow is a SENSEX/BANKEX expiry day. Execution stays NIFTY-only, but treat the cross-index read as noisier than usual."
+    "FLAT or GAP-UP: BUY-side setups, to TARGET the seated sellers. This is a HUNT, not a follow -- the opposite premise to the last two sessions, and the premise flips even where the direction looks familiar.",
+    "GAP-DOWN: flip to SELL-side and go WITH the market. His reason is the profit half of the two-condition test -- on a gap-down the sellers are already in decent profit, and a crowd in profit is not a target.",
+    "FLAT VETO, the level must NOT break: 'once the level breaks the sellers come into confidence, and then targeting them will not be easy for us'. A break converts a trapped crowd into a validated one and voids the buy-side hunt.",
+    "HE DOES NOT WANT A BREAKDOWN: 'as soon as a breakdown happens, any seated selling trader will not cut his trade, so we will not get the SLs'. The hunt needs sellers who are WRONG and forced to cut, not sellers proven right.",
+    "24,000 is named as NIFTY's psychological number, with 23,920 as the second support beneath it."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24320,
-        24380
+        24200,
+        24270
       ],
       "support": [
-        24120,
-        24180
+        23920,
+        24000
       ]
     },
     {
@@ -27,19 +28,19 @@
         58200
       ],
       "support": [
-        57420,
-        57720
+        57200,
+        57500
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77750,
-        78000
+        77400,
+        77750
       ],
       "support": [
-        77000,
-        77250
+        76550,
+        77000
       ]
     }
   ]
