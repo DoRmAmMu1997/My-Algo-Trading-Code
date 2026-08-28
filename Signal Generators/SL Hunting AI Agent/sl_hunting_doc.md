@@ -5182,3 +5182,116 @@ test carries a comment saying not to reconstruct it from the caption.
 the premise back to follow, dropping the hunt framing, regating the gap-down
 branch on the gap's sign, softening either veto, or "correcting" the SENSEX
 support each fail the suite.
+
+---
+
+## SLH-013 - the prompt cap stops being the guard, and latency becomes visible
+
+Three changes that belong together: the cap is raised past the point where it can
+detect anything, so the detection moves to a test; and the thing that actually
+limits prompt growth gets measured for the first time.
+
+### The cap: 160,000 -> 350,000
+
+Raised so it stops being a recurring question every few knowledge versions
+(75k -> 120k -> 160k -> 350k). 350,000 characters is on the order of 90-100k
+tokens -- this corpus is ALL-CAPS-heavy and tokenises worse than the usual ~4
+chars/token -- against Sonnet 5's 200k context, so it is comfortably inside with
+room for the bar context and the agentic loop.
+
+**This raise is different in kind from the two before it, and the comment block
+now says so.** The earlier raises kept the bound tight enough to still catch a
+runaway lessons file or a malformed note, which its own top paragraph names as
+the failure it exists for. At 350,000 it cannot: the runtime can inject only
+~8,500 characters at its own caps, so nothing pathological in that material could
+ever reach the bound. Raising it without moving the detection somewhere else
+would have quietly retired the guard while leaving prose claiming it was armed.
+
+### Where the detection went
+
+`test_runtime_injected_blocks_stay_small` renders a worst-case lessons block and
+a worst-case pre-open note through the REAL `format_lessons` and
+`format_premarket_note`, and fails if the total passes 12,000 characters
+(measured today: 8,519 = lessons 4,918 + note 3,601, so ~40% of room). It trips
+if anyone widens `MAX_LESSON_CHARS`, `MAX_LIVE_LESSONS`, `MAX_PLAN_ITEMS`,
+`MAX_LINE_CHARS`, `MAX_LEVELS_PER_SIDE` or `MAX_INDEX_BLOCKS` enough to matter,
+whatever the cap says.
+
+The ceiling is deliberately a flat number rather than one derived from those
+per-field caps: a derived bound would move silently when the caps move, which is
+exactly the change worth catching.
+
+### A live inaccuracy this turned up
+
+The test being replaced, `test_prompt_cap_leaves_room_for_lessons_and_a_note`,
+assumed the runtime could add `12 * 280 + 2500 = 5,860` characters. The real
+worst case is **8,519** - it ignored each lesson's 80-character scope and its
+per-lesson formatting, and understated the note by 1,101.
+
+So the effective budget was **151,481, not the 154,140** that has been quoted in
+every knowledge addendum since the last raise, and the headroom reported at v4q
+was 6,334 rather than 8,993. Nothing was ever actually at risk - the gap was
+always larger than the error - but the number was wrong and is now measured
+rather than assumed.
+
+**Two fixture traps worth recording**, because they cost real time and the next
+person to touch this will hit them:
+
+- `StoredLesson` is tamper-evident. An approved record needs `id` equal to
+  `_slug(scope, lesson)` AND `approval_digest` equal to
+  `lesson_content_digest(record)`. Get either wrong and `_validated_records`
+  drops it silently, `format_lessons` returns `""`, and a test measuring "worst
+  case" happily measures zero and passes. The new helper asserts the fixture
+  validated, so it can never quietly measure nothing.
+- `_slug` truncates to 48 characters. Worst-case records must differ in their
+  FIRST few characters or they collide on id and `consolidate` keeps only one.
+
+### Latency: the constraint that actually binds
+
+Context was never the limit. The 90-second SDK deadline fired **27 times between
+7 and 31 July 2026**, and not once since - each of those a bar the agent silently
+HELD through, with no decision at all. It stopped firing when the model moved to
+Sonnet 5 with fast mode, NOT because the prompt shrank: the prompt has nearly
+doubled since. Prefill scales with what the cap permits, so this raise spends
+precisely the margin that fixed those timeouts.
+
+Until now there was no latency measurement anywhere - only cost. So:
+
+- Every decision logs its wall-clock at INFO beside the cost line. Deliberately
+  NOT sharing the cost line's condition: that one fires only when the SDK
+  reported a cost, and a run that reported none is exactly the kind worth timing.
+- A WARN fires at `SL_HUNTING_SLOW_DECISION_WARN_SECONDS` (default 60 of the 90s
+  budget), naming the elapsed time, the threshold, the percentage of the deadline
+  and the consequence, so one line in a shared log is enough to judge it.
+- A threshold at or above the deadline can never fire, because the call is
+  abandoned first. That is allowed rather than rejected - it is a legitimate way
+  to switch the warning off.
+
+A timed-out call raises out of `_run_sync` and already logs its own message
+naming the deadline, so it is not double-reported here.
+
+### Verification
+
+Nine mutations, each confirmed to fail the suite: widening any of the four
+lessons/note caps; logging latency at DEBUG; gating latency on `cost_usd`;
+disabling the warn branch; and dropping the deadline detail from the warning
+text. Two tests assert the QUIET cases - a fast decision does not warn, and a
+threshold above the deadline still constructs - so the warning cannot decay into
+noise.
+
+**One of these tests was wrong first, and the way it was wrong is worth keeping.**
+The two warning tests originally set the threshold to 0.001s and relied on "any
+real call takes longer than a millisecond". That holds on this machine and did
+NOT on CI, where the fake runner returned inside a millisecond, `elapsed` logged
+as 0.0s and the warning never fired -- green locally, red on CI. Wall-clock is
+not something a test may assume. Both now pin the clock via `_pin_decision_
+duration`, which returns 0.0 for the first reading and a fixed value after, and
+is robust to anything else in the call path reading the clock in between. The
+pinned version is strictly better than a working timing-based one would have
+been: it catches the warning being disabled AND the warning always firing AND
+the comparison being flipped, where a timing-based test could only ever catch
+the first.
+
+Full gates clean. `check-env` reports the new key as MISSING from the operator's
+`.env`, which is correct and expected: it is in `env.example`, and until it is
+copied across the in-code default of 60s applies.

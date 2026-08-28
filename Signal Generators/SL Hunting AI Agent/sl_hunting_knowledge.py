@@ -2126,11 +2126,39 @@ Emit ONLY this JSON object as your final answer."""
 # still small enough to catch a runaway lessons file or a malformed note, which
 # is the failure this guard actually exists to catch.
 #
+# Raised from 160,000 to 350,000 on 2026-08-27, and this raise is DIFFERENT in
+# kind from the two above -- read this before treating the number as a guard.
+#
+# The two earlier raises kept the bound tight enough that a runaway lessons file
+# or a malformed note would still trip it. 350,000 does not: the runtime can only
+# inject ~8,500 characters at its own caps, so at this bound NOTHING pathological
+# in that material could ever reach it. The detection value has been moved out
+# deliberately, into `test_runtime_injected_blocks_stay_small`, which renders a
+# worst-case lessons block and a worst-case pre-open note through the REAL
+# formatters and fails if either grows. That test -- not this number -- is what
+# now protects against the failure the paragraph at the top describes. If you are
+# about to tighten this constant because it "feels loose", tighten that test
+# instead; this one is only here to stop something absurd.
+#
+# Two measurements behind the change. First, the ceiling: 350,000 characters is
+# on the order of 90-100k tokens (this corpus is ALL-CAPS-heavy, so it tokenises
+# worse than the usual ~4 chars/token), against Sonnet 5's 200k context -- still
+# comfortably inside, with room for the bar context and the agentic loop.
+#
+# Second, and more important, the real ceiling is NOT context: it is LATENCY. The
+# 90s SDK deadline fired 27 times between 7 and 31 July, each one a bar the agent
+# silently held through. It stopped firing when the model moved to Sonnet 5 with
+# fast mode, NOT because the prompt shrank -- the prompt has nearly doubled since.
+# Prefill scales with what is set here, so the margin that fixed those timeouts is
+# exactly what this raise spends. `SL_HUNTING_SLOW_DECISION_WARN_SECONDS` exists
+# so that creep shows up as a WARN on the day it starts, rather than as held bars
+# noticed weeks later. Watch that, not this constant.
+#
 # The rule when this is next hit is the same: check whether the growth is
 # ordinary knowledge (raise the bound) or something pathological (fix the cause).
 # Pruning genuinely superseded prose is worth doing on its own merits, but it is
 # a knowledge-quality task -- never a way to buy space under this number.
-MAX_SYSTEM_PROMPT_CHARS = 160_000
+MAX_SYSTEM_PROMPT_CHARS = 350_000
 
 
 def build_system_prompt() -> str:

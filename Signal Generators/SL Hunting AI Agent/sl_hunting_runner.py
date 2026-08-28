@@ -231,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeframe", type=int, default=int(_env("SL_HUNTING_DERIVED_TIMEFRAME_MINUTES", "1")),
                         help="Decision timeframe in minutes (resampled from 1-min; SL Hunting's default is 1).")
     parser.add_argument("--model", default=_env("SL_HUNTING_MODEL", "claude-opus-4-8"), help="Claude model id.")
+    parser.add_argument("--warn-after", type=float,
+                        default=float(_env("SL_HUNTING_SLOW_DECISION_WARN_SECONDS", "60")),
+                        help="WARN when one decision takes at least this many seconds.")
     parser.add_argument("--fast", action="store_true", help="Disable extended thinking (lower latency).")
     parser.add_argument("--fake", action="store_true", help="Use the built-in always-HOLD runner (no SDK/cost).")
     parser.add_argument("--warmup", type=int, default=30, help="Min completed bars before the first decision.")
@@ -296,7 +299,10 @@ def main(argv: list[str] | None = None) -> int:
         lessons_block = format_lessons(load_lessons(args.lessons_path))
         logger.info("Lessons ON: injected %d learned-lesson chars from %s.", len(lessons_block), args.lessons_path)
     runner = _AlwaysHoldRunner() if args.fake else None
-    agent = SLHuntingAgent(model=args.model, runner=runner, fast_mode=args.fast, lessons_block=lessons_block)
+    agent = SLHuntingAgent(
+        model=args.model, runner=runner, fast_mode=args.fast, lessons_block=lessons_block,
+        slow_decision_warn_seconds=args.warn_after,
+    )
     ex = StandaloneExecutor(
         lots=args.lots,
         lot_size=args.lot_size,
