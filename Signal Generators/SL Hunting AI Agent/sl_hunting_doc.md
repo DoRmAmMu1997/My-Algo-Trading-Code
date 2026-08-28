@@ -5394,3 +5394,102 @@ The lesson is for future hand-offs: **never suggest appending to `.env` with a
 shell redirect on this machine.** Edit the file, or use
 `Add-Content -Encoding utf8`. A silently corrupted `.env` takes the whole trading
 system down at import, and the error names neither the file nor the line.
+
+---
+
+## SLH-015 - the two basket rules gave opposite defaults for the same tool
+
+The re-read promised after v4q, when `THE LAGGING INDEX DECIDES THE BASKET'S EXIT`
+had been amended by three versions and was about to be extended again. Reading it
+whole turned up something worse than accumulated cruft.
+
+### The contradiction
+
+The two largest rules in the basket family disagreed about `exit_leg`:
+
+- `THE LAGGING INDEX DECIDES THE BASKET'S EXIT` (v4i/k/l): "**Prefer that** to a
+  whole-basket exit WHEN the NIFTY premise is genuinely intact."
+- `CUTTING THE MIRROR ON A BANKNIFTY REVERSAL` (v4j/l/o): "**EXIT BOTH is the
+  default** and `exit_leg` is the exception, **not a pair of equal options**."
+
+The tool defaults to `BOTH` in code (`sl_hunting_tools.py`), and the `BASKET NOTE`
+says `"BOTH" (default)` and "When in doubt, EXIT BOTH" - so the lagging-index rule
+was the lone outlier. The agent read both and could justify either, on live-money
+exits, with no stated way to tell which applied.
+
+(A correction to the v4q note: v4o amended `CUTTING THE MIRROR`, not the
+lagging-index rule. The lagging-index rule carries v4i/v4k/v4l only.)
+
+### What was actually wrong
+
+Nothing in the trading logic. The two were always reconcilable, and the
+distinguishing fact was simply never written down:
+
+- A mirror that has **STALLED** - stopped moving while the other leg runs - is a
+  question about how much the basket can still COLLECT. Per-leg is available.
+- A mirror that has **REVERSED** is a question about whether the MOVE IS STILL ON.
+  EXIT BOTH.
+
+The lagging-index rule's per-leg preference was always about the first case. It
+just read as a general preference, because nothing scoped it.
+
+### The change
+
+Behaviour-preserving by construction, and provably so: **all fifteen v4i / v4j /
+v4k / v4l / v4o assertions pass untouched.** Not one existing test was edited,
+which was the design constraint - six tests anchor on these two headings and forty
+assertions pin their prose, so anything that required editing them would have been
+a behaviour change wearing a refactor's clothes.
+
+Three edits:
+
+1. **The per-leg preference is SCOPED, not removed.** "Prefer that to a
+   whole-basket exit" becomes "available HERE, in the STALL case, and only here",
+   with an explicit "NOT the licence for a mirror that has TURNED" and a pointer to
+   the sibling rule rather than a competing default of its own.
+2. **The discriminator is named once**, folded into the paragraph in
+   `CUTTING THE MIRROR` that already drew the distinction in different words
+   (idiosyncratic vs turned). It now says stall vs reversal, gives the reason each
+   maps to a different action, and warns that "the two look identical on a P&L
+   screen and completely different on a chart" - which is the whole trap.
+3. **The EQUAL-LOT fact is stated once.** It appeared twice inside the
+   lagging-index rule; the second occurrence now refers back rather than
+   re-deriving it.
+
+### Both headings kept
+
+Merging them under one heading would have broken all six tests, and one of those
+tests - `test_v4j_per_leg_cut_rule_does_not_cancel_the_v4i_per_leg_escape` -
+exists precisely to assert the two coexist. The existing test suite already
+encoded the decision; consolidation happened WITHIN and ACROSS the two bullets
+instead.
+
+### The satellites
+
+Checked for contradiction and left alone, as scoped: `BASKET NOTE` (v4p) already
+agrees (`"BOTH" (default)`, "When in doubt, EXIT BOTH"); `LAGGING-INDEX ENTRY
+LOCATOR` and `INDEX HIERARCHY ON THE WAY OUT` carry no exit-scope language at all,
+so no contradiction was possible.
+
+### On size
+
+The pair grew: 7,736 -> **8,371 chars (+635)**. That is the honest result and it
+was the expected one. Every measured case and IH quotation had to survive verbatim
+- they are the evidence base, and forty assertions pin them - so the only prose
+that could be removed was the single duplicated EQUAL-LOT derivation. Naming the
+discriminator costs more than that saved.
+
+The point of this pass was never headroom. It was that an agent making live-money
+exit decisions had two rules pointing opposite ways and no stated way to choose.
+Assembled prompt is 145,780 against a 350,000 cap, so the cost is irrelevant.
+
+### Verification
+
+The new guard `test_stall_or_reversal_discriminator_keeps_the_two_basket_rules_consistent`
+asserts the discriminator exists exactly once, that the lagging rule defers rather
+than restating a default, and - the actual regression - that the phrase "Prefer
+that to a whole-basket exit" never returns.
+
+Negative-tested: removing the discriminator, restoring the unscoped preference,
+having the lagging rule stop deferring, and duplicating the discriminator into
+both rules each fail the suite. Full gates clean.

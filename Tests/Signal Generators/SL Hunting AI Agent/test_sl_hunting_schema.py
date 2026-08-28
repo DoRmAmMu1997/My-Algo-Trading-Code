@@ -1850,3 +1850,49 @@ def test_v4q_obviousness_exit_never_becomes_a_licence_to_sit():
     assert "It does NOT license sitting through a stall" in rule
     assert "v4f still books when the rate of gain dies" in rule
     assert "the stop, the max loss and premise-invalidation all outrank it" in rule
+
+
+def test_stall_or_reversal_discriminator_keeps_the_two_basket_rules_consistent():
+    """SLH-015: the two basket rules used to give OPPOSITE defaults for `exit_leg`.
+
+    `THE LAGGING INDEX DECIDES THE BASKET'S EXIT` said "Prefer that to a
+    whole-basket exit WHEN the NIFTY premise is genuinely intact", while
+    `CUTTING THE MIRROR ON A BANKNIFTY REVERSAL` said "EXIT BOTH is the default
+    and `exit_leg` is the exception, not a pair of equal options" -- and the
+    tool itself defaults to BOTH in code. The agent read both and could justify
+    either, on live-money exits.
+
+    They were always reconcilable: a mirror that has STALLED is a question about
+    how much the basket can still collect (per-leg available), a mirror that has
+    REVERSED is a question about whether the move is still on (EXIT BOTH). That
+    discriminator was simply never stated. Neither rule was changed in substance
+    -- all fifteen v4i/v4j/v4k/v4l/v4o assertions still pass untouched -- the
+    per-leg preference was SCOPED to the case it was always about.
+    """
+    prompt = build_system_prompt()
+    lagging = _flat_rule(prompt, "THE LAGGING INDEX DECIDES THE BASKET'S EXIT")
+    cutting = _flat_rule(prompt, "CUTTING THE MIRROR ON A BANKNIFTY REVERSAL")
+
+    # Stated exactly ONCE, so the two rules cannot drift apart again.
+    assert prompt.count("THE STALL-OR-REVERSAL TEST") == 1
+    assert "THE STALL-OR-REVERSAL TEST" in cutting
+    assert "the discriminator both basket rules turn on, stated here once" in cutting
+
+    # Both halves of the test, and why it cannot be read off a P&L number.
+    assert "a mirror that has STALLED" in cutting
+    assert "a question about whether the MOVE IS STILL ON" in cutting
+    assert "identical on a P&L screen and completely different on a chart" in cutting
+
+    # The lagging rule owns the STALL case, says so, and defers rather than
+    # restating a competing default.
+    assert "available HERE, in the STALL case, and only here" in lagging
+    assert "NOT the licence for a mirror that has TURNED" in lagging
+    assert "see the stall-or-reversal test in the rule below" in lagging
+    assert "EXIT BOTH is the default and per-leg is the narrow exception" in lagging
+
+    # The regression itself: the unscoped preference must never come back.
+    assert "Prefer that to a whole-basket exit" not in prompt
+
+    # And the reversal case still carries the stricter default it always had.
+    assert "EXIT BOTH is the default" in cutting
+    assert "the honest action is EXIT BOTH" in cutting
