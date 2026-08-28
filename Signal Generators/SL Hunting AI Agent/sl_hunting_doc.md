@@ -5394,3 +5394,218 @@ The lesson is for future hand-offs: **never suggest appending to `.env` with a
 shell redirect on this machine.** Edit the file, or use
 `Add-Content -Encoding utf8`. A silently corrupted `.env` takes the whole trading
 system down at import, and the error names neither the file nor the line.
+
+---
+
+## SLH-015 - the two basket rules gave opposite defaults for the same tool
+
+The re-read promised after v4q, when `THE LAGGING INDEX DECIDES THE BASKET'S EXIT`
+had been amended by three versions and was about to be extended again. Reading it
+whole turned up something worse than accumulated cruft.
+
+### The contradiction
+
+The two largest rules in the basket family disagreed about `exit_leg`:
+
+- `THE LAGGING INDEX DECIDES THE BASKET'S EXIT` (v4i/k/l): "**Prefer that** to a
+  whole-basket exit WHEN the NIFTY premise is genuinely intact."
+- `CUTTING THE MIRROR ON A BANKNIFTY REVERSAL` (v4j/l/o): "**EXIT BOTH is the
+  default** and `exit_leg` is the exception, **not a pair of equal options**."
+
+The tool defaults to `BOTH` in code (`sl_hunting_tools.py`), and the `BASKET NOTE`
+says `"BOTH" (default)` and "When in doubt, EXIT BOTH" - so the lagging-index rule
+was the lone outlier. The agent read both and could justify either, on live-money
+exits, with no stated way to tell which applied.
+
+(A correction to the v4q note: v4o amended `CUTTING THE MIRROR`, not the
+lagging-index rule. The lagging-index rule carries v4i/v4k/v4l only.)
+
+### What was actually wrong
+
+Nothing in the trading logic. The two were always reconcilable, and the
+distinguishing fact was simply never written down:
+
+- A mirror that has **STALLED** - stopped moving while the other leg runs - is a
+  question about how much the basket can still COLLECT. Per-leg is available.
+- A mirror that has **REVERSED** is a question about whether the MOVE IS STILL ON.
+  EXIT BOTH.
+
+The lagging-index rule's per-leg preference was always about the first case. It
+just read as a general preference, because nothing scoped it.
+
+### The change
+
+Behaviour-preserving by construction, and provably so: **all fifteen v4i / v4j /
+v4k / v4l / v4o assertions pass untouched.** Not one existing test was edited,
+which was the design constraint - six tests anchor on these two headings and forty
+assertions pin their prose, so anything that required editing them would have been
+a behaviour change wearing a refactor's clothes.
+
+Three edits:
+
+1. **The per-leg preference is SCOPED, not removed.** "Prefer that to a
+   whole-basket exit" becomes "available HERE, in the STALL case, and only here",
+   with an explicit "NOT the licence for a mirror that has TURNED" and a pointer to
+   the sibling rule rather than a competing default of its own.
+2. **The discriminator is named once**, folded into the paragraph in
+   `CUTTING THE MIRROR` that already drew the distinction in different words
+   (idiosyncratic vs turned). It now says stall vs reversal, gives the reason each
+   maps to a different action, and warns that "the two look identical on a P&L
+   screen and completely different on a chart" - which is the whole trap.
+3. **The EQUAL-LOT fact is stated once.** It appeared twice inside the
+   lagging-index rule; the second occurrence now refers back rather than
+   re-deriving it.
+
+### Both headings kept
+
+Merging them under one heading would have broken all six tests, and one of those
+tests - `test_v4j_per_leg_cut_rule_does_not_cancel_the_v4i_per_leg_escape` -
+exists precisely to assert the two coexist. The existing test suite already
+encoded the decision; consolidation happened WITHIN and ACROSS the two bullets
+instead.
+
+### The satellites
+
+Checked for contradiction and left alone, as scoped: `BASKET NOTE` (v4p) already
+agrees (`"BOTH" (default)`, "When in doubt, EXIT BOTH"); `LAGGING-INDEX ENTRY
+LOCATOR` and `INDEX HIERARCHY ON THE WAY OUT` carry no exit-scope language at all,
+so no contradiction was possible.
+
+### On size
+
+The pair grew: 7,736 -> **8,371 chars (+635)**. That is the honest result and it
+was the expected one. Every measured case and IH quotation had to survive verbatim
+- they are the evidence base, and forty assertions pin them - so the only prose
+that could be removed was the single duplicated EQUAL-LOT derivation. Naming the
+discriminator costs more than that saved.
+
+The point of this pass was never headroom. It was that an agent making live-money
+exit decisions had two rules pointing opposite ways and no stated way to choose.
+Assembled prompt is 145,780 against a 350,000 cap, so the cost is irrelevant.
+
+### Verification
+
+The new guard `test_stall_or_reversal_discriminator_keeps_the_two_basket_rules_consistent`
+asserts the discriminator exists exactly once, that the lagging rule defers rather
+than restating a default, and - the actual regression - that the phrase "Prefer
+that to a whole-basket exit" never returns.
+
+Negative-tested: removing the discriminator, restoring the unscoped preference,
+having the lagging rule stop deferring, and duplicating the discriminator into
+both rules each fail the suite. Full gates clean.
+
+---
+
+## Video addendum - the 28 Aug LIVE SESSION (v4r)
+
+**Source:** Intraday Hunter live session `D02UJwCO7_4` (28 Aug 2026, 8:09).
+
+A flat open after the previous day's broad selloff - the exact setup the 28 Aug
+pre-open note described. IH bought it to hunt the seated sellers, sat through an
+early loss while BankNIFTY lagged, and booked a large profit once Sensex and NIFTY
+carried it. Our agent read the same setup the same way, took two longs, and
+finished **+989.75**.
+
+The whole of v4r comes from one disagreement between them, and it lands on a rule
+that was already in the corpus rather than on anything new IH said.
+
+### What the agent did
+
+| Time | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|
+| 09:25 -> 09:27 | agent, pivot stall + laggard veto | +1,352.00 | +217.50 | **+1,569.50** |
+| 09:55 -> 10:01 | agent, premise invalidation | -282.75 | -297.00 | **-579.75** |
+| | | **+1,069.25** | **-79.50** | **+989.75** |
+
+The pre-open note injected (2,265 chars, the exact size measured when written) and
+both entries cite its hunt branch by name - `seated_seller_hunt_morning_star_fib61`
+and `buyside_seller_hunt_pullback_hold`. The note's premise reversal, from three
+sessions of follow-the-momentum to hunt-the-seated-sellers, transferred cleanly.
+That is the note working exactly as intended.
+
+### The disagreement
+
+Trade 1 was closed **100 seconds after entry**, up +968.75 at the time of the
+decision, on these stated grounds:
+
+> "The BankNIFTY mirror is not confirming: it sits -202 points below its OWN pivot
+> at a lesser psych resistance and is **flat (-22.5)**, a textbook
+> laggard-never-joined signal that the shared two-index move underpinning the
+> target has stopped forming."
+
+That cites `LAGGARDS NEVER JOINED -> BOOK WHAT YOU HAVE`, correctly by its letter.
+IH spent this session on precisely that situation and reached the opposite
+conclusion:
+
+> "Sometimes one index gives a small rejection and goes, just to CHANGE PSYCHOLOGY
+> - but Sensex and NIFTY are fine."
+>
+> "One index stays behind to change psychology a little, and today that was
+> BankNIFTY."
+>
+> "Make it in Sensex and NIFTY, as much as you like. BankNIFTY just needs to not
+> stay negative - even if it gives no profit."
+
+He held. BankNIFTY broke out later in the session and he booked a large profit.
+
+### What was actually wrong with the rule
+
+Not the reasoning - the SCOPE. `LAGGARDS NEVER JOINED` is written for the MAJORITY
+refusing: "the other TWO indices never break their own levels". On a two-index
+basket that phrasing inverts easily, and one index being behind reads as "the
+laggards never joined" when it is nothing of the sort. Today two of the three
+indices were working and exactly one trailed - the opposite of the rule's case.
+
+So v4r adds a scope limit to that rule rather than a new rule:
+
+- **Count who is absent before applying it.** Majority refusing, not any single
+  index behind.
+- **Classify the trailing index by its SIGN, not its distance.** FLAT or
+  positive-but-slower has not refused; it has not ARRIVED. Negative, or a confirmed
+  reversal of its own, is the disqualifying case.
+- **Hand that disqualifying case to `THE STALL-OR-REVERSAL TEST`** (SLH-015) rather
+  than ruling on it here, so the two cannot drift into competing verdicts the way
+  the basket pair did before that fix.
+
+This completes SLH-015 from the other side. That fix separated a mirror that has
+STALLED from one that has REVERSED. Today's session named the third state sitting
+between them - a mirror that has simply **not arrived yet** - and gave the test
+that distinguishes it.
+
+### The honest half
+
+The rule text keeps the evidence that does NOT support it, and a drift guard
+asserts that it survives. The NIFTY leg really was stalling at its pivot when the
+agent booked: three 1-minute candles with tiny bodies going nowhere, which is a
+fair `BOOK WHEN THE PROFIT STOPS GROWING` exit on its own merits. Trade 1 also
+booked a genuine +1,569.50. The laggard half of that reasoning was the wrong half,
+not the whole decision, and the prose says so - "that is not proof holding is
+always right".
+
+What the day does show is a pattern now running two sessions: book early, re-enter
+worse, give some back. On 27 Aug the re-entry cost -308.00; today it cost -579.75.
+Both re-entries were at prices worse than the exit that preceded them.
+
+### Deliberately NOT added
+
+- **"Enter before the round number, because after the break the market may not give
+  you a chance"** ("enter before 500... if there is momentum it will be upside").
+  A real entry rule, but v4p's WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF,
+  WAITING IS THE COST already carries the instruction and the reasoning.
+- **"The seated-seller read needs all THREE indices to have sold"** ("if selling
+  happens in one index only, then there is a problem"). Well covered - the corpus
+  has ten separate passages on all-three-indices confirmation.
+- **The loss-tolerance passage** ("do not panic at a loss, that is what your SL is
+  for"). Covered by FEAR IS NOT A SIGNAL and v4n's DO NOT THINK YOUR WAY THROUGH
+  A LOSS.
+
+### Knowledge changes (v4r)
+
+- `LAGGARDS NEVER JOINED -> BOOK WHAT YOU HAVE` gains a scope limit: COUNT WHO IS
+  ABSENT BEFORE YOU APPLY THIS.
+- One drift guard, negative-tested seven ways: removing the scope limit, softening
+  the majority gate, turning the sign test into a distance test, reclassifying flat
+  as a refusal, ending the deferral to the basket rules, dropping the counter-
+  evidence, and dropping the measured case each fail the suite.
+- Prompt size 144,489 -> 146,349 chars. Assembled 147,640 against the post-SLH-013
+  budget: **193,841 chars of headroom.**

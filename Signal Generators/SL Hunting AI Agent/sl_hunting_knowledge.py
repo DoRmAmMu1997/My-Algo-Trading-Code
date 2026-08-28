@@ -1046,9 +1046,13 @@ RISK DISCIPLINE
     the basket even when `nifty_leg_pnl` looks healthy — the mirror is quietly giving
     back what the NIFTY leg is earning.
   * You have a finer instrument than he did: `exit_leg` lets you cut the stalling
-    mirror alone and let the NIFTY leg run. Prefer that to a whole-basket exit WHEN
-    the NIFTY premise is genuinely intact and only the mirror has stopped confirming.
-    If the divergence instead says the MOVE is tiring, exit BOTH.
+    mirror alone and let the NIFTY leg run. That is available HERE, in the STALL
+    case, and only here — a mirror that has stopped moving is a question about how
+    much the basket can still COLLECT. It is NOT the licence for a mirror that has
+    TURNED: see the stall-or-reversal test in the rule below, where EXIT BOTH is the
+    default and per-leg is the narrow exception. Within the stall case, use it when
+    the NIFTY premise is genuinely intact and only the mirror has stopped confirming;
+    if the divergence instead says the MOVE is tiring, exit BOTH.
   This is a cross-index refinement of v4f's book-when-the-profit-stops-growing rule:
   that one watches the rate on your own P&L, this one names the leg that will stop it
   first, usually before the basket total shows it.
@@ -1058,10 +1062,10 @@ RISK DISCIPLINE
   negative... only BankNIFTY has momentum, so booking the trade was the right thing."
   So read it both ways: the mirror lagging while NIFTY runs, and NIFTY lagging while
   the mirror runs, are the same message.
-  JUDGE IT ON MOVEMENT, NOT ON RUPEE SHARE (v4l). The mirror is EQUAL-LOT, and a
-  BankNIFTY option costs several times a NIFTY one and travels further, so the
-  mirror carries the larger rupee share of a basket even when BOTH legs are working
-  normally. Measured on this book (2026-08-20): a long where both legs worked split
+  JUDGE IT ON MOVEMENT, NOT ON RUPEE SHARE (v4l). For the reason already given above
+  — the mirror is EQUAL-LOT, which is not equal-rupee — it carries the larger rupee
+  share of a basket even when BOTH legs are working normally. Measured on this book
+  (2026-08-20): a long where both legs worked split
   +461.50 NIFTY / +1,092.00 mirror — a 70/30 split that is arithmetic, not
   divergence. Two trades later the NIFTY leg moved 0.15 premium points while the
   mirror moved 20.15, and THAT is divergence. So the test is whether a leg has
@@ -1073,13 +1077,17 @@ RISK DISCIPLINE
   -467 at that moment, so the leg cited as evidence the trade was working was the only
   part of it that was.
 - CUTTING THE MIRROR ON A BANKNIFTY REVERSAL IS A VERDICT ON THE WHOLE BASKET (v4j).
-  The per-leg escape above is for an IDIOSYNCRATIC problem in the mirror — a level
-  only BankNIFTY is at, a pattern only it printed. It is NOT for the case where
-  BankNIFTY has simply TURNED, because the index hierarchy says BankNIFTY leads: if
-  its reversal is real enough to close the mirror, it is real enough to disqualify
-  the NIFTY leg standing beside it. Before an `exit_leg` of "BNF", answer one
-  question out loud: is this BankNIFTY-only, or is BankNIFTY telling me the move is
-  over? If it is the second, the honest action is EXIT BOTH.
+  THE STALL-OR-REVERSAL TEST — the discriminator both basket rules turn on, stated
+  here once. The per-leg escape above is for a mirror that has STALLED, or for an
+  IDIOSYNCRATIC problem in it — a level only BankNIFTY is at, a pattern only it
+  printed. Both are questions about how much the basket can still COLLECT. It is NOT
+  for the case where BankNIFTY has simply TURNED, which is a question about whether
+  the MOVE IS STILL ON — because the index hierarchy says BankNIFTY leads: if its
+  reversal is real enough to close the mirror, it is real enough to disqualify the
+  NIFTY leg standing beside it. The two look identical on a P&L screen and completely
+  different on a chart, so before an `exit_leg` of "BNF", answer one question out
+  loud: is this BankNIFTY-only, or is BankNIFTY telling me the move is over? If it is
+  the second, the honest action is EXIT BOTH.
   BUT MOVING AGAINST YOU IS NOT THE SAME AS YOUR LEVEL BREAKING (v4o). This rule
   disqualifies on a BankNIFTY REVERSAL, not on BankNIFTY merely going the wrong
   way while your named invalidation still holds. IH sat through exactly that:
@@ -1965,6 +1973,30 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
     liquidity for someone else's trade.
   * This is distinct from the leader FAILING to lead (above): here the leader worked
     and the followers refused. Both end the same way — book and stand aside.
+  * COUNT WHO IS ABSENT BEFORE YOU APPLY THIS (v4r). The rule is written for the
+    MAJORITY refusing — "the other TWO indices never break their own levels". It is
+    NOT a rule about any single index being behind. When two of the three ARE
+    working and only one trails, you have the opposite situation, and IH names the
+    mechanism: "sometimes one index gives a small rejection and goes, just to CHANGE
+    PSYCHOLOGY — but Sensex and NIFTY are fine", and, of the same session, "one
+    index stays behind to change psychology a little, and today that was BankNIFTY."
+    He kept the trade and took the target from the two that worked: "make it in
+    Sensex and NIFTY, as much as you like. BankNIFTY just needs to not stay negative
+    — even if it gives no profit."
+    So a trailing index must be classified before it is acted on, and the test is
+    its SIGN, not its distance: an index that is FLAT or positive-but-slower has not
+    refused, it has not arrived yet. One that has gone NEGATIVE, or printed its own
+    confirmed reversal, is the disqualifying case — and that is THE
+    STALL-OR-REVERSAL TEST in the basket rules, not this one.
+    Measured on this book (2026-08-28): a long basket up +968.75 was closed 100
+    seconds after entry on the stated grounds that the "BankNIFTY mirror is not
+    confirming... flat (-22.5), a textbook laggard-never-joined signal". Flat is
+    precisely the not-yet-arrived case. IH held the comparable trade, BankNIFTY
+    broke out later in the session, and he booked a large profit. Our re-entry 28
+    minutes later, at a worse price, lost -579.75. That is not proof holding is
+    always right — the NIFTY leg was genuinely stalling at its pivot, which is a
+    fair v4f book on its own — but the LAGGARD half of that reasoning was the
+    wrong half, and it is the half this scope limit governs.
 - LAGGING-INDEX ENTRY LOCATOR: when the day direction is ALREADY established from
   retail positioning and the triple-index read, but NIFTY / Sensex are moving too
   quickly to offer a controlled entry, use the lagging index (often BankNIFTY) to
