@@ -1283,16 +1283,42 @@ def test_decision_latency_is_logged_even_when_the_sdk_reports_no_cost(caplog):
     assert "deadline" in latency[0].getMessage()
 
 
-def test_slow_decision_warns_once_past_the_threshold(caplog):
+def _pin_decision_duration(monkeypatch, seconds: float) -> None:
+    """Make one decision appear to take exactly `seconds`, deterministically.
+
+    An earlier version of these tests set the threshold to 0.001s and relied on
+    a real call taking longer than a millisecond. It does on this machine and
+    did NOT on CI, where the fake runner returned inside a millisecond and the
+    warning never fired. Wall-clock is not something a test may assume, so the
+    clock is pinned instead.
+
+    The stub returns 0.0 for the first reading and `seconds` for every reading
+    after, which is robust to anything else in the call path also reading the
+    clock between the agent's two readings.
+    """
+    import time as _time
+
+    state = {"first": True}
+
+    def _clock() -> float:
+        if state["first"]:
+            state["first"] = False
+            return 0.0
+        return float(seconds)
+
+    monkeypatch.setattr(_time, "perf_counter", _clock)
+
+
+def test_slow_decision_warns_once_past_the_threshold(caplog, monkeypatch):
     import logging
 
-    # Any real call takes longer than a millisecond, so this always trips.
     agent = SLHuntingAgent(
         model="test-model",
         runner=_FakeRunner(_HOLD_JSON),
         sdk_timeout_seconds=90,
-        slow_decision_warn_seconds=0.001,
+        slow_decision_warn_seconds=60.0,
     )
+    _pin_decision_duration(monkeypatch, 75.0)
     with caplog.at_level(logging.INFO):
         agent.decide(_candles(), StandaloneExecutor())
 
@@ -1306,7 +1332,7 @@ def test_slow_decision_warns_once_past_the_threshold(caplog):
     assert "HELD" in message
 
 
-def test_fast_decision_does_not_warn(caplog):
+def test_fast_decision_does_not_warn(caplog, monkeypatch):
     """The quiet case, asserted so the warning cannot decay into noise."""
     import logging
 
@@ -1316,6 +1342,7 @@ def test_fast_decision_does_not_warn(caplog):
         sdk_timeout_seconds=90,
         slow_decision_warn_seconds=60.0,
     )
+    _pin_decision_duration(monkeypatch, 3.0)
     with caplog.at_level(logging.INFO):
         agent.decide(_candles(), StandaloneExecutor())
 

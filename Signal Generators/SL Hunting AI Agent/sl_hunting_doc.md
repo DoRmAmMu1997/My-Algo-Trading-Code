@@ -5279,6 +5279,19 @@ text. Two tests assert the QUIET cases - a fast decision does not warn, and a
 threshold above the deadline still constructs - so the warning cannot decay into
 noise.
 
+**One of these tests was wrong first, and the way it was wrong is worth keeping.**
+The two warning tests originally set the threshold to 0.001s and relied on "any
+real call takes longer than a millisecond". That holds on this machine and did
+NOT on CI, where the fake runner returned inside a millisecond, `elapsed` logged
+as 0.0s and the warning never fired -- green locally, red on CI. Wall-clock is
+not something a test may assume. Both now pin the clock via `_pin_decision_
+duration`, which returns 0.0 for the first reading and a fixed value after, and
+is robust to anything else in the call path reading the clock in between. The
+pinned version is strictly better than a working timing-based one would have
+been: it catches the warning being disabled AND the warning always firing AND
+the comparison being flipped, where a timing-based test could only ever catch
+the first.
+
 Full gates clean. `check-env` reports the new key as MISSING from the operator's
 `.env`, which is correct and expected: it is in `env.example`, and until it is
 copied across the in-code default of 60s applies.
