@@ -198,16 +198,50 @@ class StoredLesson(StrictAIModel):
         return self
 
 
+# The id is capped at 48 characters by ``StoredLesson._validate_id``. Split that
+# budget between a human-readable prefix (so ``--list`` and log lines stay
+# legible) and a hash of the FULL content, which is what actually makes the id
+# unique. 39 + "-" + 8 lands exactly on the cap.
+_SLUG_READABLE_CHARS = 39
+_SLUG_HASH_CHARS = 8
+# NUL, which cannot occur in a scope or a lesson, so ('a-b', 'c') and
+# ('a', 'b-c') cannot hash alike. Built with chr() rather than an escape so
+# no code-generation step can collapse it into a real NUL in this file.
+_SLUG_SEPARATOR = chr(0)
+
+
 def _slug(scope: str, lesson: str) -> str:
-    """Build a STABLE id from scope + lesson text (lowercase, non-alphanumerics → '-').
+    """Build a STABLE id from scope + lesson text: readable prefix + content hash.
 
     Because the same lesson always slugs to the same id, ``consolidate`` can recognise
-    duplicates across coach runs and keep just the best-evidenced copy. Capped to 48
-    chars; falls back to ``"lesson"`` if the text had nothing alphanumeric.
+    duplicates across coach runs and keep just the best-evidenced copy.
+
+    The readable half alone is NOT enough to identify a lesson, and assuming it was
+    is the bug this shape exists to prevent. Earlier this function was simply
+    ``slug(scope + lesson)[:48]``. ``MAX_SCOPE_CHARS`` is 80, so for any scope longer
+    than ~48 characters the id was determined ENTIRELY by the scope and the lesson
+    text never reached it -- two genuinely different lessons filed under one
+    descriptive scope collided, and ``consolidate`` silently kept only the
+    better-evidenced one. The operator would never see the other again: it simply
+    would not appear in the prompt block. Appending a digest of the full
+    ``scope + lesson`` makes the id depend on every character of both, whatever the
+    prefix does.
+
+    It also tightens tamper-evidence a little. ``StoredLesson`` asserts
+    ``id == _slug(scope, lesson)``; previously an edit past the 48-character prefix
+    left that check passing, and only ``approval_digest`` caught it. Now the id
+    itself moves. (The digest remains the real guard -- see
+    ``lesson_content_digest`` -- this is defence in depth, not a replacement.)
+
+    The separator is NUL rather than a hyphen so that ("a-b", "c") and ("a", "b-c")
+    cannot hash alike; neither can appear in the fields themselves.
     """
     base = f"{scope}-{lesson}".lower()
     cleaned = "".join(c if c.isalnum() else "-" for c in base)
-    return "-".join(filter(None, cleaned.split("-")))[:48] or "lesson"
+    readable = "-".join(filter(None, cleaned.split("-")))[:_SLUG_READABLE_CHARS].rstrip("-")
+    digest = hashlib.sha256(f"{scope}{_SLUG_SEPARATOR}{lesson}".encode()).hexdigest()[:_SLUG_HASH_CHARS]
+    # A scope+lesson with nothing alphanumeric still gets a unique, valid id.
+    return f"{readable}-{digest}" if readable else f"lesson-{digest}"
 
 
 def _now() -> str:

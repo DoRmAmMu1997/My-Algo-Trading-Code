@@ -301,3 +301,74 @@ def test_agent_injects_lessons_block_before_output_contract():
     assert prompt.index("LEARNED LESSONS") < prompt.index("FINAL OUTPUT FORMAT")
     # No lessons by default.
     assert "LEARNED LESSONS" not in SLHuntingAgent(model="test-model")._system_prompt
+
+
+# --------------------------------------------------------------------------
+# SLH-014 — lesson ids must not be decided by the scope alone
+# --------------------------------------------------------------------------
+
+def test_lessons_sharing_a_long_scope_do_not_collide_on_id():
+    """A verbose scope must not swallow the lesson text out of the id.
+
+    `_slug` used to be `slug(scope + lesson)[:48]`. `MAX_SCOPE_CHARS` is 80, so
+    for any scope longer than ~48 characters the id was decided ENTIRELY by the
+    scope and the lesson text never reached it. Two genuinely different lessons
+    filed under one descriptive scope then shared an id, and `consolidate` --
+    which dedupes by id -- silently kept only the better-evidenced one. The
+    other never appeared in the prompt block again, and nothing logged it.
+
+    Found while writing the SLH-013 worst-case fixture, which rendered an EMPTY
+    lessons block because all twelve records collapsed onto a single id.
+    """
+    scope = "entries on a gap-up morning after a monthly expiry week"
+    assert len(scope) > 48, "this scope must be long enough to have swallowed the id"
+    assert len(scope) <= sl_hunting_lessons.MAX_SCOPE_CHARS, "and still be a legal scope"
+
+    first = proposed_to_record(
+        ProposedLesson(
+            scope=scope,
+            lesson="wait for the confirmation candle before entering",
+            rationale="r", wins=3, losses=1, sample_size=4, confidence=6,
+        )
+    )
+    second = proposed_to_record(
+        ProposedLesson(
+            scope=scope,
+            lesson="do not fade the first thrust of the session",
+            rationale="r", wins=9, losses=1, sample_size=10, confidence=7,
+        )
+    )
+
+    assert first["id"] != second["id"], "the lesson text must reach the id"
+
+    kept = consolidate([first, second])
+    assert len(kept) == 2, "a distinct lesson was silently dropped by an id collision"
+    assert {rec["lesson"] for rec in kept} == {first["lesson"], second["lesson"]}
+
+
+def test_slug_honours_the_id_contract_at_the_field_limits():
+    """The id is capped at 48 chars and may hold only letters, numbers, hyphens.
+
+    Asserted at the FIELD limits rather than on tidy inputs, because the bug this
+    replaces only appeared once the scope got long. `StoredLesson._validate_id`
+    rejects anything outside that contract, and a rejected record is dropped
+    silently by `_validated_records`.
+    """
+    slug = sl_hunting_lessons._slug
+
+    longest = slug(
+        "S" * sl_hunting_lessons.MAX_SCOPE_CHARS,
+        "X" * sl_hunting_lessons.MAX_LESSON_CHARS,
+    )
+    assert len(longest) <= 48
+    assert all(char.isalnum() or char == "-" for char in longest)
+
+    # Deterministic: consolidate's dedup across coach runs depends on it.
+    assert slug("a scope", "a lesson") == slug("a scope", "a lesson")
+
+    # Input with nothing alphanumeric still yields a usable, legal id.
+    fallback = slug("!!!", "###")
+    assert fallback and all(char.isalnum() or char == "-" for char in fallback)
+
+    # The joiner must not let different field splits hash alike.
+    assert slug("a-b", "c") != slug("a", "b-c")
