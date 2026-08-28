@@ -1228,3 +1228,98 @@ def test_a_normal_decision_does_not_warn(caplog):
         SLHuntingAgent(model="test-model", runner=_runner).decide(_candles(), StandaloneExecutor())
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# --------------------------------------------------------------------------
+# SLH-013 — per-decision latency, the number that tracks prompt/latency creep
+# --------------------------------------------------------------------------
+
+_HOLD_JSON = '{"action": "HOLD", "confidence": 0, "reasoning": "ok", "setup": "none"}'
+
+
+def test_slow_decision_warn_seconds_must_be_positive_and_finite():
+    import pytest
+
+    for invalid in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            SLHuntingAgent(
+                model="test-model",
+                runner=_FakeRunner(_HOLD_JSON),
+                slow_decision_warn_seconds=invalid,
+            )
+    # A threshold at or above the deadline is ALLOWED: the call is abandoned
+    # before it could fire, which is a legitimate way to switch the warning off
+    # rather than a misconfiguration.
+    assert SLHuntingAgent(
+        model="test-model",
+        runner=_FakeRunner(_HOLD_JSON),
+        sdk_timeout_seconds=90,
+        slow_decision_warn_seconds=1_000,
+    )
+
+
+def test_decision_latency_is_logged_even_when_the_sdk_reports_no_cost(caplog):
+    """Latency must NOT inherit the cost line's condition.
+
+    The cost line only fires when the SDK returned a cost. Latency is the number
+    that says how close the prompt is to the 90s deadline, and a run that
+    reported no cost is exactly the kind you would want timed, so it is logged
+    unconditionally.
+    """
+    import logging
+
+    agent = SLHuntingAgent(
+        model="test-model",
+        runner=_FakeRunner(_HOLD_JSON, cost_usd=None),
+        slow_decision_warn_seconds=1_000,
+    )
+    with caplog.at_level(logging.INFO):
+        agent.decide(_candles(), StandaloneExecutor())
+
+    latency = [r for r in caplog.records if "decision latency" in r.getMessage()]
+    cost = [r for r in caplog.records if "decision cost" in r.getMessage()]
+    assert len(latency) == 1, "latency must be logged exactly once per decision"
+    assert not cost, "this run reported no cost, so no cost line should appear"
+    assert "deadline" in latency[0].getMessage()
+
+
+def test_slow_decision_warns_once_past_the_threshold(caplog):
+    import logging
+
+    # Any real call takes longer than a millisecond, so this always trips.
+    agent = SLHuntingAgent(
+        model="test-model",
+        runner=_FakeRunner(_HOLD_JSON),
+        sdk_timeout_seconds=90,
+        slow_decision_warn_seconds=0.001,
+    )
+    with caplog.at_level(logging.INFO):
+        agent.decide(_candles(), StandaloneExecutor())
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    slow = [r for r in warnings if "at or past the" in r.getMessage()]
+    assert len(slow) == 1
+    message = slow[0].getMessage()
+    # It must name what was breached and what the real limit is, or an operator
+    # reading one line in a shared log cannot tell whether it mattered.
+    assert "threshold" in message and "deadline" in message
+    assert "HELD" in message
+
+
+def test_fast_decision_does_not_warn(caplog):
+    """The quiet case, asserted so the warning cannot decay into noise."""
+    import logging
+
+    agent = SLHuntingAgent(
+        model="test-model",
+        runner=_FakeRunner(_HOLD_JSON),
+        sdk_timeout_seconds=90,
+        slow_decision_warn_seconds=60.0,
+    )
+    with caplog.at_level(logging.INFO):
+        agent.decide(_candles(), StandaloneExecutor())
+
+    assert [r for r in caplog.records if "decision latency" in r.getMessage()]
+    assert not [
+        r for r in caplog.records if r.levelno == logging.WARNING and "at or past the" in r.getMessage()
+    ]

@@ -15027,6 +15027,12 @@ if SL_HUNTING_AVAILABLE:
                 # Mechanical stop/target, max-loss and square-off keep polling
                 # independently while this inference is running.
                 sdk_timeout_seconds=_env_float("SL_HUNTING_SDK_TIMEOUT_SECONDS", 90.0),
+                # SLH-013: WARN when one decision takes this long. Latency is the
+                # real ceiling on prompt growth -- past the deadline a bar is held
+                # with no decision at all -- so creep needs to be visible daily.
+                slow_decision_warn_seconds=_env_float(
+                    "SL_HUNTING_SLOW_DECISION_WARN_SECONDS", 60.0
+                ),
             )
             # The order tool routes through this executor into our own safe methods.
             self._executor = SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(self)

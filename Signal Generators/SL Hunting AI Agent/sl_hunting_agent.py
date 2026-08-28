@@ -35,6 +35,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, SupportsFloat, cast
@@ -315,6 +316,7 @@ class SLHuntingAgent:
         lessons_block: str = "",
         premarket_block: str = "",
         sdk_timeout_seconds: float = 90.0,
+        slow_decision_warn_seconds: float = 60.0,
     ) -> None:
         if not model:
             raise ValueError("SLHuntingAgent: model is required.")
@@ -328,6 +330,19 @@ class SLHuntingAgent:
         if not math.isfinite(timeout) or not 5.0 <= timeout <= 120.0:
             raise ValueError("SLHuntingAgent: sdk_timeout_seconds must be between 5 and 120.")
         self._sdk_timeout_seconds = timeout
+        # SLH-013: the threshold above which one decision's wall-clock is WARNed
+        # about. Latency -- not context -- is the real ceiling on prompt growth:
+        # the 90s deadline fired 27 times in July, each one a bar silently held
+        # through, and it stopped only because the model got faster. A value at
+        # or above `sdk_timeout_seconds` can never fire, because the call is
+        # abandoned first; that is a legitimate way to switch the warning off
+        # rather than a misconfiguration, so it is allowed.
+        warn_after = float(slow_decision_warn_seconds)
+        if not math.isfinite(warn_after) or warn_after <= 0.0:
+            raise ValueError(
+                "SLHuntingAgent: slow_decision_warn_seconds must be a positive, finite number."
+            )
+        self._slow_decision_warn_seconds = warn_after
         # SLH-001 / Codex: a worker thread from a PRIOR timed-out call that is
         # still alive. While set, decide() gates new calls (no fresh thread or
         # subprocess) so a persistently hung CLI can accumulate at most one.
@@ -655,6 +670,7 @@ class SLHuntingAgent:
         runner = self._runner or self._default_run
 
         def _run_once() -> str:
+            started = time.perf_counter()
             run_result = self._run_sync(
                 runner(
                     prompt,
@@ -665,6 +681,29 @@ class SLHuntingAgent:
                 ),
                 timeout_seconds=self._sdk_timeout_seconds,
             )
+            elapsed = time.perf_counter() - started
+            # SLH-013: logged on EVERY decision, unlike the cost line below, which
+            # only fires when the SDK reported a cost. Latency is the number that
+            # tells you how close the prompt is to the deadline, so it must not
+            # inherit that condition. A timed-out call raises out of `_run_sync`
+            # and logs its own message naming the deadline, so it is not doubled
+            # up here.
+            logger.info(
+                "SLHuntingAgent decision latency %.1fs (deadline %.0fs).",
+                elapsed,
+                self._sdk_timeout_seconds,
+            )
+            if elapsed >= self._slow_decision_warn_seconds:
+                logger.warning(
+                    "SL Hunting: decision took %.1fs, at or past the %.0fs warning "
+                    "threshold and %.0f%% of the %.0fs deadline. Past the deadline a "
+                    "bar is HELD with no decision, so treat sustained warnings as "
+                    "prompt/latency creep rather than noise.",
+                    elapsed,
+                    self._slow_decision_warn_seconds,
+                    100.0 * elapsed / self._sdk_timeout_seconds,
+                    self._sdk_timeout_seconds,
+                )
             if run_result.cost_usd is not None:
                 logger.info("SLHuntingAgent decision cost ~$%.4f", run_result.cost_usd)
             return run_result.text

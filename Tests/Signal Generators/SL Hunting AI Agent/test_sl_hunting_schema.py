@@ -577,19 +577,139 @@ def test_system_prompt_has_v3x_aggregate_inventory_and_option_rr_knowledge():
     assert "POST-EXIT RE-ENTRY GATE" in prompt
 
 
-def test_prompt_cap_leaves_room_for_lessons_and_a_note():
-    """The cap is a sanity bound, not a budget knowledge must squeeze into.
+def _worst_case_runtime_blocks() -> tuple[str, str]:
+    """Render the LARGEST lessons block and pre-open note the runtime can inject.
 
-    It was raised on 2026-07-31 because knowledge alone had reached ~68k against a
-    75k cap, leaving too little for lessons plus a pre-open note. Keep provable
-    headroom so an ordinary addendum cannot silently disable the agent.
+    Built through the REAL formatters rather than by arithmetic, because the
+    arithmetic is what went wrong before: the previous version of this test
+    assumed `12 * 280 + 2500`, which ignored each lesson's 80-character scope
+    and its per-lesson formatting, and understated the note by ~1,100. It read
+    2,659 characters light in total.
+
+    Two fixture traps, both discovered the hard way:
+
+    * `StoredLesson` is tamper-evident. An approved record needs `id` equal to
+      `_slug(scope, lesson)` AND an `approval_digest` equal to
+      `lesson_content_digest(record)`; anything else is silently rejected by
+      `_validated_records` and renders as an empty block.
+    * `_slug` truncates to 48 characters, so records whose scope shares a long
+      prefix collide on id and `consolidate` keeps only one. The varying part
+      must come FIRST.
+    """
+    import datetime as _dt
+    import json
+    import os
+    import tempfile
+
+    import sl_hunting_lessons as L
+    import sl_hunting_premarket as P
+
+    def _lesson(index: int) -> dict:
+        scope = f"s{index:02d}" + "S" * (L.MAX_SCOPE_CHARS - 3)
+        lesson = f"l{index:02d}" + "X" * (L.MAX_LESSON_CHARS - 3)
+        record = {
+            "id": L._slug(scope, lesson),
+            "scope": scope,
+            "lesson": lesson,
+            "rationale": "r" * L.MAX_RATIONALE_CHARS,
+            "evidence": {"wins": 999, "losses": 999, "sample_size": 9999},
+            "confidence": 5,
+            "status": "approved",
+            "created_at": "2026-08-27T00:00:00Z",
+            "updated_at": "2026-08-27T00:00:00Z",
+        }
+        record["approval_digest"] = L.lesson_content_digest(record)
+        return record
+
+    lessons = [_lesson(i) for i in range(L.MAX_LIVE_LESSONS)]
+    validated, rejected = L._validated_records(lessons)
+    assert not rejected and len(validated) == L.MAX_LIVE_LESSONS, (
+        "the worst-case lessons fixture is being rejected, so this test would "
+        f"measure an empty block and prove nothing (rejected={len(rejected)})"
+    )
+    lessons_block = L.format_lessons(lessons)
+
+    note = {
+        "for_date": "2026-08-28",
+        "source": "s" * P.MAX_SOURCE_CHARS,
+        "context": "c" * P.MAX_LINE_CHARS,
+        "plan": ["p" * P.MAX_LINE_CHARS for _ in range(P.MAX_PLAN_ITEMS)],
+        "levels": [
+            {
+                "index": "I" * P.MAX_INDEX_CHARS,
+                "resistance": [99999.5] * P.MAX_LEVELS_PER_SIDE,
+                "support": [99999.5] * P.MAX_LEVELS_PER_SIDE,
+            }
+            for _ in range(P.MAX_INDEX_BLOCKS)
+        ],
+    }
+    handle, path = tempfile.mkstemp(suffix=".json")
+    os.close(handle)
+    try:
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump(note, stream)
+        loaded = P.load_premarket_note(path)
+        assert loaded is not None, "the worst-case note fixture failed to validate"
+        note_block = P.format_premarket_note(loaded, _dt.date(2026, 8, 28))
+    finally:
+        os.unlink(path)
+    assert note_block, "the worst-case note rendered empty"
+    return lessons_block, note_block
+
+
+# The ceiling the runtime-injected material must stay under. Measured at 8,519
+# on 2026-08-27 (lessons 4,918 + note 3,601); 12,000 leaves ~40% of room for an
+# ordinary widening while still failing on anything that changes the order of
+# magnitude. This number is deliberately NOT derived from the per-field caps --
+# a derived bound would move silently when those caps move, which is precisely
+# the change this test exists to catch.
+MAX_RUNTIME_INJECTED_CHARS = 12_000
+
+
+def test_runtime_injected_blocks_stay_small():
+    """The real guard on runaway lessons / notes, now that the cap cannot be.
+
+    `MAX_SYSTEM_PROMPT_CHARS` was raised to 350,000 on 2026-08-27, which is far
+    too loose to catch a runaway lessons file or a malformed note -- the failure
+    its own comment block says it exists to catch. The detection was moved here
+    on purpose.
+
+    This fails if anyone widens `MAX_LESSON_CHARS`, `MAX_LIVE_LESSONS`,
+    `MAX_PLAN_ITEMS`, `MAX_LINE_CHARS`, `MAX_LEVELS_PER_SIDE` or
+    `MAX_INDEX_BLOCKS` enough to matter, regardless of what the cap says.
+    """
+    lessons_block, note_block = _worst_case_runtime_blocks()
+    total = len(lessons_block) + len(note_block)
+
+    assert total <= MAX_RUNTIME_INJECTED_CHARS, (
+        f"worst-case runtime injection is {total:,} chars "
+        f"(lessons {len(lessons_block):,} + note {len(note_block):,}), over the "
+        f"{MAX_RUNTIME_INJECTED_CHARS:,} ceiling. The prompt cap will NOT catch "
+        "this -- either narrow the per-field caps or raise this ceiling "
+        "deliberately, with the new number measured and recorded."
+    )
+
+
+def test_assembled_prompt_plus_worst_case_runtime_fits_the_cap():
+    """Knowledge + the worst the runtime can add must still fit, with room spare.
+
+    The cap is a sanity bound, not a budget knowledge must squeeze into, so this
+    asserts real headroom rather than a bare fit. It uses the MEASURED worst case
+    from `_worst_case_runtime_blocks`, not arithmetic -- the arithmetic version
+    of this test read 2,659 characters light and reported the budget as 154,140
+    when it was really 151,481.
     """
     from sl_hunting_knowledge import MAX_SYSTEM_PROMPT_CHARS
 
+    lessons_block, note_block = _worst_case_runtime_blocks()
     assembled = len(build_system_prompt() + FINAL_OUTPUT_INSTRUCTION)
-    # Worst case the runtime can add: 12 lessons at their own cap, plus a note.
-    worst_case_runtime_additions = 12 * 280 + 2_500
-    assert assembled + worst_case_runtime_additions < MAX_SYSTEM_PROMPT_CHARS
+    worst_case = assembled + len(lessons_block) + len(note_block)
+
+    assert worst_case < MAX_SYSTEM_PROMPT_CHARS, (
+        f"assembled prompt {assembled:,} plus worst-case runtime injection "
+        f"{len(lessons_block) + len(note_block):,} exceeds the "
+        f"{MAX_SYSTEM_PROMPT_CHARS:,} cap"
+    )
 
 
 def test_system_prompt_has_v3x_profit_depth_and_known_road_knowledge():
