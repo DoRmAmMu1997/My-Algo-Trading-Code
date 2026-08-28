@@ -5295,3 +5295,102 @@ the first.
 Full gates clean. `check-env` reports the new key as MISSING from the operator's
 `.env`, which is correct and expected: it is in `env.example`, and until it is
 copied across the in-code default of 60s applies.
+## SLH-014 - a lesson id decided by the scope alone, and the lesson it swallowed
+
+### The bug
+
+`_slug(scope, lesson)` built a lesson id by lowercasing `scope + "-" + lesson`,
+replacing non-alphanumerics with hyphens, and truncating to **48 characters**.
+`MAX_SCOPE_CHARS` is **80**. So for any scope longer than roughly 48 characters
+the id was decided ENTIRELY by the scope and the lesson text never reached it.
+
+Two genuinely different lessons filed under one descriptive scope therefore
+shared an id, and `consolidate` -- which dedupes by id, keeping the
+better-evidenced copy -- silently discarded one. It never appeared in the prompt
+block again and nothing logged its loss. A realistic 55-character scope is enough
+to trigger it:
+
+```
+scope  = "entries on a gap-up morning after a monthly expiry week"
+lesson A -> entries-on-a-gap-up-morning-after-a-monthly-expi
+lesson B -> entries-on-a-gap-up-morning-after-a-monthly-expi
+```
+
+Severity today was low -- `SL_HUNTING_LESSONS_ENABLED` is off by default and the
+existing scopes are short -- but it is silent data loss in the learning loop, and
+it would have bitten the first time lessons were switched on with descriptive
+scopes, which is exactly the natural way to write them.
+
+It surfaced while building the SLH-013 worst-case fixture: twelve records with
+identical scopes rendered an EMPTY lessons block, and the test would have
+happily measured nothing and passed.
+
+### The fix
+
+The id is now a readable prefix plus a digest of the full content:
+
+```
+39 chars of readable slug + "-" + 8 hex of sha256(scope NUL lesson)   = 48
+```
+
+Both halves earn their place. The readable prefix keeps `--list` output and log
+lines legible; the digest makes the id depend on every character of both fields,
+whatever the prefix does. The separator is NUL rather than a hyphen so
+`("a-b", "c")` and `("a", "b-c")` cannot hash alike, and it is built with
+`chr(0)` rather than an escape sequence so no code-generation step can collapse
+it into a literal NUL in the source (which happened once while writing this).
+
+It also tightens tamper-evidence slightly. `StoredLesson` asserts
+`id == _slug(scope, lesson)`; previously an edit past the 48-character prefix
+left that check passing and only `approval_digest` caught it. Now the id moves
+too. The digest remains the real guard -- this is defence in depth, not a
+replacement.
+
+### No migration was needed
+
+Changing the slug changes every id, and `lesson_content_digest` covers the id, so
+every approved record would have been invalidated. That would normally force a
+migration or a documented one-time re-approval, and the operator would have to
+choose which.
+
+It did not arise: **both stores are empty.** `lessons.json` holds zero records
+and the proposed store (`Backtest Outputs/sl_hunting_lessons_proposed.json`) does
+not exist. So there is nothing to invalidate, and this is the cheapest moment the
+fix will ever have. Worth stating explicitly, because if it had been deferred
+until after the first approved lessons landed, it would have cost a re-approval
+cycle instead.
+
+### Verification
+
+Two regression tests in `test_sl_hunting_lessons.py`, both negative-tested by
+mutating `_slug`:
+
+| mutation | result |
+|---|---|
+| revert to the original `slug(scope + lesson)[:48]` | 2 tests fail |
+| digest over the scope only | 1 fails |
+| readable prefix widened to 48 (id overruns its cap) | 3 fail |
+| hyphen separator instead of NUL | 1 fails |
+
+The first row is the point: a literal revert to the shipped bug fails the suite.
+
+Full gates clean.
+
+### Unrelated damage found on the way, and how
+
+The master file would not import at all: `load_dotenv` raised
+`ValueError: embedded null character`. The cause was in `Dependencies/.env`, not
+the repo -- its last three lines were
+`SL_HUNTING_SLOW_DECISION_WARN_SECONDS=60` written TWICE in UTF-16LE, every
+character followed by a NUL.
+
+The source was a command suggested in the SLH-013 hand-off, given in a `bash`
+fence and run in **Windows PowerShell 5.1, whose `>>` defaults to UTF-16LE**.
+Appending UTF-16 to a UTF-8 file produces exactly this. The file was repaired
+(backed up first, corruption proven confined to the trailing three lines, 610 ->
+609 key lines: two corrupt duplicates removed, one clean UTF-8 line added).
+
+The lesson is for future hand-offs: **never suggest appending to `.env` with a
+shell redirect on this machine.** Edit the file, or use
+`Add-Content -Encoding utf8`. A silently corrupted `.env` takes the whole trading
+system down at import, and the error names neither the file nor the line.
