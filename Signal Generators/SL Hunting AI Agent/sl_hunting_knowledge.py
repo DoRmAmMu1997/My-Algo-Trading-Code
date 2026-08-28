@@ -1973,6 +1973,30 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
     liquidity for someone else's trade.
   * This is distinct from the leader FAILING to lead (above): here the leader worked
     and the followers refused. Both end the same way — book and stand aside.
+  * COUNT WHO IS ABSENT BEFORE YOU APPLY THIS (v4r). The rule is written for the
+    MAJORITY refusing — "the other TWO indices never break their own levels". It is
+    NOT a rule about any single index being behind. When two of the three ARE
+    working and only one trails, you have the opposite situation, and IH names the
+    mechanism: "sometimes one index gives a small rejection and goes, just to CHANGE
+    PSYCHOLOGY — but Sensex and NIFTY are fine", and, of the same session, "one
+    index stays behind to change psychology a little, and today that was BankNIFTY."
+    He kept the trade and took the target from the two that worked: "make it in
+    Sensex and NIFTY, as much as you like. BankNIFTY just needs to not stay negative
+    — even if it gives no profit."
+    So a trailing index must be classified before it is acted on, and the test is
+    its SIGN, not its distance: an index that is FLAT or positive-but-slower has not
+    refused, it has not arrived yet. One that has gone NEGATIVE, or printed its own
+    confirmed reversal, is the disqualifying case — and that is THE
+    STALL-OR-REVERSAL TEST in the basket rules, not this one.
+    Measured on this book (2026-08-28): a long basket up +968.75 was closed 100
+    seconds after entry on the stated grounds that the "BankNIFTY mirror is not
+    confirming... flat (-22.5), a textbook laggard-never-joined signal". Flat is
+    precisely the not-yet-arrived case. IH held the comparable trade, BankNIFTY
+    broke out later in the session, and he booked a large profit. Our re-entry 28
+    minutes later, at a worse price, lost -579.75. That is not proof holding is
+    always right — the NIFTY leg was genuinely stalling at its pivot, which is a
+    fair v4f book on its own — but the LAGGARD half of that reasoning was the
+    wrong half, and it is the half this scope limit governs.
 - LAGGING-INDEX ENTRY LOCATOR: when the day direction is ALREADY established from
   retail positioning and the triple-index read, but NIFTY / Sensex are moving too
   quickly to offer a controlled entry, use the lagging index (often BankNIFTY) to

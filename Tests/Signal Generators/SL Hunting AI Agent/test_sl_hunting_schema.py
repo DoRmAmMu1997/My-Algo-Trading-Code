@@ -1896,3 +1896,52 @@ def test_stall_or_reversal_discriminator_keeps_the_two_basket_rules_consistent()
     # And the reversal case still carries the stricter default it always had.
     assert "EXIT BOTH is the default" in cutting
     assert "the honest action is EXIT BOTH" in cutting
+
+
+def test_v4r_laggards_never_joined_is_scoped_to_the_majority_refusing():
+    """v4r (28 Aug live session): the rule is about the MAJORITY, not any one index.
+
+    `LAGGARDS NEVER JOINED` is written for "the other TWO indices never break
+    their own levels". On a two-index basket that phrasing is easy to invert:
+    one index trailing reads as "the laggards never joined" when it is nothing
+    of the sort.
+
+    Measured the same morning: a basket up +968.75 was closed 100 seconds after
+    entry, citing a mirror that was "flat (-22.5), a textbook laggard-never-joined
+    signal". Flat is the not-yet-arrived case, which is what this scope limit
+    exists to separate from the refusing case.
+
+    Three things a summarising edit would flatten, each asserted:
+
+    1. The COUNT is the gate -- majority absent, not any single index behind.
+    2. The classification test is the trailing index's SIGN, not its distance.
+       Flat or positive-but-slower has not refused; negative or a confirmed
+       reversal is the disqualifying case.
+    3. It hands the disqualifying case to THE STALL-OR-REVERSAL TEST rather than
+       ruling on it here, so the two cannot drift into competing verdicts the way
+       the basket pair did before SLH-015.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "LAGGARDS NEVER JOINED")
+
+    # 1. The majority gate.
+    assert "COUNT WHO IS ABSENT BEFORE YOU APPLY THIS" in rule
+    assert "written for the MAJORITY refusing" in rule
+    assert "NOT a rule about any single index being behind" in rule
+
+    # 2. Sign, not distance -- the part that decides the action.
+    assert "the test is its SIGN, not its distance" in rule
+    assert "FLAT or positive-but-slower has not refused, it has not arrived yet" in rule
+
+    # 3. It defers the disqualifying case rather than ruling on it.
+    assert "THE STALL-OR-REVERSAL TEST in the basket rules, not this one" in rule
+
+    # The mechanism, which is what makes a trailing index readable at all.
+    assert "just to CHANGE" in rule and "PSYCHOLOGY" in rule
+    assert "BankNIFTY just needs to not stay negative" in rule
+
+    # The measured case, including the honest half that does NOT support the rule.
+    assert "+968.75" in rule and "flat (-22.5)" in rule
+    assert "-579.75" in rule
+    assert "That is not proof holding is" in rule
+    assert "which is a fair v4f book on its own" in rule
