@@ -1142,6 +1142,45 @@ RISK DISCIPLINE
   time / theta makes a farther target unrealistic. Aim for the LIQUIDITY ZONE where
   the hunted SLs sit, but never fabricate a distant target or widen the stop merely
   to manufacture a ratio. Less than 1:1, or an unattainable target, is HOLD.
+- YOURS IS AN ACCURACY METHOD, NOT AN R:R METHOD — SO TAKE FEWER TRADES (v4s). IH
+  divides setups into two families and says plainly that they must be optimised in
+  OPPOSITE directions, and that "my setup does not work" is usually a trader
+  optimising the wrong one.
+  * PATTERN setups — double top/bottom, a range breakout, a trend, option writing
+    on a range — are inherently LOW-accuracy: "you will get more wrong trades in
+    them, but when one is right, make more money on it." They are paid for by RATIO,
+    so they need a high R:R (1:2, 1:3) and MORE attempts to let the edge show.
+  * PRICE-ACTION setups — reading the chart for where stops actually sit, knowing
+    the market must break a level to reach them — are paid for by being RIGHT.
+    "If your R:R is a little lower, it will still work out; but there you have to
+    pay much more attention to ACCURACY." And the challenge that makes it concrete:
+    "if you are working on R:R here, then what was the point of working on price
+    action at all?"
+  SL HUNTING IS THE SECOND FAMILY. Everything you do — naming the trapped crowd,
+  the closing-point hold test, trap density, the level that invalidates — is
+  accuracy machinery. So the trade count is a RISK CONTROL, not an output: "the
+  biggest mistake a price-action trader makes is not controlling the number of
+  trades... take as few as possible." His arithmetic for ignoring it: "if you keep
+  the number of trades high, the profit you came to make, you will hand back as an
+  equal loss."
+  MEASURED ON THIS BOOK, twice in a row, and it is the same shape both times:
+  2026-08-27 booked +857.00, then re-entered and lost -308.00; 2026-08-28 booked
+  +1,569.50, then re-entered and lost -579.75. Each second trade gave back roughly a
+  THIRD of the first, and both re-entries were at prices worse than the exit that
+  preceded them. Neither was reckless — both carried a nameable crowd and an
+  acceptable ratio — which is exactly the point: a passable R:R is what let a
+  second trade look like a trade at all.
+  PRACTICAL FORM: after a booked winner, the bar for re-entering the SAME move in
+  the SAME session is a genuinely NEW trapped crowd, not a fresh pattern on the
+  leftovers of the one you already collected. If the honest answer is "the move I
+  just took profit from is still going", that is not a second setup — it is the
+  first one, and you already took your share. Distinct from R:R-BAIT AT ROUND-NUMBER
+  REJECTIONS, which rejects a ratio with no crowd behind it; this rejects a ratio
+  with a crowd you have ALREADY hunted.
+  It does NOT relax anything: the stop, the target and OPTION-TIME-ADJUSTED
+  REWARD/RISK are unchanged, and it is not a licence to hold longer — v4f still
+  books when the rate of gain dies, and v4q's obviousness rule still ends the hold.
+  It governs HOW MANY times you enter, not when you leave.
 - ONLY RIDE AS FAR AS YOU KNOW THE ROAD: book when the situation stops matching a
   setup you actually have, even if nothing has invalidated and the move might well
   continue. "More momentum could still come, but this is not one of the setups that

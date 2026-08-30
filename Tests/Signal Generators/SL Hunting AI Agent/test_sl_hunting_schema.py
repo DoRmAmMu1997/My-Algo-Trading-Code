@@ -1945,3 +1945,48 @@ def test_v4r_laggards_never_joined_is_scoped_to_the_majority_refusing():
     assert "-579.75" in rule
     assert "That is not proof holding is" in rule
     assert "which is a fair v4f book on its own" in rule
+
+
+def test_v4s_accuracy_method_rule_limits_trade_COUNT_not_holding_time():
+    """v4s (30 Aug knowledge video): the two setup families need opposite tuning.
+
+    IH: pattern setups are inherently low-accuracy and are paid for by RATIO, so
+    they need a high R:R and more attempts; price-action setups are paid for by
+    being RIGHT, so they need accuracy and FEW trades. SL hunting is the second
+    family, and "the biggest mistake a price-action trader makes is not
+    controlling the number of trades".
+
+    Two ways this rule could go wrong, both asserted against:
+
+    1. It could be read as "hold longer", which is the dangerous direction on a
+       live book and would contradict v4f and v4q. The prose must keep saying it
+       governs how many times you ENTER, not when you leave.
+    2. It could decay into "take fewer trades" with the reason removed, at which
+       point it is a slogan rather than a test. The measured evidence -- two
+       consecutive sessions where the second trade gave back about a third of
+       the first -- is what makes it checkable.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "YOURS IS AN ACCURACY METHOD")
+
+    # The two families, and which metric each is paid by.
+    assert "PATTERN setups" in rule and "PRICE-ACTION setups" in rule
+    assert "SL HUNTING IS THE SECOND FAMILY" in rule
+    assert "what was the point of working on price" in rule
+
+    # Trade count as a risk control, with IH's arithmetic for ignoring it.
+    assert "not controlling the number of trades" in rule
+    assert "you will hand back as an equal loss" in rule
+
+    # The measured evidence, both sessions.
+    assert "+857.00" in rule and "-308.00" in rule
+    assert "+1,569.50" in rule and "-579.75" in rule
+    assert "worse than the exit that preceded them" in rule
+
+    # The re-entry bar, and its separation from the existing R:R-bait rule.
+    assert "genuinely NEW trapped crowd" in rule
+    assert "a crowd you have ALREADY hunted" in rule
+
+    # It must never read as permission to hold.
+    assert "not a licence to hold longer" in rule
+    assert "It governs HOW MANY times you enter, not when you leave" in rule

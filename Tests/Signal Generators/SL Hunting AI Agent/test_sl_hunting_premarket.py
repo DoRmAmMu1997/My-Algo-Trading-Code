@@ -201,84 +201,75 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_28_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 27 Aug transcript.
+def test_shipped_note_matches_august_31_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 30 Aug transcript.
 
-    Four things a summarising edit would flatten, and this note is unusually
-    easy to flatten because it reverses TWO different habits at once:
+    This note breaks a pattern every previous one held, and that is the whole
+    risk in editing it:
 
-    1. The premise is HUNT, not follow. The last two notes both said "follow
-       the momentum, nobody is trapped"; three indices selling off all day
-       has now SEATED a seller crowd, and this plan targets it. An editor
-       working from the previous notes would keep the follow premise and get
-       the direction right for the wrong reason -- the failure mode v4o's THE
-       METHOD IS NOT ALWAYS A FADE names in the other direction.
-    2. The sign of the gap DOES split the branch this time. The last two
-       notes deliberately put flat on the same side as the gapped opens, and
-       both carried a test asserting it. Here flat sits with GAP-UP on the
-       buy side and gap-down alone takes the sell side.
-    3. Both branches carry a stated VETO, and the vetoes are the checkable
-       part: a level break, or any breakdown, converts the trapped sellers
-       into validated ones who will not cut -- so there are no stops to
-       collect and the hunt is off. Losing these turns a gated plan into a
-       directional bias.
-    4. 24,000 is named as a psychological number, not merely a support.
+    1. THE METHOD DIFFERS BY BRANCH. Both gapped branches are counter-crowd
+       HUNTS; the flat branch is a FOLLOW. Every prior note applied one method
+       across all three shapes, so an editor working from habit would unify
+       them and destroy half the plan.
+    2. The gap branches are gated on CROWD PSYCHOLOGY, not on levels: a gap-up
+       is sold because everyone buys it directly and leaves no stops above; a
+       gap-down is bought for the mirror-image reason. Losing the reason turns
+       two checkable reads into "fade the gap".
+    3. FLAT is named the PROBLEM case -- "either gap is easier than no gap" --
+       which is the opposite of the last three notes, where flat shared a
+       branch with a gapped open and was never singled out.
     """
     import os
 
     here = AGENT_DIR
-    shipped = os.path.join(here, "premarket_note.json")
-    note = load_premarket_note(shipped)
+    note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-08-28"
-    assert "IwYyOclpDR8" in note.source
-    assert "SELLERS are now seated" in note.context
-    # The premise reversal, stated in the context so it cannot be lost.
-    assert "first HUNT-the-crowd plan in three sessions" in note.context
+    assert note.for_date == "2026-08-31"
+    assert "62oH6ARjxAQ" in note.source
+    assert "few sellers are seated" in note.context
+    # Flat singled out as the hard case, not folded into a gapped branch.
+    assert "calls an exactly FLAT open the PROBLEM case" in note.context
 
-    buy = next(line for line in note.plan if line.startswith("FLAT or GAP-UP"))
-    assert "BUY-side" in buy
-    assert "TARGET the seated sellers" in buy
-    assert "This is a HUNT, not a follow" in buy
+    up = next(line for line in note.plan if line.startswith("GAP-UP"))
+    assert "SELL-side" in up
+    assert "no seated stops above to hunt" in up
+    assert "the fresh buyers ARE the crowd" in up
 
-    sell = next(line for line in note.plan if line.startswith("GAP-DOWN"))
-    assert "SELL-side" in sell
-    # Gated on the crowd being in profit, not merely on the gap's sign.
-    assert "a crowd in profit is not a target" in sell
+    down = next(line for line in note.plan if line.startswith("GAP-DOWN"))
+    assert "BUY-side" in down
+    assert "others will try to sell directly" in down
 
-    # Veto 1: the flat-open branch dies if the level breaks.
-    veto_level = next(line for line in note.plan if line.startswith("FLAT VETO"))
-    assert "the level must NOT break" in veto_level
-    assert "converts a trapped crowd into a validated one" in veto_level
+    flat = next(line for line in note.plan if line.startswith("FLAT"))
+    assert "SELL-side" in flat
+    # The flat branch FOLLOWS -- it does not hunt.
+    assert "by FOLLOWING the market, not hunting" in flat
+    assert "rather than against a crowd" in flat
 
-    # Veto 2: a breakdown removes the stops the hunt feeds on.
-    veto_break = next(
-        line for line in note.plan if line.startswith("HE DOES NOT WANT A BREAKDOWN")
-    )
-    assert "will not cut his trade" in veto_break
-    assert "sellers who are WRONG and forced to cut" in veto_break
-
-    assert any("psychological number" in line for line in note.plan)
+    # The split itself must survive as an explicit instruction.
+    method = next(line for line in note.plan if line.startswith("THE METHOD DIFFERS"))
+    assert "both gapped branches are counter-crowd HUNTS, the flat branch is a FOLLOW" in method
+    assert "Do not carry the hunt premise into flat" in method
 
     assert [level.model_dump() for level in note.levels] == [
         {
+            # Caption ran the supports together as "24072980"; confirmed off the
+            # chart by the operator as 23980/24070, not reconstructed.
             "index": "NIFTY",
-            "resistance": [24200.0, 24270.0],
-            "support": [23920.0, 24000.0],
+            "resistance": [24240.0, 24300.0],
+            "support": [23980.0, 24070.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [58000.0, 58200.0],
-            "support": [57200.0, 57500.0],
+            "resistance": [57700.0, 58000.0],
+            "support": [57000.0, 57200.0],
         },
         {
-            # The caption gave the resistances cleanly but lost the second
-            # support between segments, leaving an impossible "77650" support
-            # above the 77400 resistance. Confirmed off the chart by the
-            # operator as 77000/76550 -- do not reconstruct from the caption.
+            # Caption gave six digits ("776700") where two five-digit levels
+            # belong; confirmed as 76700/77000. 77000 is the level he names
+            # repeatedly as the one SENSEX did NOT cross.
             "index": "SENSEX",
-            "resistance": [77400.0, 77750.0],
-            "support": [76550.0, 77000.0],
+            "resistance": [77500.0, 77750.0],
+            "support": [76700.0, 77000.0],
         },
     ]
