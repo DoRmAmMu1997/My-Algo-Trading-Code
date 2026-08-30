@@ -5609,3 +5609,150 @@ Both re-entries were at prices worse than the exit that preceded them.
   evidence, and dropping the measured case each fail the suite.
 - Prompt size 144,489 -> 146,349 chars. Assembled 147,640 against the post-SLH-013
   budget: **193,841 chars of headroom.**
+
+---
+
+## Knowledge addendum - the 30 Aug WEEKEND video (v4s)
+
+**Source:** Intraday Hunter, "How to Plan a Trade Before You Enter"
+(`HkJ2PdmpPc8`, uploaded 2026-08-30 10:30 IST, 9:40).
+
+Not a session - a methodology video, and the first one in this series that says
+something about what THIS agent should be optimising.
+
+### The idea
+
+IH splits setups into two families and says they must be tuned in OPPOSITE
+directions, and that "my setup does not work" is usually a trader optimising the
+wrong one:
+
+- **PATTERN setups** (double top/bottom, range breakout, trend, option writing on
+  a range) are inherently low-accuracy: "you will get more wrong trades in them,
+  but when one is right, make more money on it." They are paid for by RATIO, so
+  they want a high R:R (1:2, 1:3) and MORE attempts for the edge to show.
+- **PRICE-ACTION setups** - reading the chart for where stops actually sit,
+  knowing the market must break a level to reach them - are paid for by being
+  RIGHT. "If your R:R is a little lower it will still work out; but there you have
+  to pay much more attention to ACCURACY." And the line that makes it bite: "if
+  you are working on R:R here, then what was the point of working on price action
+  at all?"
+
+**SL hunting is squarely the second family.** Naming the trapped crowd, the
+closing-point hold test, trap density, the level that invalidates - all of it is
+accuracy machinery. From which his operational conclusion follows: "the biggest
+mistake a price-action trader makes is not controlling the number of trades...
+take as few as possible", because "if you keep the number of trades high, the
+profit you came to make, you will hand back as an equal loss."
+
+### Why it earned a version rather than a note in passing
+
+Because we have measured that exact failure, twice running, and had already
+flagged the pattern without a rule to attach it to:
+
+| Session | First trade | Re-entry | Gave back |
+|---|---|---|---|
+| 2026-08-27 | +857.00 | -308.00 | ~36% |
+| 2026-08-28 | +1,569.50 | -579.75 | ~37% |
+
+Both re-entries were at prices WORSE than the exit that preceded them. Neither was
+reckless - each carried a nameable crowd and an acceptable ratio - and that is
+precisely the point the rule now makes: **a passable R:R is what let a second trade
+look like a trade at all.**
+
+So the practical form is a bar on RE-ENTRY, not on holding: after a booked winner,
+re-entering the same move in the same session needs a genuinely NEW trapped crowd,
+not a fresh pattern on the leftovers of the one you already collected. "The move I
+just took profit from is still going" is not a second setup - it is the first one,
+and you already took your share.
+
+Distinct from `R:R-BAIT AT ROUND-NUMBER REJECTIONS`, which rejects a ratio with no
+crowd behind it. This rejects a ratio with a crowd you have ALREADY hunted.
+
+### The direction it must NOT be read in
+
+On a live book the dangerous misreading is "so hold longer". The rule says the
+opposite in as many words - the stop, the target and OPTION-TIME-ADJUSTED
+REWARD/RISK are unchanged, v4f still books when the rate of gain dies, v4q's
+obviousness rule still ends the hold - and a drift guard asserts both that
+sentence and "It governs HOW MANY times you enter, not when you leave" survive.
+
+### Deliberately NOT added
+
+- **"Raise the target, not the quantity."** Good advice, does not transfer: our
+  size is computed mechanically to a ~Rs.2500 risk budget and the agent does not
+  choose quantity. Same reasoning as v4p's capital-size passage.
+- **"No trailing; hold some quantity for target 2, exit at breakeven if it does not
+  come."** Partial-quantity exits are not in the tool surface - `exit_leg` closes a
+  whole leg - so there is nothing for the agent to act on.
+- **"Entry cannot be fixed, SL and target must be."** Already carried by
+  `NAME THE LAST POINT, NOT ONLY THE STOP` and `PRE-COMMIT THE ADVERSE MOVE YOUR
+  THESIS TOLERATES`.
+
+### Knowledge changes (v4s)
+
+- `RISK`: YOURS IS AN ACCURACY METHOD, NOT AN R:R METHOD - SO TAKE FEWER TRADES.
+- One drift guard, negative-tested six ways: removing the rule, collapsing the two
+  families, dropping the hold-time guard, re-reading it as permission to hold,
+  dropping the measured evidence, and softening the re-entry bar each fail.
+- Prompt size 146,349 -> 149,224 chars. Assembled 150,515: **190,966 of headroom.**
+
+### A note on access
+
+A third weekend upload, "What Happens to the Market When SL Is Hit or Created?"
+(`m79HfFq8ibY`, 7:22), is **members-only** and could not be read. On title alone it
+is the most on-topic video this channel has posted in weeks. Worth the operator
+watching it directly if the membership is available.
+
+---
+
+## Pre-open note for 2026-08-31
+
+**Source:** Intraday Hunter, "Prediction For 31 AUG 2026" (`62oH6ARjxAQ`, uploaded
+2026-08-30 21:00 IST, 2:16) - posted Sunday evening, per the channel's pattern for
+a Monday.
+
+### The plan
+
+**The method differs BY BRANCH, which no previous note has done.** Every note so
+far applied one premise across all three open shapes - hunt, or follow. This one
+splits:
+
+- **GAP-UP -> SELL side.** "Everyone will start buying directly, so we plan
+  selling-side setups - because directly there are no SLs available here." The
+  fresh buyers ARE the crowd.
+- **GAP-DOWN -> BUY side.** The mirror image: "seeing the market fall, others will
+  try to sell directly", so the fresh sellers become the crowd.
+- **FLAT -> SELL side, but FOLLOWING, not hunting.** "In flat there is a bit of a
+  problem for us... the situation will not be very clear, so we will just walk WITH
+  the market."
+
+Both gapped branches are counter-crowd hunts; the flat branch is a follow. Carrying
+one premise across all three is exactly the habit the last four notes built, so the
+test asserts the split explicitly.
+
+**He also names FLAT as the problem case** - "our work gets done if we get either a
+gap-up or a gap-down; if it opens exactly flat, that is more of a problem" - which
+inverts the last three notes, where flat quietly shared a branch and was never
+singled out.
+
+Context: Friday closed with small rejections and little momentum across the board,
+and SENSEX never crossed 77,000, so few sellers are seated.
+
+### Levels
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 24240, 24300 | 23980, 24070 |
+| BANKNIFTY | 57700, 58000 | 57000, 57200 |
+| SENSEX | 77500, 77750 | 76700, 77000 |
+
+Both support pairs needed the operator. NIFTY's ran together as "24072980";
+SENSEX's came through as "776700" - six digits where two five-digit levels belong.
+Confirmed off the chart as 23980/24070 and 76700/77000; the test carries comments
+saying not to reconstruct either from the caption.
+
+### Verification
+
+19/19 on the premarket suite, each new assertion negative-tested: unifying flat
+with the gapped branches, removing the method split, dropping the gap-up reason,
+demoting flat from the problem case, and "correcting" the NIFTY support each fail.
