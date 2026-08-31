@@ -5756,3 +5756,123 @@ saying not to reconstruct either from the caption.
 19/19 on the premarket suite, each new assertion negative-tested: unifying flat
 with the gapped branches, removing the method split, dropping the gap-up reason,
 demoting flat from the problem case, and "correcting" the NIFTY support each fail.
+
+---
+
+## Video addendum - the 31 Aug LIVE SESSION (v4t)
+
+**Source:** Intraday Hunter live session `BJksj4JrtxU` (31 Aug 2026, 6:45).
+
+The most instructive session in this series so far, because IH and the agent read
+the SAME open from the SAME pre-open note and took OPPOSITE sides. He sold it and
+booked a good profit. We bought it three times for **+368.75**, with the last two
+trades giving back 73% of the first.
+
+Nothing downstream was wrong. The patterns, levels, fibs and crowd reads in all six
+decisions were competently done. The whole day turned on one word.
+
+### The one word
+
+The 31 Aug note branched: GAP-UP to the SELL side, GAP-DOWN to the BUY side, FLAT
+to the SELL side. NIFTY opened **58 points below the prior close, about 0.24%**;
+BankNIFTY about 0.25%.
+
+- **IH called it "almost FLAT"** and said so repeatedly through the session. He also
+  said what a real gap-down would have meant for him: "if a gap-down opens directly,
+  then the OTHER people also start selling, and then our thing does not work." He
+  took the flat branch, sold, and booked.
+- **The agent called it a gap-down** - explicitly, in writing: "Shared gap-down open
+  (NIFTY -58pts, BankNIFTY -142pts, both ~0.25%) matches the pre-open note's
+  GAP-DOWN=BUY-side branch." It took the buy branch three times.
+
+Both applied the note faithfully. Only the classification differed, and the note
+sent them opposite ways on it.
+
+**Nothing in the corpus said where the line is.** `DEFAULT FLAT-OPEN READ`,
+`GAP SIZE IS A RISK DIAL` and `SHARED-GAP REQUIREMENT` all explain at length what a
+gap MEANS versus what flat MEANS - and every one of them assumes you already know
+which you are looking at. Worse, `DEFAULT FLAT-OPEN READ` would have put the agent
+on IH's side ("a flat-open rally into a level is normally a SHORT candidate"), and
+it never got consulted because the open had already been labelled a gap.
+
+### What v4t adds
+
+**1. `CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT, AND SAY WHY`.** The test is
+PARTICIPATION, not arithmetic, and it is the same question `DEFAULT FLAT-OPEN READ`
+turns on: did the open itself RECRUIT the other side directly? A real gap acts
+before anyone can decide. An open small enough that the crowd is still deciding is
+flat, whatever the sign of the number.
+
+The percentage is carried as CALIBRATION rather than as the rule - a quarter of a
+percent is not a gap; somewhere around half a percent, or an open clean past the
+nearby stop clusters, is where the gap reading starts to earn itself - with an
+explicit tie-break: **if you are hesitating between the two words, that hesitation
+IS the answer, and it is flat.** A bare threshold would misfire the first time a
+0.4% open behaves like a gap, so the guard asserts the participation test survives
+alongside the number.
+
+It also requires the classification and its reason to appear in the entry
+reasoning, so a wrong call is visible as a wrong CALL rather than buried inside a
+good-looking setup - which is exactly how today's went unnoticed for three trades.
+
+**2. `THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN`.** IH's read of the actual
+session: "when it opens flat and falls directly, the market gives a small
+retracement so that other people cannot sell directly", and "because of the
+retracement nobody will be seated short - this retracement is JUST A TRAP." So the
+pull-back is where YOU join ("now a retracement has come, especially in BankNIFTY,
+so now we can sell here"), and it also tells you who is NOT there: a crowd kept out
+never got seated, so the trade is a FOLLOW of the original move, not a fade of a
+trapped crowd. The rule sends the reader to `THE METHOD IS NOT ALWAYS A FADE`
+rather than to a hunt, and a guard asserts that.
+
+### v4s did not bite, one session after shipping
+
+All three entries name the same crowd - the gap-down sellers - and none of the six
+decisions mentions the trade count, the re-entry bar, or v4s at all.
+
+| Time | NIFTY | Mirror | Basket |
+|---|---|---|---|
+| 09:19 -> 09:24 | -19.50 | +1,377.00 | **+1,357.50** |
+| 09:33 -> 09:35 | +65.00 | -202.50 | **-137.50** |
+| 10:00 -> 10:01 | -302.25 | -549.00 | **-851.25** |
+| | **-256.75** | **+625.50** | **+368.75** |
+
+Give-back has gone the wrong way three sessions running: 36%, 37%, now **73%**.
+
+The likely reason v4s missed is worth recording rather than fixing blind: its test
+is "a genuinely NEW trapped crowd", and the agent named a fresh PATTERN each time
+(flush reversal, double bottom, psych-support hammer) and treated the pattern as
+the setup. The crowd was identical in all three. **A pattern is not a crowd** - but
+that sharpening should be made after seeing whether v4t's classification rule
+removes the problem at the root, since on a correct FLAT read none of the three
+longs would have been taken at all. Deliberately NOT added this version.
+
+Trade 1 is also worth noting on its own: the basket was carried entirely by the
+MIRROR (+1,377.00 against a NIFTY leg of -19.50). The NIFTY read was wrong and the
+basket paid anyway, which is the pending
+[[v4n-narrating-by-favourable-leg]] concern in its cleanest form yet.
+
+### SLH-013's first live data
+
+The latency line shipped two days ago and produced its first session: **73
+decisions, median 41.1s, p90 50.0s, max 61.2s** against a 90s deadline. Exactly one
+crossed the 60s warn threshold and exactly one WARN fired; nothing came near the
+deadline.
+
+That is a well-calibrated threshold (1.4% fire rate) and a useful datum for the cap
+question: at a median of 41s of a 90s budget, the prompt has real room before
+latency becomes the binding constraint.
+
+### Knowledge changes (v4t)
+
+- `OPENING_DRIVE`: CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT, AND SAY WHY (new,
+  placed immediately before DEFAULT FLAT-OPEN READ, which it gates).
+- `OPENING_DRIVE`: THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (new).
+- Two drift guards, negative-tested seven ways: removing either rule, turning the
+  participation test into an arithmetic one, dropping the calibration, dropping the
+  tie-break, dropping the measured consequence, and flipping the retracement rule
+  from a follow to a fade each fail the suite.
+- **Deliberately NOT added:** the holiday-clears-inventory observation (already
+  covered by `EVENT / HOLIDAY PARTICIPATION`), and the "a pattern is not a crowd"
+  sharpening of v4s - see above.
+- Prompt size 149,224 -> 152,587 chars. Assembled 153,878: **187,603 of headroom.**
