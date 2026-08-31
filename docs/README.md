@@ -57,6 +57,7 @@ component folder's own `Readme.md`.
 | [0010](adr/0010-tests-in-a-mirrored-tests-tree.md) | Tests consolidated into a mirrored top-level `Tests/` tree |
 | [0011](adr/0011-committed-docs-untracked-superpowers.md) | Committed `docs/` set; Superpowers workspace untracked |
 | [0012](adr/0012-crash-durable-session-state.md) | Per-trade P&L and open positions persisted during the session |
+| [0013](adr/0013-codeql-false-positive-triage.md) | Five CodeQL alerts dismissed as false positives, not patched |
 
 ## Keeping these documents honest
 
