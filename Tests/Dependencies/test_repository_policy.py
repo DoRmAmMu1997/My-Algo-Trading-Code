@@ -596,3 +596,84 @@ def test_coverage_threshold_checker_enforces_safety_and_broker_budgets():
 
     assert len(failures) == 1
     assert safety_path in failures[0]
+
+
+def _test_function_bodies(source: str) -> dict[str, str]:
+    """Split a test module into ``{function name: body}``.
+
+    Needed because a file-wide substring count proves nothing here: this module
+    has several tests that use a logger, so "at least N logger calls exist"
+    stays true even after the one line that matters has been deleted. The
+    assertion has to be made INSIDE the function that owns the line.
+    """
+    bodies: dict[str, str] = {}
+    for match in re.finditer(r"^def (test_\w+)\(", source, re.MULTILINE):
+        name = match.group(1)
+        nxt = re.search(r"^def test_\w+\(", source[match.end() :], re.MULTILINE)
+        end = match.end() + (nxt.start() if nxt else len(source))
+        bodies[name] = source[match.start() : end]
+    return bodies
+
+
+def test_secret_redaction_canary_coverage_survives_codeql_pressure():
+    """The canary-logging redaction tests must not be "fixed" away (ADR-0013).
+
+    CodeQL flags three lines of ``Tests/Dependencies/test_secret_redaction.py``
+    as ``py/clear-text-logging-sensitive-data``. That is EXPECTED and the alerts
+    are dismissed: each line logs a fake CANARY secret through a handler that
+    has ``RedactingFilter`` installed, into an in-memory buffer, and the test
+    then asserts the secret never reached the output.
+
+    The logging call is not incidental to those tests -- it IS the test. It is
+    the only way to prove the filter scrubs a secret before it reaches a
+    handler, and that filter exists because dhanhq's marketfeed puts a live
+    access token in its websocket URL, so a connect error would otherwise write
+    a working credential into a log operators routinely share.
+
+    So the obvious way to quiet the scanner -- delete the logging call -- would
+    remove the protection while leaving a green Security tab. This guard makes
+    that edit fail loudly instead. If you are here because CodeQL complained
+    again, re-dismiss the alert and read ADR-0013; do not patch the test.
+    """
+    source = (ROOT / "Tests/Dependencies/test_secret_redaction.py").read_text(
+        encoding="utf-8"
+    )
+    bodies = _test_function_bodies(source)
+
+    # The flagged lines, by the test that owns each and the FILTER PATH it
+    # covers. Checked per path, not per test: the first test carries two of the
+    # three alerts, so "this test still logs something" stays true after one of
+    # them is deleted. CLAUDE.md names both paths -- "lazy %s args and exception
+    # tracebacks included" -- and losing either is a real hole.
+    required_paths = {
+        "test_debug_and_exception_records_never_emit_canary_secrets": (
+            (r"logger\.debug\([^)]*secret", "a lazy %s/dict argument"),
+            (r"logger\.exception\([^)]*secret", "an exception traceback"),
+        ),
+        "test_install_redaction_filter_covers_logger_and_existing_handlers": (
+            (r"logger\.debug\([^)]*secret", "a logger installed via install_redaction_filter"),
+        ),
+    }
+
+    for name, paths in required_paths.items():
+        body = bodies.get(name)
+        assert body, (
+            f"{name} has been removed or renamed. It is one of only two tests "
+            "proving the redaction filter scrubs a secret before it reaches a "
+            "handler -- see ADR-0013 before changing it."
+        )
+        for pattern, path_description in paths:
+            assert re.search(pattern, body), (
+                f"{name} no longer pushes the canary secret through {path_description}. "
+                "That is exactly the CodeQL-silencing edit ADR-0013 rejects: the "
+                "alert disappears and so does the coverage."
+            )
+        assert "assert secret not in output" in body, (
+            f"{name} no longer asserts the secret is absent from the captured "
+            "output. Logging a canary proves nothing without that check."
+        )
+
+    # The non-logging redaction test is not under CodeQL pressure, but it is the
+    # only coverage for nested containers, so keep it from drifting away too.
+    assert "test_redaction_reaches_secrets_inside_tuples_and_sets" in bodies
+    assert "CANARY" in source, "the canary marker strings have been removed"
