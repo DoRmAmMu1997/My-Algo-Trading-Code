@@ -16,8 +16,10 @@ updates:
     # un-mergeable by policy or would land a change no gate can see. Re-checked
     # whenever this list is revisited: an ignore whose reason has expired is
     # worse than no ignore at all, because it reads to the next maintainer as
-    # protection that is no longer being earned. Two were retired that way on
-    # 2026-09-01 -- see RETIRED at the bottom.
+    # protection that is no longer being earned. Three were retired on
+    # 2026-09-01 -- see RETIRED at the bottom. Two of those had expired reasons;
+    # the third is an accepted risk, which is a different thing and is labelled
+    # as such so nobody reads it as evidence the risk went away.
     ignore:
       # Kotak's official v2.0.1 tag hard-depends on websocket-client==1.8.0 --
       # verified against the installed neo_api_client 2.0.0 metadata, which
@@ -54,19 +56,10 @@ updates:
       - dependency-name: "mypy"
         update-types:
           - "version-update:semver-major"
-      # The async transport under dhanhq.marketfeed, i.e. the LIVE market feed.
-      # dhanhq only declares websockets>=12.0.1, so this pin is the sole thing
-      # holding a major back, and a breaking change surfaces as a dead feed at
-      # 09:15 rather than as a failing gate -- nothing in CI opens a real
-      # socket. This reason is STRONGER than when it was written, not weaker:
-      # MARKET_DATA_SOURCE=WEBSOCKET is now the active feed, so this is the
-      # production data path rather than an opt-in alternative. Bump majors
-      # deliberately, after a paper session on the new version.
-      - dependency-name: "websockets"
-        update-types:
-          - "version-update:semver-major"
       #
-      # RETIRED (2026-09-01) -- recorded so they are not re-added by reflex:
+      # RETIRED (2026-09-01) -- recorded so they are not re-added by reflex.
+      # The first two had reasons that had expired. The third did NOT: its risk
+      # is real and was accepted deliberately, on evidence, by the operator.
       #   * mcp majors. The reason was mechanical, not a judgement: the SDK then
       #     capped mcp<2.0.0, so a major could not resolve alongside the pinned
       #     claude-agent-sdk and pip failed with ResolutionImpossible before a
@@ -83,6 +76,25 @@ updates:
       #     the mypy gate types pandas 3 with pandas 2 stubs. A stubs bump is
       #     typing-only -- it can fail the mypy gate but cannot reach the
       #     trading path -- so a red PR is the whole of the risk.
+      #   * websockets majors -- ACCEPTED RISK, not an expired reason. The
+      #     hazard is unchanged and still real: dhanhq only declares
+      #     websockets>=12.0.1, so this pin was the only thing holding a major
+      #     back, and CI opens no real socket, so a breaking change surfaces as
+      #     a dead feed at 09:15 rather than as a red build. Retired anyway on
+      #     the operator's standing decision, already recorded twice in the
+      #     `websockets` pin review in test_repository_policy: the feed is the
+      #     active data path (MARKET_DATA_SOURCE=WEBSOCKET) but EVERY strategy
+      #     is paper -- LIVE_TRADING_ENABLED=false and all 29 per-strategy
+      #     <PREFIX>_LIVE_TRADING gates are false -- so a bad feed costs a
+      #     session of paper data, not money, and diagnosing it in the open is
+      #     worth more than never being told the release exists. Two things
+      #     make that a bounded bet rather than a blind one: the pin is still
+      #     second-asserted in test_repository_policy, so a major cannot go
+      #     green on its own and arrives as a PR a human must review; and that
+      #     review block carries the standing instruction -- confirm the feed
+      #     ticks on the next PAPER session, and revert this pin first if it
+      #     does not. REVISIT THIS if live trading is ever switched on: the
+      #     evidence the retirement rests on is the paper gates being false.
 
   - package-ecosystem: github-actions
     directory: "/"
