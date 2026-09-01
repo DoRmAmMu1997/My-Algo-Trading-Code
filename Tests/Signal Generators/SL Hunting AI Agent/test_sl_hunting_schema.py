@@ -1990,3 +1990,67 @@ def test_v4s_accuracy_method_rule_limits_trade_COUNT_not_holding_time():
     # It must never read as permission to hold.
     assert "not a licence to hold longer" in rule
     assert "It governs HOW MANY times you enter, not when you leave" in rule
+
+
+def test_v4t_open_classification_rule_is_behavioural_and_carries_its_calibration():
+    """v4t (31 Aug live session): the flat/gap call inverts the whole day.
+
+    Every open-shape rule and every pre-open note branches on flat vs gap, and
+    nothing said where the line is. Measured that morning: NIFTY opened 58
+    points (~0.24%) below the prior close. IH called it "almost flat" all
+    session and traded the SELL side; the agent called it a gap-down and bought
+    it three times, finishing +368.75 with the last two trades giving back 73%
+    of the first.
+
+    Two things this rule must keep or it stops working:
+
+    1. The test is PARTICIPATION, not arithmetic -- did the open recruit the
+       other side directly? The percentage is calibration, not the rule. If it
+       decays into a bare threshold it will misfire the first time a 0.4% open
+       behaves like a gap.
+    2. The tie-break must survive: hesitating between the two words means flat.
+       Without it the rule adds a judgement call without resolving one.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT")
+
+    # Participation is the test; arithmetic is only calibration.
+    assert "THE TEST IS PARTICIPATION, NOT ARITHMETIC" in rule
+    assert "did the open itself RECRUIT the other side" in rule
+    assert "then our thing does not work" in rule
+
+    # The measured calibration point, with both halves of the number.
+    assert "58 points below the previous close" in rule
+    assert "0.24%" in rule
+    assert "a quarter of a percent is not a gap" in rule
+
+    # The tie-break.
+    assert "that hesitation IS the answer: it is flat" in rule
+
+    # The consequence, stated so the rule cannot be read as bookkeeping.
+    assert "+368.75" in rule
+    assert "on the wrong side of the day" in rule
+    assert "State the classification and the reason for it" in rule
+
+
+def test_v4t_early_retracement_rule_points_at_follow_not_fade():
+    """v4t: the first pull-back keeps the crowd OUT, so nobody gets seated.
+
+    The dangerous misreading is to treat the retracement as a trapped crowd to
+    squeeze -- it is the opposite, an absence of one -- so the rule has to send
+    the reader to THE METHOD IS NOT ALWAYS A FADE rather than to a hunt.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE EARLY RETRACEMENT IS THE TRAP")
+
+    assert "keep the crowd OUT of the move, not to end it" in rule
+    assert "cannot sell directly" in rule
+    assert "JUST A TRAP" in rule
+
+    # Entry timing: it is where you join.
+    assert "the retracement is where YOU" in rule
+
+    # And who is NOT there -- the half that prevents an inverted read.
+    assert "never got seated, so there is nobody to hunt" in rule
+    assert "makes the trade a FOLLOW" in rule
+    assert "THE METHOD IS NOT ALWAYS A FADE" in rule

@@ -552,6 +552,50 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   / opening range, and there must be no bullish rejection reclaiming those levels.
   Default gap-down logic still looks UP; use this short branch only when sellers
   are not huntable and buyer inventory / failed recovery is the active trap.
+- CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT, AND SAY WHY (v4t). Every open-shape
+  rule below, and every pre-open note, branches on flat vs gap — and none of them
+  tells you where the line is. Treat that classification as a JUDGEMENT you make
+  and state, not a fact you read off the tape, because a pre-open plan can send you
+  the OPPOSITE way depending on which word you pick.
+  THE TEST IS PARTICIPATION, NOT ARITHMETIC, and it is the same question
+  DEFAULT FLAT-OPEN READ turns on: did the open itself RECRUIT the other side
+  directly? A real gap acts before anyone can decide — on a genuine gap-down "the
+  other people also start selling straight away, and then our thing does not work",
+  as IH puts it. An open small enough that the crowd is still deciding is FLAT,
+  whatever the sign of the number, and the flat reading governs.
+  CALIBRATION, measured 2026-08-31: NIFTY opened 58 points below the previous close,
+  about 0.24%, and BankNIFTY about 0.25%. IH called that "almost FLAT" all session
+  and said explicitly that a direct gap-down would have VOIDED the plan he was
+  running. So a quarter of a percent is not a gap. Something in the region of half
+  a percent, or an open clean past the nearby stop clusters, is where the gap
+  reading starts to earn itself — and if you are hesitating between the two words,
+  that hesitation IS the answer: it is flat.
+  WHY IT MATTERS MORE THAN IT LOOKS: this is a one-word decision that inverts the
+  whole day. On that session the pre-open note branched GAP-DOWN to the BUY side
+  and FLAT to the SELL side. IH read flat, sold, and booked a good profit. We read
+  "gap-down", bought it three times, and finished +368.75 with the last two trades
+  giving back 73% of the first. Nothing downstream was wrong: the patterns, the
+  levels and the crowd read were all competently done, on the wrong side of the
+  day. State the classification and the reason for it in your entry reasoning, so a
+  wrong call is visible as a wrong CALL rather than hidden inside a good-looking
+  setup.
+- THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (v4t). After a session opens and
+  moves directly one way, the small pull-back that follows is usually there to keep
+  the crowd OUT of the move, not to end it. IH, on exactly that: "when it opens flat
+  and falls directly, the market gives a small retracement so that other people
+  cannot sell directly", and later, "because of the retracement nobody will be
+  seated short — this retracement that is coming is JUST A TRAP."
+  The operational consequence is the entry timing: the retracement is where YOU
+  join, because it is the only moment the move offers a price. "Now a retracement
+  has come, especially in BankNIFTY, so now we can sell here."
+  It also tells you who is NOT there. A crowd kept out by the retracement never got
+  seated, so there is nobody to hunt on that side — which makes the trade a FOLLOW
+  of the original move rather than a fade of a trapped crowd. Do not go looking for
+  a crowd to squeeze in the direction the retracement came from; it does not exist,
+  and this is a case of THE METHOD IS NOT ALWAYS A FADE (v4o).
+  Distinct from A REJECTION BEFORE THE FLUSH IS NOISE, which is about ignoring a
+  bounce BEFORE the move has begun; this is about reading the bounce AFTER the
+  first leg as recruitment-prevention, and entering into it.
 - DEFAULT FLAT-OPEN READ: A FLAT OPEN CANNOT RUN THE WAY A GAP CAN (v4d), and the
   reason is participation rather than momentum. This is the DEFAULT after an
   ordinary or recently rising session; the strict multi-day-down seller-hunt

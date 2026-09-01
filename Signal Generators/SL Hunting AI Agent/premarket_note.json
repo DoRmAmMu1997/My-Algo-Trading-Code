@@ -1,12 +1,13 @@
 {
-  "for_date": "2026-08-31",
-  "source": "Intraday Hunter, 'Prediction For 31 AUG 2026' (62oH6ARjxAQ, uploaded 2026-08-30)",
-  "context": "Friday closed with small rejections and little momentum across the board, and SENSEX never crossed 77,000 - so few sellers are seated. He calls an exactly FLAT open the PROBLEM case: either gap is easier for him than no gap.",
+  "for_date": "2026-09-01",
+  "source": "Intraday Hunter, 'Prediction For 01 SEP 2026' (dZqfpsKwqRQ, uploaded 2026-08-31)",
+  "context": "Three-four days of CONTINUOUS selling, and today the market took round-number support then fell again. So PUT traders are the seated crowd and buyers are not. Today is NIFTY's weekly EXPIRY.",
   "plan": [
-    "GAP-UP: SELL-side setups. Everyone buys a gap-up directly, so there are no seated stops above to hunt -- the fresh buyers ARE the crowd, and the trade is the other side of them.",
-    "GAP-DOWN: BUY-side setups. The same psychology inverted -- 'seeing the market fall, others will try to sell directly' -- so the fresh sellers become the crowd to take the other side of.",
-    "FLAT: SELL-side, but by FOLLOWING the market, not hunting. He calls flat the problem case because 'the situation will not be very clear', so this branch goes WITH the move rather than against a crowd.",
-    "THE METHOD DIFFERS BY BRANCH, which no previous note has done: both gapped branches are counter-crowd HUNTS, the flat branch is a FOLLOW. Do not carry the hunt premise into flat, or the follow premise into a gap."
+    "FLAT or GAP-UP: BUY-side setups, to TARGET the seated put traders. Same shape as the 28 Aug note -- a multi-day sell-off seats a bearish crowd, and a non-gap-down open is the chance to hunt it.",
+    "GAP-DOWN: flip to SELL-side. His reason is explicit and it is about the crowd, not the direction: 'they have already endured this far', so a gap-down hands them profit and confidence instead of pain.",
+    "THE GAP-DOWN VETO IS TIED TO A LEVEL, not just the gap: 'until this level is crossed, the put traders cannot be targeted directly'. He does not name the NIFTY level on air, so treat your own named invalidation as that level.",
+    "EXPECT AN UPWARD TRAP: 'they will try to save their trade, so the market may build some trap, may try to go up a bit'. A push up need not be a reversal -- it can be the bait that precedes the hunt.",
+    "SENSEX 76500 is called out as the psychological number, with 76700 as support above it."
   ],
   "levels": [
     {
@@ -16,8 +17,8 @@
         24300
       ],
       "support": [
-        23980,
-        24070
+        23900,
+        23980
       ]
     },
     {
@@ -38,8 +39,8 @@
         77750
       ],
       "support": [
-        76700,
-        77000
+        76500,
+        76700
       ]
     }
   ]
