@@ -5930,3 +5930,105 @@ and the test says not to reconstruct it from the caption.
 branches back to yesterday's, regating the veto on the gap's sign, dropping the
 upward-trap warning, dropping the expiry from the context, and "correcting" the
 NIFTY resistance each fail.
+
+---
+
+## Video addendum - the 1 Sep LIVE SESSION (v4u)
+
+**Source:** Intraday Hunter live session `kUZDZ42c-y8` (1 Sep 2026, 12:00 - the
+longest in this series).
+
+The first LOSING session in this stretch: **-1,488.25 over three trades**, against
+IH booking his target on a single held position. Both halves of the loss have a
+named cause, and neither was a bad pattern read.
+
+| Time | Held | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|
+| 09:51 -> 09:52 | **43s** | agent, index hierarchy | +149.50 | -180.00 | **-30.50** |
+| 09:58 -> 10:04 | 6m | **mechanical AI_STOP** | -604.50 | -1,084.50 | **-1,689.00** |
+| 10:11 -> 10:12 | **51s** | agent, index hierarchy | +276.25 | -45.00 | **+231.25** |
+
+### 1. The open was measured against the wrong price
+
+v4t told the agent to classify the open by participation. It never said what to
+compare it TO, and that gap decided the day.
+
+NIFTY opened flat on any reference (24077.55 against 24080.40). BankNIFTY was read
+as **"gapped down hard (~0.8%)"** against its OFFICIAL close - and that reading
+flipped the pre-open note's branch from BUY to SELL, producing both shorts.
+
+IH judges the same thing off a different price, and says so plainly:
+
+> "You will see BankNIFTY has closed somewhere here. But more than the closing, we
+> go by where the market closed AROUND 3:15."
+
+The last fifteen minutes carry auction and settlement prints that no crowd traded
+around, so a gap measured to 15:30 can be an artefact of the close rather than a
+fact about positioning - and positioning is the only thing the classification is
+trying to read. On the 3:15 reference the session was flat, IH stayed on the buy
+side, and booked.
+
+v4u adds this as a sub-bullet on `CLASSIFY THE OPEN`, with the disagreement case:
+**when the indices disagree, the flat one is the honest read.** That is
+`SHARED-GAP REQUIREMENT` applied in the direction it does not currently name - that
+rule covers a flat BankNIFTY beside a gapped NIFTY, and today was the mirror.
+
+### 2. The hierarchy was read one candle at a time
+
+The long was opened at 09:51:49 and closed at 09:52:32 - **43 seconds** - because
+"BankNIFTY is in an accelerating downtrend... disqualifies the whole basket". The
+third trade was opened at 10:11:52 and closed at 10:12:43 - **51 seconds** - on the
+OPPOSITE reading: "BankNIFTY printed a confirmed bullish morning-star...
+disqualifies the whole basket."
+
+The leading index disqualified a long for falling and a short for rising inside
+twenty minutes. That is not the hierarchy working; it is a chop being read one
+candle at a time.
+
+IH spends the session on exactly the move that triggered the first cut:
+
+> "It went down first, because what does the market have to do? It has to CREATE
+> the stop-losses. So we had to see a slight loss. But when the market produced
+> positive momentum, it did exactly what we expected."
+
+The first minute after entry is the one the setup PREDICTED would go against you.
+So `ONE CANDLE IS NOT A REVERSAL` requires, before the hierarchy may close a trade
+you just opened, that the leading index has printed a confirmed reversal **on the
+timeframe you entered on - the same bar you would demand to ENTER on it** - and not
+merely a move against you. If the only thing that has changed since entry is price,
+nothing has changed; that was priced in when the stop was placed.
+
+**Written against the dangerous reading.** "Hold through reversals" is how a small
+loss becomes a large one, so the rule ranks the stop, the max loss and
+premise-invalidation above itself and keeps the counter-evidence: the same
+session's second trade was stopped mechanically for -1,689.00, and that stop was
+right. A drift guard asserts both.
+
+### Deliberately NOT added
+
+- **The holiday explanation** for why he followed momentum on 31 Aug and hunts
+  today ("in a holiday traders take less risk... but if someone took risk
+  yesterday, they took it in selling"). It is the cleanest account yet of why two
+  consecutive notes inverted, but `EVENT / HOLIDAY PARTICIPATION` already carries
+  it, including the "two days can print an almost IDENTICAL chart" framing.
+- **The 15-minute time budget** ("assume 15 minutes is the max; profit will come
+  before 11:15") and the small-candle tell. Close to v4q's obviousness rule and
+  v4b's second leg; recorded here rather than added.
+- **"One rejection is understandable; a SECOND rejection means the market may be
+  doing something to you"** - covered by the existing two-rejections /
+  third-momentum rule.
+
+### SLH-013 latency, second session
+
+**57 decisions, median 41.8s, p90 56.1s, max 70.8s** against the 90s deadline; one
+crossed the 60s threshold. Consistent with session one (median 41.1s, p90 50.0s),
+so the threshold is holding its calibration at roughly one warning per session.
+
+### Knowledge changes (v4u)
+
+- `CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT` gains COMPARE THE OPEN TO THE 3:15
+  LEVEL, NOT THE OFFICIAL CLOSE, plus the indices-disagree rule.
+- `ONE CANDLE IS NOT A REVERSAL: THE HIERARCHY NEEDS TIME TO SPEAK` (new).
+- Two drift guards, negative-tested nine ways. One assertion was found too weak by
+  that pass (it checked "never overrides the" without checking WHAT) and tightened.
+- Prompt size 152,587 -> 155,916 chars. Assembled 157,207: **184,274 of headroom.**

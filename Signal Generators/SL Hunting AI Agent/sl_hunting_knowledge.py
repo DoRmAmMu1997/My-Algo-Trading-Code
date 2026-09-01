@@ -579,6 +579,22 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   day. State the classification and the reason for it in your entry reasoning, so a
   wrong call is visible as a wrong CALL rather than hidden inside a good-looking
   setup.
+  * COMPARE THE OPEN TO THE 3:15 LEVEL, NOT THE OFFICIAL CLOSE (v4u). IH is
+    explicit that this is the reference he uses: "you will see BankNIFTY has
+    closed somewhere here, but more than the closing, we go by where the market
+    closed AROUND 3:15." The last fifteen minutes carry auction and settlement
+    prints that no crowd traded around, so a gap measured against 15:30 can be
+    an artefact of the close rather than a fact about positioning — and
+    positioning is the only thing the classification is trying to read.
+    Measured 2026-09-01: NIFTY opened flat on any reference (24077.55 vs 24080.40),
+    but BankNIFTY was read as "gapped down hard (~0.8%)" against its official
+    close. That reading flipped the pre-open note's branch from BUY to SELL and
+    produced two shorts. IH, judging the same session off the 3:15 level, called
+    it flat, stayed on the buy side, and booked his target. Our day was -1,488.25.
+    WHEN THE INDICES DISAGREE, the flat one is the honest read — which is
+    SHARED-GAP REQUIREMENT applied in the direction it does not currently name:
+    that rule covers a flat BankNIFTY beside a gapped NIFTY, and this is the
+    mirror case. A gap in ONE index is not a gapped market.
 - THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (v4t). After a session opens and
   moves directly one way, the small pull-back that follows is usually there to keep
   the crowd OUT of the move, not to end it. IH, on exactly that: "when it opens flat
@@ -1992,6 +2008,34 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   buys a move the other two may never join (that is LAGGARDS NEVER JOINED, seen
   from the front), while exiting on the leader alone only costs you a trade.
   Be slow to enter on BankNIFTY alone; be fast to leave on it.
+- ONE CANDLE IS NOT A REVERSAL: THE HIERARCHY NEEDS TIME TO SPEAK (v4u). The
+  index-hierarchy disqualification is real and stays real. What it cannot do is
+  fire on the price action of the first minute after entry, because that minute
+  is the one the setup PREDICTED would go against you. IH on the same session:
+  "it went down first, because what does the market have to do? It has to CREATE
+  the stop-losses. So we had to see a slight loss. But when the market produced
+  positive momentum, it did exactly what we expected." He sat through it and
+  booked his target.
+  Measured 2026-09-01: a long was opened at 09:51:49 on a confirmed hammer at the
+  24000 psych support and closed at 09:52:32 — FORTY-THREE SECONDS later — because
+  "BankNIFTY is in an accelerating downtrend... disqualifies the whole basket".
+  A second trade was opened at 10:11:52 and closed at 10:12:43, fifty-one seconds,
+  on the OPPOSITE hierarchy read: "BankNIFTY printed a confirmed bullish
+  morning-star... disqualifies the whole basket". The leading index disqualified a
+  long for falling and a short for rising inside twenty minutes. That is not the
+  hierarchy working, it is a chop being read one candle at a time.
+  PRACTICAL FORM: before citing the hierarchy to close a trade you just opened,
+  require that the leading index has printed a CONFIRMED reversal on the timeframe
+  you entered on — pattern plus confirmation candle, the same bar you would demand
+  to ENTER on it — and not merely a move against you. If the only thing that has
+  changed since entry is price, nothing has changed: that was priced in when the
+  stop was placed. The stop is what handles being wrong early; the hierarchy is
+  for when the READ is wrong.
+  This does NOT license sitting through a real reversal, and it never overrides the
+  stop, the max loss or premise-invalidation — the same session's second trade was
+  stopped out mechanically for -1,689.00, and that stop did its job. It narrows one
+  specific move: using the leading index as a reason to cut before the trade has
+  had the time its own setup asked for.
 - INDEX HIERARCHY ON THE WAY OUT — the indices are NOT equal when a position is
   going against you (v3y). NIFTY and Sensex drifting against the trade is
   TOLERABLE; that is handleable noise and does not by itself end the trade.

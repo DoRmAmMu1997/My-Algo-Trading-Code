@@ -2054,3 +2054,75 @@ def test_v4t_early_retracement_rule_points_at_follow_not_fade():
     assert "never got seated, so there is nobody to hunt" in rule
     assert "makes the trade a FOLLOW" in rule
     assert "THE METHOD IS NOT ALWAYS A FADE" in rule
+
+
+def test_v4u_open_is_compared_to_the_315_level_not_the_official_close():
+    """v4u (1 Sep live session): which price the open is measured against.
+
+    v4t said to classify the open by participation. It did not say what to
+    compare it TO, and that gap cost a day: NIFTY opened flat on any reference,
+    but BankNIFTY read as "gapped down hard (~0.8%)" against its OFFICIAL close,
+    which flipped the pre-open note's branch from BUY to SELL. IH, judging the
+    same session off the 3:15 level, called it flat and booked his target.
+
+    The rule must keep the REASON (the last fifteen minutes carry prints no
+    crowd traded around) or it decays into an arbitrary preference for one
+    timestamp, and it must keep the disagreement case, which is what actually
+    fired here.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT")
+
+    assert "COMPARE THE OPEN TO THE 3:15 LEVEL, NOT THE OFFICIAL CLOSE" in rule
+    assert "more than the closing, we go by where the market" in rule
+    # The reason, not just the instruction.
+    assert "an artefact of the close rather than a fact about positioning" in rule
+
+    # The measured case, both sides of it.
+    assert "gapped down hard (~0.8%)" in rule
+    assert "-1,488.25" in rule
+
+    # The disagreement rule, and its link to the existing one it mirrors.
+    assert "the flat one is the honest read" in rule
+    assert "SHARED-GAP REQUIREMENT" in rule
+    assert "A gap in ONE index is not a gapped market" in rule
+
+
+def test_v4u_hierarchy_needs_time_and_never_overrides_the_stop():
+    """v4u: the leading index cannot disqualify a trade seconds after entry.
+
+    Measured the same session: a long was cut 43 seconds after entry because
+    BankNIFTY was falling, and a short was cut 51 seconds after entry because
+    BankNIFTY was rising. The hierarchy disqualified opposite directions inside
+    twenty minutes.
+
+    The dangerous misreading is "so hold through reversals", which on a live
+    book is how a small loss becomes a large one. The rule must keep the stop,
+    the max loss and premise-invalidation ranked above it, and must keep the
+    counter-evidence: the same session's second trade was stopped mechanically
+    for -1,689.00 and that stop was right.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "ONE CANDLE IS NOT A REVERSAL")
+
+    # The mechanism: the first minute is the one the setup predicted.
+    assert "the market have to do? It has to CREATE" in rule
+    assert "that minute" in rule or "the first minute after entry" in rule
+
+    # Both measured cuts, and the point that they contradicted each other.
+    assert "FORTY-THREE SECONDS later" in rule
+    assert "fifty-one seconds" in rule
+    assert "disqualified a" in rule and "long for falling and a short for rising" in rule
+
+    # The bar it sets, tied to the entry standard rather than a new one.
+    assert "the same bar you would demand" in rule
+    assert "If the only thing that has changed since entry is price" in rule
+
+    # And the ranking that stops it being read as permission to hold. Named in
+    # full: asserting only "never overrides the" passes while the list of what
+    # it does not override is deleted, which is the half that does the work.
+    assert "never overrides the" in rule
+    assert "the max loss or premise-invalidation" in rule
+    assert "does NOT license sitting through a real reversal" in rule
+    assert "-1,689.00" in rule
+    assert "that stop did its job" in rule
