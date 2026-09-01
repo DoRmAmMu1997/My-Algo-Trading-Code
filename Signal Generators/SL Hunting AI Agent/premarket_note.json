@@ -1,46 +1,47 @@
 {
-  "for_date": "2026-09-01",
-  "source": "Intraday Hunter, 'Prediction For 01 SEP 2026' (dZqfpsKwqRQ, uploaded 2026-08-31)",
-  "context": "Three-four days of CONTINUOUS selling, and today the market took round-number support then fell again. So PUT traders are the seated crowd and buyers are not. Today is NIFTY's weekly EXPIRY.",
+  "for_date": "2026-09-02",
+  "source": "Intraday Hunter, 'Prediction For 02 SEP 2026' (iPeDUGlpMoQ, uploaded 2026-09-01)",
+  "context": "BankNIFTY broke the 500 level, momentum came, held briefly, then the market FELL. His read: after a breakout people like us BUY while the one driving it quietly SELLS. So the trapped LONGS are the seated crowd.",
   "plan": [
-    "FLAT or GAP-UP: BUY-side setups, to TARGET the seated put traders. Same shape as the 28 Aug note -- a multi-day sell-off seats a bearish crowd, and a non-gap-down open is the chance to hunt it.",
-    "GAP-DOWN: flip to SELL-side. His reason is explicit and it is about the crowd, not the direction: 'they have already endured this far', so a gap-down hands them profit and confidence instead of pain.",
-    "THE GAP-DOWN VETO IS TIED TO A LEVEL, not just the gap: 'until this level is crossed, the put traders cannot be targeted directly'. He does not name the NIFTY level on air, so treat your own named invalidation as that level.",
-    "EXPECT AN UPWARD TRAP: 'they will try to save their trade, so the market may build some trap, may try to go up a bit'. A push up need not be a reversal -- it can be the bait that precedes the hunt.",
-    "SENSEX 76500 is called out as the psychological number, with 76700 as support above it."
+    "GAP-DOWN: SELL-side setups. This is his PREFERRED open, said outright -- 'if a gap-down opens, that is the best'. The buyers left holding the failed breakout are the crowd being hunted.",
+    "FLAT: SELL-side as well, same plan, no extra condition. He expects flat precisely BECAUSE the operator distributed into the breakout: 'we should see a flat opening, and if we get a gap-down, even better'.",
+    "GAP-UP: he says it should NOT happen, and this is the only branch with a PRECONDITION -- the plan holds only if rejection starts showing as soon as it opens. No rejection at the open means no trade.",
+    "A BIG GAP EITHER WAY IS A STAND-ASIDE, not a flip: 'if some big gap comes, no plan will be kept there for now'. He says it twice, once for BankNIFTY and again for a big gap-up on SENSEX.",
+    "EVERY BRANCH IS SELL-SIDE. That inverts yesterday's note, which bought flat/gap-up to hunt seated PUT traders. The crowd changed sides: three days of selling seated bears, one failed breakout seated bulls.",
+    "NIFTY carries TWO confirmations rather than one -- the chart read AND the rejection -- 'so we are getting a chance to follow both things'. Treat NIFTY as the cleanest of the three, not merely as confirmation."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24240,
-        24300
+        24060,
+        24180
       ],
       "support": [
-        23900,
-        23980
+        23850,
+        23900
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57700,
-        58000
+        57500,
+        57800
       ],
       "support": [
-        57000,
-        57200
+        56440,
+        57000
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77500,
-        77750
+        77000,
+        77300
       ],
       "support": [
-        76500,
-        76700
+        76200,
+        76500
       ]
     }
   ]

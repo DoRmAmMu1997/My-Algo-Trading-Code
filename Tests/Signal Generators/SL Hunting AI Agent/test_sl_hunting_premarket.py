@@ -201,24 +201,28 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_1_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 31 Aug transcript.
+def test_shipped_note_matches_september_2_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 01 Sep transcript.
 
-    Four things a summarising edit would flatten:
+    Five things a summarising edit would flatten:
 
-    1. The branch returns to the 28 Aug shape -- FLAT or GAP-UP hunts a seated
-       bearish crowd, GAP-DOWN follows -- which is the OPPOSITE of yesterday's
-       note (gap-up sell, gap-down buy, flat sell). Two consecutive notes with
-       inverted branches is exactly the setup for carrying the wrong habit
-       forward, and yesterday that cost the day's direction.
-    2. The gap-down veto is gated on a LEVEL, not on the gap's sign. He does
-       not name the NIFTY level on air, so the note says to use your own named
-       invalidation rather than inventing one -- losing that turns a checkable
-       veto into a guess.
-    3. He warns the market may TRAP upward first, because the seated crowd will
-       try to save its trade. Without that, a push up reads as a reversal when
-       it may be the bait before the hunt.
-    4. Today is NIFTY's weekly expiry, which the context line must keep.
+    1. EVERY branch is SELL-side. That is a total inversion of yesterday's note,
+       which bought flat/gap-up to hunt seated PUT traders. Two consecutive notes
+       with inverted branches is the exact setup for carrying the wrong habit
+       forward, and on 31 Aug that cost the whole day's direction -- so the test
+       asserts the inversion is stated in the note rather than left implicit.
+    2. The crowd changed sides. It is no longer the bears seated by a multi-day
+       sell-off; it is the LONGS trapped by a failed BankNIFTY breakout, which is
+       WHY every branch sells. Losing the mechanism leaves three unexplained
+       sell branches that read as a directional call.
+    3. GAP-UP is the ONLY branch carrying a precondition -- rejection must appear
+       at the open. Flattening it to "gap-up = sell" manufactures a trade the
+       note does not authorise.
+    4. A BIG GAP is a STAND-ASIDE, not a flip. Every previous note's veto changed
+       DIRECTION; this one removes the trade entirely. A veto that silently
+       becomes "trade the other way" is worse than no veto.
+    5. NIFTY carries TWO confirmations (chart AND rejection), which is why he
+       treats it as the cleanest of the three.
     """
     import os
 
@@ -226,48 +230,58 @@ def test_shipped_note_matches_september_1_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-01"
-    assert "dZqfpsKwqRQ" in note.source
-    assert "PUT traders are the seated crowd" in note.context
-    assert "NIFTY's weekly EXPIRY" in note.context
+    assert note.for_date == "2026-09-02"
+    assert "iPeDUGlpMoQ" in note.source
+    # The mechanism, not just the conclusion: a breakout that retail bought and
+    # the operator sold into is what seats the crowd being hunted.
+    assert "trapped LONGS are the seated crowd" in note.context
+    assert "people like us BUY" in note.context
 
-    buy = next(line for line in note.plan if line.startswith("FLAT or GAP-UP"))
-    assert "BUY-side" in buy
-    assert "TARGET the seated put traders" in buy
+    gap_down = next(line for line in note.plan if line.startswith("GAP-DOWN"))
+    assert "SELL-side" in gap_down
+    assert "PREFERRED open" in gap_down
 
-    sell = next(line for line in note.plan if line.startswith("GAP-DOWN"))
-    assert "SELL-side" in sell
-    # Gated on the crowd's state, not on the direction of the gap.
-    assert "they have already endured this far" in sell
-    assert "profit and confidence instead of pain" in sell
+    flat = next(line for line in note.plan if line.startswith("FLAT"))
+    assert "SELL-side" in flat
+    # Flat shares the gap-down branch outright -- no extra condition on it.
+    assert "no extra condition" in flat
 
-    veto = next(line for line in note.plan if line.startswith("THE GAP-DOWN VETO"))
-    assert "TIED TO A LEVEL" in veto
-    assert "until this level is crossed" in veto
-    assert "treat your own named invalidation as that level" in veto
+    gap_up = next(line for line in note.plan if line.startswith("GAP-UP"))
+    assert "PRECONDITION" in gap_up
+    assert "rejection starts showing as soon as it opens" in gap_up
+    assert "No rejection at the open means no trade" in gap_up
 
-    trap = next(line for line in note.plan if line.startswith("EXPECT AN UPWARD TRAP"))
-    assert "try to save their trade" in trap
-    assert "need not be a reversal" in trap
+    stand_aside = next(line for line in note.plan if line.startswith("A BIG GAP"))
+    assert "STAND-ASIDE, not a flip" in stand_aside
+    assert "no plan will be kept there for now" in stand_aside
 
-    assert any("76500 is called out as the psychological number" in line for line in note.plan)
+    inversion = next(line for line in note.plan if line.startswith("EVERY BRANCH IS SELL-SIDE"))
+    assert "inverts yesterday's note" in inversion
+    assert "seated PUT traders" in inversion
+
+    assert any("TWO confirmations" in line and "chart read AND the rejection" in line
+               for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # Caption dropped a digit from the first resistance ("2440");
-            # confirmed off the chart by the operator as 24240.
             "index": "NIFTY",
-            "resistance": [24240.0, 24300.0],
-            "support": [23900.0, 23980.0],
+            "resistance": [24060.0, 24180.0],
+            "support": [23850.0, 23900.0],
         },
         {
+            # Caption ran the two supports together as "575640"; confirmed off
+            # the chart by the operator as 57000 and 56440. Do NOT reconstruct
+            # these from the caption.
             "index": "BANKNIFTY",
-            "resistance": [57700.0, 58000.0],
-            "support": [57000.0, 57200.0],
+            "resistance": [57500.0, 57800.0],
+            "support": [56440.0, 57000.0],
         },
         {
+            # Caption ran the two resistances together as "777300"; confirmed off
+            # the chart by the operator as 77000 and 77300. Do NOT reconstruct
+            # these from the caption -- the obvious split (77700/77300) is wrong.
             "index": "SENSEX",
-            "resistance": [77500.0, 77750.0],
-            "support": [76500.0, 76700.0],
+            "resistance": [77000.0, 77300.0],
+            "support": [76200.0, 76500.0],
         },
     ]
