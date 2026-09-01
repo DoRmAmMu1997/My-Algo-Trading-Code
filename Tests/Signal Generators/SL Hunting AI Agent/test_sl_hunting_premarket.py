@@ -201,23 +201,24 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_august_31_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 30 Aug transcript.
+def test_shipped_note_matches_september_1_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 31 Aug transcript.
 
-    This note breaks a pattern every previous one held, and that is the whole
-    risk in editing it:
+    Four things a summarising edit would flatten:
 
-    1. THE METHOD DIFFERS BY BRANCH. Both gapped branches are counter-crowd
-       HUNTS; the flat branch is a FOLLOW. Every prior note applied one method
-       across all three shapes, so an editor working from habit would unify
-       them and destroy half the plan.
-    2. The gap branches are gated on CROWD PSYCHOLOGY, not on levels: a gap-up
-       is sold because everyone buys it directly and leaves no stops above; a
-       gap-down is bought for the mirror-image reason. Losing the reason turns
-       two checkable reads into "fade the gap".
-    3. FLAT is named the PROBLEM case -- "either gap is easier than no gap" --
-       which is the opposite of the last three notes, where flat shared a
-       branch with a gapped open and was never singled out.
+    1. The branch returns to the 28 Aug shape -- FLAT or GAP-UP hunts a seated
+       bearish crowd, GAP-DOWN follows -- which is the OPPOSITE of yesterday's
+       note (gap-up sell, gap-down buy, flat sell). Two consecutive notes with
+       inverted branches is exactly the setup for carrying the wrong habit
+       forward, and yesterday that cost the day's direction.
+    2. The gap-down veto is gated on a LEVEL, not on the gap's sign. He does
+       not name the NIFTY level on air, so the note says to use your own named
+       invalidation rather than inventing one -- losing that turns a checkable
+       veto into a guess.
+    3. He warns the market may TRAP upward first, because the seated crowd will
+       try to save its trade. Without that, a push up reads as a reversal when
+       it may be the bait before the hunt.
+    4. Today is NIFTY's weekly expiry, which the context line must keep.
     """
     import os
 
@@ -225,39 +226,39 @@ def test_shipped_note_matches_august_31_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-08-31"
-    assert "62oH6ARjxAQ" in note.source
-    assert "few sellers are seated" in note.context
-    # Flat singled out as the hard case, not folded into a gapped branch.
-    assert "calls an exactly FLAT open the PROBLEM case" in note.context
+    assert note.for_date == "2026-09-01"
+    assert "dZqfpsKwqRQ" in note.source
+    assert "PUT traders are the seated crowd" in note.context
+    assert "NIFTY's weekly EXPIRY" in note.context
 
-    up = next(line for line in note.plan if line.startswith("GAP-UP"))
-    assert "SELL-side" in up
-    assert "no seated stops above to hunt" in up
-    assert "the fresh buyers ARE the crowd" in up
+    buy = next(line for line in note.plan if line.startswith("FLAT or GAP-UP"))
+    assert "BUY-side" in buy
+    assert "TARGET the seated put traders" in buy
 
-    down = next(line for line in note.plan if line.startswith("GAP-DOWN"))
-    assert "BUY-side" in down
-    assert "others will try to sell directly" in down
+    sell = next(line for line in note.plan if line.startswith("GAP-DOWN"))
+    assert "SELL-side" in sell
+    # Gated on the crowd's state, not on the direction of the gap.
+    assert "they have already endured this far" in sell
+    assert "profit and confidence instead of pain" in sell
 
-    flat = next(line for line in note.plan if line.startswith("FLAT"))
-    assert "SELL-side" in flat
-    # The flat branch FOLLOWS -- it does not hunt.
-    assert "by FOLLOWING the market, not hunting" in flat
-    assert "rather than against a crowd" in flat
+    veto = next(line for line in note.plan if line.startswith("THE GAP-DOWN VETO"))
+    assert "TIED TO A LEVEL" in veto
+    assert "until this level is crossed" in veto
+    assert "treat your own named invalidation as that level" in veto
 
-    # The split itself must survive as an explicit instruction.
-    method = next(line for line in note.plan if line.startswith("THE METHOD DIFFERS"))
-    assert "both gapped branches are counter-crowd HUNTS, the flat branch is a FOLLOW" in method
-    assert "Do not carry the hunt premise into flat" in method
+    trap = next(line for line in note.plan if line.startswith("EXPECT AN UPWARD TRAP"))
+    assert "try to save their trade" in trap
+    assert "need not be a reversal" in trap
+
+    assert any("76500 is called out as the psychological number" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # Caption ran the supports together as "24072980"; confirmed off the
-            # chart by the operator as 23980/24070, not reconstructed.
+            # Caption dropped a digit from the first resistance ("2440");
+            # confirmed off the chart by the operator as 24240.
             "index": "NIFTY",
             "resistance": [24240.0, 24300.0],
-            "support": [23980.0, 24070.0],
+            "support": [23900.0, 23980.0],
         },
         {
             "index": "BANKNIFTY",
@@ -265,11 +266,8 @@ def test_shipped_note_matches_august_31_intraday_hunter_plan():
             "support": [57000.0, 57200.0],
         },
         {
-            # Caption gave six digits ("776700") where two five-digit levels
-            # belong; confirmed as 76700/77000. 77000 is the level he names
-            # repeatedly as the one SENSEX did NOT cross.
             "index": "SENSEX",
             "resistance": [77500.0, 77750.0],
-            "support": [76700.0, 77000.0],
+            "support": [76500.0, 76700.0],
         },
     ]

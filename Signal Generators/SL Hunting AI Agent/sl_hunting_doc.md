@@ -5876,3 +5876,57 @@ latency becomes the binding constraint.
   covered by `EVENT / HOLIDAY PARTICIPATION`), and the "a pattern is not a crowd"
   sharpening of v4s - see above.
 - Prompt size 149,224 -> 152,587 chars. Assembled 153,878: **187,603 of headroom.**
+
+---
+
+## Pre-open note for 2026-09-01
+
+**Source:** Intraday Hunter, "Prediction For 01 SEP 2026" (`dZqfpsKwqRQ`, uploaded
+2026-08-31 21:25 IST, 2:28).
+
+### The plan
+
+**The branch returns to the 28 Aug shape, inverting yesterday's.** Three-to-four
+days of continuous selling have SEATED a bearish crowd - "put-side traders will be
+the ones sitting here" - so:
+
+- **FLAT or GAP-UP -> BUY side**, to hunt them.
+- **GAP-DOWN -> SELL side**, because a gap-down hands that crowd profit instead of
+  pain: "they have already waited this far", and a gap-down leaves them sitting in
+  confidence rather than forcing them out.
+
+That is the exact opposite of the 31 Aug note (gap-up sell, gap-down buy, flat
+sell). Two consecutive notes with inverted branches is precisely the setup for
+carrying yesterday's habit forward - and yesterday a misclassified open cost the
+day's direction, which is what v4t's CLASSIFY THE OPEN rule now guards.
+
+**The gap-down veto is tied to a LEVEL, not to the gap's sign**: "until this level
+is crossed, the put traders cannot be targeted directly." He points at the chart
+rather than naming the NIFTY level on air, so the note says to treat your own named
+invalidation as that level rather than inventing his.
+
+**He warns of an upward trap first**: the seated crowd "will try to save their
+trade, so the market may build some trap, may try to go up a bit." A push up need
+not be a reversal - it can be the bait before the hunt. That pairs directly with
+v4t's THE EARLY RETRACEMENT IS THE TRAP, arriving from the opposite direction.
+
+**Today is NIFTY's weekly expiry.**
+
+### Levels
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 24240, 24300 | 23900, 23980 |
+| BANKNIFTY | 57700, 58000 | 57000, 57200 |
+| SENSEX | 77500, 77750 | 76500, 76700 |
+
+SENSEX 76500 is named as the psychological number. The caption dropped a digit from
+NIFTY's first resistance ("2440"); confirmed off the chart by the operator as 24240,
+and the test says not to reconstruct it from the caption.
+
+### Verification
+
+19/19 on the premarket suite, each new assertion negative-tested: flipping the
+branches back to yesterday's, regating the veto on the gap's sign, dropping the
+upward-trap warning, dropping the expiry from the context, and "correcting" the
+NIFTY resistance each fail.
