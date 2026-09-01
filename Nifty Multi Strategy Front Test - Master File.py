@@ -16771,6 +16771,54 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
     return updates, sorted(unmatched)
 
 
+def _diagnose_empty_sheet_update(values, pnl_by_day, today_str, month_tab):
+    """Explain WHY a sheet update produced no cells, or None if that is normal.
+
+    OPS-002. An empty update used to log one bland INFO line, "nothing to write",
+    which is indistinguishable from a genuinely quiet day. On 2026-09-01 that hid
+    a real failure for a whole session: the new "September 2026" tab had been
+    copied from August and still carried 2026-08-01..2026-08-30 as its date
+    headers, so `_compute_pnl_sheet_updates` skipped every day at
+
+        if date_str[:7] != current_month or date_str not in date_to_col: continue
+
+    -- today for the missing column, August for the wrong month. Both `updates`
+    and `unmatched` came back empty, because `unmatched` only tracks strategy ROW
+    labels and the loop never reached the strategy inner loop. Nothing warned.
+
+    This is the SAME failure mode `_parse_eod_pnl_by_day` already records for the
+    time window ("the only symptom was a Google Sheet that quietly stayed blank"),
+    and it is more likely, because it recurs at EVERY month boundary rather than
+    on an unusual shutdown.
+
+    Returns a warning string when the emptiness is a fault the operator must fix,
+    and None when there was genuinely nothing to write.
+    """
+    if not values:
+        return (
+            f"Google Sheet P&L update wrote nothing: the {month_tab!r} tab is EMPTY "
+            "(no header row), so there is nothing to line figures up against. Add "
+            "the date header row and the strategy row labels."
+        )
+    header = values[0]
+    date_columns = {
+        str(cell).strip()
+        for cell in header
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(cell).strip())
+    }
+    if today_str in pnl_by_day and today_str not in date_columns:
+        sample = ", ".join(sorted(date_columns)[:3]) or "none"
+        return (
+            f"Google Sheet P&L update wrote nothing: today ({today_str}) has "
+            f"{len(pnl_by_day[today_str])} strategy figures, but the {month_tab!r} "
+            f"tab has NO column headed {today_str!r} (its date columns start: "
+            f"{sample}). This is the month-boundary trap -- a new tab copied from "
+            "the previous month keeps the old date headers. Relabel the header "
+            "row, and the next run backfills today automatically."
+        )
+    return None
+
+
 def _update_pnl_google_sheet() -> bool:
     """
     End-of-day: write each strategy's realised P&L into the current month's tab of
@@ -16850,7 +16898,15 @@ def _update_pnl_google_sheet() -> bool:
                 ", ".join(unmatched),
             )
         if not updates:
-            logger.info("Google Sheet P&L update: nothing to write.")
+            # OPS-002: distinguish a quiet day from a broken sheet. See
+            # `_diagnose_empty_sheet_update` for the 2026-09-01 incident.
+            problem = _diagnose_empty_sheet_update(
+                values, pnl_by_day, today_str, month_tab
+            )
+            if problem:
+                logger.warning("%s", problem)
+            else:
+                logger.info("Google Sheet P&L update: nothing to write.")
             return False
         # Step 7: gspread's Cell is 1-based, our tuples are 0-based, so add 1 to
         # each. One batched update_cells call is far fewer API hits than writing

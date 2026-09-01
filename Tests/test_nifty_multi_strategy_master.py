@@ -12735,3 +12735,59 @@ if __name__ == "__main__":
     # Use the custom runner so both `python file.py` and any other direct
     # invocation produce verbose per-test output PLUS the final summary.
     sys.exit(0 if _run_with_logging() else 1)
+
+
+class SheetEmptyUpdateDiagnosisTests(unittest.TestCase):
+    """OPS-002: an empty Google Sheet update must say WHY when it is a fault.
+
+    On 2026-09-01 the runner logged one bland INFO line, "nothing to write",
+    and the day's P&L never reached the tracker. The new "September 2026" tab
+    had been copied from August and still carried 2026-08-01..2026-08-30 as its
+    date headers, so every day was skipped: today for the missing column, and
+    August for the wrong month. Both `updates` and `unmatched` came back empty,
+    because `unmatched` only tracks strategy ROW labels and the loop never
+    reached the strategy inner loop -- so nothing warned, for a whole session.
+    """
+
+    HEADER_SEPT = ["", "2026-09-01", "2026-09-02"]
+    HEADER_AUG = ["", "2026-08-01", "2026-08-02"]
+
+    def _diagnose(self, values, pnl_by_day, today="2026-09-01", tab="September 2026"):
+        if master_file is None:
+            self.skipTest("master module unavailable")
+        return master_file._diagnose_empty_sheet_update(values, pnl_by_day, today, tab)
+
+    def test_month_boundary_tab_with_stale_date_headers_is_reported(self):
+        """The 2026-09-01 incident itself: right tab, previous month's headers."""
+        values = [self.HEADER_AUG, ["Renko Strategy", "", ""]]
+        pnl = {"2026-09-01": {"Renko": 100.0, "CPR": -50.0}}
+
+        message = self._diagnose(values, pnl)
+
+        self.assertIsNotNone(message, "a stale-header tab must not fail silently")
+        # It has to name the date, the tab, and the count, or the operator cannot
+        # tell this from an ordinary quiet day.
+        self.assertIn("2026-09-01", message)
+        self.assertIn("September 2026", message)
+        self.assertIn("2 strategy figures", message)
+        self.assertIn("month-boundary trap", message)
+        # And it must say the data is recoverable, so nobody re-keys it by hand.
+        self.assertIn("backfills today automatically", message)
+
+    def test_completely_empty_tab_is_reported(self):
+        message = self._diagnose([], {"2026-09-01": {"Renko": 1.0}})
+        self.assertIsNotNone(message)
+        self.assertIn("EMPTY", message)
+
+    def test_a_genuinely_quiet_day_stays_quiet(self):
+        """The column exists and today has figures -> not this helper's business.
+
+        Asserted so the warning cannot decay into noise on every normal run.
+        """
+        values = [self.HEADER_SEPT, ["Renko Strategy", "", ""]]
+        self.assertIsNone(self._diagnose(values, {"2026-09-01": {"Renko": 1.0}}))
+
+    def test_no_figures_for_today_at_all_is_not_a_fault(self):
+        """A day the runner produced nothing for is quiet, not broken."""
+        values = [self.HEADER_SEPT, ["Renko Strategy", "", ""]]
+        self.assertIsNone(self._diagnose(values, {"2026-08-31": {"Renko": 1.0}}))
