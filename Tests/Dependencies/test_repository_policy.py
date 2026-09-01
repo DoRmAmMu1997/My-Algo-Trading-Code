@@ -224,7 +224,17 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
         "update the CI install step, the README gate block, and this test "
         "together -- CI installs requirements.txt only."
     )
-    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8"):
+    # numpy joined this list on 2026-09-01 (PR #150) when the MINOR half of its
+    # Dependabot ignore was retired. Until then nothing asserted the numpy pin a
+    # second time, so a bump could have gone green with no human reading it --
+    # the same hole that was open on pandas-stubs. MAT-106's determinism
+    # snapshot verifies numpy's BEHAVIOUR to 8 decimal places, which is the
+    # stronger check; this assertion is the separate guarantee that the VERSION
+    # cannot move without someone editing this line. Majors remain ignored:
+    # TA-Lib ships a compiled extension built against the numpy 2.x C ABI and
+    # declares a bare `numpy` with no ceiling, so nothing in the metadata would
+    # stop pip resolving numpy 3.x against a wheel that cannot survive it.
+    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.4.6"):
         assert runtime_pin in core
     for tool_pin in ("pytest==9.1.1", "mypy==1.20.2", "bandit==1.9.4", "pip-audit==2.10.1"):
         assert tool_pin in core

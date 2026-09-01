@@ -16,10 +16,11 @@ updates:
     # un-mergeable by policy or would land a change no gate can see. Re-checked
     # whenever this list is revisited: an ignore whose reason has expired is
     # worse than no ignore at all, because it reads to the next maintainer as
-    # protection that is no longer being earned. Three were retired on
-    # 2026-09-01 -- see RETIRED at the bottom. Two of those had expired reasons;
-    # the third is an accepted risk, which is a different thing and is labelled
-    # as such so nobody reads it as evidence the risk went away.
+    # protection that is no longer being earned. Five entries were retired on
+    # 2026-09-01 -- see RETIRED at the bottom. Four had reasons that had expired
+    # or were already gated elsewhere; ONE is an accepted risk, which is a
+    # different thing and is labelled as such so nobody reads it as evidence the
+    # risk went away.
     ignore:
       # Kotak's official v2.0.1 tag hard-depends on websocket-client==1.8.0 --
       # verified against the installed neo_api_client 2.0.0 metadata, which
@@ -42,24 +43,32 @@ updates:
       # smoothing semantics, so it is bumped deliberately, with revalidation,
       # never automatically.
       - dependency-name: "ta-lib"
-      # The numeric core under pandas + TA-Lib. Patches are welcome; minor and
-      # major bumps can change floating-point behaviour across the indicator
-      # pipeline, so they follow the same deliberate path as TA-Lib.
+      # The numeric core under pandas + TA-Lib. MAJORS only -- the minor half of
+      # this ignore was retired on 2026-09-01 once its reason was checked.
+      #
+      # The stated fear was that a bump "can change floating-point behaviour
+      # across the indicator pipeline". That IS gated, precisely: MAT-106's
+      # `test_fixed_fixture_indicator_and_signal_snapshot` pins exact EMA, ATR,
+      # ADX, SMA, Supertrend, MACD and Renko values to EIGHT decimal places plus
+      # the resulting signal actions, and CI runs it on both 3.12 and 3.13.
+      # Verified by perturbing one pinned value by 1 unit in the 8th decimal:
+      # the suite goes red. A minor that moves any indicator therefore cannot
+      # merge silently, which is the whole thing the ignore was protecting.
+      #
+      # The MAJOR stays, for a hazard that snapshot does NOT speak to: TA-Lib
+      # ships a COMPILED extension (_ta_lib.*.pyd) built against the numpy 2.x
+      # C ABI, and declares a bare `numpy` with NO upper bound -- pandas 3.0.5
+      # likewise floors at numpy>=1.26.0 without a ceiling. Nothing in the
+      # dependency metadata would stop pip resolving numpy 3.x against a wheel
+      # that cannot survive it, and the live box would need TA-Lib rebuilt.
       - dependency-name: "numpy"
-        update-types:
-          - "version-update:semver-major"
-          - "version-update:semver-minor"
-      # Typing majors routinely break the mypy gate wholesale; take them as
-      # dedicated upgrades, not weekly noise. Still load-bearing: mypy 2.x was
-      # already available when this list was written (2.3.0 was among the bumps
-      # deliberately deferred then) and the pin is still on the 1.x line.
-      - dependency-name: "mypy"
         update-types:
           - "version-update:semver-major"
       #
       # RETIRED (2026-09-01) -- recorded so they are not re-added by reflex.
-      # The first two had reasons that had expired. The third did NOT: its risk
-      # is real and was accepted deliberately, on evidence, by the operator.
+      # All but one had reasons that had expired or were already covered by a
+      # gate nobody had checked for. The websockets entry did NOT: its risk is
+      # real and was accepted deliberately, on evidence, by the operator.
       #   * mcp majors. The reason was mechanical, not a judgement: the SDK then
       #     capped mcp<2.0.0, so a major could not resolve alongside the pinned
       #     claude-agent-sdk and pip failed with ResolutionImpossible before a
@@ -95,6 +104,18 @@ updates:
       #     ticks on the next PAPER session, and revert this pin first if it
       #     does not. REVISIT THIS if live trading is ever switched on: the
       #     evidence the retirement rests on is the paper gates being false.
+      #   * mypy majors. Held because "typing majors routinely break the mypy
+      #     gate wholesale" -- true, and precisely why the ignore was pointless.
+      #     mypy is a DEV/CI tool: it cannot reach the trading path, so the only
+      #     thing a bad major can do is turn the build red, which is the review
+      #     signal we want rather than the outcome to prevent. The pin is
+      #     already second-asserted in test_repository_policy, so a major cannot
+      #     merge without a human moving that assertion by hand. Meanwhile the
+      #     ignore had frozen us on 1.x while 2.x shipped.
+      #   * numpy MINORS (majors still ignored above). The stated fear was
+      #     floating-point drift through the indicator pipeline; MAT-106's
+      #     determinism snapshot already pins that to 8 decimal places on both
+      #     Python versions, so a minor that moves anything goes red.
 
   - package-ecosystem: github-actions
     directory: "/"
