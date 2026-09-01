@@ -62,10 +62,14 @@ pip-audit==2.10.1
 # Type stubs for typed third-party usage in the mypy scope. pandas-stubs is
 # pinned so local and CI mypy see the exact same pandas typing (an out-of-band
 # stubs install once made local mypy fail while CI stayed green).
-# mypy and pandas-stubs majors are deliberately NOT auto-bumped (see
-# .github/dependabot.yml); take them as dedicated typing upgrades.
+# mypy majors are deliberately NOT auto-bumped (see .github/dependabot.yml);
+# take them as dedicated typing upgrades. pandas-stubs is NO LONGER held back:
+# `pandas` itself is not ignored, so holding the stubs produced exactly the
+# drift this pin exists to prevent -- they sat a full major behind the pandas
+# they describe. pandas-stubs tracks the pandas release it types, so keep this
+# on the same major as the pandas pin above.
 types-requests==2.33.0.20260712
-pandas-stubs==2.3.3.260113
+pandas-stubs==3.0.5.260730
 
 # ---- Exact optional dependency sets -----------------------------------------
 # Live broker compatibility manifest:

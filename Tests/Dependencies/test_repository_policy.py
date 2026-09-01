@@ -78,6 +78,19 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # but every strategy is PAPER, so a bad feed costs a session, not money.
     # If the feed does not tick at 09:15, revert this pin first.
     assert "websockets==17.1" in core
+    # 2.3.3.260113 -> 3.0.5.260730 (2026-09-01, PR #150). A correction more than
+    # an upgrade. `pandas` is pinned at 3.0.5 and is NOT in the Dependabot ignore
+    # list, so it moved to the 3.x line while a semver-major ignore pinned the
+    # stubs to the 2.3.3 line -- the mypy gate has been typing pandas 3 with
+    # pandas 2 stubs ever since. pandas-stubs tracks the pandas release it
+    # describes, so matching majors IS the point of this pin rather than a risk
+    # to it, and the ignore has been retired accordingly. Unlike the transport
+    # pins above this one was verified BEFORE the merge, because a stubs change
+    # is typing-only and cannot reach the trading path: mypy reports no issues in
+    # 54 source files against 3.0.5.260730. That is also the version the
+    # operator's box already had installed while this file still asked for
+    # 2.3.3, so `pip install -r requirements.txt` would have DOWNGRADED it.
+    assert "pandas-stubs==3.0.5.260730" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
     #
@@ -211,7 +224,17 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
         "update the CI install step, the README gate block, and this test "
         "together -- CI installs requirements.txt only."
     )
-    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8"):
+    # numpy joined this list on 2026-09-01 (PR #150) when the MINOR half of its
+    # Dependabot ignore was retired. Until then nothing asserted the numpy pin a
+    # second time, so a bump could have gone green with no human reading it --
+    # the same hole that was open on pandas-stubs. MAT-106's determinism
+    # snapshot verifies numpy's BEHAVIOUR to 8 decimal places, which is the
+    # stronger check; this assertion is the separate guarantee that the VERSION
+    # cannot move without someone editing this line. Majors remain ignored:
+    # TA-Lib ships a compiled extension built against the numpy 2.x C ABI and
+    # declares a bare `numpy` with no ceiling, so nothing in the metadata would
+    # stop pip resolving numpy 3.x against a wheel that cannot survive it.
+    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.4.6"):
         assert runtime_pin in core
     for tool_pin in ("pytest==9.1.1", "mypy==1.20.2", "bandit==1.9.4", "pip-audit==2.10.1"):
         assert tool_pin in core
