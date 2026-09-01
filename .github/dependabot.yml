@@ -13,13 +13,27 @@ updates:
         patterns:
           - "*"
     # Packages Dependabot must NOT propose, because its grouped bump would be
-    # un-mergeable by policy (each reason below is enforced by CI, so an
-    # auto-bump only produces a red PR -- exactly what happened in PR #76):
+    # un-mergeable by policy or would land a change no gate can see. Re-checked
+    # whenever this list is revisited: an ignore whose reason has expired is
+    # worse than no ignore at all, because it reads to the next maintainer as
+    # protection that is no longer being earned. Two were retired that way on
+    # 2026-09-01 -- see RETIRED at the bottom.
     ignore:
-      # Kotak's official v2.0.1 tag hard-depends on websocket-client==1.8.0,
-      # and pyotp rides in the same isolated broker environment. Bump these
-      # only together with a new validated Kotak SDK tag.
+      # Kotak's official v2.0.1 tag hard-depends on websocket-client==1.8.0 --
+      # verified against the installed neo_api_client 2.0.0 metadata, which
+      # declares it as an EXACT pin, not a floor. websocket-client is also in
+      # the core set for the vendored Shoonya client, so a bump would have to
+      # move both files and would still be refused by the broker CI job (that
+      # is what happened in PR #76). Bump only with a new validated Kotak tag.
       - dependency-name: "websocket-client"
+      # Shoonya's TOTP seed generator. NOT a Kotak dependency: neo_api_client
+      # v2.0.1 does not declare pyotp at all, so the original "rides in the same
+      # isolated broker environment" reason was simply wrong. The real reason to
+      # hold it is that nothing exercises it -- `_generate_totp` imports pyotp
+      # lazily inside the function, the broker CI job installs the package but
+      # runs only the contract and Flattrade suites, and no test ever computes a
+      # code. A break would surface at a live Shoonya login rather than as a red
+      # build, which is the same blind spot that keeps `websockets` below.
       - dependency-name: "pyotp"
       # MAT-106 pins the exact TA-Lib build as the deterministic indicator
       # backend for every strategy. A version change can shift warm-up and
@@ -34,29 +48,41 @@ updates:
           - "version-update:semver-major"
           - "version-update:semver-minor"
       # Typing majors routinely break the mypy gate wholesale; take them as
-      # dedicated upgrades, not weekly noise.
+      # dedicated upgrades, not weekly noise. Still load-bearing: mypy 2.x was
+      # already available when this list was written (2.3.0 was among the bumps
+      # deliberately deferred then) and the pin is still on the 1.x line.
       - dependency-name: "mypy"
-        update-types:
-          - "version-update:semver-major"
-      - dependency-name: "pandas-stubs"
-        update-types:
-          - "version-update:semver-major"
-      # claude-agent-sdk caps this at mcp<2.0.0, so an mcp MAJOR can never
-      # resolve alongside the pinned SDK -- pip fails with ResolutionImpossible
-      # before a single test runs. This is what made PR #99 un-mergeable. Take
-      # mcp majors only together with an SDK release that raises the ceiling.
-      - dependency-name: "mcp"
         update-types:
           - "version-update:semver-major"
       # The async transport under dhanhq.marketfeed, i.e. the LIVE market feed.
       # dhanhq only declares websockets>=12.0.1, so this pin is the sole thing
       # holding a major back, and a breaking change surfaces as a dead feed at
       # 09:15 rather than as a failing gate -- nothing in CI opens a real
-      # socket. Bump majors deliberately, after a paper session on the new
-      # version.
+      # socket. This reason is STRONGER than when it was written, not weaker:
+      # MARKET_DATA_SOURCE=WEBSOCKET is now the active feed, so this is the
+      # production data path rather than an opt-in alternative. Bump majors
+      # deliberately, after a paper session on the new version.
       - dependency-name: "websockets"
         update-types:
           - "version-update:semver-major"
+      #
+      # RETIRED (2026-09-01) -- recorded so they are not re-added by reflex:
+      #   * mcp majors. The reason was mechanical, not a judgement: the SDK then
+      #     capped mcp<2.0.0, so a major could not resolve alongside the pinned
+      #     claude-agent-sdk and pip failed with ResolutionImpossible before a
+      #     single test ran, which is what made PR #99 un-mergeable. SDK 0.2.140
+      #     widened that to mcp>=1.23.0,<3.0.0 and 0.2.145 still declares it, so
+      #     the mechanism is gone. The surface we import directly --
+      #     `mcp.server.fastmcp.FastMCP` in cpr_ai_mcp_server -- is genuinely
+      #     covered: test_cpr_ai_context builds a real server and
+      #     test_cpr_ai_runtime patches FastMCP.run. An incompatible major now
+      #     arrives as a red PR to review instead of never being proposed.
+      #   * pandas-stubs majors. The ignore outlived its reason and began
+      #     causing the drift it existed to prevent: pandas is NOT ignored and
+      #     has moved to 3.0.5, while the stubs pin stayed on the 2.3.3 line, so
+      #     the mypy gate types pandas 3 with pandas 2 stubs. A stubs bump is
+      #     typing-only -- it can fail the mypy gate but cannot reach the
+      #     trading path -- so a red PR is the whole of the risk.
 
   - package-ecosystem: github-actions
     directory: "/"
