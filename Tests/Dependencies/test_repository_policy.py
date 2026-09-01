@@ -64,7 +64,20 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # merge, because MARKET_DATA_SOURCE=WEBSOCKET is active but every strategy
     # is PAPER (LIVE_TRADING_ENABLED=false), so a bad feed costs a session and
     # not money. If the feed does not tick, revert this pin first.
-    assert "websockets==17.0.1" in core
+    # 17.0.1 -> 17.1 (2026-09-01, PR #144). Upstream calls 17.1 purely additive
+    # and the changelog confirms it: the backward-incompatible release was 17.0,
+    # where the new asyncio implementation became the default, and this pin is
+    # already past that. Everything new in 17.1 — reconnect(), redirect-following,
+    # alternate host/port — lands in the THREADING implementation, which
+    # dhanhq.marketfeed does not use; it is an asyncio client. marketfeed's entire
+    # surface is still the same three names, none of them touched: connect,
+    # ConnectionClosed, protocol.State.CLOSED. The one behavioural change that
+    # reaches any client is "connections are garbage collected immediately once
+    # closed", which cannot break a feed that reconnects on ConnectionClosed.
+    # Same operator decision as before: MARKET_DATA_SOURCE=WEBSOCKET is active
+    # but every strategy is PAPER, so a bad feed costs a session, not money.
+    # If the feed does not tick at 09:15, revert this pin first.
+    assert "websockets==17.1" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
     #
@@ -94,7 +107,16 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # Unchanged from before: CI never spawns the bundled CLI, so confirm on the
     # next PAPER session that decisions still return ("SLHuntingAgent decision
     # cost ~$..." in the log). If they stop, revert this pin first.
-    assert "claude-agent-sdk==0.2.143" in ai
+    # 0.2.143 -> 0.2.145 (2026-09-01, PR #144). The narrowest SDK bump so far:
+    # both 0.2.144 and 0.2.145 are CLI-bundle-only releases with NO user-facing
+    # Python changes — query(), ClaudeAgentOptions, the in-process MCP server and
+    # tool definitions are all untouched, so none of the reasoning above needs
+    # revisiting. What DID change is the bundled Claude CLI (2.1.245 -> 2.1.247),
+    # and that is the part actually running the agent. CI never spawns it, so
+    # this build proves nothing about it. Confirm on the next PAPER session that
+    # decisions still return ("SLHuntingAgent decision cost ~$..." in the log,
+    # alongside the SLH-013 latency line). If they stop, revert this pin first.
+    assert "claude-agent-sdk==0.2.145" in ai
     assert "pydantic==2.13.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
@@ -124,7 +146,12 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # surfaces as CPR AI errors in the next session -- that session, not this
     # build, is the actual test.
     assert "openai-codex==0.147.0" in ai
-    assert "mcp==1.29.0" in ai
+    # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
+    # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
+    # and openai-codex is satisfied too, so the shared single-version constraint
+    # that forced these into one file still holds. Nothing to validate beyond a
+    # clean resolve, which CI does perform.
+    assert "mcp==1.29.1" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
     assert any(
