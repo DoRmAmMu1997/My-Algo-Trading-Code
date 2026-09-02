@@ -16,8 +16,8 @@ this folder alongside Goldmine and Money Machine. Its backtest remains at
 - `goldmine_strategy_logic.py`
 - `money_machine_strategy_logic.py`
 - `profit_shooter_strategy_logic.py`
-- `Nifty Goldmine Signal Generator.py`
-- `Nifty Money Machine Signal Generator.py`
+- `goldmine_signal_generator.py`
+- `money_machine_signal_generator.py`
 
 The Goldmine and Money Machine modules expect already-prepared 5-minute OHLC
 data. They do not resample 1-minute data because that belongs in the front-test

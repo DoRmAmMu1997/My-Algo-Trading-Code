@@ -253,11 +253,11 @@ class TestSubhamoyStrategySignalGenerators(unittest.TestCase):
 
     def test_wrapper_files_import_and_expose_latest_functions(self):
         goldmine_wrapper = load_module(
-            STRATEGY_DIR / "Nifty Goldmine Signal Generator.py",
+            STRATEGY_DIR / "goldmine_signal_generator.py",
             "nifty_goldmine_signal_generator",
         )
         money_wrapper = load_module(
-            STRATEGY_DIR / "Nifty Money Machine Signal Generator.py",
+            STRATEGY_DIR / "money_machine_signal_generator.py",
             "nifty_money_machine_signal_generator",
         )
 

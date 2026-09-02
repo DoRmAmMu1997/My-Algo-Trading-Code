@@ -8,7 +8,6 @@ import pandas as pd
 # Tests/Signal Generators/CPR Strategy/<this file> -> repository root is three up.
 STRATEGY_DIR = Path(__file__).resolve().parents[3] / "Signal Generators" / "CPR Strategy"
 LOGIC_PATH = STRATEGY_DIR / "cpr_strategy_logic.py"
-BACKTEST_PATH = STRATEGY_DIR / "Nifty CPR Strategy Backtest.py"
 ALGO3_PATH = STRATEGY_DIR / "Nifty CPR Algo 3 Signal Generator.py"
 
 
