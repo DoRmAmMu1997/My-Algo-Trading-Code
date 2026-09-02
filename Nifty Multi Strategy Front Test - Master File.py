@@ -1504,43 +1504,43 @@ execution_client, LIVE_EXCHANGE_SEGMENT, LIVE_PRODUCT_TYPE = _select_execution_c
 SIGNAL_GEN_DIR = ROOT_DIR / "Signal Generators"
 
 SMA_CROSSOVER_LOGIC = load_module(
-    "master_sma_crossover", SIGNAL_GEN_DIR / "Nifty SMA Crossover Signal Generator.py"
+    "master_sma_crossover", SIGNAL_GEN_DIR / "sma_crossover_signal_generator.py"
 )
 BOLLINGER_BANDS_LOGIC = load_module(
-    "master_bollinger_bands", SIGNAL_GEN_DIR / "Nifty Bollinger Bands Signal Generator.py"
+    "master_bollinger_bands", SIGNAL_GEN_DIR / "bollinger_bands_signal_generator.py"
 )
 KELTNER_SQUEEZE_LOGIC = load_module(
-    "master_keltner_squeeze", SIGNAL_GEN_DIR / "Nifty Keltner Squeeze Signal Generator.py"
+    "master_keltner_squeeze", SIGNAL_GEN_DIR / "keltner_squeeze_signal_generator.py"
 )
 MEAN_REVERSION_ZSCORE_LOGIC = load_module(
-    "master_mean_reversion_zscore", SIGNAL_GEN_DIR / "Nifty Mean Reversion Zscore Signal Generator.py"
+    "master_mean_reversion_zscore", SIGNAL_GEN_DIR / "mean_reversion_zscore_signal_generator.py"
 )
 ML_ENSEMBLE_LOGIC = load_module(
-    "master_ml_ensemble", SIGNAL_GEN_DIR / "Nifty ML Ensemble Signal Generator.py"
+    "master_ml_ensemble", SIGNAL_GEN_DIR / "ml_ensemble_signal_generator.py"
 )
 MULTI_TIMEFRAME_LOGIC = load_module(
-    "master_multi_timeframe", SIGNAL_GEN_DIR / "Nifty Multi Timeframe Signal Generator.py"
+    "master_multi_timeframe", SIGNAL_GEN_DIR / "multi_timeframe_signal_generator.py"
 )
 OPENING_RANGE_BREAKOUT_LOGIC = load_module(
-    "master_opening_range_breakout", SIGNAL_GEN_DIR / "Nifty Opening Range Breakout Signal Generator.py"
+    "master_opening_range_breakout", SIGNAL_GEN_DIR / "opening_range_breakout_signal_generator.py"
 )
 PARABOLIC_SAR_LOGIC = load_module(
-    "master_parabolic_sar", SIGNAL_GEN_DIR / "Nifty Parabolic SAR Signal Generator.py"
+    "master_parabolic_sar", SIGNAL_GEN_DIR / "parabolic_sar_signal_generator.py"
 )
 RSI_DIVERGENCE_LOGIC = load_module(
-    "master_rsi_divergence", SIGNAL_GEN_DIR / "Nifty RSI Divergence Signal Generator.py"
+    "master_rsi_divergence", SIGNAL_GEN_DIR / "rsi_divergence_signal_generator.py"
 )
 RSI_REVERSAL_LOGIC = load_module(
-    "master_rsi_reversal", SIGNAL_GEN_DIR / "Nifty RSI Reversal Signal Generator.py"
+    "master_rsi_reversal", SIGNAL_GEN_DIR / "rsi_reversal_signal_generator.py"
 )
 STOCHASTIC_LOGIC = load_module(
-    "master_stochastic_oscillator", SIGNAL_GEN_DIR / "Nifty Stochastic Oscillator Signal Generator.py"
+    "master_stochastic_oscillator", SIGNAL_GEN_DIR / "stochastic_oscillator_signal_generator.py"
 )
 SUPERTREND_PORT_LOGIC = load_module(
-    "master_supertrend_port", SIGNAL_GEN_DIR / "Nifty Supertrend Signal Generator.py"
+    "master_supertrend_port", SIGNAL_GEN_DIR / "supertrend_signal_generator.py"
 )
 VOLATILITY_BREAKOUT_LOGIC = load_module(
-    "master_volatility_breakout", SIGNAL_GEN_DIR / "Nifty Volatility Breakout Signal Generator.py"
+    "master_volatility_breakout", SIGNAL_GEN_DIR / "volatility_breakout_signal_generator.py"
 )
 # Regime-adaptive router (ported from the MIT-licensed
 # workratananmol-hub/nifty-options-paper-trading-bot). It dispatches between an

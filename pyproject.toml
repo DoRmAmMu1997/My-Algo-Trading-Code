@@ -120,6 +120,23 @@ files = [
     "Signal Generators/renko_strategy_logic.py",
     "Signal Generators/renko_strategy_logic_9_21.py",
     "Signal Generators/misc_strategy_common.py",
+    # ADR-0014 tier 1, batch 1 (2026-09-02): the 13 TradingBot ports were
+    # renamed off spaced basenames. NINE of them pass mypy unmodified and are
+    # admitted here. The other four -- mean_reversion_zscore, parabolic_sar,
+    # rsi_reversal and supertrend -- report Any|None argument errors from
+    # `.get()` results reaching int()/float(), and stay OUT until those are
+    # fixed on their own merits. Admitting only what passes keeps this tier a
+    # rename; silencing four files with ignores would make it a typing change
+    # wearing a rename's diff, which is what ADR-0014 exists to prevent.
+    "Signal Generators/bollinger_bands_signal_generator.py",
+    "Signal Generators/keltner_squeeze_signal_generator.py",
+    "Signal Generators/ml_ensemble_signal_generator.py",
+    "Signal Generators/multi_timeframe_signal_generator.py",
+    "Signal Generators/opening_range_breakout_signal_generator.py",
+    "Signal Generators/rsi_divergence_signal_generator.py",
+    "Signal Generators/sma_crossover_signal_generator.py",
+    "Signal Generators/stochastic_oscillator_signal_generator.py",
+    "Signal Generators/volatility_breakout_signal_generator.py",
     "Signal Generators/CPR Strategy/cpr_strategy_logic.py",
     # Tier 4 of ADR-0014: renamed from spaced basenames on 2026-09-02 and
     # admitted to the type gate in the same commit, which is the entire point

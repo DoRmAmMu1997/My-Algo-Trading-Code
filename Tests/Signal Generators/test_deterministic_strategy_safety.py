@@ -266,7 +266,7 @@ def test_fixed_fixture_indicator_and_signal_snapshot():
         "mat106_snapshot_profit",
     )
     supertrend_module = _load_module(
-        "Nifty Supertrend Signal Generator.py",
+        "supertrend_signal_generator.py",
         "mat106_snapshot_supertrend",
     )
     common = _load_module("misc_strategy_common.py", "mat106_snapshot_common")

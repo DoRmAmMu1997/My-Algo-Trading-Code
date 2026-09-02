@@ -45,19 +45,19 @@ independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 
 | File | Strategy idea |
 |---|---|
-| `Nifty SMA Crossover Signal Generator.py` | fast/slow SMA crossover |
-| `Nifty Bollinger Bands Signal Generator.py` | bounce off a band (mean reversion) |
-| `Nifty Keltner Squeeze Signal Generator.py` | BB-inside-KC squeeze release + MACD sign |
-| `Nifty Mean Reversion Zscore Signal Generator.py` | fade z-score extremes back to the mean |
-| `Nifty ML Ensemble Signal Generator.py` | RandomForest P(up) — **requires scikit-learn** |
-| `Nifty Multi Timeframe Signal Generator.py` | trend SMA + EMA crossover + RSI band |
-| `Nifty Opening Range Breakout Signal Generator.py` | close breaks open +/- ATR |
-| `Nifty Parabolic SAR Signal Generator.py` | SAR flip filtered by ADX |
-| `Nifty RSI Divergence Signal Generator.py` | price vs RSI swing divergence |
-| `Nifty RSI Reversal Signal Generator.py` | oversold/overbought reversal |
-| `Nifty Stochastic Oscillator Signal Generator.py` | %K/%D cross in zone, trend-filtered |
-| `Nifty Supertrend Signal Generator.py` | ATR-band Supertrend flip |
-| `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
+| `sma_crossover_signal_generator.py` | fast/slow SMA crossover |
+| `bollinger_bands_signal_generator.py` | bounce off a band (mean reversion) |
+| `keltner_squeeze_signal_generator.py` | BB-inside-KC squeeze release + MACD sign |
+| `mean_reversion_zscore_signal_generator.py` | fade z-score extremes back to the mean |
+| `ml_ensemble_signal_generator.py` | RandomForest P(up) — **requires scikit-learn** |
+| `multi_timeframe_signal_generator.py` | trend SMA + EMA crossover + RSI band |
+| `opening_range_breakout_signal_generator.py` | close breaks open +/- ATR |
+| `parabolic_sar_signal_generator.py` | SAR flip filtered by ADX |
+| `rsi_divergence_signal_generator.py` | price vs RSI swing divergence |
+| `rsi_reversal_signal_generator.py` | oversold/overbought reversal |
+| `stochastic_oscillator_signal_generator.py` | %K/%D cross in zone, trend-filtered |
+| `supertrend_signal_generator.py` | ATR-band Supertrend flip |
+| `volatility_breakout_signal_generator.py` | Larry Williams prev-range breakout |
 | `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
 
 # Regime Adaptive port (`Regime Adaptive Strategy/`) — different source project

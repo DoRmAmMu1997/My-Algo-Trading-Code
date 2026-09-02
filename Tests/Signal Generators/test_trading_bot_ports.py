@@ -62,19 +62,19 @@ if str(GEN_DIR) not in sys.path:
 
 # (path relative to this folder, attr prefix, build-function name, optional import the port needs)
 PORTS = [
-    ("Nifty SMA Crossover Signal Generator.py", "SMACrossover", "sma_crossover", None),
-    ("Nifty Bollinger Bands Signal Generator.py", "BollingerBands", "bollinger_bands", None),
-    ("Nifty Keltner Squeeze Signal Generator.py", "KeltnerSqueeze", "keltner_squeeze", None),
-    ("Nifty Mean Reversion Zscore Signal Generator.py", "MeanReversionZscore", "mean_reversion_zscore", None),
-    ("Nifty ML Ensemble Signal Generator.py", "MLEnsemble", "ml_ensemble", "sklearn"),
-    ("Nifty Multi Timeframe Signal Generator.py", "MultiTimeframe", "multi_timeframe", None),
-    ("Nifty Opening Range Breakout Signal Generator.py", "OpeningRangeBreakout", "opening_range_breakout", None),
-    ("Nifty Parabolic SAR Signal Generator.py", "ParabolicSAR", "parabolic_sar", None),
-    ("Nifty RSI Divergence Signal Generator.py", "RSIDivergence", "rsi_divergence", None),
-    ("Nifty RSI Reversal Signal Generator.py", "RSIReversal", "rsi_reversal", None),
-    ("Nifty Stochastic Oscillator Signal Generator.py", "StochasticOscillator", "stochastic_oscillator", None),
-    ("Nifty Supertrend Signal Generator.py", "Supertrend", "supertrend", None),
-    ("Nifty Volatility Breakout Signal Generator.py", "VolatilityBreakout", "volatility_breakout", None),
+    ("sma_crossover_signal_generator.py", "SMACrossover", "sma_crossover", None),
+    ("bollinger_bands_signal_generator.py", "BollingerBands", "bollinger_bands", None),
+    ("keltner_squeeze_signal_generator.py", "KeltnerSqueeze", "keltner_squeeze", None),
+    ("mean_reversion_zscore_signal_generator.py", "MeanReversionZscore", "mean_reversion_zscore", None),
+    ("ml_ensemble_signal_generator.py", "MLEnsemble", "ml_ensemble", "sklearn"),
+    ("multi_timeframe_signal_generator.py", "MultiTimeframe", "multi_timeframe", None),
+    ("opening_range_breakout_signal_generator.py", "OpeningRangeBreakout", "opening_range_breakout", None),
+    ("parabolic_sar_signal_generator.py", "ParabolicSAR", "parabolic_sar", None),
+    ("rsi_divergence_signal_generator.py", "RSIDivergence", "rsi_divergence", None),
+    ("rsi_reversal_signal_generator.py", "RSIReversal", "rsi_reversal", None),
+    ("stochastic_oscillator_signal_generator.py", "StochasticOscillator", "stochastic_oscillator", None),
+    ("supertrend_signal_generator.py", "Supertrend", "supertrend", None),
+    ("volatility_breakout_signal_generator.py", "VolatilityBreakout", "volatility_breakout", None),
     ("Regime Adaptive Strategy/Nifty Regime Adaptive Signal Generator.py",
      "RegimeAdaptive", "regime_adaptive", None),
 ]
@@ -215,7 +215,7 @@ FORCED_LEVELS = {
 def test_ml_training_discards_infinite_feature_rows():
     """scikit-learn must never receive infinity from malformed market data."""
     pytest.importorskip("sklearn")
-    module = _load_port("Nifty ML Ensemble Signal Generator.py")
+    module = _load_port("ml_ensemble_signal_generator.py")
     config = module.MLEnsembleConfig(
         training_window=8,
         min_training_rows=4,

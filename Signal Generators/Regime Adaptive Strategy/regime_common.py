@@ -137,7 +137,7 @@ def attach_opening_range(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
     3. Grouping is per `session_date`, so yesterday's range can never survive
        into today.
 
-    NOTE: this is NOT what `Nifty Opening Range Breakout Signal Generator.py`
+    NOTE: this is NOT what `opening_range_breakout_signal_generator.py`
     computes. That file puts an ATR band around each candle's own open, which is
     a different idea despite the similar name.
     """
