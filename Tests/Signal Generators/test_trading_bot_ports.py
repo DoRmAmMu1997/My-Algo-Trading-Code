@@ -75,7 +75,7 @@ PORTS = [
     ("stochastic_oscillator_signal_generator.py", "StochasticOscillator", "stochastic_oscillator", None),
     ("supertrend_signal_generator.py", "Supertrend", "supertrend", None),
     ("volatility_breakout_signal_generator.py", "VolatilityBreakout", "volatility_breakout", None),
-    ("Regime Adaptive Strategy/Nifty Regime Adaptive Signal Generator.py",
+    ("Regime Adaptive Strategy/regime_adaptive_signal_generator.py",
      "RegimeAdaptive", "regime_adaptive", None),
 ]
 PORT_IDS = [prefix for (_f, prefix, _b, _d) in PORTS]

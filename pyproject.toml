@@ -143,6 +143,12 @@ files = [
     # and opening_strike_pcr_vwap_atr reports 12 argument-type errors on its
     # decision dataclass. Both stay out until fixed on their own merits.
     "Signal Generators/supertrend_signal_generator_bullish.py",
+    # ADR-0014 tier 1, batch 3 (2026-09-02). The Regime Adaptive router is
+    # clean and joins here; cpr_algo3_signal_generator reports 6 errors and
+    # stays out. Its two candidate rules in the same folder are already in
+    # scope below, so the router's admission completes that strategy's set
+    # apart from the candidates' own module.
+    "Signal Generators/Regime Adaptive Strategy/regime_adaptive_signal_generator.py",
     "Signal Generators/CPR Strategy/cpr_strategy_logic.py",
     # Tier 4 of ADR-0014: renamed from spaced basenames on 2026-09-02 and
     # admitted to the type gate in the same commit, which is the entire point

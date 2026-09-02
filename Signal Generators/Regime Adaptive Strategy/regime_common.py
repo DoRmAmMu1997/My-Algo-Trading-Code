@@ -19,7 +19,7 @@ import ...` from inside this folder would not resolve at runtime.
 
 Rather than repeat a path bootstrap in every module here, exactly ONE module
 does it -- this one -- and re-exports the handful of shared indicators the rest
-of the folder needs. So `Nifty Regime Adaptive Signal Generator.py` and
+of the folder needs. So `regime_adaptive_signal_generator.py` and
 `regime_candidates.py` import only from their own siblings, with no path magic
 of their own. (`conftest.py` does the equivalent for pytest.)
 

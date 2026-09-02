@@ -38,7 +38,7 @@ from regime_candidates import (  # noqa: E402
 
 def _load_router():
     """Load the spaced-filename generator the way the master file does."""
-    path = STRATEGY_DIR / "Nifty Regime Adaptive Signal Generator.py"
+    path = STRATEGY_DIR / "regime_adaptive_signal_generator.py"
     spec = importlib.util.spec_from_file_location("regime_adaptive_under_test", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

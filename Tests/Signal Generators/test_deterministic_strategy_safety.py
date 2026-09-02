@@ -173,7 +173,7 @@ def test_opening_strike_is_consumed_only_after_entry_acknowledgement():
             {"trend_move_pct": float("nan")},
         ),
         (
-            "CPR Strategy/Nifty CPR Algo 3 Signal Generator.py",
+            "CPR Strategy/cpr_algo3_signal_generator.py",
             "mat106_cpr3_config",
             "CPRAlgo3Config",
             {"call_arsi_min": float("nan")},

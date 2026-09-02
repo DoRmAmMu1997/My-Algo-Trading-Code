@@ -20,7 +20,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/cpr_algo1_signal_generator.py` | Algo 1 trend-only CPR wrapper | CPR trend-only callers |
 | `CPR Strategy/cpr_algo2_signal_generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
 | `CPR Strategy/cpr_combined_signal_generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
-| `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
+| `CPR Strategy/cpr_algo3_signal_generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
 | `CPR AI Agent/` | Frozen five-minute context, four no-argument tools, Codex judgment, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
@@ -75,7 +75,7 @@ Everything for it lives in its own folder, `Regime Adaptive Strategy/`:
 
 | File | Role |
 |---|---|
-| `Nifty Regime Adaptive Signal Generator.py` | the router — the only worker of the three |
+| `regime_adaptive_signal_generator.py` | the router — the only worker of the three |
 | `regime_candidates.py` | the two candidate rules, as pure column-producing functions |
 | `regime_common.py` | session date, session VWAP, session opening range — and this folder's **only** `sys.path` bootstrap, which is why it re-exports the shared indicators from `misc_strategy_common` one level up |
 | `REGIME_PORTING_NOTES.md` | **read before enabling live** — what was dropped and why |

@@ -14,7 +14,7 @@ NOTE: this combined stream covers Algo 1 + Algo 2 only, because they all read th
 SAME single chart (the NIFTY spot). Algo 3 ("CPR basic setup") is deliberately
 NOT folded in here: it is multi-instrument (it needs spot + an ITM CE + an ITM PE
 together), so it cannot share this single-frame decision stream. It lives beside
-this file as its own generator - see `Nifty CPR Algo 3 Signal Generator.py`.
+this file as its own generator - see `cpr_algo3_signal_generator.py`.
 """
 
 from __future__ import annotations

@@ -1303,7 +1303,7 @@ CPR_LOGIC = load_module(
 sys.modules.setdefault("cpr_strategy_logic", CPR_LOGIC)
 CPR_ALGO3_LOGIC = load_module(
     "master_cpr_algo3_signal_generator",
-    ROOT_DIR / "Signal Generators" / "CPR Strategy" / "Nifty CPR Algo 3 Signal Generator.py",
+    ROOT_DIR / "Signal Generators" / "CPR Strategy" / "cpr_algo3_signal_generator.py",
 )
 
 # CPR Codex AI modules are loaded from a directory whose name contains spaces,
@@ -1550,7 +1550,7 @@ VOLATILITY_BREAKOUT_LOGIC = load_module(
 # Signal Generators/Regime Adaptive Strategy/REGIME_PORTING_NOTES.md.
 REGIME_ADAPTIVE_LOGIC = load_module(
     "master_regime_adaptive",
-    SIGNAL_GEN_DIR / "Regime Adaptive Strategy" / "Nifty Regime Adaptive Signal Generator.py",
+    SIGNAL_GEN_DIR / "Regime Adaptive Strategy" / "regime_adaptive_signal_generator.py",
 )
 
 # =============================================================================
@@ -9447,7 +9447,7 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
     Unlike the single-chart CPR worker above, Algo 3 watches THREE charts at once:
     the NIFTY spot plus a ~ITM CE and a ~ITM PE of the CURRENT-week expiry. It only
     fires when VWAP and the CPR band line up across all three (with RSI/ARSI and the
-    target read off the spot). See `Nifty CPR Algo 3 Signal Generator.py`.
+    target read off the spot). See `cpr_algo3_signal_generator.py`.
 
     The two ITM options are OBSERVATION ONLY: a signal still BUYS the ATM CE/PE of
     the next-next expiry through the shared, battle-tested `enter_position` path, so
