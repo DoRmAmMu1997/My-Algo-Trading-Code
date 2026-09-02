@@ -1241,6 +1241,45 @@ RISK DISCIPLINE
   REWARD/RISK are unchanged, and it is not a licence to hold longer — v4f still
   books when the rate of gain dies, and v4q's obviousness rule still ends the hold.
   It governs HOW MANY times you enter, not when you leave.
+- A BREAKOUT THROUGH THE LEVEL YOUR PREMISE FORBADE ENDS THAT PREMISE FOR THE
+  SESSION (v4v). The LOSS-side twin of the rule above. That one governs re-entry
+  after a booked WINNER; this governs re-entry after the premise itself has been
+  proved wrong, which nothing else here covers — MOVE-EXHAUSTION also keys on a
+  move already BOOKED, and POST-LOSS SPEED LIMIT only asks that the NEXT setup be
+  fresh and high-quality, a bar a competent read clears every few minutes.
+  IH names the mechanism and predicts the failure in one breath: "if a trap forms
+  here of a breakout, then it will be the WHOLE DAY'S TRAP. Then you sell here,
+  sell here — YOU WILL BE WRONG IN ALL TWO-THREE PLACES." And why an open in your
+  favour is not safety: "sometimes, SEEING THE GAP-DOWN, OTHER PEOPLE ALSO START
+  SELLING, and the market makes a trap FOR THAT DAY."
+  PRACTICAL FORM: when you entered on "price must not cross X" and price crosses
+  X, that premise is dead for the SESSION, not merely for that entry. A later
+  pattern in the same direction is not a new setup — it is the same dead premise
+  wearing a new candle. To trade that direction again you need a NEW premise
+  naming a DIFFERENT crowd, trapped by price action that happened AFTER the
+  break, and you must say which. "Another clean bearish engulfing" is not that.
+  THE CLOCK TELLS YOU BEFORE THE LEVEL DOES: he budgets the move — "momentum
+  should have happened in 5-10 minutes when we made the trade", "there should
+  have been a fall by 10:00" — and treats overrun as evidence rather than as a
+  reason for patience: "the time it is taking is EXTRA for us".
+  MEASURED ON THIS BOOK, and it is the worst day in the series: 2026-09-02 took
+  SIX shorts in 65 minutes on ONE premise — longs trapped by BankNIFTY's failed
+  breakout — for -3,877.25. The premise died on the second entry, when 23837
+  broke and the stop paid -1,086.50. Five entries followed it, each naming a
+  fresh PATTERN (double top, fibo rejection, bearish engulfing, shooting star)
+  and the SAME crowd. That substitution of a pattern for a crowd is exactly what
+  this rule forbids.
+  WRITTEN AGAINST THE WRONG READING, and today is the cleanest proof available:
+  this is NOT a rule about direction. IH took the SAME side on the SAME premise
+  and was ALSO wrong — he lost too. The read was never the error; taking it six
+  times was. Nor is it "never re-enter": the sixth entry made +672.00. What
+  separated him from us is that he entered ONCE, sat through the adverse move,
+  and cut ONCE at his limit — "DO NOT FIGHT WHEN YOU ARE WRONG; make good profit
+  when you are right."
+  IT RELAXES NO EXIT. The stop, the max loss, premise-invalidation and the 15:15
+  square-off are unchanged, and it is not a licence to hold a loser longer —
+  INDEX HIERARCHY ON THE WAY OUT still cuts the basket. It governs whether you
+  may OPEN the next trade, never whether you may close this one.
 - ONLY RIDE AS FAR AS YOU KNOW THE ROAD: book when the situation stops matching a
   setup you actually have, even if nothing has invalidated and the move might well
   continue. "More momentum could still come, but this is not one of the setups that
