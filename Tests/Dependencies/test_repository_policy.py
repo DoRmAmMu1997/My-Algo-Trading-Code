@@ -172,15 +172,26 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # and openai-codex is satisfied too, so the shared single-version constraint
     # that forced these into one file still holds. Nothing to validate beyond a
     # clean resolve, which CI does perform.
-    # DELIBERATELY NOT BUMPED (2026-09-02, PR #151). Dependabot proposed mcp
-    # 2.1.1 -- the first major to reach a PR since that ignore was retired, which
-    # is the retirement working as intended. CI refused it with a REAL breakage,
-    # not a policy failure: 2.x deletes `mcp.server.fastmcp`, renaming FastMCP to
-    # MCPServer, and `test_cpr_ai_context` / `test_cpr_ai_runtime` both died on
-    # ModuleNotFoundError -- the exact two tests cited as the coverage that made
-    # retiring the ignore safe. Taking 2.x means porting cpr_ai_mcp_server and
-    # re-verifying its four frozen tools, which belongs in its own PR.
-    assert "mcp==1.29.1" in ai
+    # 1.29.1 -> 2.1.1 (2026-09-02, PR #151). A MAJOR, taken together with the
+    # port it required, in the same commit. Held first in this same PR, then
+    # ported once the v2 surface had been read rather than assumed.
+    # WHAT ACTUALLY BROKE: 2.x deletes `mcp.server.fastmcp` and renames FastMCP
+    # to MCPServer, so cpr_ai_mcp_server failed at import and took
+    # test_cpr_ai_context and test_cpr_ai_runtime with it -- the exact two tests
+    # cited in PR #150 as the coverage that made retiring the mcp-major ignore
+    # safe. They caught it the first week it could reach a PR.
+    # WHAT DID NOT CHANGE, verified against 2.1.1 in an isolated venv rather
+    # than inferred from the migration guide: the `@server.tool(name=,
+    # description=)` decorator signature, `run(transport="stdio")`, the
+    # constructor's `log_level`, and the tool objects the tests read
+    # (`_tool_manager._tools`, `get_tool`, `.parameters["properties"] == {}`,
+    # `.fn()`). So the port is the import and the class name, and the four
+    # frozen no-argument tools are registered exactly as before.
+    # THE OTHER AGENT WAS CHECKED TOO, because one process can hold only one
+    # mcp: claude-agent-sdk imports the LOW-LEVEL `mcp.server.Server` plus
+    # mcp.shared.memory / mcp.shared.message / mcp.types, and every one of those
+    # paths still resolves on 2.1.1, so SL Hunting is unaffected.
+    assert "mcp==2.1.1" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
     assert any(

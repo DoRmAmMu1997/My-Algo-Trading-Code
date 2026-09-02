@@ -23,14 +23,14 @@ openai-codex==0.147.0
 # -- Shared by both agents ----------------------------------------------------
 # These are the packages that forced the merge: one process, one version.
 #
-# HELD AT 1.x DELIBERATELY. Dependabot proposed mcp 2.1.1 in PR #151 and CI
-# refused it with a real breakage, not a policy failure: 2.x removes
-# `mcp.server.fastmcp` entirely, renaming FastMCP to MCPServer
-# (`from mcp.server.mcpserver import MCPServer`) and changing other APIs.
-# `Signal Generators/CPR AI Agent/cpr_ai_mcp_server.py` imports the old path to
-# build the four frozen no-argument context tools, so taking 2.x is a PORT of
-# that server plus a re-verification of its tool surface -- deliberate work with
-# its own PR, not a pin bump. The ignore for mcp majors stays RETIRED so the
-# release keeps arriving as a visible red PR rather than silence.
-mcp==1.29.1
+# 2.x TAKEN, WITH THE PORT IT REQUIRED. mcp 2.x deletes `mcp.server.fastmcp`
+# and renames FastMCP to MCPServer, which broke cpr_ai_mcp_server outright --
+# CI caught it as a red PR the first week the mcp-major ignore was retired.
+# The port is in the same commit as this bump: only the import and the class
+# name changed, because 2.x keeps the `@server.tool(name=, description=)`
+# signature, `run(transport="stdio")`, and the tool objects the tests read.
+# Checked against BOTH agents, since one process can hold only one mcp:
+# claude-agent-sdk uses the LOW-LEVEL `mcp.server.Server` plus mcp.shared.* and
+# mcp.types, none of which 2.x moved, so SL Hunting is unaffected.
+mcp==2.1.1
 pydantic==2.13.5

@@ -44,12 +44,19 @@ def build_mcp_server(snapshot_path: str):
 
     # This optional import belongs inside the factory so a missing MCP package
     # disables only this opt-in agent, not the master runner.
-    from mcp.server.fastmcp import FastMCP
+    #
+    # mcp 2.x renamed FastMCP to MCPServer and deleted `mcp.server.fastmcp`
+    # outright, so this import is version-specific rather than merely renamed;
+    # 1.x would raise ModuleNotFoundError here. Everything else about the
+    # server is unchanged: the `@server.tool(name=, description=)` decorator
+    # keeps its v1 signature and `run(transport="stdio")` is still the entry
+    # point, so the four frozen tools below are registered exactly as before.
+    from mcp.server.mcpserver import MCPServer
 
     # Load once before registering tools.  Tool calls below can only copy this
     # object; they cannot observe live feed updates during the Codex turn.
     payload = load_snapshot_payload(snapshot_path)
-    server = FastMCP("cpr-srsi-vwap-context", log_level="ERROR")
+    server = MCPServer("cpr-srsi-vwap-context", log_level="ERROR")
 
     @server.tool(name="session_levels", description="Return frozen CPR and opening-session facts.")
     def session_levels() -> dict[str, Any]:
