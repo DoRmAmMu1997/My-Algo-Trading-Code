@@ -325,7 +325,11 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert config["tool"]["coverage"]["run"]["branch"] is True
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 68.0
+    # 68.0 -> 70.0 (2026-09-02). CI measured 70.2% on five consecutive main
+    # runs, so the floor was raised into the headroom it had accumulated. The
+    # remaining margin is ~0.2pp by design; per pyproject's own rule this only
+    # ever moves UP.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 70.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():

@@ -95,6 +95,12 @@ files = [
     "Dependencies/session_state.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
+    # Added 2026-09-02. Nothing imports this script, so unlike every other
+    # module here it was never reached transitively either -- a canary type
+    # error planted in it escaped the gate entirely. It decides whether the
+    # coverage build passes, so an unchecked type error here silently weakens
+    # a gate rather than breaking a feature.
+    "scripts/check_coverage_thresholds.py",
     "Dependencies/Kotak API/kotak_execution.py",
     "Dependencies/Kotak API/diagnose_kotak_symbol.py",
     "Dependencies/Shoonya API/shoonya_execution.py",
@@ -213,17 +219,23 @@ omit = [
 # enforced from coverage.json by the small policy script because Coverage.py has
 # only one global fail-under setting.
 #
-# 68.0 is set against CI's 69.1%. USE THE CI NUMBER, NOT A LOCAL ONE: a developer
-# machine with the optional broker SDKs installed (neo_api_client, pyotp) runs 7
-# tests that CI's verify job skips, and reads ~71.4% -- about 2.3 points high. CI
-# installs core + dev + ai + codex-ai only, deliberately (Kotak's official tag
-# pins older pandas/requests and cannot share the audited core environment), so
-# the hosted number is the honest one.
+# 70.0 is set against CI's 70.2% (2026-09-02), measured identically on five
+# consecutive main runs -- this number is deterministic, not drifting, so the
+# margin is small BY DESIGN rather than by luck. USE THE CI NUMBER, NOT A LOCAL
+# ONE: a developer machine with the optional broker SDKs installed
+# (neo_api_client, pyotp) runs 7 tests that CI's verify job skips and reads
+# about 2 points high. CI installs core + dev + ai + codex-ai only, deliberately
+# (Kotak's official tag pins older pandas/requests and cannot share the audited
+# core environment), so the hosted number is the honest one.
+#
+# The margin at 70.0 is roughly 0.2pp, about 40 statements. That is deliberate
+# pressure: a PR that adds materially untested code should go red. It is NOT an
+# invitation to lower the floor when it does.
 #
 # Raising this is deliberate and one-way: only move it UP, and only after a CI
 # run shows real headroom. Lowering it to make a red build pass defeats the gate
 # -- fix the tests instead.
-fail_under = 68.0
+fail_under = 70.0
 precision = 1
 show_missing = true
 skip_covered = false
