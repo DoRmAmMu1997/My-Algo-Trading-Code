@@ -40,6 +40,13 @@ SAFETY_THRESHOLDS = {
     # dies before publishing results. A regression here is silent until the
     # day it matters, so it carries the data-safety budget.
     "Dependencies/session_state.py": 90.0,
+    # The rolling-window rate limiter, hoisted out of the Flattrade and Dhan
+    # adapters (2026-09-02). It sits directly in front of every live broker
+    # request those two make: if it under-counts, orders breach the broker's
+    # published limits; if it over-waits, a trading decision goes stale. Given
+    # its own row here so the code cannot escape a budget by moving files --
+    # the exact failure this dict's header warns about.
+    "Dependencies/broker_rate_limit.py": 90.0,
 }
 
 # EVERY live execution adapter belongs in this dict. A broker added without a
