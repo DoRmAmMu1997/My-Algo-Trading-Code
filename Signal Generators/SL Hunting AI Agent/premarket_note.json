@@ -1,25 +1,25 @@
 {
-  "for_date": "2026-09-02",
-  "source": "Intraday Hunter, 'Prediction For 02 SEP 2026' (iPeDUGlpMoQ, uploaded 2026-09-01)",
-  "context": "BankNIFTY broke the 500 level, momentum came, held briefly, then the market FELL. His read: after a breakout people like us BUY while the one driving it quietly SELLS. So the trapped LONGS are the seated crowd.",
+  "for_date": "2026-09-03",
+  "source": "Intraday Hunter, 'Prediction For 03 SEP 2026' (8GwfUa2LcL4, uploaded 2026-09-02)",
+  "context": "Selling came, but the market kept flushing sellers out with repeated retracements and recoveries. So today may have been a ONE-DAY TRAP rather than a settled turn -- and the sellers are NOT a seated crowd. SENSEX has expiry.",
   "plan": [
-    "GAP-DOWN: SELL-side setups. This is his PREFERRED open, said outright -- 'if a gap-down opens, that is the best'. The buyers left holding the failed breakout are the crowd being hunted.",
-    "FLAT: SELL-side as well, same plan, no extra condition. He expects flat precisely BECAUSE the operator distributed into the breakout: 'we should see a flat opening, and if we get a gap-down, even better'.",
-    "GAP-UP: he says it should NOT happen, and this is the only branch with a PRECONDITION -- the plan holds only if rejection starts showing as soon as it opens. No rejection at the open means no trade.",
-    "A BIG GAP EITHER WAY IS A STAND-ASIDE, not a flip: 'if some big gap comes, no plan will be kept there for now'. He says it twice, once for BankNIFTY and again for a big gap-up on SENSEX.",
-    "EVERY BRANCH IS SELL-SIDE. That inverts yesterday's note, which bought flat/gap-up to hunt seated PUT traders. The crowd changed sides: three days of selling seated bears, one failed breakout seated bulls.",
-    "NIFTY carries TWO confirmations rather than one -- the chart read AND the rejection -- 'so we are getting a chance to follow both things'. Treat NIFTY as the cleanest of the three, not merely as confirmation."
+    "THE PIVOT IS THE CLOSING PRICE, not a gap size: of BankNIFTY he says 'it is a resistance and it is also a support'. Which side of today's close the market opens on decides the entire plan, so measure the open against that level.",
+    "ABOVE the close: BUY-side setups. His reason is TIME, not price -- 'when a big level's situation has to change, it takes time; do not think one momentum means everything is now fine'. A gap-up says good traders sat from below.",
+    "FLAT to GAP-DOWN: SELL-side, but as a FOLLOW and not a hunt -- 'we will walk WITH the market'. There is no particular strength, and the retracements already flushed the sellers, so no trapped crowd is being targeted here.",
+    "THIS INVERTS TODAY'S NOTE, which was uniformly SELL-side across all three open shapes. Do not carry that branch forward: an open above the close now means BUY, where yesterday the gap-down was his preferred sell.",
+    "SENSEX HAS EXPIRY on this session, so expect expiry-day behaviour in it on top of the shared read.",
+    "BANKNIFTY 57000 is named the important psychological number, sitting between the 57500 resistance and the 56770 support."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24060,
-        24180
+        23965,
+        24060
       ],
       "support": [
-        23850,
-        23900
+        23730,
+        23800
       ]
     },
     {
@@ -29,7 +29,7 @@
         57800
       ],
       "support": [
-        56440,
+        56770,
         57000
       ]
     },
@@ -40,8 +40,8 @@
         77300
       ],
       "support": [
-        76200,
-        76500
+        75940,
+        76200
       ]
     }
   ]

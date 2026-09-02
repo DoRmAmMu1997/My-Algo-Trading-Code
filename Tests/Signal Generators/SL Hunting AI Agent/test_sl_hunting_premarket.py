@@ -201,28 +201,26 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_2_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 01 Sep transcript.
+def test_shipped_note_matches_september_3_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 02 Sep transcript.
 
-    Five things a summarising edit would flatten:
+    Five things a summarising edit would flatten, each of which would change
+    what the agent does at 09:15:
 
-    1. EVERY branch is SELL-side. That is a total inversion of yesterday's note,
-       which bought flat/gap-up to hunt seated PUT traders. Two consecutive notes
-       with inverted branches is the exact setup for carrying the wrong habit
-       forward, and on 31 Aug that cost the whole day's direction -- so the test
-       asserts the inversion is stated in the note rather than left implicit.
-    2. The crowd changed sides. It is no longer the bears seated by a multi-day
-       sell-off; it is the LONGS trapped by a failed BankNIFTY breakout, which is
-       WHY every branch sells. Losing the mechanism leaves three unexplained
-       sell branches that read as a directional call.
-    3. GAP-UP is the ONLY branch carrying a precondition -- rejection must appear
-       at the open. Flattening it to "gap-up = sell" manufactures a trade the
-       note does not authorise.
-    4. A BIG GAP is a STAND-ASIDE, not a flip. Every previous note's veto changed
-       DIRECTION; this one removes the trade entirely. A veto that silently
-       becomes "trade the other way" is worse than no veto.
-    5. NIFTY carries TWO confirmations (chart AND rejection), which is why he
-       treats it as the cleanest of the three.
+    1. The branch pivots on the CLOSING PRICE, not on a gap size. Every note
+       before this one branched on gap shape; this one asks which side of
+       yesterday's close the market opened, and says the close is "a resistance
+       and also a support". Losing that turns a checkable level into a feel.
+    2. The gap-up branch BUYS, which is the exact inverse of the previous
+       session's note (uniformly sell-side). Two consecutive notes with opposite
+       branches is the setup that cost the whole day's direction on 31 Aug, so
+       the inversion has to be stated IN the note, not left implicit.
+    3. The sell branch is a FOLLOW, not a hunt -- "we will walk WITH the market"
+       -- because the retracements already flushed the sellers out. There is no
+       trapped crowd on that side, and reading it as a hunt would invent one.
+    4. His reason for the buy branch is TIME, not price: a big level's situation
+       takes time to change, so one day of selling may be a one-day trap.
+    5. SENSEX has expiry on this session.
     """
     import os
 
@@ -230,58 +228,60 @@ def test_shipped_note_matches_september_2_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-02"
-    assert "iPeDUGlpMoQ" in note.source
-    # The mechanism, not just the conclusion: a breakout that retail bought and
-    # the operator sold into is what seats the crowd being hunted.
-    assert "trapped LONGS are the seated crowd" in note.context
-    assert "people like us BUY" in note.context
+    assert note.for_date == "2026-09-03"
+    assert "8GwfUa2LcL4" in note.source
+    # The mechanism, not just the direction: the sellers were flushed, so they
+    # are NOT the seated crowd, and the day may have been a one-day trap.
+    assert "ONE-DAY TRAP" in note.context
+    assert "sellers are NOT a seated crowd" in note.context
+    assert "SENSEX has expiry" in note.context
 
-    gap_down = next(line for line in note.plan if line.startswith("GAP-DOWN"))
-    assert "SELL-side" in gap_down
-    assert "PREFERRED open" in gap_down
+    pivot = next(line for line in note.plan if line.startswith("THE PIVOT IS THE CLOSING PRICE"))
+    assert "not a gap size" in pivot
+    assert "it is a resistance and it is also a support" in pivot
 
-    flat = next(line for line in note.plan if line.startswith("FLAT"))
-    assert "SELL-side" in flat
-    # Flat shares the gap-down branch outright -- no extra condition on it.
-    assert "no extra condition" in flat
+    buy = next(line for line in note.plan if line.startswith("ABOVE the close"))
+    assert "BUY-side" in buy
+    assert "reason is TIME, not price" in buy
+    assert "do not think one momentum means everything is now fine" in buy
 
-    gap_up = next(line for line in note.plan if line.startswith("GAP-UP"))
-    assert "PRECONDITION" in gap_up
-    assert "rejection starts showing as soon as it opens" in gap_up
-    assert "No rejection at the open means no trade" in gap_up
+    sell = next(line for line in note.plan if line.startswith("FLAT to GAP-DOWN"))
+    assert "SELL-side" in sell
+    # A follow, not a hunt -- and the reason, so it cannot be re-read as one.
+    assert "FOLLOW and not a hunt" in sell
+    assert "walk WITH the market" in sell
+    assert "already flushed the sellers" in sell
 
-    stand_aside = next(line for line in note.plan if line.startswith("A BIG GAP"))
-    assert "STAND-ASIDE, not a flip" in stand_aside
-    assert "no plan will be kept there for now" in stand_aside
+    inversion = next(line for line in note.plan if line.startswith("THIS INVERTS TODAY'S NOTE"))
+    assert "uniformly SELL-side across all three open shapes" in inversion
+    assert "Do not carry that branch forward" in inversion
 
-    inversion = next(line for line in note.plan if line.startswith("EVERY BRANCH IS SELL-SIDE"))
-    assert "inverts yesterday's note" in inversion
-    assert "seated PUT traders" in inversion
-
-    assert any("TWO confirmations" in line and "chart read AND the rejection" in line
-               for line in note.plan)
+    assert any("SENSEX HAS EXPIRY" in line for line in note.plan)
+    assert any("57000 is named the important psychological number" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24060.0, 24180.0],
-            "support": [23850.0, 23900.0],
+            "resistance": [23965.0, 24060.0],
+            "support": [23730.0, 23800.0],
         },
         {
-            # Caption ran the two supports together as "575640"; confirmed off
-            # the chart by the operator as 57000 and 56440. Do NOT reconstruct
-            # these from the caption.
+            # Caption gave only "56,770" for two supports, right after naming
+            # 57,000 as the psychological number; confirmed off the chart by the
+            # operator as 57000 and 56770. Do NOT reconstruct from the caption.
             "index": "BANKNIFTY",
             "resistance": [57500.0, 57800.0],
-            "support": [56440.0, 57000.0],
+            "support": [56770.0, 57000.0],
         },
         {
-            # Caption ran the two resistances together as "777300"; confirmed off
-            # the chart by the operator as 77000 and 77300. Do NOT reconstruct
-            # these from the caption -- the obvious split (77700/77300) is wrong.
+            # Both SENSEX sides were garbled: resistances ran together as
+            # "777300" (the SAME string as the 02 Sep note) and supports as the
+            # eight-digit "76275940". Confirmed by the operator as 77000/77300
+            # and 76200/75940. The repeated resistance garble is a coincidence
+            # of speech, not evidence the levels were unchanged -- do not assume
+            # a repeat next time it appears.
             "index": "SENSEX",
             "resistance": [77000.0, 77300.0],
-            "support": [76200.0, 76500.0],
+            "support": [75940.0, 76200.0],
         },
     ]
