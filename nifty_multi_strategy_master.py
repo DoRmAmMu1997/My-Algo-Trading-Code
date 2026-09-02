@@ -11021,6 +11021,13 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
     (`_pick_hedged_puts`), per the user's design hint. The resolver only
     supplies the primitives.
     """
+    # Both hedged workers REPLACE the base class's single-leg PaperPosition
+    # with a two-leg HedgedPaperPosition in their own __init__. Declaring that
+    # here is a pure annotation -- it creates no class attribute and changes no
+    # runtime behaviour -- but it is what lets the type checker see the main_*
+    # and hedge_* fields this class actually uses.
+    pos: HedgedPaperPosition
+
 
     strategy_name = "SupertrendBullish"
     timeframe = "1"
@@ -11680,6 +11687,13 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
     We override `run` to run SL/target every poll and dispatch entries
     on the signature gate.
     """
+    # Both hedged workers REPLACE the base class's single-leg PaperPosition
+    # with a two-leg HedgedPaperPosition in their own __init__. Declaring that
+    # here is a pure annotation -- it creates no class attribute and changes no
+    # runtime behaviour -- but it is what lets the type checker see the main_*
+    # and hedge_* fields this class actually uses.
+    pos: HedgedPaperPosition
+
 
     strategy_name = "DonchianBearish"
     timeframe = "1"
