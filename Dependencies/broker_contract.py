@@ -115,6 +115,30 @@ _PARTIAL_STATES = frozenset(
 TERMINAL_BROKER_STATES = _FILLED_STATES | _REJECTED_STATES
 
 
+def exact_int(value: Any) -> int | None:
+    """Parse a broker quantity only when it is a finite whole number.
+
+    Deliberately SIGNED, unlike ``_non_negative_int`` below: a position's net
+    quantity is legitimately negative when the account is short, so rejecting
+    negatives here would read a real short position as unparseable. Keep the
+    two separate -- the non-negative variant guards order quantities, where a
+    negative genuinely is nonsense.
+
+    Hoisted from the four broker adapters on 2026-09-02, where it was
+    byte-identical in all four (verified by digest before the move).
+    """
+
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
+
+
 def _non_negative_int(value: Any) -> int | None:
     """Return an exact non-negative integer, never a rounded quantity."""
 

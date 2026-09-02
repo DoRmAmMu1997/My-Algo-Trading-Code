@@ -80,8 +80,14 @@ from broker_contract import (  # noqa: E402
     OpenPosition,
     OrderResult,
     OrderStatus,
+    exact_int,
     normalize_order_result,
 )
+
+# This module and its tests refer to the helper by its historical private name,
+# so keep that binding rather than editing 8-9 call sites and the suites that
+# read `<module>._exact_int`. The implementation now lives in broker_contract.
+_exact_int = exact_int
 
 try:
     from dotenv import load_dotenv
@@ -115,21 +121,6 @@ _MAX_RATE_LIMIT_WAIT_SECONDS = 2.0
 
 _PRODUCT_MAP = {"INTRADAY": "I", "NORMAL": "M"}
 _SIDE_MAP = {"BUY": "B", "SELL": "S"}
-_TERMINAL_FAILURE_STATES = {"rejected", "cancelled", "canceled"}
-
-
-def _exact_int(value: Any) -> int | None:
-    """Parse a broker quantity only when it is a finite whole number."""
-
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or not number.is_integer():
-        return None
-    return int(number)
 
 
 def _positive_price(value: Any) -> float:
@@ -1197,10 +1188,7 @@ class FlattradeExecutionClient:
                 return BrokerQueryResult.indeterminate(
                     "Flattrade open-order query contained incomplete order data."
                 )
-            if raw_state in {
-                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
-                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
-            }:
+            if raw_state in TERMINAL_BROKER_STATES:
                 continue
             if snapshot.remaining_quantity <= 0:
                 continue

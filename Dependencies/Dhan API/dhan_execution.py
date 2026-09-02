@@ -116,8 +116,14 @@ from broker_contract import (  # noqa: E402
     OpenPosition,
     OrderResult,
     OrderStatus,
+    exact_int,
     normalize_order_result,
 )
+
+# This module and its tests refer to the helper by its historical private name,
+# so keep that binding rather than editing 8-9 call sites and the suites that
+# read `<module>._exact_int`. The implementation now lives in broker_contract.
+_exact_int = exact_int
 
 from Dependencies.secret_redaction import redact_text  # noqa: E402
 
@@ -180,20 +186,6 @@ _SIDE_KEYS = ("transactionType", "transaction_type")
 _PRODUCT_KEYS = ("productType", "product_type")
 _NET_QTY_KEYS = ("netQty", "net_qty", "netQuantity")
 _REASON_KEYS = ("omsErrorDescription", "oms_error_description", "errorMessage")
-
-
-def _exact_int(value: Any) -> int | None:
-    """Parse a broker quantity only when it is a finite whole number."""
-
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or not number.is_integer():
-        return None
-    return int(number)
 
 
 def _positive_price(value: Any) -> float:
@@ -1313,10 +1305,7 @@ class DhanExecutionClient:
                 return BrokerQueryResult.indeterminate(
                     "Dhan open-order query contained incomplete order data."
                 )
-            if raw_state in {
-                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
-                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
-            }:
+            if raw_state in TERMINAL_BROKER_STATES:
                 continue
             if snapshot.remaining_quantity <= 0:
                 continue
