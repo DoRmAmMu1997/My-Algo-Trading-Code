@@ -1283,15 +1283,15 @@ MONEY_MACHINE_LOGIC = load_module(
 )
 SUPERTREND_LOGIC = load_module(
     "master_supertrend_signal_generator_bullish",
-    ROOT_DIR / "Signal Generators" / "Supertrend Signal Generator Bullish.py",
+    ROOT_DIR / "Signal Generators" / "supertrend_signal_generator_bullish.py",
 )
 DONCHIAN_BEARISH_LOGIC = load_module(
     "master_donchian_signal_generator_bearish",
-    ROOT_DIR / "Signal Generators" / "Donchian Signal Generator Bearish.py",
+    ROOT_DIR / "Signal Generators" / "donchian_signal_generator_bearish.py",
 )
 OPENING_STRIKE_LOGIC = load_module(
     "master_nifty_opening_strike_pcr_vwap_atr_signal_generator",
-    ROOT_DIR / "Signal Generators" / "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
+    ROOT_DIR / "Signal Generators" / "opening_strike_pcr_vwap_atr_signal_generator.py",
 )
 CPR_LOGIC = load_module(
     "master_cpr_strategy_logic",

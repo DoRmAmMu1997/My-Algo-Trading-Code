@@ -10,7 +10,7 @@ This file is an import-able module. You give it a DataFrame of candles
 extra columns that describe the Donchian Channel state and a *bearish*
 entry signal.
 
-It is the bearish counterpart of `Supertrend Signal Generator Bullish.py`
+It is the bearish counterpart of `supertrend_signal_generator_bullish.py`
 in the same folder. Both files share the same I/O contract:
 
     * Input  : a pandas DataFrame with O/H/L/C columns (any case).

@@ -5,7 +5,7 @@ This folder contains the signal generators which will be imported into the main 
 Signal generator expects the OHLC data DataFrame as an argument(which will be provided by the main front test file) and works on the data to generate a bullish or a bearish signal
 
 # The coding itself?
-- Claude Opus 4.7 Max: Generated Donchian Signal Generator Bearish.py and Supertrend Signal Generator Bullish.py
+- Claude Opus 4.7 Max: Generated donchian_signal_generator_bearish.py and supertrend_signal_generator_bullish.py
 - GPT-5.4-xhigh: Generated ema_trend_strategy_logic.py, heikin_ashi_strategy_logic.py, profit_shooter_strategy_logic.py, renko_strategy_logic.py and renko_strategy_logic_9_21.py
 - GPT-5.5-xhigh: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
 - GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
@@ -26,8 +26,8 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
 | `Subhamoy Strategies/goldmine_signal_generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
 | `Subhamoy Strategies/money_machine_signal_generator.py` | Thin NIFTY Money Machine wrapper | Money Machine callers that prefer wrapper functions |
-| `Donchian Signal Generator Bearish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
-| `Supertrend Signal Generator Bullish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
+| `donchian_signal_generator_bearish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
+| `supertrend_signal_generator_bullish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
 | `ema_trend_strategy_logic.py` | Stateful signal engine (class) | EMA backtest + front-test master |
 | `heikin_ashi_strategy_logic.py` | Stateful signal engine (class) | front-test master |
 | `Subhamoy Strategies/profit_shooter_strategy_logic.py` | Stateful signal engine (class) | Profit Shooter backtest + front-test master |

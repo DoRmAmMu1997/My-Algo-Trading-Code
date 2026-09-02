@@ -137,6 +137,12 @@ files = [
     "Signal Generators/sma_crossover_signal_generator.py",
     "Signal Generators/stochastic_oscillator_signal_generator.py",
     "Signal Generators/volatility_breakout_signal_generator.py",
+    # ADR-0014 tier 1, batch 2 (2026-09-02). Only the Supertrend Bullish
+    # generator qualifies: donchian_signal_generator_bearish reports unused
+    # TA-Lib `type: ignore` comments plus a union-attr on an optional module,
+    # and opening_strike_pcr_vwap_atr reports 12 argument-type errors on its
+    # decision dataclass. Both stay out until fixed on their own merits.
+    "Signal Generators/supertrend_signal_generator_bullish.py",
     "Signal Generators/CPR Strategy/cpr_strategy_logic.py",
     # Tier 4 of ADR-0014: renamed from spaced basenames on 2026-09-02 and
     # admitted to the type gate in the same commit, which is the entire point
