@@ -129,8 +129,16 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # this build proves nothing about it. Confirm on the next PAPER session that
     # decisions still return ("SLHuntingAgent decision cost ~$..." in the log,
     # alongside the SLH-013 latency line). If they stop, revert this pin first.
-    assert "claude-agent-sdk==0.2.145" in ai
-    assert "pydantic==2.13.4" in ai
+    # 0.2.145 -> 0.2.148 (2026-09-02, PR #151). Three releases, all bundled-CLI
+    # only (2.1.247 -> 2.1.251) with no user-facing Python changes, so none of
+    # the reasoning above needs revisiting. Same standing check as before: CI
+    # never spawns the bundled CLI, so confirm on the next PAPER session that
+    # decisions still return ("SLHuntingAgent decision cost ~$..." in the log).
+    assert "claude-agent-sdk==0.2.148" in ai
+    # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
+    # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
+    # wants >=2.12, and the strict models both agents rely on are unaffected.
+    assert "pydantic==2.13.5" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -164,6 +172,14 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # and openai-codex is satisfied too, so the shared single-version constraint
     # that forced these into one file still holds. Nothing to validate beyond a
     # clean resolve, which CI does perform.
+    # DELIBERATELY NOT BUMPED (2026-09-02, PR #151). Dependabot proposed mcp
+    # 2.1.1 -- the first major to reach a PR since that ignore was retired, which
+    # is the retirement working as intended. CI refused it with a REAL breakage,
+    # not a policy failure: 2.x deletes `mcp.server.fastmcp`, renaming FastMCP to
+    # MCPServer, and `test_cpr_ai_context` / `test_cpr_ai_runtime` both died on
+    # ModuleNotFoundError -- the exact two tests cited as the coverage that made
+    # retiring the ignore safe. Taking 2.x means porting cpr_ai_mcp_server and
+    # re-verifying its four frozen tools, which belongs in its own PR.
     assert "mcp==1.29.1" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
@@ -234,9 +250,23 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # TA-Lib ships a compiled extension built against the numpy 2.x C ABI and
     # declares a bare `numpy` with no ceiling, so nothing in the metadata would
     # stop pip resolving numpy 3.x against a wheel that cannot survive it.
-    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.4.6"):
+    # numpy 2.4.6 -> 2.5.2 (2026-09-02, PR #151) -- the FIRST bump admitted by
+    # retiring the minor half of numpy's Dependabot ignore, and the evidence that
+    # retirement rested on held: MAT-106's determinism snapshot pins EMA, ATR,
+    # ADX, SMA, Supertrend, MACD and Renko to 8 decimal places, and it passed
+    # UNCHANGED on 2.5.2 on both 3.12 and 3.13. Nothing in the indicator pipeline
+    # moved. Majors remain ignored (TA-Lib's compiled extension, no numpy ceiling
+    # declared anywhere).
+    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.5.2"):
         assert runtime_pin in core
-    for tool_pin in ("pytest==9.1.1", "mypy==1.20.2", "bandit==1.9.4", "pip-audit==2.10.1"):
+    # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
+    # admitted by retiring that ignore. It is exactly the case the retirement
+    # argued for -- mypy cannot reach the trading path, so a bad major can only
+    # turn the build red. Note the gate ORDER when reading this PR's history: the
+    # test step runs BEFORE mypy, so the run that failed on mcp never reached
+    # mypy at all and proved nothing about it. The green run on this commit is
+    # what actually type-checks 2.3.1, on both 3.12 and 3.13.
+    for tool_pin in ("pytest==9.1.1", "mypy==2.3.1", "bandit==1.9.4", "pip-audit==2.10.1"):
         assert tool_pin in core
     assert all("==" in line for line in core)
 

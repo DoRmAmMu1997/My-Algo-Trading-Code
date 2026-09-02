@@ -22,5 +22,15 @@ openai-codex==0.147.0
 
 # -- Shared by both agents ----------------------------------------------------
 # These are the packages that forced the merge: one process, one version.
-mcp==2.1.1
+#
+# HELD AT 1.x DELIBERATELY. Dependabot proposed mcp 2.1.1 in PR #151 and CI
+# refused it with a real breakage, not a policy failure: 2.x removes
+# `mcp.server.fastmcp` entirely, renaming FastMCP to MCPServer
+# (`from mcp.server.mcpserver import MCPServer`) and changing other APIs.
+# `Signal Generators/CPR AI Agent/cpr_ai_mcp_server.py` imports the old path to
+# build the four frozen no-argument context tools, so taking 2.x is a PORT of
+# that server plus a re-verification of its tool surface -- deliberate work with
+# its own PR, not a pin bump. The ignore for mcp majors stays RETIRED so the
+# release keeps arriving as a visible red PR rather than silence.
+mcp==1.29.1
 pydantic==2.13.5
