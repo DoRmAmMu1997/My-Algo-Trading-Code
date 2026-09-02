@@ -601,7 +601,7 @@ def test_position_state_allows_only_typed_host_judgment_facts():
 
 
 def test_mcp_server_exposes_exactly_four_no_argument_frozen_context_tools(tmp_path):
-    """The real FastMCP registration surface must match the prompt contract."""
+    """The real MCPServer registration surface must match the prompt contract."""
 
     registry = FrozenCPRContextRegistry(
         build_cpr_context(_two_session_frame(), position_state={"is_flat": True, "entry_price": None})

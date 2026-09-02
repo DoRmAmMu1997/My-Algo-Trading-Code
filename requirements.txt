@@ -21,7 +21,7 @@
 # ---- LIVE RUNTIME (DEPS-001: the verified live-runner set) -------------------
 dhanhq==2.2.0
 pandas==3.0.5
-numpy==2.4.6
+numpy==2.5.2
 backtesting==0.6.6
 python-dotenv==1.2.3
 gspread==6.2.1
@@ -53,10 +53,10 @@ TA-Lib==0.6.8
 # they separate.
 pytest==9.1.1
 ruff==0.16.5
-mypy==1.20.2
+mypy==2.3.1
 bandit==1.9.4
 pre-commit==4.6.2
-coverage==7.15.4
+coverage==7.16.0
 pytest-cov==7.1.0
 pip-audit==2.10.1
 # Type stubs for typed third-party usage in the mypy scope. pandas-stubs is

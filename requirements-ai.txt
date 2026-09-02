@@ -11,7 +11,7 @@
 # -- SL Hunting (Claude Agent SDK) --------------------------------------------
 # The first three are the SDK's direct runtime dependencies; pinning them
 # prevents a fresh install from silently changing the agent transport.
-claude-agent-sdk==0.2.145
+claude-agent-sdk==0.2.148
 anyio==4.14.2
 sniffio==1.3.1
 
@@ -22,5 +22,15 @@ openai-codex==0.147.0
 
 # -- Shared by both agents ----------------------------------------------------
 # These are the packages that forced the merge: one process, one version.
-mcp==1.29.1
-pydantic==2.13.4
+#
+# 2.x TAKEN, WITH THE PORT IT REQUIRED. mcp 2.x deletes `mcp.server.fastmcp`
+# and renames FastMCP to MCPServer, which broke cpr_ai_mcp_server outright --
+# CI caught it as a red PR the first week the mcp-major ignore was retired.
+# The port is in the same commit as this bump: only the import and the class
+# name changed, because 2.x keeps the `@server.tool(name=, description=)`
+# signature, `run(transport="stdio")`, and the tool objects the tests read.
+# Checked against BOTH agents, since one process can hold only one mcp:
+# claude-agent-sdk uses the LOW-LEVEL `mcp.server.Server` plus mcp.shared.* and
+# mcp.types, none of which 2.x moved, so SL Hunting is unaffected.
+mcp==2.1.1
+pydantic==2.13.5

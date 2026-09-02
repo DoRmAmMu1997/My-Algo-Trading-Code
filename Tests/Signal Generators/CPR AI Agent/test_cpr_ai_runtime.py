@@ -709,7 +709,7 @@ def test_generated_mcp_command_reaches_the_real_server_parser(tmp_path, monkeypa
         observed["transport"] = transport
         observed["tools"] = tuple(server._tool_manager._tools)
 
-    monkeypatch.setattr("mcp.server.fastmcp.FastMCP.run", fake_run)
+    monkeypatch.setattr("mcp.server.mcpserver.MCPServer.run", fake_run)
 
     assert mcp_server.main(command["args"][1:]) == 0
     assert observed == {
