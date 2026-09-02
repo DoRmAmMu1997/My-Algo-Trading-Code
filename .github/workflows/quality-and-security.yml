@@ -68,9 +68,9 @@ jobs:
           python scripts/check_coverage_thresholds.py coverage.json
 
       - name: Compile every Python file
-        # The master runner and most strategy files have SPACES in their names,
-        # so they cannot be mypy modules -- byte-compiling them (plus the test
-        # suites above) is their syntax/consistency gate.
+        # Not every file is inside mypy's scope -- the master runner and a few
+        # strategy files still have type errors to fix -- so byte-compiling
+        # everything (plus the test suites above) is their syntax gate.
         run: python -m compileall -q . -x "(__pycache__|Backtest Outputs|\.git)"
 
       - name: Run Ruff static checks

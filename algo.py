@@ -7,7 +7,7 @@ its own long path and its own options:
 
     python "Data Extractors/nifty_1m_5y_data_fetch_dhan.py" --lookback 5y
     python "My Backtest Files (For Reference)/renko_strategy_backtest.py" --data ...
-    python "Nifty Multi Strategy Front Test - Master File.py"
+    python "nifty_multi_strategy_master.py"
 
 Remembering those exact paths is fiddly. This file is a small "front desk": you
 tell it WHAT you want to do (a short command like `fetch-data` or `backtest`) and
@@ -109,7 +109,7 @@ BROKER_DIAGNOSTICS = {
 }
 
 # Commands that always map to exactly one script (no selector needed).
-MASTER_SCRIPT = "Nifty Multi Strategy Front Test - Master File.py"
+MASTER_SCRIPT = "nifty_multi_strategy_master.py"
 TOKEN_SETUP_SCRIPT = "Dependencies/dhan_token_setup.py"
 CHECK_ENV_SCRIPT = "Dependencies/check_env_config.py"
 

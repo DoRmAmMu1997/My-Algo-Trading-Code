@@ -351,7 +351,14 @@ def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
 
     assert configured_files == runtime_files
     assert "Signal Generators/CPR AI Agent" in mypy["mypy_path"]
-    assert "Nifty Multi Strategy Front Test - Master File.py" not in mypy["files"]
+    # The master is STILL outside mypy, but the reason changed on 2026-09-02.
+    # It used to be structural -- a spaced filename cannot be a mypy module.
+    # ADR-0014 tier 2a renamed it, so the exclusion is now purely a backlog:
+    # mypy reports 288 errors on it (193 attr-defined). This assertion is
+    # therefore TEMPORARY and must be INVERTED, not deleted, once tier 2b has
+    # worked those down -- at which point the master joins `files` and this
+    # line should assert its PRESENCE.
+    assert "nifty_multi_strategy_master.py" not in mypy["files"]
     assert any(
         "openai_codex.*" in override.get("module", [])
         and override.get("ignore_missing_imports") is True
@@ -464,7 +471,7 @@ def test_cpr_ai_documentation_rejects_obsolete_arbiter_and_worker_disable_guidan
     assert "strict allowlist" in focused_readme
     assert "trading and api secrets" in focused_readme.lower()
 
-    master = (ROOT / "Nifty Multi Strategy Front Test - Master File.py").read_text(
+    master = (ROOT / "nifty_multi_strategy_master.py").read_text(
         encoding="utf-8"
     )
     assert "optional CPR arbiter" not in master
@@ -478,7 +485,7 @@ def test_current_architecture_docs_distinguish_core_from_optional_agents():
         ROOT / "Signal Generators/Readme.md",
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
-        ROOT / "Nifty Multi Strategy Front Test - Master File.py",
+        ROOT / "nifty_multi_strategy_master.py",
         # The committed HLD is a whole-system overview, so the same rule applies:
         # a reader must be able to see both optional agents and must not mistake
         # the core count for the enabled total (docs/adr/0011 follow-up).

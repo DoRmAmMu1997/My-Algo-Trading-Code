@@ -1,6 +1,6 @@
 # Quality-tooling configuration only. This repo is not a packaged distribution
-# (the runner and most strategy files have SPACES in their names and are loaded
-# via importlib -- see load_module() in the master file), so there is no
+# (strategy FOLDERS still have spaces in their names, so their modules are
+# loaded via importlib -- see load_module() in the master runner), so there is no
 # [project] section: this file centralizes ruff + mypy configuration, mirroring
 # the Streamlit Scanner App's setup (the house pattern for CI quality gates).
 
@@ -76,11 +76,12 @@ external = ["BLE"]
 # CI runs 3.12 and 3.13; pin the older so local runs stay honest about what CI
 # will accept.
 python_version = "3.12"
-# First-adoption scope: every module whose FILENAME is a valid Python
-# identifier. The master runner ("Nifty Multi Strategy Front Test - Master
-# File.py") and the per-strategy files with spaces in their names CANNOT be
-# mypy modules (invalid module name); they are covered by `compileall` plus
-# the master unittest suite instead.
+# Scope: every module that both has an identifier filename AND type-checks
+# clean. ADR-0014 retired the spaced FILENAMES, so nothing is excluded for
+# naming any more -- what remains outside is excluded on its own merits:
+# nifty_multi_strategy_master.py (288 errors, being worked down) and eight
+# renamed strategy/backtest files whose errors are real. All of them are still
+# covered by `compileall` plus the unittest suites.
 files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",

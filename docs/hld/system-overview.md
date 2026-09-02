@@ -80,9 +80,10 @@ trues its bars up against official REST candles (see §5.2).
   service mesh for a workload that fits in one process (see [ADR-0001](../adr/0001-single-process-thread-per-strategy.md)).
 - **Broker APIs are the unreliable part.** Not the strategies, not the data
   volume. The safety machinery is concentrated at that boundary.
-- **Many source files have spaces in their names** (`Nifty Multi Strategy Front
-  Test - Master File.py`). They cannot be imported normally, which shapes module
-  loading, mypy scope and test layout (see [ADR-0009](../adr/0009-importlib-loading-for-spaced-filenames.md)).
+- **Source FOLDERS have spaces in their names** (`Signal Generators/CPR AI
+  Agent/`). Modules inside them cannot be imported normally, which shapes module
+  loading and test layout (see [ADR-0014](../adr/0014-tiered-rename-of-spaced-filenames.md),
+  which superseded ADR-0009 and retired the spaced FILENAMES).
 - **The feed carries no volume.** Anything volume-derived (true VWAP, breadth)
   is either a documented proxy or deliberately unimplemented.
 
@@ -115,7 +116,7 @@ silently affect order placement, or vice versa.
 ## 4. Component view
 
 ```
-                       Nifty Multi Strategy Front Test - Master File.py
+                       nifty_multi_strategy_master.py
  ┌──────────────────────────────────────────────────────────────────────────────┐
  │                                                                              │
  │  main()                                                                      │

@@ -109,7 +109,7 @@ def env_keys_read_by(path: Path) -> set[str]:
 
 def source_files(repo_root: Path) -> list[Path]:
     """The modules whose `_env_*` calls define the configuration surface."""
-    files = [repo_root / "Nifty Multi Strategy Front Test - Master File.py"]
+    files = [repo_root / "nifty_multi_strategy_master.py"]
     files += sorted((repo_root / "Dependencies").glob("*.py"))
     return [path for path in files if path.is_file()]
 

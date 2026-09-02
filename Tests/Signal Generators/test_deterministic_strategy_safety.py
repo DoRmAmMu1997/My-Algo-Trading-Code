@@ -20,7 +20,7 @@ GENERATOR_DIR = Path(__file__).resolve().parents[2] / "Signal Generators"
 
 
 def _load_module(relative_path: str, module_name: str):
-    """Load a spaced-name strategy module the same way the master runner does."""
+    """Load a strategy module from a spaced FOLDER, as the master runner does."""
 
     path = GENERATOR_DIR / relative_path
     parent = str(path.parent)

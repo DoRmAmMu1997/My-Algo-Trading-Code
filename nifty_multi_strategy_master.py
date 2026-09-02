@@ -1,6 +1,6 @@
 """
 ================================================================================
-Nifty Multi Strategy Front Test - Master File
+NIFTY Multi-Strategy Front Test - Master Runner
 ================================================================================
 
 WHAT THIS FILE IS (read this first if you have never seen this code base)

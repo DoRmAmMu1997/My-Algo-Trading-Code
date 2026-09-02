@@ -99,7 +99,7 @@ the unittest `TestCase` classes as well and merge the numbers.
 
 ## 3. Why the master suite is the master's only real gate
 
-mypy cannot see `Nifty Multi Strategy Front Test - Master File.py` — its filename
+mypy cannot see `nifty_multi_strategy_master.py` — its filename
 is not a valid module name ([ADR-0009](../adr/0009-importlib-loading-for-spaced-filenames.md)).
 So the 17k-line runner is covered by:
 
@@ -153,7 +153,7 @@ newer-only syntax). `permissions: contents: read` — the workflow only reads.
 | `pip_audit --local` | audits the clean resolved tree, not a developer's system Python |
 | `pre_commit validate-config` | the hook config itself is valid |
 | branch-enabled coverage over all three suites + threshold script | the budgets above |
-| `compileall` | the syntax gate for spaced-name files |
+| `compileall` | the syntax gate for every file, including those outside mypy |
 | `ruff check .` | lint |
 | `mypy` | scoped in `pyproject.toml` to identifier-named modules |
 | `bandit -r .` | security; B101/B105/B110 skipped, vendored + reference code excluded |

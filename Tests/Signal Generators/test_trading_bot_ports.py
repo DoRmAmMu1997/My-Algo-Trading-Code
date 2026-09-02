@@ -103,7 +103,7 @@ PORTS_WITHOUT_SETUP_FLAGS = {"MLEnsemble"}
 
 @cache
 def _load_port(filename: str):
-    """Load one spaced-name generator module (same mechanism as the master).
+    """Load one generator module from its spaced folder (as the master does).
 
     `filename` may include a subfolder ("Regime Adaptive Strategy/..."), so the
     derived module name flattens both spaces and separators.
