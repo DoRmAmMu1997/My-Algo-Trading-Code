@@ -129,8 +129,8 @@ Each subfolder has its own `Readme.md` with the details.
 Run `python algo.py --help`, or `python algo.py <command> --help`, for the details.
 
 # Typical workflow
-1. Pull historical data — e.g. `python "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py"`. The CSV lands in `Backtest Outputs/`.
-2. Run a backtest against that CSV — e.g. `python "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py"`.
+1. Pull historical data — e.g. `python "Data Extractors/nifty_1m_5y_data_fetch_dhan.py"`. The CSV lands in `Backtest Outputs/`.
+2. Run a backtest against that CSV — e.g. `python "My Backtest Files (For Reference)/renko_strategy_backtest.py"`.
 3. Once a strategy looks good, run `Nifty Multi Strategy Front Test - Master File.py` for multi-strategy execution — paper by default, or live once you've configured a broker (Setup step 6).
 
 (Or do all three with the unified CLI above: `python algo.py fetch-data --index nifty` → `python algo.py backtest --strategy renko --data ...` → `python algo.py run`.)

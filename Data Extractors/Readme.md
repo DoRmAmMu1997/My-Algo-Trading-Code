@@ -5,15 +5,15 @@ Data extractor extracts 1 minute historical OHLC data of your preferred index(NI
 If you want to implement your backtesting logics(like or unlike how I implememted my own), that data would be helpful
 
 # Files in this folder
-- `Nifty 1m 5Y Data Fetch Dhan.py` — NIFTY (security_id 13) wrapper.
-- `Banknifty 1m 5Y Data Fetch Dhan.py` — BANKNIFTY (security_id 25) wrapper.
-- `Finnifty 1m 5Y Data Fetch Dhan.py` — FINNIFTY (security_id 27) wrapper.
+- `nifty_1m_5y_data_fetch_dhan.py` — NIFTY (security_id 13) wrapper.
+- `banknifty_1m_5y_data_fetch_dhan.py` — BANKNIFTY (security_id 25) wrapper.
+- `finnifty_1m_5y_data_fetch_dhan.py` — FINNIFTY (security_id 27) wrapper.
 - `index_1m_5y_data_fetch_dhan_common.py` — shared chunked-download engine. Don't run this directly; the three wrappers above call it.
 
 # How to run
 Each wrapper has the index-specific defaults baked in, so this is enough:
 ```
-python "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py"
+python "Data Extractors/nifty_1m_5y_data_fetch_dhan.py"
 ```
 Override anything via CLI — `--from-date`, `--to-date`, `--output`, `--client-id`, `--chunk-days`. Run with `--help` for the full list. (The access token has no CLI flag on purpose — see Credentials.)
 

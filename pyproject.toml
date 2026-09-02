@@ -84,6 +84,12 @@ python_version = "3.12"
 files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
+    # Tier 3 of ADR-0014: renamed 2026-09-02 and admitted here in the same
+    # commit. The engine was already checked; these three wrappers were outside
+    # only because of their spaced names, and they pass unmodified.
+    "Data Extractors/nifty_1m_5y_data_fetch_dhan.py",
+    "Data Extractors/banknifty_1m_5y_data_fetch_dhan.py",
+    "Data Extractors/finnifty_1m_5y_data_fetch_dhan.py",
     "Dependencies/broker_contract.py",
     "Dependencies/check_env_config.py",
     "Dependencies/diagnostic_preflight.py",

@@ -20,15 +20,16 @@ runner's safety machinery entirely.
 ```
  Data Extractors/
    index_1m_5y_data_fetch_dhan_common.py     ← the shared engine
-   Nifty 1m 5Y Data Fetch Dhan.py            ┐
-   Banknifty 1m 5Y Data Fetch Dhan.py        ├ thin per-index wrappers
-   Finnifty 1m 5Y Data Fetch Dhan.py         ┘
+   nifty_1m_5y_data_fetch_dhan.py            ┐
+   banknifty_1m_5y_data_fetch_dhan.py        ├ thin per-index wrappers
+   finnifty_1m_5y_data_fetch_dhan.py         ┘
 ```
 
 One engine, three wrappers. The wrappers differ only in the instrument they
 name; everything about paging, retry, epoch-unit handling and CSV writing lives
-in the common module, which is also the only part under mypy (the wrappers have
-spaces in their names).
+in the common module. All four are under mypy: the wrappers were renamed to
+identifier names under [ADR-0014](../adr/0014-tiered-rename-of-spaced-filenames.md)
+and joined the type gate in the same commit.
 
 Output lands in `Backtest Outputs/`, which is gitignored.
 
@@ -53,14 +54,14 @@ decades apart with no obvious symptom.
 
 ```
  My Backtest Files (For Reference)/
-   Nifty Renko Strategy Backtest.py
-   Nifty EMA Trend Strategy Backtest.py
-   Nifty Heiken Ashi Futures 5Y Backtest.py
-   Nifty CPR Strategy Backtest.py
+   renko_strategy_backtest.py
+   ema_trend_strategy_backtest.py
+   heikin_ashi_futures_5y_backtest.py
+   cpr_strategy_backtest.py
    profit_shooter_backtest.py
    Subhamoy Strategies/
-     Nifty Goldmine Strategy Backtest.py
-     Nifty Money Machine Strategy Backtest.py
+     goldmine_strategy_backtest.py
+     money_machine_strategy_backtest.py
      subhamoy_backtest_common.py
 ```
 

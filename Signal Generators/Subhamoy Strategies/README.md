@@ -25,14 +25,14 @@ or data-preparation file.
 
 ## Backtests
 
-- `Nifty Goldmine Strategy Backtest.py`
-- `Nifty Money Machine Strategy Backtest.py`
+- `goldmine_strategy_backtest.py`
+- `money_machine_strategy_backtest.py`
 
 Run the new backtests with an explicit 5-minute CSV:
 
 ```powershell
-python "My Backtest Files (For Reference)\Subhamoy Strategies\Nifty Goldmine Strategy Backtest.py" --data "path\to\five_minute_data.csv" --dataset nifty
-python "My Backtest Files (For Reference)\Subhamoy Strategies\Nifty Money Machine Strategy Backtest.py" --data "path\to\five_minute_data.csv" --dataset nifty
+python "My Backtest Files (For Reference)\Subhamoy Strategies\goldmine_strategy_backtest.py" --data "path\to\five_minute_data.csv" --dataset nifty
+python "My Backtest Files (For Reference)\Subhamoy Strategies\money_machine_strategy_backtest.py" --data "path\to\five_minute_data.csv" --dataset nifty
 ```
 
 Both backtests write logs, trades, daily equity, stats, and daily max-loss files

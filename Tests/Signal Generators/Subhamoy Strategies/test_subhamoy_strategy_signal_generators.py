@@ -273,7 +273,7 @@ class TestSubhamoyStrategyBacktests(unittest.TestCase):
 
     def test_goldmine_backtest_loader_accepts_five_minute_data_and_rejects_one_minute_data(self):
         module = load_module(
-            BACKTEST_DIR / "Nifty Goldmine Strategy Backtest.py",
+            BACKTEST_DIR / "goldmine_strategy_backtest.py",
             "nifty_goldmine_strategy_backtest_loader",
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -292,11 +292,11 @@ class TestSubhamoyStrategyBacktests(unittest.TestCase):
 
     def test_backtest_modules_run_smoke_backtests_on_synthetic_five_minute_data(self):
         goldmine = load_module(
-            BACKTEST_DIR / "Nifty Goldmine Strategy Backtest.py",
+            BACKTEST_DIR / "goldmine_strategy_backtest.py",
             "nifty_goldmine_strategy_backtest_smoke",
         )
         money = load_module(
-            BACKTEST_DIR / "Nifty Money Machine Strategy Backtest.py",
+            BACKTEST_DIR / "money_machine_strategy_backtest.py",
             "nifty_money_machine_strategy_backtest_smoke",
         )
         with tempfile.TemporaryDirectory() as tmp:
