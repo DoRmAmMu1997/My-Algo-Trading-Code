@@ -6032,3 +6032,142 @@ so the threshold is holding its calibration at roughly one warning per session.
 - Two drift guards, negative-tested nine ways. One assertion was found too weak by
   that pass (it checked "never overrides the" without checking WHAT) and tightened.
 - Prompt size 152,587 -> 155,916 chars. Assembled 157,207: **184,274 of headroom.**
+
+---
+
+## Video addendum - the 2 Sep LIVE SESSION (v4v)
+
+**Source:** Intraday Hunter live session `fE8Sw4vQOSM` (2 Sep 2026, 11:01,
+uploaded 11:06 IST).
+
+**The worst day in the series: -3,877.25 over SIX trades.** And the most
+instructive, because IH took the SAME trade, on the SAME premise, and was
+ALSO wrong. He lost too. The read was not the error.
+
+| # | Time | Held | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|---|
+| 1 | 09:20 -> 09:27 | 6m40s | agent, index hierarchy | +214.50 | -1,251.00 | **-1,036.50** |
+| 2 | 09:32 -> 09:34 | **1m37s** | **mechanical AI_STOP** | -279.50 | -807.00 | **-1,086.50** |
+| 3 | 09:40 -> 09:43 | 2m54s | agent, premise invalidation | -422.50 | -150.00 | **-572.50** |
+| 4 | 09:48 -> 09:57 | 8m57s | agent, index hierarchy | -377.00 | -646.50 | **-1,023.50** |
+| 5 | 10:12 -> 10:14 | 1m48s | agent, index hierarchy | -419.25 | -411.00 | **-830.25** |
+| 6 | 10:24 -> 10:25 | 58s | agent, premise invalidation | +234.00 | +438.00 | **+672.00** |
+| | | | **TOTAL** | **-1,049.75** | **-2,827.50** | **-3,877.25** |
+
+### The pre-open note transferred perfectly. That was the problem.
+
+Every one of the six entries cites the note's GAP-DOWN branch by name, and the
+note was right about the open: NIFTY gapped -198pts (-0.82%), BankNIFTY -0.69%,
+shared and genuine. The agent classified the open correctly (v4t), measured it
+correctly, and picked the branch the note prescribed.
+
+Then it took that branch six times in sixty-five minutes.
+
+### What IH did, and the one line that predicts our whole day
+
+He entered PUT-side across BankNIFTY, SENSEX and NIFTY at roughly our first
+entry, on identical reasoning - yesterday's failed 500-level breakout seated
+retail longs, "the good trader slowly sells", so the day should stay in selling.
+He then said what must NOT happen:
+
+> "This green candle should not go too much higher, especially in BankNIFTY,
+> because there is the 57,000 number. If it goes above this level, the market
+> will go to the closing price."
+
+And, four minutes in, he predicted our day exactly:
+
+> "A trap will not form by doing a breakout. **If a breakout happens, then it
+> will be the WHOLE DAY'S TRAP.** ... Then you sell here, sell here - **you will
+> be wrong in all two-three places.**"
+
+The breakout happened. He named it the moment it did ("we did NOT want the market
+to do a breakout, but it DID"), waited once for a small trap that never came, and
+cut at his limit:
+
+> "Sometimes, **seeing the gap-down, other people also start selling**, and the
+> market makes a trap FOR THAT DAY. We are seeing something like that here."
+>
+> "**Do not fight when you are wrong.** Make good profit when you are right."
+
+He was wrong once, for one loss. We were wrong six times.
+
+### The gap this exposed in the corpus
+
+Every re-entry rule we have keys on a booked **WINNER**:
+
+- `YOURS IS AN ACCURACY METHOD` (v4s) - "after a booked winner, the bar for
+  re-entering the SAME move is a genuinely NEW trapped crowd".
+- `MOVE-EXHAUSTION - ONE MOVE PER THESIS` - "once a thesis's move has been
+  captured and **BOOKED**".
+
+The only loss-side rule, `POST-LOSS SPEED LIMIT`, asks that the next setup be
+"fresh, deliberate, high-quality, with a named target crowd and clear
+invalidation" - and the agent supplied exactly that, six times. Each entry named
+a genuinely fresh PATTERN (double top, fibo rejection, bearish engulfing,
+shooting star) and the identical crowd. **Nothing said the premise itself dies.**
+
+The 5-minute mechanical cooldown was respected on every re-entry, so the host
+gate was never the thing that failed either.
+
+This is also the third session where v4s did not bite, and the v4t addendum
+already flagged why in advance - "a pattern is not a crowd" - and deliberately
+deferred it pending v4t's classification rule. v4t's rule worked and the problem
+survived it, so the sharpening is no longer speculative.
+
+### What v4v adds
+
+`A BREAKOUT THROUGH THE LEVEL YOUR PREMISE FORBADE ENDS THAT PREMISE FOR THE
+SESSION`, placed as the explicit loss-side twin of v4s. When you entered on
+"price must not cross X" and price crosses X, the premise is dead for the
+**session**, not for that entry; a later pattern in the same direction is the
+same dead premise wearing a new candle. Trading it again needs a NEW crowd
+trapped by price action that happened AFTER the break, named as such.
+
+It carries **the clock as the earlier detector** - IH budgets 5-10 minutes for
+momentum and treats overrun as evidence, not patience ("the time it is taking is
+EXTRA for us"). This is the second appearance of the time budget; v4u recorded it
+and deliberately did not add it, and today it is the thing that told him to stop.
+
+**Written against three wrong readings, each guarded:**
+
+1. **It is not about direction.** IH took the same side and lost too. A guard
+   asserts his counter-evidence survives, because an edit that turns this into
+   "do not short a gap-down" would learn the opposite of the day's lesson.
+2. **It is not "never re-enter".** The sixth entry made +672.00, and the rule
+   says so.
+3. **It governs OPENING, never closing.** Read as licence to sit through a loss
+   it would have turned -3,877 into something uncapped, so the rule ranks the
+   stop, the max loss, premise-invalidation and INDEX HIERARCHY above itself.
+
+### Deliberately NOT added
+
+- **The discipline / mindset passage** ("your mindset should not change so
+  quickly... today I cut the trade and make a call trade, then in net you will
+  get nothing"). It is the emotional companion to the rule above and is already
+  carried by `NO INSTANT FLIP`, `FEAR IS NOT A SIGNAL` and v4n's
+  `DO NOT THINK YOUR WAY THROUGH A LOSS`.
+- **"Where to enter - at the lower point, higher, or right here"** (3:38-3:45).
+  Covered by v4p's `WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF`.
+- **The SENSEX 77,000 breakout as a second instance** of the same
+  retail-buys/operator-sells mechanism. Same mechanism, no new content.
+
+### SLH-013 latency, third session
+
+**71 decisions, median 39.2s, p90 51.2s, max 66.3s** against the 90s deadline;
+two crossed the 60s warn threshold. In line with session one (median 41.1s, p90
+50.0s) and session two (41.8s / 56.1s), so the threshold is holding calibration
+at roughly one to two warnings per session.
+
+### Knowledge changes (v4v)
+
+- `RISK`: A BREAKOUT THROUGH THE LEVEL YOUR PREMISE FORBADE ENDS THAT PREMISE FOR
+  THE SESSION (new, placed immediately after v4s, whose loss-side twin it is).
+- One drift guard, negative-tested **thirteen** ways: removing the rule,
+  narrowing its scope from session to entry, letting a pattern stand in for a
+  crowd, dropping the counter-evidence that IH was also wrong, turning it into an
+  absolute re-entry ban, re-reading it as permission to hold a loser, dropping
+  the exit-precedence sentence, dropping the INDEX HIERARCHY deference, dropping
+  the measured evidence, dropping which entry killed the premise, dropping the
+  clock detector, dropping the gap-down-recruits-sellers mechanism, and no longer
+  naming the gap it fills each fail the suite.
+- Prompt size 155,916 -> 158,839 chars. **191,161 of headroom.**

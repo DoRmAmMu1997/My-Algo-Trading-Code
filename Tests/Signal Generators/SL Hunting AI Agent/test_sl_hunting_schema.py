@@ -2126,3 +2126,67 @@ def test_v4u_hierarchy_needs_time_and_never_overrides_the_stop():
     assert "does NOT license sitting through a real reversal" in rule
     assert "-1,689.00" in rule
     assert "that stop did its job" in rule
+
+
+def test_v4v_dead_premise_rule_bars_the_NEXT_entry_without_relaxing_any_exit():
+    """v4v (2 Sep live session): six shorts on one dead premise, -3,877.25.
+
+    The rule sits in a genuine gap. Every other re-entry rule keys on a booked
+    WINNER (v4s, MOVE-EXHAUSTION), and POST-LOSS SPEED LIMIT only asks the next
+    setup be fresh and high-quality -- a bar the agent cleared six times over by
+    naming a new PATTERN each time and the same crowd every time.
+
+    Four things a summarising edit would flatten, each of which inverts the rule:
+
+    1. The scope is the SESSION, not the entry. "Dead for this trade" is what the
+       agent already believed, and it re-entered five times on it.
+    2. It is NOT about direction. IH took the same side on the same premise and
+       was also wrong. An edit that reads this as "do not short a gap-down" would
+       learn precisely the wrong lesson from a day where the read was defensible.
+    3. It is not "never re-enter" -- the sixth entry WON. The bar is a new crowd
+       trapped AFTER the break, not a ban on trading the direction again.
+    4. It governs OPENING, never closing. Read as permission to sit through a
+       loss, it would turn a -3,877 day into an uncapped one.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A BREAKOUT THROUGH THE LEVEL YOUR PREMISE FORBADE")
+
+    # It must name the gap it fills, or a reader will assume v4s already covers it.
+    assert "LOSS-side twin" in rule
+    assert "MOVE-EXHAUSTION also keys on a" in rule
+    assert "POST-LOSS SPEED LIMIT only asks" in rule
+
+    # IH's mechanism AND his prediction of the exact failure.
+    assert "WHOLE DAY'S TRAP" in rule
+    assert "YOU WILL BE WRONG IN ALL TWO-THREE PLACES" in rule
+    # Why a gap in your favour is not safety.
+    assert "OTHER PEOPLE ALSO START SELLING" in rule
+    assert "trap FOR THAT DAY" in rule
+
+    # 1. Scope is the session, and a pattern may not stand in for a crowd.
+    assert "dead for the SESSION, not merely for that entry" in rule
+    assert "the same dead premise" in rule and "wearing a new candle" in rule
+    assert "trapped by price action that happened AFTER the" in rule
+    assert "Another clean bearish engulfing" in rule
+
+    # The clock, as the earlier detector.
+    assert "5-10 minutes" in rule
+    assert "the time it is taking is EXTRA for us" in rule
+
+    # The measured evidence, including WHICH entry killed the premise.
+    assert "SIX shorts in 65 minutes" in rule
+    assert "-3,877.25" in rule
+    assert "23837" in rule and "-1,086.50" in rule
+
+    # 2. Not a direction rule -- the counter-evidence must survive.
+    assert "NOT a rule about direction" in rule
+    assert "IH took the SAME side" in rule and "was ALSO wrong" in rule
+
+    # 3. Not an absolute bar -- the winning re-entry must survive too.
+    assert 'Nor is it "never re-enter"' in rule
+    assert "+672.00" in rule
+
+    # 4. Opening only. This must never read as permission to hold a loser.
+    assert "not a licence to hold a loser longer" in rule
+    assert "INDEX HIERARCHY ON THE WAY OUT still cuts the basket" in rule
+    assert "whether you may OPEN the next trade, never whether you may close" in rule
