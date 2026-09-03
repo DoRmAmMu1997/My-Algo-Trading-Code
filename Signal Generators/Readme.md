@@ -5,7 +5,7 @@ This folder contains the signal generators which will be imported into the main 
 Signal generator expects the OHLC data DataFrame as an argument(which will be provided by the main front test file) and works on the data to generate a bullish or a bearish signal
 
 # The coding itself?
-- Claude Opus 4.7 Max: Generated Donchian Signal Generator Bearish.py and Supertrend Signal Generator Bullish.py
+- Claude Opus 4.7 Max: Generated donchian_signal_generator_bearish.py and supertrend_signal_generator_bullish.py
 - GPT-5.4-xhigh: Generated ema_trend_strategy_logic.py, heikin_ashi_strategy_logic.py, profit_shooter_strategy_logic.py, renko_strategy_logic.py and renko_strategy_logic_9_21.py
 - GPT-5.5-xhigh: Generated the CPR Strategy folder with shared CPR logic, Algo 1, Algo 2, and combined signal-generator wrappers
 - GPT-5.5-xhigh: Generated the Subhamoy Strategies folder with Goldmine and Money Machine shared engines and NIFTY wrappers
@@ -17,17 +17,17 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | File | Shape | Used by |
 |---|---|---|
 | `CPR Strategy/cpr_strategy_logic.py` | Stateful CPR engine with CPR levels, Algo 1, Algo 2, and RSI divergence | CPR backtest + future front-test integration |
-| `CPR Strategy/Nifty CPR Algo 1 Signal Generator.py` | Algo 1 trend-only CPR wrapper | CPR trend-only callers |
-| `CPR Strategy/Nifty CPR Algo 2 Signal Generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
-| `CPR Strategy/Nifty CPR Combined Signal Generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
-| `CPR Strategy/Nifty CPR Algo 3 Signal Generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
+| `CPR Strategy/cpr_algo1_signal_generator.py` | Algo 1 trend-only CPR wrapper | CPR trend-only callers |
+| `CPR Strategy/cpr_algo2_signal_generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
+| `CPR Strategy/cpr_combined_signal_generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
+| `CPR Strategy/cpr_algo3_signal_generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
 | `CPR AI Agent/` | Frozen five-minute context, four no-argument tools, Codex judgment, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
-| `Subhamoy Strategies/Nifty Goldmine Signal Generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
-| `Subhamoy Strategies/Nifty Money Machine Signal Generator.py` | Thin NIFTY Money Machine wrapper | Money Machine callers that prefer wrapper functions |
-| `Donchian Signal Generator Bearish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
-| `Supertrend Signal Generator Bullish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
+| `Subhamoy Strategies/goldmine_signal_generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
+| `Subhamoy Strategies/money_machine_signal_generator.py` | Thin NIFTY Money Machine wrapper | Money Machine callers that prefer wrapper functions |
+| `donchian_signal_generator_bearish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
+| `supertrend_signal_generator_bullish.py` | DataFrame in -> DataFrame with signal columns out (stateless) | front-test master |
 | `ema_trend_strategy_logic.py` | Stateful signal engine (class) | EMA backtest + front-test master |
 | `heikin_ashi_strategy_logic.py` | Stateful signal engine (class) | front-test master |
 | `Subhamoy Strategies/profit_shooter_strategy_logic.py` | Stateful signal engine (class) | Profit Shooter backtest + front-test master |
@@ -45,19 +45,19 @@ independently tunable from `.env` by its own prefix (e.g. `SMA_CROSSOVER_*`).
 
 | File | Strategy idea |
 |---|---|
-| `Nifty SMA Crossover Signal Generator.py` | fast/slow SMA crossover |
-| `Nifty Bollinger Bands Signal Generator.py` | bounce off a band (mean reversion) |
-| `Nifty Keltner Squeeze Signal Generator.py` | BB-inside-KC squeeze release + MACD sign |
-| `Nifty Mean Reversion Zscore Signal Generator.py` | fade z-score extremes back to the mean |
-| `Nifty ML Ensemble Signal Generator.py` | RandomForest P(up) — **requires scikit-learn** |
-| `Nifty Multi Timeframe Signal Generator.py` | trend SMA + EMA crossover + RSI band |
-| `Nifty Opening Range Breakout Signal Generator.py` | close breaks open +/- ATR |
-| `Nifty Parabolic SAR Signal Generator.py` | SAR flip filtered by ADX |
-| `Nifty RSI Divergence Signal Generator.py` | price vs RSI swing divergence |
-| `Nifty RSI Reversal Signal Generator.py` | oversold/overbought reversal |
-| `Nifty Stochastic Oscillator Signal Generator.py` | %K/%D cross in zone, trend-filtered |
-| `Nifty Supertrend Signal Generator.py` | ATR-band Supertrend flip |
-| `Nifty Volatility Breakout Signal Generator.py` | Larry Williams prev-range breakout |
+| `sma_crossover_signal_generator.py` | fast/slow SMA crossover |
+| `bollinger_bands_signal_generator.py` | bounce off a band (mean reversion) |
+| `keltner_squeeze_signal_generator.py` | BB-inside-KC squeeze release + MACD sign |
+| `mean_reversion_zscore_signal_generator.py` | fade z-score extremes back to the mean |
+| `ml_ensemble_signal_generator.py` | RandomForest P(up) — **requires scikit-learn** |
+| `multi_timeframe_signal_generator.py` | trend SMA + EMA crossover + RSI band |
+| `opening_range_breakout_signal_generator.py` | close breaks open +/- ATR |
+| `parabolic_sar_signal_generator.py` | SAR flip filtered by ADX |
+| `rsi_divergence_signal_generator.py` | price vs RSI swing divergence |
+| `rsi_reversal_signal_generator.py` | oversold/overbought reversal |
+| `stochastic_oscillator_signal_generator.py` | %K/%D cross in zone, trend-filtered |
+| `supertrend_signal_generator.py` | ATR-band Supertrend flip |
+| `volatility_breakout_signal_generator.py` | Larry Williams prev-range breakout |
 | `misc_strategy_common.py` | shared indicators used by all 13 (SMA, EMA, RSI, MACD, Bollinger, Keltner, Stochastic, ADX, Parabolic SAR, Supertrend, z-score, swing detection) |
 
 # Regime Adaptive port (`Regime Adaptive Strategy/`) — different source project
@@ -75,7 +75,7 @@ Everything for it lives in its own folder, `Regime Adaptive Strategy/`:
 
 | File | Role |
 |---|---|
-| `Nifty Regime Adaptive Signal Generator.py` | the router — the only worker of the three |
+| `regime_adaptive_signal_generator.py` | the router — the only worker of the three |
 | `regime_candidates.py` | the two candidate rules, as pure column-producing functions |
 | `regime_common.py` | session date, session VWAP, session opening range — and this folder's **only** `sys.path` bootstrap, which is why it re-exports the shared indicators from `misc_strategy_common` one level up |
 | `REGIME_PORTING_NOTES.md` | **read before enabling live** — what was dropped and why |

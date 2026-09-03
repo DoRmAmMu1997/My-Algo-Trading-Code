@@ -34,7 +34,7 @@ from Dependencies.execution_ledger import OrderAttempt
 # This suite lives under "Tests/", so every path below is anchored on the
 # REPOSITORY ROOT rather than on this file's own folder.
 REPO_ROOT = Path(__file__).resolve().parents[1]
-file_path = REPO_ROOT / "Nifty Multi Strategy Front Test - Master File.py"
+file_path = REPO_ROOT / "nifty_multi_strategy_master.py"
 spec = importlib.util.spec_from_file_location("master_file", file_path)
 master_file = importlib.util.module_from_spec(spec)
 sys.modules["master_file"] = master_file

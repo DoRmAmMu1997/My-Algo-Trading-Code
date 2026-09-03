@@ -90,7 +90,7 @@ One process, cooperating threads:
 
 ## Repository layout
 ```
-Nifty Multi Strategy Front Test - Master File.py   # the multithreaded paper/live runner (the "big one")
+nifty_multi_strategy_master.py   # the multithreaded paper/live runner (the "big one")
 algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
 Tests/                                             # EVERY test, mirroring the source tree (docs/adr/0010)
   test_nifty_multi_strategy_master.py              #   unittest suite for the master
@@ -180,8 +180,9 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
 - **Code style:** detailed, beginner-friendly module + function docstrings and plain-English inline
   comments — match the existing density. Type hints where practical. `snake_case` functions/modules,
   `PascalCase` classes, `UPPER_SNAKE` constants and env keys. In library code use a module
-  `logging.getLogger(__name__)` logger, **not `print()`**. Strategy files have spaces in their names and
-  are imported via `load_module()` (master ~L1024), not regular imports.
+  `logging.getLogger(__name__)` logger, **not `print()`**. Strategy FOLDERS still have spaces, so
+  their modules are imported via `load_module()` (master ~L1024), not regular imports; the
+  filenames themselves were renamed to identifiers by ADR-0014.
 - **CLI:** prefer `python algo.py <command>` (`fetch-data` / `backtest` / `run` / `setup-token` /
   `diagnose` / `check-env`); each underlying script still runs standalone, and any flag beyond the
   selector passes straight through. A bare `python algo.py` prints help.
@@ -206,11 +207,11 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,
-  Bandit, and pre-commit. Coverage floors are 68% overall, 90% for new
+  Bandit, and pre-commit. Coverage floors are 70% overall, 90% for new
   execution/reconciliation/data-safety modules, and 80% per broker adapter.
   Judge the overall floor from CI, never from a local run: a machine with the
   optional broker SDKs installed runs 7 tests CI's verify job skips and reads
-  ~2 points high (CI measures 69.1%). The floor only ever moves UP, and only
+  ~2 points high (CI measures 70.2%). The floor only ever moves UP, and only
   after a CI run shows headroom -- never lower it to make a red build pass.
 - **Dependencies:** `pip install -r requirements.txt` installs the runtime AND
   the dev/CI gate tooling (requirements-dev.txt was merged into it); add

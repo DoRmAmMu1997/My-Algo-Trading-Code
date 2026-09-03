@@ -55,7 +55,6 @@ import sys
 import threading
 import time
 import webbrowser
-from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -73,6 +72,14 @@ _DEPENDENCIES_DIR = Path(__file__).resolve().parent.parent
 if str(_DEPENDENCIES_DIR) not in sys.path:
     sys.path.insert(0, str(_DEPENDENCIES_DIR))
 
+from broker_rate_limit import RollingWindowRateLimiter  # noqa: E402
+
+# Kept under the historical private name: three suites construct it as
+# `<module>._RollingWindowRateLimiter` (Tests/Dependencies/<Broker> API/... and
+# Tests/test_nifty_multi_strategy_master.py), and the adapter's own call sites
+# read better unchanged. The implementation now lives in broker_rate_limit.
+_RollingWindowRateLimiter = RollingWindowRateLimiter
+
 from broker_contract import (  # noqa: E402
     TERMINAL_BROKER_STATES,
     BrokerQueryResult,
@@ -80,8 +87,14 @@ from broker_contract import (  # noqa: E402
     OpenPosition,
     OrderResult,
     OrderStatus,
+    exact_int,
     normalize_order_result,
 )
+
+# This module and its tests refer to the helper by its historical private name,
+# so keep that binding rather than editing 8-9 call sites and the suites that
+# read `<module>._exact_int`. The implementation now lives in broker_contract.
+_exact_int = exact_int
 
 try:
     from dotenv import load_dotenv
@@ -115,21 +128,6 @@ _MAX_RATE_LIMIT_WAIT_SECONDS = 2.0
 
 _PRODUCT_MAP = {"INTRADAY": "I", "NORMAL": "M"}
 _SIDE_MAP = {"BUY": "B", "SELL": "S"}
-_TERMINAL_FAILURE_STATES = {"rejected", "cancelled", "canceled"}
-
-
-def _exact_int(value: Any) -> int | None:
-    """Parse a broker quantity only when it is a finite whole number."""
-
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or not number.is_integer():
-        return None
-    return int(number)
 
 
 def _positive_price(value: Any) -> float:
@@ -179,98 +177,6 @@ def _env_non_negative_int(name: str, default: int) -> int:
         log.warning("Invalid %s=%r; using %s.", name, raw, default)
         return default
     return value
-
-
-class _RollingWindowRateLimiter:
-    """Enforce per-second and per-minute request budgets across worker threads.
-
-    Short bursts wait for a slot.  A wait longer than ``max_wait_seconds`` raises
-    before the HTTP request is sent; a stale live order is more dangerous than a
-    clear indeterminate result that freezes new live entry.
-    """
-
-    def __init__(
-        self,
-        per_second: int,
-        per_minute: int,
-        max_wait_seconds: float,
-        clock: Callable[[], float] = time.monotonic,
-        sleeper: Callable[[float], None] = time.sleep,
-        label: str = "API",
-    ) -> None:
-        self.per_second = int(per_second)
-        self.per_minute = int(per_minute)
-        self.max_wait_seconds = float(max_wait_seconds)
-        self._clock = clock
-        self._sleep = sleeper
-        self.label = label
-        self._timestamps: deque[float] = deque()
-        self._lock = threading.Lock()
-
-    def acquire(self, deadline: float | None = None) -> None:
-        """Reserve one request slot or raise before a long/stale wait.
-
-        The deque stores only timestamps from the last minute. We separately
-        count its last one-second slice because Flattrade publishes both limits.
-        A short wait is acceptable; a long wait would make a trading decision
-        stale, so it raises *before* any broker request is sent.
-        """
-        started = self._clock()
-        if deadline is None:
-            acquired = self._lock.acquire()
-        else:
-            remaining = deadline - started
-            acquired = remaining > 0 and self._lock.acquire(timeout=remaining)
-        if not acquired:
-            raise TimeoutError(
-                f"Flattrade {self.label} deadline expired waiting for the limiter lock"
-            )
-        try:
-            while True:
-                now = self._clock()
-                # Discard calls that are older than the longest (60-second)
-                # window. Keeping the deque small also makes each check cheap.
-                minute_cutoff = now - 60.0
-                while self._timestamps and self._timestamps[0] <= minute_cutoff:
-                    self._timestamps.popleft()
-
-                # The minute deque includes the one-second window, so select its
-                # recent tail instead of maintaining a second source of truth.
-                recent_second = [
-                    stamp for stamp in self._timestamps if stamp > now - 1.0
-                ]
-                second_full = len(recent_second) >= self.per_second
-                minute_full = len(self._timestamps) >= self.per_minute
-
-                if not second_full and not minute_full:
-                    # Reserving the timestamp before returning prevents two
-                    # strategy threads from claiming the same final slot.
-                    self._timestamps.append(now)
-                    return
-
-                waits = []
-                if second_full:
-                    waits.append(1.0 - (now - recent_second[0]))
-                if minute_full:
-                    waits.append(60.0 - (now - self._timestamps[0]))
-                wait_seconds = max(0.0, max(waits))
-                elapsed = now - started
-                exceeds_call_deadline = (
-                    deadline is not None and now + wait_seconds > deadline
-                )
-                if elapsed + wait_seconds > self.max_wait_seconds or exceeds_call_deadline:
-                    raise RuntimeError(
-                        f"Flattrade {self.label} rate limit exhausted; "
-                        f"safe slot needs {wait_seconds:.2f}s"
-                    )
-                self._sleep(wait_seconds)
-        finally:
-            self._lock.release()
-
-    def reset(self) -> None:
-        """Forget local request history after a session is explicitly closed."""
-        with self._lock:
-            self._timestamps.clear()
 
 
 class FlattradeExecutionClient:
@@ -1197,10 +1103,7 @@ class FlattradeExecutionClient:
                 return BrokerQueryResult.indeterminate(
                     "Flattrade open-order query contained incomplete order data."
                 )
-            if raw_state in {
-                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
-                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
-            }:
+            if raw_state in TERMINAL_BROKER_STATES:
                 continue
             if snapshot.remaining_quantity <= 0:
                 continue

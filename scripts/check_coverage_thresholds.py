@@ -5,7 +5,7 @@ The CI run enables branch measurement globally, then this script applies stricte
 budgets to the live-money safety core and each broker adapter.
 
 Why this script exists at all: Coverage.py has exactly ONE global
-``fail_under`` setting (pyproject pins it to the repository's 68% floor),
+``fail_under`` setting (pyproject pins it to the repository's 70% floor),
 so the stricter 90%/80% per-module budgets have to be enforced from the JSON
 report by hand.  The split is deliberate -- the global floor stops overall
 erosion, while these budgets stop a specific safety module from quietly losing
@@ -40,6 +40,13 @@ SAFETY_THRESHOLDS = {
     # dies before publishing results. A regression here is silent until the
     # day it matters, so it carries the data-safety budget.
     "Dependencies/session_state.py": 90.0,
+    # The rolling-window rate limiter, hoisted out of the Flattrade and Dhan
+    # adapters (2026-09-02). It sits directly in front of every live broker
+    # request those two make: if it under-counts, orders breach the broker's
+    # published limits; if it over-waits, a trading decision goes stale. Given
+    # its own row here so the code cannot escape a budget by moving files --
+    # the exact failure this dict's header warns about.
+    "Dependencies/broker_rate_limit.py": 90.0,
 }
 
 # EVERY live execution adapter belongs in this dict. A broker added without a

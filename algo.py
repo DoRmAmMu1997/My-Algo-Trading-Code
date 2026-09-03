@@ -5,9 +5,9 @@ algo.py - one friendly command-line entry point for the whole project.
 This repo has several separate scripts you normally run one at a time, each with
 its own long path and its own options:
 
-    python "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py" --lookback 5y
-    python "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py" --data ...
-    python "Nifty Multi Strategy Front Test - Master File.py"
+    python "Data Extractors/nifty_1m_5y_data_fetch_dhan.py" --lookback 5y
+    python "My Backtest Files (For Reference)/renko_strategy_backtest.py" --data ...
+    python "nifty_multi_strategy_master.py"
 
 Remembering those exact paths is fiddly. This file is a small "front desk": you
 tell it WHAT you want to do (a short command like `fetch-data` or `backtest`) and
@@ -82,20 +82,20 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 # `fetch-data --index <key>`
 INDEX_SCRIPTS = {
-    "nifty": "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py",
-    "banknifty": "Data Extractors/Banknifty 1m 5Y Data Fetch Dhan.py",
-    "finnifty": "Data Extractors/Finnifty 1m 5Y Data Fetch Dhan.py",
+    "nifty": "Data Extractors/nifty_1m_5y_data_fetch_dhan.py",
+    "banknifty": "Data Extractors/banknifty_1m_5y_data_fetch_dhan.py",
+    "finnifty": "Data Extractors/finnifty_1m_5y_data_fetch_dhan.py",
 }
 
 # `backtest --strategy <key>`
 BACKTEST_SCRIPTS = {
-    "renko": "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py",
-    "ema": "My Backtest Files (For Reference)/Nifty EMA Trend Strategy Backtest.py",
-    "heikin": "My Backtest Files (For Reference)/Nifty Heiken Ashi Futures 5Y Backtest.py",
-    "cpr": "My Backtest Files (For Reference)/Nifty CPR Strategy Backtest.py",
+    "renko": "My Backtest Files (For Reference)/renko_strategy_backtest.py",
+    "ema": "My Backtest Files (For Reference)/ema_trend_strategy_backtest.py",
+    "heikin": "My Backtest Files (For Reference)/heikin_ashi_futures_5y_backtest.py",
+    "cpr": "My Backtest Files (For Reference)/cpr_strategy_backtest.py",
     "profit-shooter": "My Backtest Files (For Reference)/profit_shooter_backtest.py",
-    "goldmine": "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Goldmine Strategy Backtest.py",
-    "money-machine": "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Money Machine Strategy Backtest.py",
+    "goldmine": "My Backtest Files (For Reference)/Subhamoy Strategies/goldmine_strategy_backtest.py",
+    "money-machine": "My Backtest Files (For Reference)/Subhamoy Strategies/money_machine_strategy_backtest.py",
 }
 
 # `diagnose --broker <key>`. argparse builds its allowed --broker choices from
@@ -109,7 +109,7 @@ BROKER_DIAGNOSTICS = {
 }
 
 # Commands that always map to exactly one script (no selector needed).
-MASTER_SCRIPT = "Nifty Multi Strategy Front Test - Master File.py"
+MASTER_SCRIPT = "nifty_multi_strategy_master.py"
 TOKEN_SETUP_SCRIPT = "Dependencies/dhan_token_setup.py"
 CHECK_ENV_SCRIPT = "Dependencies/check_env_config.py"
 

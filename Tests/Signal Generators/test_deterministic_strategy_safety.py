@@ -20,7 +20,7 @@ GENERATOR_DIR = Path(__file__).resolve().parents[2] / "Signal Generators"
 
 
 def _load_module(relative_path: str, module_name: str):
-    """Load a spaced-name strategy module the same way the master runner does."""
+    """Load a strategy module from a spaced FOLDER, as the master runner does."""
 
     path = GENERATOR_DIR / relative_path
     parent = str(path.parent)
@@ -91,7 +91,7 @@ def test_profit_shooter_open_stop_precedes_indicator_warmup():
 
 def test_supertrend_warmup_is_neutral_not_artificial_long():
     module = _load_module(
-        "Supertrend Signal Generator Bullish.py",
+        "supertrend_signal_generator_bullish.py",
         "mat106_supertrend_bullish",
     )
     high = pd.Series([101.0, 102.0, 103.0])
@@ -106,7 +106,7 @@ def test_supertrend_warmup_is_neutral_not_artificial_long():
 
 def test_opening_strike_is_consumed_only_after_entry_acknowledgement():
     module = _load_module(
-        "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
+        "opening_strike_pcr_vwap_atr_signal_generator.py",
         "mat106_opening_strike",
     )
     engine = module.NiftyOpeningStrikePCRVWAPATRSignalGenerator(
@@ -173,19 +173,19 @@ def test_opening_strike_is_consumed_only_after_entry_acknowledgement():
             {"trend_move_pct": float("nan")},
         ),
         (
-            "CPR Strategy/Nifty CPR Algo 3 Signal Generator.py",
+            "CPR Strategy/cpr_algo3_signal_generator.py",
             "mat106_cpr3_config",
             "CPRAlgo3Config",
             {"call_arsi_min": float("nan")},
         ),
         (
-            "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
+            "opening_strike_pcr_vwap_atr_signal_generator.py",
             "mat106_opening_config",
             "NiftyOpeningStrikePCRVWAPATRConfig",
             {"pcr_bullish_threshold": float("nan")},
         ),
         (
-            "Supertrend Signal Generator Bullish.py",
+            "supertrend_signal_generator_bullish.py",
             "mat106_supertrend_config",
             "SupertrendSettings",
             {"factor": float("nan")},
@@ -213,7 +213,7 @@ def test_core_strategy_configs_reject_non_finite_values(
 def test_core_strategy_configs_enforce_cross_field_and_percentage_invariants():
     ema = _load_module("ema_trend_strategy_logic.py", "mat106_ema_invariants")
     opening = _load_module(
-        "Nifty Opening Strike PCR VWAP ATR Signal Generator.py",
+        "opening_strike_pcr_vwap_atr_signal_generator.py",
         "mat106_opening_invariants",
     )
     slh = _load_module(
@@ -221,7 +221,7 @@ def test_core_strategy_configs_enforce_cross_field_and_percentage_invariants():
         "mat106_slh_invariants",
     )
     donchian = _load_module(
-        "Donchian Signal Generator Bearish.py",
+        "donchian_signal_generator_bearish.py",
         "mat106_donchian_invariants",
     )
 
@@ -266,7 +266,7 @@ def test_fixed_fixture_indicator_and_signal_snapshot():
         "mat106_snapshot_profit",
     )
     supertrend_module = _load_module(
-        "Nifty Supertrend Signal Generator.py",
+        "supertrend_signal_generator.py",
         "mat106_snapshot_supertrend",
     )
     common = _load_module("misc_strategy_common.py", "mat106_snapshot_common")

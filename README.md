@@ -46,7 +46,7 @@ You might have to adjust the import addresses from which the files are to be imp
 # Repository structure
 ```
 .
-├── Nifty Multi Strategy Front Test - Master File.py   # ~27 core strategies + independently opt-in agents
+├── nifty_multi_strategy_master.py   # ~27 core strategies + independently opt-in agents
 ├── Data Extractors/                                   # 1m OHLC downloaders + shared helper
 ├── My Backtest Files (For Reference)/                 # backtesting.py-based backtests
 ├── Signal Generators/                                 # strategy / signal logic modules
@@ -129,9 +129,9 @@ Each subfolder has its own `Readme.md` with the details.
 Run `python algo.py --help`, or `python algo.py <command> --help`, for the details.
 
 # Typical workflow
-1. Pull historical data — e.g. `python "Data Extractors/Nifty 1m 5Y Data Fetch Dhan.py"`. The CSV lands in `Backtest Outputs/`.
-2. Run a backtest against that CSV — e.g. `python "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py"`.
-3. Once a strategy looks good, run `Nifty Multi Strategy Front Test - Master File.py` for multi-strategy execution — paper by default, or live once you've configured a broker (Setup step 6).
+1. Pull historical data — e.g. `python "Data Extractors/nifty_1m_5y_data_fetch_dhan.py"`. The CSV lands in `Backtest Outputs/`.
+2. Run a backtest against that CSV — e.g. `python "My Backtest Files (For Reference)/renko_strategy_backtest.py"`.
+3. Once a strategy looks good, run `nifty_multi_strategy_master.py` for multi-strategy execution — paper by default, or live once you've configured a broker (Setup step 6).
 
 (Or do all three with the unified CLI above: `python algo.py fetch-data --index nifty` → `python algo.py backtest --strategy renko --data ...` → `python algo.py run`.)
 
@@ -168,7 +168,7 @@ python -m compileall -q .
 python -m ruff check .
 python -m mypy
 ```
-Coverage is branch-enabled: overall runtime coverage may not fall below 68% (CI measures 69.1%; a local run with the optional broker SDKs installed reads ~2 points higher because 7 SDK-gated tests skip in CI — trust the CI number), new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The two local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
+Coverage is branch-enabled: overall runtime coverage may not fall below 70% (CI measures 70.2%; a local run with the optional broker SDKs installed reads ~2 points higher because 7 SDK-gated tests skip in CI — trust the CI number), new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The two local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
 
 # License
 Released under the MIT License — see [LICENSE](LICENSE).

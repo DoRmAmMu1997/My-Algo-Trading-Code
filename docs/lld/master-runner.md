@@ -1,6 +1,6 @@
 # LLD — Master runner: process lifecycle and thread supervision
 
-**Owns:** `Nifty Multi Strategy Front Test - Master File.py` (`main()` and the
+**Owns:** `nifty_multi_strategy_master.py` (`main()` and the
 startup/shutdown helpers around it)
 **Depends on:** every other component
 **Read first:** [`../hld/system-overview.md`](../hld/system-overview.md) §6 (concurrency), §7 (failure model)
@@ -123,13 +123,16 @@ account-wide position may belong to the operator rather than this runner.
 
 ## 5. Module loading
 
-Most strategy files have spaces in their names and cannot be imported normally.
+Strategy files live in FOLDERS whose names contain spaces, so they cannot be
+imported normally even though ADR-0014 renamed the files themselves.
 `load_module(module_name, file_path)` wraps `importlib.util.spec_from_file_location`
 so the runner can load them by path. Consequences worth knowing:
 
 - The master itself is loaded the same way by its test suite.
-- mypy cannot type-check spaced-name files; they are covered by `compileall`
-  plus the unittest suite instead (see [`testing-and-ci.md`](testing-and-ci.md)).
+- Files outside mypy's scope are covered by `compileall` plus the unittest
+  suite instead (see [`testing-and-ci.md`](testing-and-ci.md)). Since ADR-0014
+  that exclusion is never about the filename -- it means the file still has
+  type errors to fix.
 - Anything imported this way is **not** on `sys.path` for its siblings, which is
   why the agent folders carry their own path bootstraps.
 

@@ -29,7 +29,7 @@ def _make_repo(tmp_path: Path, *, template: str, live: str | None, code: str = "
     (tmp_path / "Dependencies" / "env.example").write_text(template, encoding="utf-8")
     if live is not None:
         (tmp_path / "Dependencies" / ".env").write_text(live, encoding="utf-8")
-    (tmp_path / "Nifty Multi Strategy Front Test - Master File.py").write_text(
+    (tmp_path / "nifty_multi_strategy_master.py").write_text(
         code, encoding="utf-8"
     )
     return tmp_path
@@ -108,7 +108,7 @@ class TestAudit:
 
     def test_source_files_include_the_master_and_dependencies(self):
         names = {path.name for path in source_files(REPO_ROOT)}
-        assert "Nifty Multi Strategy Front Test - Master File.py" in names
+        assert "nifty_multi_strategy_master.py" in names
         assert "check_env_config.py" in names
 
 

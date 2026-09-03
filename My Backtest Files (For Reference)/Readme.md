@@ -8,29 +8,29 @@ Link: https://kernc.github.io/backtesting.py/
 # Files in this folder
 | File | Strategy | Imports from `Signal Generators/` |
 |---|---|---|
-| `Nifty CPR Strategy Backtest.py` | CPR PDF strategy on 5-minute candles, with Algo 1, Algo 2, and RSI divergence | `Signal Generators/CPR Strategy/cpr_strategy_logic.py` |
-| `Subhamoy Strategies/Nifty Goldmine Strategy Backtest.py` | Goldmine SMA20/SMA200 pullback strategy with engulfing entry | `Signal Generators/Subhamoy Strategies/goldmine_strategy_logic.py` |
-| `Subhamoy Strategies/Nifty Money Machine Strategy Backtest.py` | Money Machine SMA20/SMA200 compression strategy with Hulk/Marubozu entry | `Signal Generators/Subhamoy Strategies/money_machine_strategy_logic.py` |
-| `Nifty EMA Trend Strategy Backtest.py` | 4/11/18 EMA trend, ADX-filtered | `ema_trend_strategy_logic.py` |
-| `Nifty Heiken Ashi Futures 5Y Backtest.py` | Heikin Ashi + Bollinger Bands | (self-contained) |
-| `Nifty Renko Strategy Backtest.py` | Renko + 9/21 EMA | `renko_strategy_logic_9_21.py` |
+| `cpr_strategy_backtest.py` | CPR PDF strategy on 5-minute candles, with Algo 1, Algo 2, and RSI divergence | `Signal Generators/CPR Strategy/cpr_strategy_logic.py` |
+| `Subhamoy Strategies/goldmine_strategy_backtest.py` | Goldmine SMA20/SMA200 pullback strategy with engulfing entry | `Signal Generators/Subhamoy Strategies/goldmine_strategy_logic.py` |
+| `Subhamoy Strategies/money_machine_strategy_backtest.py` | Money Machine SMA20/SMA200 compression strategy with Hulk/Marubozu entry | `Signal Generators/Subhamoy Strategies/money_machine_strategy_logic.py` |
+| `ema_trend_strategy_backtest.py` | 4/11/18 EMA trend, ADX-filtered | `ema_trend_strategy_logic.py` |
+| `heikin_ashi_futures_5y_backtest.py` | Heikin Ashi + Bollinger Bands | (self-contained) |
+| `renko_strategy_backtest.py` | Renko + 9/21 EMA | `renko_strategy_logic_9_21.py` |
 | `profit_shooter_backtest.py` | Profit Shooter — supports NIFTY/BANKNIFTY/FINNIFTY via `--dataset` | `profit_shooter_strategy_logic.py` |
 
 # How to run
 ```
-python "My Backtest Files (For Reference)/Nifty Renko Strategy Backtest.py"
+python "My Backtest Files (For Reference)/renko_strategy_backtest.py"
 ```
 By default each backtest reads `<repo_root>/Backtest Outputs/nifty_renko_futures_5y_1min_data.csv`. Override with `--data <path>`. The profit-shooter file additionally supports `--dataset nifty|banknifty|finnifty`.
 
 Run the CPR backtest with:
 ```
-python "My Backtest Files (For Reference)/Nifty CPR Strategy Backtest.py" --dataset nifty --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"
+python "My Backtest Files (For Reference)/cpr_strategy_backtest.py" --dataset nifty --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"
 ```
 
 Run the Subhamoy backtests with already-prepared 5-minute OHLC CSVs:
 ```
-python "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Goldmine Strategy Backtest.py" --dataset nifty --data "path/to/five_minute_data.csv"
-python "My Backtest Files (For Reference)/Subhamoy Strategies/Nifty Money Machine Strategy Backtest.py" --dataset nifty --data "path/to/five_minute_data.csv"
+python "My Backtest Files (For Reference)/Subhamoy Strategies/goldmine_strategy_backtest.py" --dataset nifty --data "path/to/five_minute_data.csv"
+python "My Backtest Files (For Reference)/Subhamoy Strategies/money_machine_strategy_backtest.py" --dataset nifty --data "path/to/five_minute_data.csv"
 ```
 
 # Where outputs land

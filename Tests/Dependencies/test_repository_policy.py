@@ -325,7 +325,11 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert config["tool"]["coverage"]["run"]["branch"] is True
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 68.0
+    # 68.0 -> 70.0 (2026-09-02). CI measured 70.2% on five consecutive main
+    # runs, so the floor was raised into the headroom it had accumulated. The
+    # remaining margin is ~0.2pp by design; per pyproject's own rule this only
+    # ever moves UP.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 70.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
@@ -347,7 +351,27 @@ def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
 
     assert configured_files == runtime_files
     assert "Signal Generators/CPR AI Agent" in mypy["mypy_path"]
-    assert "Nifty Multi Strategy Front Test - Master File.py" not in mypy["files"]
+    # The master is type-checked, but NOT through `files`, and the distinction
+    # is load-bearing rather than cosmetic. Listing it there makes mypy resolve
+    # Dependencies/broker_contract.py under two module names in one run: bare
+    # `broker_contract`, which is how all four adapters import it because
+    # Dependencies/ has no __init__.py, and `Dependencies.broker_contract`,
+    # which is how the master imports it. Unifying those would change imports on
+    # the live-order path, which ADR-0014 explicitly declines.
+    #
+    # So it is gated by its OWN mypy invocation in the CI workflow instead --
+    # equally strict, and asserted below so the gate cannot be dropped. ADR-0014
+    # tier 2b took that run from 288 errors to zero.
+    assert "nifty_multi_strategy_master.py" not in mypy["files"]
+    workflow_text = (ROOT / ".github/workflows/quality-and-security.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "python -m mypy nifty_multi_strategy_master.py" in workflow_text, (
+        "The master runner is type-clean but sits outside [tool.mypy] files, so "
+        "CI must check it in a dedicated `python -m mypy "
+        "nifty_multi_strategy_master.py` step. Without that line nothing "
+        "type-checks the largest file in the repository."
+    )
     assert any(
         "openai_codex.*" in override.get("module", [])
         and override.get("ignore_missing_imports") is True
@@ -460,7 +484,7 @@ def test_cpr_ai_documentation_rejects_obsolete_arbiter_and_worker_disable_guidan
     assert "strict allowlist" in focused_readme
     assert "trading and api secrets" in focused_readme.lower()
 
-    master = (ROOT / "Nifty Multi Strategy Front Test - Master File.py").read_text(
+    master = (ROOT / "nifty_multi_strategy_master.py").read_text(
         encoding="utf-8"
     )
     assert "optional CPR arbiter" not in master
@@ -474,7 +498,7 @@ def test_current_architecture_docs_distinguish_core_from_optional_agents():
         ROOT / "Signal Generators/Readme.md",
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
-        ROOT / "Nifty Multi Strategy Front Test - Master File.py",
+        ROOT / "nifty_multi_strategy_master.py",
         # The committed HLD is a whole-system overview, so the same rule applies:
         # a reader must be able to see both optional agents and must not mistake
         # the core count for the enabled total (docs/adr/0011 follow-up).

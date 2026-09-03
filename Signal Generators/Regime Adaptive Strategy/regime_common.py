@@ -19,7 +19,7 @@ import ...` from inside this folder would not resolve at runtime.
 
 Rather than repeat a path bootstrap in every module here, exactly ONE module
 does it -- this one -- and re-exports the handful of shared indicators the rest
-of the folder needs. So `Nifty Regime Adaptive Signal Generator.py` and
+of the folder needs. So `regime_adaptive_signal_generator.py` and
 `regime_candidates.py` import only from their own siblings, with no path magic
 of their own. (`conftest.py` does the equivalent for pytest.)
 
@@ -137,7 +137,7 @@ def attach_opening_range(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
     3. Grouping is per `session_date`, so yesterday's range can never survive
        into today.
 
-    NOTE: this is NOT what `Nifty Opening Range Breakout Signal Generator.py`
+    NOTE: this is NOT what `opening_range_breakout_signal_generator.py`
     computes. That file puts an ATR band around each candle's own open, which is
     a different idea despite the similar name.
     """

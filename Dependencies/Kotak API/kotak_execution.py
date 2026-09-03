@@ -96,8 +96,14 @@ from broker_contract import (  # noqa: E402
     OpenPosition,
     OrderResult,
     OrderStatus,
+    exact_int,
     normalize_order_result,
 )
+
+# This module and its tests refer to the helper by its historical private name,
+# so keep that binding rather than editing 8-9 call sites and the suites that
+# read `<module>._exact_int`. The implementation now lives in broker_contract.
+_exact_int = exact_int
 
 from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
@@ -147,9 +153,6 @@ _SIDE_MAP = {"BUY": "B", "SELL": "S"}
 # normally fill in well under a second; we wait a few seconds then give up.
 _FILL_TIMEOUT_SECONDS = 8.0
 _FILL_POLL_INTERVAL = 0.5
-# Kotak order-status (`ordSt`) values, lower-cased.
-_FILLED_ORDER_STATES = {"complete", "traded", "executed", "filled"}
-_FAILED_ORDER_STATES = {"rejected", "cancelled", "canceled", "cancel", "lapsed"}
 _BROKER_DEADLINE_SECONDS = 10.0
 
 # The scrip master is a multi-megabyte bulk CSV fetched once, not an order, so
@@ -174,20 +177,6 @@ _SCRIP_MASTER_PROGRESS_SECONDS = 5.0
 
 class _SdkDeadlineExceeded(TimeoutError):
     """Raised when a Kotak SDK call outlives the fixed broker deadline."""
-
-
-def _exact_int(value: Any) -> int | None:
-    """Parse a broker quantity only when it is a finite whole number."""
-
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or not number.is_integer():
-        return None
-    return int(number)
 
 
 def _response_rows(response: Any) -> list[Any] | None:
@@ -1279,10 +1268,7 @@ class KotakExecutionClient:
                     "open-order",
                     "Kotak open-order query contained incomplete order data.",
                 )
-            if raw_state in {
-                "COMPLETE", "COMPLETED", "FILLED", "TRADED", "EXECUTED",
-                "REJECTED", "CANCELLED", "CANCELED", "CANCEL", "LAPSED",
-            }:
+            if raw_state in TERMINAL_BROKER_STATES:
                 continue
             if snapshot.remaining_quantity <= 0:
                 continue

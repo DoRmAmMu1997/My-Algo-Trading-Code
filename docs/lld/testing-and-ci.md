@@ -99,7 +99,7 @@ the unittest `TestCase` classes as well and merge the numbers.
 
 ## 3. Why the master suite is the master's only real gate
 
-mypy cannot see `Nifty Multi Strategy Front Test - Master File.py` — its filename
+mypy cannot see `nifty_multi_strategy_master.py` — its filename
 is not a valid module name ([ADR-0009](../adr/0009-importlib-loading-for-spaced-filenames.md)).
 So the 17k-line runner is covered by:
 
@@ -123,7 +123,7 @@ budgets are enforced from `coverage.json` by
 
 | Tier | Floor | Modules |
 |---|---|---|
-| Repository floor | **68%** | everything (CI measures **69.1%**; original MAT-110 baseline was 54.7%) |
+| Repository floor | **70%** | everything (CI measures **70.2%**; original MAT-110 baseline was 54.7%) |
 | Safety / data-safety | **90%** | `broker_contract`, `execution_ledger`, `startup_exposure`, `trading_lifecycle`, `market_data_health`, `tick_bar_builder`, `next_open_entry`, `risk_sizing`, `order_splitting`, `secret_redaction` |
 | Broker adapters | **80%** | Kotak, Shoonya, Flattrade, Dhan |
 
@@ -153,7 +153,7 @@ newer-only syntax). `permissions: contents: read` — the workflow only reads.
 | `pip_audit --local` | audits the clean resolved tree, not a developer's system Python |
 | `pre_commit validate-config` | the hook config itself is valid |
 | branch-enabled coverage over all three suites + threshold script | the budgets above |
-| `compileall` | the syntax gate for spaced-name files |
+| `compileall` | the syntax gate for every file, including those outside mypy |
 | `ruff check .` | lint |
 | `mypy` | scoped in `pyproject.toml` to identifier-named modules |
 | `bandit -r .` | security; B101/B105/B110 skipped, vendored + reference code excluded |
@@ -179,7 +179,7 @@ runtime. It asserts, without contacting any network:
 - dependency sets are exact (`==` pins) and Kotak uses its official Git tag;
 - CI runs the audit, branch coverage, and every dependency set;
 - Dependabot updates pip and GitHub Actions weekly;
-- coverage config stays branch-enabled at the 68% floor;
+- coverage config stays branch-enabled at the 70% floor;
 - every `cpr_ai_*.py` module is inside mypy's scope;
 - `env.example` documents every `_env_*` key the code reads (>300 found, as a
   sanity check that the AST walk still works);

@@ -1,6 +1,6 @@
 # ADR-0009: Load spaced-name files with `importlib` instead of renaming them
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0014](0014-tiered-rename-of-spaced-filenames.md)
 **Date:** 2026-08-10 (retrospective)
 **Deciders:** repository owner
 
@@ -103,8 +103,12 @@ README example and CLI invocation stable.
 - Test file basenames must stay unique repository-wide, because pytest's
   `prepend` import mode with no `__init__.py` files keys modules by basename.
 
-**To revisit when:** the master runner is split into modules. Do the rename
-then, in the same review, not before.
+**To revisit when:** ~~the master runner is split into modules. Do the rename
+then, in the same review, not before.~~ Superseded on 2026-09-02 by
+[ADR-0014](0014-tiered-rename-of-spaced-filenames.md), which keeps this
+document's reasoning -- the danger is one repository-wide diff -- and answers
+it with reviewable tiers instead of waiting for a split that is not being
+done.
 
 ## Action items
 

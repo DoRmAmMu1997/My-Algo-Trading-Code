@@ -1,6 +1,6 @@
 # Quality-tooling configuration only. This repo is not a packaged distribution
-# (the runner and most strategy files have SPACES in their names and are loaded
-# via importlib -- see load_module() in the master file), so there is no
+# (strategy FOLDERS still have spaces in their names, so their modules are
+# loaded via importlib -- see load_module() in the master runner), so there is no
 # [project] section: this file centralizes ruff + mypy configuration, mirroring
 # the Streamlit Scanner App's setup (the house pattern for CI quality gates).
 
@@ -76,14 +76,21 @@ external = ["BLE"]
 # CI runs 3.12 and 3.13; pin the older so local runs stay honest about what CI
 # will accept.
 python_version = "3.12"
-# First-adoption scope: every module whose FILENAME is a valid Python
-# identifier. The master runner ("Nifty Multi Strategy Front Test - Master
-# File.py") and the per-strategy files with spaces in their names CANNOT be
-# mypy modules (invalid module name); they are covered by `compileall` plus
-# the master unittest suite instead.
+# Scope: every module that both has an identifier filename AND type-checks
+# clean. ADR-0014 retired the spaced FILENAMES, so nothing is excluded for
+# naming any more -- what remains outside is excluded on its own merits:
+# nifty_multi_strategy_master.py (288 errors, being worked down) and eight
+# renamed strategy/backtest files whose errors are real. All of them are still
+# covered by `compileall` plus the unittest suites.
 files = [
     "algo.py",
     "Data Extractors/index_1m_5y_data_fetch_dhan_common.py",
+    # Tier 3 of ADR-0014: renamed 2026-09-02 and admitted here in the same
+    # commit. The engine was already checked; these three wrappers were outside
+    # only because of their spaced names, and they pass unmodified.
+    "Data Extractors/nifty_1m_5y_data_fetch_dhan.py",
+    "Data Extractors/banknifty_1m_5y_data_fetch_dhan.py",
+    "Data Extractors/finnifty_1m_5y_data_fetch_dhan.py",
     "Dependencies/broker_contract.py",
     "Dependencies/check_env_config.py",
     "Dependencies/diagnostic_preflight.py",
@@ -95,6 +102,12 @@ files = [
     "Dependencies/session_state.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
+    # Added 2026-09-02. Nothing imports this script, so unlike every other
+    # module here it was never reached transitively either -- a canary type
+    # error planted in it escaped the gate entirely. It decides whether the
+    # coverage build passes, so an unchecked type error here silently weakens
+    # a gate rather than breaking a feature.
+    "scripts/check_coverage_thresholds.py",
     "Dependencies/Kotak API/kotak_execution.py",
     "Dependencies/Kotak API/diagnose_kotak_symbol.py",
     "Dependencies/Shoonya API/shoonya_execution.py",
@@ -108,7 +121,44 @@ files = [
     "Signal Generators/renko_strategy_logic.py",
     "Signal Generators/renko_strategy_logic_9_21.py",
     "Signal Generators/misc_strategy_common.py",
+    # ADR-0014 tier 1, batch 1 (2026-09-02): the 13 TradingBot ports were
+    # renamed off spaced basenames. NINE of them pass mypy unmodified and are
+    # admitted here. The other four -- mean_reversion_zscore, parabolic_sar,
+    # rsi_reversal and supertrend -- report Any|None argument errors from
+    # `.get()` results reaching int()/float(), and stay OUT until those are
+    # fixed on their own merits. Admitting only what passes keeps this tier a
+    # rename; silencing four files with ignores would make it a typing change
+    # wearing a rename's diff, which is what ADR-0014 exists to prevent.
+    "Signal Generators/bollinger_bands_signal_generator.py",
+    "Signal Generators/keltner_squeeze_signal_generator.py",
+    "Signal Generators/ml_ensemble_signal_generator.py",
+    "Signal Generators/multi_timeframe_signal_generator.py",
+    "Signal Generators/opening_range_breakout_signal_generator.py",
+    "Signal Generators/rsi_divergence_signal_generator.py",
+    "Signal Generators/sma_crossover_signal_generator.py",
+    "Signal Generators/stochastic_oscillator_signal_generator.py",
+    "Signal Generators/volatility_breakout_signal_generator.py",
+    # ADR-0014 tier 1, batch 2 (2026-09-02). Only the Supertrend Bullish
+    # generator qualifies: donchian_signal_generator_bearish reports unused
+    # TA-Lib `type: ignore` comments plus a union-attr on an optional module,
+    # and opening_strike_pcr_vwap_atr reports 12 argument-type errors on its
+    # decision dataclass. Both stay out until fixed on their own merits.
+    "Signal Generators/supertrend_signal_generator_bullish.py",
+    # ADR-0014 tier 1, batch 3 (2026-09-02). The Regime Adaptive router is
+    # clean and joins here; cpr_algo3_signal_generator reports 6 errors and
+    # stays out. Its two candidate rules in the same folder are already in
+    # scope below, so the router's admission completes that strategy's set
+    # apart from the candidates' own module.
+    "Signal Generators/Regime Adaptive Strategy/regime_adaptive_signal_generator.py",
     "Signal Generators/CPR Strategy/cpr_strategy_logic.py",
+    # Tier 4 of ADR-0014: renamed from spaced basenames on 2026-09-02 and
+    # admitted to the type gate in the same commit, which is the entire point
+    # of the rename. All five passed mypy unmodified.
+    "Signal Generators/CPR Strategy/cpr_algo1_signal_generator.py",
+    "Signal Generators/CPR Strategy/cpr_algo2_signal_generator.py",
+    "Signal Generators/CPR Strategy/cpr_combined_signal_generator.py",
+    "Signal Generators/Subhamoy Strategies/goldmine_signal_generator.py",
+    "Signal Generators/Subhamoy Strategies/money_machine_signal_generator.py",
     "Signal Generators/CPR AI Agent/cpr_ai_agent.py",
     "Signal Generators/CPR AI Agent/cpr_ai_codex_runner.py",
     "Signal Generators/CPR AI Agent/cpr_ai_codex_subprocess.py",
@@ -213,17 +263,23 @@ omit = [
 # enforced from coverage.json by the small policy script because Coverage.py has
 # only one global fail-under setting.
 #
-# 68.0 is set against CI's 69.1%. USE THE CI NUMBER, NOT A LOCAL ONE: a developer
-# machine with the optional broker SDKs installed (neo_api_client, pyotp) runs 7
-# tests that CI's verify job skips, and reads ~71.4% -- about 2.3 points high. CI
-# installs core + dev + ai + codex-ai only, deliberately (Kotak's official tag
-# pins older pandas/requests and cannot share the audited core environment), so
-# the hosted number is the honest one.
+# 70.0 is set against CI's 70.2% (2026-09-02), measured identically on five
+# consecutive main runs -- this number is deterministic, not drifting, so the
+# margin is small BY DESIGN rather than by luck. USE THE CI NUMBER, NOT A LOCAL
+# ONE: a developer machine with the optional broker SDKs installed
+# (neo_api_client, pyotp) runs 7 tests that CI's verify job skips and reads
+# about 2 points high. CI installs core + dev + ai + codex-ai only, deliberately
+# (Kotak's official tag pins older pandas/requests and cannot share the audited
+# core environment), so the hosted number is the honest one.
+#
+# The margin at 70.0 is roughly 0.2pp, about 40 statements. That is deliberate
+# pressure: a PR that adds materially untested code should go red. It is NOT an
+# invitation to lower the floor when it does.
 #
 # Raising this is deliberate and one-way: only move it UP, and only after a CI
 # run shows real headroom. Lowering it to make a red build pass defeats the gate
 # -- fix the tests instead.
-fail_under = 68.0
+fail_under = 70.0
 precision = 1
 show_missing = true
 skip_covered = false

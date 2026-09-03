@@ -1,23 +1,28 @@
 """
-Backtest a Nifty Renko strategy using backtesting.py.
+Backtest the Nifty EMA trend strategy using backtesting.py.
 
 Flow:
 1. Read 1-minute OHLC CSV.
 2. Detect start/end date from the CSV itself.
-3. Build Renko candles + EMA indicators using shared logic file.
-4. Ask shared signal engine for entry/exit decisions.
+3. Build EMA/ATR/ADX indicator columns using the shared EMA logic file.
+4. Ask the shared signal engine for entry/exit decisions.
 5. Restrict fresh entries to the allowed intraday window (09:15 to before 15:15).
-6. Block fresh entries during the midday no-trade window (11:00 AM to 1:30 PM).
-7. Force square-off any open position at/after 15:15 each day.
-8. Enforce daily max-loss cap (2% of capital); halt for that day if breached.
-9. Save stats, trades, and daily equity.
+6. Force square-off any open position at/after 15:15 each day.
+7. Enforce daily max-loss cap (3% of capital); halt for that day if breached.
+8. Save stats, trades, and daily equity.
 
 Beginner mental model:
 - `load_ohlc_data()` prepares clean historical candles.
-- `NiftyRenkoFutures5YStrategy.next()` is called bar-by-bar by the framework.
-- Shared Renko logic file decides entries/exits.
+- `NiftyEMATrendFutures5YStrategy.next()` is called bar-by-bar by the framework.
+- Shared EMA logic decides entries and EMA11 exits.
 - `run_backtest()` wires config + engine together and executes the run.
-- `save_outputs()` exports results for analysis in spreadsheets or notebooks.
+- `save_outputs()` exports results for later spreadsheet review.
+
+Important beginner note about this file:
+- It does not contain the EMA rules themselves.
+- Those rules live in `ema_trend_strategy_logic.py`.
+- This file is mostly about "when should we ask for a signal?" and
+  "how should we simulate entries, exits, capital, and reporting?"
 """
 
 import argparse
@@ -43,22 +48,24 @@ _SIGNAL_GENERATORS_DIR = os.path.join(_REPO_ROOT, "Signal Generators")
 if _SIGNAL_GENERATORS_DIR not in sys.path:
     sys.path.insert(0, _SIGNAL_GENERATORS_DIR)
 
-from renko_strategy_logic_9_21 import (
-    RenkoPositionContext,
-    RenkoSignalEngine,
-    build_renko_with_indicators,
+from ema_trend_strategy_logic import (
+    EMATrendConfig,
+    EMATrendPositionContext,
+    EMATrendSignalEngine,
+    build_ema_trend_with_indicators,
 )
 
 # -----------------------------
 # User configuration
 # -----------------------------
+# Reuses the same 1-minute OHLC dataset used by the Renko backtest by default.
 DATA_PATH = os.path.join(_REPO_ROOT, "Backtest Outputs", "nifty_renko_futures_5y_1min_data.csv")
 OUTPUT_DIR = os.path.join(_REPO_ROOT, "Backtest Outputs")
-LOG_FILE = os.path.join(OUTPUT_DIR, "nifty_renko_futures_5y_backtest.log")
+LOG_FILE = os.path.join(OUTPUT_DIR, "nifty_ema_trend_futures_5y_backtest.log")
 
-# Starting capital: 2.5 lakh INR
+# Starting capital: 6 lakh INR
 STARTING_CAPITAL = 600000
-# Lot size and quantity (1 lot)
+# Lot size and quantity (3 lots).
 LOT_SIZE = 65
 LOTS = 3
 POSITION_SIZE = LOT_SIZE * LOTS
@@ -73,11 +80,8 @@ MIN_BARS = 120
 
 # Intraday session controls:
 # - Fresh entries are allowed only during this window.
-# - Fresh entries are blocked again during the midday pause inside this window.
 # - Any open position is force-closed at/after square-off time.
-ENTRY_START_TIME = dt_time(9, 15)
-MIDDAY_NO_TRADE_START_TIME = dt_time(11, 30)
-MIDDAY_NO_TRADE_END_TIME = dt_time(13, 00)
+ENTRY_START_TIME = dt_time(9, 25)
 SQUARE_OFF_TIME = dt_time(15, 15)
 
 # Daily risk control:
@@ -86,21 +90,12 @@ DAILY_MAX_LOSS_PCT = 0.03
 
 
 # Load .env values from this strategy folder only (keeps config local and explicit).
-# Why absolute path from `__file__`:
-# - script can be run from any working directory
-# - config resolution remains stable and predictable
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=ENV_PATH, override=False)
 
 
 def _env_float(name: str, default: float) -> float:
-    """
-    Read numeric config from environment safely.
-
-    Beginner note:
-    - If variable is missing or invalid text, we return `default`.
-    - This avoids backtest crashes due to config typos.
-    """
+    """Read float config from environment safely."""
     raw = os.getenv(name, "")
     try:
         return float(raw)
@@ -108,17 +103,41 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read integer config from environment safely."""
+    raw = os.getenv(name, "")
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+STRATEGY_CONFIG = EMATrendConfig(
+    # These environment overrides let you tune the shared EMA strategy without
+    # editing Python code. If no env value is supplied, the strategy falls back
+    # to the default values from the original brief.
+    ema_fast_period=_env_int("EMA_TREND_FAST_PERIOD", 4),
+    ema_mid_period=_env_int("EMA_TREND_MID_PERIOD", 11),
+    ema_slow_period=_env_int("EMA_TREND_SLOW_PERIOD", 18),
+    atr_period=_env_int("EMA_TREND_ATR_PERIOD", 14),
+    adx_period=_env_int("EMA_TREND_ADX_PERIOD", 14),
+    slope_lookback=_env_int("EMA_TREND_SLOPE_LOOKBACK", 3),
+    adx_threshold=_env_float("EMA_TREND_ADX_THRESHOLD", 20.0),
+    distance_atr_multiplier=_env_float("EMA_TREND_DISTANCE_ATR_MULT", 0.5),
+    ema11_slope_atr_multiplier=_env_float("EMA_TREND_EMA11_SLOPE_ATR_MULT", 0.3),
+    ema18_slope_atr_multiplier=_env_float("EMA_TREND_EMA18_SLOPE_ATR_MULT", 0.2),
+)
+
+
 # Per closed trade, this fixed amount is deducted from gross trade PnL.
-# Example:
-# - raw trade PnL = 450
-# - BROKERAGE = 80
-# - final trade PnL = 370
 # Supports typo alias `BROGERAGE` for backward compatibility.
 BROKERAGE = _env_float("BROKERAGE", _env_float("BROGERAGE", 80.0))
 
 
 def setup_logging(log_path: str) -> None:
     """Log to both console and file for easy debugging and audit."""
+    # Logging is especially useful in backtests because it lets you inspect
+    # risk halts, margin skips, and summary stats after a long run finishes.
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -128,11 +147,9 @@ def setup_logging(log_path: str) -> None:
 
 
 def _find_first_col(df: pd.DataFrame, names):
-    """
-    Return first matching column name (case-insensitive).
-
-    Useful when CSV exports use variants like `DateTime`, `datetime`, or `date`.
-    """
+    """Return first matching column name (case-insensitive)."""
+    # Historical CSVs often come from different brokers or export tools, and
+    # column names may vary slightly. This helper makes the loader more tolerant.
     col_map = {str(c).strip().lower(): c for c in df.columns}
     for name in names:
         key = str(name).strip().lower()
@@ -149,6 +166,8 @@ def load_ohlc_data(csv_path: str) -> pd.DataFrame:
     - Datetime index
     - Columns: Open, High, Low, Close, Volume
     """
+    # Fail fast if the input path is wrong so the user gets a clean error
+    # message before the backtest engine is even created.
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Data file not found: {csv_path}")
 
@@ -156,6 +175,8 @@ def load_ohlc_data(csv_path: str) -> pd.DataFrame:
     if raw.empty:
         raise ValueError(f"Data file is empty: {csv_path}")
 
+    # We detect columns flexibly because different CSV exports may use names
+    # like `datetime`, `timestamp`, `date`, or `time`.
     ts_col = _find_first_col(raw, ["timestamp", "datetime", "date", "time"])
     o_col = _find_first_col(raw, ["open"])
     h_col = _find_first_col(raw, ["high"])
@@ -166,7 +187,6 @@ def load_ohlc_data(csv_path: str) -> pd.DataFrame:
             "Input CSV must contain timestamp/date + open/high/low/close columns."
         )
 
-    # Parse types safely. Rows with invalid values are dropped.
     df = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(raw[ts_col], errors="coerce"),
@@ -177,68 +197,75 @@ def load_ohlc_data(csv_path: str) -> pd.DataFrame:
         }
     ).dropna()
 
-    # Keep data sorted and unique by timestamp.
+    # Sorting and de-duplicating ensures the backtest walks through candles in
+    # the same clean order a live strategy would see them.
     df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
 
     if len(df) < MIN_BARS:
         raise ValueError(f"Need at least {MIN_BARS} rows, got {len(df)}")
 
-    # backtesting.py expects these exact OHLC column names.
     bt_df = df.rename(
         columns={"open": "Open", "high": "High", "low": "Low", "close": "Close"}
     )
     bt_df = bt_df.set_index("timestamp")
-    # Volume is not used in this strategy, but the framework supports it.
+    # Volume is unused by this strategy, but backtesting.py is happy when the
+    # common OHLCV shape is present.
     bt_df["Volume"] = 0
     return bt_df
 
 
-class NiftyRenkoFutures5YStrategy(Strategy):
+class NiftyEMATrendFutures5YStrategy(Strategy):
     """
-    backtesting.py strategy class for Renko futures backtesting.
+    backtesting.py strategy class for the EMA trend futures strategy.
 
     Notes:
     - `next()` runs once per incoming bar.
-    - All Renko signal rules come from shared `RenkoSignalEngine`.
+    - All EMA signal rules come from shared `EMATrendSignalEngine`.
     - LONG path = bullish logic, SHORT path = bearish logic.
     - Only one position at a time.
     - Daily loss guard can halt trading for the remaining bars of the day.
     - Entry affordability check uses current equity (dynamic auto-adjust margin).
     """
+
     lot_size = POSITION_SIZE
 
     def init(self):
         """
         Initialize per-run state used by the backtest loop.
 
-        This includes:
-        - Shared strategy engine state
-        - Active trade helper values
-        - Diagnostic counters
-        - Per-day risk tracking values
+        This method is called once when backtesting.py creates the strategy.
+        Everything stored on `self` here becomes state that can be reused on
+        every later call to `next()`.
         """
-        # Guards to avoid processing same Renko candle more than once.
+        # We only want to process each completed candle once, even though the
+        # framework calls `next()` on every raw bar update.
         self.last_processed_candle_ts = None
-        self.strategy_engine = RenkoSignalEngine()
+        self.strategy_engine = EMATrendSignalEngine(STRATEGY_CONFIG)
 
-        # Active trade state used by exit logic.
+        # Trade-state fields mirror the currently open strategy trade.
+        # They are kept separate from the framework object so our own logging
+        # and signal context remain simple and explicit.
         self.trade_direction = ""
         self.entry_underlying = 0.0
+        # Stored for logs/debugging only; actual exit is dynamic when the candle
+        # range breaches EMA11 against the trade.
         self.stop_underlying = 0.0
-        self.rr_armed = False
-        # Diagnostic counters for post-run sanity checks.
+
+        # These counters are not required for trading, but they are extremely
+        # helpful for sanity-checking behavior after a run completes.
         self.signal_count = 0
         self.entry_submit_count = 0
         self.exit_count = 0
         self.square_off_count = 0
         self.daily_loss_halt_count = 0
         self.margin_skip_count = 0
-        # Stores max intraday loss observed for each date.
+
+        # This dictionary stores the worst intraday drawdown seen for each date.
         self.daily_loss_tracker = {}
         self.margin_skip_logged_dates = set()
-        # Track date for which 15:15 square-off was already requested.
         self.square_off_requested_date = None
-        # Per-day loss tracking state.
+
+        # These fields reset as the backtest moves from one trading day to the next.
         self.current_day = None
         self.day_start_equity = None
         self.day_loss_limit = STARTING_CAPITAL * DAILY_MAX_LOSS_PCT
@@ -246,34 +273,30 @@ class NiftyRenkoFutures5YStrategy(Strategy):
 
     def _reset_trade_state(self):
         """Clear active-trade helper variables after exit."""
+        # Keeping this reset logic in one place reduces the chance that some
+        # field gets forgotten after a close.
         self.trade_direction = ""
         self.entry_underlying = 0.0
         self.stop_underlying = 0.0
-        self.rr_armed = False
-
-    def _reset_reentry_flags(self):
-        """Clear pullback memory flags."""
-        self.strategy_engine.reset_reentry_flags()
-
-    def _mark_closed_trade_direction(self):
-        """Update engine with most recent closed trade direction."""
-        if self.trade_direction in ("LONG", "SHORT"):
-            self.strategy_engine.update_previous_trade_direction(self.trade_direction)
 
     def _can_afford_entry(self, entry_price: float):
         """
-        Check if a new 1-lot entry is affordable using current running equity.
+        Check if a new entry is affordable using current running equity.
 
         Returns:
             (can_enter, effective_margin, required_margin, equity, notional)
         """
+        # `self.equity` is the current account value inside the backtest,
+        # including the mark-to-market effect of open positions.
         equity = float(self.equity)
         notional = float(entry_price) * float(self.lot_size)
         if notional <= 0:
             return False, MARGIN_REQUIREMENT, 0.0, equity, notional
 
         if AUTO_ADJUST_MARGIN:
-            # Dynamic margin auto-adjust is computed at entry-time from current equity.
+            # This branch makes entries more realistic by checking what margin
+            # current equity can actually support, instead of assuming the start
+            # capital is always fully available forever.
             affordable_margin = (equity * 0.98) / notional
             effective_margin = min(
                 MARGIN_REQUIREMENT,
@@ -288,6 +311,9 @@ class NiftyRenkoFutures5YStrategy(Strategy):
 
     def _current_ohlc(self, n: int) -> pd.DataFrame:
         """Build OHLC DataFrame up to current index `n` from engine arrays."""
+        # backtesting.py exposes price history as array-like objects.
+        # We convert the data back into a normal DataFrame because the shared
+        # EMA logic expects a standard OHLC table with a timestamp column.
         idx = pd.DatetimeIndex(self.data.index[:n])
         return pd.DataFrame(
             {
@@ -304,47 +330,49 @@ class NiftyRenkoFutures5YStrategy(Strategy):
         Main strategy loop called by backtesting.py for every new bar.
 
         Sequence:
-        - Enforce intraday time rules (entry window, midday entry block, and 3:15 square-off)
-        - Enforce per-day max loss cap (2% of capital)
+        - Enforce intraday time rules (entry window and 3:15 square-off)
+        - Enforce per-day max loss cap
         - Warm-up check
-        - Rebuild Renko + indicators from history so far (shared utility)
-        - Process one fresh Renko candle only once
-        - Ask shared signal engine for one decision
+        - Rebuild indicators from history so far
+        - Process one fresh candle only once
+        - Ask the shared signal engine for one decision
         - If in trade: only process exit decisions
-        - If flat: process entry decisions only outside 11:00-13:30 (subject to margin rules)
+        - If flat: process fresh entry decisions
         """
-        # Safety: if engine is flat but local state wasn't cleared, reset it.
+        # Safety cleanup:
+        # If the framework no longer has an open position but our custom state
+        # still thinks a trade exists, bring our state back in sync.
         if not self.position and self.trade_direction:
-            self._mark_closed_trade_direction()
             self._reset_trade_state()
 
-        # Current engine bar timestamp used for time-based rules.
+        # `bar_ts` is the timestamp of the latest raw candle currently being
+        # processed by backtesting.py. Time-based rules are built from this.
         bar_ts = pd.Timestamp(self.data.index[-1])
         bar_date = bar_ts.date()
         bar_time = bar_ts.time()
 
-        # New trading day: reset day-level guards and baseline equity.
+        # At the first bar of each new day, reset day-specific guards and
+        # record the account equity we will use as that day's loss baseline.
         if self.current_day != bar_date:
             self.current_day = bar_date
-            # Baseline equity for daily loss computation.
             self.day_start_equity = float(self.equity)
-            # Re-enable trading each new day unless a new halt condition is hit.
             self.day_trading_blocked = False
             self.square_off_requested_date = None
             self.daily_loss_tracker[bar_date] = 0.0
 
-        # Day loss is measured from start-of-day equity (mark-to-market).
-        # This includes both realized and unrealized PnL impact in equity.
+        # Day loss is measured as "how far current equity has dropped from the
+        # start-of-day equity". This naturally includes realized and unrealized
+        # PnL because both are reflected in `self.equity`.
         if self.day_start_equity is None:
             self.day_start_equity = float(self.equity)
         current_equity = float(self.equity)
         day_loss = max(0.0, self.day_start_equity - current_equity)
-        # Keep a running record of worst intraday drawdown for each date.
         prev_day_max_loss = float(self.daily_loss_tracker.get(bar_date, 0.0))
         if day_loss > prev_day_max_loss:
             self.daily_loss_tracker[bar_date] = float(day_loss)
 
-        # If daily loss cap is breached, halt trading for the rest of the day.
+        # Once the daily loss cap is hit, the strategy stops initiating or
+        # holding trades for the rest of that day.
         if (not self.day_trading_blocked) and day_loss >= self.day_loss_limit:
             self.day_trading_blocked = True
             self.daily_loss_halt_count += 1
@@ -355,96 +383,93 @@ class NiftyRenkoFutures5YStrategy(Strategy):
                 day_loss,
                 self.day_loss_limit,
             )
-            # Clear pullback memory to avoid carrying stale context after risk halt.
-            self._reset_reentry_flags()
 
         if self.day_trading_blocked:
-            # If a position is open when cap is breached, close it immediately.
+            # If a trade is already open when the loss limit is hit, we close it
+            # immediately and skip the rest of the day's logic.
             if self.position:
                 self.position.close()
                 self.exit_count += 1
-                self._mark_closed_trade_direction()
                 self._reset_trade_state()
             return
 
-        # Force square-off at/after 15:15 every day.
+        # Square-off is enforced every day so the system stays intraday and
+        # never carries a position overnight in the backtest.
         if bar_time >= SQUARE_OFF_TIME:
             if self.position and self.square_off_requested_date != bar_date:
                 self.position.close()
                 self.exit_count += 1
                 self.square_off_count += 1
-                self._mark_closed_trade_direction()
                 self._reset_trade_state()
                 self.square_off_requested_date = bar_date
             return
 
-        # No entries/signals before market start.
-        # We return early so this strategy remains strictly 09:15-15:15 intraday.
+        # The strategy should not trade before the official session start.
         if bar_time < ENTRY_START_TIME:
             return
 
-        # `self.data` grows one bar at a time as framework iterates the dataset.
+        # `self.data` grows by one bar at a time. Before enough bars exist,
+        # the indicator engine would only be working with warm-up values.
         n = len(self.data.Close)
         if n < MIN_BARS:
             return
 
-        # Rebuild Renko from all bars up to this point.
+        # Rebuild all indicators from the candles seen so far. This mirrors
+        # how a live system would make decisions using only available history.
         ohlc = self._current_ohlc(n)
-        renko = build_renko_with_indicators(ohlc)
-        if renko.empty or len(renko) < 3:
+        candles = build_ema_trend_with_indicators(ohlc, STRATEGY_CONFIG)
+        if candles.empty:
             return
 
-        # Only act once per newly formed Renko candle.
-        last_ts = renko.iloc[-1]["timestamp"]
+        # Only act once per latest completed candle. Without this guard, the
+        # same signal could be processed repeatedly on the same timestamp.
+        last_ts = candles.iloc[-1]["timestamp"]
         if self.last_processed_candle_ts == last_ts:
             return
         self.last_processed_candle_ts = last_ts
 
+        # The shared engine only needs a very small summary of the open trade,
+        # not the full backtesting.py position object.
         position_ctx = None
         if self.position:
-            position_ctx = RenkoPositionContext(
+            position_ctx = EMATrendPositionContext(
                 direction=self.trade_direction,
                 entry_underlying=self.entry_underlying,
                 stop_underlying=self.stop_underlying,
-                rr_armed=self.rr_armed,
             )
-        # Exactly one decision is returned per newly formed Renko candle.
-        decision = self.strategy_engine.evaluate_candle(renko, position=position_ctx)
+        decision = self.strategy_engine.evaluate_candle(candles, position=position_ctx)
 
+        # If a trade is active, this strategy does not consider new entries.
+        # It only asks whether the current trade should be exited.
         if self.position:
-            self.rr_armed = bool(decision.rr_armed)
             if decision.action == "EXIT":
                 self.position.close()
                 self.exit_count += 1
-                self._mark_closed_trade_direction()
                 self._reset_trade_state()
             return
 
-        # Entry window is [09:15, 15:15). At 15:15 we always square-off instead.
+        # Entry logic below this point runs only while flat and only during the
+        # allowed intraday session window.
         if not (ENTRY_START_TIME <= bar_time < SQUARE_OFF_TIME):
             return
 
-        # `signal_triggered` counts raw strategy signals, even when trade is rejected
-        # later due to time filters, invalid stop, or insufficient margin.
+        # `signal_triggered` counts valid strategy setups, even if an order is
+        # later skipped because of capital or time constraints.
         if decision.signal_triggered:
             self.signal_count += 1
 
-        # Midday block applies only to fresh entries.
-        # Open-position exit handling already happened above and is unaffected.
-        if MIDDAY_NO_TRADE_START_TIME <= bar_time < MIDDAY_NO_TRADE_END_TIME:
-            return
-
         if decision.action == "ENTER_LONG":
-            c = float(decision.entry_underlying)
+            entry_price = float(decision.entry_underlying)
             stop = float(decision.stop_underlying)
-            can_enter, eff_margin, req_margin, equity_now, _ = self._can_afford_entry(c)
+            can_enter, eff_margin, req_margin, equity_now, _ = self._can_afford_entry(entry_price)
             if can_enter:
-                self.buy(size=self.lot_size, sl=stop)
+                # No hard `sl` order is placed here because the shared strategy
+                # logic handles EMA11 breach exits from candle data itself.
+                self.buy(size=self.lot_size)
                 self.entry_submit_count += 1
                 self.trade_direction = "LONG"
-                self.entry_underlying = c
+                self.entry_underlying = entry_price
                 self.stop_underlying = stop
-                self.rr_armed = False
             else:
                 self.margin_skip_count += 1
                 if bar_date not in self.margin_skip_logged_dates:
@@ -463,16 +488,15 @@ class NiftyRenkoFutures5YStrategy(Strategy):
             return
 
         if decision.action == "ENTER_SHORT":
-            c = float(decision.entry_underlying)
+            entry_price = float(decision.entry_underlying)
             stop = float(decision.stop_underlying)
-            can_enter, eff_margin, req_margin, equity_now, _ = self._can_afford_entry(c)
+            can_enter, eff_margin, req_margin, equity_now, _ = self._can_afford_entry(entry_price)
             if can_enter:
-                self.sell(size=self.lot_size, sl=stop)
+                self.sell(size=self.lot_size)
                 self.entry_submit_count += 1
                 self.trade_direction = "SHORT"
-                self.entry_underlying = c
+                self.entry_underlying = entry_price
                 self.stop_underlying = stop
-                self.rr_armed = False
             else:
                 self.margin_skip_count += 1
                 if bar_date not in self.margin_skip_logged_dates:
@@ -493,32 +517,23 @@ class NiftyRenkoFutures5YStrategy(Strategy):
 def save_outputs(stats, output_dir: str, strategy_obj=None) -> None:
     """
     Write trades, daily equity, daily max-loss tracker, and raw stats snapshot to disk.
-
-    Files created:
-    - trades CSV (one row per closed trade)
-    - daily equity CSV (end-of-day equity points)
-    - daily max-loss CSV (worst intraday loss per day, if available)
-    - text dump of full `stats` object
     """
+    # All output files are written to one folder so post-run analysis is easy.
     os.makedirs(output_dir, exist_ok=True)
 
-    trades_path = os.path.join(output_dir, "nifty_renko_futures_5y_trades.csv")
-    daily_equity_path = os.path.join(output_dir, "nifty_renko_futures_5y_daily_equity.csv")
-    stats_path = os.path.join(output_dir, "nifty_renko_futures_5y_stats.txt")
-    daily_loss_path = os.path.join(output_dir, "nifty_renko_futures_daily_max_loss.csv")
+    trades_path = os.path.join(output_dir, "nifty_ema_trend_futures_5y_trades.csv")
+    daily_equity_path = os.path.join(output_dir, "nifty_ema_trend_futures_5y_daily_equity.csv")
+    stats_path = os.path.join(output_dir, "nifty_ema_trend_futures_5y_stats.txt")
+    daily_loss_path = os.path.join(output_dir, "nifty_ema_trend_futures_daily_max_loss.csv")
 
     trades = stats.get("_trades", pd.DataFrame())
     if isinstance(trades, pd.DataFrame):
-        # Never mutate framework-owned table directly; write a derived copy.
+        # Copy before modifying so we never mutate the framework-owned object.
         trades_to_save = trades.copy()
         if "PnL" in trades_to_save.columns:
-            # Parse PnL safely so numeric math is robust even if CSV/object has mixed types.
             pnl_values = pd.to_numeric(trades_to_save["PnL"], errors="coerce")
-            # Keep brokerage explicit per row so each trade record is self-explanatory.
             trades_to_save["Brokerage"] = float(BROKERAGE)
-            # Net trade result after fixed brokerage deduction.
             trades_to_save["FinalPnL"] = pnl_values - float(BROKERAGE)
-            # Running cumulative net result after brokerage-adjusted trade outcomes.
             trades_to_save["CumulativeFinalPnL"] = trades_to_save["FinalPnL"].cumsum()
             logging.info(
                 "Brokerage-adjusted trade PnL | brokerage_per_trade=%.2f | trades=%s | "
@@ -529,9 +544,7 @@ def save_outputs(stats, output_dir: str, strategy_obj=None) -> None:
                 float(trades_to_save["FinalPnL"].sum(skipna=True)),
             )
         else:
-            logging.warning(
-                "Trades output missing `PnL` column; brokerage adjustment not applied."
-            )
+            logging.warning("Trades output missing `PnL` column; brokerage adjustment not applied.")
         trades_to_save.to_csv(trades_path, index=False)
 
     equity = stats.get("_equity_curve", pd.DataFrame())
@@ -539,12 +552,12 @@ def save_outputs(stats, output_dir: str, strategy_obj=None) -> None:
         eq = equity.copy()
         eq.index = pd.to_datetime(eq.index, errors="coerce")
         eq = eq[eq.index.notna()]
-        # Save daily last equity for easy curve review in spreadsheet tools.
+        # Resample to daily last equity so spreadsheet review is easier.
         daily = eq[["Equity"]].resample("D").last().dropna()
         daily.to_csv(daily_equity_path, index_label="date")
 
-    with open(stats_path, "w", encoding="ascii", errors="ignore") as f:
-        f.write(str(stats))
+    with open(stats_path, "w", encoding="ascii", errors="ignore") as file_obj:
+        file_obj.write(str(stats))
 
     if strategy_obj is not None:
         tracker = getattr(strategy_obj, "daily_loss_tracker", None)
@@ -552,24 +565,23 @@ def save_outputs(stats, output_dir: str, strategy_obj=None) -> None:
             daily_loss_df = pd.DataFrame(
                 {
                     "date": pd.to_datetime(list(tracker.keys())),
-                    "max_intraday_loss": [float(v) for v in tracker.values()],
+                    "max_intraday_loss": [float(value) for value in tracker.values()],
                     "daily_loss_cap": STARTING_CAPITAL * DAILY_MAX_LOSS_PCT,
                 }
             ).sort_values("date")
             daily_loss_df.to_csv(daily_loss_path, index=False, date_format="%Y-%m-%d")
             logging.info("Daily max-loss tracker saved: %s", daily_loss_path)
 
-    logging.info(f"Trades saved: {trades_path}")
-    logging.info(f"Daily equity saved: {daily_equity_path}")
-    logging.info(f"Stats saved: {stats_path}")
+    logging.info("Trades saved: %s", trades_path)
+    logging.info("Daily equity saved: %s", daily_equity_path)
+    logging.info("Stats saved: %s", stats_path)
 
 
 def run_backtest(data_path: str):
     """
     Load data, configure Backtest engine, run strategy, and return stats + strategy object.
-
-    Returning the strategy object allows callers to read custom counters after run completion.
     """
+    # Step 1: turn a raw CSV into the shape expected by backtesting.py.
     data = load_ohlc_data(data_path)
     data_start = pd.Timestamp(data.index.min())
     data_end = pd.Timestamp(data.index.max())
@@ -585,14 +597,12 @@ def run_backtest(data_path: str):
         data_end,
     )
 
-    # Engine-level margin is static in backtesting.py.
-    # For dynamic (current-equity-based) entry affordability, strategy-level checks are used.
-    # To avoid engine rejecting orders before dynamic checks, keep engine margin at floor.
     if AUTO_ADJUST_MARGIN:
+        # The engine-level margin is kept low here because the real entry
+        # affordability check happens inside the strategy on each signal.
         effective_margin = MIN_MARGIN_FLOOR
         logging.info(
-            "Dynamic margin auto-adjust enabled | engine_margin_floor=%.4f | "
-            "configured_margin=%.4f",
+            "Dynamic margin auto-adjust enabled | engine_margin_floor=%.4f | configured_margin=%.4f",
             effective_margin,
             MARGIN_REQUIREMENT,
         )
@@ -610,9 +620,10 @@ def run_backtest(data_path: str):
                 STARTING_CAPITAL,
             )
 
+    # Step 2: create the actual backtesting.py engine with strategy class + data.
     bt = Backtest(
         data,
-        NiftyRenkoFutures5YStrategy,
+        NiftyEMATrendFutures5YStrategy,
         cash=STARTING_CAPITAL,
         margin=effective_margin,
         commission=0.0,
@@ -621,6 +632,7 @@ def run_backtest(data_path: str):
         hedging=False,
         finalize_trades=True,
     )
+    # Step 3: run the full historical simulation.
     stats = bt.run()
     strategy_obj = stats.get("_strategy", None)
     if strategy_obj is not None:
@@ -635,9 +647,7 @@ def run_backtest(data_path: str):
             getattr(strategy_obj, "margin_skip_count", "NA"),
         )
     if "# Trades" in stats.index and int(stats["# Trades"]) == 0:
-        logging.warning(
-            "Backtest finished with 0 closed trades. Check entry conditions/data regime."
-        )
+        logging.warning("Backtest finished with 0 closed trades. Check entry conditions/data regime.")
     return stats, strategy_obj
 
 
@@ -646,10 +656,10 @@ def main():
     CLI entrypoint.
 
     Usage:
-    `python "Nifty Renko Strategy Backtest.py" --data "path_to_csv.csv"`
+    `python "ema_trend_strategy_backtest.py" --data "path_to_csv.csv"`
     """
     parser = argparse.ArgumentParser(
-        description="Nifty Renko futures backtest using backtesting.py"
+        description="Nifty EMA trend futures backtest using backtesting.py"
     )
     parser.add_argument(
         "--data",
@@ -658,11 +668,12 @@ def main():
     )
     args = parser.parse_args()
 
+    # Logging is configured here so everything from the run gets captured in the file.
     setup_logging(LOG_FILE)
     logging.info(
         "Config | capital=%s | lot_size=%s | lots=%s | qty=%s | margin=%s | "
         "auto_adjust_margin=%s | daily_max_loss_pct=%s | daily_max_loss_amt=%s | "
-        "brokerage_per_trade=%s",
+        "brokerage_per_trade=%s | slope_lookback=%s | adx_threshold=%s",
         STARTING_CAPITAL,
         LOT_SIZE,
         LOTS,
@@ -672,12 +683,14 @@ def main():
         DAILY_MAX_LOSS_PCT,
         STARTING_CAPITAL * DAILY_MAX_LOSS_PCT,
         BROKERAGE,
+        STRATEGY_CONFIG.slope_lookback,
+        STRATEGY_CONFIG.adx_threshold,
     )
 
+    # This is the actual backtest execution line.
     stats, strategy_obj = run_backtest(args.data)
     save_outputs(stats, OUTPUT_DIR, strategy_obj=strategy_obj)
 
-    # Print the most useful top-level stats.
     summary_keys = [
         "Start",
         "End",

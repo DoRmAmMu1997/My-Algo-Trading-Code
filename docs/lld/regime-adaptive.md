@@ -29,7 +29,7 @@ know", and not knowing means not trading.
 
 | File | Role |
 |---|---|
-| `Nifty Regime Adaptive Signal Generator.py` | The router: reads ADX, selects a candidate, returns the signal |
+| `regime_adaptive_signal_generator.py` | The router: reads ADX, selects a candidate, returns the signal |
 | `regime_candidates.py` | The two candidate rules, as **library code** |
 | `regime_common.py` | Shared helpers; re-exports indicators from `misc_strategy_common` |
 | `REGIME_PORTING_NOTES.md` | What was and was not ported, and why |
