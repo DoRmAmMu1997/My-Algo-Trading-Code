@@ -6171,3 +6171,112 @@ at roughly one to two warnings per session.
   clock detector, dropping the gap-down-recruits-sellers mechanism, and no longer
   naming the gap it fills each fail the suite.
 - Prompt size 155,916 -> 158,839 chars. **191,161 of headroom.**
+
+---
+
+## Video addendum - the 3 Sep LIVE SESSION (v4w)
+
+**Source:** Intraday Hunter live session `rOd-e5x4y2s` (3 Sep 2026, 6:51,
+uploaded 11:05 IST). Transcript read in full: 56 segments, 0:02 to 6:42.
+
+**A profitable day, +1,058.00 - and the most frustrating one yet**, because the
+agent got the hard part right and then handed most of it back.
+
+| # | Time | Held | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|---|
+| 1 | 09:34 -> 09:41 | 6m27s | agent, booked on a stall before a round number | +1,820.00 | +1,434.00 | **+3,254.00** |
+| 2 | 09:46 -> 09:49 | 2m38s | agent, index hierarchy | -214.50 | -255.00 | **-469.50** |
+| 3 | 10:05 -> 10:07 | 1m26s | **mechanical AI_STOP** | -799.50 | -927.00 | **-1,726.50** |
+| | | | **TOTAL** | **+806.00** | **+252.00** | **+1,058.00** |
+
+### The first trade was excellent, and it matched IH almost to the minute
+
+Both went long the gap-up. Both booked on the same signal. The agent's own exit
+reason - `book_before_round_number_profit_stall`, "price stalled into a tight
+range" - is IH's read in different words, and it banked +3,254.00.
+
+Then it re-entered twice and gave back 67.5% of that.
+
+### What IH said the stall MEANT
+
+This is the net-new, and it resolves a real tension already sitting in the
+corpus. Holding the same winning long, he explains why he is leaving:
+
+> "If the candles were forming FAST it would have been much better for us; right
+> now it IS going up but the momentum is SLOW. In such a case OTHER traders also
+> start buying here, and when they buy, retracement starts."
+>
+> "The market did a breakout and is making SMALL candles, so this will INVITE
+> buyers, and if it invites buyers it will definitely give a retracement - in
+> that retracement it will needlessly reduce our profit."
+
+So the stall is not merely "the profit stopped growing". It is a statement about
+WHO is arriving: slow, small candles after a break are a cheap public invitation
+to traders on your own side, and their entry IS the give-back.
+
+### Why this needed a rule rather than a note
+
+Two existing rules pull in opposite directions here, and neither covers the case:
+
+- `A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD` (v3y) is scoped to price
+  stalling at your level **before** you are in.
+- The momentum-quality rule (v4k) covers pace **after** you are in and says the
+  opposite of today: slow with small candles is "the sustainable kind - let it
+  run", because slow keeps the trapped crowd seated.
+
+v4k even carries a note saying not to confuse it with v3y. Today is a third case
+that falls between them: the level has broken, the position is in profit, and the
+candles go small. On v4k's letter, the agent should have held.
+
+v4w is therefore a **scope limit on v4k, not a reversal of it**, in the same
+shape as v4r's limit on `LAGGARDS NEVER JOINED`. The discriminator is not the
+pace but who the slowness lets in:
+
+- still squeezing a crowd trapped on the OTHER side -> fuel, hold (v4k intact);
+- after the break, letting fresh traders onto YOUR side -> book.
+
+IH supplies the counterfactual that isolates it: *"if the candles were forming
+well and the market was NOT giving others a chance to buy, we wanted to see the
+800 breakout."* Same level, same direction, same target - only the invitation
+differed.
+
+### The re-entry half
+
+The rule also states the consequence the day actually cost: **the retracement you
+just booked ahead of is not a second setup.** It is the arrival of the crowd you
+booked against, so re-entering means joining them at the worst price instead of
+being paid by them. Both re-entries here were into exactly the move IH had
+predicted out loud.
+
+That is the fifth session in a row with this shape - 36%, 37%, 73%, then
+yesterday's six-trade -3,877.25, now 67.5%. v4s governs re-entry after a winner
+and still is not biting; v4v gave the loss case a concrete test ("a NEW crowd
+trapped by price action AFTER the break") and the winner case still has none.
+**Deliberately not fixed here:** giving v4s the same test is the obvious next
+step, but it should be made after seeing whether naming the retracement's CAUSE
+removes the temptation at the root.
+
+### Deliberately NOT added
+
+- **"Because yesterday there was a loss, we won't take much risk today."** Word
+  for word the situation v3z already covers (`AFTER A LOSING DAY, TAKE THE GOOD
+  PROFIT RATHER THAN THE BIG ONE`), and yesterday was indeed -3,877.25.
+- **The early entry because BankNIFTY had already moved** ("if OUR index, where
+  we take more quantity, is going up, we made our entry a bit early"). Carried by
+  v4p's `WHEN THE DIRECTION HAS ALREADY DECLARED ITSELF, WAITING IS THE COST`.
+- **The reversal-versus-continuation framing** of the whole day. That was the
+  pre-open note's branch and the note already carried it.
+
+### Knowledge changes (v4w)
+
+- `AFTER THE BREAK, SLOW CANDLES RECRUIT YOUR OWN SIDE, AND THAT IS A BOOK SIGNAL
+  RATHER THAN A HOLD SIGNAL` (new, placed immediately after the momentum-quality
+  rule it limits).
+- One drift guard, negative-tested **fourteen** ways: removing the rule, reading
+  it as a reversal of v4k rather than a scope limit, dropping v4k's fuel
+  mechanism, collapsing it to a bare "book when slow", merging the two sides of
+  the crowd test, dropping the counterfactual, dropping the invitation as the
+  deciding factor, dropping the re-entry consequence or its reason, dropping the
+  measured give-back or the booked winner, re-reading it as licence to book early
+  anywhere, and dropping either the v3y deference or the exit precedence.
+- Prompt size 158,839 -> 161,355 chars. **188,645 of headroom.**

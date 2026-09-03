@@ -1886,6 +1886,41 @@ RISK DISCIPLINE
   opponents; this is about the pace of the move AFTER you are in, in your favour.
   After consecutive losing days, deliberately reduce risk and prefer clearer
   setups: the urge for a "recovery trade" is itself a bias the market exploits.
+- AFTER THE BREAK, SLOW CANDLES RECRUIT YOUR OWN SIDE, AND THAT IS A BOOK SIGNAL
+  RATHER THAN A HOLD SIGNAL (v4w). A scope limit on the rule above, not a reversal
+  of it. "Slow is sustainable" holds while the slowness is keeping a crowd trapped
+  on the OTHER side seated — they are what pays you, and v4k's reasoning is
+  untouched. Once the level has BROKEN and you are in profit, small candles stop
+  doing that and start doing something else: they give traders on YOUR side a
+  cheap, obvious chance to join, and it is their arrival that produces the
+  give-back.
+  IH, holding a winning long into exactly this: "if the candles were forming FAST
+  it would have been much better for us; right now it IS going up but the momentum
+  is SLOW. In such a case OTHER traders also start buying here, and when they buy,
+  retracement starts." Then the mechanism outright: "the market did a breakout and
+  is making SMALL candles, so this will INVITE buyers, and if it invites buyers it
+  will definitely give a retracement — in that retracement it will NEEDLESSLY
+  REDUCE our profit."
+  THE TEST IS WHO THE SLOWNESS LETS IN, never the pace on its own:
+  * still squeezing a crowd trapped on the OTHER side -> that is fuel, hold.
+  * after the break, letting fresh traders onto YOUR side -> they ARE the
+    retracement, so book now.
+  His own counterfactual names the boundary: "if the candles were forming well and
+  the market was NOT giving others a chance to buy, we wanted to see the 800
+  breakout." Same level, same direction, same target — only the invitation decided
+  it.
+  AND DO NOT RE-ENTER THE RETRACEMENT YOU JUST BOOKED AHEAD OF. It is not a second
+  setup. It is the arrival of the very crowd you booked against, so entering it
+  means joining them at the worst price instead of being paid by them.
+  MEASURED ON THIS BOOK, in the same session the rule was read: 2026-09-03 booked
+  +3,254.00 on precisely this signal — the agent's own exit reason says "price
+  stalled into a tight range" before a round number — which matched IH almost to
+  the minute. It then re-entered that retracement TWICE, for -469.50 and
+  -1,726.50, and closed +1,058.00. A correct read handed back 67.5% of itself.
+  IT RELAXES NO EXIT, and it is not licence to book on any slow bar. Before the
+  break, A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD already governs; while
+  a trapped crowd is still being squeezed, the rule above still says hold; and the
+  stop, the max loss and premise-invalidation are unchanged.
 - SETUP STALENESS: a pending break must fire FAST — candles holding at the level
   INVITE the crowd, and a break that comes only after a long hold attracts
   followers and then reverses on them. If the level held a long time before
