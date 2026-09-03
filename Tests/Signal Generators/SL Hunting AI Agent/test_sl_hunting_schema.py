@@ -2190,3 +2190,64 @@ def test_v4v_dead_premise_rule_bars_the_NEXT_entry_without_relaxing_any_exit():
     assert "not a licence to hold a loser longer" in rule
     assert "INDEX HIERARCHY ON THE WAY OUT still cuts the basket" in rule
     assert "whether you may OPEN the next trade, never whether you may close" in rule
+
+
+def test_v4w_post_break_slowness_is_a_book_signal_without_reversing_v4k():
+    """v4w (3 Sep live session): slow candles AFTER the break invite your side.
+
+    This rule sits between two that already exist and contradict each other if
+    read carelessly, so the guard pins the seam rather than the sentiment:
+
+    * v3y governs a slow grind AT the level, BEFORE entry -- it recruits
+      opponents whose stops become fuel against you.
+    * v4k governs pace AFTER entry and says slow is the SUSTAINABLE kind,
+      because it keeps a trapped crowd seated.
+
+    Today is a third case neither covers: the level has broken, the position is
+    in profit, and the candles go small. The discriminator is WHO the slowness
+    lets in -- an opposite-side crowd still being squeezed is fuel, fresh
+    same-side traders are the retracement. Four ways an edit could break it:
+
+    1. Reading it as a reversal of v4k rather than a scope limit on it. The
+       rule must keep saying slow is fuel while a trapped crowd is squeezed.
+    2. Losing the who-does-it-let-in test and leaving a bare "book when slow",
+       which would fire before the break, where v3y already rules.
+    3. Dropping IH's counterfactual, which is the only thing that shows the
+       level and target were unchanged and only the invitation differed.
+    4. Dropping the re-entry consequence -- the measured 67.5% give-back came
+       from re-entering the retracement, not from booking too early.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "AFTER THE BREAK, SLOW CANDLES RECRUIT YOUR OWN SIDE")
+
+    # 1. A scope limit, explicitly, and v4k's mechanism kept intact.
+    assert "scope limit on the rule above, not a reversal" in rule
+    assert "keeping a crowd trapped on the OTHER side seated" in rule
+    assert "they are what pays you" in rule
+
+    # IH's mechanism, in his words.
+    assert "SMALL candles, so this will INVITE buyers" in rule
+    assert "NEEDLESSLY REDUCE our profit" in rule
+
+    # 2. The test is the crowd, not the pace.
+    assert "THE TEST IS WHO THE SLOWNESS LETS IN, never the pace on its own" in rule
+    assert "still squeezing a crowd trapped on the OTHER side" in rule
+    assert "letting fresh traders onto YOUR side" in rule
+
+    # 3. The counterfactual that isolates the invitation as the deciding factor.
+    assert "was NOT giving others a chance to buy" in rule
+    assert "only the invitation decided" in rule
+
+    # 4. The re-entry consequence, and why it is not a second setup.
+    assert "DO NOT RE-ENTER THE RETRACEMENT YOU JUST BOOKED AHEAD OF" in rule
+    assert "joining them at the worst price" in rule
+
+    # The measured evidence, including that the BOOK itself was correct.
+    assert "+3,254.00" in rule
+    assert "-1,726.50" in rule
+    assert "handed back 67.5% of itself" in rule
+
+    # It must not read as permission to book early anywhere, nor relax an exit.
+    assert "not licence to book on any slow bar" in rule
+    assert "A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD already governs" in rule
+    assert "the stop, the max loss and premise-invalidation are unchanged" in rule
