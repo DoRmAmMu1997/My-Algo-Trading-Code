@@ -351,14 +351,27 @@ def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
 
     assert configured_files == runtime_files
     assert "Signal Generators/CPR AI Agent" in mypy["mypy_path"]
-    # The master is STILL outside mypy, but the reason changed on 2026-09-02.
-    # It used to be structural -- a spaced filename cannot be a mypy module.
-    # ADR-0014 tier 2a renamed it, so the exclusion is now purely a backlog:
-    # mypy reports 288 errors on it (193 attr-defined). This assertion is
-    # therefore TEMPORARY and must be INVERTED, not deleted, once tier 2b has
-    # worked those down -- at which point the master joins `files` and this
-    # line should assert its PRESENCE.
+    # The master is type-checked, but NOT through `files`, and the distinction
+    # is load-bearing rather than cosmetic. Listing it there makes mypy resolve
+    # Dependencies/broker_contract.py under two module names in one run: bare
+    # `broker_contract`, which is how all four adapters import it because
+    # Dependencies/ has no __init__.py, and `Dependencies.broker_contract`,
+    # which is how the master imports it. Unifying those would change imports on
+    # the live-order path, which ADR-0014 explicitly declines.
+    #
+    # So it is gated by its OWN mypy invocation in the CI workflow instead --
+    # equally strict, and asserted below so the gate cannot be dropped. ADR-0014
+    # tier 2b took that run from 288 errors to zero.
     assert "nifty_multi_strategy_master.py" not in mypy["files"]
+    workflow_text = (ROOT / ".github/workflows/quality-and-security.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "python -m mypy nifty_multi_strategy_master.py" in workflow_text, (
+        "The master runner is type-clean but sits outside [tool.mypy] files, so "
+        "CI must check it in a dedicated `python -m mypy "
+        "nifty_multi_strategy_master.py` step. Without that line nothing "
+        "type-checks the largest file in the repository."
+    )
     assert any(
         "openai_codex.*" in override.get("module", [])
         and override.get("ignore_missing_imports") is True

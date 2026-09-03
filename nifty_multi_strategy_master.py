@@ -258,7 +258,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 # --- Third-party imports -----------------------------------------------------
@@ -329,7 +330,10 @@ try:
     # local `.env` file in the Dependencies/ folder.
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional dependency
-    load_dotenv = None
+    # Deliberately rebinding an imported name to None -- the module-level
+    # guard below tests it before calling, which is the standard optional
+    # dependency shape and the one thing a checker cannot express here.
+    load_dotenv = None  # type: ignore[assignment]
 
 # dhanhq 2.2.0's marketfeed formats every tick's exchange timestamp through
 # `datetime.utcfromtimestamp()` (its `utc_time` helper), which Python 3.12+
@@ -1317,7 +1321,9 @@ CPR_ALGO3_LOGIC = load_module(
 CPR_AI_AVAILABLE = False
 CPR_AI_IMPORT_ERROR = ""
 _cpr_ai_sibling_names: tuple[str, ...] = ()
-_cpr_ai_previous_modules: dict[str, object] = {}
+# Values are restored via sys.modules.update(), which needs real modules --
+# `object` was too loose for that call.
+_cpr_ai_previous_modules: dict[str, ModuleType] = {}
 try:
     _cpr_ai_dir = ROOT_DIR / "Signal Generators" / "CPR AI Agent"
     _cpr_ai_sibling_names = tuple(
@@ -2290,6 +2296,10 @@ class SharedMarketDataStore:
         validated = validate_ohlc_frame(frame)
         source_candle_ts = pd.to_datetime(validated.iloc[-1]["timestamp"])
         candle_signature = build_last_row_signature(validated)
+        # Either a zero/one element tuple built here or the caller's own
+        # iterable; declared up front so the second branch is not measured
+        # against the shape of the first.
+        raw_official_minutes: Iterable[Any]
         if official_completed_minutes is None:
             raw_official_minutes = () if official_candle_ts is None else (official_candle_ts,)
         else:
@@ -2562,7 +2572,7 @@ def _first_existing_col(df: pd.DataFrame, names) -> str | None:
     return None
 
 
-def _infer_epoch_unit(values: pd.Series) -> str:
+def _infer_epoch_unit(values: pd.Series) -> Literal["s", "ms", "us", "ns"]:
     """
     Guess whether a numeric timestamp series is in seconds, milliseconds,
     or microseconds based on the magnitude of its largest value.
@@ -4501,7 +4511,14 @@ class WebSocketMarketDataFetcher(threading.Thread):
                 self._rollover_pending = True
 
 
-def _select_market_data_fetcher_class() -> type[threading.Thread]:
+# The two market-data producers are siblings, not a hierarchy: both subclass
+# threading.Thread directly. Naming their union keeps the selector and the
+# supervisor honest about which types actually flow, where `type[Thread]` hid
+# both the shared constructor signature and the fetcher-specific API.
+MarketDataFetcher = CentralMarketDataFetcher | WebSocketMarketDataFetcher
+
+
+def _select_market_data_fetcher_class() -> type[MarketDataFetcher]:
     """
     Pick the market data producer from MARKET_DATA_SOURCE.
 
@@ -4583,12 +4600,25 @@ class BasePaperStrategyWorker(threading.Thread):
         # PaperPosition (single-leg) or HedgedPaperPosition (two-leg) as
         # appropriate. The base only checks `self.pos.active` so either type
         # works without further coordination.
-        self.pos = PaperPosition()
+        #
+        # Typed `Any` HERE and narrowed in each subclass family, because a
+        # mutable attribute is invariant: a subclass cannot legally re-declare
+        # it as a subtype. Keeping the base loose and the leaves precise gives
+        # single-leg workers PaperPosition checking and hedged workers
+        # HedgedPaperPosition checking, which is what the comment above always
+        # meant. The base itself only ever reads `.active`.
+        self.pos: Any = PaperPosition()
+
+        # Every concrete worker family initialises this in its own __init__;
+        # intermediate classes such as NextOpenAtmStrategyWorker only ever
+        # increment it. Declared here so that shared contract is stated once
+        # rather than assumed at each use site.
+        self.entry_submit_count: int = 0
 
         # Latest strategy-frame fingerprint. Workers only re-run when the
         # latest strategy candle changed. Without this gate the fetcher's
         # 2-second polling would force every signal to recompute every poll.
-        self.last_processed_frame_signature = None
+        self.last_processed_frame_signature: tuple[Any, ...] | None = None
 
         # Synthetic order-id counter (paper-only). Used purely for log audit.
         self.paper_order_counter = 0
@@ -4612,14 +4642,14 @@ class BasePaperStrategyWorker(threading.Thread):
         # Optional trade-event sink (a queue.Queue) consumed by the Telegram
         # notifier. main() injects it after construction; it stays None when
         # notifications are disabled, in which case publish_trade_event no-ops.
-        self.trade_event_queue = None
+        self.trade_event_queue: queue.Queue | None = None
 
         # Optional crash-durable state store (Dependencies/session_state.py).
         # main() injects one shared instance after construction; it stays None
         # when SESSION_STATE_ENABLED is false. Every trade event this worker
         # publishes is mirrored into it so a mid-session crash cannot lose the
         # day's realized P&L. Never on a hot path: entries and exits only.
-        self.session_state = None
+        self.session_state: SessionStateStore | None = None
 
         # Per-strategy execution mode. Defaults to paper; main() flips this to
         # True after construction when LIVE_TRADING_ENABLED and this strategy's
@@ -7027,6 +7057,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
       different math, so single-leg ATM behaviour is shared only among
       strategies that actually use it.
     """
+
+    # The single-leg counterpart of the hedged workers' narrowing below: the
+    # base keeps `pos` loose so each family can be precise. Pure annotation --
+    # no class attribute is created and the base's assignment still wins.
+    pos: PaperPosition
+
 
     #: Reject an entry whose option is quoted wider than this percentage of mid.
     #: 0 disables the check, which is the default for every worker that predates
@@ -9489,7 +9525,7 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
         # Observation legs, chosen once per session by `_ensure_observation_strikes`.
         self.itm_ce: dict | None = None
         self.itm_pe: dict | None = None
-        self.observation_expiry = None
+        self.observation_expiry: date | None = None
         self.signal_count = 0
         self.entry_submit_count = 0
         self.exit_count = 0
@@ -9592,9 +9628,16 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
             self._check_spot_target_stop_and_exit(float(strategy_frame.iloc[-1]["close"]))
             return
 
+        # _ensure_observation_strikes() above returns False unless BOTH legs
+        # resolved, so this cannot fire; restating it lets the fetches below be
+        # checked, and it skips the poll exactly as the other "not ready" paths
+        # do rather than raising inside the fetch.
+        ce_meta, pe_meta = self.itm_ce, self.itm_pe
+        if ce_meta is None or pe_meta is None:
+            return
         try:
-            ce_ohlc = self._fetch_option_1m(self.itm_ce)
-            pe_ohlc = self._fetch_option_1m(self.itm_pe)
+            ce_ohlc = self._fetch_option_1m(ce_meta)
+            pe_ohlc = self._fetch_option_1m(pe_meta)
         except Exception as exc:
             self.log.warning("Algo3 observation OHLC fetch failed: %s", exc)
             return
@@ -9828,7 +9871,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         return f"{timestamp.date()}|{timestamp.isoformat()}"
 
     @staticmethod
-    def _naive_ist_timestamp(value: object) -> pd.Timestamp | None:
+    def _naive_ist_timestamp(value: Any) -> pd.Timestamp | None:
         """Normalize a timestamp before comparing producer and strategy clocks.
 
         Dhan history normally uses naive IST timestamps, while tests or future
@@ -9969,7 +10012,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             "scale_in_count": 1 if state.scale_in_used else 0,
         }
 
-    def _latest_frozen_context(self) -> dict[str, dict[str, object]]:
+    def _latest_frozen_context(self) -> dict[str, dict[str, Any]]:
         """Freeze one four-tool snapshot with advisory prior-regime memory.
 
         The returned deep copy is the single source shared by the host audit,
@@ -10078,7 +10121,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         spot = self._get_underlying_spot(fallback=0.0)
         return self._check_cpr_spot_boundaries(spot)
 
-    def _manage_completed_bar(self, frozen_context: dict[str, object]) -> bool:
+    def _manage_completed_bar(self, frozen_context: dict[str, dict[str, Any]]) -> bool:
         """Run SRSI reversal, staged ratchets, then prior-close trailing.
 
         A contrary SRSI cross exits first.  Normal/sideways/continuation trades
@@ -10256,10 +10299,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         or harmless.
         """
 
+        # The value KEPT and the value TESTED must be the same expression, or
+        # the isinstance narrowing cannot reach the result.
         orphan_states = tuple(
-            leg.get("live_leg")
+            state
             for leg in self._orphan_live_legs
-            if isinstance(leg.get("live_leg"), LiveLegState)
+            if isinstance((state := leg.get("live_leg")), LiveLegState)
         )
         if any(state.exposure_possible for state in orphan_states):
             return "LIVE_INDETERMINATE"
@@ -10397,7 +10442,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         direction: str,
         first_milestone: float,
         final_target: float,
-        frozen_context: dict[str, object],
+        frozen_context: dict[str, dict[str, Any]],
     ) -> float:
         """Return the next buffered CPR level beyond the first milestone.
 
@@ -10431,7 +10476,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             return final_target
         return min(candidates) if direction == "LONG" else max(candidates)
 
-    def _initialize_trade_state(self, outcome, frozen_context: dict[str, object]) -> None:
+    def _initialize_trade_state(self, outcome, frozen_context: dict[str, dict[str, Any]]) -> None:
         """Freeze host-derived spot geometry immediately after an adopted entry.
 
         The first stage is the earlier of 1R and the next buffered CPR level.
@@ -10646,7 +10691,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
     def _write_final_execution(
         self,
-        frozen_context: dict[str, object],
+        frozen_context: dict[str, dict[str, Any]],
         outcome,
         execution: dict[str, object],
         bar_metadata: dict[str, object],
@@ -11069,7 +11114,7 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         self.entry_submit_count = 0
         self.exit_count = 0
         # Prevents the cool-off "skip" log line from spamming every poll.
-        self._cooldown_log_bar_signature = None
+        self._cooldown_log_bar_signature: tuple[Any, ...] | None = None
 
     def minimum_strategy_rows(self) -> int:
         return int(self.min_strategy_rows)
@@ -11113,7 +11158,11 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
         start_long = bool(last_row.get("startLongTrade", False))
         end_long = bool(last_row.get("endLongTrade", False))
         close_price = _safe_float(last_row.get("close", 0.0), 0.0)
-        latest_candle_ts = pd.to_datetime(last_row.get("timestamp"), errors="coerce")
+        # Read into an explicitly-Any local first: `errors="coerce"` is
+        # precisely how a missing timestamp becomes NaT here, but the stubs
+        # reject an Optional first argument outright.
+        raw_candle_ts: Any = last_row.get("timestamp")
+        latest_candle_ts = pd.to_datetime(raw_candle_ts, errors="coerce")
 
         if self.pos.active:
             if end_long:
@@ -11494,7 +11543,10 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             hedge_exit_mark_is_fresh = False
 
         had_live_exposure = closed.live_legs_open
-        main_live_order = {
+        # Annotated because this payload is READ BACK -- `.get("live_leg")`
+        # below feeds a LiveLegState field, and a bare heterogeneous literal
+        # would collapse to `object` and lose that on the round trip.
+        main_live_order: dict[str, Any] = {
             "option_type": closed.main_right,
             "strike": closed.main_strike,
             "expiry": closed.main_expiry,
@@ -11502,7 +11554,10 @@ class SupertrendBullishWorker(BasePaperStrategyWorker):
             "dhan_symbol": closed.main_symbol,
             "live_leg": closed.main_live_leg,
         }
-        hedge_live_order = {
+        # Annotated because this payload is READ BACK -- `.get("live_leg")`
+        # below feeds a LiveLegState field, and a bare heterogeneous literal
+        # would collapse to `object` and lose that on the round trip.
+        hedge_live_order: dict[str, Any] = {
             "option_type": closed.hedge_right,
             "strike": closed.hedge_strike,
             "expiry": closed.hedge_expiry,
@@ -11779,7 +11834,11 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
         last_row = strategy_frame.iloc[-1]
         start_short = bool(last_row.get("startShortTrade", False))
         close_price = _safe_float(last_row.get("close", 0.0), 0.0)
-        latest_candle_ts = pd.to_datetime(last_row.get("timestamp"), errors="coerce")
+        # Read into an explicitly-Any local first: `errors="coerce"` is
+        # precisely how a missing timestamp becomes NaT here, but the stubs
+        # reject an Optional first argument outright.
+        raw_candle_ts: Any = last_row.get("timestamp")
+        latest_candle_ts = pd.to_datetime(raw_candle_ts, errors="coerce")
 
         if self.pos.active:
             return  # Existing position -> no entry path on the candle close.
@@ -12276,7 +12335,10 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             hedge_exit_mark_is_fresh = False
 
         had_live_exposure = closed.live_legs_open
-        main_live_order = {
+        # Annotated because this payload is READ BACK -- `.get("live_leg")`
+        # below feeds a LiveLegState field, and a bare heterogeneous literal
+        # would collapse to `object` and lose that on the round trip.
+        main_live_order: dict[str, Any] = {
             "option_type": closed.main_right,
             "strike": closed.main_strike,
             "expiry": closed.main_expiry,
@@ -12284,7 +12346,10 @@ class DonchianBearishWorker(BasePaperStrategyWorker):
             "dhan_symbol": closed.main_symbol,
             "live_leg": closed.main_live_leg,
         }
-        hedge_live_order = {
+        # Annotated because this payload is READ BACK -- `.get("live_leg")`
+        # below feeds a LiveLegState field, and a bare heterogeneous literal
+        # would collapse to `object` and lose that on the round trip.
+        hedge_live_order: dict[str, Any] = {
             "option_type": closed.hedge_right,
             "strike": closed.hedge_strike,
             "expiry": closed.hedge_expiry,
@@ -13539,7 +13604,10 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             hedge_exit_mark_is_fresh = False
 
         had_live_exposure = closed.live_legs_open
-        main_live_order = {
+        # Annotated because this payload is READ BACK -- `.get("live_leg")`
+        # below feeds a LiveLegState field, and a bare heterogeneous literal
+        # would collapse to `object` and lose that on the round trip.
+        main_live_order: dict[str, Any] = {
             "option_type": closed.main_right,
             "strike": closed.main_strike,
             "expiry": closed.main_expiry,
@@ -13547,7 +13615,10 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             "dhan_symbol": closed.main_symbol,
             "live_leg": closed.main_live_leg,
         }
-        hedge_live_order = {
+        # Annotated because this payload is READ BACK -- `.get("live_leg")`
+        # below feeds a LiveLegState field, and a bare heterogeneous literal
+        # would collapse to `object` and lose that on the round trip.
+        hedge_live_order: dict[str, Any] = {
             "option_type": closed.hedge_right,
             "strike": closed.hedge_strike,
             "expiry": closed.hedge_expiry,
@@ -14887,7 +14958,7 @@ STRATEGY_ENV_PREFIX = {
 # broker choice (LIVE_BROKER), max-loss, square-off and Telegram all behave
 # exactly like every other strategy. Defined only when the optional agent loaded;
 # otherwise SLHuntingAIWorker stays None and main() simply skips it.
-SLHuntingAIWorker = None
+SLHuntingAIWorker: Any = None
 if SL_HUNTING_AVAILABLE:
     _sl_hunting_ops = _signal_gen_ops("SL_HUNTING")
     # Dynamic position sizing: the NIFTY leg never exceeds the configured risk
@@ -14978,7 +15049,11 @@ if SL_HUNTING_AVAILABLE:
         "sl_hunting_premarket", SL_HUNTING_DIR / "sl_hunting_premarket.py"
     )
 
-    class SLHuntingAIWorker(AtmSingleLegStrategyWorker):
+    # Deliberate conditional definition: the sentinel above is the disabled
+    # case and main() tests `is not None` before using it. Redefining a name
+    # this way is the standard optional-feature shape and cannot be expressed
+    # to the checker any other way without restructuring the whole block.
+    class SLHuntingAIWorker(AtmSingleLegStrategyWorker):  # type: ignore[no-redef]
         """ATM single-leg worker whose entries/exits come from the SL Hunting agent."""
 
         strategy_name = "SL Hunting AI"
@@ -15074,7 +15149,7 @@ if SL_HUNTING_AVAILABLE:
             self._use_bnf = _env_bool("SL_HUNTING_USE_BNF", True)
             # Trade journal (v3): open a row on entry here, close it in after_exit
             # (the universal post-close hook, so EVERY exit path is captured).
-            self._journal = (
+            self._journal: Any = (
                 SL_HUNTING_JOURNAL_MODULE.TradeJournal(SL_HUNTING_JOURNAL_PATH)
                 if SL_HUNTING_JOURNAL_ENABLED else None
             )
@@ -15193,15 +15268,28 @@ if SL_HUNTING_AVAILABLE:
         # --------------------------------------------------------------
         # BankNIFTY mirror leg (Intraday Hunter style)
         # --------------------------------------------------------------
-        def enter_position(self, direction, entry_underlying, stop_underlying=0.0,
-                           target_underlying=0.0, trailing_active=False,
-                           pending_trailing_exit=False) -> bool:
+        def enter_position(
+            self,
+            direction: str,
+            entry_underlying: float,
+            stop_underlying: float = 0.0,
+            target_underlying: float = 0.0,
+            trailing_active: bool = False,
+            pending_trailing_exit: bool = False,
+            *,
+            option_opening_side: str = "BUY",
+            option_contract_direction: str | None = None,
+            use_current_expiry: bool = False,
+        ) -> bool:
             """Open the NIFTY leg as usual, then mechanically mirror it on
             BankNIFTY with the SAME lot count (one basket). The mirror is
             best-effort: any failure logs and skips it, never the NIFTY leg."""
             ok = super().enter_position(
                 direction, entry_underlying, stop_underlying, target_underlying,
                 trailing_active, pending_trailing_exit,
+                option_opening_side=option_opening_side,
+                option_contract_direction=option_contract_direction,
+                use_current_expiry=use_current_expiry,
             )
             if ok:
                 self._cooldown_trade_open = True
@@ -16615,7 +16703,10 @@ def _parse_eod_pnl_by_day(log_path, today_str: str | None = None) -> dict:
     test runs do not overwrite real session P&L. Legacy thread names prefixed with
     "Misc " are normalized before lookup in _PNL_SHEET_ROW_LABELS.
     """
-    result: dict[str, dict[str, float]] = {}
+    # date -> strategy -> {"pnl", "mode", "trades"}. The previous annotation
+    # said the innermost value was a float, which never matched what the rows
+    # below actually store.
+    result: dict[str, dict[str, dict[str, Any]]] = {}
     # Summary lines for TODAY that the window threw away. Counted so the drop can
     # announce itself: on 2026-08-03 a late shutdown put 53 of 54 summaries past
     # the cutoff and the only symptom was a Google Sheet that quietly stayed blank.
@@ -16764,7 +16855,10 @@ def _compute_pnl_sheet_updates(values, pnl_by_day, today_str):
             if isinstance(result_record, dict):
                 pnl = result_record.get("pnl")
                 mode = str(result_record.get("mode", "")).strip().upper()
-                if mode not in {"PAPER", "LIVE", "MIXED"}:
+                if mode not in {"PAPER", "LIVE", "MIXED"} or pnl is None:
+                    # A record with no "pnl" is as malformed as one with no
+                    # recognisable mode, and is reported the same way rather
+                    # than raising later inside float().
                     unmatched.add(strategy)
                     continue
             else:
@@ -16939,7 +17033,16 @@ def _update_pnl_google_sheet() -> bool:
         # each. One batched update_cells call is far fewer API hits than writing
         # cells one by one; USER_ENTERED makes Sheets store the value as a number.
         cells = [gspread.Cell(row + 1, col + 1, value) for (row, col, value) in updates]
-        worksheet.update_cells(cells, value_input_option="USER_ENTERED")
+        # Passed as the documented STRING, not gspread.utils.ValueInputOption:
+        # reaching through `gspread.utils` raises AttributeError against the
+        # suite's fake gspread module, and this writer treats that as a
+        # transient failure and retries -- which is how the enum version got
+        # caught. gspread accepts the plain string; only its stubs insist on
+        # the enum, so the ignore is narrowed to exactly that argument.
+        worksheet.update_cells(
+            cells,
+            value_input_option="USER_ENTERED",  # type: ignore[arg-type]
+        )
         logger.info(
             "Google Sheet P&L updated: %d cell(s) written (today=%s).", len(cells), today_str
         )
@@ -17137,6 +17240,8 @@ def _live_config_errors(
         ):
             errors.append(f"{name} must be a non-negative integer")
         elif rule == "integer_range":
+            if bounds is None:  # pragma: no cover - every such rule ships bounds
+                raise AssertionError(f"{name}: integer_range rule without bounds")
             low, high = bounds
             if not value.is_integer() or not low <= value <= high:
                 errors.append(f"{name} must be an integer from {low} to {high}")
@@ -17169,13 +17274,22 @@ def _live_config_errors(
     start_minute = getattr(worker, "trading_start_minute", None)
     cutoff_hour = getattr(worker, "square_off_hour", None)
     cutoff_minute = getattr(worker, "square_off_minute", None)
-    clock_values = (start_hour, start_minute, cutoff_hour, cutoff_minute)
-    valid_clock_types = all(
-        isinstance(value, int) and not isinstance(value, bool)
-        for value in clock_values
-    )
-    if not valid_clock_types or not (
-        0 <= start_hour <= 23
+    # The isinstance checks sit in the SAME expression as the range checks
+    # rather than behind an `all(...)` helper. A type checker cannot carry a
+    # narrowing out of a generator, so the comparisons below were being read as
+    # `int <= None`. Evaluation order is unchanged: every value is proved to be
+    # a plain int (bool excluded) before any range is tested, and `and`
+    # short-circuits exactly as `all()` did.
+    if not (
+        isinstance(start_hour, int)
+        and not isinstance(start_hour, bool)
+        and isinstance(start_minute, int)
+        and not isinstance(start_minute, bool)
+        and isinstance(cutoff_hour, int)
+        and not isinstance(cutoff_hour, bool)
+        and isinstance(cutoff_minute, int)
+        and not isinstance(cutoff_minute, bool)
+        and 0 <= start_hour <= 23
         and 0 <= cutoff_hour <= 23
         and 0 <= start_minute <= 59
         and 0 <= cutoff_minute <= 59
@@ -17217,12 +17331,13 @@ def _live_config_errors(
 
         no_new_entry_hour = getattr(worker, "no_new_entry_hour", None)
         no_new_entry_minute = getattr(worker, "no_new_entry_minute", None)
-        valid_entry_cutoff_types = all(
-            isinstance(value, int) and not isinstance(value, bool)
-            for value in (no_new_entry_hour, no_new_entry_minute)
-        )
-        if not valid_entry_cutoff_types or not (
-            0 <= no_new_entry_hour <= 23
+        # Same reasoning as the trading-clock check above.
+        if not (
+            isinstance(no_new_entry_hour, int)
+            and not isinstance(no_new_entry_hour, bool)
+            and isinstance(no_new_entry_minute, int)
+            and not isinstance(no_new_entry_minute, bool)
+            and 0 <= no_new_entry_hour <= 23
             and 0 <= no_new_entry_minute <= 59
         ):
             errors.append(
@@ -17845,7 +17960,7 @@ def _emit_supervisor_heartbeat(
 
 
 def _start_and_supervise_runtime_threads(
-    fetcher: CentralMarketDataFetcher,
+    fetcher: MarketDataFetcher,
     telegram_worker: TelegramMessageWorker | None,
     workers: Sequence[BasePaperStrategyWorker],
     session_state: SessionStateStore | None = None,
@@ -18297,7 +18412,10 @@ def main() -> None:
 
     # ----- ATM single-leg family: each BUYS the ATM CE (LONG) / PE (SHORT) of the
     #       next-next expiry. All of these subclass AtmSingleLegStrategyWorker. -----
-    workers = [
+    # Annotated to the shared base: the list starts with ATM single-leg
+    # workers but the hedged, Delta-0.2 and strangle families are appended
+    # below, so inferring from the first element would fix it too narrowly.
+    workers: list[BasePaperStrategyWorker] = [
         # 8 "core" ATM strategies authored directly in this repo.
         RenkoStrategyWorker(store, stop_event, broker),
         EMATrendStrategyWorker(store, stop_event, broker),
@@ -18382,7 +18500,8 @@ def main() -> None:
     # never started (and thus never live-gated, wired to Telegram, joined, or in
     # the EOD summary -- filtering this one list handles all of that uniformly).
     # Default is true: everything runs. There is intentionally no master switch.
-    enabled_workers, disabled_workers = [], []
+    enabled_workers: list[BasePaperStrategyWorker] = []
+    disabled_workers: list[BasePaperStrategyWorker] = []
     for worker in workers:
         target = enabled_workers if _strategy_virtual_trading_enabled(worker.strategy_name) else disabled_workers
         target.append(worker)
@@ -18432,7 +18551,7 @@ def main() -> None:
     # flag is on AND credentials are present; otherwise workers keep their
     # default `trade_event_queue = None` and publish_trade_event() is a no-op.
     telegram_worker = None
-    trade_event_queue = None
+    trade_event_queue: queue.Queue | None = None
     if TELEGRAM_ENABLED and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         trade_event_queue = queue.Queue(maxsize=1000)
         for worker in workers:
@@ -18463,7 +18582,7 @@ def main() -> None:
     # exact previous file and exposes its parsed document as ``previous_state``.
     # Same-day P&L bookkeeping is always restored; open paper exposure remains
     # opt-in and passes the narrower validation below.
-    session_state = None
+    session_state: SessionStateStore | None = None
     if SESSION_STATE_ENABLED:
         try:
             session_state = SessionStateStore(

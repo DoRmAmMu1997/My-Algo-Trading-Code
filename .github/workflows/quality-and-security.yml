@@ -79,7 +79,17 @@ jobs:
       - name: Run mypy type checks
         # Scope and strictness live in pyproject.toml ([tool.mypy]): every
         # identifier-named module is checked; expanding to tests is a follow-up.
-        run: python -m mypy
+        run: |
+          python -m mypy
+          # The master runner is checked in its OWN invocation, not via
+          # [tool.mypy] files. Listing it there makes mypy resolve
+          # Dependencies/broker_contract.py under two module names at once --
+          # bare `broker_contract` (how the adapters import it, since
+          # Dependencies/ has no __init__.py) and `Dependencies.broker_contract`
+          # (how the master imports it). Unifying those is a change to imports
+          # on the live-order path, which ADR-0014 declines. A separate run
+          # gates the file just as strictly.
+          python -m mypy nifty_multi_strategy_master.py
 
       - name: Run Bandit security checks
         # B101 (asserts), B105 (false positives on token-URL/dict-key strings)
