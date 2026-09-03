@@ -253,7 +253,7 @@ import threading
 import time
 import uuid
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -17233,7 +17233,7 @@ def _live_config_errors(
 
 
 def _configure_startup_live_trading(
-    workers: list[BasePaperStrategyWorker],
+    workers: Sequence[BasePaperStrategyWorker],
     store: SharedMarketDataStore,
     *,
     master_live: bool,
@@ -17415,7 +17415,7 @@ _SHUTDOWN_RETRY_DELAYS_SECONDS = (1.0, 2.0, 5.0)
 
 
 def _request_worker_shutdown(
-    workers: list[BasePaperStrategyWorker],
+    workers: Sequence[BasePaperStrategyWorker],
     reason: str,
 ) -> int:
     """Request flattening on every worker without setting the terminal event."""
@@ -17514,7 +17514,7 @@ def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
     return snapshot
 
 
-def _session_state_snapshots(workers: list[BasePaperStrategyWorker]) -> list[dict]:
+def _session_state_snapshots(workers: Sequence[BasePaperStrategyWorker]) -> list[dict]:
     """Snapshot every worker and mark failures explicitly as unsafe.
 
     Omitting a broken worker used to leave its previous ``open_position`` in
@@ -17537,7 +17537,7 @@ def _session_state_snapshots(workers: list[BasePaperStrategyWorker]) -> list[dic
 
 
 def _restore_session_bookkeeping(
-    workers: list[BasePaperStrategyWorker],
+    workers: Sequence[BasePaperStrategyWorker],
     state: dict | None,
 ) -> int:
     """Restore today's realized P&L independently of position recovery.
@@ -17587,7 +17587,7 @@ def _restore_session_bookkeeping(
 
 
 def _resume_open_positions(
-    workers: list[BasePaperStrategyWorker],
+    workers: Sequence[BasePaperStrategyWorker],
     state_source: dict | str,
 ) -> int:
     """Restore yesterday's-crash state into today's flat workers. Opt-in.
@@ -17792,7 +17792,7 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
 
 def _emit_supervisor_heartbeat(
     session_state: SessionStateStore,
-    started_workers: list[BasePaperStrategyWorker],
+    started_workers: Sequence[BasePaperStrategyWorker],
     last_heartbeat_at: float | None,
 ) -> float:
     """Log one supervisor liveness line per interval; return the new stamp.
@@ -17847,7 +17847,7 @@ def _emit_supervisor_heartbeat(
 def _start_and_supervise_runtime_threads(
     fetcher: CentralMarketDataFetcher,
     telegram_worker: TelegramMessageWorker | None,
-    workers: list[BasePaperStrategyWorker],
+    workers: Sequence[BasePaperStrategyWorker],
     session_state: SessionStateStore | None = None,
 ) -> bool:
     """Start workers inside the same interrupt-safe boundary that stops them.
@@ -18164,7 +18164,7 @@ class SessionFinalizationOutcome:
 
 
 def _finalize_flat_session(
-    workers: list[BasePaperStrategyWorker],
+    workers: Sequence[BasePaperStrategyWorker],
     store: SharedMarketDataStore,
     client: ExecutionClient | None,
     *,
