@@ -258,6 +258,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 # --- Third-party imports -----------------------------------------------------
@@ -1570,11 +1571,18 @@ REGIME_ADAPTIVE_LOGIC = load_module(
 SL_HUNTING_ENABLED = _env_bool("SL_HUNTING_ENABLED", False)
 SL_HUNTING_DIR = SIGNAL_GEN_DIR / "SL Hunting AI Agent"
 SL_HUNTING_AVAILABLE = False
-SL_HUNTING_AGENT_MODULE = None
-SL_HUNTING_EXECUTOR_MODULE = None
-SL_HUNTING_JOURNAL_MODULE = None
-SL_HUNTING_LESSONS_MODULE = None
-SL_HUNTING_INDICATOR_CONFIG = None
+# Annotated `Any` because that is what they genuinely are: handles to modules
+# resolved by importlib at runtime, whose attributes cannot be known statically.
+# It also makes them consistent with every OTHER dynamically loaded module in
+# this file -- those come from load_module(), which has no return annotation and
+# so already yields Any. These five differ only in being pre-initialised to None
+# for the disabled case, which is what made the checker track a `Module | None`
+# union and reject every attribute access behind the SL_HUNTING_AVAILABLE guard.
+SL_HUNTING_AGENT_MODULE: Any = None
+SL_HUNTING_EXECUTOR_MODULE: Any = None
+SL_HUNTING_JOURNAL_MODULE: Any = None
+SL_HUNTING_LESSONS_MODULE: Any = None
+SL_HUNTING_INDICATOR_CONFIG: Any = None
 if SL_HUNTING_ENABLED:
     try:
         if str(SL_HUNTING_DIR) not in sys.path:
@@ -12899,17 +12907,22 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
             self._log_capture_failure(f"contract resolution raised: {exc}")
             return
 
-        missing = [
-            label
-            for label, meta in (
-                ("ce_monitor", ce_monitor),
-                ("ce_hedge", ce_hedge),
-                ("pe_monitor", pe_monitor),
-                ("pe_hedge", pe_hedge),
-            )
-            if meta is None
-        ]
-        if missing:
+        # The `missing` list below reports WHICH legs failed, but a type checker
+        # cannot learn "all four are non-None" from a comprehension, so the
+        # guard itself tests them directly. `missing` is non-empty on exactly
+        # the same inputs, so the message and the early return are unchanged --
+        # this only moves the list inside the branch that uses it.
+        if ce_monitor is None or ce_hedge is None or pe_monitor is None or pe_hedge is None:
+            missing = [
+                label
+                for label, meta in (
+                    ("ce_monitor", ce_monitor),
+                    ("ce_hedge", ce_hedge),
+                    ("pe_monitor", pe_monitor),
+                    ("pe_hedge", pe_hedge),
+                )
+                if meta is None
+            ]
             self._log_capture_failure(
                 f"could not resolve contract metadata for {missing} "
                 f"(monitor CE={ce_strike} hedge={ce_hedge_strike}; "
