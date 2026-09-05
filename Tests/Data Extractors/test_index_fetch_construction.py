@@ -10,6 +10,8 @@ without touching the network.
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess  # nosec B404 - launching the wrapper as a script IS what this test asserts
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -66,7 +68,11 @@ def test_access_token_is_environment_only_never_a_cli_flag(monkeypatch):
         security_id="13",
         default_output="out.csv",
     )
-    monkeypatch.setenv("DHAN_TOKEN_ID", "env-only-token")
+    # Hermetic: the engine now load_dotenv()s Dependencies/.env at import, so
+    # every key this assertion depends on is pinned here. Leaving one unset
+    # would let a real token decide the result -- and print it on failure.
+    monkeypatch.setenv("DHAN_ACCESS_TOKEN", "env-only-token")
+    monkeypatch.delenv("DHAN_TOKEN_ID", raising=False)
     monkeypatch.setattr(sys, "argv", ["fetcher"])
 
     args = fetcher.parse_args(defaults)
@@ -143,3 +149,64 @@ def test_atomic_csv_replace_commits_complete_file(tmp_path):
     fetcher.atomic_write_csv(pd.DataFrame({"close": [101.0]}), target)
 
     assert "101.0" in target.read_text(encoding="utf-8")
+
+
+def test_wrapper_runs_as_a_script_the_way_algo_py_launches_it():
+    """`algo.py fetch-data` runs the wrapper as a script, not as an import.
+
+    Python then puts the SCRIPT's folder on sys.path -- not the repository root,
+    and not the cwd algo.py sets -- so the engine's `from Dependencies....`
+    import used to die with ModuleNotFoundError before argparse ever ran. This
+    test reproduces that exact launch and asserts the module imports.
+
+    `--help` exits 0 without credentials or network, which is enough: the old
+    failure happened at import time, well before argument parsing.
+    """
+    wrapper = _REPO_ROOT / "Data Extractors" / "nifty_1m_5y_data_fetch_dhan.py"
+
+    # Strip PYTHONPATH so a developer's own path setup cannot mask the bug, and
+    # clear the credential keys so nothing here depends on a populated .env.
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env.pop("DHAN_CLIENT_CODE", None)
+    env.pop("DHAN_ACCESS_TOKEN", None)
+    env.pop("DHAN_TOKEN_ID", None)
+
+    # nosec B603 - argv is [sys.executable, <a path built from __file__>, "--help"];
+    # nothing here comes from user input, and no shell is involved.
+    completed = subprocess.run(  # nosec B603
+        [sys.executable, str(wrapper), "--help"],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert "ModuleNotFoundError" not in completed.stderr, completed.stderr
+    assert completed.returncode == 0, completed.stderr
+    assert "--lookback" in completed.stdout
+
+
+def test_token_is_read_from_dhan_access_token_with_legacy_fallback(monkeypatch):
+    """DHAN_ACCESS_TOKEN is the repo-wide key and must win.
+
+    The engine used to read DHAN_TOKEN_ID only -- a name documented nowhere and
+    present in no .env -- so credentials could never load. DHAN_TOKEN_ID stays
+    accepted so an operator who exported the old name is not broken.
+    """
+    defaults = fetcher.IndexFetchDefaults(
+        display_name="NIFTY", security_id="13", default_output="out.csv"
+    )
+    monkeypatch.setattr(sys, "argv", ["prog"])
+    monkeypatch.setenv("DHAN_CLIENT_CODE", "CLIENT123")
+
+    monkeypatch.setenv("DHAN_ACCESS_TOKEN", "primary-token")
+    monkeypatch.setenv("DHAN_TOKEN_ID", "legacy-token")
+    assert fetcher.parse_args(defaults).access_token == "primary-token"
+
+    monkeypatch.delenv("DHAN_ACCESS_TOKEN")
+    assert fetcher.parse_args(defaults).access_token == "legacy-token"
+
+    monkeypatch.delenv("DHAN_TOKEN_ID")
+    assert fetcher.parse_args(defaults).access_token == ""
