@@ -14,7 +14,7 @@ import importlib.util
 import itertools
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -77,20 +77,41 @@ def test_series_plan_pairs_every_label_with_every_option_type():
     assert ("ATM", "CALL") in plan and ("ATM+1", "PUT") in plan
 
 
-def test_chunk_ranges_cover_the_whole_span_without_gaps():
+def test_chunk_ranges_tile_the_span_inclusively_without_gaps_or_overlap():
     windows = engine.chunk_ranges(date(2025, 1, 1), date(2025, 3, 31), 29)
 
+    # Both ends inclusive: the API serves toDate, whatever the docs say.
     assert windows[0][0] == date(2025, 1, 1)
-    # toDate is non-inclusive, so the last window ends one day past the range.
-    assert windows[-1][1] == date(2025, 4, 1)
+    assert windows[-1][1] == date(2025, 3, 31)
     for earlier, later in itertools.pairwise(windows):
-        assert earlier[1] == later[0], "windows must abut exactly"
-    assert all((end - start).days <= 29 for start, end in windows)
+        assert later[0] == earlier[1] + timedelta(days=1), "windows must abut, not overlap"
+    # An inclusive 29-day window spans 29 days, a day under Dhan's 30-day cap.
+    assert all((end - start).days + 1 <= 29 for start, end in windows)
+
+
+def test_chunk_ranges_do_not_overlap_on_a_trading_day():
+    """The bug this pins cost a live run.
+
+    Half-open windows made chunk N end on the same date chunk N+1 began. Because
+    toDate is inclusive, that boundary day came back in BOTH chunks, and the
+    trailing bars tripped the out-of-window guard:
+
+        ATM_CALL: 375 candle(s) outside the requested window
+        2025-01-06 -> 2025-01-17, first 2025-01-17 09:15:00
+
+    A five-day smoke run missed it only because its boundary fell on a Saturday.
+    """
+    windows = engine.chunk_ranges(date(2025, 1, 6), date(2025, 2, 28), 10)
+    covered = [d for start, end in windows for d in pd.date_range(start, end).date]
+
+    assert len(covered) == len(set(covered)), "no date may appear in two windows"
+    assert covered == sorted(covered)
+    assert covered[0] == date(2025, 1, 6) and covered[-1] == date(2025, 2, 28)
 
 
 def test_chunk_ranges_handles_a_single_day():
     assert engine.chunk_ranges(date(2025, 1, 6), date(2025, 1, 6), 29) == [
-        (date(2025, 1, 6), date(2025, 1, 7))
+        (date(2025, 1, 6), date(2025, 1, 6))
     ]
 
 
@@ -754,3 +775,58 @@ def test_bad_arguments_stop_the_run_before_any_network_call(tmp_path, monkeypatc
             DEFAULTS,
             ["--client-id", "C1", "--strike-range", "99", "--output-dir", str(tmp_path)],
         )
+
+
+# ---------------------------------------------------------------------------
+# The unlabelled tail
+# ---------------------------------------------------------------------------
+
+
+def test_sessions_after_the_last_expiry_are_reported_not_silently_dropped():
+    # The live smoke run ended on Friday 10-Jan-2025, one day past the Thursday
+    # expiry. All 375 of that Friday's bars were correctly discarded -- and said
+    # nothing about it, which is silent data loss. A 5-year backfill ending
+    # today loses the whole current part-week the same way.
+    trading_days = [date(2025, 1, 6), date(2025, 1, 7), date(2025, 1, 8), date(2025, 1, 9), date(2025, 1, 10)]
+    expiry_map = dict.fromkeys(trading_days[:4], date(2025, 1, 9))
+
+    message = engine.warn_about_unlabelled_tail(trading_days, expiry_map, date(2025, 1, 10))
+
+    assert message is not None
+    assert "1 session(s)" in message
+    assert "2025-01-10" in message
+    assert "--end-date" in message, "the message must say how to keep those bars"
+
+
+def test_a_range_ending_on_an_expiry_reports_nothing():
+    trading_days = [date(2025, 1, 6), date(2025, 1, 7), date(2025, 1, 8), date(2025, 1, 9)]
+    expiry_map = dict.fromkeys(trading_days, date(2025, 1, 9))
+
+    assert engine.warn_about_unlabelled_tail(trading_days, expiry_map, date(2025, 1, 9)) is None
+
+
+def test_atm_is_repicked_every_bar_so_one_file_holds_many_contracts():
+    """Measured against the live API, and the reason strike_price is mandatory.
+
+    On 06-Jan-2025 the ATM call series switched strike 69 times inside the one
+    session. This pins the shape that makes that survivable: the actual strike
+    travels on every row, so a re-key can recover real contracts.
+    """
+    stamps = [epoch("2025-01-06 09:15"), epoch("2025-01-06 09:16"), epoch("2025-01-06 09:17")]
+    payload = payload_for(
+        "ce", stamps,
+        close=[139.05, 158.0, 134.15],
+        open=[139.05, 158.0, 134.15],
+        high=[139.05, 158.0, 134.15],
+        low=[139.05, 158.0, 134.15],
+        strike=[24050.0, 24000.0, 24050.0],
+        spot=[24039.65, 24019.0, 24034.05],
+    )
+
+    frame = engine.normalize_rolling_payload(payload, "CALL", "ATM")
+
+    assert frame["strike_price"].tolist() == [24050.0, 24000.0, 24050.0]
+    assert frame["strike_price"].nunique() == 2, "one label, two contracts, three minutes"
+    # And each is genuinely the nearest 50 to spot.
+    for strike, spot in zip(frame["strike_price"], frame["spot"], strict=True):
+        assert abs(strike - spot) <= 25.0

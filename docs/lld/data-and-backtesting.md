@@ -72,9 +72,15 @@ per `(strike label, option type)` under
 Three properties worth knowing before using it, all covered by
 [ADR-0015](../adr/0015-rolling-relative-strike-expired-options.md):
 
-- **Strikes are relative, not contracts.** `ATM+3` is whichever strike sat three
-  above spot at the time. Re-key on `strike_price` and `expiry_date` to rebuild
-  a fixed contract; never treat `strike_label` as an instrument.
+- **Strikes are relative, not contracts, and re-pick every bar.** Measured: the
+  `ATM` call switched strike 69 times in one session, and a four-session `ATM`
+  file held 13 distinct contracts. Re-key on `strike_price` and `expiry_date` to
+  rebuild a fixed contract; never treat `strike_label` as an instrument.
+- **The tail of a range is dropped.** Sessions after the last expiry inside the
+  window cannot be labelled, so a backfill ending today loses the current
+  part-week. The run warns about it; extend `--end-date` past the next expiry.
+- **A session is usually 375 bars, but not always** — 20-Jan-2025 has a 15:30
+  print as well, giving 376. Do not assume the last bar is 15:29.
 - **±10 strikes is a ±500-point band.** A contract that drifts further from spot
   stops appearing. Silence is missing data, not a worthless option.
 - **`expiryCode` is 1-based here** (1 = near), unlike the annexure's table for

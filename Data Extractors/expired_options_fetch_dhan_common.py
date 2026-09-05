@@ -22,11 +22,18 @@ file only ever holds live contracts. Instead you ask for "the ATM call", or
 
 Two consequences, and they drive most of the design here:
 
-1. `ATM+3 CE` on Monday and `ATM+3 CE` on Wednesday are *different contracts* if
-   spot moved in between. A rolling label is not a tradeable instrument. That is
-   why we always request the `strike` field and write it out as `strike_price`:
-   it is the only way to recover a fixed-strike series afterwards, by re-keying
-   on `(expiry_date, strike_price, option_type)`.
+1. A rolling label is not a tradeable instrument, and the churn is far faster
+   than "day to day" -- it is **minute to minute**. Measured against the live
+   API on 2025-01-06: the `ATM` call series switched strike **69 times in that
+   single session**, and one four-day `ATM` file held 13 distinct contracts.
+   The rule is simply the nearest 50-point strike to spot, re-evaluated every
+   bar (verified: `strike_price` equalled the nearest 50 to `spot` on 1500 of
+   1500 rows, never more than 25 points away).
+
+   This is why we always request the `strike` field and write it out as
+   `strike_price`. Without it the data would be unusable: re-keying on
+   `(expiry_date, strike_price, option_type)` is the only way to recover a
+   series that corresponds to something you could actually have held.
 
 2. The response carries no expiry date at all. We derive one -- see
    `expiry_calendar.py` -- from a published exchange rule plus the trading days
@@ -155,8 +162,9 @@ CALENDAR_COLUMNS: tuple[str, ...] = (
     "trading_days_to_expiry",
 )
 
-# Dhan documents a 30-day ceiling per call. 29 is the default so an off-by-one in
-# how the exchange treats `toDate` cannot silently truncate a chunk.
+# Dhan documents a 30-day ceiling per call, and `toDate` is inclusive (measured
+# -- see `chunk_ranges`), so a 29-day window spans 29 days and keeps a day of
+# headroom under the cap.
 MAX_CHUNK_DAYS = 30
 DEFAULT_CHUNK_DAYS = 29
 
@@ -340,13 +348,21 @@ def series_plan(strike_range: int, option_types: Sequence[str]) -> list[tuple[st
 
 def chunk_ranges(start: date, end: date, chunk_days: int) -> list[tuple[date, date]]:
     """
-    Split ``[start, end]`` into API-sized windows.
+    Split ``[start, end]`` into API-sized windows, both ends INCLUSIVE.
 
-    Dhan documents ``toDate`` as non-inclusive, so each window is returned as a
-    half-open ``[from, to)`` pair and the next one begins exactly where the last
-    ended. The writer de-duplicates on timestamp anyway, so a boundary bar
-    arriving twice (if the exchange in fact treats ``toDate`` as inclusive) is
-    dropped rather than duplicated.
+    Dhan's documentation calls ``toDate`` non-inclusive. It is not. Measured
+    against the live API on 2026-09-05, asking for 06-Jan to 08-Jan returns
+    three sessions ending on the 8th, and 06-Jan to 10-Jan returns five ending
+    on the 10th -- the end date is served.
+
+    Getting this wrong is not cosmetic. Half-open windows made adjacent chunks
+    overlap by a day, and the last chunk then carried bars dated ``to_date``
+    that `validate_options_frame` rejected as out-of-window. It only survived a
+    five-day smoke run because that window happened to end on a Saturday.
+
+    So windows tile the range exactly: no overlap, no gap. The writer still
+    de-duplicates on timestamp, which now costs nothing and would absorb the
+    behaviour changing back.
     """
     if start > end:
         raise ValueError(f"start {start.isoformat()} is after end {end.isoformat()}")
@@ -355,11 +371,10 @@ def chunk_ranges(start: date, end: date, chunk_days: int) -> list[tuple[date, da
 
     windows: list[tuple[date, date]] = []
     cursor = start
-    final = end + timedelta(days=1)  # exclusive upper bound of the whole range
-    while cursor < final:
-        window_end = min(cursor + timedelta(days=chunk_days), final)
+    while cursor <= end:
+        window_end = min(cursor + timedelta(days=chunk_days - 1), end)
         windows.append((cursor, window_end))
-        cursor = window_end
+        cursor = window_end + timedelta(days=1)
     return windows
 
 
@@ -583,7 +598,9 @@ def validate_options_frame(frame: pd.DataFrame, from_date: date, to_date: date, 
     if stamps.duplicated().any():
         raise MarketDataValidationError(f"{label}: chunk contains duplicate timestamps")
 
-    outside = stamps[(stamps.dt.date < from_date) | (stamps.dt.date >= to_date)]
+    # Both ends inclusive, because that is what the API actually serves for
+    # `toDate` regardless of what the documentation says. See `chunk_ranges`.
+    outside = stamps[(stamps.dt.date < from_date) | (stamps.dt.date > to_date)]
     if not outside.empty:
         raise MarketDataValidationError(
             f"{label}: {len(outside)} candle(s) outside the requested window "
@@ -620,7 +637,15 @@ def label_with_expiry(frame: pd.DataFrame, expiry_map: dict[date, date]) -> pd.D
     ]
     # A bar past the last derived expiry cannot be labelled honestly, and an
     # unlabelled bar is worse than no bar for a positional backtest.
-    return labelled[labelled["expiry_date"].notna()].reset_index(drop=True)
+    kept = labelled[labelled["expiry_date"].notna()].reset_index(drop=True)
+    dropped = len(labelled) - len(kept)
+    if dropped:
+        # Debug, not warning: the systematic cause is the tail of the requested
+        # range, and `warn_about_unlabelled_tail` says that once up front rather
+        # than once per series per chunk.
+        lost = sorted({d.isoformat() for d, e in zip(trade_dates, expiries, strict=True) if not isinstance(e, date)})
+        log.debug("dropped %d bar(s) with no derivable expiry, on %s", dropped, ", ".join(lost))
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +754,34 @@ def write_calendar_csv(path: Path, trading_days: Sequence[date], expiry_map: dic
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path, index=False)
     return frame
+
+
+def warn_about_unlabelled_tail(trading_days: Sequence[date], expiry_map: dict[date, date], end: date) -> str | None:
+    """
+    Say up front which sessions will be dropped for want of an expiry.
+
+    Every bar is labelled with the expiry that was current on it, and the last
+    derived expiry is the last one that actually happened inside the requested
+    range. Sessions after it therefore cannot be labelled -- their expiry lies
+    in the future, beyond the data. Those bars are discarded.
+
+    That is the honest thing to do with them, but it is silent data loss unless
+    somebody says so: a five-year backfill ending today quietly loses the whole
+    current part-week. Returns the message (also logged), or None when the range
+    ends neatly on an expiry.
+    """
+    unlabelled = [day for day in trading_days if day not in expiry_map]
+    if not unlabelled:
+        return None
+
+    message = (
+        f"{len(unlabelled)} session(s) at the end of the range have no expiry yet "
+        f"({unlabelled[0].isoformat()} to {unlabelled[-1].isoformat()}) and will be SKIPPED. "
+        f"Their weekly expiry falls after --end-date {end.isoformat()}. "
+        f"To keep them, extend --end-date past that expiry and re-run."
+    )
+    log.warning("%s", message)
+    return message
 
 
 def read_calendar_csv(path: Path) -> dict[date, date]:
@@ -1004,6 +1057,7 @@ def run_expired_options_fetcher(defaults: ExpiredOptionsDefaults, argv: Sequence
         trading_days, expiry_map, call_frame, put_frame = build_expiry_calendar(dhan, args, start, end, limiter)
         write_calendar_csv(output_dir / CALENDAR_FILENAME, trading_days, expiry_map)
         log.info("wrote %s", output_dir / CALENDAR_FILENAME)
+        warn_about_unlabelled_tail(trading_days, expiry_map, end)
 
     windows = chunk_ranges(start, end, args.chunk_days)
     option_types = parse_option_types(args.option_types)
