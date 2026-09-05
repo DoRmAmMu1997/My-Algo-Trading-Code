@@ -87,6 +87,14 @@ INDEX_SCRIPTS = {
     "finnifty": "Data Extractors/finnifty_1m_5y_data_fetch_dhan.py",
 }
 
+# `fetch-expired-options --index <key>`
+# Separate from INDEX_SCRIPTS on purpose: these download expired OPTION
+# contracts (premium, OI, IV) rather than the index itself, and they take a
+# different flag set.
+EXPIRED_OPTIONS_SCRIPTS = {
+    "nifty": "Data Extractors/nifty_expired_options_fetch_dhan.py",
+}
+
 # `backtest --strategy <key>`
 BACKTEST_SCRIPTS = {
     "renko": "My Backtest Files (For Reference)/renko_strategy_backtest.py",
@@ -157,6 +165,17 @@ def build_parser() -> argparse.ArgumentParser:
              "--start-date, --end-date, --output, ...) pass through to the fetcher.",
     )
 
+    fetch_options = sub.add_parser(
+        "fetch-expired-options",
+        help="Download expired index-option history (premium, OI, IV) from DhanHQ.",
+    )
+    fetch_options.add_argument(
+        "--index", required=True, choices=sorted(EXPIRED_OPTIONS_SCRIPTS),
+        help="Which underlying to download. All other flags (--strike-range, "
+             "--expiry-flag, --lookback, --dry-run, --verify-expiries, ...) pass "
+             "through to the fetcher.",
+    )
+
     backtest = sub.add_parser(
         "backtest",
         help="Run one strategy's backtest against a historical-data CSV.",
@@ -216,6 +235,8 @@ def main(argv=None) -> int:
 
     if args.command == "fetch-data":
         return _run(INDEX_SCRIPTS[args.index], forwarded)
+    if args.command == "fetch-expired-options":
+        return _run(EXPIRED_OPTIONS_SCRIPTS[args.index], forwarded)
     if args.command == "backtest":
         return _run(BACKTEST_SCRIPTS[args.strategy], forwarded)
     if args.command == "run":

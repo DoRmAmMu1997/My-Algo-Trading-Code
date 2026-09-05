@@ -48,6 +48,42 @@ the extractor engine) infer the unit and then **assert it is consistent across
 the response** — a frame with mixed units would otherwise produce candles
 decades apart with no obvious symptom.
 
+### 2.2 Expired options
+
+```
+ Data Extractors/
+   expired_options_fetch_dhan_common.py     ← the engine
+   expiry_calendar.py                       ← pure expiry derivation
+   nifty_expired_options_fetch_dhan.py      ← thin wrapper
+```
+
+```bash
+python algo.py fetch-expired-options --index nifty --dry-run
+python algo.py fetch-expired-options --index nifty --lookback 5y --verify-expiries
+```
+
+Real expired NIFTY option bars — OHLC **plus volume, open interest, implied
+volatility, the actual strike and the spot** — via `POST /v2/charts/rollingoption`
+(`dhanhq.expired_options_data`). Five years, minute resolution. Output is one CSV
+per `(strike label, option type)` under
+`Backtest Outputs/expired_options/nifty/`, alongside a
+`_weekly_expiry_calendar.csv` and a `_manifest.json`.
+
+Three properties worth knowing before using it, all covered by
+[ADR-0015](../adr/0015-rolling-relative-strike-expired-options.md):
+
+- **Strikes are relative, not contracts.** `ATM+3` is whichever strike sat three
+  above spot at the time. Re-key on `strike_price` and `expiry_date` to rebuild
+  a fixed contract; never treat `strike_label` as an instrument.
+- **±10 strikes is a ±500-point band.** A contract that drifts further from spot
+  stops appearing. Silence is missing data, not a worthless option.
+- **`expiryCode` is 1-based here** (1 = near), unlike the annexure's table for
+  `/charts/historical`. A zero is rejected as a missing field.
+
+The download is resumable per chunk: `_manifest.json` records each series' byte
+length, and a restart trims any chunk a crash left half-written before carrying
+on. Pacing goes through the shared `RollingWindowRateLimiter`.
+
 ---
 
 ## 3. Backtesting
@@ -118,6 +154,13 @@ whose size or logic changed.
 engine's construction and request-building. Its module path anchor points back
 at the **source** `Data Extractors/` folder.
 
+`test_expired_options_fetch.py` and `test_expiry_calendar.py` cover the
+expired-options engine and its calendar. Neither touches the network — the
+DhanHQ client is a `SimpleNamespace` duck. The cases that earn their keep encode
+what the API taught us: `expiryCode` being 1-based, a `str` vs `dict` `remarks`
+meaning two completely different things, the parallel-array response shape, the
+holiday roll-back, and the 01-Sep-2025 Thursday→Tuesday change.
+
 The backtests themselves are not tested — they are reference scripts, not
 runtime code. `compileall` is their only gate.
 
@@ -130,5 +173,10 @@ runtime code. `compileall` is their only gate.
 - **Backtests do not model the spread gate, sizing rejections, or partial fills.**
   A backtest is an idea filter, not a P&L forecast. The paper-trading phase is
   what exercises the execution path.
-- **No volume** in the source data, so volume-derived indicators are proxies here
-  too — the same limitation the live feed has.
+- **No volume** in the *index* source data, so volume-derived indicators are
+  proxies there — the same limitation the live feed has. The expired-options
+  data of §2.2 does carry real volume, OI and IV; it is the one dataset here
+  that does not need the proxy.
+- **The expired-options set has no bid/ask** either, so spread and slippage
+  still cannot be modelled from it, and its ±500-point strike band means a
+  drifted contract goes missing rather than reading as worthless (§2.2).

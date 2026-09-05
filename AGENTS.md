@@ -91,14 +91,19 @@ One process, cooperating threads:
 ## Repository layout
 ```
 nifty_multi_strategy_master.py   # the multithreaded paper/live runner (the "big one")
-algo.py                                             # unified CLI: fetch-data / backtest / run / setup-token / diagnose / check-env
+algo.py                                             # unified CLI: fetch-data / fetch-expired-options / backtest / run / setup-token / diagnose / check-env
 Tests/                                             # EVERY test, mirroring the source tree (docs/adr/0010)
   test_nifty_multi_strategy_master.py              #   unittest suite for the master
   test_market_data_health.py                       #   unittest suite for the shared feed-health gates
 requirements.txt                                   # exact core runtime + dev/CI tooling
 requirements-brokers.txt                           # exact Kotak/Shoonya optional live set
 requirements-ai.txt                                # exact optional AI-agent stack (Claude + Codex)
-Data Extractors/                                   # DhanHQ 1-min OHLC downloaders (shared engine + per-index wrappers)
+Data Extractors/                                   # DhanHQ downloaders (shared engine + per-index wrappers)
+                                                   #   index 1-min OHLC, plus expired-OPTION history
+                                                   #   (premium/OI/IV) via expired_options_fetch_dhan_common.py
+                                                   #   + expiry_calendar.py -- read docs/adr/0015 first: strikes
+                                                   #   are RELATIVE (ATM+/-n), not contracts, and the expiry
+                                                   #   date is derived rather than returned by the API
 My Backtest Files (For Reference)/                 # backtesting.py backtests (+ Subhamoy Strategies/)
 Signal Generators/                                 # strategy signal logic (+ CPR Strategy/, Subhamoy Strategies/,
                                                    #   SL Hunting AI Agent/ — optional Claude-agent strategy;
@@ -183,9 +188,11 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   `logging.getLogger(__name__)` logger, **not `print()`**. Strategy FOLDERS still have spaces, so
   their modules are imported via `load_module()` (master ~L1024), not regular imports; the
   filenames themselves were renamed to identifiers by ADR-0014.
-- **CLI:** prefer `python algo.py <command>` (`fetch-data` / `backtest` / `run` / `setup-token` /
-  `diagnose` / `check-env`); each underlying script still runs standalone, and any flag beyond the
-  selector passes straight through. A bare `python algo.py` prints help.
+- **CLI:** prefer `python algo.py <command>` (`fetch-data` / `fetch-expired-options` / `backtest` /
+  `run` / `setup-token` / `diagnose` / `check-env`); each underlying script still runs standalone, and
+  any flag beyond the selector passes straight through. A bare `python algo.py` prints help.
+  `fetch-expired-options` is a long job (~2,700 calls for a 5-year NIFTY backfill) -- it takes
+  `--dry-run` to print the call plan first, and resumes per chunk from its `_manifest.json`.
 - **Config drift:** `python algo.py check-env` (`Dependencies/check_env_config.py`) audits
   `Dependencies/.env` against `env.example` and against the keys the code's `_env_*` calls actually
   read, reporting settings missing from `.env` (an unseen in-code default is in force), mistyped or
