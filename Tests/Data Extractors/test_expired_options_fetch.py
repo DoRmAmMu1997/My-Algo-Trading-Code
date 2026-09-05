@@ -555,23 +555,27 @@ def test_reading_a_calendar_missing_its_columns_says_which(tmp_path):
         engine.read_calendar_csv(path)
 
 
+def two_session_frames(prior_close: float, expiry_close: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """One leg's last bar on the day before expiry, then on expiry day."""
+    frame = written_frame(["2025-01-08 15:29", "2025-01-09 15:29"])
+    frame.loc[0, "close"] = prior_close
+    frame.loc[1, "close"] = expiry_close
+    return frame, frame.copy()
+
+
 def test_verification_passes_when_the_straddle_collapses_on_expiry_day():
-    calls = written_frame(["2025-01-09 15:29"])
-    calls.loc[0, "close"] = 8.0
-    puts = written_frame(["2025-01-09 15:29"])
-    puts.loc[0, "close"] = 6.0
+    # 14 against 120 the session before -- a 0.12 ratio, the measured median.
+    calls, puts = two_session_frames(prior_close=60.0, expiry_close=7.0)
 
     assert engine.verify_expiries(calls, puts, [date(2025, 1, 9)]) == []
 
 
 def test_verification_flags_a_day_that_still_carries_time_value():
-    # A calendar that is off by a day looks exactly like this.
-    calls = written_frame(["2025-01-08 15:29"])
-    calls.loc[0, "close"] = 90.0
-    puts = written_frame(["2025-01-08 15:29"])
-    puts.loc[0, "close"] = 85.0
+    # A calendar off by a day looks exactly like this: the straddle barely moved.
+    calls, puts = two_session_frames(prior_close=60.0, expiry_close=58.0)
 
-    complaints = engine.verify_expiries(calls, puts, [date(2025, 1, 8)])
+    complaints = engine.verify_expiries(calls, puts, [date(2025, 1, 9)])
+
     assert len(complaints) == 1
     assert "may not be an expiry day" in complaints[0]
 
@@ -830,3 +834,156 @@ def test_atm_is_repicked_every_bar_so_one_file_holds_many_contracts():
     # And each is genuinely the nearest 50 to spot.
     for strike, spot in zip(frame["strike_price"], frame["spot"], strict=True):
         assert abs(strike - spot) <= 25.0
+
+
+# ---------------------------------------------------------------------------
+# Corrupt counters
+# ---------------------------------------------------------------------------
+
+
+def test_a_negative_volume_is_blanked_not_fatal():
+    """One corrupt bar must not destroy a 50-minute backfill.
+
+    The real one, from the 5-year run: 2025-08-14 15:02 on the ATM-1 put,
+    volume = -4253276221, between neighbours in the tens of millions. It killed
+    the job after 20 of 42 series.
+    """
+    stamps = [epoch("2025-08-14 15:01"), epoch("2025-08-14 15:02"), epoch("2025-08-14 15:03")]
+    payload = payload_for(
+        "pe", stamps,
+        open=[1.15, 1.15, 1.15], high=[1.15, 1.15, 1.15],
+        low=[1.15, 1.15, 1.15], close=[1.15, 1.15, 1.15],
+        volume=[41_000_000, -4_253_276_221, 41_800_000],
+        oi=[44_733_975, 44_733_975, 44_733_975],
+    )
+
+    frame = engine.normalize_rolling_payload(payload, "PUT", "ATM-1")
+
+    assert len(frame) == 3, "the bar itself is kept -- only the bad value goes"
+    assert pd.isna(frame["volume"].iloc[1])
+    assert frame["volume"].iloc[0] == 41_000_000
+    assert frame["volume"].iloc[2] == 41_800_000
+    # Everything else on that bar survives untouched.
+    assert frame["close"].iloc[1] == 1.15
+    assert frame["oi"].iloc[1] == 44_733_975
+
+    # And it now passes the validator that used to abort the run.
+    engine.validate_options_frame(frame, date(2025, 8, 14), date(2025, 8, 14), "ATM-1_PUT")
+
+
+def test_a_negative_volume_is_not_repaired_by_guesswork():
+    """-4253276221 + 2**32 == 41691075, which looks plausible. Resist it.
+
+    The value does not fit a clean int32 wrap, so the mechanism is inferred, and
+    a guessed bit-pattern is not a good enough reason to invent broker data.
+    Unknown is recorded as unknown.
+    """
+    stamps = [epoch("2025-08-14 15:02")]
+    payload = payload_for(
+        "pe", stamps,
+        open=[1.15], high=[1.15], low=[1.15], close=[1.15],
+        volume=[-4_253_276_221], oi=[44_733_975],
+    )
+
+    frame = engine.normalize_rolling_payload(payload, "PUT", "ATM-1")
+
+    assert pd.isna(frame["volume"].iloc[0])
+    assert frame["volume"].iloc[0] != 41_691_075
+
+
+def test_a_negative_open_interest_is_blanked_too():
+    stamps = [epoch("2025-08-14 15:02")]
+    payload = payload_for(
+        "pe", stamps, open=[1.15], high=[1.15], low=[1.15], close=[1.15],
+        volume=[100], oi=[-7],
+    )
+
+    frame = engine.normalize_rolling_payload(payload, "PUT", "ATM-1")
+    assert pd.isna(frame["oi"].iloc[0])
+
+
+def test_a_negative_price_still_aborts_the_chunk():
+    """Prices are what a backtest computes P&L from -- they are not blankable."""
+    frame = frame_from(
+        [{"timestamp": "2025-08-14 15:02", "open": 1.15, "high": 1.15, "low": -1.15,
+          "close": 1.15, "volume": 100, "oi": 100}]
+    )
+    with pytest.raises(engine.MarketDataValidationError):
+        engine.validate_options_frame(frame, date(2025, 8, 14), date(2025, 8, 14), "ATM-1_PUT")
+
+
+# ---------------------------------------------------------------------------
+# Short-session detection and the recalibrated verification
+# ---------------------------------------------------------------------------
+
+
+def session_frame(day: str, bars: int, close: float = 100.0) -> pd.DataFrame:
+    stamps = pd.date_range(f"{day} 09:15", periods=bars, freq="1min")
+    frame = pd.DataFrame({name: [close] * bars for name in engine.OUTPUT_COLUMNS})
+    frame["timestamp"] = stamps
+    return frame[list(engine.OUTPUT_COLUMNS)]
+
+
+def test_short_sessions_are_separated_from_normal_ones():
+    """Measured split over five years: normal 375-376 bars, special 60-107."""
+    frames = [
+        pd.concat(
+            [
+                session_frame("2025-10-16", 375),
+                session_frame("2025-10-17", 375),
+                session_frame("2025-10-20", 375),
+                session_frame("2025-10-21", 105),  # Diwali Muhurat
+            ],
+            ignore_index=True,
+        )
+    ]
+
+    full = engine.full_session_days(frames)
+
+    assert date(2025, 10, 21) not in full
+    assert len(full) == 3
+    # ... but it is still a trading day.
+    assert date(2025, 10, 21) in engine.trading_days_from_frames(frames)
+
+
+def test_full_session_detection_copes_with_no_data():
+    assert engine.full_session_days([]) == []
+    assert engine.full_session_days([pd.DataFrame()]) == []
+
+
+def test_verification_uses_the_collapse_ratio_not_an_absolute_level():
+    """An absolute ceiling flagged 38 of 261 real expiries and hid the 2 bad ones.
+
+    Because ATM is the nearest 50-point strike, an expiring straddle still holds
+    up to 25 points of intrinsic, so 40-50 is entirely normal. What identifies an
+    expiry is the COLLAPSE against the previous session.
+    """
+    calls = pd.concat([session_frame("2025-01-08", 1, close=60.0),
+                       session_frame("2025-01-09", 1, close=25.0)], ignore_index=True)
+    puts = pd.concat([session_frame("2025-01-08", 1, close=60.0),
+                      session_frame("2025-01-09", 1, close=20.0)], ignore_index=True)
+
+    # 45 on expiry day would have tripped the old 40-point ceiling; against 120
+    # the day before it is a 0.38 collapse, which is exactly what an expiry does.
+    assert engine.verify_expiries(calls, puts, [date(2025, 1, 9)]) == []
+
+
+def test_verification_flags_a_day_whose_straddle_barely_moved():
+    calls = pd.concat([session_frame("2025-01-08", 1, close=60.0),
+                       session_frame("2025-01-09", 1, close=55.0)], ignore_index=True)
+    puts = pd.concat([session_frame("2025-01-08", 1, close=60.0),
+                      session_frame("2025-01-09", 1, close=55.0)], ignore_index=True)
+
+    complaints = engine.verify_expiries(calls, puts, [date(2025, 1, 9)])
+
+    assert len(complaints) == 1
+    assert "may not be an expiry day" in complaints[0]
+    assert "ratio 0.92" in complaints[0]
+
+
+def test_verification_skips_an_expiry_with_nothing_before_it():
+    calls = session_frame("2025-01-09", 1, close=55.0)
+    puts = session_frame("2025-01-09", 1, close=55.0)
+
+    # No prior session in the data to compare against, so no verdict is possible.
+    assert engine.verify_expiries(calls, puts, [date(2025, 1, 9)]) == []

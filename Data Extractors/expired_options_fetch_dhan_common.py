@@ -65,8 +65,10 @@ import importlib
 import json
 import logging
 import os
+import statistics
 import sys
 import time
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -521,6 +523,47 @@ def extract_payload(data: Any) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+def _null_impossible_counters(frame: pd.DataFrame, strike_label: str, option_type: str) -> int:
+    """
+    Blank out negative volume/OI, which are counters and cannot be negative.
+
+    Dhan serves the occasional corrupt one: 26 bars in ~19.4 million across the
+    five-year backfill. They are not scattered at random -- every one fell on an
+    expiry day, most at 14:15 exactly, which is the busiest minute of the
+    busiest session and just where a counter would overflow upstream.
+
+    They are blanked, never repaired. The first one found looked repairable:
+    ``-4253276221 + 2**32`` gives 41,691,075, neatly inside that day's range, as
+    though an unsigned counter had lost its top bit. Later ones killed that
+    theory -- the same arithmetic turned them into ~1.1 billion, roughly 25x a
+    normal day's volume. The tidy first case was a coincidence, and trusting it
+    would have written fabricated volume into two-thirds of the affected bars.
+    Blanking says "unknown", which is the truth.
+
+    Only volume and OI are treated this way. A negative PRICE is not a counter
+    glitch and still aborts the chunk in `validate_options_frame` -- prices are
+    what a backtest computes P&L from.
+
+    Returns how many values were blanked, and logs each one.
+    """
+    blanked = 0
+    for column in ("volume", "oi"):
+        if column not in frame:
+            continue
+        bad = frame[column] < 0
+        if not bad.any():
+            continue
+        blanked += int(bad.sum())
+        for position in frame.index[bad]:
+            log.warning(
+                "%s %s: negative %s (%s) at raw timestamp %s -- blanked as unknown",
+                strike_label, option_type, column,
+                frame.at[position, column], frame.at[position, "timestamp_raw"],
+            )
+        frame.loc[bad, column] = pd.NA
+    return blanked
+
+
 def normalize_rolling_payload(payload: dict[str, Any] | None, option_type: str, strike_label: str) -> pd.DataFrame:
     """
     Convert one side of the response into a tidy frame.
@@ -559,6 +602,7 @@ def normalize_rolling_payload(payload: dict[str, Any] | None, option_type: str, 
     frame = pd.DataFrame(columns)
     for field in REQUIRED_DATA_FIELDS:
         frame[field] = pd.to_numeric(frame[field], errors="coerce")
+    _null_impossible_counters(frame, strike_label, option_type)
 
     validate_single_epoch_unit(frame["timestamp_raw"])
     unit = infer_epoch_unit(frame["timestamp_raw"])
@@ -734,6 +778,48 @@ def trading_days_from_frames(frames: Sequence[pd.DataFrame]) -> list[date]:
     return sorted(days)
 
 
+# A Diwali Muhurat session runs about an hour against a normal ~6h15m day, so
+# any sane cutoff separates them. 0.5 of the median sits in the wide gap
+# between the two, and is interval-independent because it compares bar counts
+# with bar counts.
+FULL_SESSION_MIN_FRACTION = 0.5
+
+
+def full_session_days(
+    frames: Sequence[pd.DataFrame],
+    min_fraction: float = FULL_SESSION_MIN_FRACTION,
+) -> list[date]:
+    """
+    The subset of sessions long enough to be normal trading days.
+
+    NSE's Diwali Muhurat session is roughly an hour and appears in the data as
+    an ordinary date. It cannot host a weekly expiry -- the exchange moves that
+    week's expiry earlier -- so it must be excluded from expiry CANDIDATES,
+    though it stays a trading day in every other respect.
+
+    Measured over the five-year backfill, the split is unambiguous: normal
+    sessions carry 375 or 376 one-minute bars, the special ones 60 to 107.
+    """
+    counts: Counter[date] = Counter()
+    for frame in frames:
+        if frame.empty:
+            continue
+        counts.update(frame["timestamp"].dt.date.tolist())
+    if not counts:
+        return []
+
+    typical = statistics.median(counts.values())
+    threshold = typical * min_fraction
+    full = sorted(day for day, n in counts.items() if n >= threshold)
+    short = sorted(day for day, n in counts.items() if n < threshold)
+    if short:
+        log.info(
+            "%d short session(s) excluded from expiry candidates (Muhurat and the like): %s",
+            len(short), ", ".join(f"{d.isoformat()} [{counts[d]} bars]" for d in short),
+        )
+    return full
+
+
 def write_calendar_csv(path: Path, trading_days: Sequence[date], expiry_map: dict[date, date]) -> pd.DataFrame:
     """Write the derived calendar out so the labelling can be audited by eye."""
 
@@ -803,26 +889,38 @@ def read_calendar_csv(path: Path) -> dict[date, date]:
 # Verification
 # ---------------------------------------------------------------------------
 
-# On expiry afternoon an at-the-money straddle is nearly all gone: both legs sit
-# within half a strike of spot with minutes of life left. One session earlier it
-# still carries a day of time value. The gap between those two states is wide
-# enough to check a derived calendar against, without pretending to be exact.
-EXPIRY_STRADDLE_CEILING = 40.0
+# An expiring ATM straddle is nearly worthless by the close; one session earlier
+# it still carries a day of time value. What matters is the RATIO between those
+# two, not the absolute level.
+#
+# An absolute ceiling was tried first and was wrong. Because ATM is the nearest
+# 50-point strike, the expiring straddle still holds up to 25 points of
+# intrinsic, and a 40-point ceiling therefore flagged 38 of 261 real expiries as
+# suspicious -- so much noise that the two genuinely wrong ones were invisible
+# in it. Measured across the five-year backfill the ratio is decisive: median
+# 0.12, p90 0.35. Half is a wide margin above that and still far below the
+# not-an-expiry cases, which came in at 0.53 and up.
+EXPIRY_STRADDLE_MAX_RATIO = 0.5
 
 
 def verify_expiries(
     call_frame: pd.DataFrame,
     put_frame: pd.DataFrame,
     expiry_dates: Sequence[date],
-    ceiling: float = EXPIRY_STRADDLE_CEILING,
+    max_ratio: float = EXPIRY_STRADDLE_MAX_RATIO,
 ) -> list[str]:
     """
     Cross-check derived expiry dates against what the option prices actually did.
 
+    On a real expiry the ATM straddle's closing value collapses against the
+    previous session's. Where it does not, either the date is not an expiry or
+    something unusual happened that day -- both worth a human look.
+
     Returns a list of human-readable complaints; empty means every derived
-    expiry behaved like an expiry. This is a smell test, not a proof, and it is
-    aimed squarely at the failure mode worth catching: a calendar that is off by
-    a day, or that missed an exchange rule change.
+    expiry behaved like one. A smell test, not a proof, and aimed squarely at
+    the failure mode worth catching: a calendar off by a day, or one that missed
+    an exchange rule change. It earned its keep on the first full backfill by
+    catching both Diwali weeks.
     """
     problems: list[str] = []
     if call_frame.empty or put_frame.empty:
@@ -836,17 +934,26 @@ def verify_expiries(
 
     calls = last_close_by_day(call_frame)
     puts = last_close_by_day(put_frame)
+    sessions = sorted(set(calls) & set(puts))
+    position = {day: i for i, day in enumerate(sessions)}
+    straddle = {day: calls[day] + puts[day] for day in sessions}
 
     for expiry in expiry_dates:
-        call_close, put_close = calls.get(expiry), puts.get(expiry)
-        if call_close is None or put_close is None:
+        if expiry not in straddle:
             problems.append(f"{expiry.isoformat()}: derived as an expiry but has no ATM close")
             continue
-        straddle = call_close + put_close
-        if straddle > ceiling:
+        index = position[expiry]
+        if index == 0:
+            continue  # nothing before it in the data to compare against
+        previous = sessions[index - 1]
+        if straddle[previous] <= 0:
+            continue
+        ratio = straddle[expiry] / straddle[previous]
+        if ratio >= max_ratio:
             problems.append(
-                f"{expiry.isoformat()}: ATM straddle closed at {straddle:.2f}, above the "
-                f"{ceiling:.0f} ceiling -- this may not be an expiry day"
+                f"{expiry.isoformat()}: ATM straddle closed at {straddle[expiry]:.2f} against "
+                f"{straddle[previous]:.2f} on {previous.isoformat()} (ratio {ratio:.2f}, "
+                f"expected below {max_ratio:.2f}) -- this may not be an expiry day"
             )
     return problems
 
@@ -936,7 +1043,9 @@ def build_expiry_calendar(
             "calendar pre-pass returned no bars at all, so trading days cannot be derived. "
             "Check the date range, and that the Data API subscription is active."
         )
-    expiry_map = build_expiry_map(trading_days)
+    # Short sessions stay trading days but cannot host an expiry -- see
+    # `full_session_days` and `expiry_calendar.weekly_expiry_dates`.
+    expiry_map = build_expiry_map(trading_days, full_sessions=full_session_days([call_frame, put_frame]))
     log.info(
         "derived %d trading days and %d weekly expiries (%s -> %s)",
         len(trading_days),

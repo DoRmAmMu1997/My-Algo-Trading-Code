@@ -155,3 +155,58 @@ def test_a_custom_rule_table_overrides_the_shipped_one():
     fridays = calendar.weekly_expiry_dates(days, rules=[(date(2000, 1, 1), 4)])
 
     assert all(e.weekday() == 4 for e in fridays), [str(e) for e in fridays]
+
+
+# ---------------------------------------------------------------------------
+# Special (Muhurat) sessions
+# ---------------------------------------------------------------------------
+
+
+def test_a_muhurat_session_cannot_be_an_expiry():
+    """The real 2025 Diwali week, which the first full backfill got wrong.
+
+    Tuesday 21-Oct-2025 was Diwali: a ~1 hour Muhurat session, so NSE moved that
+    week's expiry back to Monday the 20th. Treating it as an ordinary trading
+    day put the expiry on the 21st and mislabelled the whole week.
+    """
+    week = [date(2025, 10, 16), date(2025, 10, 17), date(2025, 10, 20), date(2025, 10, 21)]
+    full = [d for d in week if d != date(2025, 10, 21)]
+
+    naive = calendar.weekly_expiry_dates(week)
+    fixed = calendar.weekly_expiry_dates(week, full_sessions=full)
+
+    assert date(2025, 10, 21) in naive, "this is the bug being pinned"
+    assert date(2025, 10, 21) not in fixed
+    assert date(2025, 10, 20) in fixed
+
+
+def test_the_2021_diwali_week_lands_on_the_wednesday():
+    # Thursday 04-Nov-2021 was Diwali; the expiry was Wednesday the 3rd.
+    week = [date(2021, 11, 1), date(2021, 11, 2), date(2021, 11, 3), date(2021, 11, 4)]
+    full = [d for d in week if d != date(2021, 11, 4)]
+
+    assert date(2021, 11, 3) in calendar.weekly_expiry_dates(week, full_sessions=full)
+    assert date(2021, 11, 4) not in calendar.weekly_expiry_dates(week, full_sessions=full)
+
+
+def test_a_muhurat_session_is_still_a_trading_day_with_an_expiry_ahead():
+    """It cannot HOST an expiry, but its bars still deserve a label."""
+    days = [date(2025, 10, 16), date(2025, 10, 17), date(2025, 10, 20), date(2025, 10, 21),
+            date(2025, 10, 23), date(2025, 10, 24), date(2025, 10, 27), date(2025, 10, 28)]
+    full = [d for d in days if d != date(2025, 10, 21)]
+
+    mapping = calendar.build_expiry_map(days, full_sessions=full)
+
+    assert mapping[date(2025, 10, 20)] == date(2025, 10, 20), "Monday hosts the expiry"
+    # The Muhurat session belongs to the NEXT weekly expiry, not the past one.
+    assert mapping[date(2025, 10, 21)] == date(2025, 10, 28)
+
+
+def test_full_sessions_defaults_to_every_trading_day():
+    days = [date(2025, 1, 6), date(2025, 1, 7), date(2025, 1, 8), date(2025, 1, 9)]
+    assert calendar.weekly_expiry_dates(days) == calendar.weekly_expiry_dates(days, full_sessions=days)
+
+
+def test_no_eligible_sessions_yields_no_expiries():
+    days = [date(2025, 1, 6), date(2025, 1, 9)]
+    assert calendar.weekly_expiry_dates(days, full_sessions=[]) == []

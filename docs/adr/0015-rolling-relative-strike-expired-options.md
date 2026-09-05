@@ -63,6 +63,16 @@ Two further observations, both upstream characteristics rather than defects:
 - **Session length is not always 375 bars.** 20-Jan-2025 carries a 15:30 print
   on top of the usual 09:15–15:29, giving 376. A rule that assumes "the last bar
   is 15:29" will be wrong on such days.
+- **Volume is occasionally corrupt, and not randomly.** 26 bars in ~19.4 million
+  carried a large negative volume. Every one fell on an expiry day, most at
+  14:15 exactly — the busiest minutes of the busiest session, consistent with a
+  counter overflowing upstream. Those values are blanked to `NA`, never
+  repaired: the first one looked like a lost top bit (`+2**32` gave a plausible
+  41,691,075), but applying that to later ones produced ~1.1 billion, roughly
+  25× a normal day. The pattern was a coincidence, and had we trusted it we
+  would have written fabricated volume into two-thirds of the affected bars.
+  Practical consequence: **treat volume as unreliable on expiry-day afternoons**.
+  OHLC, OI, IV and spot on those same bars are unaffected.
 
 The expiry derivation checks out against the prices: the ATM straddle's closing
 value across that week ran 377.75 → 233.15 → 136.75 → **23.50** on the derived
@@ -110,11 +120,33 @@ it labels means the two can never disagree.
 ### 3. Verify that derivation against the prices
 
 `--verify-expiries` checks each derived expiry against the ATM straddle's last
-close: on a real expiry afternoon it collapses, one session earlier it still
-carries a day of time value. This is a smell test aimed at the failure mode that
-matters — a calendar off by a day, or one that missed a rule change.
-`--calendar-csv` overrides derivation entirely when an authoritative calendar is
-available.
+close: on a real expiry afternoon it collapses against the previous session's.
+This is a smell test aimed at the failure mode that matters — a calendar off by
+a day, or one that missed a rule change. `--calendar-csv` overrides derivation
+entirely when an authoritative calendar is available.
+
+**It paid for itself on the first full backfill**, catching a real bug — see
+below. Two calibration notes, both learned there:
+
+- The test is a **ratio**, not an absolute level. An absolute 40-point ceiling
+  was tried first and flagged 38 of 261 genuine expiries, because ATM is the
+  nearest 50-point strike and an expiring straddle still holds up to 25 points
+  of intrinsic. That noise hid the two real failures completely. Measured across
+  five years the ratio is decisive: median 0.12, p90 0.35, while the bad dates
+  came in at 0.53 and above.
+- A **short session cannot host an expiry.** NSE runs a ~1-hour Diwali Muhurat
+  session that appears in the data as an ordinary trading day, and moves that
+  week's expiry earlier. Both occurrences in the window were derived wrongly
+  until `full_session_days` separated them:
+
+  | Derived | Bars | Actual expiry |
+  |---|---|---|
+  | 2021-11-04 (Thu) | 61 | 2021-11-03 (Wed) |
+  | 2025-10-21 (Tue) | 105 | 2025-10-20 (Mon) |
+
+  Six short sessions exist in the five years (60–107 bars against a normal
+  375–376), so the split is unambiguous. A Muhurat session stays a trading day
+  and still gets an expiry label — it just cannot *be* one.
 
 ## Consequences
 

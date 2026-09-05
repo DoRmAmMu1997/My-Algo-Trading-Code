@@ -80,7 +80,11 @@ Three properties worth knowing before using it, all covered by
   window cannot be labelled, so a backfill ending today loses the current
   part-week. The run warns about it; extend `--end-date` past the next expiry.
 - **A session is usually 375 bars, but not always** — 20-Jan-2025 has a 15:30
-  print as well, giving 376. Do not assume the last bar is 15:29.
+  print as well, giving 376, and the six Diwali/special sessions run 60–107.
+  Do not assume the last bar is 15:29.
+- **Volume is unreliable on expiry-day afternoons.** 26 bars in 19.4M carried a
+  corrupt negative volume, every one on an expiry day and most at 14:15; they
+  are blanked to `NA`. OHLC, OI, IV and spot on those bars are fine.
 - **±10 strikes is a ±500-point band.** A contract that drifts further from spot
   stops appearing. Silence is missing data, not a worthless option.
 - **`expiryCode` is 1-based here** (1 = near), unlike the annexure's table for

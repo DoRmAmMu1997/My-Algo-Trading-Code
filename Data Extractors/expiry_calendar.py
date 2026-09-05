@@ -85,6 +85,7 @@ def nominal_expiry_weekday(day: date, rules: Sequence[tuple[date, int]] | None =
 def weekly_expiry_dates(
     trading_days: Iterable[date],
     rules: Sequence[tuple[date, int]] | None = None,
+    full_sessions: Iterable[date] | None = None,
 ) -> list[date]:
     """
     Work out every weekly expiry date covered by ``trading_days``.
@@ -93,11 +94,25 @@ def weekly_expiry_dates(
 
     1. Take that week's Monday and ask the rule table for the nominal weekday.
     2. Step forward to the nominal date (e.g. Monday + 3 = Thursday).
-    3. Walk *backwards* to the most recent trading day on or before it.
+    3. Walk *backwards* to the most recent ELIGIBLE session on or before it.
 
-    Step 3 is what handles holidays, and it searches the whole trading-day list
-    rather than just that week -- so an expiry whose nominal day AND the days
-    before it were all holidays still rolls back correctly into the prior week.
+    Step 3 is what handles holidays, and it searches the whole list rather than
+    just that week -- so an expiry whose nominal day AND the days before it were
+    all holidays still rolls back correctly into the prior week.
+
+    ``full_sessions`` is the subset eligible to *be* an expiry, and defaults to
+    all of them. It exists because of Diwali. NSE runs a ~1-hour Muhurat session
+    on Diwali, which looks like an ordinary trading day in the data but cannot
+    host a weekly expiry -- so the exchange moves that week's expiry earlier.
+    Both occurrences in the five-year window were derived wrongly before this
+    parameter existed:
+
+        2021-11-04 (Thu, 61 bars)  -- real expiry was Wed 2021-11-03
+        2025-10-21 (Tue, 105 bars) -- real expiry was Mon 2025-10-20
+
+    Note the asymmetry: a Muhurat session cannot be an expiry, but it is still a
+    trading day that *has* one ahead of it, which is why `build_expiry_map`
+    still maps it.
 
     A week whose nominal expiry date falls after the last trading day we were
     given is skipped: that week has not finished yet, and inventing an expiry
@@ -105,6 +120,10 @@ def weekly_expiry_dates(
     """
     days = sorted(set(trading_days))
     if not days:
+        return []
+
+    eligible = sorted(set(full_sessions)) if full_sessions is not None else days
+    if not eligible:
         return []
 
     first, last = days[0], days[-1]
@@ -121,11 +140,11 @@ def weekly_expiry_dates(
         if nominal > last:
             break
 
-        # bisect_right gives the count of trading days <= nominal, so index-1 is
-        # the latest such day -- the holiday roll-back, for free.
-        position = bisect.bisect_right(days, nominal)
+        # bisect_right gives the count of eligible sessions <= nominal, so
+        # index-1 is the latest such day -- the holiday roll-back, for free.
+        position = bisect.bisect_right(eligible, nominal)
         if position > 0:
-            expiries.append(days[position - 1])
+            expiries.append(eligible[position - 1])
 
         monday += timedelta(days=7)
 
@@ -138,6 +157,7 @@ def weekly_expiry_dates(
 def build_expiry_map(
     trading_days: Iterable[date],
     rules: Sequence[tuple[date, int]] | None = None,
+    full_sessions: Iterable[date] | None = None,
 ) -> dict[date, date]:
     """
     Map every trading day to the near weekly expiry that was current on it.
@@ -147,11 +167,15 @@ def build_expiry_map(
     the API returns for ``expiryCode=1``. That makes expiry day map to itself
     and gives it ``days_to_expiry == 0``.
 
+    Every trading day is mapped, including a Diwali Muhurat session: such a day
+    cannot HOST an expiry (see `weekly_expiry_dates`) but it still has one
+    coming, and its bars deserve a label like any other.
+
     Trading days after the last derived expiry are left out entirely rather than
     guessed at -- the caller writes no expiry label for those bars.
     """
     days = sorted(set(trading_days))
-    expiries = weekly_expiry_dates(days, rules)
+    expiries = weekly_expiry_dates(days, rules, full_sessions)
     if not expiries:
         return {}
 
