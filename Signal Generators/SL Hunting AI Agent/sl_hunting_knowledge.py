@@ -1439,6 +1439,38 @@ RISK DISCIPLINE
   than a feeling, and it is what lets A REJECTION BEFORE THE FLUSH IS NOISE be
   applied without it becoming an excuse: a wobble inside the band is noise, and
   one well beyond it is the read being wrong even if the stop has not been hit.
+- THE STOP IS A DISTANCE FROM THE FILL, NOT FROM THE PRICE YOU REASONED ON (v4x).
+  The companion to the rule above, and the one that keeps it honest: v4d names the
+  tolerated adverse move BEFORE entering, this one says that named distance must be
+  RE-MEASURED at the instant the position actually opens. Deciding and filling are
+  not the same moment, and the price you measured from can be gone by the second.
+  MEASURED ON THIS BOOK (2026-09-04), and it is the cheapest loss with the most to
+  teach. The read was right and matched IH's to the strike -- he bought the same
+  BankNIFTY 57500 call in the same minute and it paid him the day. Sizing was
+  computed on entry=23935.30 against a stop at 23910.00: a 25.3-point allowance.
+  The order reached the market 42 seconds later with spot at 23914.40, so the
+  position opened with 4.4 points of room -- 83% of the allowance was already
+  spent before the trade existed. It stopped 3 seconds later at 23908.40, and
+  NIFTY traded back above 23940 within 9 seconds of that.
+  THE TEST, run against the price in front of you and never against the price you
+  reasoned on: how far is the CURRENT price from your stop, as a fraction of the
+  distance you sized? Materially less, and the trade you decided on is not the
+  trade on offer any more.
+  There are exactly two honest answers, and the tempting third is the error:
+  * re-derive the stop from the current price and accept the SMALLER size; or
+  * skip it -- a setup you have already paid most of the stop for is not a setup.
+  NEVER keep the original stop in order to keep the original size. That is not a
+  tight stop, it is a loss that has already been arranged.
+  AND IF THE RE-DERIVED STOP IS TOO WIDE TO SIZE, THE ANSWER IS NO TRADE. A stop
+  placed where the premise actually dies can cost more per lot than the risk
+  budget allows, and the budget will then refuse the position outright. That
+  refusal is the method declining a trade it could not have held -- it is never an
+  invitation to walk the stop closer until the size fits.
+  NOTHING HERE WIDENS RISK. The risk budget, the daily max loss and a stop once
+  set are all unchanged; the only two things this rule can do to a position are
+  make it SMALLER or make it not exist.
+  This bites hardest in the opening minutes, which are both the fastest the market
+  moves all day and the moment the temptation to act is strongest.
 - NAME THE LAST POINT, NOT ONLY THE STOP (v4e). One price, declared out loud BEFORE
   you need it, at which the question stops being "is the read still alive?" and
   becomes "did it recover or not?" IH, deep in a losing trade: "let us pause a

@@ -201,28 +201,29 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_4_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 03 Sep transcript.
+def test_shipped_note_matches_september_7_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 06 Sep transcript.
 
     Six things a summarising edit would flatten, each of which would change what
     the agent does at 09:15:
 
-    1. The sell branch triggers on a LEVEL, not on a gap size -- "in a small
-       gap-down nothing will happen". Drop that and any gap-down reads as a
-       sell, which is the opposite of what he said.
-    2. The middle zone INVERTS yesterday's note. Yesterday branched on the
-       closing price and sold a flat-to-gap-down open; today the sell line has
-       moved DOWN to the first support, so that same open is no longer a sell.
-       Two consecutive notes disagreeing about one open shape is what cost the
-       whole day's direction on 31 Aug, so the inversion is stated IN the note.
-    3. NEITHER crowd is seated: the gap-up was rejected (no trapped longs) and
-       yesterday's sellers were already flushed. Both branches are therefore
-       FOLLOWS. Reading either as a hunt would invent a crowd that is not there.
-    4. One branch for all three indices -- he does not vary it by index.
-    5. He names NO expiry. Yesterday's note DID (SENSEX), so the note has to say
-       so explicitly or the expiry read carries forward by inertia.
-    6. BankNIFTY resistances stepped UP to 57800/58200 and 57500 is dropped,
-       even though he says the market closed below it.
+    1. A SMALL gap up does not trigger the buy -- "a small gap up is of no use to
+       us". The marginal open falls to the SELL branch, not to a smaller long.
+       This is the exact mirror of Friday's "a small gap-down does nothing", and
+       losing it turns any green open into a long.
+    2. The FLAT open has changed sides. Friday bought flat-to-gap-up; today flat
+       sits with gap-down on the sell side. Two consecutive notes disagreeing
+       about one open shape is what cost the whole day on 31 Aug, so the switch
+       is stated IN the note rather than left implicit.
+    3. The reason is the WEEKEND, not the chart -- Friday's recovery created
+       buyers who did not hold over a 2-day break. Drop that and the inversion
+       looks arbitrary, which is how it gets argued away at 09:15.
+    4. Both branches are FOLLOWS again. Neither side has a seated crowd, so
+       reading either as a hunt invents one.
+    5. The gap up is the TEST, not the direction: the sell branch is what remains
+       when a good gap up fails to arrive.
+    6. NIFTY's rejection came from the round number 24000, which is also its
+       first named resistance.
     """
     import os
 
@@ -230,69 +231,61 @@ def test_shipped_note_matches_september_4_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-04"
-    assert "PywlkaQByoQ" in note.source
-    # The mechanism, not just the direction: the gap-up was REJECTED, so the
-    # buyers never got seated either.
-    assert "gap-up was REJECTED" in note.context
-    assert "nobody got in long" in note.context
-    assert "BUYERS are not a seated crowd" in note.context
+    assert note.for_date == "2026-09-07"
+    assert "Qw55ggRNbBo" in note.source
+    # The mechanism: the weekend, not the chart, is what emptied the book.
+    assert "2-day weekend flushed whoever bought it" in note.context
+    assert "they do not hold" in note.context
+    assert "the buyers have already left" in note.context
 
-    trigger = next(line for line in note.plan if line.startswith("THE SELL TRIGGER IS A LEVEL"))
-    assert "NOT A GAP SIZE" in trigger
-    assert "in a small gap-down nothing will happen" in trigger
-    assert "BELOW THE FIRST SUPPORT" in trigger
-    # The three numbers, so the branch stays checkable rather than a feel.
-    assert "BANKNIFTY 57000" in trigger
-    assert "NIFTY 23800" in trigger
-    assert "SENSEX 76200" in trigger
+    small = next(line for line in note.plan if line.startswith("A SMALL GAP UP DOES NOT TRIGGER"))
+    assert "a small gap up is of no use to us" in small
+    assert "the gap up must be a GOOD one" in small
+    # The marginal open must land on the sell branch, not on a reduced long.
+    assert "belongs to the SELL branch, not to a smaller long" in small
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP-UP"))
-    assert "BUY-side" in buy
-    assert "SAME branch for BankNIFTY, NIFTY and SENSEX" in buy
+    flat = next(line for line in note.plan if line.startswith("FLAT NOW SELLS"))
+    assert "On Friday flat-to-gap-up was the BUY branch" in flat
+    assert "changed sides over the weekend" in flat
+    assert "not carry Friday's branch forward" in flat
 
-    crowd = next(line for line in note.plan if line.startswith("NOBODY IS TRAPPED LONG"))
-    assert "gap-up was rejected" in crowd
-    assert "sellers were flushed" in crowd
-    # Both branches are follows -- the note must say why, so neither can be
-    # re-read as a hunt for a crowd that was already cleared out.
-    assert "neither branch is a hunt" in crowd
-    assert "both are follows" in crowd
+    why = next(line for line in note.plan if line.startswith("THE WEEKEND IS THE REASON"))
+    assert "not the chart" in why
+    assert "2-day holiday in the middle" in why
+    assert "crowd Friday made is already gone" in why
 
-    pivot = next(line for line in note.plan if line.startswith("THIS MOVES YESTERDAY'S PIVOT DOWN"))
-    assert "branched on the CLOSING PRICE" in pivot
-    assert "branches on the FIRST SUPPORT" in pivot
-    assert "SELL yesterday and is NOT one today" in pivot
+    follows = next(line for line in note.plan if line.startswith("BOTH BRANCHES ARE FOLLOWS"))
+    assert "we will walk with the market" in follows
+    assert "if the market wants that same momentum again we will follow it" in follows
+    assert "Neither side is a hunt for a seated crowd" in follows
 
-    assert any("57000 IS AGAIN THE BANKNIFTY SWITCH" in line for line in note.plan)
-    # Yesterday's note carried a SENSEX expiry; this one must cancel it rather
-    # than leave the agent to assume it still applies.
-    assert any("HE NAMES NO EXPIRY" in line for line in note.plan)
-    assert any("57500 is no longer named" in line for line in note.plan)
+    test = next(line for line in note.plan if line.startswith("THE GAP UP IS THE TEST"))
+    assert "NOT THE DIRECTION" in test
+    assert "the trap is already made" in test
+    assert "what remains when the gap up fails to arrive" in test
+
+    assert any("ROUND NUMBER 24000" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            "resistance": [24060.0, 24180.0],
-            "support": [23730.0, 23800.0],
+            "resistance": [24000.0, 24140.0],
+            "support": [23800.0, 23860.0],
         },
         {
-            # Caption was clean here: "58,200 57,800" for the resistances, which
-            # DROPS yesterday's 57500 even though he says the market closed
-            # below it. Confirmed off the chart by the operator -- it is a real
-            # step up, not a mis-hearing.
+            # "58100 57,570" came through cleanly. 57570 is finer-grained than
+            # his usual round levels, and Friday's pair was 57800/58200, so it
+            # was checked with the operator rather than rounded to 57750.
             "index": "BANKNIFTY",
-            "resistance": [57800.0, 58200.0],
-            "support": [56770.0, 57000.0],
+            "resistance": [57570.0, 58100.0],
+            "support": [57000.0, 57200.0],
         },
         {
-            # The SENSEX resistances ran together as "777300" for the THIRD note
-            # in a row; supports came through cleanly as "7620075940". The
-            # operator confirmed 77000/77300 again. The repeat is a quirk of how
-            # he says the numbers, not evidence the levels are pinned -- keep
-            # asking rather than assuming the same pair next time.
+            # Unusually, nothing in this transcript was garbled -- no run-together
+            # digits at all, unlike the three previous notes. 76370 is likewise
+            # finer-grained than usual and was confirmed, not reconstructed.
             "index": "SENSEX",
-            "resistance": [77000.0, 77300.0],
-            "support": [75940.0, 76200.0],
+            "resistance": [76800.0, 77200.0],
+            "support": [76200.0, 76370.0],
         },
     ]
