@@ -1,47 +1,47 @@
 {
-  "for_date": "2026-09-04",
-  "source": "Intraday Hunter, 'Prediction For 04 SEP 2026' (PywlkaQByoQ, uploaded 2026-09-03)",
-  "context": "Today's gap-up was REJECTED and sold back down; BankNIFTY closed under 57500. He says twice that nobody got in long, so the BUYERS are not a seated crowd -- and yesterday's sellers were already flushed.",
+  "for_date": "2026-09-07",
+  "source": "Intraday Hunter, 'Prediction For 07 SEP 2026' (Qw55ggRNbBo, uploaded 2026-09-06)",
+  "context": "Friday's positive momentum was rejected again in all three indices, and the 2-day weekend flushed whoever bought it -- 'seeing the negative momentum and the 2-day holiday, they do not hold'. In SENSEX: the buyers have already left.",
   "plan": [
-    "THE SELL TRIGGER IS A LEVEL, NOT A GAP SIZE: 'in a small gap-down nothing will happen'. Only an opening BELOW THE FIRST SUPPORT turns him seller -- BANKNIFTY 57000, NIFTY 23800, SENSEX 76200. Above that the plan does not change.",
-    "FLAT TO GAP-UP: BUY-side setups, and he gives the SAME branch for BankNIFTY, NIFTY and SENSEX -- there is no index-specific variation this session.",
-    "NOBODY IS TRAPPED LONG: the gap-up was rejected, so there is no seated buyer crowd, and yesterday's sellers were flushed. BOTH crowds are absent, so neither branch is a hunt -- both are follows.",
-    "THIS MOVES YESTERDAY'S PIVOT DOWN. Yesterday branched on the CLOSING PRICE; today it branches on the FIRST SUPPORT, which sits below it. A flat-to-small-gap-down open was a SELL yesterday and is NOT one today.",
-    "57000 IS AGAIN THE BANKNIFTY SWITCH -- it is both the named sell trigger and the first support, so it is the single number to measure the open against.",
-    "BANKNIFTY RESISTANCES STEPPED UP to 57800 and 58200: 57500 is no longer named even though the market closed below it. HE NAMES NO EXPIRY this session -- do not carry yesterday's SENSEX expiry forward."
+    "A SMALL GAP UP DOES NOT TRIGGER THE BUY: 'a small gap up is of no use to us, the gap up must be a GOOD one'. Only a good gap up buys, walking WITH the market. Anything less belongs to the SELL branch, not to a smaller long.",
+    "FLAT NOW SELLS. On Friday flat-to-gap-up was the BUY branch; today flat sits with gap-down on the SELL side. The flat open has changed sides over the weekend -- do not carry Friday's branch forward.",
+    "THE WEEKEND IS THE REASON, not the chart. Friday's recovery created buyers and 'seeing the negative momentum and the 2-day holiday in the middle' they did not hold over it. The crowd Friday made is already gone.",
+    "BOTH BRANCHES ARE FOLLOWS, again. Buy = 'we will walk with the market'; sell = 'having just made a trap, if the market wants that same momentum again we will follow it'. Neither side is a hunt for a seated crowd.",
+    "THE GAP UP IS THE TEST, NOT THE DIRECTION: 'if a recovery is to happen the trap is already made, so we should get a gap up. If that is not happening' -- then sell. The sell branch is what remains when the gap up fails to arrive.",
+    "NIFTY'S REJECTION CAME FROM THE ROUND NUMBER 24000, which is also its first named resistance -- one level doing both jobs."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24060,
-        24180
+        24000,
+        24140
       ],
       "support": [
-        23730,
-        23800
+        23800,
+        23860
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57800,
-        58200
+        57570,
+        58100
       ],
       "support": [
-        56770,
-        57000
+        57000,
+        57200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77000,
-        77300
+        76800,
+        77200
       ],
       "support": [
-        75940,
-        76200
+        76200,
+        76370
       ]
     }
   ]
