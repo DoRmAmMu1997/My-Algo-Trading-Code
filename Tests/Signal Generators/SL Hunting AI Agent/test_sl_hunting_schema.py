@@ -2251,3 +2251,70 @@ def test_v4w_post_break_slowness_is_a_book_signal_without_reversing_v4k():
     assert "not licence to book on any slow bar" in rule
     assert "A SLOW GRIND AT THE LEVEL RECRUITS THE WRONG CROWD already governs" in rule
     assert "the stop, the max loss and premise-invalidation are unchanged" in rule
+
+
+def test_v4x_stop_is_measured_from_the_fill_not_from_the_decision_price():
+    """v4x (04 Sep, measured on this book): the stop's basis is the FILL.
+
+    This is the only rule in the corpus about WHERE the stop sits relative to
+    the price that is actually in front of you, and it exists because being
+    right about direction did not save the trade. IH bought the same BankNIFTY
+    57500 call in the same minute and it paid him the day; ours was stopped
+    three seconds after it opened. Five ways an edit could quietly break it:
+
+    1. Losing the decision-versus-fill distinction and leaving a generic "give
+       the trade room". v4d already names the tolerated move in advance; the
+       whole content here is that the named distance has to be re-measured
+       when the position opens, because the reference price can be gone.
+    2. Dropping the measured numbers. 25.3 points sized, 4.4 points left at the
+       fill, stopped 3 seconds later, recovered within 9 -- without those the
+       rule is an opinion rather than an arithmetic check.
+    3. Keeping only the "re-derive the stop" branch and losing "skip it". A
+       re-derived stop that cannot be sized must end as NO TRADE.
+    4. Leaving the third option -- keeping the old stop to keep the old size --
+       merely discouraged rather than forbidden. That is the exact move the
+       sizing arithmetic rewards, so it has to be named and refused.
+    5. Losing the risk-invariance clause, which is what stops this reading as
+       permission to widen a stop or exceed the budget.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE STOP IS A DISTANCE FROM THE FILL")
+
+    # 1. The distinction this rule exists for, and its link back to v4d.
+    assert "NOT FROM THE PRICE YOU REASONED ON" in rule
+    assert "RE-MEASURED at the instant the position actually opens" in rule
+    assert "Deciding and filling are not the same moment" in rule
+
+    # 2. The measured case, including that the READ was right.
+    assert "MEASURED ON THIS BOOK (2026-09-04)" in rule
+    assert "matched IH's to the strike" in rule
+    assert "same BankNIFTY 57500 call in the same minute" in rule
+    assert "entry=23935.30 against a stop at 23910.00" in rule
+    assert "25.3-point allowance" in rule
+    assert "spot at 23914.40" in rule
+    assert "4.4 points of room" in rule
+    assert "83% of the allowance was already spent" in rule
+    assert "stopped 3 seconds later at 23908.40" in rule
+    assert "back above 23940 within 9 seconds" in rule
+
+    # The test is run against the live price, not the remembered one.
+    assert "never against the price you reasoned on" in rule
+    assert "not the trade on offer any more" in rule
+
+    # 3. Both honest branches survive, skip included.
+    assert "accept the SMALLER size" in rule
+    assert "skip it" in rule
+    assert "IF THE RE-DERIVED STOP IS TOO WIDE TO SIZE, THE ANSWER IS NO TRADE" in rule
+    assert "declining a trade it could not have held" in rule
+
+    # 4. The tempting third option, named and forbidden outright.
+    assert "NEVER keep the original stop in order to keep the original size" in rule
+    assert "a loss that has already been arranged" in rule
+    assert "never an invitation to walk the stop closer until the size fits" in rule
+
+    # 5. It can only shrink a position, never enlarge the risk.
+    assert "NOTHING HERE WIDENS RISK" in rule
+    assert "make it SMALLER or make it not exist" in rule
+
+    # And where it applies hardest -- the moment the agent most wants to act.
+    assert "bites hardest in the opening minutes" in rule

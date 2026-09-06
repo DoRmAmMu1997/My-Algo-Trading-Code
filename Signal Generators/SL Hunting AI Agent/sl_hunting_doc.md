@@ -6280,3 +6280,129 @@ removes the temptation at the root.
   measured give-back or the booked winner, re-reading it as licence to book early
   anywhere, and dropping either the v3y deference or the exit precedence.
 - Prompt size 158,839 -> 161,355 chars. **188,645 of headroom.**
+
+## Video addendum - the 4 Sep LIVE SESSION and the 6 Sep WEEKLY (v4x)
+
+**Sources.** Three accessible videos since Friday, all transcripts read in full:
+
+| Video | Id | Length | Uploaded (IST) | Segments |
+|---|---|---|---|---|
+| Live session, Friday 4 Sep | `duGx4E10IzQ` | 9:55 | 4 Sep 12:01 | 75 (0:02-9:40) |
+| Weekly analysis, "Time vs Process" | `3NgY1QjfDdg` | 18:49 | 6 Sep 12:23 | 150 (0:02-18:42) |
+| Prediction For 07 SEP 2026 | `Qw55ggRNbBo` | 2:16 | 6 Sep 21:14 | 17 (0:06-2:14) |
+
+A fourth, `uOl-kBCFEQQ` ("Master Advanced Analysis: Unlocking the Secret of Flat
+Opening | Part-7", 15:30, 5 Sep), is **members-only** and was not read. Recorded
+here so a later session does not spend time rediscovering that.
+
+**Extraction note, superseding an earlier one.** The transcript panel DID
+populate on the 18:49 weekly video. The old note that it "never populates on
+videos over 12 minutes" no longer holds; the ordinary recipe worked unchanged.
+
+### The comparison: same read, same strike, same minute, opposite outcome
+
+The agent took exactly ONE trade on Friday and lost 143.00 on it.
+
+| | IH | The agent |
+|---|---|---|
+| Direction | LONG | LONG |
+| Instrument | BankNIFTY 57500 CE (+ NIFTY, SENSEX) | NIFTY 23900 CE + BankNIFTY 57500 CE mirror |
+| Entry | immediately at the open | 09:15:48 |
+| Immediate move | against him, at once | against it, at once |
+| Held for | ~2.5 hours | **3 seconds** |
+| Result | booked a large profit | **-143.00** |
+
+IH describes the adverse move in the same terms the agent would have: *"right as
+we made the trade, some loss started showing"*, and later *"this extra rejection,
+especially in BankNIFTY, we had not expected at all"*. His response was to wait:
+*"we will have to wait here. After waiting we will make a big profit."*
+
+He also stated, before entering, that the retracement was **expected**: *"only a
+few people would be sitting short, whom we can make our target. Then the market
+will start creating SLs, that is, it may do a retracement. So before that we
+should make our trade."* He entered deliberately AHEAD of a move he forecast.
+
+### Why the agent could not do the same - and it is not a judgement failure
+
+The log carries the whole mechanism at one millisecond, 09:15:48,529:
+
+- sizing computed with `entry=23935.30`, `stop=23910.00` - a **25.3-point** allowance
+- the entry recorded at the same instant with `Spot=23914.40`
+
+The agent reasoned on a price that was 21 points stale by the time its order
+reached the market, so the position opened with **4.4 points of room** - 83% of
+the allowance already spent. `RenkoThread` independently marks spot at 23936.40
+(09:15:07), 23914.40 (09:15:48), 23905.10 (09:15:52) and **23940.05 (09:16:00)**:
+the market was back above the decision price nine seconds after the stop fired.
+
+That is what v4x encodes. It is not "hold longer" - the corpus already says that
+four times over (v4d, v4e, v4h, v4m). It is that the stop's *basis* must be the
+price in front of you at the fill.
+
+### The constraint that makes this sharp, and an operator decision
+
+`SizingDecision.from_risk_budget` uses `one_lot_risk = abs(entry - stop) *
+lot_size`, with no fallback lot and no rounding up. With
+`SL_HUNTING_RISK_BUDGET=2500` and a NIFTY lot of 65, the widest stop that can be
+sized at all is **2500 / 65 = 38.46 spot points**.
+
+Friday's premise-ending level was the note's own first support at 23800 - 135.3
+points below the decision entry. That stop would have cost 8,794.50 per lot and
+been **refused outright** (0 lots). So a stop placed where the premise actually
+dies is, today, unsizeable on this budget.
+
+v4x resolves that honestly in the direction of less trading: if the re-derived
+stop cannot be sized, the answer is NO TRADE, never a nearer stop. **Whether the
+risk budget should rise instead is an operator decision and is deliberately not
+taken here** - it is live-money sizing, and the mirror already roughly doubles
+basket risk beyond the budget.
+
+### The weekly video: the model behind the daily notes
+
+`3NgY1QjfDdg` is the most explicit statement of method he has given, and it is
+worth recording even though none of it became a rule this session.
+
+- **The SL-hunting core, stated plainly** (6:42-6:59): *"In SL hunting there is
+  only one job: focus on whose SLs you are going to get to eat. Whichever
+  trader's SLs are available to eat, eat them. Most traders try - gap up,
+  positive market, so buy, buy. But in SL hunting it is not like that."*
+- **Same chart, different mindset, different plan** (8:55-11:08). He puts Friday's
+  and Monday's charts side by side, identical, and derives OPPOSITE plans. What
+  differs is not the chart but who is seated, and that is set by what happened
+  between sessions.
+- **The empty-book branch** (10:33-10:47): *"in Friday's chart nobody is seated...
+  neither buyers came nor sellers came. So then we look ACCORDING TO THE OPENING
+  at whose SLs we can get. But when we know traders may be seated there, then we
+  target them."* Two branches: hunt the seated crowd, or - when none exists - read
+  the opening as the thing that CREATES one.
+- **The operator model** (11:53-18:26): a breakout that fails is his signature for
+  an operator selling into retail buying; *"I never fight in front of the
+  operator"*; and operators face other operators, so the OPENING is the evidence
+  of which one has the power. This is the reasoning underneath the 3 Sep note's
+  "pivot on the closing price" branch.
+- **He says the daily videos omit this** (17:51-18:07): *"when we make the
+  analysis we don't talk this much about seeing the operator. There we tell
+  simple things."* So the pre-open note is a compressed surface of a deeper model.
+
+None of that was added as a rule. v4e, v4f, v4g and v3y already cover the
+seated-crowd branches, and the operator model is a *description* of why the
+branches are what they are rather than a decision the agent can act on. It is
+recorded here so a later session can pick it up deliberately.
+
+### Two existing rules the weekend confirmed
+
+- **v4v** - IH, reviewing his own losing trade (4:43-5:09): *"when I made the
+  entry I told you that this level will not even be crossed if we are right. The
+  market crossed the level and gave a loss."* Same shape v4v encodes.
+- **v4w** - IH, on what happens after a break (7:41-7:53): *"if the market wants
+  to make you buy, it will break out and then hold, hold, then do a slight
+  momentum. That market is dangerous."* v4w restated by its source.
+
+### Deliberately not fixed here
+
+The **re-entry** question from the v4w commit is still open, and Friday did not
+answer it: the agent never re-entered because it was stopped in the first minute
+and then had nothing to re-enter into. Its worker window also closed at 11:00,
+alone among the 29 workers (every other one ran to ~15:15), so it was not present
+for the recovery IH traded. Both v4s (re-entry after a winner) and the 11:00
+cutoff remain open items.
