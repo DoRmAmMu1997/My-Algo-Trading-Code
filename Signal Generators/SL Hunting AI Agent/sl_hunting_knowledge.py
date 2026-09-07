@@ -2142,6 +2142,45 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   stopped out mechanically for -1,689.00, and that stop did its job. It narrows one
   specific move: using the leading index as a reason to cut before the trade has
   had the time its own setup asked for.
+- SIZE THE RETRACEMENT: A BIG ONE MEANS A TURN, A SMALL ONE MEANS CONTINUATION
+  (v4y). The quantitative half of the rule above. v4u tells you to demand a
+  CONFIRMED reversal on the leading index before cutting; it does not tell you how
+  big the counter-move must be, and a confirmed one-candle pattern off a fresh low
+  can satisfy v4u's letter while being nothing at all. This rule supplies the
+  measurement.
+  IH, sitting in a winning short and watching it retrace: "when a retracement
+  happens the trader's biggest problem is, first, HOW MUCH will the retracement be,
+  and second, CAN this market turn?" His answer is a rule, not a feel: "retracements
+  here should be SMALL, because the market HAS to fall. If it falls directly, others
+  get activated in selling... IF IT DID A BIG RETRACEMENT AND THEN FELL, THEN ANYONE
+  WOULD START SELLING." A market that intends to continue CANNOT hand out a big
+  retracement, because that is a good entry for everybody else -- the same logic
+  v4w applies to slow candles, pointed at the counter-move instead. So: "this is
+  how you can recognise how big the retracement will be. A BIG RETRACEMENT HAPPENS
+  WHEN THE MARKET HAS TO TURN. Now it will not turn."
+  MEASURE IT IN INDEX POINTS, AGAINST THE MOVE YOU ARE ALREADY IN. Never in premium.
+  IH names the trap himself: "our profit is reducing because we are sitting in
+  option BUYING. A SMALL GREEN CANDLE REDUCES OUR PROFIT A LOT. But overall we have
+  got good selling -- there will not be a big retracement." Long option premium
+  magnifies a trivial index retracement into something that reads like a reversal
+  on the P&L, and the P&L is the one place you must not look to answer this.
+  MEASURED ON THIS BOOK (2026-09-07), the session that cost the day. A short was
+  opened at 10:17:48 from 23793.70 and cut at 10:23:34 citing a confirmed BankNIFTY
+  hammer off its 10:17 low. The counter-move being read as a reversal was NIFTY
+  23790 to 23801 -- ELEVEN POINTS, against a session already 90 points down from
+  its open. On the mirror's premium the same 11 points looked like 557.50 to 538.25.
+  The basket lost 2,169.00; NIFTY went on to 23743 and closed near the low. The
+  read was right, the trade was cut on the smallest possible counter-move, and
+  v4u's confirmed-pattern requirement had been satisfied.
+  THE BOOKING COROLLARY, which is the same measurement pointed the other way: when
+  the trend has run with NO retracement at all across the indices, that is when to
+  take the profit. IH, booking: "now because there is no retracement in continuous
+  selling across all three indices, if a retracement happens now it could be
+  DANGEROUS for us." An absent retracement is not a promise of more trend, it is an
+  overdue one.
+  This never overrides the stop, the daily max loss, or premise-invalidation, and
+  it does not license sitting through a genuine turn. It refuses exactly one move:
+  ending a trade on a counter-move too small to be the turn it is being called.
 - INDEX HIERARCHY ON THE WAY OUT — the indices are NOT equal when a position is
   going against you (v3y). NIFTY and Sensex drifting against the trade is
   TOLERABLE; that is handleable noise and does not by itself end the trade.
