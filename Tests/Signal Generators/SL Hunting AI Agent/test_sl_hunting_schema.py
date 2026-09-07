@@ -2318,3 +2318,67 @@ def test_v4x_stop_is_measured_from_the_fill_not_from_the_decision_price():
 
     # And where it applies hardest -- the moment the agent most wants to act.
     assert "bites hardest in the opening minutes" in rule
+def test_v4y_retracement_size_decides_turn_versus_continuation():
+    """v4y (07 Sep live session + this book): measure the counter-move.
+
+    v4u already forbids cutting on "merely a move against you" and demands a
+    CONFIRMED reversal on the leading index. Monday's exit SATISFIED that -- a
+    confirmed BankNIFTY hammer -- and still gave back the day, because a
+    confirmed one-candle pattern off a fresh low can be true and trivial at the
+    same time. v4y is the size test that v4u lacks. Six ways an edit breaks it:
+
+    1. Losing the link to v4u and leaving a free-standing "hold longer". The
+       rule's whole claim is that it supplies a MEASUREMENT v4u does not have.
+    2. Dropping IH's mechanism -- a market that means to continue cannot afford
+       a big retracement, because that is everyone else's good entry. Without it
+       the rule is an assertion instead of a reason.
+    3. Losing "measure it in index points, never in premium". Option buying is
+       what makes an 11-point retracement look like a reversal, and the P&L is
+       precisely where the agent was looking.
+    4. Dropping the measured numbers. 11 points against a 90-point session move,
+       and 557.50 -> 538.25 on the same 11 points, are what make it checkable.
+    5. Losing the booking corollary. The same measurement says an ABSENT
+       retracement is overdue, not a promise -- without it the rule reads as
+       one-directional "never exit".
+    6. Losing the override clause, which keeps the stop and max loss supreme.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "SIZE THE RETRACEMENT")
+
+    # 1. It is explicitly the measurement half of v4u, not a replacement.
+    assert "A BIG ONE MEANS A TURN, A SMALL ONE MEANS CONTINUATION" in rule
+    assert "quantitative half of the rule above" in rule
+    assert "satisfy v4u's letter while being nothing at all" in rule
+
+    # 2. IH's mechanism, in his words, and the tie back to v4w.
+    assert "HOW MUCH will the retracement be" in rule
+    assert "CAN this market turn" in rule
+    assert "IF IT DID A BIG RETRACEMENT AND THEN FELL, THEN ANYONE WOULD START SELLING" in rule
+    assert "CANNOT hand out a big" in rule
+    assert "A BIG RETRACEMENT HAPPENS WHEN THE MARKET HAS TO TURN" in rule
+
+    # 3. Where to measure it -- and the one place that must not be used.
+    assert "MEASURE IT IN INDEX POINTS, AGAINST THE MOVE YOU ARE ALREADY IN" in rule
+    assert "Never in premium" in rule
+    assert "A SMALL GREEN CANDLE REDUCES OUR PROFIT A LOT" in rule
+    assert "the P&L is the one place you must not look" in rule
+
+    # 4. The measured case, including that v4u had been satisfied.
+    assert "MEASURED ON THIS BOOK (2026-09-07)" in rule
+    assert "confirmed BankNIFTY" in rule
+    assert "ELEVEN POINTS" in rule
+    assert "90 points down from its open" in rule
+    assert "557.50 to 538.25" in rule
+    assert "basket lost 2,169.00" in rule
+    assert "closed near the low" in rule
+    assert "v4u's confirmed-pattern requirement had been satisfied" in rule
+
+    # 5. The same measurement pointed the other way -- when to BOOK.
+    assert "THE BOOKING COROLLARY" in rule
+    assert "no retracement in continuous selling across all three indices" in rule
+    assert "An absent retracement is not a promise of more trend, it is an" in rule
+
+    # 6. It can never outrank the hard risk controls.
+    assert "never overrides the stop, the daily max loss, or premise-invalidation" in rule
+    assert "does not license sitting through a genuine turn" in rule
+    assert "too small to be the turn it is being called" in rule

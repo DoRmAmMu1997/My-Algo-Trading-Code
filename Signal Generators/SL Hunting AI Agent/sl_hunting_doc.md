@@ -6406,3 +6406,102 @@ and then had nothing to re-enter into. Its worker window also closed at 11:00,
 alone among the 29 workers (every other one ran to ~15:15), so it was not present
 for the recovery IH traded. Both v4s (re-entry after a winner) and the 11:00
 cutoff remain open items.
+
+## Video addendum - the 7 Sep LIVE SESSION and the 8 Sep prediction (v4y)
+
+**Sources.** Both transcripts read in full:
+
+| Video | Id | Length | Uploaded (IST) | Segments |
+|---|---|---|---|---|
+| Live session, Monday 7 Sep | `fHR7WJLY1Zg` | 10:52 | 7 Sep 11:39 | 84 (0:07-10:50) |
+| Prediction For 08 SEP 2026 | `mfCrKdkHlig` | 2:32 | 7 Sep 21:31 | 18 (0:06-2:22) |
+
+### The day: the agent and IH were on the SAME side, again
+
+NIFTY opened 23883.65 against a 23897.70 close - flat to a tiny gap-down, which
+the 7 Sep note put on its SELL branch - and fell all session: 23817 by 09:55,
+23790 by 10:17, 23765 by 11:13, 23746 by 12:50, closing near 23743. **A ~140
+point one-way down day.**
+
+The agent read it correctly and shorted it twice.
+
+| # | Window | Held | Entry | Exit reason | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|---|---|
+| 1 | 09:22:36 -> 09:24:45 | 2m09s | 23852.85, stop 23866.00, target 23818.5 | `premise_stale_exit` | +396.50 | -198.00 | **+198.50** |
+| 2 | 10:17:48 -> 10:23:34 | 5m46s | 23793.70, stop 23811.15, target 23700.0 | `index_hierarchy_exit` | -1,014.00 | -1,155.00 | **-2,169.00** |
+| | | | | **TOTAL** | **-617.50** | **-1,353.00** | **-1,970.50** |
+
+IH did the same trade and held it. He entered puts on the first small retracement
+after the open, sat through the counter-moves for roughly two hours, and booked a
+large profit. His account of the retracements is the whole lesson:
+
+> "Retracements here should be SMALL, because the market HAS to fall... if it did
+> a BIG retracement and then fell, then anyone would start selling... this is how
+> you can recognise how big the retracement will be. A BIG RETRACEMENT HAPPENS
+> WHEN THE MARKET HAS TO TURN. Now it will not turn."
+
+### Trade 2 is the one that cost the day, and v4u did not stop it
+
+The agent cut a correct short on an **eleven-point** counter-move (NIFTY 23790 ->
+23801) in a session already 90 points below its open, citing a confirmed
+BankNIFTY hammer off the 10:17 low. On the mirror's premium that same 11 points
+read as 557.50 -> 538.25, which is why it felt like a reversal.
+
+The important part: **v4u was satisfied.** v4u demands "a CONFIRMED reversal on
+the leading index... not merely a move against you", and a confirmed hammer is
+exactly that. What v4u never says is how BIG the counter-move has to be. v4y adds
+that measurement, and forbids taking it off the option P&L - the one place option
+buying guarantees a wrong answer, as IH says in the same breath: *"our profit is
+reducing because we are sitting in option BUYING. A small green candle reduces
+our profit a lot."*
+
+### Two things that are compliance gaps, not knowledge gaps
+
+Recorded so a later session does not mistake them for missing rules.
+
+- **Trade 1 entered with a target the session had already printed.** Its own exit
+  reason says so: "target 23818.5 already printed as today's session low (09:16)
+  before my entry -- the hunt is already spent." v4q already requires that test
+  BEFORE the entry, not as an exit check. It ran two minutes late.
+  Worth noting the exit conclusion was ALSO wrong: the flush was not spent, and
+  NIFTY fell another 110 points. It closed a winner for +198.50 that had ~110
+  points of room left in it.
+- **Trade 2 sold into the low with no retracement.** Its 10:17:48 entry was the
+  session low at that moment, and BankNIFTY's low was the same minute - the
+  agent's own exit reason dates the hammer to "its 10:17 low". IH refuses exactly
+  this: *"if it is falling directly, we pause a bit. We will not rush, because
+  there is no benefit making a trade here, the risk is higher... now a slight
+  retracement gave us the chance to participate."* v4f already covers it.
+
+### v4x held
+
+The rule from the last session did not have to fire, and its failure mode did not
+recur. Trade 1 sized 13.15 points and opened with 11.7 of them intact (89%);
+trade 2 sized 17.45 and opened with 20.9 (120%). Neither stop was hit - both
+exits were the agent's own decision.
+
+### Operational notes
+
+- The 08:31 launch ran with **no pre-open note** ("no pre-open note applies today
+  (absent, malformed, or dated for another session)"); the 08:35 relaunch injected
+  2,517 chars correctly. The note had merged to `main` at 00:52 IST, so the first
+  launch was simply from a working copy that had not pulled yet. If that relaunch
+  had not happened, the session would have traded noteless.
+- SL Hunting's worker cut off at **11:00** again, alone among the workers - every
+  other one ran to ~15:15. It was therefore absent for the 11:00-15:15 stretch in
+  which NIFTY fell a further 45 points.
+
+### The 8 Sep prediction: the first one-direction note in the series
+
+Every open shape takes sell-side setups - flat, gap-down and gap-up alike - with
+a single exception: *"if a gap opens, then right at the open there should be no
+big positive momentum. If something like that happens then we cannot do
+anything."* There is no buy branch to fall back on, so the exception means NO
+TRADE rather than a long.
+
+His crowd read is unusually specific and cuts against the obvious one: the
+sellers are deep in profit but are NOT seated in size, *"because when it reaches
+here, put premiums become very high, so the trader would not have HELD the put
+trade."* Being right is not the same as being positioned.
+
+Tomorrow is **NIFTY expiry**.

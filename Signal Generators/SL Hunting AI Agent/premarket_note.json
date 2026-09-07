@@ -1,47 +1,47 @@
 {
-  "for_date": "2026-09-07",
-  "source": "Intraday Hunter, 'Prediction For 07 SEP 2026' (Qw55ggRNbBo, uploaded 2026-09-06)",
-  "context": "Friday's positive momentum was rejected again in all three indices, and the 2-day weekend flushed whoever bought it -- 'seeing the negative momentum and the 2-day holiday, they do not hold'. In SENSEX: the buyers have already left.",
+  "for_date": "2026-09-08",
+  "source": "Intraday Hunter, 'Prediction For 08 SEP 2026' (mfCrKdkHlig, uploaded 2026-09-07)",
+  "context": "All three indices had continuous, good selling today. The sellers are in good profit but did NOT hold in size -- 'put premiums become very high, so the trader would not have held the put trade'. BankNIFTY never crossed its round number.",
   "plan": [
-    "A SMALL GAP UP DOES NOT TRIGGER THE BUY: 'a small gap up is of no use to us, the gap up must be a GOOD one'. Only a good gap up buys, walking WITH the market. Anything less belongs to the SELL branch, not to a smaller long.",
-    "FLAT NOW SELLS. On Friday flat-to-gap-up was the BUY branch; today flat sits with gap-down on the SELL side. The flat open has changed sides over the weekend -- do not carry Friday's branch forward.",
-    "THE WEEKEND IS THE REASON, not the chart. Friday's recovery created buyers and 'seeing the negative momentum and the 2-day holiday in the middle' they did not hold over it. The crowd Friday made is already gone.",
-    "BOTH BRANCHES ARE FOLLOWS, again. Buy = 'we will walk with the market'; sell = 'having just made a trap, if the market wants that same momentum again we will follow it'. Neither side is a hunt for a seated crowd.",
-    "THE GAP UP IS THE TEST, NOT THE DIRECTION: 'if a recovery is to happen the trap is already made, so we should get a gap up. If that is not happening' -- then sell. The sell branch is what remains when the gap up fails to arrive.",
-    "NIFTY'S REJECTION CAME FROM THE ROUND NUMBER 24000, which is also its first named resistance -- one level doing both jobs."
+    "SELL ON EVERY OPEN SHAPE. Flat, gap-down AND gap-up all take sell-side setups. The only thing that cancels the plan is a SUDDEN BIG POSITIVE MOMENTUM right at the open: 'that we cannot do anything about'.",
+    "THIS IS THE FIRST ONE-DIRECTION NOTE IN THE SERIES -- there is no buy branch to switch to. If the big-positive-momentum exception fires, the answer is NO TRADE, never a long.",
+    "THE SELLERS ARE IN PROFIT BUT NOT SEATED IN SIZE, because the high put premiums stopped them holding. Being right is not the same as being positioned: there is no big short crowd here to squeeze.",
+    "HE ASKS WHETHER THE FOLLOW CONTINUES, not whether it reverses: 'we cannot directly say the market will go up tomorrow -- we have to see whether we can CONTINUE to follow, or whether the market makes a trap'.",
+    "BANKNIFTY DID NOT CROSS ITS ROUND NUMBER 57000, so 'even if someone made a trade they would not have held it' -- the same un-seated read as NIFTY and SENSEX.",
+    "TOMORROW IS NIFTY EXPIRY. Expect expiry behaviour in NIFTY on top of the shared read."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24000,
-        24140
+        23860,
+        23940
       ],
       "support": [
-        23800,
-        23860
+        23660,
+        23720
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57570,
-        58100
+        57280,
+        57570
       ],
       "support": [
-        57000,
-        57200
+        56800,
+        57000
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        76800,
-        77200
-      ],
-      "support": [
         76200,
         76370
+      ],
+      "support": [
+        75800,
+        75950
       ]
     }
   ]
