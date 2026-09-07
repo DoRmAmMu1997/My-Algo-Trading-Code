@@ -91,6 +91,10 @@ files = [
     "Data Extractors/nifty_1m_5y_data_fetch_dhan.py",
     "Data Extractors/banknifty_1m_5y_data_fetch_dhan.py",
     "Data Extractors/finnifty_1m_5y_data_fetch_dhan.py",
+    # The expired-options extractor, typed from the start.
+    "Data Extractors/expiry_calendar.py",
+    "Data Extractors/expired_options_fetch_dhan_common.py",
+    "Data Extractors/nifty_expired_options_fetch_dhan.py",
     "Dependencies/broker_contract.py",
     "Dependencies/check_env_config.py",
     "Dependencies/diagnostic_preflight.py",
@@ -188,9 +192,11 @@ files = [
     "Signal Generators/SL Hunting AI Agent/sl_hunting_tools.py",
 ]
 # Sibling imports (sl_hunting_agent -> sl_hunting_knowledge, shoonya_execution
-# -> NorenApi, logic modules -> *_strategy_common) resolve through these roots.
+# -> NorenApi, expired_options_fetch_dhan_common -> expiry_calendar, logic
+# modules -> *_strategy_common) resolve through these roots.
 mypy_path = [
     "Dependencies",
+    "Data Extractors",
     "Signal Generators",
     "Signal Generators/CPR Strategy",
     "Signal Generators/CPR AI Agent",

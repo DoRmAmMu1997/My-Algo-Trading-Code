@@ -21,6 +21,7 @@ High-level flow used by the wrapper scripts:
 import argparse
 import math
 import os
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -30,6 +31,16 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 from dhanhq import DhanContext, dhanhq
+from dotenv import load_dotenv
+
+# `python algo.py fetch-data ...` launches this file as a SCRIPT, so Python puts
+# the script's own folder on sys.path -- not the repository root, and not the
+# working directory algo.py sets. Without this insert the `Dependencies.` import
+# below raises ModuleNotFoundError. The pytest suite never saw it because pytest
+# puts the rootdir on sys.path itself.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 if TYPE_CHECKING:
     # mypy_path includes Dependencies/, where this module is known by its bare
@@ -40,6 +51,12 @@ else:
         MarketDataValidationError,
         validate_ohlc_frame,
     )
+
+# Credentials live in Dependencies/.env like everywhere else in this repo.
+# Without this the extractors could only see variables already exported in the
+# shell, which is why they silently refused to run. `override=False` keeps a
+# value the operator exported deliberately ahead of the file's.
+load_dotenv(dotenv_path=_REPO_ROOT / "Dependencies" / ".env", override=False)
 
 
 @dataclass(frozen=True)
@@ -94,7 +111,7 @@ def parse_args(defaults: IndexFetchDefaults):
     # - the CLIENT ID is an account identifier (not a secret), so it may come
     #   from the CLI flag, then the environment, then the wrapper default.
     # - the ACCESS TOKEN is a secret and is read from the environment ONLY
-    #   (DHAN_TOKEN_ID, e.g. loaded from Dependencies/.env). There is
+    #   (DHAN_ACCESS_TOKEN, loaded from Dependencies/.env above). There is
     #   deliberately no --access-token flag: a token typed on the command
     #   line would land in shell history and process listings.
     parser.add_argument(
@@ -143,7 +160,14 @@ def parse_args(defaults: IndexFetchDefaults):
     args = parser.parse_args()
     # Attach the token AFTER parsing so it can never be supplied (or leaked)
     # through the command line; downstream code keeps reading args.access_token.
-    args.access_token = os.getenv("DHAN_TOKEN_ID", defaults.default_access_token)
+    # DHAN_ACCESS_TOKEN is the key the rest of the repo uses and the one
+    # `algo.py setup-token` writes. DHAN_TOKEN_ID is accepted only so an
+    # operator who had exported the old name keeps working.
+    args.access_token = (
+        os.getenv("DHAN_ACCESS_TOKEN")
+        or os.getenv("DHAN_TOKEN_ID")
+        or defaults.default_access_token
+    )
     return args
 
 
@@ -483,9 +507,10 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
 
     if not args.client_id or not args.access_token:
         raise ValueError(
-            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_TOKEN_ID in the "
-            "environment (e.g. Dependencies/.env). Only --client-id may be "
-            "overridden on the command line; the token is environment-only."
+            "Missing credentials. Set DHAN_CLIENT_CODE and DHAN_ACCESS_TOKEN in "
+            "Dependencies/.env (run `python algo.py setup-token` to refresh the "
+            "token). Only --client-id may be overridden on the command line; "
+            "the token is environment-only."
         )
 
     if args.chunk_days <= 0 or args.chunk_days > 90:

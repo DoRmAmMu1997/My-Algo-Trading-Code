@@ -120,6 +120,7 @@ Each subfolder has its own `Readme.md` with the details.
 | Command | What it does | Example |
 |---|---|---|
 | `fetch-data --index {nifty,banknifty,finnifty}` | Download 1-min OHLC for an index | `python algo.py fetch-data --index nifty --interval 5 --lookback 5y` |
+| `fetch-expired-options --index nifty` | Download expired option history (premium, OI, IV) — add `--dry-run` to see the call plan first | `python algo.py fetch-expired-options --index nifty --lookback 5y --verify-expiries` |
 | `backtest --strategy {renko,ema,heikin,cpr,profit-shooter,goldmine,money-machine}` | Backtest one strategy against a CSV | `python algo.py backtest --strategy renko --data "Backtest Outputs/nifty_renko_futures_5y_1min_data.csv"` |
 | `run` | Start the front-test master (paper by default; live per `.env`) | `python algo.py run` |
 | `setup-token` | One-time DhanHQ token setup (writes `.env`) | `python algo.py setup-token` |
