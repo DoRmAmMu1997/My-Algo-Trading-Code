@@ -313,6 +313,18 @@ def validate_args(args: argparse.Namespace) -> list[str]:
             problems.append(f"--option-types accepts CALL and PUT, got {option_type!r}")
     if not parse_option_types(args.option_types):
         problems.append("--option-types must name at least one of CALL,PUT")
+
+    # `expiry_calendar` derives WEEKLY expiries only. Downloading monthly
+    # contracts and then labelling them off the weekly calendar would give every
+    # bar an expiry date that is simply not its contract's -- silently wrong
+    # data, which is worse than a refusal. An operator with a real monthly
+    # calendar can still do it by supplying one.
+    if str(args.expiry_flag).upper() == "MONTH" and not args.calendar_csv:
+        problems.append(
+            "--expiry-flag MONTH has no derived calendar: expiry_calendar.py knows weekly "
+            "expiries only, so monthly bars would be labelled with weekly expiry dates. "
+            "Supply --calendar-csv with the monthly expiry dates, or use --expiry-flag WEEK."
+        )
     return problems
 
 
@@ -697,6 +709,11 @@ def label_with_expiry(frame: pd.DataFrame, expiry_map: dict[date, date]) -> pd.D
 # ---------------------------------------------------------------------------
 
 
+# Reserved manifest key describing the run the progress belongs to. Series keys
+# are "<STRIKE>_<TYPE>", so a dunder name cannot collide with one.
+RUN_SIGNATURE_KEY = "__run__"
+
+
 def load_manifest(path: Path) -> dict[str, Any]:
     """Read the resume manifest, treating any damage as 'start over'."""
 
@@ -706,6 +723,59 @@ def load_manifest(path: Path) -> dict[str, Any]:
     except (OSError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def run_signature(args: argparse.Namespace, start: date, end: date) -> dict[str, Any]:
+    """Identify the run that a manifest's progress belongs to.
+
+    Deliberately excludes `--strike-range` and `--option-types`: those only add
+    or drop whole series, and a series with no manifest entry simply starts
+    fresh. Everything here changes what a given series' rows MEAN, or where its
+    chunk boundaries fall.
+    """
+    return {
+        "start": start.isoformat(),
+        "interval": int(args.interval),
+        "chunk_days": int(args.chunk_days),
+        "expiry_flag": str(args.expiry_flag),
+        "expiry_code": int(args.expiry_code),
+        "security_id": int(args.security_id),
+        "exchange_segment": str(args.exchange_segment),
+        "instrument_type": str(args.instrument_type),
+    }
+
+
+def resumable_manifest(manifest: dict[str, Any], signature: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """
+    Decide whether stored progress may be resumed, and say why not.
+
+    The dangerous case is a manifest from a NARROWER or LATER run -- the
+    documented January smoke test, say, followed by the five-year backfill.
+    Every window ending on or before the stored `last_to_date` is skipped and
+    the writer only appends after `last_timestamp`, so the earlier years would
+    never be fetched and the command would report success over a dataset
+    missing most of its history.
+
+    Progress is therefore resumable only when it came from a run with the same
+    identity AND the same start date; a later `--end-date` extends it, which is
+    the normal case. Anything else starts over.
+
+    Returns ``(manifest_to_use, reason_it_was_discarded)``.
+    """
+    stored = manifest.get(RUN_SIGNATURE_KEY)
+    if not manifest:
+        return {}, None
+    if not isinstance(stored, dict):
+        return {}, "the existing manifest predates run signatures"
+
+    differing = [
+        f"{field}: {stored.get(field)!r} -> {value!r}"
+        for field, value in signature.items()
+        if stored.get(field) != value
+    ]
+    if differing:
+        return {}, "this run does not continue the stored one (" + "; ".join(differing) + ")"
+    return manifest, None
 
 
 def save_manifest(path: Path, manifest: dict[str, Any]) -> None:
@@ -999,13 +1069,33 @@ def build_client(args: argparse.Namespace) -> Any:
     return dhanhq(DhanContext(args.client_id, args.access_token))
 
 
+def read_atm_series(
+    output_dir: Path, defaults: ExpiredOptionsDefaults, args: argparse.Namespace
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Read back the ATM call and put files this run wrote, for verification.
+
+    Empty frames come back when a run downloaded only one side (or neither),
+    and `verify_expiries` reports that it could not check rather than passing
+    vacuously.
+    """
+    frames = []
+    for option_type in ("CALL", "PUT"):
+        path = series_csv_path(output_dir, defaults, args, "ATM", option_type)
+        if not path.exists():
+            frames.append(pd.DataFrame(columns=list(OUTPUT_COLUMNS)))
+            continue
+        frames.append(pd.read_csv(path, usecols=["timestamp", "close"], parse_dates=["timestamp"]))
+    return frames[0], frames[1]
+
+
 def build_expiry_calendar(
     dhan: Any,
     args: argparse.Namespace,
     start: date,
     end: date,
     limiter: RollingWindowRateLimiter | None,
-) -> tuple[list[date], dict[date, date], pd.DataFrame, pd.DataFrame]:
+) -> tuple[list[date], dict[date, date]]:
     """
     Learn the trading days from a cheap pre-pass, then derive the expiry map.
 
@@ -1044,16 +1134,23 @@ def build_expiry_calendar(
             "Check the date range, and that the Data API subscription is active."
         )
     # Short sessions stay trading days but cannot host an expiry -- see
-    # `full_session_days` and `expiry_calendar.weekly_expiry_dates`.
-    expiry_map = build_expiry_map(trading_days, full_sessions=full_session_days([call_frame, put_frame]))
+    # `full_session_days` and `expiry_calendar.weekly_expiry_dates`. The expiry
+    # INDEX must match the contracts being downloaded: labelling expiryCode=2
+    # bars with the near expiry would put every days_to_expiry a week out.
+    expiry_map = build_expiry_map(
+        trading_days,
+        full_sessions=full_session_days([call_frame, put_frame]),
+        expiry_index=int(args.expiry_code),
+    )
     log.info(
-        "derived %d trading days and %d weekly expiries (%s -> %s)",
+        "derived %d trading days and %d weekly expiries at expiryCode=%d (%s -> %s)",
         len(trading_days),
         len(set(expiry_map.values())),
+        int(args.expiry_code),
         trading_days[0].isoformat(),
         trading_days[-1].isoformat(),
     )
-    return trading_days, expiry_map, call_frame, put_frame
+    return trading_days, expiry_map
 
 
 def download_series(
@@ -1077,7 +1174,13 @@ def download_series(
 
     if state:
         truncate_to(csv_path, int(state.get("bytes", 0)))
-    elif args.no_resume and csv_path.exists():
+    elif csv_path.exists():
+        # No resume state, but a CSV is sitting there -- from --no-resume, or a
+        # manifest that was lost or damaged. Appending to it would duplicate
+        # every candle it already holds, because there is no last_timestamp to
+        # de-duplicate against. `load_manifest` says damage means starting over;
+        # this is what actually starts over.
+        log.info("no resume state for %s -- discarding the existing %s", key, csv_path.name)
         csv_path.unlink()
 
     resume_after = state.get("last_to_date")
@@ -1144,7 +1247,12 @@ def run_expired_options_fetcher(defaults: ExpiredOptionsDefaults, argv: Sequence
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / MANIFEST_FILENAME
+    signature = run_signature(args, start, end)
     manifest: dict[str, Any] = {} if args.no_resume else load_manifest(manifest_path)
+    manifest, discarded = resumable_manifest(manifest, signature)
+    if discarded:
+        log.warning("ignoring stored progress and starting over: %s", discarded)
+    manifest[RUN_SIGNATURE_KEY] = signature
 
     dhan = build_client(args)
     limiter = RollingWindowRateLimiter(
@@ -1159,11 +1267,9 @@ def run_expired_options_fetcher(defaults: ExpiredOptionsDefaults, argv: Sequence
     if args.calendar_csv:
         expiry_map = read_calendar_csv(Path(args.calendar_csv))
         trading_days = sorted(expiry_map)
-        call_frame = pd.DataFrame(columns=list(OUTPUT_COLUMNS))
-        put_frame = pd.DataFrame(columns=list(OUTPUT_COLUMNS))
         log.info("using supplied calendar %s (%d trading days)", args.calendar_csv, len(trading_days))
     else:
-        trading_days, expiry_map, call_frame, put_frame = build_expiry_calendar(dhan, args, start, end, limiter)
+        trading_days, expiry_map = build_expiry_calendar(dhan, args, start, end, limiter)
         write_calendar_csv(output_dir / CALENDAR_FILENAME, trading_days, expiry_map)
         log.info("wrote %s", output_dir / CALENDAR_FILENAME)
         warn_about_unlabelled_tail(trading_days, expiry_map, end)
@@ -1186,9 +1292,16 @@ def run_expired_options_fetcher(defaults: ExpiredOptionsDefaults, argv: Sequence
             limiter,
         )
 
-    log.info("done: %d rows across %d series in %s", grand_total, len(manifest), output_dir)
+    series_count = len(manifest) - 1  # the run signature is not a series
+    log.info("done: %d rows across %d series in %s", grand_total, series_count, output_dir)
 
     if args.verify_expiries:
+        # Verify against the ATM files that were just WRITTEN, not against the
+        # calendar pre-pass. That covers --calendar-csv (where there is no
+        # pre-pass at all, and verification used to report "no ATM data" and
+        # silently check nothing), and it checks the labelled data that actually
+        # shipped rather than an intermediate the operator never sees.
+        call_frame, put_frame = read_atm_series(output_dir, defaults, args)
         complaints = verify_expiries(call_frame, put_frame, sorted(set(expiry_map.values())))
         if complaints:
             log.warning("expiry verification raised %d concern(s):", len(complaints))

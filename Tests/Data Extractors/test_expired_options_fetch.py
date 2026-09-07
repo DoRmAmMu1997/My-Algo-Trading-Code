@@ -987,3 +987,147 @@ def test_verification_skips_an_expiry_with_nothing_before_it():
 
     # No prior session in the data to compare against, so no verdict is possible.
     assert engine.verify_expiries(calls, puts, [date(2025, 1, 9)]) == []
+
+
+# ---------------------------------------------------------------------------
+# Resume safety: a manifest only resumes the run it came from
+# ---------------------------------------------------------------------------
+
+
+def test_a_manifest_from_a_narrower_later_run_is_discarded():
+    """The documented smoke test, then the backfill, used to lose four years.
+
+    A January-2025 smoke run leaves last_to_date=2025-01-10. The five-year
+    backfill then skips every window ending on or before that, and the writer
+    only appends after last_timestamp -- so 2021-2024 is never fetched and the
+    command reports success over a dataset missing most of its history.
+    """
+    smoke = engine.run_signature(make_args(), date(2025, 1, 6), date(2025, 1, 10))
+    manifest = {engine.RUN_SIGNATURE_KEY: smoke, "ATM_CALL": {"last_to_date": "2025-01-10", "rows": 1500}}
+
+    backfill = engine.run_signature(make_args(), date(2021, 9, 6), date(2026, 9, 1))
+    kept, reason = engine.resumable_manifest(manifest, backfill)
+
+    assert kept == {}, "stored progress must not be reused across a different range"
+    assert reason is not None and "start" in reason
+
+
+def test_a_manifest_resumes_when_the_run_only_extends_forward():
+    signature = engine.run_signature(make_args(), date(2021, 9, 6), date(2026, 1, 1))
+    manifest = {engine.RUN_SIGNATURE_KEY: signature, "ATM_CALL": {"rows": 10}}
+
+    # Same start, later end -- the normal "carry on where I stopped" case.
+    later = engine.run_signature(make_args(), date(2021, 9, 6), date(2026, 9, 1))
+    kept, reason = engine.resumable_manifest(manifest, later)
+
+    assert reason is None
+    assert kept["ATM_CALL"]["rows"] == 10
+
+
+def test_a_manifest_is_discarded_when_the_contract_identity_changes():
+    base = engine.run_signature(make_args(), date(2021, 9, 6), date(2026, 9, 1))
+    manifest = {engine.RUN_SIGNATURE_KEY: base, "ATM_CALL": {"rows": 10}}
+
+    # Same dates, different contracts: those rows mean something else entirely.
+    other = engine.run_signature(make_args(expiry_code=2), date(2021, 9, 6), date(2026, 9, 1))
+    kept, reason = engine.resumable_manifest(manifest, other)
+
+    assert kept == {}
+    assert reason is not None and "expiry_code" in reason
+
+
+def test_a_manifest_without_a_signature_is_discarded():
+    kept, reason = engine.resumable_manifest(
+        {"ATM_CALL": {"rows": 10}}, engine.run_signature(make_args(), date(2021, 9, 6), date(2026, 9, 1))
+    )
+    assert kept == {}
+    assert reason is not None and "predates" in reason
+
+
+def test_an_empty_manifest_is_not_reported_as_discarded():
+    kept, reason = engine.resumable_manifest({}, engine.run_signature(make_args(), date(2025, 1, 6), date(2025, 1, 10)))
+    assert (kept, reason) == ({}, None)
+
+
+def test_strike_range_and_option_types_do_not_invalidate_progress():
+    """Widening the strike band only ADDS series; each new one starts fresh."""
+    narrow = engine.run_signature(make_args(strike_range=1), date(2021, 9, 6), date(2026, 9, 1))
+    wide = engine.run_signature(
+        make_args(strike_range=10, option_types="CALL"), date(2021, 9, 6), date(2026, 9, 1)
+    )
+    assert narrow == wide
+
+
+# ---------------------------------------------------------------------------
+# A stale CSV with no resume state
+# ---------------------------------------------------------------------------
+
+
+def test_a_stale_csv_is_discarded_when_the_manifest_is_gone(tmp_path):
+    """A lost or damaged manifest used to duplicate every existing candle.
+
+    `load_manifest` documents damage as "start over", but download_series kept
+    the CSV and appended with no last_timestamp to de-duplicate against.
+    """
+    csv_path = tmp_path / "nifty_1m_WEEK_ATM_CALL.csv"
+    header = ",".join(engine.OUTPUT_COLUMNS) + "\n"
+    row = "2025-01-06 09:15:00,1,1,1,100.0,1,1,1,21500,21500,ATM,CALL,2025-01-09,3\n"
+    csv_path.write_bytes((header + row).encode("utf-8"))
+
+    engine.download_series(
+        one_day_client({"2025-01-06": 100.0}),
+        make_args(), DEFAULTS, tmp_path, "ATM", "CALL",
+        [(date(2025, 1, 6), date(2025, 1, 7))], EXPIRY_MAP, {},  # empty manifest
+        tmp_path / engine.MANIFEST_FILENAME, None,
+    )
+
+    written = pd.read_csv(csv_path)
+    assert len(written) == 1, "the orphaned row must be discarded, not duplicated"
+    assert written["timestamp"].tolist() == ["2025-01-06 09:15:00"]
+
+
+# ---------------------------------------------------------------------------
+# Labelling must match the contracts actually downloaded
+# ---------------------------------------------------------------------------
+
+
+def test_month_expiries_are_refused_rather_than_labelled_from_the_weekly_calendar():
+    """Monthly bars carrying weekly expiry dates would be silently wrong."""
+    problems = engine.validate_args(make_args(expiry_flag="MONTH", calendar_csv=""))
+
+    assert any("MONTH" in p for p in problems), problems
+    assert any("--calendar-csv" in p for p in problems), problems
+
+
+def test_month_expiries_are_allowed_with_an_operator_supplied_calendar():
+    assert engine.validate_args(make_args(expiry_flag="MONTH", calendar_csv="cal.csv")) == []
+
+
+# ---------------------------------------------------------------------------
+# Verification reads what was actually written
+# ---------------------------------------------------------------------------
+
+
+def test_verification_reads_the_atm_files_that_were_written(tmp_path):
+    """With --calendar-csv there is no pre-pass, so verification used to check
+    nothing at all and report "no ATM data available"."""
+    args = make_args()
+    for option_type, close in (("CALL", 7.0), ("PUT", 6.0)):
+        frame = written_frame(["2025-01-08 15:29", "2025-01-09 15:29"])
+        frame.loc[0, "close"] = 60.0
+        frame.loc[1, "close"] = close
+        frame.to_csv(engine.series_csv_path(tmp_path, DEFAULTS, args, "ATM", option_type), index=False)
+
+    calls, puts = engine.read_atm_series(tmp_path, DEFAULTS, args)
+
+    assert not calls.empty and not puts.empty
+    assert engine.verify_expiries(calls, puts, [date(2025, 1, 9)]) == []
+
+
+def test_verification_says_so_when_the_atm_files_are_absent(tmp_path):
+    calls, puts = engine.read_atm_series(tmp_path, DEFAULTS, make_args())
+
+    assert calls.empty and puts.empty
+    assert engine.verify_expiries(calls, puts, [date(2025, 1, 9)]) == [
+        "no ATM data available to verify expiries against"
+    ]

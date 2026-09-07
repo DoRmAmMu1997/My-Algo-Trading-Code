@@ -158,6 +158,7 @@ def build_expiry_map(
     trading_days: Iterable[date],
     rules: Sequence[tuple[date, int]] | None = None,
     full_sessions: Iterable[date] | None = None,
+    expiry_index: int = 1,
 ) -> dict[date, date]:
     """
     Map every trading day to the near weekly expiry that was current on it.
@@ -171,9 +172,17 @@ def build_expiry_map(
     cannot HOST an expiry (see `weekly_expiry_dates`) but it still has one
     coming, and its bars deserve a label like any other.
 
-    Trading days after the last derived expiry are left out entirely rather than
-    guessed at -- the caller writes no expiry label for those bars.
+    ``expiry_index`` mirrors the API's ``expiryCode``: 1 is the near expiry, 2
+    the next, and so on. It must match the contracts actually being downloaded
+    -- labelling ``expiryCode=2`` bars with the near expiry would put every
+    ``days_to_expiry`` a full week out and quietly wreck a positional backtest.
+
+    Trading days whose Nth expiry is not yet in the data are left out entirely
+    rather than guessed at -- the caller writes no expiry label for those bars.
     """
+    if expiry_index < 1:
+        raise ExpiryCalendarError(f"expiry_index is 1-based (1 = near expiry), got {expiry_index}")
+
     days = sorted(set(trading_days))
     expiries = weekly_expiry_dates(days, rules, full_sessions)
     if not expiries:
@@ -181,7 +190,7 @@ def build_expiry_map(
 
     mapping: dict[date, date] = {}
     for day in days:
-        position = bisect.bisect_left(expiries, day)
+        position = bisect.bisect_left(expiries, day) + (expiry_index - 1)
         if position < len(expiries):
             mapping[day] = expiries[position]
     return mapping

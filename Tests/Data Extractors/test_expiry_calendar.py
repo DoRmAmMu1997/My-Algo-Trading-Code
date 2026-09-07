@@ -210,3 +210,48 @@ def test_full_sessions_defaults_to_every_trading_day():
 def test_no_eligible_sessions_yields_no_expiries():
     days = [date(2025, 1, 6), date(2025, 1, 9)]
     assert calendar.weekly_expiry_dates(days, full_sessions=[]) == []
+
+
+# ---------------------------------------------------------------------------
+# expiry_index: the label must match the contract that was downloaded
+# ---------------------------------------------------------------------------
+
+
+def test_expiry_index_two_labels_the_next_expiry_not_the_near_one():
+    """`--expiry-code 2` downloads next-week contracts.
+
+    Labelling those with the near expiry puts every days_to_expiry a full week
+    short, which for a positional backtest is not a rounding error -- it is the
+    wrong contract.
+    """
+    days = weekdays(date(2025, 1, 1), 30)
+
+    near = calendar.build_expiry_map(days)
+    following = calendar.build_expiry_map(days, expiry_index=2)
+
+    assert near[date(2025, 1, 6)] == date(2025, 1, 9)
+    assert following[date(2025, 1, 6)] == date(2025, 1, 16)
+    assert (following[date(2025, 1, 6)] - near[date(2025, 1, 6)]).days == 7
+
+
+def test_expiry_index_defaults_to_the_near_expiry():
+    days = weekdays(date(2025, 1, 1), 30)
+    assert calendar.build_expiry_map(days) == calendar.build_expiry_map(days, expiry_index=1)
+
+
+def test_expiry_index_drops_days_whose_nth_expiry_is_not_in_the_data():
+    days = weekdays(date(2025, 1, 1), 30)
+
+    near = calendar.build_expiry_map(days, expiry_index=1)
+    far = calendar.build_expiry_map(days, expiry_index=3)
+
+    # Every day needs three expiries ahead of it now, so the tail falls away
+    # rather than being labelled with an expiry that is not in the range.
+    assert len(far) < len(near)
+    assert max(far) < max(near)
+
+
+def test_expiry_index_must_be_one_based():
+    days = weekdays(date(2025, 1, 1), 30)
+    with pytest.raises(calendar.ExpiryCalendarError, match="1-based"):
+        calendar.build_expiry_map(days, expiry_index=0)
