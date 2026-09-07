@@ -21,7 +21,7 @@
 # ---- LIVE RUNTIME (DEPS-001: the verified live-runner set) -------------------
 dhanhq==2.2.0
 pandas==3.0.5
-numpy==2.5.2
+numpy==2.5.3
 backtesting==0.6.6
 python-dotenv==1.2.3
 gspread==6.2.1
@@ -68,7 +68,7 @@ pip-audit==2.10.1
 # drift this pin exists to prevent -- they sat a full major behind the pandas
 # they describe. pandas-stubs tracks the pandas release it types, so keep this
 # on the same major as the pandas pin above.
-types-requests==2.33.0.20260712
+types-requests==2.33.0.20260906
 pandas-stubs==3.0.5.260730
 
 # ---- Exact optional dependency sets -----------------------------------------
