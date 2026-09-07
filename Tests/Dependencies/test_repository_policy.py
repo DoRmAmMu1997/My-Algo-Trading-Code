@@ -134,7 +134,17 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # the reasoning above needs revisiting. Same standing check as before: CI
     # never spawns the bundled CLI, so confirm on the next PAPER session that
     # decisions still return ("SLHuntingAgent decision cost ~$..." in the log).
-    assert "claude-agent-sdk==0.2.148" in ai
+    # 0.2.148 -> 0.2.152 (2026-09-07, PR #157). Four releases, bundled CLI
+    # 2.1.251 -> 2.1.259 (`claude_agent_sdk._cli_version.__cli_version__`).
+    # All eight symbols the agent imports are still present on 0.2.152 --
+    # AssistantMessage, ClaudeAgentOptions, CLINotFoundError, ProcessError,
+    # ResultMessage, query, create_sdk_mcp_server, tool -- and the declared
+    # windows still hold (mcp>=1.23.0,<3.0.0, anyio>=4.0.0), so mcp 2.2.0 and
+    # anyio 4.15.1 resolve alongside it. Same standing check as before,
+    # because CI never spawns the bundled CLI: confirm on the next PAPER
+    # session that decisions still return ("SLHuntingAgent decision cost
+    # ~$..." in the log).
+    assert "claude-agent-sdk==0.2.152" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -191,7 +201,14 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # mcp: claude-agent-sdk imports the LOW-LEVEL `mcp.server.Server` plus
     # mcp.shared.memory / mcp.shared.message / mcp.types, and every one of those
     # paths still resolves on 2.1.1, so SL Hunting is unaffected.
-    assert "mcp==2.1.1" in ai
+    # 2.1.1 -> 2.2.0 (2026-09-07, PR #157). A MINOR, taken because the ignore
+    # was retired on 2026-09-01 precisely so majors and minors arrive as a
+    # reviewable PR. Every import path either agent uses was checked against
+    # the installed 2.2.0: `mcp.server.mcpserver.MCPServer` (the CPR AI port)
+    # plus the low-level `mcp.server.Server`, mcp.shared.memory,
+    # mcp.shared.message and mcp.types that claude-agent-sdk imports. All
+    # resolve, and the 106 CPR AI tests pass rather than skip.
+    assert "mcp==2.2.0" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
     assert any(
@@ -268,7 +285,7 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # UNCHANGED on 2.5.2 on both 3.12 and 3.13. Nothing in the indicator pipeline
     # moved. Majors remain ignored (TA-Lib's compiled extension, no numpy ceiling
     # declared anywhere).
-    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.5.2"):
+    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.5.3"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement

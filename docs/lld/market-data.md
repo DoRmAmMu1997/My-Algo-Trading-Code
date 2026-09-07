@@ -180,3 +180,94 @@ branch-coverage tier enforced by `scripts/check_coverage_thresholds.py`.
   first-class means parameterizing this component.
 - **One producer per process.** There is no failover from websocket to REST
   mid-session; recovery is restart with the flag flipped.
+
+---
+
+## 9. Known failure modes
+
+### 9.1 `did not receive a valid HTTP response`
+
+The websocket pump reports this when `websockets` raises `InvalidMessage` — the
+client opened TLS to `api-feed.dhan.co`, waited for an HTTP status line, and the
+server closed the connection without sending one.
+
+**It cannot be a credential or subscription problem**, and that is the whole
+point of this entry. Dhan's feed edge completes the websocket upgrade *without
+validating the token*: a deliberately invalid token connects successfully
+(verified 2026-09-04). Authentication happens after the upgrade, inside the feed
+protocol — so nothing about the token, the Data API subscription, or IP
+whitelisting can make the handshake itself fail. Silence at this stage means the
+edge is not serving upgrades, whoever is asking.
+
+The pump logs only `str(exc)` (`nifty_multi_strategy_master.py:4456`), which
+renders the bare sentence above. The useful detail is on `exc.__cause__` —
+typically `EOFError('connection closed while reading HTTP status line')`.
+
+To check the edge directly, without touching `.env` or sending real credentials:
+
+```bash
+python -c "
+import asyncio, websockets
+async def main():
+    try:
+        async with websockets.connect('wss://api-feed.dhan.co?version=2&token=DUMMY&clientId=0&authType=2', open_timeout=20):
+            print('connected')
+    except Exception as e:
+        print(type(e).__name__, '|', e, '| cause:', repr(e.__cause__))
+asyncio.run(main())
+"
+```
+
+`connected` means the edge is healthy and the fault is elsewhere — the local
+network path, or post-handshake authentication. `InvalidMessage` means the edge
+is down and no local change will help.
+
+**Observed 2026-09-04.** Five launches between 07:20 and 08:06 produced 26
+consecutive handshake failures. REST was healthy throughout on the same
+credentials — warmup history, the per-minute true-up, and the 33 MB
+instrument-master download all succeeded. The failure then reproduced outside the
+runner using the probe above, with no real credential in play at all, which ruled
+out the token, the subscription, the `websockets` and `dhanhq` versions, and this
+component's own code in one step. It cleared on Dhan's side with no local change:
+the 08:53:44 launch connected five seconds later on its first attempt.
+
+Historically this error clusters hard in the early morning: all 33 occurrences in
+five months of logs fall in hours 07 and 08, and none between 09:00 and 16:00
+across 180 successful connects. Before 2026-09-04 every one of them self-healed
+on the very next retry.
+
+### 9.2 Operator response
+
+Fall back to the REST producer — `MARKET_DATA_SOURCE=REST` plus a restart, no
+state migration ([ADR-0005](../adr/0005-rest-vs-websocket-market-data.md)).
+This is always available: the paid subscription is an optimisation, not a
+dependency, so the system runs without the feed at all.
+
+Two things to know before deciding to leave a WEBSOCKET-mode session running
+through an outage:
+
+- **A dead feed never gets louder.** The pump retries forever with no give-up
+  (`nifty_multi_strategy_master.py:4436`) and stays at WARNING for every attempt
+  (`:4456`). Backoff caps at 30s and then repeats indefinitely.
+- **Market data freezes rather than degrading.** The per-minute true-up is gated
+  on the tick aggregator's version counter (`:4283-4285`), which cannot advance
+  while no ticks arrive, so OHLC stays pinned to the warmup frame. Paper workers
+  are exempt from the health gate by the 2026-07-17 decision at `:6379-6380`, so
+  they keep trading on it. This is the concrete shape of the "no failover from
+  websocket to REST mid-session" limitation in §8 — the practical consequence is
+  that an unattended WEBSOCKET session can paper-trade a whole day against the
+  previous close.
+
+### 9.3 Reconnect churn
+
+A feed can be reachable and still degraded. On 2026-09-04, after the morning
+outage cleared, the socket dropped and recovered roughly 36 times between 09:08
+and 12:00 — mostly `keepalive ping timeout` — each recovering within 1–3 seconds.
+That day logged 37 connects against a normal range of 1–7.
+
+Integrity survives this by design: every reconnect requests an immediate true-up
+(`nifty_multi_strategy_master.py:4451`), and that full-window merge is the gap
+backfill for the ticks missed while the socket was down. The cost is REST load
+well above what ADR-0005 assumed when it traded polling for a socket, which
+erodes the API-load saving that motivated the websocket producer. Sustained churn
+at this level is a reason to re-read that trade-off, not a data-safety concern.
