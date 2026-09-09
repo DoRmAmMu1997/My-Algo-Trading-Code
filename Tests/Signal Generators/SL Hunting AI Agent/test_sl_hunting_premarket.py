@@ -201,25 +201,25 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_9_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 08 Sep transcript.
+def test_shipped_note_matches_september_10_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 09 Sep transcript.
 
     Five things a summarising edit would flatten, each of which would change
     what the agent does at 09:15:
 
-    1. The crowd IS seated this time, and the whole note turns on the fact that
-       a seated crowd is only a TARGET when the open threatens it. Flat or
-       gap-down cannot threaten shorts, so those branches join them instead.
-       Collapse that and the note reads as "sell because sellers are there",
-       which is the opposite of the SL-hunting premise.
-    2. The gap-up branch is the ONLY hunting branch, and in NIFTY it needs the
-       open to be ABOVE THE RESISTANCE, not merely green.
-    3. The flat/gap-down branch is explicitly NOT a hunt -- "do not target them
-       DIRECTLY". Reading it as one would invent a squeeze that is not there.
-    4. The crowd read INVERTS yesterday's while the direction stays the same.
-       Yesterday: sellers in profit but not seated. Today: seated. An edit that
-       "reconciles" the two by dropping one would lose the reason.
-    5. SENSEX's old supports (75800/75950) are now its resistances.
+    1. The HOLD is the whole read. He states the counterfactual himself -- had
+       the market gone straight up and straight down, reversal odds would rise;
+       because it HELD and then fell, few participated. Lose that and the note
+       is just "sell again", with no way to tell when it stops applying.
+    2. The sell branch reaches the same conclusion as yesterday for the OPPOSITE
+       reason. Yesterday: sellers seated, so unhuntable. Today: sellers thin,
+       because the hold kept them out. An edit that "simplifies" the two into
+       one loses the mechanism that would flip the branch.
+    3. The buy branch is still the only hunting branch and still needs a GOOD
+       gap up, ABOVE the resistance -- a level test, not a gap-size test.
+    4. SENSEX has expiry; NIFTY's was 08 Sep and is past. Getting this backwards
+       would put expiry behaviour on the wrong index.
+    5. The resistances are the open's measuring stick, not a target.
     """
     import os
 
@@ -227,57 +227,54 @@ def test_shipped_note_matches_september_9_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-09"
-    assert "bwqMeOc-b8I" in note.source
-    # Seated this time -- and the reason they are still not automatically prey.
-    assert "the sellers ARE seated" in note.context
-    assert "whoever is short has an SL" in note.context
-    assert "only come under threat on a gap up" in note.context
+    assert note.for_date == "2026-09-10"
+    assert "BbY6TwoC90o" in note.source
+    # The shape, not just the direction.
+    assert "the market HELD first and only then fell" in note.context
+    assert "Holding forms a PSYCHOLOGY" in note.context
+    assert "thin rather than seated" in note.context
 
-    seated = next(line for line in note.plan if line.startswith("A SEATED CROWD IS ONLY A TARGET"))
-    assert "CANNOT make those sellers our target" in seated
-    assert "If we get a GAP UP, then THEY will see risk" in seated
-    assert "whether the shorts are prey or company" in seated
+    hold = next(line for line in note.plan if line.startswith("THE HOLD IS THE WHOLE READ"))
+    assert "if the market had NOT held here" in hold
+    assert "straight up and then straight down" in hold
+    assert "reversal chances rise" in hold
+    assert "following rather than fading" in hold
 
-    up = next(line for line in note.plan if line.startswith("GAP UP ->"))
-    assert "BUY side" in up
-    assert "ABOVE THE RESISTANCE" in up
-    assert "the only branch that hunts anyone" in up
+    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP-DOWN ->"))
+    assert "walking WITH the market" in sell
+    # Same branch as yesterday, opposite reason -- both halves must survive.
+    assert "yesterday the sellers were seated and could not be hunted" in sell
+    assert "today they are thin because the hold kept them out" in sell
 
-    down = next(line for line in note.plan if line.startswith("FLAT TO GAP-DOWN ->"))
-    assert "SELL side, walking WITH the market" in down
-    assert "Explicitly NOT a hunt" in down
-    assert "do not target them DIRECTLY" in down
-    assert "joining the seated shorts, not squeezing them" in down
+    buy = next(line for line in note.plan if line.startswith("ABOVE THE RESISTANCE ->"))
+    assert "danger to the sellers increases" in buy
+    assert "those already short come under risk" in buy
+    assert "the only branch that hunts" in buy
+    assert "GOOD gap up, not a marginal one" in buy
 
-    inv = next(line for line in note.plan if line.startswith("THIS INVERTS YESTERDAY'S CROWD READ"))
-    assert "WITHOUT CHANGING THE DIRECTION" in inv
-    assert "in profit but NOT seated" in inv
-    assert "today he says they ARE seated" in inv
+    expiry = next(line for line in note.plan if line.startswith("SENSEX HAS EXPIRY"))
+    assert "NIFTY's own expiry was 08 Sep and is past" in expiry
 
-    assert any("75800 and 75950 were yesterday's support" in line for line in note.plan)
+    assert any("level test, not a gap-size test" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
+            # "23540 236 74" -- the second resistance arrived split across the
+            # caption and was confirmed with the operator as 23674, not 23640.
             "index": "NIFTY",
-            "resistance": [23670.0, 23720.0],
-            "support": [23480.0, 23540.0],
+            "resistance": [23540.0, 23674.0],
+            "support": [23340.0, 23400.0],
         },
         {
-            # "57100 57876" -- the second resistance came through mangled and
-            # was confirmed with the operator as 57870, not the rounder 57800.
+            # "56876 56600" -- confirmed as 56600/56870, not rounded to 56800.
             "index": "BANKNIFTY",
-            "resistance": [57100.0, 57870.0],
-            "support": [56370.0, 56500.0],
+            "resistance": [56600.0, 56870.0],
+            "support": [56040.0, 56200.0],
         },
         {
-            # Supports were unusable in the caption ("7530 750"). The operator
-            # listened to the video and gave 75310/75200 -- NEITHER of the two
-            # readings offered from the transcript was right, which is why these
-            # get asked rather than reconstructed. Note the resistances here are
-            # yesterday's support pair, unchanged in value and flipped in role.
+            # "75,200 75,5500" carried a duplicated digit; confirmed as 75500.
             "index": "SENSEX",
-            "resistance": [75800.0, 75950.0],
-            "support": [75200.0, 75310.0],
+            "resistance": [75200.0, 75500.0],
+            "support": [74300.0, 74500.0],
         },
     ]

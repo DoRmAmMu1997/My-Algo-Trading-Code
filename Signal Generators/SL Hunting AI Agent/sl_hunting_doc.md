@@ -6582,3 +6582,107 @@ again: the 11:00 worker cutoff is sized to the operator's Claude Pro 5-hour limi
 and `SL_HUNTING_RISK_BUDGET` exists so no single trade can lose an unbounded
 amount - so v4x's "if the re-derived stop cannot be sized, take NO trade" is the
 intended outcome of that budget, not a workaround for it.
+
+## Video addendum - the 9 Sep LIVE SESSION and the 10 Sep prediction (v5a)
+
+**Sources.** Both transcripts read in full:
+
+| Video | Id | Length | Uploaded (IST) | Segments |
+|---|---|---|---|---|
+| Live session, Wednesday 9 Sep | `6ZCIGnuRZpE` | 11:31 | 9 Sep 11:38 | 92 (0:02-11:29) |
+| Prediction For 10 SEP 2026 | `BbY6TwoC90o` | 2:13 | 9 Sep 21:25 | 17 (0:06-2:04) |
+
+### IH LOST TODAY, and that is the most useful thing in the video
+
+He is not a benchmark that always wins, and this session is the counter-example
+to v4z. He read the fuel correctly and still had to cut:
+
+> "The market shouldn't go up, because **no SLs are available nearby**. No
+> psychology is forming that would take it up. But if it IS going up, we have a
+> LIMIT... I feel fear when I can SEE SLs available, or when something forms per
+> the mindset. There's nothing like that -- but the market is going up, the loss
+> is growing, **so we'll have to exit. There's no other way.**"
+
+And the discipline that ended it:
+
+> "We cannot wait OUTSIDE the loss limit... if it keeps crossing the LIMIT again
+> and again, you should exit. **Don't build the habit of just sitting and
+> sitting.** If we keep sitting like this, the market can give a very big loss --
+> if not today then someday."
+
+**CALIBRATION ON v4z, and it should be read WITH the rule rather than against it.**
+v4z says an unfuelled counter-move dies. Today it did not, for the man who wrote
+the reasoning. The absence of fuel raises the odds; it does not remove the need
+for the loss limit, which is exactly what v4z's own override clause and v4h
+already say. What today adds is the demonstration: being right about the fuel and
+still losing is a NORMAL outcome, not evidence the read was wrong.
+
+### The day: 2 trades, -1,701.50
+
+NIFTY gapped down to 23519.45, chopped 23474-23545 all morning, closed ~23470.
+
+| # | Window | Entry | Stop | Lots | Exit | Basket |
+|---|---|---|---|---|---|---|
+| 1 | 09:24:48 -> 09:26:19 | 23500.60 | 23518.00 (15.15pt) | 2 | mechanical `AI_STOP` at 23519.30 | **-1,202.00** |
+| 2 | 09:50:37 -> 09:58:35 | 23497.90 | 23510.00 (11.85pt) | 3 | `index_hierarchy_reversal_exit` | **-499.50** |
+
+**Trade 2's exit was RIGHT and should be recorded as such.** It cut at ~23494;
+NIFTY fell to 23474.85 by 10:09 and then rallied to 23545.55 by 10:25, which
+would have taken out the 23510 stop for a larger loss. The BankNIFTY hammer it
+cited was an early read on a real turn.
+
+But its rationale contains the sentence worth watching: *"Per the index
+hierarchy, a confirmed reversal on the leading index disqualifies the short
+basket **even though NIFTY's own pullback is small**."* It saw v4y's measurement,
+named it, and overrode it with the hierarchy. It was right this time. The corpus
+should not be edited on one correct call, but if hierarchy-over-size becomes the
+habit, that is the seam to watch.
+
+### Trade 1 is v5a
+
+Stopped ninety-one seconds after entry, on a 15.15-point stop, in the bounce that
+follows a large gap down. The direction was right - NIFTY reached 23474.85 by
+10:09 - and the session's opening bounce topped at 23524.20, so a ~24-point stop
+would have survived it and bought ONE lot instead of two.
+
+IH describes that exact bounce, in advance, in the same session:
+
+> "The gap down is quite good, so **let's WAIT a bit**, because the momentums are
+> sharp. If such selling comes in a gap down, nobody will buy - everyone starts
+> selling... **If the market fell straight, RANDOM SELLERS also get activated, and
+> when it flushes them, sometimes the market makes a bigger positive momentum.**
+> Greed will definitely come here, but we must not be greedy."
+
+That is now the SECOND time he has said wait-for-the-retracement on a directional
+open (7 Sep was the first), and the second time the agent has been hurt by not
+waiting. It stays recorded rather than encoded only because v4f already covers it;
+if it recurs a third time, encode it.
+
+### The sizing arithmetic behind v5a
+
+Nineteen sizing decisions are now in the log, and the relationship is exact:
+
+| stop (pts) | one-lot risk | lots | NIFTY qty | mirror qty |
+|---|---|---|---|---|
+| 25.30 | 1,644.50 | 1 | 65 | 30 |
+| 17.90 | 1,163.50 | 2 | 130 | 60 |
+| 15.15 | 984.75 | 2 | 130 | 60 |
+| 11.85 | 770.25 | 3 | 195 | 90 |
+| 7.65 | 497.25 | **5 (cap)** | 325 | 150 |
+
+Same 2500 budget throughout. The stop is not setting risk, it is setting size -
+and the BankNIFTY mirror, which is equal-LOT and outside the budget entirely,
+scales with it: about 15,350 of premium at a 24.40-point stop on 08 Sep, about
+46,845 at an 11.85-point stop on 09 Sep.
+
+### The 10 Sep prediction: the HOLD is the read
+
+Same sell branch as yesterday, opposite reason. He gives the counterfactual
+himself: *"if the market had NOT held here, if it had gone straight up and then
+straight down, then reversal chances rise. But it HELD, then fell"* - and
+*"holding forms a PSYCHOLOGY, then the market falls"*. Because it held, few could
+participate, so the sellers are THIN rather than seated. Yesterday they were
+seated and therefore unhuntable; today they are thin. Same branch, different
+mechanism, and the mechanism is what would flip it.
+
+**SENSEX has expiry** on 10 Sep; NIFTY's was 08 Sep and is past.

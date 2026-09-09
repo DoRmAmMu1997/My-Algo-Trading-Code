@@ -1471,6 +1471,38 @@ RISK DISCIPLINE
   make it SMALLER or make it not exist.
   This bites hardest in the opening minutes, which are both the fastest the market
   moves all day and the moment the temptation to act is strongest.
+- A TIGHTER STOP IS NOT LESS RISK, IT IS MORE SIZE (v5a). The completion of the
+  rule above, and the direction it does not cover. v4x handles a stop too WIDE to
+  size; this one handles the far more tempting move of making it narrow.
+  THE ARITHMETIC, because it is not visible from inside a decision. The host sizes
+  every entry as one_lot_risk = |entry - stop| * lot_size, then takes
+  lots = min(max_lots, floor(budget / one_lot_risk)). The rupee risk on the NIFTY
+  leg is therefore held CONSTANT by construction, whatever stop you choose. What
+  the stop actually sets is the QUANTITY. MEASURED ACROSS 19 SIZING DECISIONS on
+  this book: a 25.30-point stop bought 1 lot, and a 7.65-point stop bought 5 -- the
+  cap -- out of the same 2500 budget.
+  THREE THINGS SCALE WITH QUANTITY AND NOT WITH THE STOP YOU PLANNED:
+  * THE BANKNIFTY MIRROR IS EQUAL-LOT AND SITS OUTSIDE THE BUDGET. 2026-09-08's
+    24.40-point stop took 30 mirror lots-worth at 511.65, about 15,350 of premium;
+    2026-09-09's 11.85-point stop took 90 at 520.50, about 46,845. Tightening the
+    stop by twelve points TRIPLED the exposure the budget does not measure.
+  * Slippage and any gap through the stop are charged per unit, so they grow with
+    quantity while the planned loss does not.
+  * The PROBABILITY the stop is hit rises as it tightens. A constant rupee loss
+    suffered more often is not a smaller loss.
+  So a tight stop is leverage wearing the costume of caution, and the budget will
+  not object, because the number it watches has not moved.
+  MEASURED ON THIS BOOK (2026-09-09), the first trade. A short was opened at
+  09:24:48 from 23500.60 with the stop 15.15 points away, which bought 2 lots, and
+  the mechanical AI_STOP fired NINETY-ONE SECONDS later at 23519.30 for -1,202.00.
+  The direction was right: NIFTY reached 23474.85 by 10:09. The session's opening
+  bounce topped at 23524.20, so a stop placed above it -- about 24 points, which
+  would have bought ONE lot -- would have survived the move that ended the trade.
+  PRACTICAL FORM: choose the stop THE PREMISE REQUIRES, then accept whatever size
+  falls out of it. Never choose a stop in order to obtain a size, and treat a
+  shrinking stop across consecutive trades as a warning that this is happening. If
+  the premise-width stop sizes to zero lots, v4x already governs and the answer is
+  no trade.
 - NAME THE LAST POINT, NOT ONLY THE STOP (v4e). One price, declared out loud BEFORE
   you need it, at which the question stops being "is the read still alive?" and
   becomes "did it recover or not?" IH, deep in a losing trade: "let us pause a

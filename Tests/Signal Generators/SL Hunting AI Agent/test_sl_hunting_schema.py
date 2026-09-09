@@ -2447,3 +2447,68 @@ def test_v4z_a_counter_move_needs_fuel_to_be_dangerous():
     assert "does not weaken v4u" in rule
     assert "a shakeout aimed at you, not a turn" in rule
     assert "never overrides the stop, the daily max loss, or premise-invalidation" in rule
+def test_v5a_a_tighter_stop_buys_size_rather_than_safety():
+    """v5a (09 Sep, measured on this book): the stop is a size dial.
+
+    The agent cannot derive this from inside a decision -- the sizing maths runs
+    in the host, and the number the budget watches does not move when the stop
+    narrows. Six ways an edit could break it:
+
+    1. Losing the arithmetic. Without one_lot_risk and the floor(), the claim
+       that rupee risk is held constant is an assertion rather than a mechanism.
+    2. Dropping the 25.30 -> 1 lot and 7.65 -> 5 lots endpoints, which are what
+       make the size effect concrete rather than directional.
+    3. Losing the MIRROR consequence. That leg is equal-lot and outside the
+       budget, so it is where tightening actually costs money; an edit that
+       keeps only "more quantity" loses the part that bites.
+    4. Dropping either of the other two quantity-scaled costs (per-unit
+       slippage, and a constant loss suffered more OFTEN).
+    5. Losing the measured trade, including that the DIRECTION was right and a
+       premise-width stop would have survived. Without it the rule reads as
+       "use wider stops", which is not what it says.
+    6. Losing the practical form -- stop first, size second, never the reverse.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A TIGHTER STOP IS NOT LESS RISK")
+
+    # 1. The mechanism, and its relationship to v4x.
+    assert "IT IS MORE SIZE" in rule
+    assert "v4x handles a stop too WIDE to size" in rule
+    # It must claim to cover the OTHER direction, not restate v4x.
+    assert "the direction it does not cover" in rule
+    assert "one_lot_risk = |entry - stop| * lot_size" in rule
+    assert "lots = min(max_lots, floor(budget / one_lot_risk))" in rule
+    assert "held CONSTANT by construction" in rule
+    assert "What the stop actually sets is the QUANTITY" in rule
+
+    # 2. The measured endpoints, same budget.
+    assert "MEASURED ACROSS 19 SIZING DECISIONS" in rule
+    assert "25.30-point stop bought 1 lot" in rule
+    assert "7.65-point stop bought 5" in rule
+
+    # 3. The mirror -- equal-lot, outside the budget, where it actually costs.
+    assert "THE BANKNIFTY MIRROR IS EQUAL-LOT AND SITS OUTSIDE THE BUDGET" in rule
+    assert "about 15,350 of premium" in rule
+    assert "about 46,845" in rule
+    assert "TRIPLED the exposure the budget does not measure" in rule
+
+    # 4. The other two costs that scale with quantity.
+    assert "charged per unit" in rule
+    assert "PROBABILITY the stop is hit rises as it tightens" in rule
+    assert "A constant rupee loss suffered more often is not a smaller loss" in rule
+    assert "leverage wearing the costume of caution" in rule
+
+    # 5. The measured trade, including that the read was right.
+    assert "MEASURED ON THIS BOOK (2026-09-09)" in rule
+    assert "15.15 points away, which bought 2 lots" in rule
+    assert "NINETY-ONE SECONDS later at 23519.30" in rule
+    assert "-1,202.00" in rule
+    assert "The direction was right" in rule
+    assert "NIFTY reached 23474.85 by 10:09" in rule
+    assert "would have bought ONE lot -- would have survived" in rule
+
+    # 6. Stop first, size second -- and the tie back to v4x for the other end.
+    assert "choose the stop THE PREMISE REQUIRES" in rule
+    assert "Never choose a stop in order to obtain a size" in rule
+    assert "shrinking stop across consecutive trades as a warning" in rule
+    assert "v4x already governs and the answer is no trade" in rule
