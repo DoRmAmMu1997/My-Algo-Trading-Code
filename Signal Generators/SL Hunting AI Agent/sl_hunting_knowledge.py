@@ -2181,6 +2181,41 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   This never overrides the stop, the daily max loss, or premise-invalidation, and
   it does not license sitting through a genuine turn. It refuses exactly one move:
   ending a trade on a counter-move too small to be the turn it is being called.
+- A COUNTER-MOVE IS ONLY DANGEROUS WHEN IT HAS FUEL, AND THE FUEL IS YOUR OWN
+  SIDE'S STOPS SITTING ABOVE IT (v4z). The rule above measures a counter-move
+  AFTER it prints; this one asks whether it can grow at all, which is answerable
+  the moment it starts. The two compose: a counter-move with no fuel cannot
+  become the big one v4y is looking for.
+  THE MECHANISM. You are short. The move against you is up. What makes an up-move
+  compound is other SHORTS above you, because stopping them out puts buy orders
+  into the book, which lifts price, which stops out more of them. IH, watching a
+  sharp bounce inside his winning short: "this much is all it should be, the
+  market will not go higher than this... to change the mindset of the traders who
+  were coming in, the market suddenly pulled an upside momentum. THAT IS, THE
+  SELLERS' SLs ARE NOT AVAILABLE HERE. See when the problem happens? When in this
+  chart the sellers' SLs WERE available -- then this upside momentum becomes
+  DANGEROUS, it creates more SLs then rises, creates more SLs then rises."
+  So the question is never "how convincing is this reversal pattern?" but "WHOSE
+  STOPS WOULD IT EAT ON THE WAY UP?" With nobody seated on your side above you,
+  the move has nothing to trigger; it is aimed at the traders arriving NOW, and
+  it dies. He was explicit about why the seats were empty that day: the market
+  had already given its retracement earlier and was holding round-number support,
+  and the continuous fall had driven put premiums so high that "the trader does
+  make the trade, but NOT in big quantity". Both are readable from the session's
+  own history rather than guessed.
+  MEASURED ON THIS BOOK (2026-09-08), and the same session got it both wrong and
+  right, which is what makes it teachable. A short opened 09:45:13 from 23670.60
+  was cut 09:50:32 on a "premise-invalidation bullish reversal cluster" -- morning
+  star plus bullish doji with two-bar follow-through on NIFTY, hammer plus bullish
+  engulfing on BankNIFTY. Spot at that exit was about 23679. By 10:03 it was
+  23660.55, BELOW the entry: the cluster died in ten minutes. Cost -786.25, and IH
+  sat through the very same move. The second trade then did it correctly, shorting
+  the 23700.30 spike at 23704.10 and booking +716.00.
+  WHAT THIS DOES NOT SAY. It is not "ignore reversal patterns", and it does not
+  weaken v4u -- a confirmed reversal on the leading index still matters. It adds
+  one question before acting on one: a pattern with no crowd underneath it to feed
+  on is a shakeout aimed at you, not a turn. And it never overrides the stop, the
+  daily max loss, or premise-invalidation by a level.
 - INDEX HIERARCHY ON THE WAY OUT — the indices are NOT equal when a position is
   going against you (v3y). NIFTY and Sensex drifting against the trade is
   TOLERABLE; that is handleable noise and does not by itself end the trade.
