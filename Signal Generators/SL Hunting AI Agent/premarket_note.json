@@ -1,46 +1,46 @@
 {
-  "for_date": "2026-09-09",
-  "source": "Intraday Hunter, 'Prediction For 09 SEP 2026' (bwqMeOc-b8I, uploaded 2026-09-08)",
-  "context": "Continuous selling in all three indices, so this time the sellers ARE seated -- 'sellers may be in the market here'. But whoever is short has an SL, so they only come under threat on a gap up.",
+  "for_date": "2026-09-10",
+  "source": "Intraday Hunter, 'Prediction For 10 SEP 2026' (BbY6TwoC90o, uploaded 2026-09-09)",
+  "context": "Overall selling again, but the shape matters: the market HELD first and only then fell. 'Holding forms a PSYCHOLOGY, then the market falls' -- so few could participate in the selling, and the sellers are thin rather than seated.",
   "plan": [
-    "A SEATED CROWD IS ONLY A TARGET WHEN THE OPEN THREATENS IT: 'if we get flat or gap-down we CANNOT make those sellers our target. If we get a GAP UP, then THEY will see risk.' The open decides whether the shorts are prey or company.",
-    "GAP UP -> BUY side, and in NIFTY it must be ABOVE THE RESISTANCE. This is the only branch that hunts anyone: what you would be taking are the seated shorts' stops.",
-    "FLAT TO GAP-DOWN -> SELL side, walking WITH the market. Explicitly NOT a hunt -- 'do not target them DIRECTLY' -- you are joining the seated shorts, not squeezing them.",
-    "THIS INVERTS YESTERDAY'S CROWD READ WITHOUT CHANGING THE DIRECTION. Yesterday the sellers were in profit but NOT seated (high put premiums stopped them holding); today he says they ARE seated. Same sell branch, a different reason.",
-    "SENSEX'S OLD SUPPORTS ARE NOW ITS RESISTANCES: 75800 and 75950 were yesterday's support pair. Measure the open against those, not against yesterday's ceiling."
+    "THE HOLD IS THE WHOLE READ: 'if the market had NOT held here, if it had gone straight up and then straight down, then reversal chances rise. But it HELD, then fell.' The hold is why he is following rather than fading.",
+    "FLAT TO GAP-DOWN -> SELL side, walking WITH the market. Same conclusion as yesterday but for the opposite reason: yesterday the sellers were seated and could not be hunted; today they are thin because the hold kept them out.",
+    "ABOVE THE RESISTANCE -> BUY side. 'There the danger to the sellers increases -- even those already short come under risk.' As yesterday, that is the only branch that hunts, and he wants a GOOD gap up, not a marginal one.",
+    "SENSEX HAS EXPIRY tomorrow. Expect expiry behaviour in SENSEX on top of the shared read; NIFTY's own expiry was 08 Sep and is past.",
+    "HIS RESISTANCES ARE THE OPEN'S MEASURING STICK, not a target: the buy branch needs an opening ABOVE them (NIFTY 23540, BankNIFTY 56600, SENSEX 75200), which is a level test, not a gap-size test."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23670,
-        23720
+        23540,
+        23674
       ],
       "support": [
-        23480,
-        23540
+        23340,
+        23400
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57100,
-        57870
+        56600,
+        56870
       ],
       "support": [
-        56370,
-        56500
+        56040,
+        56200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        75800,
-        75950
+        75200,
+        75500
       ],
       "support": [
-        75200,
-        75310
+        74300,
+        74500
       ]
     }
   ]
