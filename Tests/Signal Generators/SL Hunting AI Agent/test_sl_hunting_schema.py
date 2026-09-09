@@ -2382,3 +2382,68 @@ def test_v4y_retracement_size_decides_turn_versus_continuation():
     assert "never overrides the stop, the daily max loss, or premise-invalidation" in rule
     assert "does not license sitting through a genuine turn" in rule
     assert "too small to be the turn it is being called" in rule
+def test_v4z_a_counter_move_needs_fuel_to_be_dangerous():
+    """v4z (08 Sep live session + this book): whose stops would it eat?
+
+    v4y measures a counter-move after it prints. This one asks whether it can
+    grow at all. Six ways an edit could break it:
+
+    1. Losing the direction of the mechanism. The fuel is YOUR OWN side's stops
+       above you -- other shorts, whose stop-outs are buy orders. Flip that and
+       the test points at the wrong crowd.
+    2. Turning it into "ignore reversal patterns". It adds a question before
+       acting on a pattern; it does not delete v4u.
+    3. Dropping IH's compounding description -- creates SLs, rises, creates more
+       -- which is the only thing that explains why a fuelled move is different
+       in kind rather than just bigger.
+    4. Losing the two readable reasons the seats were empty that day (the
+       retracement already given at round-number support, and premiums too high
+       for size). Without them the test is unanswerable in the moment.
+    5. Dropping the measured pair. The SAME session got it wrong at 09:50 and
+       right at 10:18, which is what makes it teachable rather than a scolding.
+    6. Losing the override clause.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A COUNTER-MOVE IS ONLY DANGEROUS WHEN IT HAS FUEL")
+
+    # 1. Direction of the mechanism, and how it compounds.
+    assert "THE FUEL IS YOUR OWN SIDE'S STOPS SITTING ABOVE IT" in rule
+    assert "other SHORTS above you" in rule
+    assert "stopping them out puts buy orders into the book" in rule
+    # The compounding half of the sentence, not just the first link.
+    assert "which lifts price, which stops out more of them" in rule
+
+    # It composes with v4y rather than replacing it.
+    assert "measures a counter-move AFTER it prints" in rule
+    assert "a counter-move with no fuel cannot become the big one" in rule
+
+    # 3. IH's words, including the compounding loop.
+    assert "THE SELLERS' SLs ARE NOT AVAILABLE HERE" in rule
+    assert "creates more SLs then rises" in rule
+    assert "the market will not go higher than this" in rule
+
+    # The question the agent must actually ask.
+    assert "WHOSE STOPS WOULD IT EAT ON THE WAY UP?" in rule
+    assert 'the question is never "how convincing is this reversal pattern?"' in rule
+    assert "aimed at the traders arriving NOW" in rule
+
+    # 4. Why the seats were empty -- both readable from the session itself.
+    assert "already given its retracement earlier and was holding round-number support" in rule
+    assert "but NOT in big quantity" in rule
+
+    # 5. The measured pair, wrong then right, in one session.
+    assert "MEASURED ON THIS BOOK (2026-09-08)" in rule
+    assert "09:45:13 from 23670.60" in rule
+    assert "premise-invalidation bullish reversal cluster" in rule
+    assert "By 10:03 it was" in rule
+    assert "23660.55, BELOW the entry" in rule
+    assert "cluster died in ten minutes" in rule
+    assert "-786.25" in rule
+    assert "IH sat through the very same move" in rule
+    assert "booking +716.00" in rule
+
+    # 2 and 6. Scope: it does not delete v4u, and cannot outrank hard risk.
+    assert "It is not \"ignore reversal patterns\"" in rule
+    assert "does not weaken v4u" in rule
+    assert "a shakeout aimed at you, not a turn" in rule
+    assert "never overrides the stop, the daily max loss, or premise-invalidation" in rule

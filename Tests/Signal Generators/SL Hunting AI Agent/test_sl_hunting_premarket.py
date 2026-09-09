@@ -201,26 +201,25 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_8_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 07 Sep transcript.
+def test_shipped_note_matches_september_9_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 08 Sep transcript.
 
-    Six things a summarising edit would flatten, each of which would change what
-    the agent does at 09:15:
+    Five things a summarising edit would flatten, each of which would change
+    what the agent does at 09:15:
 
-    1. EVERY open shape sells -- flat, gap-down and gap-up alike. Every previous
-       note in this series branched by open shape, so an edit that "restores"
-       a buy branch would be reverting to a habit rather than to the source.
-    2. The one exception is a SUDDEN BIG POSITIVE MOMENTUM at the open, and its
-       consequence is NO TRADE, not a long. There is no buy branch to fall to.
-    3. The sellers are in profit but NOT seated in size, because high put
-       premiums stopped them holding. That is the opposite of the obvious read
-       after a one-way down day, and it is what stops the note being taken as
-       "a big short crowd is there to squeeze".
-    4. He frames the question as whether the FOLLOW continues, not whether the
-       market reverses.
-    5. BankNIFTY never crossed its round number, which is why nobody held there
-       either.
-    6. Tomorrow is NIFTY expiry.
+    1. The crowd IS seated this time, and the whole note turns on the fact that
+       a seated crowd is only a TARGET when the open threatens it. Flat or
+       gap-down cannot threaten shorts, so those branches join them instead.
+       Collapse that and the note reads as "sell because sellers are there",
+       which is the opposite of the SL-hunting premise.
+    2. The gap-up branch is the ONLY hunting branch, and in NIFTY it needs the
+       open to be ABOVE THE RESISTANCE, not merely green.
+    3. The flat/gap-down branch is explicitly NOT a hunt -- "do not target them
+       DIRECTLY". Reading it as one would invent a squeeze that is not there.
+    4. The crowd read INVERTS yesterday's while the direction stays the same.
+       Yesterday: sellers in profit but not seated. Today: seated. An edit that
+       "reconciles" the two by dropping one would lose the reason.
+    5. SENSEX's old supports (75800/75950) are now its resistances.
     """
     import os
 
@@ -228,57 +227,57 @@ def test_shipped_note_matches_september_8_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-08"
-    assert "mfCrKdkHlig" in note.source
-    # The crowd read, and the mechanism that makes it counter-intuitive.
-    assert "continuous, good selling" in note.context
-    assert "did NOT hold in size" in note.context
-    assert "put premiums become very high" in note.context
+    assert note.for_date == "2026-09-09"
+    assert "bwqMeOc-b8I" in note.source
+    # Seated this time -- and the reason they are still not automatically prey.
+    assert "the sellers ARE seated" in note.context
+    assert "whoever is short has an SL" in note.context
+    assert "only come under threat on a gap up" in note.context
 
-    every = next(line for line in note.plan if line.startswith("SELL ON EVERY OPEN SHAPE"))
-    assert "Flat, gap-down AND gap-up all take sell-side setups" in every
-    assert "SUDDEN BIG POSITIVE MOMENTUM right at the open" in every
-    assert "that we cannot do anything about" in every
+    seated = next(line for line in note.plan if line.startswith("A SEATED CROWD IS ONLY A TARGET"))
+    assert "CANNOT make those sellers our target" in seated
+    assert "If we get a GAP UP, then THEY will see risk" in seated
+    assert "whether the shorts are prey or company" in seated
 
-    one_way = next(line for line in note.plan if line.startswith("THIS IS THE FIRST ONE-DIRECTION"))
-    assert "there is no buy branch to switch to" in one_way
-    # The exception must resolve to standing aside, never to flipping long.
-    assert "the answer is NO TRADE, never a long" in one_way
+    up = next(line for line in note.plan if line.startswith("GAP UP ->"))
+    assert "BUY side" in up
+    assert "ABOVE THE RESISTANCE" in up
+    assert "the only branch that hunts anyone" in up
 
-    crowd = next(line for line in note.plan if line.startswith("THE SELLERS ARE IN PROFIT"))
-    assert "NOT SEATED IN SIZE" in crowd
-    assert "high put premiums stopped them holding" in crowd
-    assert "Being right is not the same as being positioned" in crowd
-    assert "no big short crowd here to squeeze" in crowd
+    down = next(line for line in note.plan if line.startswith("FLAT TO GAP-DOWN ->"))
+    assert "SELL side, walking WITH the market" in down
+    assert "Explicitly NOT a hunt" in down
+    assert "do not target them DIRECTLY" in down
+    assert "joining the seated shorts, not squeezing them" in down
 
-    follow = next(line for line in note.plan if line.startswith("HE ASKS WHETHER THE FOLLOW"))
-    assert "not whether it reverses" in follow
-    assert "cannot directly say the market will go up tomorrow" in follow
-    assert "whether we can CONTINUE to follow" in follow
+    inv = next(line for line in note.plan if line.startswith("THIS INVERTS YESTERDAY'S CROWD READ"))
+    assert "WITHOUT CHANGING THE DIRECTION" in inv
+    assert "in profit but NOT seated" in inv
+    assert "today he says they ARE seated" in inv
 
-    assert any("ROUND NUMBER 57000" in line for line in note.plan)
-    assert any("TOMORROW IS NIFTY EXPIRY" in line for line in note.plan)
+    assert any("75800 and 75950 were yesterday's support" in line for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # "23720 2360" -- the second support came through truncated and was
-            # confirmed with the operator as 23660, not the rounder 23600.
             "index": "NIFTY",
-            "resistance": [23860.0, 23940.0],
-            "support": [23660.0, 23720.0],
+            "resistance": [23670.0, 23720.0],
+            "support": [23480.0, 23540.0],
         },
         {
-            # Both BankNIFTY sides were garbled: resistances as "57284 57570"
-            # and supports as the unusable seven-digit "5756800". Confirmed as
-            # 57280/57570 and 56800/57000 -- 57000 being the round number he
-            # says the market failed to cross. Do NOT reconstruct from caption.
+            # "57100 57876" -- the second resistance came through mangled and
+            # was confirmed with the operator as 57870, not the rounder 57800.
             "index": "BANKNIFTY",
-            "resistance": [57280.0, 57570.0],
-            "support": [56800.0, 57000.0],
+            "resistance": [57100.0, 57870.0],
+            "support": [56370.0, 56500.0],
         },
         {
+            # Supports were unusable in the caption ("7530 750"). The operator
+            # listened to the video and gave 75310/75200 -- NEITHER of the two
+            # readings offered from the transcript was right, which is why these
+            # get asked rather than reconstructed. Note the resistances here are
+            # yesterday's support pair, unchanged in value and flipped in role.
             "index": "SENSEX",
-            "resistance": [76200.0, 76370.0],
-            "support": [75800.0, 75950.0],
+            "resistance": [75800.0, 75950.0],
+            "support": [75200.0, 75310.0],
         },
     ]

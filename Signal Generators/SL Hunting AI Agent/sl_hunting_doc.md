@@ -6505,3 +6505,80 @@ here, put premiums become very high, so the trader would not have HELD the put
 trade."* Being right is not the same as being positioned.
 
 Tomorrow is **NIFTY expiry**.
+
+## Video addendum - the 8 Sep LIVE SESSION and the 9 Sep prediction (v4z)
+
+**Sources.** Both transcripts read in full:
+
+| Video | Id | Length | Uploaded (IST) | Segments |
+|---|---|---|---|---|
+| Live session, Tuesday 8 Sep (NIFTY expiry) | `NitY2pWf3p0` | 12:47 | 8 Sep 12:41 | 97 (0:02-12:42) |
+| Prediction For 09 SEP 2026 | `bwqMeOc-b8I` | 1:55 | 8 Sep 21:25 | 13 (0:06-1:44) |
+
+### The day, and the first session run under v4y
+
+NIFTY opened 23737.40, fell to ~23670 by 09:30, then chopped 23660-23700 all
+morning. IH entered puts AT the open, followed continuously, and booked his
+target after roughly two hours. The agent took two trades and finished -70.25.
+
+| # | Window | Entry | Exit reason | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|---|
+| 1 | 09:45:13 -> 09:50:32 | 23670.60, stop 23695.00 | `premise_invalidation_bullish_reversal_cluster` | -393.25 | -393.00 | **-786.25** |
+| 2 | 10:18:42 -> 10:31:36 | 23704.10, stop 23722.00 | `basket_book_stall_reversal` | +65.00 | +651.00 | **+716.00** |
+| | | | **TOTAL** | **-328.25** | **+258.00** | **-70.25** |
+
+**Trade 2 is v4y working, and it should be recorded as such.** It shorted the
+23700.30 spike at 23704.10 - within four points of the top - and booked using the
+completed-hunt test in its own words: *"target zone 23657 already tapped 10:05 and
+sharply rejected to 23717; NIFTY chopping 6+ candles unable to make new low."*
+That is the reasoning v4y and v4q were written for, applied unprompted.
+
+### Trade 1 is the gap, and IH narrates the exact minute
+
+Both watched the same bounce. The agent called it a bullish reversal cluster on
+both indices - morning star plus bullish doji with two-bar follow-through on
+NIFTY, hammer plus bullish engulfing on BankNIFTY - and cut, noting it was "only
+~8pts from its 23695 stop". IH, on the same move:
+
+> "This much is all it should be, the market will not go higher than this...
+> to change the mindset of the traders who were coming in, the market suddenly
+> pulled an upside momentum. **That is, the sellers' SLs are not available here.**
+> See when the problem happens? When in this chart the sellers' SLs WERE
+> available - then this upside momentum becomes dangerous, it creates more SLs
+> then rises, creates more SLs then rises."
+
+Spot at the agent's exit was about 23679. By 10:03 it was **23660.55**, below the
+entry. The cluster died in ten minutes.
+
+That is v4z: a counter-move compounds only when there are stops on YOUR side above
+it to harvest. IH also says why the seats were empty, and both reasons are
+readable from the session's own history - the market had already given its
+retracement and was holding round-number support, and the continuous fall had
+driven put premiums so high that "the trader does make the trade, but NOT in big
+quantity".
+
+### Recorded, not encoded
+
+- **He is NOT hunting on a continuation day, deliberately.** *"In SL hunting it is
+  not that we don't follow continuously. If retail sellers have not come in, the
+  chart can be followed continuously... if some traders are sitting in profit, we
+  don't make them our target either."* Plus a timing model for retail: they sell
+  after "selling, selling, retracement, then fall", not during clean continuation.
+  This is the same seated-crowd logic v4e/v4f/v3y already carry, restated.
+- **Strike selection.** He always sizes around AT THE MONEY: deep ITM gives better
+  momentum but ties up capital and spoils the risk-reward; OTM pays more when
+  momentum comes but "when momentum takes time, OTM hurts more". The agent already
+  trades ATM, so this confirms rather than changes anything.
+- **Option buyers pay rent.** *"If time is taking too long and you are in option
+  BUYING then you should get out. An option SELLER can try, because he can
+  withstand a retracement."* Already covered by v4j and v4g's time rules.
+- **Chop days punish over-trading specifically.** *"In such a market the problem is
+  bigger for traders who overtrade... you will lose more than you profit."*
+
+### Operator constraints, settled
+
+Two things flagged in earlier addenda are **deliberate** and should not be raised
+again: the 11:00 worker cutoff is sized to the operator's Claude Pro 5-hour limit,
+and `SL_HUNTING_RISK_BUDGET` exists so no single trade can lose an unbounded
+amount - so v4x's "if the re-derived stop cannot be sized, take NO trade" is the
+intended outcome of that budget, not a workaround for it.
