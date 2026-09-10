@@ -253,7 +253,7 @@ import threading
 import time
 import uuid
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -2021,6 +2021,12 @@ class PaperPosition:
     entry_trade_price: float = 0.0
     entry_price_quality: str = "UNKNOWN"
     exit_price_quality: str = "UNKNOWN"
+    # Wall-clock entry time, naive local, matching `HedgedPaperPosition`'s
+    # field of the same name and the `ts` stamp `publish_trade_event` puts on
+    # every event. Optional so a session-state record written before this
+    # field existed still resumes. REPORTING ONLY: no risk, sizing or
+    # execution decision reads it.
+    entry_timestamp: datetime | None = None
     # Option-leg metadata, locked at entry and reused on exit.
     option_security_id: int = 0
     option_exchange_segment: str = ""
@@ -6476,6 +6482,31 @@ class BasePaperStrategyWorker(threading.Thread):
 
         return bool(getattr(self.pos, "active", False))
 
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """Every ACTIVE local position this worker owns, each with a slot label.
+
+        The sibling `_paper_positions_active` answers "is anything open?"; this
+        answers "what, exactly?".  Reporting surfaces -- the crash-durable
+        session snapshot and the read-only monitoring dashboard -- need the
+        second question, and until this hook existed they only ever saw
+        `self.pos`.  That made the Delta-0.2 CE/PE spreads, the long-strangle
+        legs and the SL-Hunting BankNIFTY mirror invisible to both, so a
+        mid-session crash lost those open positions entirely.
+
+        Override this in ANY worker that also overrides
+        `_paper_positions_active`; a policy test fails the build when a class
+        overrides one without the other.
+
+        Pure attribute reads by contract.  This is called from reporting
+        threads, so a broker round-trip or a lock acquisition here would put a
+        monitoring surface on the trading path.
+        """
+
+        position = getattr(self, "pos", None)
+        if position is not None and getattr(position, "active", False):
+            return (("pos", position),)
+        return ()
+
     def _owned_live_states(self) -> tuple[LiveLegState, ...]:
         """Return active ledger legs owned by this exact worker instance."""
 
@@ -7582,6 +7613,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             pending_trailing_exit=bool(pending_trailing_exit),
             entry_trade_price=float(option_ltp),
             entry_price_quality=entry_price_quality,
+            entry_timestamp=datetime.now(),
             option_security_id=option_sec_id,
             option_exchange_segment=option_segment,
             option_right=option_right,
@@ -12688,6 +12720,15 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
 
         return self.ce_pos.active or self.pe_pos.active
 
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """Both independently managed spreads; `self.pos` is never used here."""
+
+        return tuple(
+            (slot, position)
+            for slot, position in (("ce_pos", self.ce_pos), ("pe_pos", self.pe_pos))
+            if position.active
+        )
+
     def _flatten_additional_positions(self, reason: str) -> None:
         """Drop reference-only subscriptions once shutdown has started."""
 
@@ -14028,6 +14069,15 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
         return self.ce_pos.active or self.pe_pos.active
 
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """Both strangle legs; `self.pos` is never used by this worker."""
+
+        return tuple(
+            (slot, position)
+            for slot, position in (("ce_pos", self.ce_pos), ("pe_pos", self.pe_pos))
+            if position.active
+        )
+
     def _flatten_additional_positions(self, reason: str) -> None:
         """Drop momentum-watch subscriptions after shutdown is requested."""
 
@@ -14316,6 +14366,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             entry_order_id=str(order_id),
             entry_trade_price=float(option_ltp),
             entry_price_quality=entry_price_quality,
+            entry_timestamp=datetime.now(),
             option_security_id=option_sec_id,
             option_exchange_segment=option_segment,
             option_right=option_right,
@@ -15486,6 +15537,7 @@ if SL_HUNTING_AVAILABLE:
                 entry_order_id=str(order_id), entry_underlying=bnf_spot,
                 entry_trade_price=float(option_ltp),
                 entry_price_quality=entry_price_quality,
+                entry_timestamp=datetime.now(),
                 option_security_id=sec_id,
                 option_exchange_segment=segment, option_right=str(contract["option_type"]),
                 option_strike=float(contract["strike"]), option_expiry=contract["expiry_date"],
@@ -15760,6 +15812,14 @@ if SL_HUNTING_AVAILABLE:
             """Treat either NIFTY or its BankNIFTY mirror as owned exposure."""
 
             return super()._paper_positions_active() or self._mirror_pos.active
+
+        def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+            """The NIFTY leg from the base class, plus the BankNIFTY mirror."""
+
+            positions = list(super()._owned_open_positions())
+            if self._mirror_pos.active:
+                positions.append(("mirror_pos", self._mirror_pos))
+            return tuple(positions)
 
         def _flatten_additional_positions(self, reason: str) -> None:
             """Retry a lone BankNIFTY mirror on every due flatten pass."""
@@ -17590,6 +17650,92 @@ def _position_leg_marks(position: object, store: SharedMarketDataStore) -> dict[
     return marks
 
 
+def _position_unrealized_pnl(position: object, marks: Mapping[str, float]) -> float | None:
+    """Signed mark-to-market for one position, or None when it cannot be honest.
+
+    Returns None -- never a guess -- when a leg has no cached mark, when live
+    exposure makes the quantity itself indeterminate, or when the position
+    shape is one this function has not been taught. A reporting surface that
+    invents a number is worse than one that shows a dash.
+
+    The signs come from `AtmSingleLegStrategyWorker._option_leg_pnl`, the same
+    static helper the exit path and the max-loss kill-switch use, so a report
+    can never disagree with the books about direction. That matters concretely:
+    the arithmetic this replaces assumed every leg was BOUGHT, which wrote a
+    confidently wrong number for a CPR-AI position that SOLD premium.
+
+    `marks` comes from `_position_leg_marks`, which only records a leg whose
+    cached LTP is positive -- so "no key" already means "no price".
+    """
+
+    # An order whose fill is unresolved has an unknown quantity. There is no
+    # honest mark-to-market for exposure whose SIZE is in question, so this
+    # refuses to produce one rather than pricing a guess.
+    for attribute in ("live_leg", "main_live_leg", "hedge_live_leg"):
+        leg_state = getattr(position, attribute, None)
+        if leg_state is not None and getattr(leg_state, "exposure_indeterminate", False):
+            return None
+
+    leg_pnl = AtmSingleLegStrategyWorker._option_leg_pnl
+
+    if isinstance(position, PaperPosition):
+        mark = marks.get("option")
+        if mark is None:
+            return None
+        return leg_pnl(
+            position.option_opening_side,
+            position.entry_trade_price,
+            mark,
+            position.quantity,
+        )
+
+    if isinstance(position, HedgedPaperPosition):
+        main_mark = marks.get("main")
+        hedge_mark = marks.get("hedge")
+        # Half a hedged pair is not a partial answer, it is a wrong one: the
+        # unpriced leg is exactly the one that offsets the other.
+        if main_mark is None or hedge_mark is None:
+            return None
+        # Each leg carries its OWN quantity. A partial hedge is simply a
+        # smaller second term; there is no basket quantity to get wrong.
+        return leg_pnl(
+            position.main_side,
+            position.main_entry_price,
+            main_mark,
+            position.main_quantity,
+        ) + leg_pnl(
+            position.hedge_side,
+            position.hedge_entry_price,
+            hedge_mark,
+            position.hedge_quantity,
+        )
+
+    return None
+
+
+def _worker_owned_positions(worker: object) -> tuple[tuple[str, Any], ...]:
+    """Enumerate a worker's open positions without ever raising.
+
+    Thin defensive wrapper around `BasePaperStrategyWorker._owned_open_positions`
+    so a half-constructed worker -- or a test double that does not implement
+    the hook -- degrades to "nothing to report" instead of interrupting the
+    supervision loop that persists everyone else's crash-recovery state.
+    """
+
+    getter = getattr(worker, "_owned_open_positions", None)
+    if not callable(getter):
+        return ()
+    try:
+        return tuple(getter())
+    except Exception:  # noqa: BLE001 - reporting only
+        logger.debug(
+            "Could not enumerate owned positions for %s.",
+            getattr(worker, "strategy_name", type(worker).__name__),
+            exc_info=True,
+        )
+        return ()
+
+
 def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
     """Build one worker's crash-durable snapshot (counters + open position).
 
@@ -17609,23 +17755,38 @@ def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
     except Exception:  # noqa: BLE001 - reporting only
         snapshot["execution_mode"] = "PAPER"
 
-    position = getattr(worker, "pos", None)
-    if position is None or not getattr(position, "active", False):
-        return snapshot
+    # `open_position` keeps its exact historical contract: ONE record, built
+    # from `worker.pos`. It is the only key `resumable_open_positions` and
+    # `_resume_open_positions` will ever read, and resume accepts only a
+    # single-leg PaperPosition, so widening this key would widen resume too.
+    primary = getattr(worker, "pos", None)
+    if primary is not None and getattr(primary, "active", False):
+        primary_marks = _position_leg_marks(primary, worker.store)
+        snapshot["open_position"] = serialize_position(
+            primary,
+            leg_marks=primary_marks,
+            unrealized_pnl=_position_unrealized_pnl(primary, primary_marks),
+        )
 
-    marks = _position_leg_marks(position, worker.store)
-    # Mark-to-market is computed only for the single-leg family, where every
-    # position is a BOUGHT option and the arithmetic is unambiguous. Hedged and
-    # multi-leg shapes carry per-leg sides, so guessing a sign here would write
-    # a confidently wrong number into a file used for recovery.
-    unrealized = None
-    if "option" in marks and isinstance(position, PaperPosition):
-        unrealized = (marks["option"] - float(position.entry_trade_price)) * int(position.quantity)
-    snapshot["open_position"] = serialize_position(
-        position,
-        leg_marks=marks,
-        unrealized_pnl=unrealized,
-    )
+    # `owned_positions` is the COMPLETE local book, including the positions
+    # that never lived in `worker.pos` -- the Delta-0.2 CE/PE spreads, the
+    # long-strangle legs, the SL-Hunting BankNIFTY mirror. Those used to be
+    # absent from the marks file entirely, so a mid-session crash lost them.
+    # The `pos` slot is deliberately included as well, so a reader that wants
+    # everything reads one key rather than unioning two. Resume ignores it.
+    owned: list[dict] = []
+    for slot, position in _worker_owned_positions(worker):
+        marks = _position_leg_marks(position, worker.store)
+        record = serialize_position(
+            position,
+            leg_marks=marks,
+            unrealized_pnl=_position_unrealized_pnl(position, marks),
+        )
+        if record is not None:
+            record["position_slot"] = str(slot)
+            owned.append(record)
+    if owned:
+        snapshot["owned_positions"] = owned
     return snapshot
 
 
@@ -17796,6 +17957,27 @@ def _resume_open_positions(
     return restored
 
 
+def _parse_naive_timestamp(value: object) -> datetime | None:
+    """Best-effort read of a persisted entry timestamp; None when unreadable.
+
+    Deliberately forgiving. The entry time is REPORTING data -- nothing about
+    risk, sizing or execution depends on it -- so a record written before the
+    field existed, or one whose value is malformed, must still resume rather
+    than be rejected as unsafe. The value is normalised to naive local time to
+    match every other timestamp the runner stamps.
+    """
+
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo is not None else value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo is not None else parsed
+
+
 def _paper_position_from_record(record: dict) -> PaperPosition:
     """Rebuild a single-leg PaperPosition from its persisted record.
 
@@ -17892,6 +18074,9 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         bars_in_trade=int(record.get("bars_in_trade", 0) or 0),
         entry_trade_price=entry_trade_price,
         entry_price_quality=str(record.get("entry_price_quality", "UNKNOWN")),
+        # Optional and non-validating on purpose: a record from before this
+        # field existed resumes fine and simply reports no entry time.
+        entry_timestamp=_parse_naive_timestamp(record.get("entry_timestamp")),
         option_security_id=security_id,
         option_exchange_segment=exchange_segment,
         option_right=option_right,

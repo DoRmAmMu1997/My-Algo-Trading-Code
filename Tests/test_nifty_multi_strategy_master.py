@@ -12791,3 +12791,377 @@ class SheetEmptyUpdateDiagnosisTests(unittest.TestCase):
         """A day the runner produced nothing for is quiet, not broken."""
         values = [self.HEADER_SEPT, ["Renko Strategy", "", ""]]
         self.assertIsNone(self._diagnose(values, {"2026-08-31": {"Renko": 1.0}}))
+
+
+class TestOwnedOpenPositions(unittest.TestCase):
+    """The hook that answers "what, exactly, is open?".
+
+    `_paper_positions_active` has always answered "is anything open?", but
+    every reporting surface -- the crash-durable marks file, and now the
+    monitoring dashboard -- needs the second question. Before this hook they
+    read `worker.pos` alone, so the three families that keep exposure
+    elsewhere were invisible: a mid-session crash lost them entirely.
+    """
+
+    def _atm_worker(self):
+        worker = master_file.AtmSingleLegStrategyWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(),
+            broker=MagicMock(),
+        )
+        worker.strategy_name = "Renko"
+        return worker
+
+    def _single_leg(self, symbol="NIFTY-24550-CE", security_id=43210, side="BUY"):
+        return master_file.PaperPosition(
+            active=True,
+            direction="BULLISH",
+            symbol=symbol,
+            quantity=75,
+            entry_trade_price=100.0,
+            option_security_id=security_id,
+            option_exchange_segment="NSE_FNO",
+            option_right="CE",
+            option_strike=24550.0,
+            option_lot_size=75,
+            option_opening_side=side,
+        )
+
+    # -- the base implementation ----------------------------------------
+    def test_flat_worker_owns_nothing(self):
+        self.assertEqual(self._atm_worker()._owned_open_positions(), ())
+
+    def test_open_worker_owns_its_pos_under_the_pos_slot(self):
+        worker = self._atm_worker()
+        worker.pos = self._single_leg()
+        owned = worker._owned_open_positions()
+        self.assertEqual([slot for slot, _ in owned], ["pos"])
+        self.assertIs(owned[0][1], worker.pos)
+
+    # -- the three families that keep exposure outside `pos` -------------
+    def test_delta20_enumerates_both_spreads(self):
+        worker = master_file.Delta20HedgedSpreadWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(),
+            broker=MagicMock(),
+        )
+        self.assertEqual(worker._owned_open_positions(), ())
+        worker.ce_pos = master_file.HedgedPaperPosition(active=True, direction="CE")
+        worker.pe_pos = master_file.HedgedPaperPosition(active=True, direction="PE")
+        self.assertEqual(
+            [slot for slot, _ in worker._owned_open_positions()], ["ce_pos", "pe_pos"]
+        )
+        # One side closing must drop exactly that side.
+        worker.ce_pos = master_file.HedgedPaperPosition()
+        self.assertEqual([slot for slot, _ in worker._owned_open_positions()], ["pe_pos"])
+
+    def test_long_strangle_enumerates_both_legs(self):
+        worker = master_file.LongStrangleWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(),
+            broker=MagicMock(),
+        )
+        self.assertEqual(worker._owned_open_positions(), ())
+        worker.ce_pos = self._single_leg(symbol="NIFTY-CE", security_id=1001)
+        worker.pe_pos = self._single_leg(symbol="NIFTY-PE", security_id=1002)
+        self.assertEqual(
+            [slot for slot, _ in worker._owned_open_positions()], ["ce_pos", "pe_pos"]
+        )
+
+    @unittest.skipIf(
+        getattr(master_file, "SLHuntingAIWorker", None) is None,
+        "SL Hunting AI Agent dependencies are not installed",
+    )
+    def test_sl_hunting_enumerates_the_banknifty_mirror_beside_the_nifty_leg(self):
+        worker = master_file.SLHuntingAIWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(),
+            broker=MagicMock(),
+        )
+        worker.pos = self._single_leg(symbol="NIFTY-24550-CE", security_id=1)
+        worker._mirror_pos = self._single_leg(symbol="BANKNIFTY-57900-CE", security_id=2)
+        self.assertEqual(
+            [slot for slot, _ in worker._owned_open_positions()], ["pos", "mirror_pos"]
+        )
+        # A lone mirror is still owned exposure -- that asymmetry is the whole
+        # point of the mirror being evaluated independently of the NIFTY leg.
+        worker.pos = master_file.PaperPosition()
+        self.assertEqual([slot for slot, _ in worker._owned_open_positions()], ["mirror_pos"])
+
+    # -- the two hooks must never disagree -------------------------------
+    def test_the_two_hooks_agree_for_every_family(self):
+        """`bool(owned) == is anything active`, checked per family.
+
+        These are separate methods -- one gates flattening, a live-money path;
+        the other is reporting -- so nothing structurally forces them to
+        agree. Drift would mean either a flatten that skips real exposure or a
+        report that hides it.
+        """
+        store, stop = master_file.SharedMarketDataStore(), threading.Event()
+        cases = [
+            (
+                master_file.AtmSingleLegStrategyWorker(
+                    store=store, stop_event=stop, broker=MagicMock()
+                ),
+                lambda w: setattr(w, "pos", self._single_leg()),
+            ),
+            (
+                master_file.Delta20HedgedSpreadWorker(
+                    store=store, stop_event=stop, broker=MagicMock()
+                ),
+                lambda w: setattr(
+                    w, "pe_pos", master_file.HedgedPaperPosition(active=True, direction="PE")
+                ),
+            ),
+            (
+                master_file.LongStrangleWorker(
+                    store=store, stop_event=stop, broker=MagicMock()
+                ),
+                lambda w: setattr(w, "ce_pos", self._single_leg()),
+            ),
+        ]
+        for worker, open_one in cases:
+            with self.subTest(worker=type(worker).__name__):
+                self.assertEqual(
+                    bool(worker._owned_open_positions()), worker._paper_positions_active()
+                )
+                open_one(worker)
+                self.assertEqual(
+                    bool(worker._owned_open_positions()), worker._paper_positions_active()
+                )
+
+    def test_a_class_that_overrides_one_hook_must_override_the_other(self):
+        """Reflective guard for the NEXT worker family, not today's three.
+
+        A new worker that keeps positions outside `self.pos` must override
+        `_paper_positions_active` (or shutdown misses its exposure) and can
+        silently forget the reporting hook -- which is exactly the bug this
+        change exists to fix. Fail the build instead of shipping the blind spot.
+        """
+        offenders = []
+        for name, obj in vars(master_file).items():
+            if not isinstance(obj, type):
+                continue
+            if not issubclass(obj, master_file.BasePaperStrategyWorker):
+                continue
+            if "_paper_positions_active" in vars(obj) and "_owned_open_positions" not in vars(obj):
+                offenders.append(name)
+        self.assertEqual(
+            offenders,
+            [],
+            "these workers override _paper_positions_active without "
+            "_owned_open_positions, so their exposure is invisible to the "
+            f"marks file and the dashboard: {offenders}",
+        )
+
+    def test_enumeration_never_raises_on_a_broken_worker(self):
+        """Reporting must degrade, not interrupt the supervision loop."""
+        broken = MagicMock()
+        broken.strategy_name = "Broken"
+        broken._owned_open_positions.side_effect = RuntimeError("boom")
+        self.assertEqual(master_file._worker_owned_positions(broken), ())
+        # A stand-in with no hook at all is equally harmless.
+        self.assertEqual(master_file._worker_owned_positions(object()), ())
+
+
+class TestPositionUnrealizedPnl(unittest.TestCase):
+    """Mark-to-market for reporting: the right sign, or an honest None.
+
+    The arithmetic this replaced assumed every leg was BOUGHT, so a CPR-AI
+    position that SOLD premium had its persisted `unrealized_pnl` written with
+    the wrong sign.
+    """
+
+    def _bought(self):
+        return master_file.PaperPosition(
+            active=True, quantity=75, entry_trade_price=100.0, option_opening_side="BUY"
+        )
+
+    def _sold(self):
+        return master_file.PaperPosition(
+            active=True, quantity=75, entry_trade_price=100.0, option_opening_side="SELL"
+        )
+
+    def test_a_bought_leg_gains_when_the_mark_rises(self):
+        self.assertAlmostEqual(
+            master_file._position_unrealized_pnl(self._bought(), {"option": 110.0}), 750.0
+        )
+
+    def test_a_sold_leg_loses_when_the_mark_rises(self):
+        """The regression that motivated this helper."""
+        self.assertAlmostEqual(
+            master_file._position_unrealized_pnl(self._sold(), {"option": 110.0}), -750.0
+        )
+
+    def test_a_hedged_pair_uses_each_legs_own_quantity(self):
+        position = master_file.HedgedPaperPosition(
+            active=True,
+            main_side="SELL",
+            main_entry_price=120.0,
+            main_quantity=150,
+            hedge_side="BUY",
+            hedge_entry_price=8.0,
+            hedge_quantity=75,
+        )
+        # SELL 150 @120 -> 110 = +1500 ; BUY 75 @8 -> 7 = -75
+        self.assertAlmostEqual(
+            master_file._position_unrealized_pnl(position, {"main": 110.0, "hedge": 7.0}),
+            1425.0,
+        )
+
+    def test_a_missing_mark_is_a_dash_not_a_zero(self):
+        self.assertIsNone(master_file._position_unrealized_pnl(self._bought(), {}))
+        # Half a hedged pair is a wrong answer, not a partial one: the unpriced
+        # leg is exactly the one that offsets the other.
+        position = master_file.HedgedPaperPosition(active=True)
+        self.assertIsNone(master_file._position_unrealized_pnl(position, {"main": 110.0}))
+
+    def test_indeterminate_live_exposure_has_no_honest_mark(self):
+        position = self._bought()
+        position.live_leg = SimpleNamespace(exposure_indeterminate=True)
+        self.assertIsNone(master_file._position_unrealized_pnl(position, {"option": 110.0}))
+
+    def test_an_unknown_position_shape_is_never_guessed(self):
+        self.assertIsNone(
+            master_file._position_unrealized_pnl(SimpleNamespace(), {"option": 110.0})
+        )
+
+
+class TestOwnedPositionsReachTheSnapshot(unittest.TestCase):
+    """The hook is only useful if it survives all the way to the marks file."""
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.worker = master_file.Delta20HedgedSpreadWorker(
+            store=self.store, stop_event=threading.Event(), broker=MagicMock()
+        )
+
+    def _side(self, main_id, hedge_id):
+        return master_file.HedgedPaperPosition(
+            active=True,
+            direction="CE",
+            main_symbol="NIFTY-23000-CE",
+            main_side="SELL",
+            main_security_id=main_id,
+            main_exchange_segment="NSE_FNO",
+            main_quantity=75,
+            main_entry_price=120.0,
+            hedge_symbol="NIFTY-23200-CE",
+            hedge_side="BUY",
+            hedge_security_id=hedge_id,
+            hedge_exchange_segment="NSE_FNO",
+            hedge_quantity=75,
+            hedge_entry_price=8.0,
+        )
+
+    def test_both_delta20_spreads_appear_with_their_slot_labels(self):
+        self.worker.ce_pos = self._side(1001, 2002)
+        self.worker.pe_pos = self._side(3003, 4004)
+        self.store.update_ltp_map(
+            {
+                ("NSE_FNO", 1001): 110.0,
+                ("NSE_FNO", 2002): 7.0,
+                ("NSE_FNO", 3003): 110.0,
+                ("NSE_FNO", 4004): 7.0,
+            }
+        )
+
+        snapshot = master_file._worker_session_state_snapshot(self.worker)
+
+        owned = snapshot["owned_positions"]
+        self.assertEqual([record["position_slot"] for record in owned], ["ce_pos", "pe_pos"])
+        # SELL 75 @120 -> 110 = +750 ; BUY 75 @8 -> 7 = -75
+        self.assertAlmostEqual(owned[0]["unrealized_pnl"], 675.0, places=2)
+        self.assertEqual(owned[0]["leg_marks"], {"main": 110.0, "hedge": 7.0})
+        # This worker never uses `self.pos`, so the resume-facing key stays out.
+        self.assertNotIn("open_position", snapshot)
+
+    def test_a_flat_worker_writes_no_owned_positions_key(self):
+        snapshot = master_file._worker_session_state_snapshot(self.worker)
+        self.assertNotIn("owned_positions", snapshot)
+
+    def test_the_single_leg_family_reports_pos_under_both_keys(self):
+        """`open_position` keeps its resume contract; `owned_positions` is the
+        complete book, so the single-leg family appears in both."""
+        worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        worker.strategy_name = "Renko"
+        worker.pos = master_file.PaperPosition(
+            active=True,
+            direction="BULLISH",
+            symbol="NIFTY-24550-CE",
+            quantity=75,
+            entry_trade_price=112.35,
+            option_security_id=43210,
+            option_exchange_segment="NSE_FNO",
+            option_lot_size=75,
+        )
+        self.store.update_ltp_map({("NSE_FNO", 43210): 98.1})
+
+        snapshot = master_file._worker_session_state_snapshot(worker)
+
+        self.assertAlmostEqual(snapshot["open_position"]["unrealized_pnl"], -1068.75, places=2)
+        self.assertEqual([r["position_slot"] for r in snapshot["owned_positions"]], ["pos"])
+        self.assertAlmostEqual(
+            snapshot["owned_positions"][0]["unrealized_pnl"], -1068.75, places=2
+        )
+
+    def test_marks_are_still_read_from_the_cache_only(self):
+        """This runs on the supervisor thread; a broker call would stall it."""
+        self.worker.ce_pos = self._side(1001, 2002)
+        master_file._worker_session_state_snapshot(self.worker)
+        self.worker.broker.fetch_ltp_map.assert_not_called()
+
+
+class TestPaperPositionEntryTimestamp(unittest.TestCase):
+    """Entry time is reporting data, so it is recorded but never validated."""
+
+    @staticmethod
+    def _resumable_record():
+        return {
+            "direction": "BULLISH",
+            "symbol": "NIFTY-24550-CE",
+            "quantity": 75,
+            "entry_trade_price": 112.35,
+            "entry_underlying": 24561.2,
+            "stop_underlying": 24510.0,
+            "target_underlying": 24640.0,
+            "option_security_id": 43210,
+            "option_exchange_segment": "NSE_FNO",
+            "option_right": "CE",
+            "option_strike": 24550.0,
+            "option_expiry": "2026-08-11",
+            "option_lot_size": 75,
+            "option_opening_side": "BUY",
+        }
+
+    def test_a_fresh_position_defaults_to_no_entry_time(self):
+        self.assertIsNone(master_file.PaperPosition().entry_timestamp)
+
+    def test_a_resumed_record_without_the_field_still_resumes(self):
+        """Records written before this field existed must not be rejected."""
+        record = self._resumable_record()
+        record.pop("entry_timestamp", None)
+        position = master_file._paper_position_from_record(record)
+        self.assertTrue(position.active)
+        self.assertIsNone(position.entry_timestamp)
+
+    def test_a_resumed_record_carries_its_entry_time_back(self):
+        record = dict(self._resumable_record(), entry_timestamp="2026-09-10T10:17:45")
+        position = master_file._paper_position_from_record(record)
+        self.assertEqual(position.entry_timestamp, datetime(2026, 9, 10, 10, 17, 45))
+
+    def test_an_unreadable_entry_time_never_blocks_a_resume(self):
+        record = dict(self._resumable_record(), entry_timestamp="not a timestamp")
+        position = master_file._paper_position_from_record(record)
+        self.assertTrue(position.active)
+        self.assertIsNone(position.entry_timestamp)
+
+    def test_the_parser_normalises_away_a_timezone(self):
+        """Every other timestamp the runner stamps is naive local."""
+        parsed = master_file._parse_naive_timestamp("2026-09-10T10:17:45+05:30")
+        self.assertIsNone(parsed.tzinfo)
+        self.assertEqual(parsed, datetime(2026, 9, 10, 10, 17, 45))
+        self.assertIsNone(master_file._parse_naive_timestamp(None))
+        self.assertIsNone(master_file._parse_naive_timestamp("  "))

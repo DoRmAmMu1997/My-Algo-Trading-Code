@@ -942,3 +942,88 @@ def test_a_failing_write_does_not_kill_the_writer_or_lose_the_event(state_path: 
     state = load_session_state(state_path)
     assert state["strategies"]["Renko"]["recorded_pnl"] == 7.0
     assert calls["n"] >= 2, "the failed write must have been retried"
+
+
+# ---------------------------------------------------------------------------
+# owned_positions: the COMPLETE local book, not just `worker.pos`
+# ---------------------------------------------------------------------------
+# Three worker families keep exposure outside `worker.pos` (the Delta-0.2 CE/PE
+# spreads, the long-strangle legs, the SL-Hunting BankNIFTY mirror). They were
+# absent from this file entirely, so a mid-session crash lost them. The key is
+# additive: `open_position` keeps its exact resume contract.
+def _owned(slot: str = "ce_pos", **overrides) -> dict:
+    record = serialize_position(_FakePosition(**overrides), leg_marks={"option": 98.1})
+    assert record is not None
+    record["position_slot"] = slot
+    return record
+
+
+def test_owned_positions_are_written_to_the_marks_document(state_path: Path):
+    store = _store(state_path)
+    store.update_worker_snapshot(
+        [{"strategy": "Delta20Hedged", "owned_positions": [_owned("ce_pos"), _owned("pe_pos")]}],
+        force=True,
+    )
+
+    marks = json.loads(_marks_path_for(state_path).read_text(encoding="utf-8"))
+    written = marks["strategies"]["Delta20Hedged"]["owned_positions"]
+    assert [record["position_slot"] for record in written] == ["ce_pos", "pe_pos"]
+
+
+def test_owned_positions_never_reach_the_durable_document(state_path: Path):
+    """Volatile mark data must not widen the durable file's torn-write surface."""
+    store = _store(state_path)
+    store.update_worker_snapshot(
+        [{"strategy": "Delta20Hedged", "owned_positions": [_owned()]}], force=True
+    )
+    store.record_trade_event({"action": "EXIT", "strategy": "Delta20Hedged", "pnl": 12.0})
+
+    durable = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "owned_positions" not in durable["strategies"]["Delta20Hedged"]
+    # ...but the realized P&L the durable file exists for is still there.
+    assert durable["strategies"]["Delta20Hedged"]["recorded_pnl"] == 12.0
+
+
+def test_a_flat_worker_has_its_owned_positions_removed(state_path: Path):
+    """Exactly the `open_position` rule: a stale record would look like exposure."""
+    store = _store(state_path)
+    store.update_worker_snapshot(
+        [{"strategy": "Delta20Hedged", "owned_positions": [_owned()]}], force=True
+    )
+    assert "owned_positions" in store.snapshot()["strategies"]["Delta20Hedged"]
+
+    store.update_worker_snapshot(
+        [{"strategy": "Delta20Hedged", "owned_positions": []}], force=True
+    )
+    assert "owned_positions" not in store.snapshot()["strategies"]["Delta20Hedged"]
+
+
+def test_owned_positions_never_carry_forward_across_a_restart(state_path: Path):
+    """Exposure never carries implicitly; only a live worker read may re-assert it."""
+    first = _store(state_path)
+    first.record_trade_event({"action": "EXIT", "strategy": "Delta20Hedged", "pnl": -250.0})
+    first.update_worker_snapshot(
+        [{"strategy": "Delta20Hedged", "owned_positions": [_owned()]}], force=True
+    )
+
+    second = _store(state_path)
+    carried = second.snapshot()["strategies"]["Delta20Hedged"]
+    assert "owned_positions" not in carried
+    assert "open_position" not in carried
+    # Realized P&L, which the carry-forward exists for, must survive.
+    assert recorded_realized_pnl(second.snapshot())["Delta20Hedged"] == -250.0
+
+
+def test_resume_still_keys_on_open_position_alone(state_path: Path):
+    """`owned_positions` must be invisible to resume: it can hold hedged and
+    mirror shapes that `_paper_position_from_record` cannot rebuild."""
+    store = _store(state_path, session_date=date(2026, 8, 10))
+    store.update_worker_snapshot(
+        [{"strategy": "Delta20Hedged", "owned_positions": [_owned(), _owned("pe_pos")]}],
+        force=True,
+    )
+
+    resumable = resumable_open_positions(
+        load_session_state(state_path), session_date=date(2026, 8, 10)
+    )
+    assert resumable == {}
