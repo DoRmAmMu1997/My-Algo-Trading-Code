@@ -40,6 +40,14 @@ SAFETY_THRESHOLDS = {
     # dies before publishing results. A regression here is silent until the
     # day it matters, so it carries the data-safety budget.
     "Dependencies/session_state.py": 90.0,
+    # The dashboard's PURE half: it decides which trades closed and when each
+    # open one started, so a defect here shows an operator a wrong entry time
+    # or a wrong P&L beside a real position. It has no I/O and no threads, so
+    # a high budget is cheap to honour. Its transport sibling
+    # (dashboard_server.py) is deliberately NOT listed -- socket-bound code
+    # has branches that cannot honestly be covered, and a budget you cannot
+    # meet is worse than none.
+    "Dependencies/dashboard_snapshot.py": 90.0,
     # The rolling-window rate limiter, hoisted out of the Flattrade and Dhan
     # adapters (2026-09-02). It sits directly in front of every live broker
     # request those two make: if it under-counts, orders breach the broker's

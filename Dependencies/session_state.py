@@ -114,6 +114,7 @@ MARKS_STALL_INTERVALS = 4
 # needed to answer "what had this strategy banked when the process died".
 _MARKS_ONLY_KEYS = (
     "open_position",
+    "owned_positions",
     "snapshot_valid",
     "snapshot_error_at",
     "completed_trades",
@@ -427,6 +428,7 @@ class SessionStateStore:
             # record separately and its first successful snapshot writes back
             # only positions that genuinely resumed.
             copied_entry.pop("open_position", None)
+            copied_entry.pop("owned_positions", None)
             copied_entry.pop("snapshot_valid", None)
             copied_entry.pop("snapshot_error_at", None)
             self._state["strategies"][str(strategy)] = copied_entry
@@ -636,6 +638,19 @@ class SessionStateStore:
                         # A closed position must be REMOVED, not left behind --
                         # a stale record here would look resumable.
                         entry.pop("open_position", None)
+                    # The complete local book, including the multi-position
+                    # families whose exposure never lived in `worker.pos`.
+                    # Note this loop copies a FIXED set of keys: a snapshot key
+                    # that is not named here is silently dropped, which is
+                    # exactly how this one could have looked implemented and
+                    # not been.
+                    owned = snapshot.get("owned_positions")
+                    if owned:
+                        coerced_owned = _jsonable(owned)
+                        if coerced_owned is not _UNSERIALIZABLE:
+                            entry["owned_positions"] = coerced_owned
+                    else:
+                        entry.pop("owned_positions", None)
                 # Marks only: the snapshot loop must never rewrite the durable
                 # document, or one torn write could destroy the day's books.
                 self._flush_marks_locked()

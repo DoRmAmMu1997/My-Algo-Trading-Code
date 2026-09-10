@@ -253,7 +253,7 @@ import threading
 import time
 import uuid
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -279,7 +279,9 @@ import requests
 # when MARKET_DATA_SOURCE=WEBSOCKET selects the tick-driven producer below.
 from dhanhq import DhanContext, DhanLogin, MarketFeed, dhanhq
 
+from Dependencies import dashboard_snapshot
 from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
+from Dependencies.dashboard_server import DashboardEventSink, DashboardServer, start_dashboard
 from Dependencies.execution_ledger import (
     ExecutionLedger,
     LegSpec,
@@ -679,6 +681,44 @@ SESSION_STATE_HEARTBEAT_SECONDS = _env_float("SESSION_STATE_HEARTBEAT_SECONDS", 
 # events also still have their `EXIT` log line, which is what the EOD Sheet
 # parses, so the fallback is the same one used before this module existed.
 SESSION_STATE_ASYNC_WRITES = _env_bool("SESSION_STATE_ASYNC_WRITES", False)
+
+# Read-only local monitoring dashboard. A browser page served by the runner
+# itself, answering "where do I stand right now" -- the one question the log
+# file, the Telegram feed and the end-of-day Google Sheet all fail to answer
+# while a session is running.
+#
+# It is read-only by construction: GET is the only request method implemented,
+# it never touches the broker, and it reads values already cached in memory
+# from its own background thread. It binds 127.0.0.1 and there is deliberately
+# NO host setting -- reaching it from another machine is a reviewed code change
+# plus an access token, not a line in `.env`.
+#
+# OFF by default.
+DASHBOARD_ENABLED = _env_bool("DASHBOARD_ENABLED", False)
+DASHBOARD_PORT = _env_int("DASHBOARD_PORT", 8787)
+# Everything below is clamped at read time rather than validated, because a
+# typo in a monitoring knob must never stop a trading session from starting.
+#
+# Rebuild cadence, and the browser's poll interval -- one number drives both
+# ends so they cannot drift apart.
+DASHBOARD_REFRESH_SECONDS = min(max(_env_float("DASHBOARD_REFRESH_SECONDS", 1.0), 0.25), 30.0)
+# Candles the chart shows. 375 is one full session.
+DASHBOARD_CHART_BARS = min(max(_env_int("DASHBOARD_CHART_BARS", 375), 60), 2200)
+# Trade events the dashboard mirrors in memory for its closed-trade table. A
+# normal day is around 170.
+DASHBOARD_MAX_TRADE_EVENTS = min(max(_env_int("DASHBOARD_MAX_TRADE_EVENTS", 2000), 100), 20000)
+# A cached option price older than this is shown dimmed rather than presented
+# as a current mark.
+DASHBOARD_STALE_MARK_SECONDS = min(
+    max(_env_float("DASHBOARD_STALE_MARK_SECONDS", 15.0), 1.0), 300.0
+)
+# How long shutdown waits for the dashboard to close. It is stopped LAST, after
+# the session is broker-confirmed flat and the results are published, so this
+# can never delay flattening.
+DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS = min(
+    max(_env_float("DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS", 2.0), 0.5), 15.0
+)
+
 
 # Telegram trade-notification settings. See Dependencies/.env for the one-time
 # bot/channel setup. When disabled (or token/chat blank) the notifier thread is
@@ -2021,6 +2061,12 @@ class PaperPosition:
     entry_trade_price: float = 0.0
     entry_price_quality: str = "UNKNOWN"
     exit_price_quality: str = "UNKNOWN"
+    # Wall-clock entry time, naive local, matching `HedgedPaperPosition`'s
+    # field of the same name and the `ts` stamp `publish_trade_event` puts on
+    # every event. Optional so a session-state record written before this
+    # field existed still resumes. REPORTING ONLY: no risk, sizing or
+    # execution decision reads it.
+    entry_timestamp: datetime | None = None
     # Option-leg metadata, locked at entry and reused on exit.
     option_security_id: int = 0
     option_exchange_segment: str = ""
@@ -2349,6 +2395,29 @@ class SharedMarketDataStore:
             official_completed_minutes=snapshot.official_completed_minutes,
             official_candle_ts=snapshot.official_candle_ts,
         )
+
+    def peek_snapshot_meta(
+        self, timeframe: str
+    ) -> tuple[tuple | None, pd.Timestamp | None, datetime] | None:
+        """Metadata for one stored snapshot WITHOUT copying its frame.
+
+        `get()` copies roughly 2,200 rows every call, which is the wrong price
+        to pay for the once-a-second question "has anything changed?". This
+        reads three already-materialized attributes under the same lock,
+        mutates nothing, and is safe from any thread.
+
+        Returns `(candle_signature, source_candle_ts, fetched_at)`, or None
+        when that timeframe has never been published.
+        """
+        with self._lock:
+            snapshot = self._snapshots.get(str(timeframe))
+            if snapshot is None:
+                return None
+            return (
+                snapshot.candle_signature,
+                snapshot.source_candle_ts,
+                snapshot.fetched_at,
+            )
 
     # ------------------------------------------------------------------
     # LTP pool
@@ -4650,6 +4719,11 @@ class BasePaperStrategyWorker(threading.Thread):
         # publishes is mirrored into it so a mid-session crash cannot lose the
         # day's realized P&L. Never on a hot path: entries and exits only.
         self.session_state: SessionStateStore | None = None
+        # Optional read-only monitoring mirror (Dependencies/dashboard_server.py).
+        # `main()` injects one shared sink when DASHBOARD_ENABLED and leaves it
+        # None otherwise, so with the dashboard off the choke point below costs
+        # exactly one attribute read.
+        self.dashboard_event_sink: Any | None = None
 
         # Per-strategy execution mode. Defaults to paper; main() flips this to
         # True after construction when LIVE_TRADING_ENABLED and this strategy's
@@ -6000,6 +6074,20 @@ class BasePaperStrategyWorker(threading.Thread):
             if state_store is not None:
                 state_store.record_trade_event(event)
 
+            # Read-only monitoring mirror: one shallow copy appended to an
+            # in-memory deque under a lock nothing else contends for. No disk,
+            # no network. It sits BETWEEN the two hand-offs deliberately -- its
+            # own try/except means a sink bug can never displace the durable
+            # write above, and being before the `event_queue is None` early
+            # return means notifications being off cannot skip it.
+            sink = getattr(self, "dashboard_event_sink", None)
+            if sink is not None:
+                # A monitor must never disturb trading, so this swallows
+                # everything -- including a sink that has somehow been replaced
+                # by an object that does not implement `record`.
+                with contextlib.suppress(Exception):
+                    sink.record(event)
+
             event_queue = getattr(self, "trade_event_queue", None)
             if event_queue is None:
                 return
@@ -6475,6 +6563,31 @@ class BasePaperStrategyWorker(threading.Thread):
         """Return whether this worker still owns local position bookkeeping."""
 
         return bool(getattr(self.pos, "active", False))
+
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """Every ACTIVE local position this worker owns, each with a slot label.
+
+        The sibling `_paper_positions_active` answers "is anything open?"; this
+        answers "what, exactly?".  Reporting surfaces -- the crash-durable
+        session snapshot and the read-only monitoring dashboard -- need the
+        second question, and until this hook existed they only ever saw
+        `self.pos`.  That made the Delta-0.2 CE/PE spreads, the long-strangle
+        legs and the SL-Hunting BankNIFTY mirror invisible to both, so a
+        mid-session crash lost those open positions entirely.
+
+        Override this in ANY worker that also overrides
+        `_paper_positions_active`; a policy test fails the build when a class
+        overrides one without the other.
+
+        Pure attribute reads by contract.  This is called from reporting
+        threads, so a broker round-trip or a lock acquisition here would put a
+        monitoring surface on the trading path.
+        """
+
+        position = getattr(self, "pos", None)
+        if position is not None and getattr(position, "active", False):
+            return (("pos", position),)
+        return ()
 
     def _owned_live_states(self) -> tuple[LiveLegState, ...]:
         """Return active ledger legs owned by this exact worker instance."""
@@ -7582,6 +7695,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             pending_trailing_exit=bool(pending_trailing_exit),
             entry_trade_price=float(option_ltp),
             entry_price_quality=entry_price_quality,
+            entry_timestamp=datetime.now(),
             option_security_id=option_sec_id,
             option_exchange_segment=option_segment,
             option_right=option_right,
@@ -12688,6 +12802,15 @@ class Delta20HedgedSpreadWorker(BasePaperStrategyWorker):
 
         return self.ce_pos.active or self.pe_pos.active
 
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """Both independently managed spreads; `self.pos` is never used here."""
+
+        return tuple(
+            (slot, position)
+            for slot, position in (("ce_pos", self.ce_pos), ("pe_pos", self.pe_pos))
+            if position.active
+        )
+
     def _flatten_additional_positions(self, reason: str) -> None:
         """Drop reference-only subscriptions once shutdown has started."""
 
@@ -14028,6 +14151,15 @@ class LongStrangleWorker(BasePaperStrategyWorker):
 
         return self.ce_pos.active or self.pe_pos.active
 
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """Both strangle legs; `self.pos` is never used by this worker."""
+
+        return tuple(
+            (slot, position)
+            for slot, position in (("ce_pos", self.ce_pos), ("pe_pos", self.pe_pos))
+            if position.active
+        )
+
     def _flatten_additional_positions(self, reason: str) -> None:
         """Drop momentum-watch subscriptions after shutdown is requested."""
 
@@ -14316,6 +14448,7 @@ class LongStrangleWorker(BasePaperStrategyWorker):
             entry_order_id=str(order_id),
             entry_trade_price=float(option_ltp),
             entry_price_quality=entry_price_quality,
+            entry_timestamp=datetime.now(),
             option_security_id=option_sec_id,
             option_exchange_segment=option_segment,
             option_right=option_right,
@@ -15486,6 +15619,7 @@ if SL_HUNTING_AVAILABLE:
                 entry_order_id=str(order_id), entry_underlying=bnf_spot,
                 entry_trade_price=float(option_ltp),
                 entry_price_quality=entry_price_quality,
+                entry_timestamp=datetime.now(),
                 option_security_id=sec_id,
                 option_exchange_segment=segment, option_right=str(contract["option_type"]),
                 option_strike=float(contract["strike"]), option_expiry=contract["expiry_date"],
@@ -15760,6 +15894,14 @@ if SL_HUNTING_AVAILABLE:
             """Treat either NIFTY or its BankNIFTY mirror as owned exposure."""
 
             return super()._paper_positions_active() or self._mirror_pos.active
+
+        def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+            """The NIFTY leg from the base class, plus the BankNIFTY mirror."""
+
+            positions = list(super()._owned_open_positions())
+            if self._mirror_pos.active:
+                positions.append(("mirror_pos", self._mirror_pos))
+            return tuple(positions)
 
         def _flatten_additional_positions(self, reason: str) -> None:
             """Retry a lone BankNIFTY mirror on every due flatten pass."""
@@ -17590,6 +17732,92 @@ def _position_leg_marks(position: object, store: SharedMarketDataStore) -> dict[
     return marks
 
 
+def _position_unrealized_pnl(position: object, marks: Mapping[str, float]) -> float | None:
+    """Signed mark-to-market for one position, or None when it cannot be honest.
+
+    Returns None -- never a guess -- when a leg has no cached mark, when live
+    exposure makes the quantity itself indeterminate, or when the position
+    shape is one this function has not been taught. A reporting surface that
+    invents a number is worse than one that shows a dash.
+
+    The signs come from `AtmSingleLegStrategyWorker._option_leg_pnl`, the same
+    static helper the exit path and the max-loss kill-switch use, so a report
+    can never disagree with the books about direction. That matters concretely:
+    the arithmetic this replaces assumed every leg was BOUGHT, which wrote a
+    confidently wrong number for a CPR-AI position that SOLD premium.
+
+    `marks` comes from `_position_leg_marks`, which only records a leg whose
+    cached LTP is positive -- so "no key" already means "no price".
+    """
+
+    # An order whose fill is unresolved has an unknown quantity. There is no
+    # honest mark-to-market for exposure whose SIZE is in question, so this
+    # refuses to produce one rather than pricing a guess.
+    for attribute in ("live_leg", "main_live_leg", "hedge_live_leg"):
+        leg_state = getattr(position, attribute, None)
+        if leg_state is not None and getattr(leg_state, "exposure_indeterminate", False):
+            return None
+
+    leg_pnl = AtmSingleLegStrategyWorker._option_leg_pnl
+
+    if isinstance(position, PaperPosition):
+        mark = marks.get("option")
+        if mark is None:
+            return None
+        return leg_pnl(
+            position.option_opening_side,
+            position.entry_trade_price,
+            mark,
+            position.quantity,
+        )
+
+    if isinstance(position, HedgedPaperPosition):
+        main_mark = marks.get("main")
+        hedge_mark = marks.get("hedge")
+        # Half a hedged pair is not a partial answer, it is a wrong one: the
+        # unpriced leg is exactly the one that offsets the other.
+        if main_mark is None or hedge_mark is None:
+            return None
+        # Each leg carries its OWN quantity. A partial hedge is simply a
+        # smaller second term; there is no basket quantity to get wrong.
+        return leg_pnl(
+            position.main_side,
+            position.main_entry_price,
+            main_mark,
+            position.main_quantity,
+        ) + leg_pnl(
+            position.hedge_side,
+            position.hedge_entry_price,
+            hedge_mark,
+            position.hedge_quantity,
+        )
+
+    return None
+
+
+def _worker_owned_positions(worker: object) -> tuple[tuple[str, Any], ...]:
+    """Enumerate a worker's open positions without ever raising.
+
+    Thin defensive wrapper around `BasePaperStrategyWorker._owned_open_positions`
+    so a half-constructed worker -- or a test double that does not implement
+    the hook -- degrades to "nothing to report" instead of interrupting the
+    supervision loop that persists everyone else's crash-recovery state.
+    """
+
+    getter = getattr(worker, "_owned_open_positions", None)
+    if not callable(getter):
+        return ()
+    try:
+        return tuple(getter())
+    except Exception:  # noqa: BLE001 - reporting only
+        logger.debug(
+            "Could not enumerate owned positions for %s.",
+            getattr(worker, "strategy_name", type(worker).__name__),
+            exc_info=True,
+        )
+        return ()
+
+
 def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
     """Build one worker's crash-durable snapshot (counters + open position).
 
@@ -17609,23 +17837,38 @@ def _worker_session_state_snapshot(worker: BasePaperStrategyWorker) -> dict:
     except Exception:  # noqa: BLE001 - reporting only
         snapshot["execution_mode"] = "PAPER"
 
-    position = getattr(worker, "pos", None)
-    if position is None or not getattr(position, "active", False):
-        return snapshot
+    # `open_position` keeps its exact historical contract: ONE record, built
+    # from `worker.pos`. It is the only key `resumable_open_positions` and
+    # `_resume_open_positions` will ever read, and resume accepts only a
+    # single-leg PaperPosition, so widening this key would widen resume too.
+    primary = getattr(worker, "pos", None)
+    if primary is not None and getattr(primary, "active", False):
+        primary_marks = _position_leg_marks(primary, worker.store)
+        snapshot["open_position"] = serialize_position(
+            primary,
+            leg_marks=primary_marks,
+            unrealized_pnl=_position_unrealized_pnl(primary, primary_marks),
+        )
 
-    marks = _position_leg_marks(position, worker.store)
-    # Mark-to-market is computed only for the single-leg family, where every
-    # position is a BOUGHT option and the arithmetic is unambiguous. Hedged and
-    # multi-leg shapes carry per-leg sides, so guessing a sign here would write
-    # a confidently wrong number into a file used for recovery.
-    unrealized = None
-    if "option" in marks and isinstance(position, PaperPosition):
-        unrealized = (marks["option"] - float(position.entry_trade_price)) * int(position.quantity)
-    snapshot["open_position"] = serialize_position(
-        position,
-        leg_marks=marks,
-        unrealized_pnl=unrealized,
-    )
+    # `owned_positions` is the COMPLETE local book, including the positions
+    # that never lived in `worker.pos` -- the Delta-0.2 CE/PE spreads, the
+    # long-strangle legs, the SL-Hunting BankNIFTY mirror. Those used to be
+    # absent from the marks file entirely, so a mid-session crash lost them.
+    # The `pos` slot is deliberately included as well, so a reader that wants
+    # everything reads one key rather than unioning two. Resume ignores it.
+    owned: list[dict] = []
+    for slot, position in _worker_owned_positions(worker):
+        marks = _position_leg_marks(position, worker.store)
+        record = serialize_position(
+            position,
+            leg_marks=marks,
+            unrealized_pnl=_position_unrealized_pnl(position, marks),
+        )
+        if record is not None:
+            record["position_slot"] = str(slot)
+            owned.append(record)
+    if owned:
+        snapshot["owned_positions"] = owned
     return snapshot
 
 
@@ -17649,6 +17892,387 @@ def _session_state_snapshots(workers: Sequence[BasePaperStrategyWorker]) -> list
             )
             snapshots.append({"strategy": strategy, "snapshot_valid": False})
     return snapshots
+
+
+# =============================================================================
+# READ-ONLY MONITORING DASHBOARD -- COLLECTOR
+# =============================================================================
+# Everything below reads live runner state for the dashboard. It lives here,
+# beside `_worker_session_state_snapshot`, rather than in `Dependencies/`,
+# because it reaches into `BasePaperStrategyWorker`, `PaperPosition` and
+# `SharedMarketDataStore`; a Dependencies module doing that would have to
+# import the master back.
+#
+# THE RULE FOR EVERY FUNCTION HERE: cache-only, allocation-light, and never a
+# call that can reach the broker or mutate shared state. Specifically NEVER:
+#
+#   * `store.market_data_health.snapshot()` -- it MUTATES the healthy-streak
+#     and unhealthy-since fields that drive the 30s liquidation clock, so
+#     polling it from a monitor would move a live risk decision.
+#   * `worker._get_open_position_pnl()` / `_get_option_ltp()` /
+#     `_get_underlying_spot()` -- all three fall back to `broker.fetch_ltp_map`
+#     when the cache is cold.
+#   * `SessionStateStore.snapshot()` -- it serializes the whole document under
+#     the lock `record_trade_event` needs.
+#
+# A test asserts all of those stay uncalled.
+# =============================================================================
+
+
+class _DashboardChartCache:
+    """Remembers the last chart series so a poll rarely copies the frame.
+
+    `SharedMarketDataStore.get()` copies the whole ~2,200-row DataFrame, so
+    calling it once a second purely to ask "is there a new candle?" would be
+    the most expensive thing this dashboard does. `peek_snapshot_meta` answers
+    that question for free, and the frame is copied only when the answer is
+    yes.
+
+    Three outcomes, cheapest first:
+
+    * nothing changed            -> no copy at all;
+    * the forming candle moved   -> copy, keep only the last row (`last_bar`);
+    * a new minute closed        -> copy, re-serialize the tail, bump
+                                    `series_version` so the browser refetches
+                                    the full array (about 375 times a day
+                                    rather than 22,500).
+    """
+
+    def __init__(self, max_bars: int) -> None:
+        self.max_bars = max(1, int(max_bars))
+        self.series: list[dict] = []
+        self.series_version = 0
+        self.last_bar: dict | None = None
+        self.signature: tuple | None = None
+        self.source_candle_ts: object = None
+
+
+def _bar_record(row: pd.Series[Any]) -> dict:
+    """One candle in the shape the charting library expects."""
+
+    timestamp = row["timestamp"]
+    return {
+        # Seconds since the epoch, as lightweight-charts wants -- but the
+        # library always renders a timestamp as UTC and offers no timezone
+        # setting. The frame's timestamps are already naive IST wall-clock, so
+        # they are labelled UTC here on purpose: the axis then reads 09:15,
+        # 09:16 ... exactly as the exchange clock does. Localizing to IST
+        # instead would draw the session starting at 03:45.
+        "time": int(pd.Timestamp(timestamp).tz_localize("UTC").timestamp()),
+        "open": round(float(row["open"]), 2),
+        "high": round(float(row["high"]), 2),
+        "low": round(float(row["low"]), 2),
+        "close": round(float(row["close"]), 2),
+    }
+
+
+def _dashboard_chart_payload(
+    store: SharedMarketDataStore, cache: _DashboardChartCache
+) -> dict:
+    """The chart half of the document: a version, and the forming candle."""
+
+    meta = store.peek_snapshot_meta("1")
+    if meta is None:
+        return {"state": "NO_DATA", "series_version": 0, "last_bar": None, "bars": 0}
+    signature, source_candle_ts, _fetched_at = meta
+
+    if signature == cache.signature:
+        return {
+            "state": "OK",
+            "series_version": cache.series_version,
+            "last_bar": cache.last_bar,
+            "bars": len(cache.series),
+        }
+
+    snapshot = store.get("1")
+    if snapshot is None or snapshot.frame.empty:
+        return {"state": "NO_DATA", "series_version": cache.series_version,
+                "last_bar": None, "bars": 0}
+
+    frame = snapshot.frame
+    new_minute = source_candle_ts != cache.source_candle_ts or not cache.series
+    if new_minute:
+        tail = frame.tail(cache.max_bars)
+        cache.series = [_bar_record(row) for _, row in tail.iterrows()]
+        cache.series_version += 1
+        cache.source_candle_ts = source_candle_ts
+    cache.last_bar = _bar_record(frame.iloc[-1])
+    cache.signature = signature
+
+    return {
+        "state": "OK",
+        "series_version": cache.series_version,
+        "last_bar": cache.last_bar,
+        "bars": len(cache.series),
+    }
+
+
+def _dashboard_chart_series(cache: _DashboardChartCache) -> dict:
+    """The full candle array behind `/api/chart`.
+
+    Read straight out of the cache the state document already filled, so this
+    touches neither the store nor its lock. The builder thread calls it only
+    when `series_version` has moved, i.e. once a minute rather than once a
+    poll.
+    """
+
+    return {"series_version": cache.series_version, "bars": cache.series}
+
+
+def _dashboard_feed_view(store: SharedMarketDataStore) -> dict:
+    """Feed freshness, derived only from observation.
+
+    Deliberately NOT `market_data_health.snapshot()`: that call mutates the
+    healthy-streak and unhealthy-since fields feeding the liquidation clock,
+    so a dashboard polling it could pull a real risk decision earlier. These
+    numbers are read from the published snapshot's own timestamps instead, and
+    influence nothing.
+    """
+
+    spot = store.get_ltp_by_secid(
+        NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID, fallback=0.0
+    )
+    view: dict = {
+        "source": MARKET_DATA_SOURCE,
+        "spot": round(float(spot), 2) if spot > 0 else None,
+        "newest_bar": None,
+        "fetch_age_seconds": None,
+    }
+    meta = store.peek_snapshot_meta("1")
+    if meta is not None:
+        _signature, source_candle_ts, fetched_at = meta
+        if source_candle_ts is not None:
+            view["newest_bar"] = pd.Timestamp(source_candle_ts).strftime("%H:%M")
+        # `fetched_at` is the timezone-aware exchange clock, so the
+        # comparison is made aware too rather than assuming the host runs on
+        # IST. Purely a display number; nothing gates on it.
+        reference = _ist_now() if fetched_at.tzinfo is not None else datetime.now()
+        view["fetch_age_seconds"] = round(
+            max(0.0, (reference - fetched_at).total_seconds()), 1
+        )
+    return view
+
+
+def _dashboard_leg_views(position: object, store: SharedMarketDataStore) -> list[dict]:
+    """One row per option leg, with a cached mark and its staleness.
+
+    Legs are discovered by the same `<prefix>security_id` naming convention
+    `_position_leg_marks` uses, so this covers the single-leg family
+    (`option_*`) and the hedged pairs (`main_*` / `hedge_*`) without knowing
+    either shape.
+
+    Staleness is measured with the store's existing public API rather than a
+    new accessor: the same read with and without `max_age_seconds` differs
+    exactly when a price is cached but old.
+    """
+
+    attributes = getattr(position, "__dict__", {}) or {}
+    legs: list[dict] = []
+    for name, security_id in attributes.items():
+        if not name.endswith("security_id") or not isinstance(security_id, int):
+            continue
+        if security_id <= 0:
+            continue
+        prefix = name[: -len("security_id")]
+        segment = str(attributes.get(f"{prefix}exchange_segment", "") or "")
+        if not segment:
+            continue
+        label = prefix.rstrip("_") or "leg"
+        ltp = store.get_ltp_by_secid(segment, int(security_id), fallback=0.0)
+        fresh = store.get_ltp_by_secid(
+            segment,
+            int(security_id),
+            fallback=0.0,
+            max_age_seconds=DASHBOARD_STALE_MARK_SECONDS,
+        )
+        legs.append(
+            {
+                "label": label,
+                # The hedged shapes name their legs `main_symbol`/`hedge_symbol`;
+                # the single-leg family just has `symbol` beside `option_*`.
+                "symbol": str(
+                    attributes.get(f"{prefix}symbol", "")
+                    or attributes.get("symbol", "")
+                    or ""
+                ),
+                "side": str(
+                    attributes.get(f"{prefix}side", "")
+                    or attributes.get("option_opening_side", "")
+                    or ""
+                ),
+                "right": str(attributes.get(f"{prefix}right", "") or ""),
+                "strike": float(attributes.get(f"{prefix}strike", 0.0) or 0.0),
+                "quantity": int(
+                    attributes.get(f"{prefix}quantity", attributes.get("quantity", 0)) or 0
+                ),
+                "entry_price": float(
+                    attributes.get(f"{prefix}entry_price", 0.0)
+                    or attributes.get("entry_trade_price", 0.0)
+                    or 0.0
+                ),
+                "entry_price_quality": str(
+                    attributes.get(f"{prefix}entry_price_quality", "")
+                    or attributes.get("entry_price_quality", "")
+                    or ""
+                ),
+                "ltp": round(float(ltp), 2) if ltp > 0 else None,
+                "stale_mark": bool(ltp > 0 and fresh <= 0),
+            }
+        )
+    # The primary leg must lead, because the page shows `legs[0]` on the
+    # parent row and indents the rest: a hedged pair headed by its HEDGE would
+    # read as the wrong trade at a glance.
+    order = {"option": 0, "main": 1, "hedge": 2}
+    legs.sort(key=lambda leg: (order.get(str(leg["label"]), 9), str(leg["label"])))
+    return legs
+
+
+def _dashboard_position_view(
+    strategy: str,
+    slot: str,
+    position: object,
+    store: SharedMarketDataStore,
+    ledger: dashboard_snapshot.TradeLedger,
+) -> dict:
+    """One open position, ready to render.
+
+    Entry time is looked up in the trade ledger by symbol set -- the event
+    stream is the only place a single-leg entry's clock time was ever recorded
+    for positions opened before `PaperPosition.entry_timestamp` existed -- and
+    falls back to the position's own field, then to nothing at all. It is
+    never inferred from anything else.
+    """
+
+    legs = _dashboard_leg_views(position, store)
+    marks = {leg["label"]: leg["ltp"] for leg in legs if leg["ltp"] is not None}
+    unrealized = _position_unrealized_pnl(position, marks)
+
+    symbols = frozenset(
+        str(leg["symbol"]).strip().upper() for leg in legs if str(leg["symbol"]).strip()
+    )
+    entry_time, exit_failed = dashboard_snapshot.entry_time_for(ledger, strategy, symbols)
+    if entry_time is None:
+        # Fallback for a position the event stream cannot account for -- one
+        # resumed from a previous process, most plausibly.
+        own_stamp = getattr(position, "entry_timestamp", None)
+        if isinstance(own_stamp, datetime):
+            entry_time = own_stamp.strftime("%H:%M:%S")
+
+    indeterminate = any(
+        getattr(position, attribute, None) is not None
+        and getattr(getattr(position, attribute), "exposure_indeterminate", False)
+        for attribute in ("live_leg", "main_live_leg", "hedge_live_leg")
+    )
+
+    flags = []
+    if indeterminate:
+        flags.append("INDETERMINATE")
+    if exit_failed:
+        flags.append("EXIT FAILED - STILL OPEN")
+    if any(leg["stale_mark"] for leg in legs):
+        flags.append("STALE MARK")
+
+    return {
+        "slot": slot,
+        "direction": str(getattr(position, "direction", "") or ""),
+        "quantity": int(getattr(position, "quantity", 0) or 0)
+        or sum(int(leg["quantity"]) for leg in legs),
+        "entry_time": entry_time,
+        "unrealized_pnl": unrealized,
+        "legs": legs,
+        "flags": flags,
+    }
+
+
+def _dashboard_worker_view(
+    worker: BasePaperStrategyWorker,
+    store: SharedMarketDataStore,
+    ledger: dashboard_snapshot.TradeLedger,
+) -> dict:
+    """One strategy's counters plus every position it currently owns."""
+
+    strategy = str(getattr(worker, "strategy_name", type(worker).__name__))
+    view: dict = {
+        "strategy": strategy,
+        "snapshot_valid": True,
+        "completed_trades": int(getattr(worker, "completed_trades", 0) or 0),
+        "realized_pnl": round(float(getattr(worker, "realized_pnl", 0.0) or 0.0), 2),
+        "live_trading": bool(getattr(worker, "live_trading", False)),
+        "positions": [],
+    }
+    try:
+        view["mode"] = worker.session_execution_mode()
+    except Exception:  # noqa: BLE001 - reporting only
+        view["mode"] = "PAPER"
+
+    for slot, position in _worker_owned_positions(worker):
+        try:
+            view["positions"].append(
+                _dashboard_position_view(strategy, str(slot), position, store, ledger)
+            )
+        except Exception:  # noqa: BLE001 - one odd position must not blind the rest
+            view["snapshot_valid"] = False
+            logger.debug(
+                "Could not render %s position %s for the dashboard.",
+                strategy,
+                slot,
+                exc_info=True,
+            )
+    return view
+
+
+def _dashboard_session_view(workers: Sequence[BasePaperStrategyWorker]) -> dict:
+    """Header facts that do not change during a session."""
+
+    now = datetime.now()
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "clock": now.strftime("%H:%M:%S"),
+        "phase": _dashboard_session_phase(now),
+        "workers": len(workers),
+        "session_state_enabled": SESSION_STATE_ENABLED,
+        "market_data_source": MARKET_DATA_SOURCE,
+        # Read off the workers rather than the env switch, because a strategy
+        # trades live only when the GLOBAL gate and its own gate are both on.
+        # This badge must reflect what is actually armed, not what is allowed.
+        "any_live": any(bool(getattr(worker, "live_trading", False)) for worker in workers),
+        "live_broker": LIVE_BROKER,
+    }
+
+
+def _dashboard_session_phase(now: datetime) -> str:
+    """PRE_OPEN / OPEN / CLOSED, so empty tables can explain themselves."""
+
+    clock = now.time()
+    if clock < dt_time(9, 15):
+        return "PRE_OPEN"
+    if clock <= dt_time(15, 30):
+        return "OPEN"
+    return "CLOSED"
+
+
+def _dashboard_document(
+    workers: Sequence[BasePaperStrategyWorker],
+    store: SharedMarketDataStore,
+    sink: Any,
+    chart_cache: _DashboardChartCache,
+) -> dict:
+    """Build the whole `/api/state` document. Runs on the builder thread only."""
+
+    ledger = dashboard_snapshot.pair_trade_events(sink.events() if sink is not None else [])
+    worker_views = [_dashboard_worker_view(worker, store, ledger) for worker in workers]
+    return dashboard_snapshot.build_dashboard_document(
+        dashboard_snapshot.DocumentInputs(
+            generated_at=datetime.now().strftime("%H:%M:%S"),
+            version=0,  # the builder thread stamps the real one
+            poll_seconds=DASHBOARD_REFRESH_SECONDS,
+            session=_dashboard_session_view(workers),
+            worker_views=worker_views,
+            ledger=ledger,
+            chart=_dashboard_chart_payload(store, chart_cache),
+            feed=_dashboard_feed_view(store),
+        )
+    )
 
 
 def _restore_session_bookkeeping(
@@ -17796,6 +18420,27 @@ def _resume_open_positions(
     return restored
 
 
+def _parse_naive_timestamp(value: object) -> datetime | None:
+    """Best-effort read of a persisted entry timestamp; None when unreadable.
+
+    Deliberately forgiving. The entry time is REPORTING data -- nothing about
+    risk, sizing or execution depends on it -- so a record written before the
+    field existed, or one whose value is malformed, must still resume rather
+    than be rejected as unsafe. The value is normalised to naive local time to
+    match every other timestamp the runner stamps.
+    """
+
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo is not None else value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo is not None else parsed
+
+
 def _paper_position_from_record(record: dict) -> PaperPosition:
     """Rebuild a single-leg PaperPosition from its persisted record.
 
@@ -17892,6 +18537,9 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         bars_in_trade=int(record.get("bars_in_trade", 0) or 0),
         entry_trade_price=entry_trade_price,
         entry_price_quality=str(record.get("entry_price_quality", "UNKNOWN")),
+        # Optional and non-validating on purpose: a record from before this
+        # field existed resumes fine and simply reports no entry time.
+        entry_timestamp=_parse_naive_timestamp(record.get("entry_timestamp")),
         option_security_id=security_id,
         option_exchange_segment=exchange_segment,
         option_right=option_right,
@@ -18632,6 +19280,68 @@ def main() -> None:
     else:
         logger.info("Session state persistence disabled (SESSION_STATE_ENABLED=false).")
 
+    # -------------------------------------------------------------------------
+    # Optional read-only monitoring dashboard (loopback only).
+    # -------------------------------------------------------------------------
+    # Started HERE because everything it needs is now settled -- the
+    # virtual-trading filter has run, live modes are decided, session state is
+    # wired -- and, critically, no worker thread has started yet, so its event
+    # sink is attached before the first trade event can be published.
+    #
+    # It is structurally incapable of affecting trading: GET-only, bound to
+    # 127.0.0.1, cache-only reads, on its own daemon threads. Any failure here
+    # detaches it completely and the session continues without it.
+    dashboard: DashboardServer | None = None
+    dashboard_sink: DashboardEventSink | None = None
+    if DASHBOARD_ENABLED and not (1024 <= DASHBOARD_PORT <= 65535):
+        logger.warning(
+            "DASHBOARD_PORT=%s is outside 1024-65535; the monitoring dashboard is "
+            "disabled for this session.", DASHBOARD_PORT,
+        )
+    elif DASHBOARD_ENABLED:
+        try:
+            dashboard_sink = DashboardEventSink(maxlen=DASHBOARD_MAX_TRADE_EVENTS)
+            if session_state is not None:
+                # ONE snapshot read, at startup, so a same-day restart still
+                # shows the trades carried forward from the earlier process.
+                # Never on a tick: snapshot() serializes the whole document
+                # under the lock record_trade_event needs, and that lock is
+                # taken by trading threads on the exit path.
+                dashboard_sink.seed(session_state.snapshot().get("trades") or [])
+            for worker in workers:
+                worker.dashboard_event_sink = dashboard_sink
+            chart_cache = _DashboardChartCache(max_bars=DASHBOARD_CHART_BARS)
+            dashboard = start_dashboard(
+                port=DASHBOARD_PORT,
+                refresh_seconds=DASHBOARD_REFRESH_SECONDS,
+                builder=lambda: _dashboard_document(
+                    workers, store, dashboard_sink, chart_cache
+                ),
+                chart_builder=lambda: _dashboard_chart_series(chart_cache),
+                renderer=dashboard_snapshot.render_document_bytes,
+                log=logger,
+            )
+            if dashboard is not None:
+                logger.info(
+                    "Monitoring dashboard READ-ONLY at %s (refresh %.2fs). It serves GET "
+                    "only and cannot place, cancel or modify an order.",
+                    dashboard.url, DASHBOARD_REFRESH_SECONDS,
+                )
+            else:
+                for worker in workers:
+                    worker.dashboard_event_sink = None
+                dashboard_sink = None
+        except Exception:  # noqa: BLE001 - a monitor must never stop a session
+            dashboard = None
+            dashboard_sink = None
+            for worker in workers:
+                worker.dashboard_event_sink = None
+            logger.exception(
+                "Could not start the monitoring dashboard; trading continues without it."
+            )
+    else:
+        logger.info("Monitoring dashboard disabled (DASHBOARD_ENABLED=false).")
+
     natural_eod = _start_and_supervise_runtime_threads(
         fetcher,
         telegram_worker,
@@ -18687,6 +19397,20 @@ def main() -> None:
         session_state.mark_clean_shutdown(
             results_published=finalization.results_published,
         )
+
+    # Stopped only NOW: the flatten, the broker-confirmed-flat wait, the
+    # finalization, the Google Sheet write and mark_clean_shutdown have all
+    # already run, so the dashboard cannot have delayed any of them -- and the
+    # operator could watch the whole reconciliation happen. Its threads are
+    # daemons, so the timeout is a courtesy, not something exit depends on.
+    if dashboard is not None:
+        try:
+            dashboard.stop(timeout=DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS)
+            logger.info("Monitoring dashboard stopped.")
+        except Exception:  # noqa: BLE001 - shutdown must not hinge on a monitor
+            logger.exception(
+                "Monitoring dashboard did not stop cleanly; the process still exits."
+            )
 
     # Only a fully finalized flat session may release the fetcher/notifier.
     stop_event.set()

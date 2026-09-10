@@ -12,6 +12,11 @@ Tell the operator what happened — during the session (Telegram), after it
 (Google Sheet), and forensically (the log) — **without ever being able to affect
 trading**.
 
+The fourth surface, *where do I stand right now*, is the optional read-only
+dashboard: [`monitoring-dashboard.md`](monitoring-dashboard.md). It follows the
+same clause, more strictly — it is GET-only, loopback-only, and calls nothing
+that can reach a broker or move a risk gate.
+
 Every design choice here follows from that last clause. Reporting is
 best-effort, off the trading path, and a safe no-op when unconfigured.
 
@@ -127,7 +132,7 @@ It is **two files**, split by how much their loss costs:
 | File | Contents | Written by | fsync |
 |---|---|---|---|
 | `session_state.json` | session date, shutdown flags, `recorded_pnl` / `recorded_trades`, `trades[]` | trade events, clean shutdown, once at construction | **yes** |
-| `session_state.marks.json` | live counters and `open_position` with `last_mark_ltp` | the 30 s supervisor snapshot | no |
+| `session_state.marks.json` | live counters, `open_position` and `owned_positions`, each with `last_mark_ltp` | the 30 s supervisor snapshot | no |
 
 The supervisor never touches the durable file. That is a safety property, not an
 optimisation: `os.replace` is atomic for the *name* but not the *data*, so a
@@ -152,6 +157,22 @@ Properties that make it trustworthy:
   a reporting problem; the first failure logs loudly, then stays quiet.
 - **Cache-only marks** — `_position_leg_marks` reads the shared LTP cache and
   never the broker, because it runs on the supervisor thread.
+- **The whole local book, not just `worker.pos`** — three families keep their
+  exposure elsewhere (the Delta-0.2 CE/PE spreads, the two long-strangle legs,
+  the SL-Hunting BankNIFTY mirror), so a snapshot built from `worker.pos` alone
+  simply omitted them and a mid-session crash lost them. Every worker now
+  enumerates its open positions through `_owned_open_positions()`, and the
+  marks file carries them as `owned_positions`, each record tagged with its
+  `position_slot`. The key is **additive**: `open_position` keeps its exact
+  prior shape because it is the only key resume reads, and resume can rebuild
+  only a single-leg `PaperPosition`. A policy test fails the build if a worker
+  overrides `_paper_positions_active` without also overriding the new hook.
+- **Signed mark-to-market** — `_position_unrealized_pnl` takes its signs from
+  `AtmSingleLegStrategyWorker._option_leg_pnl`, the same helper the exit path
+  and the max-loss kill-switch use, and returns `None` rather than a guess when
+  a leg has no cached mark or live exposure makes the quantity indeterminate.
+  The arithmetic it replaced assumed every leg was BOUGHT, which wrote the
+  wrong sign for a CPR-AI position that sold premium.
 - **Observable liveness** — the supervisor logs a heartbeat every
   `SESSION_STATE_HEARTBEAT_SECONDS` (default 300) with workers alive, completed
   marks writes, marks age, open positions and trades recorded. MainThread is

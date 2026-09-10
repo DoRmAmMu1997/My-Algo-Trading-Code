@@ -120,6 +120,23 @@ surfaces before the first bar, not at the first order.
 
 ---
 
+## 7a. Monitoring dashboard settings
+
+Seven `DASHBOARD_*` keys, all read in the master and **clamped at read time**
+rather than validated: a typo in a monitoring knob must never stop a trading
+session from starting. `DASHBOARD_PORT` outside 1024-65535 disables the
+dashboard for that session with a warning.
+
+There is deliberately **no host key**. `DASHBOARD_BIND_HOST` is a module
+constant in `Dependencies/dashboard_server.py`, so no `.env` value can make the
+page reachable from another machine; that requires a reviewed code change plus
+an access token. A test asserts no `DASHBOARD_HOST`-shaped key appears in
+`env.example`, and another asserts neither dashboard module reads a setting of
+its own. See [`monitoring-dashboard.md`](monitoring-dashboard.md) and
+[`ADR-0016`](../adr/0016-read-only-loopback-monitoring-dashboard.md).
+
+---
+
 ## 8. Adding a setting — checklist
 
 1. Read it through the right helper (`_env_*`, or `_scaled_*` if it is

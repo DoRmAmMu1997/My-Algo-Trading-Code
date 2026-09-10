@@ -1,0 +1,173 @@
+/* Read-only monitoring dashboard.
+ *
+ * Dark by default and deliberately low-contrast except where it matters:
+ * this page sits on a second monitor for six hours, so only P&L, flags and
+ * notices are allowed to be loud. A dash means "not known" -- it is styled
+ * distinctly from a zero, because confusing the two is the single most
+ * expensive misreading this page could cause.
+ */
+
+:root {
+  --bg: #14161a;
+  --panel: #1b1f26;
+  --panel-2: #21262f;
+  --line: #2c333d;
+  --text: #dfe4ec;
+  --muted: #8b94a3;
+  --pos: #35c46b;
+  --neg: #ef5f5f;
+  --warn: #e8b13a;
+  --accent: #5b9dd9;
+  --mono: "Cascadia Mono", "Consolas", "SF Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* ------------------------------------------------------------------ header */
+#header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+.brand strong { letter-spacing: 0.2px; }
+
+/* Pulses on every successful poll, so a frozen page is visible at a glance
+ * without reading a timestamp. */
+.dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--muted); transition: background 0.2s;
+}
+.dot.ok { background: var(--pos); }
+.dot.stale { background: var(--warn); }
+.dot.dead { background: var(--neg); }
+
+.badge {
+  padding: 2px 8px; border-radius: 3px; font-size: 11px;
+  font-weight: 600; letter-spacing: 0.4px;
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.badge.live { background: #4a1d1d; border-color: var(--neg); color: #ffb4b4; }
+.badge.subtle { color: var(--muted); font-weight: 500; }
+
+.feed { display: flex; gap: 7px; flex-wrap: wrap; }
+.chip {
+  padding: 2px 8px; border-radius: 3px; font-size: 11px;
+  background: var(--panel-2); color: var(--muted); font-family: var(--mono);
+}
+#stale-chip { background: #4a3a12; color: #ffd98a; }
+
+.totals { display: flex; gap: 18px; align-items: baseline; }
+.total { display: flex; flex-direction: column; align-items: flex-end; }
+.total .label { font-size: 10px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.6px; }
+.total .value { font-family: var(--mono); font-size: 15px; }
+.total.big .value { font-size: 20px; font-weight: 600; }
+
+.banner {
+  padding: 7px 16px; background: #4a3a12; color: #ffd98a;
+  border-bottom: 1px solid var(--warn); font-size: 12px;
+}
+.banner.dead { background: #4a1d1d; color: #ffb4b4; border-bottom-color: var(--neg); }
+
+/* ------------------------------------------------------------------- panes */
+main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+
+.pane {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 10px 12px 12px;
+}
+.pane h2 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted);
+}
+.count {
+  margin-left: 6px; padding: 1px 6px; border-radius: 9px;
+  background: var(--panel-2); color: var(--text); font-size: 11px;
+}
+
+.columns { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.columns .wide { flex: 3 1 560px; }
+.columns .narrow { flex: 2 1 380px; }
+
+.chart-pane #chart { height: 40vh; min-height: 260px; }
+
+/* Wide tables scroll inside their own pane; the page body never scrolls
+ * sideways. */
+.scroll { overflow-x: auto; max-height: 46vh; overflow-y: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th {
+  position: sticky; top: 0; z-index: 1;
+  text-align: left; padding: 5px 8px; white-space: nowrap;
+  background: var(--panel-2); color: var(--muted);
+  font-weight: 600; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.4px; border-bottom: 1px solid var(--line);
+}
+td { padding: 4px 8px; border-bottom: 1px solid #232932; white-space: nowrap; }
+tbody tr:hover td { background: var(--panel-2); }
+.num { text-align: right; font-family: var(--mono); }
+tfoot td { font-weight: 600; border-top: 1px solid var(--line); }
+
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+/* A dash is NOT a zero. It is dimmer and centred so the eye separates
+ * "no number available" from "the number is zero". */
+.dash { color: var(--muted); opacity: 0.65; }
+
+.flag {
+  display: inline-block; margin-right: 4px; padding: 1px 5px;
+  border-radius: 3px; font-size: 10px; font-weight: 600;
+  background: var(--panel-2); color: var(--muted);
+}
+.flag.live { background: #4a1d1d; color: #ffb4b4; }
+.flag.warn { background: #4a3a12; color: #ffd98a; }
+.flag.bad { background: #4a1d1d; color: #ff9c9c; }
+
+.leg-row td { color: var(--muted); }
+.leg-row td:first-child { padding-left: 22px; }
+
+.empty { margin: 6px 2px 0; color: var(--muted); font-style: italic; }
+.note { margin: 0 0 8px; color: var(--warn); font-size: 12px; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); }
+
+/* ----------------------------------------------------------- closed trades */
+details {
+  border: 1px solid var(--line); border-radius: 4px;
+  margin-bottom: 6px; background: var(--panel-2);
+}
+summary {
+  cursor: pointer; padding: 6px 10px; font-size: 12px;
+  display: flex; gap: 14px; align-items: baseline;
+}
+summary::-webkit-details-marker { color: var(--muted); }
+summary .name { font-weight: 600; flex: 1; }
+details > .scroll { padding: 0 10px 8px; background: var(--panel); }
+
+#notices { margin: 0; padding-left: 18px; font-size: 12px; }
+#notices li { margin-bottom: 2px; color: var(--muted); }
+#notices li.urgent { color: #ff9c9c; }
+
+footer {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  padding: 9px 16px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 11px;
+}

@@ -38,6 +38,7 @@ component folder's own `Readme.md`.
 | Regime Adaptive router | [`lld/regime-adaptive.md`](lld/regime-adaptive.md) |
 | Configuration and drift detection | [`lld/configuration.md`](lld/configuration.md) |
 | Telegram alerts, EOD P&L sheet, logging | [`lld/reporting-and-observability.md`](lld/reporting-and-observability.md) |
+| Read-only loopback monitoring dashboard (optional) | [`lld/monitoring-dashboard.md`](lld/monitoring-dashboard.md) |
 | Data extraction and backtesting | [`lld/data-and-backtesting.md`](lld/data-and-backtesting.md) |
 | Test architecture, coverage budgets, CI | [`lld/testing-and-ci.md`](lld/testing-and-ci.md) |
 
@@ -60,6 +61,7 @@ component folder's own `Readme.md`.
 | [0013](adr/0013-codeql-false-positive-triage.md) | Five CodeQL alerts dismissed as false positives, not patched |
 | [0014](adr/0014-tiered-rename-of-spaced-filenames.md) | Spaced filenames renamed in reviewable tiers, master last (supersedes 0009) |
 | [0015](adr/0015-rolling-relative-strike-expired-options.md) | Expired-options history kept in rolling relative-strike form, expiry date derived |
+| [0016](adr/0016-read-only-loopback-monitoring-dashboard.md) | A read-only loopback dashboard, served by the runner itself |
 
 ## Keeping these documents honest
 
