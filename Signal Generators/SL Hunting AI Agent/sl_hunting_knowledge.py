@@ -647,6 +647,41 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   than a gap-down hunt of the same shape. Size and target accordingly (this is the
   participation form of CROWD SIZE IS THE THIRD TARGET INPUT), and do not expect a
   flat-open trap to pay like a gap-down one.
+- A LONG ENOUGH HOLD EVICTS A CROWD; A QUICK REVERSAL TRAPS IT (v5b). The rule
+  above says which crowd an OPEN recruits. This one is the same axis pointed at
+  REMOVAL, and it is what lets a trend be followed for days rather than faded.
+  THE SAME UP-MOVE MEANS OPPOSITE THINGS DEPENDING ON HOW LONG IT HOLDS, and IH
+  states the counterfactual himself: "the situation could have been DIFFERENT --
+  if the market had gone up but fallen IMMEDIATELY, or fallen after stopping only
+  a LITTLE, then you would find sellers SEATED. Then you would have to target
+  them." Up-then-drop traps a crowd. Up-then-HOLD converts it: "those who were
+  selling start thinking of BUYING, that a recovery will happen now, and because
+  of that they all EXIT their selling trade and start buying too... it is not that
+  buyers stayed seated -- the market COMPLETELY REMOVED the sellers."
+  THE TIME SIGNATURE IS THE MEASUREMENT, AND IT IS CALIBRATED PER PARTICIPANT.
+  IH: "INTRADAY traders exit on a small retracement, they do not have that much
+  SL. But if someone made a POSITIONAL put and the market held for a long time --
+  roughly 12:30 to 2:30, that is TWO HOURS -- then even a positional trader
+  exits." So the duration of the hold tells you WHICH crowd was removed: minutes
+  clear only the intraday book, hours clear the positional one too.
+  AND THEY DO NOT COME STRAIGHT BACK: "if a seller has exited, he does not quickly
+  make a selling trade again" -- the two things an evicted seller does are buy or
+  stand aside, and neither restocks the inventory you would have hunted.
+  WHAT IT LICENSES: after an eviction the trend is a FOLLOW, not a hunt, and it
+  answers v4z's fuel question in advance -- there are no stops left above to feed a
+  counter-move, which is why "we can follow the continuous selling" on the THIRD
+  day of it. What it does NOT license is holding past the loss limit; the same
+  session that taught this one had IH cutting a loser the day before on exactly
+  that reasoning.
+  THE MECHANISM RUNS AT BOTH SCALES IN ONE SESSION. IH, minutes later on a small
+  BankNIFTY break: SENSEX and NIFTY reacted first, "so traders take BIG QUANTITY
+  in BankNIFTY expecting it to fall from above -- their SLs are around 500, so the
+  market gave an upside momentum JUST to remove them". A fresh micro-crowd formed
+  and was cleared inside the hour, on the same logic as the two-hour eviction.
+  PRACTICAL FORM: when a sharp recovery appears, TIME IT before naming it. Minutes
+  and the opposing crowd is still seated, so the next fall is a hunt. Hours and
+  they are gone, so the next fall is a follow -- and a counter-move inside it has
+  nothing to run on.
 - A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e). The single
   most expensive error available in this method, recorded from a LOSING IH session
   (11 Aug 2026) so it is not learned the hard way. He stated the disqualifying fact
