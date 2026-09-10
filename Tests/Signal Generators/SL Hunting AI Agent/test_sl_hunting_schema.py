@@ -2512,3 +2512,68 @@ def test_v5a_a_tighter_stop_buys_size_rather_than_safety():
     assert "Never choose a stop in order to obtain a size" in rule
     assert "shrinking stop across consecutive trades as a warning" in rule
     assert "v4x already governs and the answer is no trade" in rule
+def test_v5b_hold_duration_decides_evicted_versus_trapped():
+    """v5b (10 Sep live session): time the hold before naming the crowd.
+
+    v3z reads a crowd's ABSENCE from a missing rip. This rule explains how a
+    crowd that WAS there becomes absent, and supplies the measurement -- the
+    duration of the hold, calibrated to the participant. Six ways an edit
+    could break it:
+
+    1. Losing the counterfactual. Up-then-drop and up-then-hold are the SAME
+       price shape; without both halves the rule cannot discriminate.
+    2. Dropping the conversion mechanism -- sellers do not merely fail to be
+       trapped, they exit and flip. That is why the inventory does not exist
+       afterwards.
+    3. Losing the per-participant time scale. "Minutes vs hours" is the whole
+       measurement; without the intraday/positional split it is a vibe.
+    4. Dropping the no-quick-return clause, which is what makes the eviction
+       persist into following sessions rather than one bar.
+    5. Losing the tie to v4z (fuel answered in advance) or the loss-limit
+       caveat, which is what stops this becoming licence to sit.
+    6. Dropping the both-scales observation, which shows the mechanism is not
+       only a multi-day phenomenon.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A LONG ENOUGH HOLD EVICTS A CROWD")
+
+    # 1. Both halves of the counterfactual, in IH's words.
+    assert "A QUICK REVERSAL TRAPS IT" in rule
+    # It must claim to be v4e's axis pointed at removal, not a new topic.
+    assert "the same axis pointed at REMOVAL" in rule
+    # And the core claim: one price shape, two meanings, decided by duration.
+    assert "THE SAME UP-MOVE MEANS OPPOSITE THINGS DEPENDING ON HOW LONG IT HOLDS" in rule
+    assert "fallen IMMEDIATELY, or fallen after stopping only a LITTLE" in rule
+    assert "you would find sellers SEATED" in rule
+    assert "Up-then-drop traps a crowd" in rule
+
+    # 2. Conversion, not merely non-trapping.
+    assert "start thinking of BUYING" in rule
+    assert "they all EXIT their selling trade" in rule
+    assert "the market COMPLETELY REMOVED the sellers" in rule
+
+    # 3. The measurement, and the per-participant calibration.
+    assert "THE TIME SIGNATURE IS THE MEASUREMENT" in rule
+    assert "INTRADAY traders exit on a small retracement" in rule
+    assert "roughly 12:30 to 2:30, that is TWO HOURS" in rule
+    assert "minutes clear only the intraday book, hours clear the positional one too" in rule
+
+    # 4. Why the eviction persists.
+    assert "does not quickly make a selling trade again" in rule
+    assert "neither restocks the inventory you would have hunted" in rule
+
+    # 5. What it licenses -- and the boundary that stops it becoming licence to sit.
+    assert "the trend is a FOLLOW, not a hunt" in rule
+    assert "answers v4z's fuel question in advance" in rule
+    assert "THIRD day of it" in rule
+    assert "does NOT license is holding past the loss limit" in rule
+
+    # 6. Same mechanism, two scales, one session.
+    assert "RUNS AT BOTH SCALES IN ONE SESSION" in rule
+    assert "their SLs are around 500" in rule
+    assert "cleared inside the hour" in rule
+
+    # The instruction the agent must actually follow.
+    assert "TIME IT before naming it" in rule
+    assert "Minutes and the opposing crowd is still seated" in rule
+    assert "Hours and they are gone" in rule

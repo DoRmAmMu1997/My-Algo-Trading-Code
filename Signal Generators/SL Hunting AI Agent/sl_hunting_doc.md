@@ -6686,3 +6686,117 @@ seated and therefore unhuntable; today they are thin. Same branch, different
 mechanism, and the mechanism is what would flip it.
 
 **SENSEX has expiry** on 10 Sep; NIFTY's was 08 Sep and is past.
+
+## Video addendum - the 10 Sep LIVE SESSION (v5b)
+
+**Source.** Intraday Hunter live session `JsdfH5uOuaw` (10 Sep 2026, 10:50,
+uploaded 11:20 IST). Transcript read in full: 87 segments, 0:06 to 10:40.
+The "Prediction For 11 SEP 2026" video was not yet published at the time of
+writing; those go up around 21:25 IST.
+
+### The best day of the series: 4 trades, +6,617.00
+
+| # | Window | Dir | Stop | Lots | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 09:25:43 -> 09:27:38 | LONG | 16.55pt | 2 | `profit_book_opposing_cross_index` | +1,027.00 | +2,052.00 | **+3,079.00** |
+| 2 | 09:45:39 -> 09:50:05 | SHORT | 14.40pt | 2 | mechanical `AI_STOP` | -780.00 | -600.00 | **-1,380.00** |
+| 3 | 09:56:34 -> 10:09:27 | SHORT | 12.65pt | 3 | `target_approach_round_number_book` | +2,359.50 | +2,713.50 | **+5,073.00** |
+| 4 | 10:20:38 -> 10:24:32 | SHORT | 8.05pt | 4 | `index_hierarchy_exit` | +247.00 | -402.00 | **-155.00** |
+| | | | | | **TOTAL** | **+2,853.50** | **+3,763.50** | **+6,617.00** |
+
+Three winners, one stop-out. Trade 3's exit is the model one: conf=8,
+`target_approach_round_number_book`, booked at 23410.05 with the target at 23405
+and the 23400 psych level right underneath.
+
+**The pre-open note did its job.** Trade 4's rationale quotes it almost verbatim:
+*"prior session held then fell, so sellers are thin/unseated and today is a
+follow, not a hunt."* That is the note's crowd read being used as a crowd read
+rather than as a direction.
+
+### v5a DID NOT BITE ON ITS FIRST LIVE DAY
+
+Recorded plainly because the day was profitable and that makes it easy to miss.
+v5a merged at 22:13 IST on 9 Sep and was in the prompt for this session. The
+behaviour it targets continued and intensified:
+
+| trade | stop | lots | NIFTY qty | mirror qty |
+|---|---|---|---|---|
+| 1 | 16.55 | 2 | 130 | 60 |
+| 2 | 14.40 | 2 | 130 | 60 |
+| 3 | 12.65 | 3 | 195 | 90 |
+| 4 | **8.05** | **4** | **260** | **120** |
+
+Every entry rationale says some version of "stop tight just above the pattern
+high". Anchoring the stop to the pattern is legitimate and is not what v5a
+forbids -- but it produced the narrowest stop and the largest position of the
+series, and the rule did not intervene. The day was +6,617 so nothing punished
+it; that is luck about the regime, not evidence the rule is working.
+
+**Suggested next step, not taken here:** v5a is currently a piece of reasoning
+with no concrete trigger. v4v got teeth when it was given one. The obvious
+candidate is a stated floor on stop width, or a check that fires when the stop
+narrows across consecutive entries. That is a live-money sizing decision and
+belongs to the operator.
+
+### v5b: how a hold EVICTS a crowd
+
+IH sold for the third consecutive day and explained why he could:
+
+> "For two-three days there has been continuous selling... still, what are we
+> doing? Following the continuous selling. And that is because **we do not have
+> the sellers' SLs available.**"
+
+The mechanism, and it is the part the corpus did not have:
+
+> "When the market recovered sharply and then **HELD** here, it changes many
+> traders' mindset. Those who were selling start thinking of BUYING... they all
+> EXIT their selling trade and start buying too. It is not that buyers stayed
+> seated -- **the market COMPLETELY REMOVED the sellers.**"
+
+And the discriminator, stated as a counterfactual:
+
+> "The situation could have been **different**. If the market had gone up but
+> fallen **immediately**, or fallen after stopping only a little, then you would
+> find sellers **seated**. Then you would have to target them."
+
+So the same price shape means opposite things, and what decides it is DURATION:
+
+> "**Intraday** traders exit on a small retracement, they do not have that much
+> SL. But if someone made a **positional** put and the market held for a long
+> time -- roughly 12:30 to 2:30, that is **two hours** -- then even a positional
+> trader exits."
+
+Plus the persistence clause: *"if a seller has exited, he does not quickly make a
+selling trade again"* -- an evicted seller either buys or stands aside, and
+neither restocks the inventory.
+
+**Why this is not v3z.** v3z (THE MISSING RIP IS THE TELL) infers that a crowd
+was never there, from the market declining to hunt it. v5b describes how a crowd
+that WAS there is removed, and gives the time signature that says which one. They
+compose: v3z reads absence, v5b explains it.
+
+**Both scales in one session.** Minutes after the entry, BankNIFTY broke 500 and
+IH read it the same way: SENSEX and NIFTY had reacted first, *"so traders take
+big quantity in BankNIFTY expecting it to fall from above -- their SLs are around
+500, so the market gave an upside momentum **just to remove them**."* A fresh
+micro-crowd, formed and cleared inside the hour.
+
+### Confirmed, not encoded
+
+- **v3z's after-a-losing-day rule.** IH books early and says why, twice:
+  *"our problem is that yesterday we had a loss. Today if we are getting a chance
+  to make a decent profit, we book and go... we cannot take much risk."* That is
+  AFTER A LOSING DAY, TAKE THE GOOD PROFIT RATHER THAN THE BIG ONE, unchanged.
+- **He names his entry levels BEFORE the open** (NIFTY ~23500, BankNIFTY
+  ~56350-56400, SENSEX around the closing price) and waits for price to reach
+  them. The agent reacts to patterns as they print instead. Not encoded: it is a
+  workflow difference rather than a rule, and the pre-open note already carries
+  his levels.
+
+### The hierarchy exits keep being right
+
+Flagged two sessions ago as "the seam to watch". Trade 4's `index_hierarchy_exit`
+cut at ~23416 on a BankNIFTY confirmed hammer; NIFTY reached 23443.05 by 10:44,
+which would have taken out the 23436.50 stop. That is three correct hierarchy
+exits in a row (09 Sep trade 2, 10 Sep trade 4). The seam is still worth watching,
+but it is now watching something that keeps working.
