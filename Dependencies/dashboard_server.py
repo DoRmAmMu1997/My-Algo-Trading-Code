@@ -210,13 +210,18 @@ class DashboardBuilderThread(threading.Thread):
         self._chart_builder = chart_builder
         self._refresh_seconds = max(0.05, float(refresh_seconds))
         self._log = log
-        self._stop = threading.Event()
+        # NOT `_stop`: `threading.Thread` has a private `_stop()` METHOD that
+        # CPython 3.12's `join()` calls through `_wait_for_tstate_lock`.
+        # Shadowing it with an Event makes every `join()` raise
+        # "'Event' object is not callable" -- so `stop()` would fail on 3.12
+        # while passing on 3.13, which no longer takes that path.
+        self._stop_event = threading.Event()
         self._failure_logged = False
         self._version = 0
         self._chart_version: object = None
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def build_once(self) -> bool:
         """One build/render/publish cycle. Returns False if it failed."""
@@ -268,7 +273,7 @@ class DashboardBuilderThread(threading.Thread):
         # into the cadence. `Event.wait` rather than `sleep` so a stop request
         # is honoured at once instead of after a full interval.
         self.build_once()
-        while not self._stop.wait(self._refresh_seconds):
+        while not self._stop_event.wait(self._refresh_seconds):
             self.build_once()
 
 

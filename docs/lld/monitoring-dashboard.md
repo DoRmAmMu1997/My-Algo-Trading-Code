@@ -179,6 +179,21 @@ whole reconciliation — which is when an operator most wants to watch. Its
 threads are daemons, so `DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS` is a courtesy, not
 something process exit depends on. A source-order test pins that sequence.
 
+## A trap worth remembering
+
+`DashboardBuilderThread` keeps its stop flag in `_stop_event`, **not** `_stop`.
+`threading.Thread` has a private `_stop()` *method* that CPython 3.12's
+`join()` calls through `_wait_for_tstate_lock`, so shadowing it with an
+`Event` makes every join raise `'Event' object is not callable`. Python 3.13
+removed that call path, so the bug passed the local run *and* the 3.13 CI leg
+while failing only on 3.12 — and `DashboardServer.stop()` would have failed
+the same way in production on 3.12.
+
+`test_the_builder_thread_shadows_nothing_that_threading_owns` guards it, and
+deliberately unions the running interpreter's `dir(threading.Thread)` with the
+names newer versions deleted: reflection alone is blind to this on exactly the
+interpreter that is not failing.
+
 ## Vendored code
 
 `Dependencies/dashboard_assets/vendor/lightweight-charts.standalone.production.js`

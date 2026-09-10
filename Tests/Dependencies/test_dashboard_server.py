@@ -174,6 +174,57 @@ def test_the_chart_series_is_republished_only_when_its_version_moves():
     assert calls["n"] == 2
 
 
+def test_the_builder_thread_shadows_nothing_that_threading_owns():
+    """Regression guard for a bug only Python 3.12 surfaced.
+
+    `DashboardBuilderThread` originally kept its stop flag in `self._stop`.
+    `threading.Thread` already has a private `_stop()` METHOD, which CPython
+    3.12's `join()` calls through `_wait_for_tstate_lock` -- so every join
+    raised "'Event' object is not callable". Python 3.13 no longer takes that
+    path, so the local run and the 3.13 CI leg passed while 3.12 failed, and
+    `dashboard.stop()` would have failed the same way in production.
+
+    Checking every attribute, rather than re-testing `_stop` alone, means the
+    next accidental collision fails here on any version.
+    """
+
+    thread = DashboardBuilderThread(
+        builder=lambda: {}, renderer=_render, publisher=DashboardPublisher(),
+        refresh_seconds=30.0, log=QUIET,
+    )
+    # Reflection over the RUNNING interpreter is not enough on its own: 3.13
+    # deleted `Thread._stop`, so on 3.13 there is nothing left to collide with
+    # and the original bug would sail straight through. The union with names
+    # that existed in a supported-but-older version is what makes this guard
+    # work on the interpreter that is not failing.
+    removed_in_newer_pythons = {"_stop", "_wait_for_tstate_lock", "_reset_internal_locks"}
+    reserved = {
+        name
+        for name in dir(threading.Thread)
+        if callable(getattr(threading.Thread, name, None))
+    } | removed_in_newer_pythons
+
+    shadowed = sorted(set(vars(thread)) & reserved)
+    assert shadowed == [], (
+        "these instance attributes shadow threading.Thread methods and will "
+        f"break join() or start() on at least one supported Python: {shadowed}"
+    )
+
+
+def test_joining_the_builder_thread_after_it_exits_does_not_raise():
+    """The exact call `DashboardServer.stop` makes, which 3.12 broke on."""
+
+    thread = DashboardBuilderThread(
+        builder=lambda: {"generated_at": "x"}, renderer=_render,
+        publisher=DashboardPublisher(), refresh_seconds=30.0, log=QUIET,
+    )
+    thread.start()
+    thread.stop()
+    thread.join(timeout=2.0)
+    thread.join(timeout=2.0)  # a second join must be a no-op, not a TypeError
+    assert not thread.is_alive()
+
+
 def test_the_builder_thread_stops_promptly_when_asked():
     publisher = DashboardPublisher()
     thread = DashboardBuilderThread(
