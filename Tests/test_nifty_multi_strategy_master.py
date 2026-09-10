@@ -13165,3 +13165,315 @@ class TestPaperPositionEntryTimestamp(unittest.TestCase):
         self.assertEqual(parsed, datetime(2026, 9, 10, 10, 17, 45))
         self.assertIsNone(master_file._parse_naive_timestamp(None))
         self.assertIsNone(master_file._parse_naive_timestamp("  "))
+
+
+class TestDashboardCollector(unittest.TestCase):
+    """The runner half of the read-only monitoring dashboard.
+
+    The pure shaping is covered in Tests/Dependencies/test_dashboard_snapshot.py
+    and the transport in test_dashboard_server.py. What matters here is the
+    part that reaches into live runner state: that it reads the right things,
+    and -- far more important -- that it never reaches anything that could
+    move a trading decision.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.broker = MagicMock()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=self.broker
+        )
+        self.worker.strategy_name = "Renko"
+        self.cache = master_file._DashboardChartCache(max_bars=375)
+
+    def _open_position(self, **overrides):
+        defaults = {
+            "active": True,
+            "direction": "BULLISH",
+            "symbol": "NIFTY-24550-CE",
+            "quantity": 75,
+            "entry_trade_price": 112.35,
+            "entry_timestamp": datetime(2026, 9, 10, 10, 17, 45),
+            "entry_price_quality": "LTP",
+            "option_security_id": 43210,
+            "option_exchange_segment": "NSE_FNO",
+            "option_right": "CE",
+            "option_strike": 24550.0,
+            "option_lot_size": 75,
+        }
+        defaults.update(overrides)
+        return master_file.PaperPosition(**defaults)
+
+    def _frame(self, rows=5):
+        return pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-09-10 09:15", periods=rows, freq="1min"),
+                "open": [100.0 + i for i in range(rows)],
+                "high": [101.0 + i for i in range(rows)],
+                "low": [99.0 + i for i in range(rows)],
+                "close": [100.5 + i for i in range(rows)],
+            }
+        )
+
+    # -- THE safety test -------------------------------------------------
+    def test_building_a_document_never_reaches_the_broker_or_a_mutating_gate(self):
+        """The single most important assertion about this whole feature.
+
+        `market_data_health.snapshot()` MUTATES the healthy-streak and
+        unhealthy-since fields that drive the 30-second liquidation clock, so
+        a monitor polling it once a second could pull a real risk decision
+        earlier. `_get_open_position_pnl` and friends fall back to
+        `broker.fetch_ltp_map` on a cold cache. `SessionStateStore.snapshot()`
+        serializes the whole document under the lock trading threads take on
+        the exit path.
+        """
+        self.worker.pos = self._open_position()
+        self.store.update("1", self._frame())
+        health = MagicMock()
+        self.store.market_data_health = health
+        session_state = MagicMock()
+        self.worker.session_state = session_state
+        sink = master_file.DashboardEventSink(maxlen=10)
+
+        master_file._dashboard_document([self.worker], self.store, sink, self.cache)
+
+        health.snapshot.assert_not_called()
+        self.broker.fetch_ltp_map.assert_not_called()
+        session_state.snapshot.assert_not_called()
+
+    # -- position rendering ----------------------------------------------
+    def test_an_open_position_renders_with_its_mark_and_signed_pnl(self):
+        self.worker.pos = self._open_position()
+        self.store.update_ltp_map({("NSE_FNO", 43210): 98.1})
+        sink = master_file.DashboardEventSink(maxlen=10)
+
+        document = master_file._dashboard_document(
+            [self.worker], self.store, sink, self.cache
+        )
+
+        position = document["open_positions"][0]
+        self.assertEqual(position["strategy"], "Renko")
+        self.assertEqual(position["slot"], "pos")
+        self.assertEqual(position["entry_time"], "10:17:45")
+        self.assertAlmostEqual(position["unrealized_pnl"], -1068.75, places=2)
+        leg = position["legs"][0]
+        self.assertEqual(leg["symbol"], "NIFTY-24550-CE")
+        self.assertEqual(leg["ltp"], 98.1)
+
+    def test_a_position_with_no_cached_mark_shows_no_pnl_rather_than_zero(self):
+        self.worker.pos = self._open_position()
+        sink = master_file.DashboardEventSink(maxlen=10)
+
+        document = master_file._dashboard_document(
+            [self.worker], self.store, sink, self.cache
+        )
+
+        position = document["open_positions"][0]
+        self.assertIsNone(position["legs"][0]["ltp"])
+        self.assertIsNone(position["unrealized_pnl"])
+        # And that unknown must propagate, not be silently treated as zero.
+        self.assertIsNone(document["strategies"][0]["open"])
+        self.assertIsNone(document["strategies"][0]["total"])
+
+    def test_the_entry_time_comes_from_the_event_stream_when_the_position_lacks_one(self):
+        """A position resumed or opened before the field existed still has an
+        entry time in the published ENTRY event."""
+        self.worker.pos = self._open_position(entry_timestamp=None)
+        sink = master_file.DashboardEventSink(maxlen=10)
+        sink.record(
+            {
+                "action": "ENTRY", "strategy": "Renko", "ts": "2026-09-10 09:31:02",
+                "direction": "BULLISH", "quantity": 75,
+                "legs": [{"symbol": "NIFTY-24550-CE", "side": "BUY", "entry_price": 112.35}],
+            }
+        )
+
+        document = master_file._dashboard_document(
+            [self.worker], self.store, sink, self.cache
+        )
+        self.assertEqual(document["open_positions"][0]["entry_time"], "09:31:02")
+
+    def test_an_unconfirmed_exit_is_flagged_as_still_open(self):
+        self.worker.pos = self._open_position()
+        sink = master_file.DashboardEventSink(maxlen=10)
+        legs = [{"symbol": "NIFTY-24550-CE", "side": "BUY", "entry_price": 112.35}]
+        sink.record({"action": "ENTRY", "strategy": "Renko", "ts": "2026-09-10 09:31:02",
+                     "direction": "BULLISH", "legs": legs})
+        sink.record({"action": "EXIT_FAILED", "strategy": "Renko", "ts": "2026-09-10 10:00:00",
+                     "direction": "BULLISH", "legs": legs})
+
+        document = master_file._dashboard_document(
+            [self.worker], self.store, sink, self.cache
+        )
+        self.assertIn("EXIT FAILED - STILL OPEN", document["open_positions"][0]["flags"])
+
+    def test_a_position_the_collector_cannot_render_does_not_hide_the_others(self):
+        exploding = MagicMock()
+        exploding.strategy_name = "Broken"
+        exploding.realized_pnl = 5.0
+        exploding.completed_trades = 1
+        exploding.live_trading = False
+        exploding._owned_open_positions.return_value = (("pos", object()),)
+        exploding.session_execution_mode.return_value = "PAPER"
+        self.worker.pos = self._open_position()
+
+        with patch.object(master_file, "_dashboard_position_view",
+                          side_effect=RuntimeError("boom")):
+            document = master_file._dashboard_document(
+                [exploding, self.worker], self.store, None, self.cache
+            )
+
+        self.assertEqual(
+            [row["strategy"] for row in document["strategies"]], ["Broken", "Renko"]
+        )
+        self.assertTrue(all(row["snapshot_valid"] is False for row in document["strategies"]))
+
+    # -- chart -----------------------------------------------------------
+    def test_the_chart_reports_no_data_before_the_first_candle(self):
+        payload = master_file._dashboard_chart_payload(self.store, self.cache)
+        self.assertEqual(payload["state"], "NO_DATA")
+        self.assertIsNone(payload["last_bar"])
+
+    def test_an_unchanged_snapshot_is_never_copied_again(self):
+        """`store.get()` copies ~2,200 rows; the once-a-second "anything new?"
+        question must not pay that price."""
+        self.store.update("1", self._frame())
+        first = master_file._dashboard_chart_payload(self.store, self.cache)
+
+        with patch.object(self.store, "get", side_effect=AssertionError("copied!")) as gets:
+            second = master_file._dashboard_chart_payload(self.store, self.cache)
+            gets.assert_not_called()
+
+        self.assertEqual(first["series_version"], second["series_version"])
+        self.assertEqual(second["bars"], 5)
+
+    def test_a_new_minute_bumps_the_series_version(self):
+        self.store.update("1", self._frame(rows=5))
+        first = master_file._dashboard_chart_payload(self.store, self.cache)
+        self.store.update("1", self._frame(rows=6))
+        second = master_file._dashboard_chart_payload(self.store, self.cache)
+        self.assertEqual(second["series_version"], first["series_version"] + 1)
+        self.assertEqual(
+            master_file._dashboard_chart_series(self.cache)["series_version"],
+            second["series_version"],
+        )
+
+    def test_candles_carry_the_exchange_wall_clock(self):
+        """lightweight-charts renders every timestamp as UTC and has no
+        timezone setting, so IST wall-clock minutes are labelled UTC. Getting
+        this wrong draws the session starting at 03:45."""
+        self.store.update("1", self._frame(rows=1))
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        bar = master_file._dashboard_chart_series(self.cache)["bars"][0]
+        self.assertEqual(
+            datetime.fromtimestamp(bar["time"], UTC).strftime("%H:%M"), "09:15"
+        )
+
+    # -- feed ------------------------------------------------------------
+    def test_the_feed_view_reports_the_spot_and_the_newest_bar(self):
+        self.store.update_ltp_map({("IDX_I", 13): 24561.2})
+        self.store.update("1", self._frame())
+        feed = master_file._dashboard_feed_view(self.store)
+        self.assertEqual(feed["spot"], 24561.2)
+        self.assertEqual(feed["newest_bar"], "09:19")
+        self.assertIsNotNone(feed["fetch_age_seconds"])
+
+    def test_the_feed_view_is_honest_before_any_data_arrives(self):
+        feed = master_file._dashboard_feed_view(self.store)
+        self.assertIsNone(feed["spot"])
+        self.assertIsNone(feed["newest_bar"])
+
+    # -- store peek ------------------------------------------------------
+    def test_peeking_at_snapshot_metadata_does_not_copy_the_frame(self):
+        self.store.update("1", self._frame())
+        signature, source_candle_ts, fetched_at = self.store.peek_snapshot_meta("1")
+        self.assertEqual(signature, self.store.get("1").candle_signature)
+        self.assertIsNotNone(source_candle_ts)
+        self.assertIsNotNone(fetched_at)
+        self.assertIsNone(self.store.peek_snapshot_meta("5"))
+
+
+class TestDashboardEventSinkWiring(unittest.TestCase):
+    """The three lines this feature adds to a live-money choke point."""
+
+    def setUp(self):
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=master_file.SharedMarketDataStore(),
+            stop_event=threading.Event(),
+            broker=MagicMock(),
+        )
+        self.worker.strategy_name = "Renko"
+
+    def test_no_sink_is_the_default_and_costs_one_attribute_read(self):
+        self.assertIsNone(self.worker.dashboard_event_sink)
+        self.worker.trade_event_queue = master_file.queue.Queue(maxsize=10)
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": 1.0})
+        self.assertEqual(self.worker.trade_event_queue.qsize(), 1)
+
+    def test_a_sink_receives_every_event_the_state_store_does(self):
+        sink = master_file.DashboardEventSink(maxlen=10)
+        self.worker.dashboard_event_sink = sink
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": -929.5})
+
+        recorded = sink.events()
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0]["pnl"], -929.5)
+        self.assertEqual(recorded[0]["strategy"], "Renko")
+        self.assertEqual(recorded[0]["mode"], "PAPER")
+
+    def test_an_exploding_sink_breaks_neither_persistence_nor_telegram(self):
+        """A monitor must never disturb trading, and must never displace the
+        two hand-offs it sits between."""
+        state = MagicMock()
+        sink = MagicMock()
+        sink.record.side_effect = RuntimeError("monitor is broken")
+        self.worker.session_state = state
+        self.worker.dashboard_event_sink = sink
+        self.worker.trade_event_queue = master_file.queue.Queue(maxsize=10)
+
+        self.worker.publish_trade_event({"action": "EXIT", "pnl": 1.0})  # must not raise
+
+        state.record_trade_event.assert_called_once()
+        self.assertEqual(self.worker.trade_event_queue.qsize(), 1)
+
+    def test_a_sink_still_records_when_telegram_is_switched_off(self):
+        """The `event_queue is None` early return must not skip the sink."""
+        sink = master_file.DashboardEventSink(maxlen=10)
+        self.worker.dashboard_event_sink = sink
+        self.worker.trade_event_queue = None
+        self.worker.publish_trade_event({"action": "ENTRY"})
+        self.assertEqual(len(sink.events()), 1)
+
+
+class TestDashboardConfiguration(unittest.TestCase):
+    """Config lives in the master, and every knob is clamped rather than trusted."""
+
+    def test_the_dashboard_is_off_by_default(self):
+        self.assertFalse(master_file.DASHBOARD_ENABLED)
+
+    def test_the_clamped_knobs_stay_inside_their_documented_ranges(self):
+        self.assertGreaterEqual(master_file.DASHBOARD_REFRESH_SECONDS, 0.25)
+        self.assertLessEqual(master_file.DASHBOARD_REFRESH_SECONDS, 30.0)
+        self.assertGreaterEqual(master_file.DASHBOARD_CHART_BARS, 60)
+        self.assertLessEqual(master_file.DASHBOARD_CHART_BARS, 2200)
+        self.assertGreaterEqual(master_file.DASHBOARD_MAX_TRADE_EVENTS, 100)
+        self.assertLessEqual(master_file.DASHBOARD_MAX_TRADE_EVENTS, 20000)
+        self.assertGreaterEqual(master_file.DASHBOARD_STALE_MARK_SECONDS, 1.0)
+        self.assertLessEqual(master_file.DASHBOARD_STALE_MARK_SECONDS, 300.0)
+
+    def test_there_is_no_bind_host_setting_anywhere(self):
+        """Making the dashboard reachable off-box must stay a reviewed code
+        change plus a token, not a line in `.env`."""
+        template = (REPO_ROOT / "Dependencies" / "env.example").read_text(encoding="utf-8")
+        for forbidden in ("DASHBOARD_HOST", "DASHBOARD_BIND", "DASHBOARD_PUBLIC"):
+            self.assertNotIn(forbidden, template)
+
+    def test_main_stops_the_dashboard_only_after_the_session_is_finalized(self):
+        """Read as source, because reaching this line in a test would mean
+        running a whole session. The ORDER is the safety property: flatten,
+        confirm flat, finalize, publish results, mark clean -- and only then
+        stop the monitor, so it can never delay any of them."""
+        source = (REPO_ROOT / "nifty_multi_strategy_master.py").read_text(encoding="utf-8")
+        stop_at = source.index("dashboard.stop(timeout=DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS)")
+        self.assertLess(source.index("mark_clean_shutdown("), stop_at)
+        self.assertLess(stop_at, source.index("# Only a fully finalized flat session"))

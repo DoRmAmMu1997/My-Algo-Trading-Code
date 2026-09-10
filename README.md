@@ -38,6 +38,7 @@ Although I own the code, the coding itself was done entirely using GPT-5.4-xhigh
 - **Regime Adaptive — one router, two rules.** A fourteenth port through the same factory, but from a different project ([`workratananmol-hub/nifty-options-paper-trading-bot`](https://github.com/workratananmol-hub/nifty-options-paper-trading-bot), MIT). Instead of one rule it reads ADX each bar and switches: an **opening-range breakout** confirmed by VWAP when the market trends, a **fade back to VWAP** when it ranges, and **no trade at all** when ADX is missing — it never guesses the regime. The two candidate rules live in `Regime Adaptive Strategy/regime_candidates.py` as library code with no worker of their own, so the router can never double up on a candidate's signal. Tunable by `REGIME_ADAPTIVE_*`. **Read `Signal Generators/Regime Adaptive Strategy/REGIME_PORTING_NOTES.md` before enabling it live:** this runner receives no volume, so its VWAP is an equal-weight proxy. The source's India VIX and breadth vetoes are **not implemented** — absent by choice rather than for want of data (the source project runs on Dhan too).
 - **Bid/ask spread gate — `<PREFIX>_MAX_SPREAD_PCT`.** Most single-leg strategies buy options; CPR AI SIDEWAYS may instead sell one. Either opening side crosses the same quoted market, so a wide spread is an immediate execution cost before the idea has done anything. The runner reads `top_bid_price`/`top_ask_price` off the `/optionchain` response for the exact strike and expiry and refuses an entry quoted wider than the cap. A too-wide spread is refused in **paper and live alike** (it's a market fact, so paper rows stay predictive); an **unreadable** quote refuses **live only** and lets paper through with a warning (an API failure shouldn't cost you a paper data point, but it also shouldn't spend real money on a check that didn't run). Workers share one 3-second cache because Dhan allows a single option-chain request per 3s per underlying/expiry. **Default `0` — off — for every strategy except Regime Adaptive (2.0)**, so no existing strategy's behaviour changed.
 - **CPR (Central Pivot Range) strategy is now live in the front test.** It runs as an ATM single-leg worker (`CPRStrategyWorker`) alongside the other strategies: the master file feeds it 1-min OHLC, the CPR logic resamples to complete 5-min candles internally, and a LONG/SHORT signal buys the ATM CE/PE of the next-next expiry. Tunable via `CPR_*` knobs in the `.env` (lots, max-loss, poll, 09:25-15:15 window). (This brought the master file to nine workers at the time; the running roster is now configuration-dependent.)
+- **Read-only live dashboard (optional, off by default).** The runner can serve a browser page on `http://127.0.0.1:8787/` showing open trades with live marks and running P&L, today's closed trades grouped by strategy, per-strategy realized/open/total, and a live NIFTY candle chart. It answers "where do I stand right now", which the log, Telegram and the once-a-day Sheet do not. It is read-only by construction (GET only, never touches the broker, cannot place or cancel an order), binds loopback only with no host setting, and runs on its own thread so it can never delay a trading decision. Switch it on with `DASHBOARD_ENABLED=true`; see `docs/lld/monitoring-dashboard.md`.
 - **Telegram trade notifications.** A queue-based `TelegramMessageWorker` posts a message to a Telegram group/channel on every entry and exit from *any* worker. Each alert shows the strategy, the exact option instrument(s), lot size, entry and exit price, and P&L (hedged spreads show both legs). It runs on its own thread so Telegram latency or downtime never blocks the trading loop, and it's a cheap no-op when disabled. See Setup below to switch it on.
 
 # Pro Tip
@@ -75,7 +76,9 @@ Each subfolder has its own `Readme.md` with the details.
    pip install --no-deps "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1#egg=neo_api_client"
    ```
    Flattrade uses the core `requests` and `pandas` dependencies. Shoonya's NorenApi
-   client is vendored. Kotak's official tag declares older exact pandas/requests
+   client is vendored, as is TradingView's Apache-2.0 `lightweight-charts` build used
+   by the optional dashboard (`Dependencies/dashboard_assets/vendor/`, with its licence,
+   an attribution NOTICE and the file's SHA-256). Kotak's official tag declares older exact pandas/requests
    versions, so `--no-deps` prevents it from silently downgrading the audited core
    runtime. `requirements-brokers.txt` records and tests the upstream broker
    dependency environment separately in CI; do not combine it with `requirements.txt`.
@@ -91,6 +94,13 @@ Each subfolder has its own `Readme.md` with the details.
    TELEGRAM_CHAT_ID=@your_channel_or_-100xxxxxxxxxx
    ```
    Create the bot via @BotFather and add it to your group/channel as an admin. Leave `TELEGRAM_ENABLED=false` (the default) to run without alerts. The token stays in `.env`, which is git-ignored.
+
+4b. (Optional) Turn on the read-only live dashboard by adding to the master file's `.env`:
+   ```
+   DASHBOARD_ENABLED=true
+   DASHBOARD_PORT=8787
+   ```
+   Then open `http://127.0.0.1:8787/` while the runner is up. It binds loopback only and there is deliberately no host setting — reaching it from another machine is a reviewed code change plus a token, not a line in `.env`. Every other `DASHBOARD_*` knob has a sensible default and is clamped at read time; see `Dependencies/env.example`.
 
 5. (Optional) End-of-day P&L to Google Sheets. After all workers exit, the master writes each strategy's day-end P&L into a tracker sheet (one row per strategy, one column per day, with month backfill). Enable it by adding to the master's `.env`:
    ```

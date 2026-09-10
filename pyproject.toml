@@ -97,6 +97,10 @@ files = [
     "Data Extractors/nifty_expired_options_fetch_dhan.py",
     "Dependencies/broker_contract.py",
     "Dependencies/check_env_config.py",
+    # The read-only monitoring dashboard. Typed from the start; the pure half
+    # carries a 90% coverage budget in scripts/check_coverage_thresholds.py.
+    "Dependencies/dashboard_snapshot.py",
+    "Dependencies/dashboard_server.py",
     "Dependencies/diagnostic_preflight.py",
     "Dependencies/next_open_entry.py",
     "Dependencies/order_splitting.py",

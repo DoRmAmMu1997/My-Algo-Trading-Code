@@ -70,6 +70,20 @@ One process, cooperating threads:
   the existing sections (distilled from Intraday Hunter videos; provenance in `sl_hunting_doc.md`).
   With both optional agents enabled, the configured roster can reach approximately 29 workers, but
   enable and virtual-trading gates keep the running roster configuration-dependent.
+- An **optional, opt-in read-only monitoring dashboard** (`DASHBOARD_ENABLED`, default
+  false) serves a browser page on `127.0.0.1` answering "where do I stand right now":
+  open trades with live marks and running P&L, today's closed trades grouped by strategy,
+  per-strategy realized/open/total, and a live NIFTY candle chart. Read-only by
+  construction — GET is the only method (anything else is 405), routes are a frozen
+  whitelist, and nothing it calls can reach the broker. One daemon builder thread
+  publishes an immutable JSON blob that HTTP threads hand out, so no browser tab ever
+  touches a worker. It must never call `market_data_health.snapshot()` (which MUTATES
+  the liquidation clock's state), `_get_open_position_pnl`/`_get_option_ltp`
+  (broker fallback), or `SessionStateStore.snapshot()` on a tick; a test asserts all
+  three. `DASHBOARD_BIND_HOST` is a module constant with deliberately NO `.env` knob.
+  Stopped LAST, after the session is flat and results are published. Pure shaping in
+  `Dependencies/dashboard_snapshot.py`, transport in `dashboard_server.py`, the collector
+  in the master beside `_worker_session_state_snapshot`; see `docs/adr/0016`.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading). That same `publish_trade_event` choke point also
   mirrors every event into the **crash-durable session state** (`Dependencies/session_state.py`,
@@ -79,7 +93,14 @@ One process, cooperating threads:
   run writes anything, it archives the exact prior file and carries same-day realized P&L into every
   matching worker so a restart cannot reset a daily max-loss budget. It exists because the Sheet is
   written ONCE at a clean end-of-day, so a mid-session crash (2026-08-10's machine hang) otherwise
-  loses the whole day's books. Resuming OPEN exposure remains opt-in (`SESSION_STATE_RESUME_ENABLED`,
+  loses the whole day's books. Every worker enumerates its open positions through
+  `_owned_open_positions()`, so the marks file's `owned_positions` key covers the three
+  families whose exposure never lived in `worker.pos` (Delta-0.2 CE/PE, the strangle legs,
+  the SL-Hunting BankNIFTY mirror) — a class overriding `_paper_positions_active` without
+  that hook fails a policy test. `open_position` keeps its exact prior shape because it is
+  the only key resume reads, and NOTE `update_worker_snapshot` copies a FIXED key list: a
+  new snapshot key not named there is silently dropped.
+  Resuming OPEN exposure remains opt-in (`SESSION_STATE_RESUME_ENABLED`,
   default false) and deliberately narrow — today's date, an unclean shutdown, PAPER, single-leg
   only; live positions are never restored because the broker account is the authority there. See
   `docs/adr/0012`.
@@ -112,6 +133,9 @@ Signal Generators/                                 # strategy signal logic (+ CP
                                                    #   REGIME_PORTING_NOTES.md before enabling it live)
 Dependencies/
   env.example                                      # template; copy to Dependencies/.env (gitignored)
+  dashboard_snapshot.py / dashboard_server.py      # the optional read-only dashboard: pure
+  dashboard_assets/                                #   shaping, transport, and the page (+ the
+                                                   #   vendored Apache-2.0 lightweight-charts)
   dhan_token_setup.py                              # one-time DhanHQ OAuth token setup
   check_env_config.py                              # `algo.py check-env` config-drift audit (read-only)
   Kotak API/     -> kotak_execution.py, diagnose_kotak_symbol.py

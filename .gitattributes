@@ -1,0 +1,6 @@
+# Third-party code vendored verbatim. Marking it keeps GitHub's language
+# statistics honest and, more usefully, keeps CodeQL's default setup from
+# switching on JavaScript analysis and reporting findings against a minified
+# upstream bundle nobody here should be patching. See
+# Dependencies/dashboard_assets/vendor/NOTICE-lightweight-charts.md.
+Dependencies/dashboard_assets/vendor/** linguist-vendored

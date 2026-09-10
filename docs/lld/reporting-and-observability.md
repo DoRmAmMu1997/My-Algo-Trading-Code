@@ -12,6 +12,11 @@ Tell the operator what happened — during the session (Telegram), after it
 (Google Sheet), and forensically (the log) — **without ever being able to affect
 trading**.
 
+The fourth surface, *where do I stand right now*, is the optional read-only
+dashboard: [`monitoring-dashboard.md`](monitoring-dashboard.md). It follows the
+same clause, more strictly — it is GET-only, loopback-only, and calls nothing
+that can reach a broker or move a risk gate.
+
 Every design choice here follows from that last clause. Reporting is
 best-effort, off the trading path, and a safe no-op when unconfigured.
 
