@@ -1,20 +1,20 @@
 {
-  "for_date": "2026-09-10",
-  "source": "Intraday Hunter, 'Prediction For 10 SEP 2026' (BbY6TwoC90o, uploaded 2026-09-09)",
-  "context": "Overall selling again, but the shape matters: the market HELD first and only then fell. 'Holding forms a PSYCHOLOGY, then the market falls' -- so few could participate in the selling, and the sellers are thin rather than seated.",
+  "for_date": "2026-09-11",
+  "source": "Intraday Hunter, 'Prediction For 11 SEP 2026' (xYh9Kd1qzm4, uploaded 2026-09-10)",
+  "context": "Three-four days of continuous selling and NIFTY closed on a BREAKDOWN, so the sellers are seated again -- but they got in LATE and out of FEAR, on the strength of a rejection, after failing to get in earlier.",
   "plan": [
-    "THE HOLD IS THE WHOLE READ: 'if the market had NOT held here, if it had gone straight up and then straight down, then reversal chances rise. But it HELD, then fell.' The hold is why he is following rather than fading.",
-    "FLAT TO GAP-DOWN -> SELL side, walking WITH the market. Same conclusion as yesterday but for the opposite reason: yesterday the sellers were seated and could not be hunted; today they are thin because the hold kept them out.",
-    "ABOVE THE RESISTANCE -> BUY side. 'There the danger to the sellers increases -- even those already short come under risk.' As yesterday, that is the only branch that hunts, and he wants a GOOD gap up, not a marginal one.",
-    "SENSEX HAS EXPIRY tomorrow. Expect expiry behaviour in SENSEX on top of the shared read; NIFTY's own expiry was 08 Sep and is past.",
-    "HIS RESISTANCES ARE THE OPEN'S MEASURING STICK, not a target: the buy branch needs an opening ABOVE them (NIFTY 23540, BankNIFTY 56600, SENSEX 75200), which is a level test, not a gap-size test."
+    "EVERY OPEN SHAPE NOW BUYS. Gap up, flat AND gap down all take BUY-side setups -- 'in flat to gap down the SAME plan can be kept'. This is the first note in the run with no sell branch at all.",
+    "THIS INVERTS THREE SESSIONS OF FOLLOW-THE-SELLING. The last three notes said walk WITH the market; this one HUNTS the sellers instead. Do not carry the follow branch forward.",
+    "THE REASON IS FEAR, AND HE FLAGS IT AS AN EXCEPTION: 'in a NORMAL case, in such a chart, we do NOT target the sellers. But these sellers are AFRAID.' The chart alone would say follow; the crowd's STATE is what overrides it.",
+    "WHY THEY ARE AFRAID: they could not get in earlier, then entered late on the rejection -- 'now he feels it is falling anyway, so let me make a trade'. A late, scared entry is the weak kind, and it is the whole setup.",
+    "A FEARFUL CROWD IS CAPTURABLE: 'if a trader is seated out of fear, the market can capture him.' He also warns the seller 'will not run away quickly' on a flat or gap-down open, so expect the squeeze to take time rather than fire at 09:15."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23540,
-        23674
+        23500,
+        23540
       ],
       "support": [
         23340,
@@ -35,8 +35,8 @@
     {
       "index": "SENSEX",
       "resistance": [
-        75200,
-        75500
+        75000,
+        75200
       ],
       "support": [
         74300,
