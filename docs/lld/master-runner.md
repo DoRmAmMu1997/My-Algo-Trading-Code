@@ -54,7 +54,12 @@ main()
   │        ── <PREFIX>_VIRTUAL_TRADING=false means the thread never starts,
   │           so the strategy does neither paper nor live
   │
-  6. _start_and_supervise_runtime_threads(...)
+  6. optional read-only monitoring dashboard    (see monitoring-dashboard.md)
+  │     └─ started HERE, before any worker thread, so its event sink is
+  │        attached before the first trade event can be published.
+  │        Any failure detaches it and the session trades on without it.
+  │
+  7. _start_and_supervise_runtime_threads(...)
         ├─ market data producer thread   (exactly one, see market-data.md)
         ├─ TelegramMessageWorker         (if enabled)
         └─ N strategy worker threads
@@ -108,9 +113,17 @@ shutdown requested (end of day, max loss, operator, or fatal supervision event)
   │        the runner's own ledger is flat
   │
   5. _finalize_flat_session(...)
-        ├─ _publish_eod_summary(...)          → Telegram
-        ├─ _update_pnl_google_sheet()         → per-strategy P&L row/column
-        └─ _refresh_instrument_master_for_next_day()
+  │     ├─ _publish_eod_summary(...)          → Telegram
+  │     ├─ _update_pnl_google_sheet()         → per-strategy P&L row/column
+  │     └─ _refresh_instrument_master_for_next_day()
+  │
+  6. session_state.mark_clean_shutdown(...)
+  │
+  7. dashboard.stop(...)  ── LAST, so a monitor can delay none of the above,
+  │                          and the operator can watch reconciliation happen
+  │
+  8. stop_event.set()  ── only a fully finalized flat session releases the
+                          fetcher and the notifier
 ```
 
 Step 3 is the one that matters. "Stopping the threads" and "safely stopping a

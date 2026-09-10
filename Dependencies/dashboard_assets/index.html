@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Algo Runner — Live</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+
+<header id="header">
+  <div class="brand">
+    <span class="dot" id="liveness-dot"></span>
+    <strong>Algo Runner</strong>
+    <span class="muted" id="session-date">—</span>
+    <span class="badge" id="mode-badge">PAPER</span>
+    <span class="badge subtle" id="phase-badge">—</span>
+  </div>
+
+  <div class="feed">
+    <span class="chip" id="feed-source">—</span>
+    <span class="chip" id="feed-spot">NIFTY —</span>
+    <span class="chip" id="feed-bar">bar —</span>
+    <span class="chip" id="stale-chip" hidden>STALE</span>
+  </div>
+
+  <div class="totals">
+    <div class="total"><span class="label">Realized</span><span class="value" id="total-realized">—</span></div>
+    <div class="total"><span class="label">Open</span><span class="value" id="total-open">—</span></div>
+    <div class="total big"><span class="label">Total</span><span class="value" id="total-total">—</span></div>
+    <div class="total"><span class="label">Updated</span><span class="value mono" id="generated-at">—</span></div>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section class="pane chart-pane">
+    <h2>NIFTY · 1 minute</h2>
+    <div id="chart"></div>
+    <p class="empty" id="chart-empty">Waiting for the first candle…</p>
+  </section>
+
+  <div class="columns">
+    <section class="pane wide">
+      <h2>Open trades <span class="count" id="open-count">0</span></h2>
+      <div class="scroll">
+        <table id="open-table">
+          <thead>
+            <tr>
+              <th>Strategy</th><th>Slot</th><th>Dir</th><th>Symbol</th><th>Side</th>
+              <th class="num">Qty</th><th>Entry</th><th class="num">Entry px</th>
+              <th class="num">LTP</th><th class="num">Unrealised</th><th>Flags</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="open-empty">No open positions.</p>
+    </section>
+
+    <section class="pane narrow">
+      <h2>Per strategy</h2>
+      <div class="scroll">
+        <table id="strategy-table">
+          <thead>
+            <tr>
+              <th>Strategy</th><th>Mode</th><th class="num">Trades</th>
+              <th class="num">Realized</th><th class="num">Open</th><th class="num">Total</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="strategy-empty">No strategies running.</p>
+    </section>
+  </div>
+
+  <section class="pane" id="notices-pane" hidden>
+    <h2>Notices</h2>
+    <ul id="notices"></ul>
+  </section>
+
+  <section class="pane">
+    <h2>Closed trades today <span class="count" id="closed-count">0</span></h2>
+    <p class="note" id="session-state-note" hidden>
+      Session state is off, so this list covers the current process only and is lost on restart.
+    </p>
+    <div id="closed-groups"></div>
+    <p class="empty" id="closed-empty">No trades closed yet today.</p>
+  </section>
+</main>
+
+<footer>
+  <span>Informational only — the broker is the authority on what is open.</span>
+  <span class="muted">Read-only · loopback · GET only</span>
+  <span class="muted">Charts by TradingView Lightweight Charts™ — Apache-2.0</span>
+</footer>
+
+<script src="/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/dashboard.js"></script>
+</body>
+</html>
