@@ -13450,7 +13450,38 @@ class TestDashboardConfiguration(unittest.TestCase):
     """Config lives in the master, and every knob is clamped rather than trusted."""
 
     def test_the_dashboard_is_off_by_default(self):
-        self.assertFalse(master_file.DASHBOARD_ENABLED)
+        """The DEFAULT must be asserted with the env var UNSET.
+
+        The earlier version read `master_file.DASHBOARD_ENABLED`, which is
+        resolved from the environment at import time. That made it pass in CI
+        and in a fresh worktree, where `Dependencies/.env` is absent, and FAIL
+        on the operator's own box the moment the dashboard was switched on --
+        green everywhere except the machine that actually runs it. Identical
+        failure mode to
+        `test_no_new_entry_cutoff_fallback_is_not_masked_by_local_env`.
+
+        Two halves, because either alone is insufficient: the helper must fall
+        back to OFF with the knob unset, AND the master must be the thing
+        passing that default -- otherwise flipping the source to `True` would
+        still leave this test green.
+        """
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DASHBOARD_ENABLED", None)
+            self.assertFalse(master_file._env_bool("DASHBOARD_ENABLED", False))
+
+            # ...and a set value must still win, so the knob is not inert.
+            os.environ["DASHBOARD_ENABLED"] = "true"
+            self.assertTrue(master_file._env_bool("DASHBOARD_ENABLED", False))
+
+        # Read as source for the same reason as the shutdown-order test below:
+        # this machine's .env has already bound the module constant, so the
+        # call site is the only place the code's OWN default can be pinned.
+        # Whitespace is stripped so reformatting cannot silently void it.
+        source = (REPO_ROOT / "nifty_multi_strategy_master.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'DASHBOARD_ENABLED=_env_bool("DASHBOARD_ENABLED",False)',
+            "".join(source.split()),
+        )
 
     def test_the_clamped_knobs_stay_inside_their_documented_ranges(self):
         self.assertGreaterEqual(master_file.DASHBOARD_REFRESH_SECONDS, 0.25)
