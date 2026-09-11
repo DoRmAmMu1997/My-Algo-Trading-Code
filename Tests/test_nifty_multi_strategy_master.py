@@ -3,6 +3,7 @@ import importlib
 import importlib.util
 import inspect
 import json
+import math
 import os
 import re
 import sys
@@ -13364,7 +13365,7 @@ class TestDashboardCollector(unittest.TestCase):
         this wrong draws the session starting at 03:45."""
         self.store.update("1", self._frame(rows=1))
         master_file._dashboard_chart_payload(self.store, self.cache)
-        bar = master_file._dashboard_chart_series(self.cache)["bars"][0]
+        bar = master_file._dashboard_chart_series(self.cache)["timeframes"]["1"]["bars"][0]
         self.assertEqual(
             datetime.fromtimestamp(bar["time"], UTC).strftime("%H:%M"), "09:15"
         )
@@ -13477,3 +13478,273 @@ class TestDashboardConfiguration(unittest.TestCase):
         stop_at = source.index("dashboard.stop(timeout=DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS)")
         self.assertLess(source.index("mark_clean_shutdown("), stop_at)
         self.assertLess(stop_at, source.index("# Only a fully finalized flat session"))
+
+
+class TestDashboardChartIndicators(unittest.TestCase):
+    """CPR, VWAP, stochastic and the 5-minute view, wired into the collector.
+
+    The pure maths is covered in Tests/Dependencies/test_dashboard_indicators.py.
+    What matters here is the wiring: that the chart reuses the STRATEGIES' own
+    helpers rather than a copy, that the expensive work happens once a minute
+    rather than once a poll, and that a broken indicator costs its own line and
+    nothing else.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.cache = master_file._DashboardChartCache(max_bars=120)
+
+    def _frame(self, rows=400, session="2026-09-11", start="09:15"):
+        """A single session of 1-minute bars with a non-degenerate shape."""
+        opening = pd.Timestamp(f"{session} {start}")
+        closes = [
+            24500.0 + 40.0 * math.sin(index / 17.0) + 12.0 * math.sin(index / 3.0)
+            for index in range(rows)
+        ]
+        return pd.DataFrame(
+            {
+                "timestamp": [opening + pd.Timedelta(minutes=i) for i in range(rows)],
+                "open": [round(c - 1.5, 2) for c in closes],
+                "high": [round(c + 3.0, 2) for c in closes],
+                "low": [round(c - 3.0, 2) for c in closes],
+                "close": [round(c, 2) for c in closes],
+            }
+        )
+
+    def _two_sessions(self, prior_rows=375, today_rows=40):
+        return pd.concat(
+            [self._frame(prior_rows, "2026-09-10"), self._frame(today_rows, "2026-09-11")],
+            ignore_index=True,
+        )
+
+    # -- the chart uses the strategies' own maths ------------------------
+    def test_the_indicator_helpers_are_the_strategies_own_objects(self):
+        """Not a second copy: `load_module` returns the instance already loaded.
+
+        A parallel copy would type-check, run, and silently diverge the moment
+        anyone retuned a strategy helper.
+        """
+        deps = master_file._DASHBOARD_CHART_DEPS
+        self.assertIs(deps.stochastic_fn, sys.modules["misc_strategy_common"].stochastic)
+        self.assertIs(
+            deps.attach_session_vwap, sys.modules["regime_common"].attach_session_vwap
+        )
+        self.assertIs(deps.width_classifier, master_file.CPR_LOGIC.classify_daily_cpr_width)
+
+    def test_the_stochastic_tracks_the_strategys_configured_periods(self):
+        deps = master_file._DASHBOARD_CHART_DEPS
+        self.assertEqual(deps.k_period, master_file.STOCHASTIC_CONFIG.k_period)
+        self.assertEqual(deps.d_period, master_file.STOCHASTIC_CONFIG.d_period)
+        self.assertEqual(deps.smooth_k, master_file.STOCHASTIC_CONFIG.smooth_k)
+
+    # -- the payload -----------------------------------------------------
+    def test_both_timeframes_arrive_in_one_payload(self):
+        """One payload is what makes the toggle instant and unable to fail."""
+        self.store.update("1", self._two_sessions())
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        payload = master_file._dashboard_chart_series(self.cache)
+
+        self.assertEqual(set(payload["timeframes"]), {"1", "5"})
+        one, five = payload["timeframes"]["1"], payload["timeframes"]["5"]
+        self.assertEqual(one["minutes"], 1)
+        self.assertEqual(five["minutes"], 5)
+        self.assertTrue(one["bars"] and five["bars"])
+        # Indicator columns are right-aligned to their bars.
+        for block in (one, five):
+            for column in ("vwap", "stoch_k", "stoch_d"):
+                self.assertEqual(len(block[column]), len(block["bars"]), column)
+
+    def test_the_leftmost_visible_bar_is_already_warm(self):
+        """Indicators run over more history than is shown, so the chart does
+        not open with a run of nulls."""
+        self.store.update("1", self._two_sessions(375, 300))
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        one = master_file._dashboard_chart_series(self.cache)["timeframes"]["1"]
+        self.assertIsNotNone(one["stoch_k"][0])
+        self.assertIsNotNone(one["vwap"][0])
+
+    def test_cpr_is_identical_in_both_timeframes(self):
+        """A daily level is horizontal: it cannot depend on the bar size."""
+        self.store.update("1", self._two_sessions())
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        payload = master_file._dashboard_chart_series(self.cache)
+        self.assertTrue(payload["cpr"]["available"])
+        self.assertTrue(payload["cpr"]["chart_only"])
+        self.assertEqual(payload["cpr"]["window"], "09:15-15:15")
+
+    def test_the_payload_survives_the_json_renderer(self):
+        """`allow_nan=False`: one NaN freezes the dashboard for the session."""
+        for rows in (1, 5, 30, 400):
+            with self.subTest(rows=rows):
+                cache = master_file._DashboardChartCache(max_bars=120)
+                store = master_file.SharedMarketDataStore()
+                store.update("1", self._frame(rows))
+                store.get = store.get  # explicit: the real store, no mocks
+                master_file._dashboard_chart_payload(store, cache)
+                payload = master_file._dashboard_chart_series(cache)
+                self.assertTrue(master_file.dashboard_snapshot.render_document_bytes(payload))
+
+    def test_the_forming_five_minute_bar_is_named_not_hidden(self):
+        """It is not what the 5-minute strategies act on, so the page says so."""
+        self.store.update("1", self._frame(rows=17))  # 09:15..09:31 -> 09:30 forming
+        state = master_file._dashboard_chart_payload(self.store, self.cache)
+        self.assertIsNotNone(state["last_bar_5m"])
+        payload = master_file._dashboard_chart_series(self.cache)
+        self.assertIn("forming_from", payload["timeframes"]["5"])
+
+    # -- cadence: what stops the cheap path rotting ----------------------
+    def test_the_expensive_work_happens_once_a_minute_not_once_a_poll(self):
+        """The whole performance argument, pinned.
+
+        A future edit that moves indicator work onto the per-poll path turns a
+        ~90 ms build into a ~400 ms one and takes the store lock every second.
+        """
+        frame = self._two_sessions(375, 60)
+        self.store.update("1", frame)
+        deps = master_file._DASHBOARD_CHART_DEPS
+        spy = SimpleNamespace(resample=0, vwap=0, stoch=0)
+
+        def counted(name, real):
+            def wrapper(*args, **kwargs):
+                setattr(spy, name, getattr(spy, name) + 1)
+                return real(*args, **kwargs)
+            return wrapper
+
+        traced = master_file._DashboardChartDeps(
+            stochastic_fn=counted("stoch", deps.stochastic_fn),
+            attach_session_date=deps.attach_session_date,
+            attach_session_vwap=counted("vwap", deps.attach_session_vwap),
+            width_classifier=deps.width_classifier,
+            resample=counted("resample", deps.resample),
+            k_period=deps.k_period, d_period=deps.d_period, smooth_k=deps.smooth_k,
+        )
+
+        master_file._dashboard_chart_payload(self.store, self.cache, traced)
+        after_first = (spy.resample, spy.vwap, spy.stoch)
+
+        # Twenty polls with NOTHING new: the store must not even be read.
+        with patch.object(self.store, "get", side_effect=AssertionError("copied!")):
+            for _ in range(20):
+                master_file._dashboard_chart_payload(self.store, self.cache, traced)
+        self.assertEqual((spy.resample, spy.vwap, spy.stoch), after_first)
+
+        # Twenty NEW MINUTES: the 5-minute resample runs at most once per
+        # bucket, not once per minute.
+        for extra in range(1, 21):
+            self.store.update("1", frame.iloc[: len(frame) + 0].pipe(
+                lambda f, n=extra: pd.concat([f, self._frame(n, "2026-09-11", "15:16")],
+                                             ignore_index=True)
+            ))
+            master_file._dashboard_chart_payload(self.store, self.cache, traced)
+        self.assertLessEqual(spy.resample - after_first[0], 6, "resample ran too often")
+        self.assertLessEqual(spy.vwap - after_first[1], 42)
+
+    def test_cpr_is_computed_once_per_session_not_once_per_minute(self):
+        frame = self._two_sessions(375, 30)
+        self.store.update("1", frame)
+        calls = {"n": 0}
+        deps = master_file._DASHBOARD_CHART_DEPS
+
+        def counting(*args):
+            calls["n"] += 1
+            return deps.width_classifier(*args)
+
+        traced = master_file._DashboardChartDeps(
+            stochastic_fn=deps.stochastic_fn,
+            attach_session_date=deps.attach_session_date,
+            attach_session_vwap=deps.attach_session_vwap,
+            width_classifier=counting, resample=deps.resample,
+            k_period=deps.k_period, d_period=deps.d_period, smooth_k=deps.smooth_k,
+        )
+        for extra in range(1, 11):
+            self.store.update("1", pd.concat(
+                [frame, self._frame(extra, "2026-09-11", "09:46")], ignore_index=True))
+            master_file._dashboard_chart_payload(self.store, self.cache, traced)
+        self.assertEqual(calls["n"], 1, "CPR recomputed more than once in a session")
+
+    # -- fail-soft -------------------------------------------------------
+    def test_a_broken_indicator_costs_its_own_line_and_nothing_else(self):
+        """A chart with no stochastic still beats no chart at all."""
+        self.store.update("1", self._two_sessions())
+        deps = master_file._DASHBOARD_CHART_DEPS
+
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("indicator is broken")
+
+        broken = master_file._DashboardChartDeps(
+            stochastic_fn=explode,
+            attach_session_date=deps.attach_session_date,
+            attach_session_vwap=explode,
+            width_classifier=deps.width_classifier,
+            resample=explode,
+            k_period=deps.k_period, d_period=deps.d_period, smooth_k=deps.smooth_k,
+        )
+        state = master_file._dashboard_chart_payload(self.store, self.cache, broken)
+        payload = master_file._dashboard_chart_series(self.cache, broken)
+
+        self.assertEqual(state["state"], "OK")
+        self.assertTrue(payload["timeframes"]["1"]["bars"], "candles must survive")
+        self.assertTrue(all(v is None for v in payload["timeframes"]["1"]["stoch_k"]))
+        self.assertTrue(master_file.dashboard_snapshot.render_document_bytes(payload))
+
+    def test_a_gap_in_the_five_minute_buckets_rebuilds_rather_than_skips(self):
+        """After a stall the incremental path would silently miss buckets."""
+        self.store.update("1", self._frame(rows=60))
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        first = len(self.cache.series_5m)
+
+        # Jump forward an hour: far more than one bucket.
+        self.store.update("1", self._frame(rows=120))
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        self.assertGreater(len(self.cache.series_5m), first)
+        bars = self.cache.series_5m
+        gaps = {bars[i + 1]["time"] - bars[i]["time"] for i in range(len(bars) - 1)}
+        self.assertEqual(gaps, {300}, "the 5-minute series must have no holes")
+
+    def test_the_safety_contract_still_holds_with_indicators_on(self):
+        """The assertion that matters most, re-run on a realistic frame."""
+        self.store.update("1", self._two_sessions())
+        health = MagicMock()
+        self.store.market_data_health = health
+        worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        worker.strategy_name = "Renko"
+        session_state = MagicMock()
+        worker.session_state = session_state
+
+        master_file._dashboard_document(
+            [worker], self.store, master_file.DashboardEventSink(maxlen=10), self.cache
+        )
+
+        health.snapshot.assert_not_called()
+        worker.broker.fetch_ltp_map.assert_not_called()
+        session_state.snapshot.assert_not_called()
+
+    def test_the_five_minute_view_survives_a_session_boundary(self):
+        """Regression: a TIME-based lookback emptied this chart every morning.
+
+        Anchored to "now minus 575 minutes", the window reaches back past
+        midnight at 09:15 and so excludes the entire previous session -- while
+        the 1-minute chart beside it still shows yesterday's close. Counting
+        ROWS keeps both views over the same bars.
+        """
+        cache = master_file._DashboardChartCache(max_bars=375)
+        yesterday = pd.concat(
+            [self._frame(375, "2026-09-09"), self._frame(375, "2026-09-10")], ignore_index=True
+        )
+        self.store.update("1", yesterday)
+        master_file._dashboard_chart_payload(self.store, cache)
+        self.assertEqual(len(cache.series_5m), cache.max_bars_5m)
+
+        # The first few minutes of a new session must not blank the pane.
+        for minutes_in in (1, 3, 7, 20):
+            with self.subTest(minutes_in=minutes_in):
+                self.store.update(
+                    "1",
+                    pd.concat(
+                        [yesterday, self._frame(minutes_in, "2026-09-11")], ignore_index=True
+                    ),
+                )
+                master_file._dashboard_chart_payload(self.store, cache)
+                self.assertEqual(len(cache.series_5m), cache.max_bars_5m)
