@@ -82,8 +82,19 @@ One process, cooperating threads:
   (broker fallback), or `SessionStateStore.snapshot()` on a tick; a test asserts all
   three. `DASHBOARD_BIND_HOST` is a module constant with deliberately NO `.env` knob.
   Stopped LAST, after the session is flat and results are published. Pure shaping in
-  `Dependencies/dashboard_snapshot.py`, transport in `dashboard_server.py`, the collector
-  in the master beside `_worker_session_state_snapshot`; see `docs/adr/0016`.
+  `Dependencies/dashboard_snapshot.py`, chart indicators in `dashboard_indicators.py`,
+  transport in `dashboard_server.py`, the collector in the master beside
+  `_worker_session_state_snapshot`; see `docs/adr/0016`.
+  The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a 1m/5m
+  toggle (both timeframes ride in ONE `/api/chart` payload, so switching needs no
+  fetch). VWAP and the stochastic are the strategies' OWN objects, reached through
+  `load_module` under BARE names so `sys.modules` returns the already-loaded instance
+  rather than a second copy. CPR is the one deliberate divergence and is labelled
+  CHART-ONLY everywhere: it reads the prior session 09:15-15:15 inclusive (high, low
+  AND close) while CPR / CPR Algo 3 / CPR AI keep using the full session and its last
+  intraday close -- those strategies are untouched, only the input WINDOW differs, and
+  a test feeds an untruncated session through both to prove the algebra has not forked.
+  See `docs/adr/0017`.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading). That same `publish_trade_event` choke point also
   mirrors every event into the **crash-durable session state** (`Dependencies/session_state.py`,

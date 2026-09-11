@@ -39,6 +39,7 @@ worker objects         ──attribute reads──────────┤
 
 | Unit | File | Responsibility |
 |---|---|---|
+| Chart indicators | `Dependencies/dashboard_indicators.py` | CPR from a truncated prior session, session VWAP, stochastic %K/%D, the forming higher-timeframe bucket, and the `/api/chart` document. Pure: pandas allowed, nothing else. The VWAP and stochastic helpers are INJECTED so the chart uses the strategies' own objects. |
 | Pure shaping | `Dependencies/dashboard_snapshot.py` | Pairs the event stream into closed trades and open-entry times; rolls up per-strategy and session totals; renders the document. No threads, no I/O, no clock, no `.env`. |
 | Transport | `Dependencies/dashboard_server.py` | Event sink, publisher, builder thread, HTTP server, asset whitelist. Reads **no** configuration of its own. |
 | Collector | `nifty_multi_strategy_master.py` (after `_session_state_snapshots`) | The only code that reaches into live workers and the store. It lives in the master because a `Dependencies/` module doing that would have to import the master back. |
@@ -101,6 +102,44 @@ and the SL-Hunting mirror all appear (see
 from `store.get_ltp_by_secid`, which never calls the broker; a mark is "stale"
 when the same read with `max_age_seconds=DASHBOARD_STALE_MARK_SECONDS` returns
 nothing while the unbounded read returns a price.
+
+### Chart indicators and the 1m/5m toggle
+
+Three overlays, and a toggle because several strategies derive 5-minute bars.
+
+| Indicator | Source | Note |
+|---|---|---|
+| CPR | `dashboard_indicators.chart_cpr` | **Chart-only.** Prior session 09:15-15:15 inclusive -- high, low AND close -- against the strategies' full session. Drawn with `createPriceLine`, so it is timeframe-independent by construction. See [`ADR-0017`](../adr/0017-chart-only-cpr-on-a-truncated-prior-session.md). |
+| VWAP | `regime_common.attach_session_vwap`, injected | The strategies' own object. Always an equal-weight proxy in live running -- the index feed carries no volume -- so it is labelled `VWAP*` with a footnote. |
+| Stochastic %K/%D | `misc_strategy_common.stochastic`, injected | The same TA-Lib `STOCH` and the same `STOCHASTIC_*` periods the Stochastic Oscillator strategy trades on. Own pane, 80/20 guides. |
+
+The helpers are reached with `load_module` under **bare** names, which returns
+`sys.modules[name]` when already loaded -- so these are the very objects the
+strategies use, not copies. A prefixed alias would create a second instance
+that type-checks, runs, and diverges the moment anyone retunes a helper; a
+test asserts identity against `sys.modules`.
+
+Indicators are computed on **completed bars**; the forming candle carries no
+indicator point. Cheaper, and truer to what the strategies evaluate.
+
+Both timeframes ride in ONE `/api/chart` payload, so switching is instant from
+data the browser already holds -- measured at zero network requests -- and the
+transport keeps its single publisher slot and zero-argument builder.
+`resample_ohlc_from_1m` is used unchanged for the completed 5-minute bars; the
+forming bucket is aggregated separately and concatenated, so the resampler's
+"completed buckets only" guarantee stays intact for the strategies that depend
+on it.
+
+Two things that look like details and are not:
+
+- The 5-minute window is a **row** tail, not a time window. Anchored to
+  "now minus 575 minutes" it reaches past midnight at 09:15 and excludes the
+  entire prior session, leaving the pane near-empty every morning while the
+  1-minute chart beside it shows yesterday's close.
+- The 5-minute series is **de-duplicated** on append. The bulk rebuild can
+  already hold the bucket the incremental path re-derives, and
+  lightweight-charts requires strictly ascending times -- one repeat makes it
+  silently drop bars, with nothing in the console to say why.
 
 ### The chart
 
@@ -179,7 +218,20 @@ whole reconciliation — which is when an operator most wants to watch. Its
 threads are daemons, so `DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS` is a courtesy, not
 something process exit depends on. A source-order test pins that sequence.
 
-## A trap worth remembering
+## Traps worth remembering
+
+**`fitContent()` against a zero-width container silently does nothing** and
+leaves a nonsense bar spacing behind, drawing every candle squeezed into a few
+pixels. On a first paint, or in a tab that is still hidden, the container can
+genuinely have no width. A `ResizeObserver` fits the range when layout gives
+the element a size, with a per-render retry behind it.
+
+**pandas 3 defaults to MICROSECOND datetime resolution.** The obvious
+`astype("int64") // 10**9` for epoch seconds therefore yields values a
+thousand times too small and draws the whole session in 1970. `bar_records`
+integer-divides a `Timedelta` instead, which is resolution-independent, and a
+test asserts it matches the master's `_bar_record` bar for bar.
+
 
 `DashboardBuilderThread` keeps its stop flag in `_stop_event`, **not** `_stop`.
 `threading.Thread` has a private `_stop()` *method* that CPython 3.12's
@@ -215,9 +267,11 @@ deliberately no host key.
 |---|---|
 | `Tests/Dependencies/test_dashboard_snapshot.py` | Every pairing confidence, the Delta-0.2 / SL-Hunting-mirror / re-entry shapes, `EXIT_FAILED` not closing, malformed events, the honesty rules, NaN rejection |
 | `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read |
-| `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, and the "never reaches the broker or a mutating gate" assertion |
+| `Tests/Dependencies/test_dashboard_indicators.py` | CPR truncation and every degenerate session shape; **the equality test that pins the CPR algebra against `_add_daily_cpr`**; VWAP and stochastic equality with the strategies' helpers; the forming bucket; and every fixture rendered through `render_document_bytes` |
+| `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, the "never reaches the broker or a mutating gate" assertion, the recompute-cadence guards, and fail-soft when an indicator raises |
 
-`Dependencies/dashboard_snapshot.py` carries a 90 % coverage budget in
-`scripts/check_coverage_thresholds.py`. `dashboard_server.py` deliberately does
+`Dependencies/dashboard_snapshot.py` and `Dependencies/dashboard_indicators.py`
+each carry a 90 % coverage budget in `scripts/check_coverage_thresholds.py`
+(the latter measures 98.9 %). `dashboard_server.py` deliberately does
 not: socket-bound code has branches that cannot honestly be covered, and a
 budget you cannot meet is worse than none.
