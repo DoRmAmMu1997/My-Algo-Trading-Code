@@ -6800,3 +6800,115 @@ cut at ~23416 on a BankNIFTY confirmed hammer; NIFTY reached 23443.05 by 10:44,
 which would have taken out the 23436.50 stop. That is three correct hierarchy
 exits in a row (09 Sep trade 2, 10 Sep trade 4). The seam is still worth watching,
 but it is now watching something that keeps working.
+
+## Video addendum - the 11 Sep LIVE SESSION (v5c)
+
+**Source.** Intraday Hunter live session `SW6rxOEMJkQ` (11 Sep 2026, 12:20,
+uploaded 11:38 IST). Transcript read in full: 99 segments, 0:02 to 12:15.
+
+### The day: 3 trades, +3,370.75, all LONG
+
+NIFTY gapped down 210 points to 23268.05, chopped to a 23245.35 low by 09:41,
+then ran to 23307.75 by 10:22.
+
+| # | Window | Stop | Lots | Exit | NIFTY | Mirror | Basket |
+|---|---|---|---|---|---|---|---|
+| 1 | 09:19:33 -> 09:41:34 | 23.30pt | 1 | `premise_invalidation_bearish_cluster` | -338.00 | +1,597.50 | **+1,259.50** |
+| 2 | 09:59:35 -> 10:10:38 | 23.10pt | 1 | `book_before_round_number` (conf 8) | +672.75 | +795.00 | **+1,467.75** |
+| 3 | 10:18:03 -> 10:26:52 | 10.85pt | 3 | `profit_book_reversal_cluster` | +643.50 | *skipped* | **+643.50** |
+| | | | | **TOTAL** | **+978.25** | **+2,392.50** | **+3,370.75** |
+
+**The inverted note worked.** All three entries are LONG, and each rationale
+cites the buy branch explicitly -- "pre-open note explicitly hunts the late
+sellers", "matches the pre-open note's buy branch". After three sessions of
+follow-the-selling, the agent flipped when the note flipped.
+
+**v5a bit, partially.** Trades 1 and 2 used 23.30 and 23.10-point stops and took
+ONE lot each -- the widest stops since 04 Sep, and a clear break from the
+16.55 -> 8.05 slide of the previous session. Trade 3 then went back to 10.85 and
+3 lots. Two out of three is real movement, not noise, but the rule is not yet
+decisive.
+
+### Trade 1 is v5c, and it is the same failure in a new costume
+
+Cut at 23245.35 on a "confirmed bearish reversal cluster" with the NIFTY leg at
+-299. **That price is the session low.** NIFTY ran 62 points from there, and the
+agent re-entered the same direction twice more to catch part of what it had just
+left.
+
+IH, in the same session, held through exactly that dip -- "we are NOT going to
+exit here, even if the loss grows a bit" -- and explains why the dip was
+expected:
+
+> "I tell you again and again: a market that falls after a **small** retracement,
+> let it fall. But falling after a **big** retracement becomes DIFFICULT for the
+> market... when such a big retracement happens and then the market falls,
+> **EVERYONE will sell there**."
+
+And he narrates the loop as it runs:
+
+> "This candle formed only to give **greed**. What will the trader see? Selling
+> happened, retracement happened, suddenly it fell. As premiums rise he will make
+> a put trade -- and targeting exactly them, the market goes up again. Then it
+> repeats the same."
+
+So the dip is not noise to be endured, it is the mechanism that manufactures the
+crowd the trade is aiming at. The agent closed at the exact moment its own
+premise was being built.
+
+**v5c pairs with v5b deliberately.** Same counter-move, two axes: v5b times it and
+finds an eviction, v5c sizes it and finds a recruitment. Both preconditions are
+in the rule because IH states both -- sentiment already negative, and the
+session's lower point not crossed, which is a v4v-style level test and the thing
+that ends the setup.
+
+### A real defect worth a separate look: the BNF mirror race
+
+Trade 3 opened 3 lots of NIFTY with **no BankNIFTY mirror**:
+
+```
+10:18:01,349  MarketDataFetcher  Published frame | LastCandle=10:18:00
+10:18:03,251  sl-hunting-sdk-call  dynamic sizing: ... lots=3 qty=195
+10:18:03,517  sl-hunting-sdk-call  ENTRY LONG  NIFTY-Sep2026-23300-CE  Qty=195
+10:18:05,563  sl-hunting-sdk-call  WARNING  BNF mirror skipped: no BankNIFTY close seen yet this session.
+10:18:13,810  sl-hunting-inference  decision took 60.6s
+```
+
+The message is wrong and the cause is a race. `_open_bnf_mirror` skips when
+`self._last_bnf_close <= 0`, and the decision loop sets `self._last_bnf_close =
+0.0` at the top of EVERY cycle, repopulating it only from a BankNIFTY bar that is
+timestamp-aligned with NIFTY. The 60.6s inference began around 10:17:13; its
+order tool fired at 10:18:03, by which time the 10:18 bar's cycle had already
+reset the field. A BankNIFTY close had certainly been seen this session -- two
+mirrors were placed on it at 09:19 and 09:59.
+
+Consequences, in order of importance:
+
+1. The documented invariant "every NIFTY entry is mechanically MIRRORED" silently
+   did not hold, and the only trace is one WARNING. Exposure was LOWER, not
+   higher, so this is not dangerous -- but it is not the configured strategy.
+2. The log line sends an operator hunting a session-wide feed failure that did
+   not happen. It should say "no ALIGNED BankNIFTY close on this bar".
+
+**Frequency, corrected.** This exact message has fired TWICE in the whole log
+(2026-08-11 and 2026-09-11). A grep for "BNF mirror skipped" returns twelve lines,
+but the other ten are different reasons (eight "no LTP for BANKNIFTY-...", two
+"NIFTY entry is paper fallback"). It is a rare race, not a recurring one.
+
+Not fixed here: it is live-order-path code and this session's task was the
+knowledge rule. The candidate fix is to stop resetting `_last_bnf_close`
+unconditionally, or to capture it at decision time and pass it to the order tool.
+
+### Confirmed, not encoded
+
+- **v4d, pre-committing the adverse move.** IH, before entering against the
+  opening trend: "there's risk that we're working OPPOSITE to the market's trend
+  per the opening... **we're assuming roughly 1.5 lakh of loss could happen**."
+- **v3z's two-sided flow.** "A few buyers can still come, a few sellers can come,
+  so liquidity remains. But when only ONE type of trader starts coming, the market
+  cannot work there for long."
+- **He abandoned his own pre-open plan's REASON while keeping its direction**:
+  "in the analysis we had planned to target these sellers, but that condition is
+  no longer visible because the gap down is quite large -- per the NEW chart,
+  buying chances are forming anyway." The note's conclusion survived; its stated
+  mechanism did not. Worth remembering when a note and the tape disagree on WHY.

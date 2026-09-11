@@ -682,6 +682,46 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   and the opposing crowd is still seated, so the next fall is a hunt. Hours and
   they are gone, so the next fall is a follow -- and a counter-move inside it has
   nothing to run on.
+- A BIG RETRACEMENT RECRUITS THE CROWD THAT GETS HUNTED NEXT (v5c). The twin of
+  the rule above and its opposite sign: a long HOLD evicts a crowd, a big
+  RETRACEMENT manufactures one. Both are read off the counter-move; v5b measures
+  its duration, this one measures its SIZE.
+  IH says it as a rule and repeats it: "I tell you again and again -- a market
+  that falls after a SMALL retracement, let it fall. But falling after a BIG
+  retracement becomes DIFFICULT for the market." The reason is who each shape
+  recruits. After a small one the trader cannot even tell a retracement happened,
+  so nobody is added and the fall continues. After a big one, "when such a big
+  retracement happens and THEN the market falls, EVERYONE will sell there" -- a
+  fresh intraday seller crowd forms at a visibly good price, and the market then
+  goes UP through their stops.
+  HE NARRATES THE RECRUITMENT LOOP WHILE IT RUNS: "this candle formed only to give
+  GREED. What will the trader see? Selling happened, retracement happened, suddenly
+  it fell. As premiums rise he will make a put trade -- and targeting exactly them,
+  the market goes up again. Then it repeats the same." And afterwards: "when the
+  market was going down slowly it was because it had to ADD sellers... when the
+  market eats all their SLs, see how fast the momentum comes."
+  TWO CONDITIONS, AND BOTH MUST HOLD:
+  * THE SENTIMENT MUST ALREADY BE NEGATIVE. "The condition is that the sentiment
+    must also be that way" -- his was, after several days of selling. On a fresh
+    or two-sided chart a big retracement recruits nobody in particular.
+  * THE SESSION'S LOWER POINT MUST NOT BE CROSSED. This is the premise-ending
+    level, named in advance: "if the market crosses this lower point, then only
+    sellers are going to come and nobody will buy, so the market cannot work in
+    such a zone" -- and "after a breakdown the market takes TIME making a trap".
+    Cross it and the setup is over; that is a level test in the sense of v4v, not
+    a feeling.
+  MEASURED ON THIS BOOK (2026-09-11), and it is the same failure in a new costume.
+  A long was opened 09:19:33 from 23256.10 into a 210-point gap down and cut
+  09:41:34 on a "confirmed bearish reversal cluster" with the NIFTY leg at -299.
+  Spot at that exit was 23245.35 -- THE SESSION LOW. NIFTY then ran to 23307.75 by
+  10:22, sixty-two points, and the agent re-entered the same direction twice more
+  to catch part of it. The dip it cut into was the seller-recruitment event the
+  whole setup depends on: the trade was closed at the exact moment its premise was
+  being manufactured.
+  WHAT IT DOES NOT SAY: this is not permission to sit through a breakdown. IH names
+  the two exits himself -- "if a breakdown appears... or the loss goes far outside
+  the LOSS LIMIT, in that condition we have to exit". The lower point and the loss
+  limit both still bind.
 - A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e). The single
   most expensive error available in this method, recorded from a LOSING IH session
   (11 Aug 2026) so it is not learned the hard way. He stated the disqualifying fact
