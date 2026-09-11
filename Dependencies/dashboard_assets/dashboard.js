@@ -16,9 +16,13 @@
   const REFRESH_FALLBACK_SECONDS = 1.0;
   const HIDDEN_TAB_SECONDS = 5.0;
   const RETRY_SECONDS = 5.0;
-  /* Two quiet polls in a row is normal jitter; more than this many means the
-   * builder thread has stopped producing new documents. */
-  const STALE_POLLS = 5;
+  /* How long the document may go unchanged before the page says so. Measured
+   * in TIME, not in polls: a poll count silently assumes this tab polls no
+   * faster than the runner publishes, and a count of consecutive 304s says
+   * nothing about how long they took. Five refresh intervals of real silence
+   * is a stopped builder; anything shorter is jitter. */
+  const STALE_AFTER_INTERVALS = 5;
+  const STALE_FLOOR_SECONDS = 5.0;
 
   const el = (id) => document.getElementById(id);
   const nodes = {
@@ -48,14 +52,45 @@
     sessionStateNote: el("session-state-note"),
     chart: el("chart"),
     chartEmpty: el("chart-empty"),
+    chartTitle: el("chart-title"),
+    cprProvenance: el("cpr-provenance"),
+    vwapLabel: el("vwap-label"),
+    vwapFootnote: el("vwap-footnote"),
+    tf1: el("tf-1"),
+    tf5: el("tf-5"),
   };
 
   let etag = null;
   let pollSeconds = REFRESH_FALLBACK_SECONDS;
-  let unchangedPolls = 0;
+  let lastFreshAt = Date.now();
+  /* Exactly one pending timer and one in-flight request at any moment. Without
+   * these, every return to the tab started an ADDITIONAL poll chain: the old
+   * timer was never cancelled, so N tab-switches meant N concurrent loops all
+   * polling a server that publishes once per interval. Most of those requests
+   * then got a 304, which the page read as "the runner has gone quiet" and
+   * flashed a staleness banner that cleared on the next publish. */
+  let pollTimer = null;
+  let pollInFlight = false;
   let chart = null;
   let candleSeries = null;
+  let vwapSeries = null;
+  let kSeries = null;
+  let dSeries = null;
   let seriesVersion = -1;
+  /* The last `/api/chart` response, holding BOTH timeframes. Keeping it means
+   * the timeframe toggle redraws from memory instead of issuing a request
+   * that could fail and leave a blank chart. */
+  let chartPayload = null;
+  let cprLines = [];
+  let cprSignature = null;
+  /* Which timeframe the series currently hold. Switching changes both the bar
+   * spacing and the span, so the visible range has to be refit -- but ONLY
+   * then, never on the once-a-minute refresh, or the operator's zoom would be
+   * yanked back every minute. */
+  let renderedTimeframe = null;
+  /* Set whenever the visible range needs refitting, cleared once a fit has
+   * actually landed. See `requestFit`. */
+  let pendingFit = false;
 
   /* ------------------------------------------------------------ formatting */
   const DASH = '<span class="dash">—</span>';
@@ -264,6 +299,49 @@
   }
 
   /* ----------------------------------------------------------------- chart */
+  /* ----------------------------------------------------------------- chart */
+  /* Indicator visibility and the timeframe are per-browser preferences, held
+   * in a VERSIONED key so a future rename falls back to defaults instead of
+   * silently hiding a line. Every access is wrapped: a private window, cleared
+   * site data or a corrupt value must not take the page down with it. */
+  const PREFS_KEY = "algoDashboard.chart.v1";
+  const PREF_DEFAULTS = { tf: "1", cpr: true, cprRS1: false, cprRS3: false, vwap: true, stoch: true };
+
+  function loadPrefs() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+      return { ...PREF_DEFAULTS, ...(stored && typeof stored === "object" ? stored : {}) };
+    } catch (error) {
+      return { ...PREF_DEFAULTS };
+    }
+  }
+
+  function savePrefs() {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    } catch (error) {
+      /* A preference that cannot be remembered is not worth an error. */
+    }
+  }
+
+  const prefs = loadPrefs();
+
+  /* CPR groups. `core` is on by default; the ladders are opt-in because
+   * eleven horizontal lines over candles is not a chart, it is a net. */
+  const CPR_LEVELS = [
+    { key: "pivot", group: "core", title: "P",  color: "#e8b13a", dashed: false },
+    { key: "bc",    group: "core", title: "BC", color: "#8b94a3", dashed: true },
+    { key: "tc",    group: "core", title: "TC", color: "#8b94a3", dashed: true },
+    { key: "r1",    group: "rs1",  title: "R1", color: "#ef5f5f", dashed: true },
+    { key: "r2",    group: "rs1",  title: "R2", color: "#ef5f5f", dashed: true },
+    { key: "s1",    group: "rs1",  title: "S1", color: "#35c46b", dashed: true },
+    { key: "s2",    group: "rs1",  title: "S2", color: "#35c46b", dashed: true },
+    { key: "r3",    group: "rs3",  title: "R3", color: "#8a3b3b", dashed: true },
+    { key: "r4",    group: "rs3",  title: "R4", color: "#8a3b3b", dashed: true },
+    { key: "s3",    group: "rs3",  title: "S3", color: "#2c6b45", dashed: true },
+    { key: "s4",    group: "rs3",  title: "S4", color: "#2c6b45", dashed: true },
+  ];
+
   function ensureChart() {
     if (chart || typeof LightweightCharts === "undefined") return;
     chart = LightweightCharts.createChart(nodes.chart, {
@@ -273,6 +351,13 @@
         /* Left enabled deliberately: the vendored library is Apache-2.0 and
          * this is its attribution. See vendor/NOTICE-lightweight-charts.md. */
         attributionLogo: true,
+        /* The library's own separator defaults are light-theme greys
+         * (#E0E3EB) and would draw a bright bar across this panel. */
+        panes: {
+          enableResize: true,
+          separatorColor: "#2c333d",
+          separatorHoverColor: "rgba(91, 157, 217, 0.35)",
+        },
       },
       grid: {
         vertLines: { color: "#232932" },
@@ -283,11 +368,192 @@
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       autoSize: true,
     });
+
     candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
       upColor: "#35c46b", downColor: "#ef5f5f",
       borderUpColor: "#35c46b", borderDownColor: "#ef5f5f",
       wickUpColor: "#35c46b", wickDownColor: "#ef5f5f",
-    });
+    }, 0);
+
+    vwapSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: "#e8b13a", lineWidth: 1, priceLineVisible: false,
+      lastValueVisible: false, title: "VWAP*", visible: prefs.vwap,
+    }, 0);
+
+    /* Pane 1: the oscillator. v5 takes the pane index as addSeries' third
+     * argument and creates the pane on demand. */
+    kSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: "#5b9dd9", lineWidth: 1, priceLineVisible: false, title: "%K",
+    }, 1);
+    dSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: "#e8b13a", lineWidth: 1, priceLineVisible: false, title: "%D",
+    }, 1);
+    for (const level of [80, 20]) {
+      kSeries.createPriceLine({
+        price: level, color: "#39414d", lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true,
+      });
+    }
+    applyStochVisibility();
+
+    /* Fitting the visible range requires the container to HAVE a width. On a
+     * first paint -- or in a tab that is still hidden -- it can be zero, and
+     * fitting against a zero-width box silently does nothing while leaving a
+     * nonsense bar spacing behind, which draws every candle squeezed into a
+     * few pixels at the right edge. Observing the element means the fit
+     * happens exactly when layout gives it a size, however late that is. */
+    try {
+      new ResizeObserver(() => applyPendingFit()).observe(nodes.chart);
+    } catch (error) {
+      /* No ResizeObserver: the per-render retry below still covers it. */
+    }
+  }
+
+  function requestFit() {
+    pendingFit = true;
+    applyPendingFit();
+  }
+
+  function applyPendingFit() {
+    if (!pendingFit || !chart) return;
+    if (!nodes.chart.clientWidth) return;  // not laid out yet; try again later
+    chart.timeScale().fitContent();
+    pendingFit = false;
+  }
+
+  const STOCH_PANE_HEIGHT = 110;
+
+  function applyStochVisibility() {
+    if (!kSeries) return;
+    kSeries.applyOptions({ visible: prefs.stoch });
+    dSeries.applyOptions({ visible: prefs.stoch });
+    /* Hiding the lines is not enough: the pane itself keeps its height and
+     * the price chart stays short, which is the opposite of what turning the
+     * oscillator off is for. Collapse it so the candles get the room back. */
+    try {
+      chart.panes()[1].setHeight(prefs.stoch ? STOCH_PANE_HEIGHT : 1);
+    } catch (error) {
+      /* Pane sizing is cosmetic; never let it stop the chart drawing. */
+    }
+  }
+
+  /* Indicator columns arrive as bare numbers zipped against bars[i].time --
+   * ~9 bytes a point instead of ~36 for {time, value} objects. */
+  function pointsFrom(bars, values) {
+    const points = [];
+    for (let index = 0; index < bars.length; index += 1) {
+      const value = values ? values[index] : null;
+      if (value !== null && value !== undefined) {
+        points.push({ time: bars[index].time, value });
+      }
+    }
+    return points;
+  }
+
+  function renderCprLines(cpr) {
+    if (!candleSeries) return;
+    const signature = JSON.stringify([
+      cpr && cpr.available ? cpr.pivot : null, prefs.cpr, prefs.cprRS1, prefs.cprRS3,
+    ]);
+    if (signature === cprSignature) return;
+    cprSignature = signature;
+
+    for (const handle of cprLines) candleSeries.removePriceLine(handle);
+    cprLines = [];
+    if (!cpr || !cpr.available || !prefs.cpr) return;
+
+    for (const level of CPR_LEVELS) {
+      const on = level.group === "core"
+        || (level.group === "rs1" && prefs.cprRS1)
+        || (level.group === "rs3" && prefs.cprRS3);
+      const price = cpr[level.key];
+      if (!on || price === null || price === undefined) continue;
+      cprLines.push(candleSeries.createPriceLine({
+        price,
+        color: level.color,
+        lineWidth: 1,
+        lineStyle: level.dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        /* The "(chart)" suffix travels with a screenshot of just the chart,
+         * where none of the page's other captions would. */
+        title: `${level.title} (chart)`,
+      }));
+    }
+  }
+
+  function renderCprProvenance(cpr) {
+    if (!cpr || !cpr.available) {
+      nodes.cprProvenance.hidden = false;
+      nodes.cprProvenance.textContent = cpr && cpr.unavailable_reason
+        ? `CPR unavailable — ${cpr.unavailable_reason}.`
+        : "";
+      nodes.cprProvenance.hidden = !nodes.cprProvenance.textContent;
+      return;
+    }
+    /* Built from the payload's OWN inputs, not a fixed string: the operator
+     * can see the 15:15 close rather than take it on trust, and can see how
+     * far it sits from the figure the strategies actually trade. */
+    const parts = [
+      `Prior ${cpr.prior_session_date} ${cpr.window}`,
+      `${cpr.bars_used} bars`,
+      `H ${cpr.prev_high} L ${cpr.prev_low} C ${cpr.prev_close}`,
+      `pivot ${cpr.pivot} (chart)`,
+    ];
+    if (cpr.strategies_pivot !== null && cpr.strategies_pivot !== undefined) {
+      parts.push(`strategies ${cpr.strategies_pivot} (full session)`);
+    }
+    if (cpr.partial) parts.push("partial prior session");
+    if (cpr.width) parts.push(cpr.width);
+    nodes.cprProvenance.textContent = parts.join(" · ");
+    nodes.cprProvenance.hidden = false;
+  }
+
+  function applyTimeframe() {
+    if (!chartPayload || !candleSeries) return;
+    const block = chartPayload.timeframes[prefs.tf] || chartPayload.timeframes["1"];
+    if (!block) return;
+
+    candleSeries.setData(block.bars || []);
+    vwapSeries.setData(pointsFrom(block.bars || [], block.vwap));
+    kSeries.setData(pointsFrom(block.bars || [], block.stoch_k));
+    dSeries.setData(pointsFrom(block.bars || [], block.stoch_d));
+
+    if (renderedTimeframe !== prefs.tf) {
+      renderedTimeframe = prefs.tf;
+      /* 75 five-minute bars cover a different span from 375 one-minute ones,
+       * so without a refit the new candles sit outside the old visible range
+       * and the pane looks empty apart from the price lines.
+       *
+       * Deferred to the next PAINT, not called inline: on a first load the
+       * container can still have zero width, and fitting against a zero-width
+       * box silently does nothing and leaves the stale range behind. A hidden
+       * tab does not run animation frames at all, so this also waits, by
+       * itself, until the tab is actually shown. */
+      requestFit();
+    }
+
+    const minutes = block.minutes || 1;
+    nodes.chartTitle.textContent =
+      `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
+      + `${(chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15"} (chart only)`;
+    renderCprLines(chartPayload.cpr);
+    renderCprProvenance(chartPayload.cpr);
+
+    const vwapMeta = (chartPayload.indicators || {}).vwap || {};
+    nodes.vwapLabel.title = vwapMeta.note || "";
+    nodes.vwapFootnote.hidden = vwapMeta.is_proxy === false;
+  }
+
+  function setTimeframe(value) {
+    prefs.tf = value;
+    savePrefs();
+    nodes.tf1.classList.toggle("active", value === "1");
+    nodes.tf5.classList.toggle("active", value === "5");
+    nodes.tf1.setAttribute("aria-pressed", String(value === "1"));
+    nodes.tf5.setAttribute("aria-pressed", String(value === "5"));
+    /* Switching redraws from the payload the browser ALREADY holds: no fetch,
+     * so the toggle has no way to fail. */
+    applyTimeframe();
   }
 
   async function renderChart(doc) {
@@ -299,24 +565,29 @@
     ensureChart();
     if (!candleSeries) return;
 
-    /* The full candle array is refetched only when a new MINUTE closed --
-     * roughly 375 times a session rather than once per poll. In between, the
-     * forming candle is updated in place, which is what makes the chart move
-     * tick-by-tick under MARKET_DATA_SOURCE=WEBSOCKET for ~120 bytes a poll. */
+    /* The arrays are refetched only when a new MINUTE closed -- roughly 375
+     * times a session rather than once per poll. In between, the forming
+     * candle is updated in place, which is what makes the chart move
+     * tick-by-tick under MARKET_DATA_SOURCE=WEBSOCKET for a few hundred bytes. */
     if (info.series_version !== seriesVersion) {
       try {
         const response = await fetch("/api/chart", { cache: "no-store" });
         if (response.ok) {
-          const payload = await response.json();
-          candleSeries.setData(payload.bars || []);
+          chartPayload = await response.json();
           seriesVersion = info.series_version;
+          applyTimeframe();
         }
       } catch (error) {
         /* Leave the previous series on screen; the next poll retries. */
         return;
       }
     }
-    candleSeries.update(info.last_bar);
+
+    /* Only the forming candle moves between minutes. Indicators are computed
+     * on COMPLETED bars, so they deliberately have no point here. */
+    const forming = prefs.tf === "5" ? info.last_bar_5m : info.last_bar;
+    if (forming) candleSeries.update(forming);
+    applyPendingFit();
   }
 
   /* ------------------------------------------------------------------ poll */
@@ -340,24 +611,35 @@
     renderChart(doc);
   }
 
+  function schedulePoll(delaySeconds) {
+    /* Cancelling first is what keeps this to ONE loop. */
+    if (pollTimer !== null) clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, delaySeconds * 1000);
+  }
+
   async function poll() {
+    /* A request is already out; it will schedule the next one when it lands. */
+    if (pollInFlight) return;
+    pollInFlight = true;
     let delay = pollSeconds;
     try {
       const headers = etag ? { "If-None-Match": etag } : {};
       const response = await fetch("/api/state", { headers, cache: "no-store" });
 
       if (response.status === 304) {
-        /* The document is byte-identical, including its clock -- so the
-         * builder thread has stopped producing. Say so rather than quietly
-         * showing numbers that are no longer being refreshed. */
-        unchangedPolls += 1;
-        if (unchangedPolls >= STALE_POLLS) {
+        /* Byte-identical, including the document's own clock -- so nothing has
+         * been published since THIS tab's last 200. (Other tabs cannot cause
+         * this: each keeps its own ETag, so every tab gets a 200 on every new
+         * version.) One 304 just means we polled inside a publish gap; only
+         * sustained silence means the builder has actually stopped. */
+        const quietFor = (Date.now() - lastFreshAt) / 1000;
+        if (quietFor >= Math.max(STALE_FLOOR_SECONDS, pollSeconds * STALE_AFTER_INTERVALS)) {
           setLiveness("stale", "The runner has not published an update recently; " +
             "these numbers are frozen. Trading is unaffected.");
         }
       } else if (response.ok) {
         etag = response.headers.get("ETag");
-        unchangedPolls = 0;
+        lastFreshAt = Date.now();
         const doc = await response.json();
         if (doc.poll_seconds) pollSeconds = doc.poll_seconds;
         render(doc);
@@ -374,13 +656,36 @@
       delay = RETRY_SECONDS;
     }
 
+    pollInFlight = false;
     if (document.visibilityState === "hidden") delay = Math.max(delay, HIDDEN_TAB_SECONDS);
-    setTimeout(poll, delay * 1000);
+    schedulePoll(delay);
   }
 
+  /* Controls. Each checkbox flips visibility rather than re-setting data, so
+   * toggling never costs a redraw of the series it keeps. */
+  nodes.tf1.addEventListener("click", () => setTimeframe("1"));
+  nodes.tf5.addEventListener("click", () => setTimeframe("5"));
+
+  for (const [id, key] of [
+    ["ind-cpr", "cpr"], ["ind-cpr-rs1", "cprRS1"], ["ind-cpr-rs3", "cprRS3"],
+    ["ind-vwap", "vwap"], ["ind-stoch", "stoch"],
+  ]) {
+    const box = el(id);
+    box.checked = Boolean(prefs[key]);
+    box.addEventListener("change", () => {
+      prefs[key] = box.checked;
+      savePrefs();
+      if (key === "vwap" && vwapSeries) vwapSeries.applyOptions({ visible: prefs.vwap });
+      else if (key === "stoch") applyStochVisibility();
+      else if (chartPayload) renderCprLines(chartPayload.cpr);
+    });
+  }
+  setTimeframe(prefs.tf === "5" ? "5" : "1");
+
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") poll();
+    /* Bring the NEXT poll forward rather than starting a second loop. */
+    if (document.visibilityState === "visible") schedulePoll(0);
   });
 
-  poll();
+  schedulePoll(0);
 })();

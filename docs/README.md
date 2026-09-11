@@ -62,6 +62,7 @@ component folder's own `Readme.md`.
 | [0014](adr/0014-tiered-rename-of-spaced-filenames.md) | Spaced filenames renamed in reviewable tiers, master last (supersedes 0009) |
 | [0015](adr/0015-rolling-relative-strike-expired-options.md) | Expired-options history kept in rolling relative-strike form, expiry date derived |
 | [0016](adr/0016-read-only-loopback-monitoring-dashboard.md) | A read-only loopback dashboard, served by the runner itself |
+| [0017](adr/0017-chart-only-cpr-on-a-truncated-prior-session.md) | The dashboard's CPR reads a truncated prior session; the strategies' does not |
 
 ## Keeping these documents honest
 

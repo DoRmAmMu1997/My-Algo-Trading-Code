@@ -253,7 +253,7 @@ import threading
 import time
 import uuid
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -279,7 +279,7 @@ import requests
 # when MARKET_DATA_SOURCE=WEBSOCKET selects the tick-driven producer below.
 from dhanhq import DhanContext, DhanLogin, MarketFeed, dhanhq
 
-from Dependencies import dashboard_snapshot
+from Dependencies import dashboard_indicators, dashboard_snapshot
 from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
 from Dependencies.dashboard_server import DashboardEventSink, DashboardServer, start_dashboard
 from Dependencies.execution_ledger import (
@@ -17926,6 +17926,70 @@ def _session_state_snapshots(workers: Sequence[BasePaperStrategyWorker]) -> list
 # =============================================================================
 
 
+@dataclass(frozen=True)
+class _DashboardChartDeps:
+    """Indicator callables and settings, resolved ONCE at import.
+
+    Every callable here is the SAME object a live strategy uses, so a line on
+    the chart cannot silently drift from the maths the runner trades on. They
+    are injected rather than imported inside `Dependencies/dashboard_indicators.py`
+    because that module is pure: it may not reach into the spaced
+    `Signal Generators/` tree, and it may not read configuration.
+
+    Frozen and allocation-free -- the builder thread only ever reads it.
+    """
+
+    stochastic_fn: Callable[..., tuple[pd.Series, pd.Series]]
+    attach_session_date: Callable[[pd.DataFrame], pd.DataFrame]
+    attach_session_vwap: Callable[[pd.DataFrame], pd.DataFrame]
+    width_classifier: Callable[[float, float, float], str]
+    resample: Callable[[pd.DataFrame, int], pd.DataFrame]
+    k_period: int
+    d_period: int
+    smooth_k: int
+
+
+def _build_dashboard_chart_deps() -> _DashboardChartDeps:
+    """Resolve the strategies' own indicator helpers for the chart.
+
+    `load_module` returns `sys.modules[name]` when a bare name is already
+    loaded, and both of these are loaded by the ported signal generators, so
+    this hands back the very same module objects -- NOT a second copy. Loading
+    them under a prefixed alias instead would create a parallel instance and
+    defeat the entire point.
+    """
+
+    misc = load_module("misc_strategy_common", SIGNAL_GEN_DIR / "misc_strategy_common.py")
+    regime = load_module(
+        "regime_common", SIGNAL_GEN_DIR / "Regime Adaptive Strategy" / "regime_common.py"
+    )
+    return _DashboardChartDeps(
+        stochastic_fn=misc.stochastic,
+        attach_session_date=regime.attach_session_date,
+        attach_session_vwap=regime.attach_session_vwap,
+        width_classifier=CPR_LOGIC.classify_daily_cpr_width,
+        resample=resample_ohlc_from_1m,
+        # The SAME periods the Stochastic Oscillator strategy trades on, so the
+        # sub-pane shows that strategy's actual oscillator. Clamped anyway: a
+        # typo in a strategy knob must not be able to break the monitor.
+        k_period=min(max(int(STOCHASTIC_CONFIG.k_period), 2), 60),
+        d_period=min(max(int(STOCHASTIC_CONFIG.d_period), 1), 20),
+        smooth_k=min(max(int(STOCHASTIC_CONFIG.smooth_k), 1), 20),
+    )
+
+
+_DASHBOARD_CHART_DEPS = _build_dashboard_chart_deps()
+
+
+#: Extra bars fed to the stochastic beyond what is displayed, so the first
+#: visible bar is already warm instead of a run of nulls.
+_DASHBOARD_INDICATOR_WARMUP_BARS = 40
+
+#: Minutes per bar in the dashboard's higher timeframe. Several strategies
+#: derive exactly this, which is why it is the one the toggle offers.
+_DASHBOARD_HIGHER_TIMEFRAME_MINUTES = 5
+
+
 class _DashboardChartCache:
     """Remembers the last chart series so a poll rarely copies the frame.
 
@@ -17935,23 +17999,51 @@ class _DashboardChartCache:
     that question for free, and the frame is copied only when the answer is
     yes.
 
-    Three outcomes, cheapest first:
+    Four tiers, cheapest first:
 
     * nothing changed            -> no copy at all;
-    * the forming candle moved   -> copy, keep only the last row (`last_bar`);
-    * a new minute closed        -> copy, re-serialize the tail, bump
-                                    `series_version` so the browser refetches
-                                    the full array (about 375 times a day
-                                    rather than 22,500).
+    * the forming candle moved   -> copy, refresh only the two forming bars;
+    * a new minute closed        -> copy, re-serialize the 1-minute tail and
+                                    its indicators, bump `series_version`;
+    * a 5-minute bucket closed   -> additionally extend the 5-minute series,
+                                    resampling ONLY the bucket that just
+                                    closed (~9 ms) rather than the whole
+                                    window (~54 ms).
+
+    Single-threaded by contract: only the dashboard's builder thread touches
+    it, which is why none of this needs a lock.
     """
 
     def __init__(self, max_bars: int) -> None:
         self.max_bars = max(1, int(max_bars))
+        # Same span in both views, so switching timeframe does not change the
+        # window the operator is looking at.
+        self.max_bars_5m = max(24, math.ceil(self.max_bars / _DASHBOARD_HIGHER_TIMEFRAME_MINUTES))
+
         self.series: list[dict] = []
         self.series_version = 0
         self.last_bar: dict | None = None
         self.signature: tuple | None = None
         self.source_candle_ts: object = None
+
+        # Indicator columns, aligned to `series`.
+        self.vwap: list[float | None] = []
+        self.stoch_k: list[float | None] = []
+        self.stoch_d: list[float | None] = []
+        self.vwap_is_proxy = True
+
+        # The higher timeframe. `completed_5m` is grown a bucket at a time.
+        self.completed_5m: pd.DataFrame | None = None
+        self.bucket_anchor: pd.Timestamp | None = None
+        self.series_5m: list[dict] = []
+        self.vwap_5m: list[float | None] = []
+        self.stoch_k_5m: list[float | None] = []
+        self.stoch_d_5m: list[float | None] = []
+        self.forming_5m: dict | None = None
+
+        # CPR is a daily level: computed once per session, not per minute.
+        self.cpr: dashboard_indicators.ChartCpr = dashboard_indicators.ChartCpr(False)
+        self.cpr_key: tuple[date, int] | None = None
 
 
 def _bar_record(row: pd.Series[Any]) -> dict:
@@ -17973,10 +18065,138 @@ def _bar_record(row: pd.Series[Any]) -> dict:
     }
 
 
+def _refresh_chart_indicators(
+    frame: pd.DataFrame, cache: _DashboardChartCache, deps: _DashboardChartDeps
+) -> None:
+    """Recompute the 1-minute series and its indicator columns. Tier A.
+
+    Runs once a minute, not once a poll. Indicators are computed over a window
+    wider than the display so the leftmost visible bar is already warm, then
+    `timeframe_block` right-aligns the columns to the bars.
+
+    VWAP is computed over the DISPLAY window rather than the whole frame: it
+    resets per session anyway, so the slice is equivalent and cheaper.
+    """
+
+    display = frame.tail(cache.max_bars)
+    warm = frame.tail(cache.max_bars + _DASHBOARD_INDICATOR_WARMUP_BARS)
+
+    cache.series = dashboard_indicators.bar_records(display)
+    cache.series_version += 1
+
+    # Each indicator is guarded on its own. A broken one must cost its own
+    # line, not the candles: a chart with no VWAP is still worth looking at,
+    # and an exception here would freeze the whole dashboard on its last good
+    # document for the rest of the session.
+    try:
+        cache.vwap, cache.vwap_is_proxy = dashboard_indicators.session_vwap_values(
+            display,
+            attach_session_date=deps.attach_session_date,
+            attach_session_vwap=deps.attach_session_vwap,
+        )
+    except Exception:  # noqa: BLE001 - reporting only
+        cache.vwap, cache.vwap_is_proxy = [], True
+        logger.debug("Dashboard VWAP unavailable this minute.", exc_info=True)
+
+    try:
+        cache.stoch_k, cache.stoch_d = dashboard_indicators.stochastic_values(
+            warm,
+            stochastic_fn=deps.stochastic_fn,
+            k_period=deps.k_period,
+            d_period=deps.d_period,
+            smooth_k=deps.smooth_k,
+        )
+    except Exception:  # noqa: BLE001 - reporting only
+        cache.stoch_k, cache.stoch_d = [], []
+        logger.debug("Dashboard stochastic unavailable this minute.", exc_info=True)
+
+
+def _refresh_chart_five_minute(
+    frame: pd.DataFrame, cache: _DashboardChartCache, deps: _DashboardChartDeps
+) -> None:
+    """Extend the 5-minute series when a bucket closes. Tier A-prime.
+
+    `resample_ohlc_from_1m` is used UNCHANGED -- its "completed buckets only"
+    guarantee is what the 5-minute strategies stand on. It is simply fed the
+    five rows of the bucket that just closed (~9 ms) instead of the whole
+    window (~54 ms); the output is byte-identical either way.
+
+    A bucket that the resampler rejects (a missing or duplicated minute) is
+    absent here too, which is correct: the 5-minute strategies skipped that
+    bucket as well.
+    """
+
+    minutes = _DASHBOARD_HIGHER_TIMEFRAME_MINUTES
+    newest = pd.Timestamp(frame["timestamp"].iloc[-1])
+    anchor = newest.floor(f"{minutes}min")
+    previous = cache.bucket_anchor
+
+    rebuild = cache.completed_5m is None or previous is None
+    if previous is not None and not rebuild:
+        # More than one bucket has gone by (a stall, or a restart): the
+        # incremental path would silently skip the gap, so rebuild instead.
+        elapsed = (anchor - previous) // pd.Timedelta(minutes=minutes)
+        rebuild = not 0 <= elapsed <= 1
+
+    if rebuild or previous is None:
+        # A ROW tail, not a time window. A time window anchored to "now" reaches
+        # back past midnight at the start of a session and so excludes the whole
+        # previous day, leaving the 5-minute chart nearly empty every morning --
+        # while the 1-minute chart beside it happily shows yesterday's close.
+        # Counting rows keeps both views over the same bars. Any partial leading
+        # bucket is dropped by the resampler, as it is for the strategies.
+        span_rows = (cache.max_bars_5m + _DASHBOARD_INDICATOR_WARMUP_BARS) * minutes
+        cache.completed_5m = deps.resample(frame.tail(span_rows), minutes)
+    elif anchor != previous:
+        closed = frame.loc[(frame["timestamp"] >= previous) & (frame["timestamp"] < anchor)]
+        finished = deps.resample(closed, minutes)
+        if not finished.empty:
+            # De-duplicate on the way in. The bulk rebuild may already hold the
+            # bucket this append re-derives -- when the newest minute happened
+            # to complete it -- and lightweight-charts requires STRICTLY
+            # ascending times: one repeat makes it silently drop bars, which
+            # shows up as a chart that is mysteriously half empty.
+            cache.completed_5m = (
+                pd.concat([cache.completed_5m, finished], ignore_index=True)
+                .drop_duplicates(subset="timestamp", keep="last")
+                .sort_values("timestamp")
+                .reset_index(drop=True)
+                .tail(cache.max_bars_5m + _DASHBOARD_INDICATOR_WARMUP_BARS)
+            )
+
+    cache.bucket_anchor = anchor
+    completed = cache.completed_5m
+    if completed is None or completed.empty:
+        cache.series_5m, cache.vwap_5m, cache.stoch_k_5m, cache.stoch_d_5m = [], [], [], []
+        return
+
+    display = completed.tail(cache.max_bars_5m)
+    cache.series_5m = dashboard_indicators.bar_records(display)
+    cache.vwap_5m, _ = dashboard_indicators.session_vwap_values(
+        display,
+        attach_session_date=deps.attach_session_date,
+        attach_session_vwap=deps.attach_session_vwap,
+    )
+    cache.stoch_k_5m, cache.stoch_d_5m = dashboard_indicators.stochastic_values(
+        completed,
+        stochastic_fn=deps.stochastic_fn,
+        k_period=deps.k_period,
+        d_period=deps.d_period,
+        smooth_k=deps.smooth_k,
+    )
+
+
 def _dashboard_chart_payload(
-    store: SharedMarketDataStore, cache: _DashboardChartCache
+    store: SharedMarketDataStore,
+    cache: _DashboardChartCache,
+    deps: _DashboardChartDeps = _DASHBOARD_CHART_DEPS,
 ) -> dict:
-    """The chart half of the document: a version, and the forming candle."""
+    """The chart half of the `/api/state` document: a version and the forming bars.
+
+    The heavy arrays live behind `/api/chart` and are refetched only when
+    `series_version` moves. Everything here is deliberately small enough to
+    ride along with every poll.
+    """
 
     meta = store.peek_snapshot_meta("1")
     if meta is None:
@@ -17984,12 +18204,8 @@ def _dashboard_chart_payload(
     signature, source_candle_ts, _fetched_at = meta
 
     if signature == cache.signature:
-        return {
-            "state": "OK",
-            "series_version": cache.series_version,
-            "last_bar": cache.last_bar,
-            "bars": len(cache.series),
-        }
+        # TIER C. The store is never touched here, and a test pins that.
+        return _chart_state_block(cache)
 
     snapshot = store.get("1")
     if snapshot is None or snapshot.frame.empty:
@@ -17997,33 +18213,103 @@ def _dashboard_chart_payload(
                 "last_bar": None, "bars": 0}
 
     frame = snapshot.frame
-    new_minute = source_candle_ts != cache.source_candle_ts or not cache.series
-    if new_minute:
-        tail = frame.tail(cache.max_bars)
-        cache.series = [_bar_record(row) for _, row in tail.iterrows()]
-        cache.series_version += 1
+    if source_candle_ts != cache.source_candle_ts or not cache.series:
+        # TIER A, once a minute.
+        _refresh_chart_indicators(frame, cache, deps)
+        # The higher timeframe and CPR are each expendable: losing one leaves
+        # the other two panes intact rather than blanking the chart.
+        try:
+            _refresh_chart_five_minute(frame, cache, deps)
+        except Exception:  # noqa: BLE001 - reporting only
+            logger.debug("Dashboard 5-minute series unavailable this minute.", exc_info=True)
+        try:
+            _refresh_chart_cpr(frame, cache, deps)
+        except Exception:  # noqa: BLE001 - reporting only
+            logger.debug("Dashboard CPR unavailable this minute.", exc_info=True)
         cache.source_candle_ts = source_candle_ts
+
+    # TIER B, at most once a poll: only the two forming bars move.
     cache.last_bar = _bar_record(frame.iloc[-1])
+    cache.forming_5m, _anchor = dashboard_indicators.forming_bucket(
+        frame, timeframe_minutes=_DASHBOARD_HIGHER_TIMEFRAME_MINUTES
+    )
     cache.signature = signature
+    return _chart_state_block(cache)
+
+
+def _refresh_chart_cpr(
+    frame: pd.DataFrame, cache: _DashboardChartCache, deps: _DashboardChartDeps
+) -> None:
+    """Recompute CPR only when the session it is derived from changes.
+
+    A daily level does not move intraday, so this runs about once per session
+    rather than once per minute.
+    """
+
+    today = frame["timestamp"].iloc[-1].date()
+    key = (today, len(frame))
+    if cache.cpr_key is not None and cache.cpr_key[0] == today and cache.cpr.available:
+        return
+    cache.cpr = dashboard_indicators.chart_cpr(frame, width_classifier=deps.width_classifier)
+    cache.cpr_key = key
+
+
+def _chart_state_block(cache: _DashboardChartCache) -> dict:
+    """The small per-poll block. No frame, no arrays -- just what moves."""
 
     return {
-        "state": "OK",
+        "state": "OK" if cache.series else "NO_DATA",
         "series_version": cache.series_version,
         "last_bar": cache.last_bar,
+        "last_bar_5m": cache.forming_5m,
         "bars": len(cache.series),
+        "bars_5m": len(cache.series_5m),
     }
 
 
-def _dashboard_chart_series(cache: _DashboardChartCache) -> dict:
-    """The full candle array behind `/api/chart`.
+def _dashboard_chart_series(
+    cache: _DashboardChartCache, deps: _DashboardChartDeps = _DASHBOARD_CHART_DEPS
+) -> dict:
+    """The full `/api/chart` payload: both timeframes, their indicators, and CPR.
 
     Read straight out of the cache the state document already filled, so this
     touches neither the store nor its lock. The builder thread calls it only
-    when `series_version` has moved, i.e. once a minute rather than once a
-    poll.
+    when `series_version` has moved -- once a minute rather than once a poll.
+
+    BOTH timeframes ride in one payload on purpose: the toggle then switches
+    instantly from data the browser already holds, so it has no way to fail,
+    and the transport keeps its single publisher slot and zero-argument
+    builder.
     """
 
-    return {"series_version": cache.series_version, "bars": cache.series}
+    timeframes = {
+        "1": dashboard_indicators.timeframe_block(
+            minutes=1,
+            bars=cache.series,
+            vwap=cache.vwap,
+            stoch_k=cache.stoch_k,
+            stoch_d=cache.stoch_d,
+        ),
+        str(_DASHBOARD_HIGHER_TIMEFRAME_MINUTES): dashboard_indicators.timeframe_block(
+            minutes=_DASHBOARD_HIGHER_TIMEFRAME_MINUTES,
+            bars=cache.series_5m,
+            vwap=cache.vwap_5m,
+            stoch_k=cache.stoch_k_5m,
+            stoch_d=cache.stoch_d_5m,
+            forming_from=(cache.forming_5m or {}).get("time"),
+        ),
+    }
+    return dashboard_indicators.chart_document(
+        series_version=cache.series_version,
+        timeframes=timeframes,
+        cpr=cache.cpr,
+        vwap_is_proxy=cache.vwap_is_proxy,
+        stochastic_settings={
+            "k_period": deps.k_period,
+            "d_period": deps.d_period,
+            "smooth_k": deps.smooth_k,
+        },
+    )
 
 
 def _dashboard_feed_view(store: SharedMarketDataStore) -> dict:

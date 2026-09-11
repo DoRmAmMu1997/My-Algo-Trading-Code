@@ -107,7 +107,63 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 .columns .wide { flex: 3 1 560px; }
 .columns .narrow { flex: 2 1 380px; }
 
-.chart-pane #chart { height: 40vh; min-height: 260px; }
+/* Taller than it was (40vh), and taller still than it looks: the stochastic
+ * sub-pane lives INSIDE this box, so the price pane only grows if the total
+ * grows by more than the sub-pane takes. At 1080p this is ~626px, of which
+ * ~110px is the oscillator, leaving ~510px of price against the old 432px.
+ * `clamp` stops a 4K monitor pushing the tables below the fold, and the drag
+ * handle lets the operator settle it themselves -- `autoSize: true` on the
+ * chart follows the element. */
+.chart-pane #chart {
+  height: clamp(340px, 58vh, 760px);
+  min-height: 340px;
+  resize: vertical;
+  overflow: hidden;
+}
+
+.chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+.chart-head h2 { margin-bottom: 6px; }
+
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.chart-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.chart-controls input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+
+.tf-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.tf-switch .tf {
+  padding: 2px 9px;
+  border: 0;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.tf-switch .tf.active { background: var(--accent); color: #0e1116; font-weight: 600; }
+.tf-switch .tf:not(.active):hover { color: var(--text); }
+
+/* The CPR provenance line: the actual numbers the levels came from, so the
+ * 15:15 close is visible rather than merely promised. */
+.provenance { margin: 6px 2px 0; font-size: 11px; color: var(--muted); }
 
 /* Wide tables scroll inside their own pane; the page body never scrolls
  * sideways. */
