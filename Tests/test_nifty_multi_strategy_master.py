@@ -5558,6 +5558,47 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
         self.assertFalse(worker._mirror_pos.active)
 
+    def test_a_failed_banknifty_bar_does_not_erase_the_close_the_mirror_needs(self):
+        """An ENTER that lands after a later bar's BankNIFTY fetch failed must
+        still mirror.
+
+        The agent's inference runs on its own thread with a 90-second deadline,
+        so the order tool for bar N can fire AFTER bar N+1 has already begun.
+        `process_strategy_frame` must therefore not destroy the last aligned
+        BankNIFTY close it recorded: doing so leaves the NIFTY leg unmirrored,
+        which is exactly what the entry-evaluation guard above it exists to
+        prevent ("a flat worker must not create an unmirrored NIFTY position").
+
+        Measured on 2026-09-11 at 10:18:03, where a 3-lot NIFTY entry opened
+        with no mirror and the log blamed a session-wide feed failure that had
+        not happened -- two mirrors had already been placed that morning.
+        """
+        worker, _ = self._make_worker()
+        worker._use_bnf = True
+        aligned_close = worker._last_bnf_close
+        self.assertGreater(aligned_close, 0.0)
+
+        # The next bar's BankNIFTY fetch fails. The worker is flat, so this bar
+        # returns early without evaluating an entry -- but the in-flight
+        # inference from the PREVIOUS bar can still fire its order tool.
+        worker.broker.fetch_index_1m_ohlc.side_effect = RuntimeError("BNF feed hiccup")
+        # The worker is flat, so the 10:30 entry cutoff would otherwise return
+        # before the BankNIFTY block is reached at all.
+        with patch.object(master_file, "is_after_time", return_value=False):
+            worker.process_strategy_frame(
+                pd.DataFrame(
+                    {
+                        "timestamp": [pd.Timestamp("2026-09-11 10:18:00")],
+                        "open": [24300.0], "high": [24305.0],
+                        "low": [24295.0], "close": [24300.0],
+                    }
+                )
+            )
+
+        self.assertEqual(worker._last_bnf_close, aligned_close)
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        self.assertTrue(worker._mirror_pos.active)
+
     def test_mirror_disabled_flag_trades_nifty_only(self):
         worker, _ = self._make_worker()
         worker._mirror_enabled = False

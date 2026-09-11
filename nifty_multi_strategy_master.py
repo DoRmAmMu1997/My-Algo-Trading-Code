@@ -16280,7 +16280,14 @@ if SL_HUNTING_AVAILABLE:
             bnf_candles = None
             bnf_ready = not self._use_bnf
             if self._use_bnf:
-                self._last_bnf_close = 0.0
+                # NOT reset per bar, deliberately. Inference runs on its own
+                # thread with a 90s deadline, so the order tool for bar N can
+                # fire AFTER bar N+1 has started; clearing the close here left
+                # that entry unmirrored, which is the very thing the
+                # entry-evaluation guard below exists to prevent. Staleness is
+                # already bounded by that guard (a FLAT worker never evaluates
+                # an entry without aligned BankNIFTY data) plus the deadline,
+                # so the value can only ever be a bar or two old.
                 try:
                     bnf_1m = self.broker.fetch_index_1m_ohlc(
                         BANKNIFTY_INDEX_SECURITY_ID,
