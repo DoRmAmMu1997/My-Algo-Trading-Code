@@ -51,3 +51,7 @@ htmlcov/
 # per-session working record, not product documentation. docs/ itself is the
 # committed architecture set (hld/, lld/, adr/) -- only this subtree is ignored.
 docs/superpowers/
+
+# Git worktrees for isolated feature work. Never tracked: a worktree is a
+# second checkout of this same repository, not content that belongs in it.
+.worktrees/
