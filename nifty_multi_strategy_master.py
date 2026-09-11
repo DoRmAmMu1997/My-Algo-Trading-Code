@@ -18144,9 +18144,18 @@ def _refresh_chart_five_minute(
         closed = frame.loc[(frame["timestamp"] >= previous) & (frame["timestamp"] < anchor)]
         finished = deps.resample(closed, minutes)
         if not finished.empty:
-            cache.completed_5m = pd.concat(
-                [cache.completed_5m, finished], ignore_index=True
-            ).tail(cache.max_bars_5m + _DASHBOARD_INDICATOR_WARMUP_BARS)
+            # De-duplicate on the way in. The bulk rebuild may already hold the
+            # bucket this append re-derives -- when the newest minute happened
+            # to complete it -- and lightweight-charts requires STRICTLY
+            # ascending times: one repeat makes it silently drop bars, which
+            # shows up as a chart that is mysteriously half empty.
+            cache.completed_5m = (
+                pd.concat([cache.completed_5m, finished], ignore_index=True)
+                .drop_duplicates(subset="timestamp", keep="last")
+                .sort_values("timestamp")
+                .reset_index(drop=True)
+                .tail(cache.max_bars_5m + _DASHBOARD_INDICATOR_WARMUP_BARS)
+            )
 
     cache.bucket_anchor = anchor
     completed = cache.completed_5m

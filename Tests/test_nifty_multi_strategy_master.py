@@ -13748,3 +13748,31 @@ class TestDashboardChartIndicators(unittest.TestCase):
                 )
                 master_file._dashboard_chart_payload(self.store, cache)
                 self.assertEqual(len(cache.series_5m), cache.max_bars_5m)
+
+    def test_the_five_minute_series_is_strictly_ascending(self):
+        """lightweight-charts silently drops bars on a repeated timestamp.
+
+        The bulk rebuild can already hold the bucket the incremental append
+        re-derives, when the newest minute happened to complete it. The result
+        was a chart that rendered with most of its candles missing and no
+        console error to explain why.
+        """
+        cache = master_file._DashboardChartCache(max_bars=375)
+        base = pd.concat(
+            [self._frame(375, "2026-09-10"), self._frame(240, "2026-09-11")], ignore_index=True
+        )
+        # Walk a minute at a time across several bucket boundaries, which is
+        # exactly the sequence that produced the duplicate.
+        for extra in range(0, 24):
+            self.store.update(
+                "1",
+                base if extra == 0
+                else pd.concat(
+                    [base, self._frame(extra, "2026-09-11", "13:15")], ignore_index=True
+                ),
+            )
+            master_file._dashboard_chart_payload(self.store, cache)
+            times = [bar["time"] for bar in cache.series_5m]
+            with self.subTest(extra=extra):
+                self.assertEqual(len(times), len(set(times)), "duplicate bar timestamp")
+                self.assertEqual(times, sorted(times), "bars are out of order")

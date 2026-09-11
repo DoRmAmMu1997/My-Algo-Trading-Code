@@ -36,9 +36,26 @@
 
 <main>
   <section class="pane chart-pane">
-    <h2>NIFTY · 1 minute</h2>
+    <div class="chart-head">
+      <h2 id="chart-title">NIFTY · 1 minute</h2>
+      <div class="chart-controls">
+        <div class="tf-switch" role="group" aria-label="Chart timeframe">
+          <button type="button" id="tf-1" class="tf active" aria-pressed="true">1m</button>
+          <button type="button" id="tf-5" class="tf" aria-pressed="false">5m</button>
+        </div>
+        <label title="Pivot, BC and TC from the prior session 09:15-15:15">
+          <input type="checkbox" id="ind-cpr" checked> CPR
+          <span class="flag warn" id="cpr-chip">CHART-ONLY</span>
+        </label>
+        <label><input type="checkbox" id="ind-cpr-rs1"> R1/R2 · S1/S2</label>
+        <label><input type="checkbox" id="ind-cpr-rs3"> R3/R4 · S3/S4</label>
+        <label id="vwap-label"><input type="checkbox" id="ind-vwap" checked> VWAP*</label>
+        <label><input type="checkbox" id="ind-stoch" checked> Stochastic</label>
+      </div>
+    </div>
     <div id="chart"></div>
     <p class="empty" id="chart-empty">Waiting for the first candle…</p>
+    <p class="provenance mono" id="cpr-provenance" hidden></p>
   </section>
 
   <div class="columns">
@@ -94,6 +111,7 @@
 <footer>
   <span>Informational only — the broker is the authority on what is open.</span>
   <span class="muted">Read-only · loopback · GET only</span>
+  <span class="muted" id="vwap-footnote">* VWAP is an equal-weight proxy — the index feed carries no volume.</span>
   <span class="muted">Charts by TradingView Lightweight Charts™ — Apache-2.0</span>
 </footer>
 
