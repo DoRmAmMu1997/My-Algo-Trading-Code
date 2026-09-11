@@ -2577,3 +2577,64 @@ def test_v5b_hold_duration_decides_evicted_versus_trapped():
     assert "TIME IT before naming it" in rule
     assert "Minutes and the opposing crowd is still seated" in rule
     assert "Hours and they are gone" in rule
+def test_v5c_a_big_retracement_recruits_the_next_crowd():
+    """v5c (11 Sep live session + this book): measure the counter-move's SIZE.
+
+    Paired with v5b deliberately -- same counter-move, two axes. v5b times it
+    and finds an eviction; v5c sizes it and finds a recruitment. Six ways an
+    edit could break it:
+
+    1. Losing the pairing, or the small-versus-big contrast. "Let it fall" after
+       a small one and "difficult to fall" after a big one are the whole rule.
+    2. Dropping WHY size matters -- after a small retracement nobody can tell it
+       happened, so nobody is recruited. Without that the rule is superstition.
+    3. Losing the recruitment loop, which is what makes the dip predictable
+       rather than merely survivable.
+    4. Dropping either precondition. Negative sentiment and an unbroken lower
+       point are both required; an edit keeping only one turns a conditional
+       setup into a standing bias.
+    5. Losing the measured trade, including that the exit was AT the session low
+       and that the move afterwards was 62 points.
+    6. Losing the breakdown/loss-limit exits, which is what stops this being
+       read as permission to sit.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A BIG RETRACEMENT RECRUITS THE CROWD THAT GETS HUNTED NEXT")
+
+    # 1. The pairing with v5b, and the two-sided contrast.
+    assert "a long HOLD evicts a crowd, a big RETRACEMENT manufactures one" in rule
+    assert "v5b measures its duration, this one measures its SIZE" in rule
+    assert "falls after a SMALL retracement, let it fall" in rule
+    assert "falling after a BIG retracement becomes DIFFICULT for the market" in rule
+
+    # 2. Why size is the thing that matters.
+    assert "cannot even tell a retracement happened" in rule
+    assert "EVERYONE will sell there" in rule
+    assert "goes UP through their stops" in rule
+
+    # 3. The loop, narrated while it ran.
+    assert "this candle formed only to give GREED" in rule
+    assert "As premiums rise he will make a put trade" in rule
+    assert "when the market eats all their SLs, see how fast the momentum comes" in rule
+
+    # 4. Both preconditions -- and that they are REQUIRED, not decoration.
+    assert "TWO CONDITIONS, AND BOTH MUST HOLD" in rule
+    assert "THE SENTIMENT MUST ALREADY BE NEGATIVE" in rule
+    assert "On a fresh or two-sided chart a big retracement recruits nobody" in rule
+    assert "THE SESSION'S LOWER POINT MUST NOT BE CROSSED" in rule
+    assert "only sellers are going to come and nobody will buy" in rule
+    assert "after a breakdown the market takes TIME making a trap" in rule
+    assert "a level test in the sense of v4v" in rule
+
+    # 5. The measured trade -- cut at the low, and what followed.
+    assert "MEASURED ON THIS BOOK (2026-09-11)" in rule
+    assert "210-point gap down" in rule
+    assert "confirmed bearish reversal cluster" in rule
+    assert "23245.35 -- THE SESSION LOW" in rule
+    assert "23307.75 by 10:22, sixty-two points" in rule
+    assert "closed at the exact moment its premise was being manufactured" in rule
+
+    # 6. The two exits that still bind.
+    assert "not permission to sit through a breakdown" in rule
+    assert "the loss goes far outside the LOSS LIMIT" in rule
+    assert "The lower point and the loss limit both still bind" in rule
