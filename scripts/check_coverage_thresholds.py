@@ -48,6 +48,10 @@ SAFETY_THRESHOLDS = {
     # has branches that cannot honestly be covered, and a budget you cannot
     # meet is worse than none.
     "Dependencies/dashboard_snapshot.py": 90.0,
+    # The chart's indicator maths. A defect here draws a CPR level or a
+    # stochastic in the wrong place beside real positions, and it is pure
+    # pandas with no I/O, so the budget is cheap to honour.
+    "Dependencies/dashboard_indicators.py": 90.0,
     # The rolling-window rate limiter, hoisted out of the Flattrade and Dhan
     # adapters (2026-09-02). It sits directly in front of every live broker
     # request those two make: if it under-counts, orders breach the broker's
