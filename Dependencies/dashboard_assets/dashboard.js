@@ -16,9 +16,13 @@
   const REFRESH_FALLBACK_SECONDS = 1.0;
   const HIDDEN_TAB_SECONDS = 5.0;
   const RETRY_SECONDS = 5.0;
-  /* Two quiet polls in a row is normal jitter; more than this many means the
-   * builder thread has stopped producing new documents. */
-  const STALE_POLLS = 5;
+  /* How long the document may go unchanged before the page says so. Measured
+   * in TIME, not in polls: a poll count silently assumes this tab polls no
+   * faster than the runner publishes, and a count of consecutive 304s says
+   * nothing about how long they took. Five refresh intervals of real silence
+   * is a stopped builder; anything shorter is jitter. */
+  const STALE_AFTER_INTERVALS = 5;
+  const STALE_FLOOR_SECONDS = 5.0;
 
   const el = (id) => document.getElementById(id);
   const nodes = {
@@ -52,7 +56,15 @@
 
   let etag = null;
   let pollSeconds = REFRESH_FALLBACK_SECONDS;
-  let unchangedPolls = 0;
+  let lastFreshAt = Date.now();
+  /* Exactly one pending timer and one in-flight request at any moment. Without
+   * these, every return to the tab started an ADDITIONAL poll chain: the old
+   * timer was never cancelled, so N tab-switches meant N concurrent loops all
+   * polling a server that publishes once per interval. Most of those requests
+   * then got a 304, which the page read as "the runner has gone quiet" and
+   * flashed a staleness banner that cleared on the next publish. */
+  let pollTimer = null;
+  let pollInFlight = false;
   let chart = null;
   let candleSeries = null;
   let seriesVersion = -1;
@@ -340,24 +352,35 @@
     renderChart(doc);
   }
 
+  function schedulePoll(delaySeconds) {
+    /* Cancelling first is what keeps this to ONE loop. */
+    if (pollTimer !== null) clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, delaySeconds * 1000);
+  }
+
   async function poll() {
+    /* A request is already out; it will schedule the next one when it lands. */
+    if (pollInFlight) return;
+    pollInFlight = true;
     let delay = pollSeconds;
     try {
       const headers = etag ? { "If-None-Match": etag } : {};
       const response = await fetch("/api/state", { headers, cache: "no-store" });
 
       if (response.status === 304) {
-        /* The document is byte-identical, including its clock -- so the
-         * builder thread has stopped producing. Say so rather than quietly
-         * showing numbers that are no longer being refreshed. */
-        unchangedPolls += 1;
-        if (unchangedPolls >= STALE_POLLS) {
+        /* Byte-identical, including the document's own clock -- so nothing has
+         * been published since THIS tab's last 200. (Other tabs cannot cause
+         * this: each keeps its own ETag, so every tab gets a 200 on every new
+         * version.) One 304 just means we polled inside a publish gap; only
+         * sustained silence means the builder has actually stopped. */
+        const quietFor = (Date.now() - lastFreshAt) / 1000;
+        if (quietFor >= Math.max(STALE_FLOOR_SECONDS, pollSeconds * STALE_AFTER_INTERVALS)) {
           setLiveness("stale", "The runner has not published an update recently; " +
             "these numbers are frozen. Trading is unaffected.");
         }
       } else if (response.ok) {
         etag = response.headers.get("ETag");
-        unchangedPolls = 0;
+        lastFreshAt = Date.now();
         const doc = await response.json();
         if (doc.poll_seconds) pollSeconds = doc.poll_seconds;
         render(doc);
@@ -374,13 +397,15 @@
       delay = RETRY_SECONDS;
     }
 
+    pollInFlight = false;
     if (document.visibilityState === "hidden") delay = Math.max(delay, HIDDEN_TAB_SECONDS);
-    setTimeout(poll, delay * 1000);
+    schedulePoll(delay);
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") poll();
+    /* Bring the NEXT poll forward rather than starting a second loop. */
+    if (document.visibilityState === "visible") schedulePoll(0);
   });
 
-  poll();
+  schedulePoll(0);
 })();
