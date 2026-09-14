@@ -1,31 +1,31 @@
 {
-  "for_date": "2026-09-11",
-  "source": "Intraday Hunter, 'Prediction For 11 SEP 2026' (xYh9Kd1qzm4, uploaded 2026-09-10)",
-  "context": "Three-four days of continuous selling and NIFTY closed on a BREAKDOWN, so the sellers are seated again -- but they got in LATE and out of FEAR, on the strength of a rejection, after failing to get in earlier.",
+  "for_date": "2026-09-15",
+  "source": "Intraday Hunter, 'Prediction For 15 SEP 2026' (xB8Jt0d4Ll8, uploaded 2026-09-14)",
+  "context": "After many days of selling, 11 Sep produced a sudden RECOVERY -- and he flags it may be a REVERSAL, not a bounce. Then a two-three day holiday. So neither side is seated going in.",
   "plan": [
-    "EVERY OPEN SHAPE NOW BUYS. Gap up, flat AND gap down all take BUY-side setups -- 'in flat to gap down the SAME plan can be kept'. This is the first note in the run with no sell branch at all.",
-    "THIS INVERTS THREE SESSIONS OF FOLLOW-THE-SELLING. The last three notes said walk WITH the market; this one HUNTS the sellers instead. Do not carry the follow branch forward.",
-    "THE REASON IS FEAR, AND HE FLAGS IT AS AN EXCEPTION: 'in a NORMAL case, in such a chart, we do NOT target the sellers. But these sellers are AFRAID.' The chart alone would say follow; the crowd's STATE is what overrides it.",
-    "WHY THEY ARE AFRAID: they could not get in earlier, then entered late on the rejection -- 'now he feels it is falling anyway, so let me make a trade'. A late, scared entry is the weak kind, and it is the whole setup.",
-    "A FEARFUL CROWD IS CAPTURABLE: 'if a trader is seated out of fear, the market can capture him.' He also warns the seller 'will not run away quickly' on a flat or gap-down open, so expect the squeeze to take time rather than fire at 09:15."
+    "EVERY OPEN SHAPE BUYS, but as a FOLLOW this time and not a hunt: 'such a market can be followed continuously', 'we can walk with the market'. Gap up, flat AND gap down all keep the same plan.",
+    "NEITHER SIDE IS SEATED, AND HE CHECKS BOTH: 'if in gap-up or flat we try to find any SELLER's SLs, we won't get them' -- and in the same breath, 'the BUYERS' SLs aren't here either'. There is nobody to squeeze in either direction.",
+    "THE HOLIDAY IS WHY THERE ARE NO BUYERS: the move was sudden AND a two-three day break followed, so 'not many people are sitting long here' and traders 'couldn't apply their minds'. Without the break this recovery would have recruited longs.",
+    "A GOOD GAP UP IS THE BEST CASE -- 'if a good gap up opens, that is best for us'. A gap down keeps the SAME buy plan 'because overall positive momentum has happened', so a red open is not a reason to flip.",
+    "HE FLAGS THE RECOVERY MAY BE A REVERSAL: 'any recovery can also be a reversal', so treat it as a possible turn in the multi-day downtrend. In FLAT he warns that 'sometimes there are some rejections in such a market'."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
         23500,
-        23540
+        23560
       ],
       "support": [
-        23340,
-        23400
+        23270,
+        23320
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56600,
-        56870
+        56870,
+        57100
       ],
       "support": [
         56040,
@@ -35,8 +35,8 @@
     {
       "index": "SENSEX",
       "resistance": [
-        75000,
-        75200
+        75200,
+        75500
       ],
       "support": [
         74300,
