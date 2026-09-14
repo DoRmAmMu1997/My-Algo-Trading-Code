@@ -6912,3 +6912,121 @@ unconditionally, or to capture it at decision time and pass it to the order tool
   no longer visible because the gap down is quite large -- per the NEW chart,
   buying chances are forming anyway." The note's conclusion survived; its stated
   mechanism did not. Worth remembering when a note and the tape disagree on WHY.
+
+## Video addendum - the 12-14 Sep gap and the 15 Sep prediction
+
+**There was no trading between 11 and 15 Sep.** 12-13 Sep was the weekend and
+14 Sep was a market holiday, which IH confirms in his own words -- "a two-three
+day holiday in the middle". The runner did not start on any of those days: the
+log's last line is 2026-09-11 15:20:16, and the shipped note sat at `2026-09-11`
+until this one replaced it. So there are NO agent trades to compare for this
+stretch, and nothing was missed by not looking.
+
+**Everything the channel published since the 11 Sep session, and what happened to
+each:**
+
+| Video | Id | Uploaded (IST) | Status |
+|---|---|---|---|
+| Prediction For 15 SEP 2026 | `xB8Jt0d4Ll8` | 14 Sep 21:00 | read in full, 16 segments (0:06-2:01) |
+| The Power of an Edge in Trading | `uC4PeLdGFmo` | 13 Sep 11:47 | **transcript NOT retrievable** |
+| Live Crypto Trading 13 SEP | `rRSE6lk5pqU` | 13 Sep | members-only, and crypto -- out of scope |
+
+There was no "Prediction For 12 SEP", no 12 Sep live session, no "Prediction For
+14 SEP" and no 14 Sep live session. The channel published nothing between the
+11 Sep pair and the 13 Sep weekend content, which is consistent with the holiday.
+
+### The Edge lecture: retrieved by hand, after automation failed
+
+`uC4PeLdGFmo` (15:20, 13 Sep 11:47 IST) is the weekend lecture slot. Its
+transcript panel opens and then spins forever: the normal recipe, a real trusted
+click rather than a JS click, a resize to 1400x900 and a full reload at that size
+all left `#segments-container` unmounted and the panel's own `innerText` as
+skeleton whitespace after ~35 seconds of polling. Same per-video failure already
+on record; the 15 Sep prediction transcribed normally minutes earlier.
+
+**The operator loaded it manually in Chrome and supplied the transcript**, so the
+content below is read in full rather than inferred. Worth remembering as the
+fallback when the panel refuses: a human-loaded page still produces one.
+
+#### What it says
+
+The lecture is about the difference between having an EDGE and expecting
+certainty, and it contains two ideas this corpus does not have.
+
+**1. A setup you cannot lose on is a broken setup.** Stated as a test, not a
+sentiment:
+
+> "Any setup you have will only work IF it has a CHANCE OF LOSS... if you have
+> built a setup where you can SEE there will be no loss, you should RE-CHECK it,
+> because the setup that makes profit is the one that HAS a margin of loss."
+
+And the symptom to look for:
+
+> "If you feel the market will go up and you profit, go down and you profit,
+> sideways and you profit, momentum and you profit -- there is very little chance
+> that setup works."
+
+He is explicit that he has chased this himself: nights spent on a setup that
+looked lossless, "but it runs for a few days, then its number comes up". Also
+that neither large nor small capital fixes it -- large capital lets you manage a
+wrong position until "it goes outside the range", small capital only helps
+because it controls emotion.
+
+This is adjacent to v3z's NAME THE ONE WAY THIS TRADE FAILS but is not the same
+rule. v3z asks you to name the failure mode; this asks what it MEANS when you
+cannot -- the inability to name it is itself the disqualifying signal, and the
+setup is to be re-checked rather than taken.
+
+**2. Analysis and trading are separate skills with different edges.**
+
+> "In trading there are TWO things: you ANALYSE by looking at the chart, and you
+> TRADE by looking at the chart. Your edge in analysis should be quite good,
+> because in analysis there is no matter of entry/exit timing... in trading we
+> can be wrong, the edge there is LOWER."
+
+And the consequence he repeats three times: "when the analysis is right, that
+does not mean your trade will also be right." He grades his own week by exactly
+that split -- "in analysis you could say we were 100% right", and then, of a
+losing trade inside the same week, "here we had a loss" because the market
+retraced and pulled out positive momentum.
+
+That split maps cleanly onto this agent: the pre-open note plus the direction
+read is the ANALYSIS, and the entry, stop and exit are the TRADE. It is also the
+shape of every session in this series -- direction right, execution wrong.
+
+#### Two smaller things, both already covered
+
+- **Friday and the day before expiry are his reversal-prone days**, with a
+  mechanism: on a Friday a reversal cannot be bought, because of the two-day
+  holiday, so sellers keep accumulating and become the target. This is how he
+  called the 11 Sep reversal in advance. The calendar pairing is new phrasing,
+  but v5b already carries the holiday-eviction mechanism and the 07 Sep note
+  carried the weekend flush.
+- **His own account of the 11 Sep trade**: "we did not think the recovery would
+  be this big -- otherwise we would have kept sitting. We took a decent profit."
+  Consistent with v3z's after-a-losing-day rule, which he cited that morning.
+
+### The 15 Sep prediction: every shape buys, as a FOLLOW this time
+
+Structurally this looks like the 11 Sep note -- all three open shapes buy -- but
+the mechanism is the opposite one, and that difference is the whole content:
+
+- **11 Sep**: sellers were seated and FEARFUL, so the buy branch was a HUNT of
+  their stops.
+- **15 Sep**: nobody is seated on either side, so the buy branch is a FOLLOW.
+  "Such a market can be followed continuously", "we can walk with the market".
+
+He checks both books explicitly, which is what makes it a follow rather than a
+hunt: "if in gap-up or flat we try to find any SELLER's SLs, we won't get them"
+-- and in the same breath, "but the BUYERS' SLs aren't here either, because the
+momentum happened suddenly, it is a reversal, and there is a two-three day
+holiday in the middle, so not many people are sitting long here."
+
+That is v5b's eviction logic arriving by a different route: the holiday did to the
+would-be buyers what a long hold does to a trapped crowd. Nothing is added to the
+corpus for it -- v5b already covers the mechanism, and this is one instance of it.
+
+Two smaller points carried into the note: a gap DOWN keeps the same buy plan
+"because overall positive momentum has happened", and he flags that "any recovery
+can also be a reversal", so this may be a genuine turn in the multi-day downtrend
+rather than a bounce inside it.

@@ -201,26 +201,22 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_11_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 10 Sep transcript.
+def test_shipped_note_matches_september_15_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 14 Sep transcript.
 
-    This is the sharpest inversion in the series and the one an edit is most
-    likely to "correct" back toward the recent habit. Five load-bearing points:
+    Five things a summarising edit would flatten:
 
-    1. EVERY open shape buys. Gap up, flat and gap down alike -- there is no
-       sell branch. Three consecutive notes before this one said follow-the-
-       selling, so a summariser reverting the flat branch to SELL would be
-       reverting to habit rather than to the source.
-    2. It inverts those three sessions, and says so, so the agent cannot carry
-       the follow branch forward by inertia.
-    3. The reason is the crowd's STATE, not the chart, and IH flags it as an
-       exception to his own normal rule: "in a normal case, in such a chart, we
-       do NOT target the sellers. But these sellers are AFRAID."
-    4. Why they are afraid -- a late, scared entry after failing to get in
-       earlier. That is what makes them weak, and it is the entire setup.
-    5. The squeeze is expected to be SLOW: he warns the seller "will not run
-       away quickly" on flat/gap-down, which is what stops the buy branch being
-       read as an immediate 09:15 trigger.
+    1. Every open shape buys, but as a FOLLOW -- "we can walk with the market".
+       The previous all-buy note (11 Sep) was a HUNT of fearful sellers. Same
+       shape, opposite mechanism, and an edit that merges them loses the reason.
+    2. He checks BOTH books and finds both empty. Keeping only the seller half
+       would read as "sellers are gone, so buy", which is a hunt again.
+    3. The HOLIDAY is why no buyers are seated. Without it a sudden recovery
+       would have recruited longs, and the note would say something else.
+    4. A gap DOWN keeps the buy plan. That is the branch most likely to be
+       "corrected" back to selling by habit.
+    5. He flags the recovery may be a genuine REVERSAL of the multi-day
+       downtrend, and warns of rejections specifically in a flat open.
     """
     import os
 
@@ -228,62 +224,58 @@ def test_shipped_note_matches_september_11_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-11"
-    assert "xYh9Kd1qzm4" in note.source
-    # Seated again -- but the manner of entry is what matters.
-    assert "closed on a BREAKDOWN" in note.context
-    assert "sellers are seated again" in note.context
-    assert "LATE and out of FEAR" in note.context
+    assert note.for_date == "2026-09-15"
+    assert "xB8Jt0d4Ll8" in note.source
+    assert "sudden RECOVERY" in note.context
+    assert "may be a REVERSAL, not a bounce" in note.context
+    assert "two-three day holiday" in note.context
+    assert "neither side is seated" in note.context
 
-    every = next(line for line in note.plan if line.startswith("EVERY OPEN SHAPE NOW BUYS"))
-    assert "Gap up, flat AND gap down all take BUY-side setups" in every
-    assert "in flat to gap down the SAME plan can be kept" in every
-    assert "no sell branch at all" in every
+    follow = next(line for line in note.plan if line.startswith("EVERY OPEN SHAPE BUYS"))
+    assert "as a FOLLOW this time and not a hunt" in follow
+    assert "followed continuously" in follow
+    assert "Gap up, flat AND gap down all keep the same plan" in follow
 
-    inv = next(line for line in note.plan if line.startswith("THIS INVERTS THREE SESSIONS"))
-    assert "walk WITH the market" in inv
-    assert "HUNTS the sellers instead" in inv
-    assert "Do not carry the follow branch forward" in inv
+    both = next(line for line in note.plan if line.startswith("NEITHER SIDE IS SEATED"))
+    assert "we won't get them" in both
+    assert "the BUYERS' SLs aren't here either" in both
+    assert "nobody to squeeze in either direction" in both
 
-    fear = next(line for line in note.plan if line.startswith("THE REASON IS FEAR"))
-    assert "HE FLAGS IT AS AN EXCEPTION" in fear
-    assert "in a NORMAL case, in such a chart, we do NOT target the sellers" in fear
-    assert "But these sellers are AFRAID" in fear
-    # The chart would say follow; only the crowd's state overrides that.
-    assert "the crowd's STATE is what overrides it" in fear
+    why = next(line for line in note.plan if line.startswith("THE HOLIDAY IS WHY"))
+    assert "not many people are sitting long here" in why
+    assert "couldn't apply their minds" in why
+    assert "Without the break this recovery would have recruited longs" in why
 
-    why = next(line for line in note.plan if line.startswith("WHY THEY ARE AFRAID"))
-    assert "could not get in earlier" in why
-    assert "now he feels it is falling anyway, so let me make a trade" in why
-    assert "A late, scared entry is the weak kind" in why
+    up = next(line for line in note.plan if line.startswith("A GOOD GAP UP IS THE BEST CASE"))
+    assert "that is best for us" in up
+    # The branch most likely to be reverted to selling out of habit.
+    assert "A gap down keeps the SAME buy plan" in up
+    assert "a red open is not a reason to flip" in up
 
-    slow = next(line for line in note.plan if line.startswith("A FEARFUL CROWD IS CAPTURABLE"))
-    assert "if a trader is seated out of fear, the market can capture him" in slow
-    assert "will not run away quickly" in slow
-    assert "expect the squeeze to take time rather than fire at 09:15" in slow
+    rev = next(line for line in note.plan if line.startswith("HE FLAGS THE RECOVERY"))
+    assert "any recovery can also be a reversal" in rev
+    assert "possible turn in the multi-day downtrend" in rev
+    assert "sometimes there are some rejections in such a market" in rev
 
     assert [level.model_dump() for level in note.levels] == [
         {
+            # "23320 2370" -- the second support arrived truncated and was
+            # confirmed with the operator as 23270, below the first.
             "index": "NIFTY",
-            "resistance": [23500.0, 23540.0],
-            "support": [23340.0, 23400.0],
+            "resistance": [23500.0, 23560.0],
+            "support": [23270.0, 23320.0],
         },
         {
-            # The caption gave "56600 56876" -- byte-identical to yesterday's
-            # garble, with identical supports, so yesterday's operator-confirmed
-            # 56870 is reused rather than re-derived. BankNIFTY's levels are
-            # unchanged from the 10 Sep note.
+            # "568 76" again, the same garble that has resolved to 56870 in
+            # every prior note; supports unchanged from 11 Sep.
             "index": "BANKNIFTY",
-            "resistance": [56600.0, 56870.0],
+            "resistance": [56870.0, 57100.0],
             "support": [56040.0, 56200.0],
         },
         {
-            # Resistances were unusable ("7575200"). The operator watched the
-            # video: 75000 and 75200 -- NEITHER of the two readings offered from
-            # the transcript was right, which is the second time that has
-            # happened on SENSEX. Ask; never reconstruct.
+            # SENSEX came through clean and is unchanged from the 11 Sep note.
             "index": "SENSEX",
-            "resistance": [75000.0, 75200.0],
+            "resistance": [75200.0, 75500.0],
             "support": [74300.0, 74500.0],
         },
     ]
