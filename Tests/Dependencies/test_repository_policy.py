@@ -172,11 +172,23 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # prompt/approval_mode/output_schema/effort)`, and the result fields
     # `final_response`, `items`, `usage`. 0.147.0 still declares only
     # pydantic>=2.12 (our 2.13.4 satisfies it) and pins its own CLI binary.
-    # A three-minor jump on a young SDK could still rename a kwarg silently.
-    # CPR_AI_ENABLED is true and the worker trades paper daily, so a break
-    # surfaces as CPR AI errors in the next session -- that session, not this
-    # build, is the actual test.
-    assert "openai-codex==0.147.0" in ai
+    # 0.147.0 -> 0.154.0 (2026-09-14, PR #167). SEVEN minors on a young SDK, so
+    # the surface was introspected against the installed 0.154.0 rather than
+    # assumed. All three imported names survive (ApprovalMode, Codex, Sandbox),
+    # `Codex` is still a context manager, and both enum members we pass by value
+    # are present (Sandbox.read_only, ApprovalMode.deny_all). `thread_start`
+    # still accepts every one of model/config/cwd/developer_instructions/
+    # ephemeral/sandbox/approval_mode. `Codex.thread_start` is annotated to
+    # return the SYNC `Thread`, whose `run` declares approval_mode, output_schema
+    # and effort as REAL named parameters -- not swallowed by **kwargs -- and is
+    # not a coroutine, which is what our synchronous call requires. `TurnResult`
+    # still carries final_response, items and usage. It declares pydantic>=2.12
+    # and our 2.13.5 satisfies it.
+    # The standing check is unchanged, because none of the above exercises a real
+    # turn: CPR_AI_ENABLED is true and the worker trades paper daily, so a
+    # behavioural break surfaces as CPR AI errors in the next session -- that
+    # session, not this build, is the actual test.
+    assert "openai-codex==0.154.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
