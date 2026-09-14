@@ -2638,3 +2638,92 @@ def test_v5c_a_big_retracement_recruits_the_next_crowd():
     assert "not permission to sit through a breakdown" in rule
     assert "the loss goes far outside the LOSS LIMIT" in rule
     assert "The lower point and the loss limit both still bind" in rule
+def test_v5d_an_unloseable_setup_is_a_broken_setup():
+    """v5d (13 Sep Edge lecture): the contrapositive of v3z.
+
+    v3z asks you to name the way the trade fails. This says the inability to
+    name one is itself the disqualifying signal. Five ways an edit breaks it:
+
+    1. Losing the tie to v3z, or inverting the direction of the claim -- the
+       whole rule is that NOT seeing a loss is bad news, not confidence.
+    2. Dropping "re-check it". The instruction is to revisit the read, not to
+       trade it smaller, and a summariser will reach for the latter.
+    3. Losing the checkable symptom -- a rationale where up, down, sideways and
+       momentum all profit. Without it the rule cannot be applied to anything.
+    4. Dropping the passage that aims it at this agent specifically: a long
+       rationale that answers every objection FEELS thorough and is the failure.
+    5. Losing the capital clause, which forecloses the obvious wrong fix.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "IF YOU CANNOT SEE HOW THIS LOSES")
+
+    # 1. Explicitly the contrapositive of v3z, in the stated direction.
+    assert "THE SETUP IS BROKEN" in rule
+    assert "contrapositive of the rule above" in rule
+    assert "the inability to name it is not confidence, it is a defect" in rule
+
+    # IH's own words, including that he has chased the other kind.
+    assert "will only work IF it has a CHANCE OF LOSS" in rule
+    assert "the setup that makes profit is the one that HAS a margin of loss" in rule
+    # The instruction inside the quote, not just the claim around it.
+    assert "you should RE-CHECK it" in rule
+    # Anchored on the setup NOT lasting, which is the whole point of the anecdote.
+    assert "but it runs for a few days, then its number comes up" in rule
+
+    # 2 and 3. The instruction, and the symptom that triggers it.
+    assert "RE-CHECKED rather than taken" in rule
+    assert "sideways and you profit, momentum and you profit" in rule
+    assert "stopped being a read and become an argument" in rule
+
+    # 4. Why it is pointed at this agent.
+    assert "WHY THIS RULE IS AIMED AT YOU" in rule
+    assert "answers every objection FEELS like thoroughness" in rule
+    assert "state the branch that costs you money" in rule
+    assert "do not size the trade down -- re-check the read" in rule
+
+    # 5. Capital is not the repair.
+    assert "Neither big nor small capital repairs this" in rule
+    assert "until it goes outside the range" in rule
+
+
+def test_v5d_the_read_carries_more_edge_than_the_trade():
+    """v5d (13 Sep Edge lecture): analysis and execution are scored apart.
+
+    Five ways an edit could break it:
+
+    1. Reversing which side carries more edge. The claim is that the READ is the
+       stronger one, and it is the reason to fix the read first.
+    2. Losing WHY -- no entry, no target, no clock in the read, so emotion stays
+       out. Without the mechanism it is an unsupported ranking.
+    3. Dropping "a right analysis does not mean a right trade", which he repeats
+       three times and which is the operative consequence.
+    4. Losing the mapping onto this agent -- note plus direction read is the
+       analysis, entry/stop/exit is the trade -- which is what makes it usable.
+    5. Dropping the scoring rule, so a losing session is allowed to falsify a
+       correct read (or a correct read to excuse a bad trade).
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "YOUR EDGE IN THE READ IS HIGHER THAN YOUR EDGE IN THE TRADE")
+
+    # 1 and 2. The ranking, and the reason for it.
+    assert "the gap is structural rather than a run of bad luck" in rule
+    assert "in analysis there is no matter of entry/exit timing" in rule
+    assert "the edge there is LOWER" in rule
+    assert "no entry, no target and no clock" in rule
+    assert "so emotion stays out of it" in rule
+
+    # 3. The consequence, and that he grades himself by it.
+    assert "THE CONSEQUENCE HE REPEATS THREE TIMES" in rule
+    assert "does NOT mean your trade will also be right" in rule
+    assert "in analysis you could say we were 100% right" in rule
+    assert "here we had a loss" in rule
+
+    # 4. The mapping onto this agent's own parts.
+    assert "The pre-open note plus your direction read is the ANALYSIS" in rule
+    assert "the entry, the stop and the exit are the TRADE" in rule
+
+    # 5. Scored apart, and which one to fix first.
+    assert "a losing session does NOT falsify the read" in rule
+    assert "a correct read does not entitle the trade" in rule
+    assert "the way v4h scores entry apart from direction" in rule
+    assert "then your trading time will come" in rule

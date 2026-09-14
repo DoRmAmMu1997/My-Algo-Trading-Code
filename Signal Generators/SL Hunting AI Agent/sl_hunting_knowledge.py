@@ -756,6 +756,27 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   ENTRY means a better price existed and was missed (timing); a bad DIRECTION
   means no entry price would have helped (read). Score them separately, and never
   let a good entry launder a wrong read, or a wrong read condemn a good entry.
+- YOUR EDGE IN THE READ IS HIGHER THAN YOUR EDGE IN THE TRADE (v5d). The rule
+  above splits a loss into direction and entry. This one says the two do not carry
+  the same edge, and that the gap is structural rather than a run of bad luck.
+  IH: "in trading there are TWO things -- you ANALYSE by looking at the chart, and
+  you TRADE by looking at the chart. Your edge in analysis should be quite good,
+  because in analysis there is no matter of entry/exit timing... in trading we can
+  be wrong, the edge there is LOWER." In the read there is no entry, no target and
+  no clock, so emotion stays out of it; in the trade there is slow momentum, fast
+  momentum, sideways, and a stop that can be taken by either.
+  THE CONSEQUENCE HE REPEATS THREE TIMES: "when the analysis is right, that does
+  NOT mean your trade will also be right." He grades his own week by exactly that
+  split -- "in analysis you could say we were 100% right" and, of a losing trade
+  inside the same week, "here we had a loss" because the market retraced and
+  pulled out positive momentum.
+  HOW TO USE IT. The pre-open note plus your direction read is the ANALYSIS; the
+  entry, the stop and the exit are the TRADE. So a losing session does NOT falsify
+  the read, and a correct read does not entitle the trade -- score them apart, the
+  way v4h scores entry apart from direction. And when they disagree, fix the
+  weaker one: "first learn to do ANALYSIS, then your trading time will come",
+  because the read is where the edge is larger and therefore where being wrong is
+  cheaper to correct.
 - THE CHART DOES NOT REPEAT TWO DAYS RUNNING (v4f). When today's open reproduces
   yesterday's shape — same flat open, same immediate drop, same indices — that
   SAMENESS is itself the tell, and it argues AGAINST the continuation everyone
@@ -1836,6 +1857,29 @@ RISK DISCIPLINE
   to 58,000 specifically, and said he watched BankNIFTY hardest because that is
   where his QUANTITY is largest. Concentrate monitoring where the exposure is
   biggest, not where the chart is busiest.
+- IF YOU CANNOT SEE HOW THIS LOSES, THE SETUP IS BROKEN (v5d). The contrapositive
+  of the rule above, and the more useful half for you specifically. v3z asks you
+  to NAME the way the trade fails. This one says what it MEANS when you cannot:
+  the inability to name it is not confidence, it is a defect in the setup, and
+  the setup is to be RE-CHECKED rather than taken.
+  IH states it as a rule and as a confession: "any setup you have will only work
+  IF it has a CHANCE OF LOSS... if you have built a setup where you can SEE there
+  will be no loss, you should RE-CHECK it, because the setup that makes profit is
+  the one that HAS a margin of loss." He has chased the other kind himself --
+  nights spent on a setup that looked lossless, "but it runs for a few days, then
+  its number comes up".
+  THE SYMPTOM, which is the checkable part: "if you feel the market will go up and
+  you profit, go down and you profit, sideways and you profit, momentum and you
+  profit -- there is very little chance that setup works." A rationale in which
+  every branch of the market confirms the trade has stopped being a read and
+  become an argument.
+  WHY THIS RULE IS AIMED AT YOU. You write your own rationale before you act, and
+  a long rationale that answers every objection FEELS like thoroughness. It is the
+  exact failure mode above. Before entering, state the branch that costs you
+  money; if you cannot state one, do not size the trade down -- re-check the read.
+  Neither big nor small capital repairs this: he tried both, and reports that
+  large capital only lets you manage a wrong position "until it goes outside the
+  range", while small capital helps only because it controls emotion.
 - VOLATILE-DAY SIZING WIDENS BOTH ENDS, not just the stop (v3y). On a day that
   opens with visibly fast momentum — especially after a stretch of sideways
   sessions that produced none — widen the TARGET as well as the stop. A normal

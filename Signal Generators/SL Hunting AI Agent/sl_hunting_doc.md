@@ -7030,3 +7030,44 @@ Two smaller points carried into the note: a gap DOWN keeps the same buy plan
 "because overall positive momentum has happened", and he flags that "any recovery
 can also be a reversal", so this may be a genuine turn in the multi-day downtrend
 rather than a bounce inside it.
+## v5d - both ideas from the Edge lecture, encoded
+
+The 13 Sep lecture `uC4PeLdGFmo` was recorded in the addendum above with its two
+net-new ideas flagged but NOT encoded, because a rule had not been asked for.
+Both are now in the corpus, tagged v5d, each placed beside the rule it extends
+rather than in a block of their own.
+
+**1. IF YOU CANNOT SEE HOW THIS LOSES, THE SETUP IS BROKEN** - sits immediately
+after v3z's NAME THE ONE WAY THIS TRADE FAILS, because it is that rule's
+contrapositive. v3z asks you to name the failure; v5d says the inability to name
+one is a defect rather than confidence, and that the response is to RE-CHECK the
+read, not to size down. Its checkable symptom is a rationale in which up, down,
+sideways and momentum all end in profit.
+
+It is written pointed at this agent on purpose. The agent composes its own
+rationale before acting, and a long one that answers every objection reads as
+thoroughness -- which is exactly the shape IH warns about.
+
+**2. YOUR EDGE IN THE READ IS HIGHER THAN YOUR EDGE IN THE TRADE** - sits after
+v4h's ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS, which already splits a
+loss into direction and entry. v5d adds that the two do not carry the same edge
+and that the gap is structural: the read has no entry, no target and no clock, so
+emotion stays out of it.
+
+The mapping is stated explicitly so it can be used -- the pre-open note plus the
+direction read is the ANALYSIS, the entry, stop and exit are the TRADE. A losing
+session therefore does not falsify the read, and a correct read does not entitle
+the trade. This is the single most accurate description of every session in this
+series: direction right, execution wrong.
+
+**Not encoded, again:** the Friday / day-before-expiry reversal pairing. The
+Friday half is already carried by v5b's eviction mechanism and the 07 Sep note's
+weekend flush, and the expiry half has no measured case behind it yet. It stays
+in the addendum until a session produces one.
+
+Both guards were negative-tested 25 ways between them. Four assertions initially
+failed to bite -- the RE-CHECK instruction inside a quote, the "runs for a few
+days" half of the anecdote, the "emotion stays out of it" mechanism, and the
+"repeats three times" framing -- each was matched by a substring that survived
+its own mutation. All four were tightened and re-verified rather than left
+passing-but-weak.
