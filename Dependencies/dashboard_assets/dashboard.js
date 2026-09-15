@@ -334,9 +334,16 @@
    *
    * `pd` is the prior day's traded HIGH and LOW rather than arithmetic derived
    * from them, which is why it toggles separately from the pivot family. Both
-   * share one colour: they are a range, and the axis labels name each end. */
+   * share one colour: they are a range, and the axis labels name each end.
+   *
+   * The pivot is cyan rather than the amber it started as, because VWAP is
+   * amber too and both draw on pane 0 -- once every CPR level became solid
+   * the two were only a glance apart. Cyan is the one hue this pane was not
+   * already spending: the ladders own red and green, `pd` owns violet, BC
+   * and TC are grey. (%D in the oscillator pane stays amber; it never
+   * shares a pane with VWAP.) */
   const CPR_LEVELS = [
-    { key: "pivot",     group: "core", title: "P",   color: "#e8b13a" },
+    { key: "pivot",     group: "core", title: "P",   color: "#3fc9d9" },
     { key: "bc",        group: "core", title: "BC",  color: "#8b94a3" },
     { key: "tc",        group: "core", title: "TC",  color: "#8b94a3" },
     { key: "prev_high", group: "pd",   title: "PDH", color: "#a78bda" },
