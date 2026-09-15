@@ -305,7 +305,9 @@
    * silently hiding a line. Every access is wrapped: a private window, cleared
    * site data or a corrupt value must not take the page down with it. */
   const PREFS_KEY = "algoDashboard.chart.v1";
-  const PREF_DEFAULTS = { tf: "1", cpr: true, cprRS1: false, cprRS3: false, vwap: true, stoch: true };
+  const PREF_DEFAULTS = {
+    tf: "1", cpr: true, cprPD: true, cprRS1: false, cprRS3: false, vwap: true, stoch: true,
+  };
 
   function loadPrefs() {
     try {
@@ -326,20 +328,34 @@
 
   const prefs = loadPrefs();
 
-  /* CPR groups. `core` is on by default; the ladders are opt-in because
-   * eleven horizontal lines over candles is not a chart, it is a net. */
+  /* CPR groups, each with its own checkbox. `core` and `pd` are on by
+   * default; the R/S ladders are opt-in because thirteen horizontal lines over
+   * candles is not a chart, it is a net.
+   *
+   * `pd` is the prior day's traded HIGH and LOW rather than arithmetic derived
+   * from them, which is why it toggles separately from the pivot family. Both
+   * share one colour: they are a range, and the axis labels name each end.
+   *
+   * The pivot is cyan rather than the amber it started as, because VWAP is
+   * amber too and both draw on pane 0 -- once every CPR level became solid
+   * the two were only a glance apart. Cyan is the one hue this pane was not
+   * already spending: the ladders own red and green, `pd` owns violet, BC
+   * and TC are grey. (%D in the oscillator pane stays amber; it never
+   * shares a pane with VWAP.) */
   const CPR_LEVELS = [
-    { key: "pivot", group: "core", title: "P",  color: "#e8b13a", dashed: false },
-    { key: "bc",    group: "core", title: "BC", color: "#8b94a3", dashed: true },
-    { key: "tc",    group: "core", title: "TC", color: "#8b94a3", dashed: true },
-    { key: "r1",    group: "rs1",  title: "R1", color: "#ef5f5f", dashed: true },
-    { key: "r2",    group: "rs1",  title: "R2", color: "#ef5f5f", dashed: true },
-    { key: "s1",    group: "rs1",  title: "S1", color: "#35c46b", dashed: true },
-    { key: "s2",    group: "rs1",  title: "S2", color: "#35c46b", dashed: true },
-    { key: "r3",    group: "rs3",  title: "R3", color: "#8a3b3b", dashed: true },
-    { key: "r4",    group: "rs3",  title: "R4", color: "#8a3b3b", dashed: true },
-    { key: "s3",    group: "rs3",  title: "S3", color: "#2c6b45", dashed: true },
-    { key: "s4",    group: "rs3",  title: "S4", color: "#2c6b45", dashed: true },
+    { key: "pivot",     group: "core", title: "P",   color: "#3fc9d9" },
+    { key: "bc",        group: "core", title: "BC",  color: "#8b94a3" },
+    { key: "tc",        group: "core", title: "TC",  color: "#8b94a3" },
+    { key: "prev_high", group: "pd",   title: "PDH", color: "#a78bda" },
+    { key: "prev_low",  group: "pd",   title: "PDL", color: "#a78bda" },
+    { key: "r1",        group: "rs1",  title: "R1",  color: "#ef5f5f" },
+    { key: "r2",        group: "rs1",  title: "R2",  color: "#ef5f5f" },
+    { key: "s1",        group: "rs1",  title: "S1",  color: "#35c46b" },
+    { key: "s2",        group: "rs1",  title: "S2",  color: "#35c46b" },
+    { key: "r3",        group: "rs3",  title: "R3",  color: "#8a3b3b" },
+    { key: "r4",        group: "rs3",  title: "R4",  color: "#8a3b3b" },
+    { key: "s3",        group: "rs3",  title: "S3",  color: "#2c6b45" },
+    { key: "s4",        group: "rs3",  title: "S4",  color: "#2c6b45" },
   ];
 
   function ensureChart() {
@@ -452,8 +468,13 @@
 
   function renderCprLines(cpr) {
     if (!candleSeries) return;
+    /* EVERY group pref belongs in here. One left out means ticking its box
+     * updates the pref and then this function early-returns on an unchanged
+     * signature, so the line never appears and the bug looks like the box
+     * doing nothing. */
     const signature = JSON.stringify([
-      cpr && cpr.available ? cpr.pivot : null, prefs.cpr, prefs.cprRS1, prefs.cprRS3,
+      cpr && cpr.available ? cpr.pivot : null,
+      prefs.cpr, prefs.cprPD, prefs.cprRS1, prefs.cprRS3,
     ]);
     if (signature === cprSignature) return;
     cprSignature = signature;
@@ -464,6 +485,7 @@
 
     for (const level of CPR_LEVELS) {
       const on = level.group === "core"
+        || (level.group === "pd" && prefs.cprPD)
         || (level.group === "rs1" && prefs.cprRS1)
         || (level.group === "rs3" && prefs.cprRS3);
       const price = cpr[level.key];
@@ -472,7 +494,7 @@
         price,
         color: level.color,
         lineWidth: 1,
-        lineStyle: level.dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+        lineStyle: LightweightCharts.LineStyle.Solid,
         axisLabelVisible: true,
         /* The "(chart)" suffix travels with a screenshot of just the chart,
          * where none of the page's other captions would. */
@@ -657,8 +679,41 @@
     }
 
     pollInFlight = false;
+    /* Cheap and idempotent: it writes only when the header's height actually
+     * changed, so a stable window costs one getBoundingClientRect a second. */
+    publishHeaderHeight();
+
     if (document.visibilityState === "hidden") delay = Math.max(delay, HIDDEN_TAB_SECONDS);
     schedulePoll(delay);
+  }
+
+  /* The chart pane sizes itself against the viewport minus the sticky header,
+   * and that header WRAPS to two or three rows on a narrow window -- 62px wide
+   * open, 94px wrapped. Publishing its measured height as a CSS variable keeps
+   * the chart flush at any width, where a hardcoded offset leaves a gap or
+   * pushes the page into an unnecessary scroll.
+   *
+   * Re-measured from the poll loop rather than trusted to a ResizeObserver
+   * alone: an observer that never fires leaves the variable stale and the gap
+   * visible, and that failure is invisible in code review. Writing only on a
+   * CHANGE makes the once-a-second check free. */
+  let headerHeight = 0;
+
+  function publishHeaderHeight() {
+    const header = el("header");
+    if (!header) return;
+    const height = Math.ceil(header.getBoundingClientRect().height);
+    if (!height || height === headerHeight) return;
+    headerHeight = height;
+    document.documentElement.style.setProperty("--header-h", `${height}px`);
+  }
+
+  publishHeaderHeight();
+  try {
+    /* Instant response when it does work; the poll is the guarantee. */
+    new ResizeObserver(publishHeaderHeight).observe(el("header"));
+  } catch (error) {
+    window.addEventListener("resize", publishHeaderHeight);
   }
 
   /* Controls. Each checkbox flips visibility rather than re-setting data, so
@@ -667,7 +722,8 @@
   nodes.tf5.addEventListener("click", () => setTimeframe("5"));
 
   for (const [id, key] of [
-    ["ind-cpr", "cpr"], ["ind-cpr-rs1", "cprRS1"], ["ind-cpr-rs3", "cprRS3"],
+    ["ind-cpr", "cpr"], ["ind-cpr-pd", "cprPD"],
+    ["ind-cpr-rs1", "cprRS1"], ["ind-cpr-rs3", "cprRS3"],
     ["ind-vwap", "vwap"], ["ind-stoch", "stoch"],
   ]) {
     const box = el(id);

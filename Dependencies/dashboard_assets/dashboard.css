@@ -107,16 +107,26 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 .columns .wide { flex: 3 1 560px; }
 .columns .narrow { flex: 2 1 380px; }
 
-/* Taller than it was (40vh), and taller still than it looks: the stochastic
- * sub-pane lives INSIDE this box, so the price pane only grows if the total
- * grows by more than the sub-pane takes. At 1080p this is ~626px, of which
- * ~110px is the oscillator, leaving ~510px of price against the old 432px.
- * `clamp` stops a 4K monitor pushing the tables below the fold, and the drag
- * handle lets the operator settle it themselves -- `autoSize: true` on the
- * chart follows the element. */
+/* The chart owns the window, the way TradingView's does: the pane fills the
+ * viewport below the sticky header, and the tables live below the fold. The
+ * header's height is measured in JS and published as --header-h, because it
+ * WRAPS on a narrow window and a hardcoded offset would leave a gap or push
+ * the page into an unnecessary scroll. The 26px is `main`'s padding plus the
+ * pane border. */
+.chart-pane {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--header-h, 46px) - 26px);
+  min-height: 360px;
+}
+
+/* `flex: 1` is what makes the rest self-adjusting: the head wraps freely and
+ * the provenance caption comes and goes, and the chart simply takes whatever
+ * is left. `autoSize: true` on the chart follows the element, and the drag
+ * handle still lets the operator settle it by hand. */
 .chart-pane #chart {
-  height: clamp(340px, 58vh, 760px);
-  min-height: 340px;
+  flex: 1 1 auto;
+  min-height: 220px;
   resize: vertical;
   overflow: hidden;
 }
