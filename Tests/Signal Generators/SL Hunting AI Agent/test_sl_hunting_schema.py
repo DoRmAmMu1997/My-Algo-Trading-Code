@@ -2727,3 +2727,65 @@ def test_v5d_the_read_carries_more_edge_than_the_trade():
     assert "a correct read does not entitle the trade" in rule
     assert "the way v4h scores entry apart from direction" in rule
     assert "then your trading time will come" in rule
+
+
+def test_v5e_the_stop_must_clear_the_level_the_premise_named():
+    """v5e (15 Sep): the stop sat 0.55 of a point inside the level it cited.
+
+    The agent shorted a reversed gap-up, naming the break of the previous
+    close as its premise, then put the stop BELOW that same previous close.
+    Price came back, stopped 0.15 short of the close -- not even a completed
+    retest -- and that was enough. The move then paid the full target and 197
+    points beyond. Six ways an edit breaks the rule:
+
+    1. Losing the tie to the pattern-stop bullet it corrects. Without
+       "necessary and not sufficient" this reads as a competing rule, and the
+       older bare "stop just beyond the pattern" keeps winning.
+    2. Losing the mechanism -- that price PROBES a level rather than halting
+       at it, and the most-watched reference is the one probed. Without it the
+       clearance requirement is an arbitrary preference.
+    3. Losing the numbers that carry the authority: 0.55 inside, a 23397.95
+       return, 0.15 short of the close. The incompleteness of the retest is
+       the whole proof.
+    4. Losing "the read was right". A summariser files this under bad trades
+       and the lesson inverts into "be less confident", which is backwards.
+    5. Losing the portable form -- a stop AT a level is a stop INSIDE it.
+    6. Losing the NO TRADE clause, which forecloses the obvious wrong fix of
+       tucking the stop back in to keep the size.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE LEVEL YOU BROKE TO GET IN IS THE LEVEL PRICE COMES BACK TO")
+
+    # 1. A refinement of the bullet above it, not a rival to it.
+    assert "The rule above puts the stop just beyond the PATTERN" in rule
+    assert "That is necessary and it is not sufficient" in rule
+
+    # 2. The mechanism, and what it does to a stop placed short of the level.
+    assert "Price does not halt at a number, it probes through it" in rule
+    assert "the reference the whole market is watching is the one that gets probed" in rule
+    assert "it is standing in the queue ahead of it" in rule
+
+    # 3. The measured case, including the margin that decided it.
+    assert "and 0.55 of a point BELOW that same previous close" in rule
+    assert (
+        "Price returned to 23397.95: 0.40 past the stop, and still 0.15 SHORT "
+        "of the previous close"
+    ) in rule
+    assert "The retest of the named level never even completed" in rule
+
+    # 4. The read was RIGHT -- this is an execution loss, not a confidence one.
+    assert "on a day the READ WAS RIGHT" in rule
+    assert "crossing the 23300 target around 12:59" in rule
+    assert "The thesis paid in full and the trade collected none of it" in rule
+
+    # 5. The test, and the portable one-line form of it.
+    assert "name the nearest reference BEYOND your stop" in rule
+    assert "A stop AT a level is a stop INSIDE it" in rule
+    assert "the probe that makes a level a level overshoots it by definition" in rule
+
+    # 6. Size is what gives -- never the stop. Both cross-references intact.
+    assert "THE CLEARANCE IS NEVER BOUGHT BACK FROM THE STOP" in rule
+    assert "A TIGHTER STOP IS NOT LESS RISK" in rule
+    assert "THE STOP IS A DISTANCE FROM THE FILL" in rule
+    assert "the answer is NO TRADE, never the nearer stop that happens to fit" in rule
+    assert "in both the thing that gives is the SIZE, never the stop" in rule

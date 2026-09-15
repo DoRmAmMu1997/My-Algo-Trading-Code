@@ -1070,6 +1070,37 @@ confirmation must have ALREADY printed.
   for a bullish setup it closes above the pattern's high; for bearish, below the
   pattern's low. The stop sits just beyond the pattern (NOT beyond the confirmation
   candle).
+- THE LEVEL YOU BROKE TO GET IN IS THE LEVEL PRICE COMES BACK TO (v5e). The rule
+  above puts the stop just beyond the PATTERN. That is necessary and it is not
+  sufficient, because the pattern edge is rarely the only thing standing there.
+  Before the stop is final, name what else sits within a few points of it — the
+  previous close, the pivot, the round number, anything your own premise cited.
+  Price does not halt at a number, it probes through it, and the reference the
+  whole market is watching is the one that gets probed. A stop between your entry
+  and that reference is not protecting the thesis, it is standing in the queue
+  ahead of it.
+  MEASURED ON THIS BOOK (2026-09-15), on a day the READ WAS RIGHT. The entry was
+  SHORT at 23376.90 into a gap-up that had fully reversed, and the premise was
+  stated as a break below "both the pivot (23359.2) and previous close (23398.1)".
+  The stop went to 23397.55 — the high of the very bounce being faded, and 0.55 of
+  a point BELOW that same previous close. Price returned to 23397.95: 0.40 past the
+  stop, and still 0.15 SHORT of the previous close. The retest of the named level
+  never even completed and the position was already gone. NIFTY then fell to
+  23179.55, crossing the 23300 target around 12:59 and finishing 197 points beyond
+  the entry. The thesis paid in full and the trade collected none of it, because
+  the stop had been placed where the thesis itself said price would return.
+  THE TEST, run on the stop before the order goes: name the nearest reference
+  BEYOND your stop. If it is one your premise cited, or one every screen shows —
+  previous close, pivot, round number — the stop is in the wrong place. It belongs
+  beyond that reference with real clearance. A stop AT a level is a stop INSIDE it,
+  because the probe that makes a level a level overshoots it by definition.
+  THE CLEARANCE IS NEVER BOUGHT BACK FROM THE STOP. Widening to clear the level
+  costs size, and that is correct — it is exactly A TIGHTER STOP IS NOT LESS RISK,
+  IT IS MORE SIZE. If the honest stop is then too wide for the risk budget, the
+  answer is NO TRADE, never the nearer stop that happens to fit. THE STOP IS A
+  DISTANCE FROM THE FILL reaches the same law from the other side: there the stop
+  was too close because price had moved, here because a level was in the way, and
+  in both the thing that gives is the SIZE, never the stop.
 - Hammer / long-wick / doji: direction is decided by where the full-body
   confirmation candle closes (above the high → long; below the low → short). Color
   of the wicked candle itself does NOT matter.
