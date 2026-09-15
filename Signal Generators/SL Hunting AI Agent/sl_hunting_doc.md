@@ -7071,3 +7071,120 @@ days" half of the anecdote, the "emotion stays out of it" mechanism, and the
 "repeats three times" framing -- each was matched by a substring that survived
 its own mutation. All four were tightened and re-verified rather than left
 passing-but-weak.
+## v5e - the stop that sat inside the level the premise named (15 Sep)
+
+Source: `Yl-m6yX2Fok`, "Live Bank Nifty Option Trading", uploaded 2026-09-15
+10:11 IST. Compared against the agent's own session the same morning (two
+trades, both stopped, basket -Rs.1,294). 11 Sep was the previous trading day;
+12-14 Sep were closed, which is the gap both sides were reading.
+
+**The inversion.** For the first time in this series IH and the agent read the
+same day in OPPOSITE directions, and the agent was right. Both named the same
+level. IH bought calls into the gap-up's fast rejection on the trap read -- his
+stated logic is that a fast rejection traps nobody because the preceding
+multi-day selling and the holiday meant "in the reversal most people could not
+buy", so there were no seated buyers to hunt and the sharp drop had to be a
+shakeout. He sized across all three indices (BankNIFTY 1170 on the 56900 call,
+Sensex 900, NIFTY 1430 on its expiry day). The agent read the same rejection as
+a genuine breakdown and shorted it. NIFTY closed at 23179.55, roughly 400 points
+below the open. IH cut at his limit and posted the session as a loss.
+
+**What killed IH's trade is the level the agent had named.** His exit criterion,
+in his own words, was that the closing-price breakdown "should not have
+happened here -- because there was already a rejection, we should have
+immediately got momentum covering the market". The agent's ENTRY criterion, in
+its own words, was the break "below both the pivot (23359.2) and previous close
+(23398.1)". Same level, opposite sides, and the agent had it right.
+
+**The agent still lost on it, and the cause is mechanical.** It shorted at
+23376.90 and put the stop at 23397.55: the high of the bounce it was fading,
+and 0.55 of a point BELOW the previous close it had just cited as the reason
+for the trade. Price returned to 23397.95 -- 0.40 past the stop, and still 0.15
+SHORT of that previous close. The retest of the named level never completed and
+the position was already gone. NIFTY then fell through the 23300 target around
+12:59 and finished 197 points beyond the entry. The thesis paid in full; the
+trade collected none of it.
+
+Encoded as **THE LEVEL YOU BROKE TO GET IN IS THE LEVEL PRICE COMES BACK TO
+(v5e)**, placed directly under the confirmation-candle bullet in
+PATTERNS_AND_CONFIRMATION -- the bullet that says "the stop sits just beyond the
+pattern". That instruction produced this loss, so v5e refines it in place rather
+than competing with it from another section: beyond the pattern is necessary and
+not sufficient, and a reference the premise cited (or one every screen shows)
+sitting beside the pattern edge must itself be cleared. A stop AT a level is a
+stop INSIDE it, because the probe that makes a level a level overshoots it.
+
+The rule closes the obvious wrong fix explicitly, because it is the one an agent
+reaches for: clearance is bought with SIZE, never back from the stop. It
+cross-references v5a (A TIGHTER STOP IS NOT LESS RISK, IT IS MORE SIZE) and v4x
+(THE STOP IS A DISTANCE FROM THE FILL), which reach the same law from the other
+side -- there the stop is too close because price moved, here because a level is
+in the way, and in both the thing that gives is the size.
+
+Negative-tested 16 ways, all 16 caught on the first pass, plus a control
+mutation of unasserted prose confirming the harness discriminates rather than
+failing on everything.
+
+**Considered and not encoded.** IH's fast-rejection-is-a-trap read is the thesis
+that LOST him the day, so it is not a candidate. His "a real trap recovers
+IMMEDIATELY, so a thesis that needs time is not a trap" deadline is the more
+durable idea in the video, but v3j already considered and deliberately dropped
+"counter-gap recovery must be FAST" because it collides with RISK's
+SLOW-but-CONTINUOUS is sustainable; one session of his own loss is not enough to
+reverse that, and per BACKTEST A THRESHOLD BEFORE PICKING IT a deadline needs to
+be priced against the journals first. His loss-discipline passage ("put your
+thinking into the PROFIT trade, not the losing one -- the more effort you spend
+on a trade the more emotionally connected you get, and then you will not want to
+leave it") is close to already-encoded v3y BEING DIRECTIONALLY RIGHT DOES NOT
+EARN THE HOLD, which names the same tell.
+
+## SLH-016 - an entry whose stop is already breached is refused at the tool
+
+The same session's FIRST trade is a separate failure with the same root, and it
+is the one that had to become code rather than prose.
+
+At 09:15:55 the order tool fired claiming entry 23571.40 with a stop at
+23566.30 -- a 5.1-point allowance, so `from_risk_budget` granted the 5-lot CAP
+(325 qty, mirrored by 150 BankNIFTY) -- while live spot was already 23493.25,
+**73 points beyond that stop**. The ENTRY line records both numbers side by
+side (`Spot=23493.25 | EntryUnderlying=23571.40 | StopUnderlying=23566.30`) and
+nothing compared them. The position was closed 4 seconds later. The 60.6s
+inference that authorised it completed at 09:16:05 and was then discarded as a
+stale generation, so a real trade outlived and outranked the decision behind it.
+
+v4x has said since 2026-09-04 that the stop is a distance from the FILL and
+must be re-measured at the instant the position opens. It is prose, and prose
+did not bind -- exactly the history behind SLH-005, where the re-entry gate was
+talked past twice before its time arm moved into code.
+
+`MasterWorkerExecutor.enter` now reads the worker's `_get_underlying_spot`
+before delegating and refuses the entry when the stop is already on the wrong
+side of spot (`<=` for LONG, `>=` for SHORT, so zero room counts as breached).
+The rejection names both numbers and restates v4x's two honest answers:
+re-derive the stop from the price in front of you and take the smaller size, or
+take no trade -- never keep the original stop to keep the original size.
+
+Four deliberate scope decisions:
+
+- **The narrowest checkable arm only.** "Already breached" needs no threshold.
+  How much of the sized allowance is merely SPENT -- v4x's 83% case from
+  2026-09-04 -- stays a judgement the prompt owns, because choosing that
+  fraction needs the journals behind it rather than an intuition. This follows
+  BACKTEST A THRESHOLD BEFORE PICKING IT.
+- **Paper as well as live.** A dead-on-arrival paper trade still writes a
+  journal row and still trains the coach.
+- **An unreadable spot is NOT refused here.** `enter_position` already skips the
+  entry outright when the NIFTY LTP comes back non-positive; a second opinion
+  would only make that failure harder to read in the log.
+- **Duck-typed, entries only.** A worker without the accessor (the standalone
+  paper runner) is unaffected, and exits are never gated -- a breached stop is
+  precisely when an exit must stay available.
+
+No extra broker call: `_get_underlying_spot` writes a direct fetch back into the
+shared store, so this warms the very LTP `enter_position` reads a moment later.
+
+Negative-tested 8 ways, all 8 caught, each by the specific test that should own
+it. A ninth mutation was written and discarded as invalid -- setting the
+exception branch to `float("inf")` is filtered by the `isfinite` guard and
+changes no behaviour, so it proved nothing; it was replaced by mutations that
+make the exception branch refuse and re-raise, both caught.

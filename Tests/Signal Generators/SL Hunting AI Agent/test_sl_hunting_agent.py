@@ -511,6 +511,136 @@ def test_worker_without_cooldown_hook_still_enters():
 
 
 # --------------------------------------------------------------------------
+# SLH-016: an entry whose stop is already breached at the fill is refused
+# --------------------------------------------------------------------------
+
+class _SpotWorker(_FakeWorker):
+    """Worker exposing the spot accessor the real master worker uses at fill.
+
+    `AtmSingleLegStrategyWorker.enter_position` reads the live underlying through
+    `_get_underlying_spot` and logs it beside the model's claimed entry, so the
+    two were already side by side in every ENTRY line -- nothing compared them.
+    """
+
+    def __init__(self, spot):
+        super().__init__()
+        self.spot = spot
+
+    def _get_underlying_spot(self, fallback=0.0):
+        if isinstance(self.spot, BaseException):
+            raise self.spot
+        return self.spot
+
+
+def test_long_entry_refused_when_the_stop_is_already_breached_at_the_fill():
+    """SLH-016, measured on this book at 2026-09-15 09:15:55.
+
+    The order tool fired with entry 23571.40 and stop 23566.30 -- a 5.1-point
+    allowance, so the risk budget granted the 5-lot CAP -- while live spot was
+    already 23493.25, i.e. 73 points BEYOND the stop. A maximum-size position
+    opened past its own stop and was closed four seconds later. v4x has said
+    since 2026-09-04 that the stop is a distance from the FILL; prose did not
+    bind, exactly as it failed to for the re-entry gate before SLH-005.
+    """
+    worker = _SpotWorker(23493.25)
+    ex = MasterWorkerExecutor(worker)
+
+    result = ex.enter(
+        "LONG", stop=23566.30, target=23650.0, reason="opening drive", price=23571.40
+    )
+
+    assert result["accepted"] is False
+    assert "23566.30" in result["reason"]      # the stop it asked for
+    assert "23493.25" in result["reason"]      # the price actually in front of it
+    assert worker.entries == []                # nothing reached the worker
+
+
+def test_short_entry_refused_when_the_stop_is_already_breached_at_the_fill():
+    """A SHORT stop sits ABOVE price, so it is breached from the other side."""
+    worker = _SpotWorker(23400.00)
+    ex = MasterWorkerExecutor(worker)
+
+    result = ex.enter(
+        "SHORT", stop=23397.55, target=23300.0, reason="gap rejection", price=23376.90
+    )
+
+    assert result["accepted"] is False
+    assert "23397.55" in result["reason"]
+    assert "23400.00" in result["reason"]
+    assert worker.entries == []
+
+
+def test_an_entry_with_room_left_is_still_accepted():
+    """The gate refuses only a stop already taken -- not a merely tight one."""
+    worker = _SpotWorker(23571.40)
+    ex = MasterWorkerExecutor(worker)
+
+    assert ex.enter(
+        "LONG", stop=23566.30, target=23650.0, reason="ok", price=23571.40
+    )["accepted"] is True
+    assert worker.entries == [("LONG", 23571.40, 23566.30, 23650.0)]
+
+
+def test_a_stop_exactly_at_spot_is_refused():
+    """Zero room is not room. Touching the stop closes the position."""
+    worker = _SpotWorker(23566.30)
+    ex = MasterWorkerExecutor(worker)
+
+    assert ex.enter(
+        "LONG", stop=23566.30, target=23650.0, reason="x", price=23571.40
+    )["accepted"] is False
+    assert worker.entries == []
+
+
+def test_the_breached_stop_gate_never_blocks_an_exit():
+    """Entries only. A breached stop is precisely when an exit must stay open."""
+    worker = _SpotWorker(23493.25)
+    ex = MasterWorkerExecutor(worker)
+    worker.pos.active = True
+
+    assert ex.exit("stop hit", price=23493.25)["accepted"] is True
+
+
+def test_worker_without_a_spot_accessor_still_enters():
+    """Duck-typed: the standalone paper runner exposes no spot at all."""
+    ex = MasterWorkerExecutor(_FakeWorker())
+    assert ex.enter(
+        "LONG", stop=23566.30, target=23650.0, reason="x", price=23571.40
+    )["accepted"] is True
+
+
+def test_an_unreadable_spot_leaves_the_decision_to_enter_position():
+    """No second opinion invented here when the feed is down.
+
+    The gate cannot compare against a price it does not have, so it stands
+    aside rather than guessing. Nothing is lost: the real
+    `AtmSingleLegStrategyWorker.enter_position` already refuses outright when
+    `_get_underlying_spot` comes back non-positive, logging "Skipping %s entry
+    because NIFTY spot LTP was unavailable."
+    """
+    for unreadable in (0.0, -1.0, float("nan"), float("inf"), RuntimeError("feed down")):
+        worker = _SpotWorker(unreadable)
+        ex = MasterWorkerExecutor(worker)
+
+        result = ex.enter(
+            "LONG", stop=23566.30, target=23650.0, reason="x", price=23571.40
+        )
+
+        assert result["accepted"] is True, unreadable
+
+
+def test_a_breached_stop_is_refused_for_paper_too():
+    """Not live-only: a dead-on-arrival paper trade still poisons the journal."""
+    worker = _SpotWorker(23493.25)
+    worker.live_trading = False
+    ex = MasterWorkerExecutor(worker)
+
+    assert ex.enter(
+        "LONG", stop=23566.30, target=23650.0, reason="x", price=23571.40
+    )["accepted"] is False
+
+
+# --------------------------------------------------------------------------
 # SLH-002: agent-provided ENTRY stop/target must be sane at the order tool.
 # The mechanical per-poll exit uses these UNDERLYING levels verbatim, so a
 # hallucinated stop (wrong side / absurd distance / non-finite) silently
