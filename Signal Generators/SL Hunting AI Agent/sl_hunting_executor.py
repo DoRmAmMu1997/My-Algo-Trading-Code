@@ -387,6 +387,47 @@ class MasterWorkerExecutor:
                         "structure under a new setup name). Wait for genuinely new price action."
                     ),
                 }
+        # SLH-016: refuse an entry whose stop the market has ALREADY taken.
+        # Deciding and filling are not the same moment -- inference runs on its
+        # own thread and the order tool can fire tens of seconds after the bar
+        # the model reasoned on. On 2026-09-15 that gap was 78 points: the order
+        # went in claiming entry 23571.40 with a 5.1-point stop (so the risk
+        # budget granted the LOT CAP) while spot already sat 73 points beyond
+        # that stop, and the maximum-size position was closed four seconds
+        # later. v4x states this in prose, and prose did not bind -- the same
+        # reason the re-entry gate had to become SLH-005.
+        #
+        # Deliberately the NARROWEST checkable arm: "already breached" needs no
+        # threshold. How much of the sized allowance is merely SPENT stays a
+        # judgement the prompt owns, because choosing that fraction needs the
+        # journals behind it rather than an intuition.
+        spot_fn = getattr(self._w, "_get_underlying_spot", None)
+        if callable(spot_fn):
+            try:
+                # Warms the same shared-store LTP that enter_position reads a
+                # moment later, so this costs no extra broker call.
+                spot = float(spot_fn(fallback=0.0))
+            except Exception:  # noqa: BLE001 - an unreadable feed is not this gate's call
+                spot = 0.0
+            stop_value = float(stop)
+            # A spot we cannot read is deliberately NOT refused here:
+            # enter_position already skips the entry outright when the NIFTY
+            # LTP comes back non-positive, and inventing a second opinion would
+            # only make the failure harder to read in the log.
+            if math.isfinite(spot) and spot > 0 and math.isfinite(stop_value):
+                breached = spot <= stop_value if direction == "LONG" else spot >= stop_value
+                if breached:
+                    return {
+                        "accepted": False,
+                        "reason": (
+                            f"stop {stop_value:.2f} is already breached: spot is "
+                            f"{spot:.2f}, so the position would open past its own stop "
+                            "and close on the next check. Re-derive the stop from the "
+                            "price in front of you and take the smaller size, or take "
+                            "no trade -- never keep the original stop in order to keep "
+                            "the original size."
+                        ),
+                    }
         ok = bool(self._w.enter_position(
             direction,
             float(price),

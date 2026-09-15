@@ -7138,14 +7138,53 @@ on a trade the more emotionally connected you get, and then you will not want to
 leave it") is close to already-encoded v3y BEING DIRECTIONALLY RIGHT DOES NOT
 EARN THE HOLD, which names the same tell.
 
-**Open, not fixed here.** The session's first trade opened a MAXIMUM-size
-position that was already past its stop. At 09:15:55 the order tool fired with
-entry 23571.40 and stop 23566.30 (a 5.1-point stop, so the risk budget granted
-the 5-lot cap) while live spot was 23493.25 -- 73 points beyond the stop before
-the position existed. It was stopped 4 seconds later, and the decision that
-authorised it only completed at 09:16:05, after a 60.6s inference, then was
-discarded as a stale generation. `MasterWorkerExecutor.enter` passes the model's
-claimed entry and stop through unchecked, so nothing compares them against the
-spot at fill. This is precisely v4x's arm, and v4x is prose -- the same shape as
-the re-entry gate that had to become SLH-005. A code gate belongs here, but it
-is a runtime change and was left out of a knowledge-only PR.
+## SLH-016 - an entry whose stop is already breached is refused at the tool
+
+The same session's FIRST trade is a separate failure with the same root, and it
+is the one that had to become code rather than prose.
+
+At 09:15:55 the order tool fired claiming entry 23571.40 with a stop at
+23566.30 -- a 5.1-point allowance, so `from_risk_budget` granted the 5-lot CAP
+(325 qty, mirrored by 150 BankNIFTY) -- while live spot was already 23493.25,
+**73 points beyond that stop**. The ENTRY line records both numbers side by
+side (`Spot=23493.25 | EntryUnderlying=23571.40 | StopUnderlying=23566.30`) and
+nothing compared them. The position was closed 4 seconds later. The 60.6s
+inference that authorised it completed at 09:16:05 and was then discarded as a
+stale generation, so a real trade outlived and outranked the decision behind it.
+
+v4x has said since 2026-09-04 that the stop is a distance from the FILL and
+must be re-measured at the instant the position opens. It is prose, and prose
+did not bind -- exactly the history behind SLH-005, where the re-entry gate was
+talked past twice before its time arm moved into code.
+
+`MasterWorkerExecutor.enter` now reads the worker's `_get_underlying_spot`
+before delegating and refuses the entry when the stop is already on the wrong
+side of spot (`<=` for LONG, `>=` for SHORT, so zero room counts as breached).
+The rejection names both numbers and restates v4x's two honest answers:
+re-derive the stop from the price in front of you and take the smaller size, or
+take no trade -- never keep the original stop to keep the original size.
+
+Four deliberate scope decisions:
+
+- **The narrowest checkable arm only.** "Already breached" needs no threshold.
+  How much of the sized allowance is merely SPENT -- v4x's 83% case from
+  2026-09-04 -- stays a judgement the prompt owns, because choosing that
+  fraction needs the journals behind it rather than an intuition. This follows
+  BACKTEST A THRESHOLD BEFORE PICKING IT.
+- **Paper as well as live.** A dead-on-arrival paper trade still writes a
+  journal row and still trains the coach.
+- **An unreadable spot is NOT refused here.** `enter_position` already skips the
+  entry outright when the NIFTY LTP comes back non-positive; a second opinion
+  would only make that failure harder to read in the log.
+- **Duck-typed, entries only.** A worker without the accessor (the standalone
+  paper runner) is unaffected, and exits are never gated -- a breached stop is
+  precisely when an exit must stay available.
+
+No extra broker call: `_get_underlying_spot` writes a direct fetch back into the
+shared store, so this warms the very LTP `enter_position` reads a moment later.
+
+Negative-tested 8 ways, all 8 caught, each by the specific test that should own
+it. A ninth mutation was written and discarded as invalid -- setting the
+exception branch to `float("inf")` is filtered by the `isfinite` guard and
+changes no behaviour, so it proved nothing; it was replaced by mutations that
+make the exception branch refuse and re-raise, both caught.
