@@ -19,6 +19,7 @@ import ast
 import io
 import json
 import logging
+import re
 import socket
 import sys
 import threading
@@ -419,3 +420,34 @@ def test_the_server_stops_without_leaving_its_threads_running():
     names = {thread.name for thread in threading.enumerate()}
     assert "DashboardBuilder" not in names
     assert "DashboardHTTP" not in names
+
+
+def test_every_element_the_page_script_looks_up_exists_in_the_markup():
+    """A wired id missing from the HTML blanks the whole page, silently.
+
+    The control-wiring loop in `dashboard.js` does `const box = el(id)` with no
+    null guard, so one absent id throws inside the IIFE and NOTHING on the page
+    renders -- not a missing checkbox, a blank dashboard. Nothing else in the
+    repository reads these assets, so that would ship unnoticed.
+
+    Two lookup shapes are checked: a literal `el("x")` / `getElementById("x")`,
+    and the `["element-id", "prefKey"]` pairs the checkbox loop iterates, where
+    the id never appears next to `el(` at all.
+    """
+
+    assets = ASSETS_DIR
+    script = (assets / "dashboard.js").read_text(encoding="utf-8")
+    markup = (assets / "index.html").read_text(encoding="utf-8")
+
+    looked_up = set(
+        re.findall(r'(?:el|getElementById)\(\s*"([A-Za-z0-9_-]+)"\s*\)', script)
+    ) | set(re.findall(r'\[\s*"([A-Za-z0-9_-]+)"\s*,\s*"[A-Za-z0-9_]+"\s*\]', script))
+    declared = set(re.findall(r'\bid="([A-Za-z0-9_-]+)"', markup))
+
+    # Sanity check: if the patterns stop matching, this test would "pass" while
+    # checking nothing at all.
+    assert len(looked_up) > 20, f"id extraction looks broken: found only {len(looked_up)}"
+    assert looked_up <= declared, (
+        "dashboard.js looks up element ids that index.html does not define: "
+        f"{sorted(looked_up - declared)}"
+    )

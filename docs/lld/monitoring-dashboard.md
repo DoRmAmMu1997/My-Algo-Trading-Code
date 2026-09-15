@@ -109,7 +109,7 @@ Three overlays, and a toggle because several strategies derive 5-minute bars.
 
 | Indicator | Source | Note |
 |---|---|---|
-| CPR | `dashboard_indicators.chart_cpr` | **Chart-only.** Prior session 09:15-15:15 inclusive -- high, low AND close -- against the strategies' full session. Drawn with `createPriceLine`, so it is timeframe-independent by construction. See [`ADR-0017`](../adr/0017-chart-only-cpr-on-a-truncated-prior-session.md). |
+| CPR | `dashboard_indicators.chart_cpr` | **Chart-only.** Prior session 09:15-15:15 inclusive -- high, low AND close -- against the strategies' full session. Drawn with `createPriceLine`, so it is timeframe-independent by construction. Thirteen levels in four toggle groups: `core` (pivot/BC/TC) and `pd` (PDH/PDL, the prior session's traded extremes) on by default, the two R/S ladders opt-in. All solid, matching VWAP. See [`ADR-0017`](../adr/0017-chart-only-cpr-on-a-truncated-prior-session.md). |
 | VWAP | `regime_common.attach_session_vwap`, injected | The strategies' own object. Always an equal-weight proxy in live running -- the index feed carries no volume -- so it is labelled `VWAP*` with a footnote. |
 | Stochastic %K/%D | `misc_strategy_common.stochastic`, injected | The same TA-Lib `STOCH` and the same `STOCHASTIC_*` periods the Stochastic Oscillator strategy trades on. Own pane, 80/20 guides. |
 
@@ -218,7 +218,39 @@ whole reconciliation — which is when an operator most wants to watch. Its
 threads are daemons, so `DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS` is a courtesy, not
 something process exit depends on. A source-order test pins that sequence.
 
+## Layout
+
+The chart pane fills the viewport below the sticky header, TradingView-style;
+the tables sit below the fold. `#chart` is `flex: 1` inside a flex-column pane,
+so the chart absorbs whatever the head and the provenance caption leave -- the
+head wraps freely at narrow widths and nothing needs recalculating.
+
+The one number CSS cannot know is the header's height, because `#header` wraps
+(62px open, 94px on a narrow window). `dashboard.js` measures it and publishes
+`--header-h`. It is re-measured **from the poll loop**, not left to a
+`ResizeObserver` alone -- see the traps below.
+
 ## Traps worth remembering
+
+**A `ResizeObserver` that never fires leaves no trace.** In at least one
+embedded browser the observer does not run at all -- not even the initial
+callback the spec guarantees on `observe()`. Anything layout-critical hanging
+off one needs a second, unconditional path: the chart's range fit and the
+header-height measurement both retry from the once-a-second poll, which costs a
+`getBoundingClientRect` and writes only on a change.
+
+**A new CPR group must be added to the `cprSignature` memo array** in
+`renderCprLines`. That memo skips the redraw when its signature is unchanged,
+so a group left out of it sets its preference and then draws nothing -- the
+checkbox appears to do nothing at all.
+
+**A wired element id missing from `index.html` blanks the page.** The control
+loop does `const box = el(id)` with no null guard, so one absent id throws
+inside the IIFE and nothing renders.
+`test_every_element_the_page_script_looks_up_exists_in_the_markup` covers both
+lookup shapes, including the `["element-id", "prefKey"]` pairs where the id
+never appears beside `el(`.
+
 
 **`fitContent()` against a zero-width container silently does nothing** and
 leaves a nonsense bar spacing behind, drawing every candle squeezed into a few
