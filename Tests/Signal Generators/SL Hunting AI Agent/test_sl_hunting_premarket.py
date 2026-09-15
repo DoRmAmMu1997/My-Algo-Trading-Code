@@ -201,22 +201,24 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_15_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 14 Sep transcript.
+def test_shipped_note_matches_september_16_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 15 Sep transcript.
 
-    Five things a summarising edit would flatten:
+    This note INVERTS the previous one, which is the whole reason it is pinned:
+    14 Sep said every open shape buys, 15 Sep makes the side depend on the open.
+    Six things a summarising edit would flatten:
 
-    1. Every open shape buys, but as a FOLLOW -- "we can walk with the market".
-       The previous all-buy note (11 Sep) was a HUNT of fearful sellers. Same
-       shape, opposite mechanism, and an edit that merges them loses the reason.
-    2. He checks BOTH books and finds both empty. Keeping only the seller half
-       would read as "sellers are gone, so buy", which is a hunt again.
-    3. The HOLIDAY is why no buyers are seated. Without it a sudden recovery
-       would have recruited longs, and the note would say something else.
-    4. A gap DOWN keeps the buy plan. That is the branch most likely to be
-       "corrected" back to selling by habit.
-    5. He flags the recovery may be a genuine REVERSAL of the multi-day
-       downtrend, and warns of rejections specifically in a flat open.
+    1. The conditionality itself. An edit that keeps one branch turns a
+       two-sided plan into a directional call, which is how the previous note
+       would be "remembered" over this one.
+    2. Gap up means BUY, and the reason is that the gap TRAPS seated sellers --
+       a hunt. Lose the reason and it reads as a bullish forecast.
+    3. Flat or gap down means SELL because there is NOTHING TO HUNT, not
+       because the market is weak. That distinction is the method.
+    4. A gap down is his EASY case, not a warning. Habit reverses this.
+    5. Late sellers are the target, early ones are not. The sharpest line in
+       the video, and the one most likely to be dropped as a detail.
+    6. Profit PLUS confidence is what removes a crowd as prey -- both halves.
     """
     import os
 
@@ -224,58 +226,67 @@ def test_shipped_note_matches_september_15_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-15"
-    assert "xB8Jt0d4Ll8" in note.source
-    assert "sudden RECOVERY" in note.context
-    assert "may be a REVERSAL, not a bounce" in note.context
-    assert "two-three day holiday" in note.context
-    assert "neither side is seated" in note.context
+    assert note.for_date == "2026-09-16"
+    assert "2siXRlm4_jo" in note.source
+    assert "gave back the prior day's whole positive move" in note.context
+    assert "that much selling has already happened" in note.context
+    assert "ALREADY negative" in note.context
+    assert "POSITIONAL SELLERS are now seated and in profit" in note.context
 
-    follow = next(line for line in note.plan if line.startswith("EVERY OPEN SHAPE BUYS"))
-    assert "as a FOLLOW this time and not a hunt" in follow
-    assert "followed continuously" in follow
-    assert "Gap up, flat AND gap down all keep the same plan" in follow
+    # 1. Both branches survive, and the note says the open decides first.
+    cond = next(line for line in note.plan if line.startswith("THE PLAN IS CONDITIONAL"))
+    assert "inverting yesterday's all-buy note" in cond
+    assert "a good GAP UP means BUY, FLAT or GAP DOWN means SELL" in cond
+    assert "the open picks the side before any setup is read" in cond
 
-    both = next(line for line in note.plan if line.startswith("NEITHER SIDE IS SEATED"))
-    assert "we won't get them" in both
-    assert "the BUYERS' SLs aren't here either" in both
-    assert "nobody to squeeze in either direction" in both
+    # 2. The bull branch is a HUNT of trapped sellers, not a forecast.
+    up = next(line for line in note.plan if line.startswith("GAP UP ->"))
+    assert "because the gap traps the seated sellers" in up
+    assert "there can be POSITIONAL sellers here" in up
+    assert "if we get a good gap up we CAN target these sellers" in up
 
-    why = next(line for line in note.plan if line.startswith("THE HOLIDAY IS WHY"))
-    assert "not many people are sitting long here" in why
-    assert "couldn't apply their minds" in why
-    assert "Without the break this recovery would have recruited longs" in why
+    # 3. The bear branch is about an absent target, not about weakness.
+    down = next(line for line in note.plan if line.startswith("FLAT OR GAP DOWN ->"))
+    assert "the ABSENCE of a target rather than weakness" in down
+    assert "they will already be sitting in confidence so we cannot target them" in down
+    assert "there we must go WITH the market" in down
 
-    up = next(line for line in note.plan if line.startswith("A GOOD GAP UP IS THE BEST CASE"))
-    assert "that is best for us" in up
-    # The branch most likely to be reverted to selling out of habit.
-    assert "A gap down keeps the SAME buy plan" in up
-    assert "a red open is not a reason to flip" in up
+    # 4. The branch habit is most likely to invert.
+    easy = next(line for line in note.plan if line.startswith("A GAP DOWN IS THE EASY CASE"))
+    assert "NOT A WARNING" in easy
+    assert "that is a very good thing" in easy
+    assert "walking with the market will be easy" in easy
+    assert "in flat there is no problem either" in easy
 
-    rev = next(line for line in note.plan if line.startswith("HE FLAGS THE RECOVERY"))
-    assert "any recovery can also be a reversal" in rev
-    assert "possible turn in the multi-day downtrend" in rev
-    assert "sometimes there are some rejections in such a market" in rev
+    # 5. Which seller cohort is prey, and which is not.
+    late = next(line for line in note.plan if line.startswith("TARGET THE LATE SELLERS"))
+    assert "the upper-side seller we cannot make our target" in late
+    assert "those sitting having SOLD HERE can be targeted" in late
+    assert "The cohort that sold into today's lows is the marginal one" in late
+
+    # 6. Both halves of what disqualifies a crowd as prey.
+    profit = next(line for line in note.plan if line.startswith("SELLERS IN PROFIT"))
+    assert "the sellers will come into some profit" in profit
+    assert "confidence will stay inside them" in profit
+    assert "Profit plus confidence is what removes them as prey" in profit
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # "23320 2370" -- the second support arrived truncated and was
-            # confirmed with the operator as 23270, below the first.
             "index": "NIFTY",
-            "resistance": [23500.0, 23560.0],
-            "support": [23270.0, 23320.0],
+            "resistance": [23280.0, 23340.0],
+            "support": [23080.0, 23000.0],
         },
         {
-            # "568 76" again, the same garble that has resolved to 56870 in
-            # every prior note; supports unchanged from 11 Sep.
+            # "5500" -- the first support arrived a digit short and was
+            # confirmed with the operator as 55500, matching the 300-350 point
+            # spacing of his other pairs and sitting below the ~55,850 close.
             "index": "BANKNIFTY",
-            "resistance": [56870.0, 57100.0],
-            "support": [56040.0, 56200.0],
+            "resistance": [56650.0, 56300.0],
+            "support": [55500.0, 55200.0],
         },
         {
-            # SENSEX came through clean and is unchanged from the 11 Sep note.
             "index": "SENSEX",
-            "resistance": [75200.0, 75500.0],
-            "support": [74300.0, 74500.0],
+            "resistance": [74800.0, 74500.0],
+            "support": [73800.0, 73650.0],
         },
     ]
