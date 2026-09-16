@@ -92,6 +92,28 @@
    * actually landed. See `requestFit`. */
   let pendingFit = false;
 
+  /* ------------------------------------------------------------- history */
+  /* Years of candles, fetched a page at a time as the operator scrolls back
+   * and kept for the session. Page 0 is the NEWEST slice, so scrolling left
+   * just asks for the next number.
+   *
+   * These are held SEPARATELY from `chartPayload`, which is replaced wholesale
+   * every time a minute closes. Merging them at draw time is what stops that
+   * once-a-minute refresh from throwing away everything scrolled back to. */
+  const historyBars = { "1": [], "5": [], "D": [] };
+  const historyNextPage = { "1": 0, "5": 0, "D": 0 };
+  const historyExhausted = { "1": false, "5": false, "D": false };
+  let historyInFlight = false;
+  /* How many bars the series currently hold, so a prepend can work out how far
+   * the logical indices moved and put the viewport back where it was. */
+  let renderedBarCount = 0;
+  /* Start fetching while this many bars are still to the left of the viewport,
+   * so the next page is usually there before the operator reaches it. */
+  const HISTORY_PREFETCH_BARS = 200;
+  /* One `/api/chart` request at a time. It is fired without `await` from the
+   * poll loop, so back-to-back polls could otherwise put two in the air. */
+  let chartFetchInFlight = false;
+
   /* ------------------------------------------------------------ formatting */
   const DASH = '<span class="dash">—</span>';
 
@@ -423,6 +445,15 @@
     } catch (error) {
       /* No ResizeObserver: the per-render retry below still covers it. */
     }
+
+    /* Scrolling left past the start of what is loaded fetches the next older
+     * page. `from` is a LOGICAL index and goes negative once the operator
+     * scrolls past the first bar, so the test is "close to, or past, the left
+     * edge" rather than a positive threshold. */
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range) return;
+      if (range.from <= HISTORY_PREFETCH_BARS) loadNextHistoryPage();
+    });
   }
 
   function requestFit() {
@@ -464,6 +495,22 @@
       }
     }
     return points;
+  }
+
+  /* History and the live window, spliced into one strictly ascending array.
+   *
+   * lightweight-charts DROPS bars silently when times are not strictly
+   * ascending, so the seam matters: the live block and the newest history page
+   * overlap, and the live copy wins because it is the one that keeps updating.
+   */
+  function mergedBars(liveBars) {
+    const history = historyBars[prefs.tf] || [];
+    if (!history.length) return liveBars;
+    if (!liveBars.length) return history.slice();
+    const firstLive = liveBars[0].time;
+    let cut = history.length;
+    while (cut > 0 && history[cut - 1].time >= firstLive) cut -= 1;
+    return history.slice(0, cut).concat(liveBars);
   }
 
   function renderCprLines(cpr) {
@@ -535,10 +582,19 @@
     const block = chartPayload.timeframes[prefs.tf] || chartPayload.timeframes["1"];
     if (!block) return;
 
-    candleSeries.setData(block.bars || []);
-    vwapSeries.setData(pointsFrom(block.bars || [], block.vwap));
-    kSeries.setData(pointsFrom(block.bars || [], block.stoch_k));
-    dSeries.setData(pointsFrom(block.bars || [], block.stoch_d));
+    const live = block.bars || [];
+    const bars = mergedBars(live);
+    candleSeries.setData(bars);
+    renderedBarCount = bars.length;
+
+    /* The indicator columns cover the LIVE window only -- history pages carry
+     * candles and nothing else. That is fine and needs no padding, because
+     * these are {time, value} points: lightweight-charts places them by time,
+     * so they simply stop where the live window starts rather than sliding out
+     * of step with the bars underneath. */
+    vwapSeries.setData(pointsFrom(live, block.vwap));
+    kSeries.setData(pointsFrom(live, block.stoch_k));
+    dSeries.setData(pointsFrom(live, block.stoch_d));
 
     if (renderedTimeframe !== prefs.tf) {
       renderedTimeframe = prefs.tf;
@@ -564,6 +620,100 @@
     const vwapMeta = (chartPayload.indicators || {}).vwap || {};
     nodes.vwapLabel.title = vwapMeta.note || "";
     nodes.vwapFootnote.hidden = vwapMeta.is_proxy === false;
+
+    /* Fetch the first page outright rather than waiting for a range event to
+     * say the viewport is near the left edge.
+     *
+     * That event only lands if a FIT has landed, and `applyPendingFit` refuses
+     * to fit a zero-width container -- which is the state a chart can sit in
+     * indefinitely, because the ResizeObserver meant to catch the layout has
+     * been measured NOT firing in some panes. Waiting on it meant a chart that
+     * silently never loaded any history at all. The re-entrant call is stopped
+     * by `historyInFlight`, and by history existing once a page has landed. */
+    if (!(historyBars[prefs.tf] || []).length && !historyExhausted[prefs.tf]) {
+      loadNextHistoryPage();
+    }
+  }
+
+  /* Redraw after prepending history, WITHOUT moving what the operator is
+   * looking at.
+   *
+   * `fitContent` is deliberately not used here. It is the only fit call site
+   * and it exists for timeframe switches; firing it on a prepend would yank
+   * the viewport back to the whole series every time a page arrived, which is
+   * the opposite of what scrolling back is for. Prepending N bars shifts every
+   * logical index by N, so the range is simply moved by the same N. */
+  function redrawKeepingViewport() {
+    const scale = chart ? chart.timeScale() : null;
+    const before = scale ? scale.getVisibleLogicalRange() : null;
+    const previousCount = renderedBarCount;
+    applyTimeframe();
+    const added = renderedBarCount - previousCount;
+    if (scale && before && added > 0) {
+      scale.setVisibleLogicalRange({ from: before.from + added, to: before.to + added });
+    }
+    return added;
+  }
+
+  /* Fetch the next older page for the CURRENT timeframe.
+   *
+   * A 404 means there is nothing older -- the server answers that way whether
+   * history was never loaded or the operator has reached the start of it -- so
+   * the timeframe is marked exhausted and stops asking. */
+  async function loadNextHistoryPage() {
+    const timeframe = prefs.tf;
+    if (historyInFlight || historyExhausted[timeframe]) return;
+    historyInFlight = true;
+    try {
+      const page = historyNextPage[timeframe];
+      const response = await fetch(
+        `/api/history?tf=${encodeURIComponent(timeframe)}&page=${page}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        /* A 404 has two meanings and they must not be confused. Once a page has
+         * loaded it means the operator has reached the start of history, and
+         * asking again is pointless. BEFORE that it means the server is still
+         * building -- measured at 29.5 seconds on the five-year file -- and
+         * treating it as exhausted would disable scroll-back for the whole
+         * session over a few seconds of startup. */
+        if ((historyBars[timeframe] || []).length) historyExhausted[timeframe] = true;
+        return;
+      }
+      const doc = await response.json();
+      const bars = doc.bars || [];
+      if (!bars.length) {
+        historyExhausted[timeframe] = true;
+        return;
+      }
+      historyBars[timeframe] = bars.concat(historyBars[timeframe] || []);
+      historyNextPage[timeframe] = page + 1;
+      if (doc.pages && historyNextPage[timeframe] >= doc.pages) {
+        historyExhausted[timeframe] = true;
+      }
+      /* Only redraw if the operator has not switched timeframe while this was
+       * in the air; otherwise the bars belong to a chart nobody is looking at. */
+      const added = prefs.tf === timeframe ? redrawKeepingViewport() : 0;
+
+      if (!added && !historyExhausted[timeframe]) {
+        /* Every bar in that page was already inside the live window, so the
+         * merge dropped all of it: the chart gained nothing and the viewport
+         * did not move, which means NO range event will arrive to ask for the
+         * next page. Without this the scroll-back would simply stop.
+         *
+         * It happens whenever a page is shorter than the live window -- not at
+         * the shipped sizes (2,000 against 375) but `DASHBOARD_CHART_BARS` goes
+         * up to 2,200, which would silently break it. Deferred rather than
+         * recursive so `historyInFlight` has been cleared first; it ends as
+         * soon as one page reaches back past the live window, or at the 404. */
+        setTimeout(loadNextHistoryPage, 0);
+      }
+    } catch (error) {
+      /* A failed page costs the scroll-back, never the chart. The next scroll
+       * tries again; the timeframe is deliberately NOT marked exhausted. */
+    } finally {
+      historyInFlight = false;
+    }
   }
 
   function setTimeframe(value) {
@@ -591,17 +741,26 @@
      * times a session rather than once per poll. In between, the forming
      * candle is updated in place, which is what makes the chart move
      * tick-by-tick under MARKET_DATA_SOURCE=WEBSOCKET for a few hundred bytes. */
-    if (info.series_version !== seriesVersion) {
+    if (info.series_version !== seriesVersion && !chartFetchInFlight) {
+      /* Guarded: this runs from `render`, which the poll loop calls WITHOUT
+       * awaiting, so two polls landing close together could otherwise put two
+       * requests in the air for the same version. */
+      chartFetchInFlight = true;
       try {
         const response = await fetch("/api/chart", { cache: "no-store" });
         if (response.ok) {
           chartPayload = await response.json();
           seriesVersion = info.series_version;
-          applyTimeframe();
+          /* Keeping the viewport, not refitting: by now the operator may have
+           * scrolled back through years of history, and a minute closing must
+           * not drag them back to today. */
+          redrawKeepingViewport();
         }
       } catch (error) {
         /* Leave the previous series on screen; the next poll retries. */
         return;
+      } finally {
+        chartFetchInFlight = false;
       }
     }
 
