@@ -340,6 +340,7 @@ def normalize_response_data(data) -> pd.DataFrame:
     # older window returns, and validating them first would either pass junk
     # through (they are minute-aligned) or fail the chunk on rows nobody wants.
     out = clip_to_session(out)
+    out = drop_impossible_candles(out)
     if out.empty:
         return out
     out = validate_ohlc_frame(out)
@@ -350,6 +351,58 @@ def normalize_response_data(data) -> pd.DataFrame:
     out["volume"] = volume
 
     return out[["timestamp", "open", "high", "low", "close", "volume"]]
+
+
+#: A chunk with a larger share of self-contradicting candles than this is not
+#: noisy, it is the wrong data -- those keep failing instead of being trimmed.
+MAX_DROPPED_CANDLE_FRACTION = 0.001
+
+
+def drop_impossible_candles(frame: pd.DataFrame) -> pd.DataFrame:
+    """Drop candles that contradict themselves; refuse a chunk that is mostly bad.
+
+    Dhan's older index history carries the occasional print whose high sits
+    below its own open. Measured while backfilling: exactly ONE row in 23,380
+    across 2021-12-26..2022-03-25, at 2022-03-25 09:15, open 17289.00 against a
+    high of 17287.10.
+
+    Such a row is provably wrong -- no reading of a candle makes its high lower
+    than the open it contains -- and failing a five-year backfill on one of them
+    is the wrong trade. Isolated ones are therefore dropped and NAMED, never
+    silently. Many of them is a different thing: it says the response is not the
+    series we asked for, and that still fails.
+
+    This is the historical backfill path only. `validate_ohlc_frame` is untouched
+    and still refuses, on the live feed, everything it refused before -- including
+    the rows dropped here, which is why they are removed before it runs rather
+    than by relaxing it.
+    """
+
+    if frame.empty:
+        return frame
+
+    body_high = frame[["open", "close"]].max(axis=1)
+    body_low = frame[["open", "close"]].min(axis=1)
+    impossible = (
+        (frame["high"] < body_high)
+        | (frame["low"] > body_low)
+        | (frame["high"] < frame["low"])
+    )
+
+    dropped = int(impossible.sum())
+    if not dropped:
+        return frame
+
+    share = dropped / len(frame)
+    if share > MAX_DROPPED_CANDLE_FRACTION:
+        raise MarketDataValidationError(
+            f"Dhan chunk has {dropped} self-contradicting candles of {len(frame)} "
+            f"({share:.2%}) -- too many to be stray prints, refusing the chunk"
+        )
+
+    names = ", ".join(str(value) for value in frame.loc[impossible, "timestamp"].head(5))
+    print(f"Dropping {dropped} self-contradicting candle(s): {names}")
+    return frame.loc[~impossible].reset_index(drop=True)
 
 
 def clip_to_session(frame: pd.DataFrame) -> pd.DataFrame:

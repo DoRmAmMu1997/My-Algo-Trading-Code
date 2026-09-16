@@ -276,3 +276,67 @@ def test_the_session_window_is_market_data_healths_own():
     start, end = fetcher.MARKET_SESSION_START, fetcher.MARKET_SESSION_END
     assert (start.hour, start.minute) == (9, 15)
     assert (end.hour, end.minute) == (15, 30)
+
+
+def _minute_candles(count, start="2022-03-25 09:15:00"):
+    """`count` identical, perfectly well-formed one-minute candles."""
+
+    base = pd.Timestamp(start)
+    return pd.DataFrame(
+        {
+            "timestamp": [base + pd.Timedelta(minutes=index) for index in range(count)],
+            "open": [100.0] * count,
+            "high": [101.0] * count,
+            "low": [99.0] * count,
+            "close": [100.5] * count,
+            "volume": [0.0] * count,
+        }
+    )
+
+
+def test_a_stray_self_contradicting_candle_is_dropped_and_named(capsys):
+    """The real one that blocked the backfill: an open ABOVE its own high.
+
+    Measured at 2022-03-25 09:15 -- open 17289.00, high 17287.10 -- one row in
+    23,380. No reading of a candle makes that right, so it goes; failing five
+    years of history on it would be the wrong trade.
+    """
+
+    frame = _minute_candles(2000)
+    frame.loc[0, ["open", "high", "low", "close"]] = [17289.0, 17287.0996, 17264.85, 17266.30]
+
+    kept = fetcher.drop_impossible_candles(frame)
+
+    assert len(kept) == 1999
+    assert pd.Timestamp("2022-03-25 09:15:00") not in set(kept["timestamp"])
+    assert "2022-03-25 09:15:00" in capsys.readouterr().out, "a dropped bar must be named"
+
+
+def test_a_chunk_that_is_mostly_impossible_still_fails():
+    """Many bad candles is not noise -- it says this is not the series we asked for."""
+
+    frame = _minute_candles(10)
+    frame.loc[0, "high"] = 1.0
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="too many to be stray"):
+        fetcher.drop_impossible_candles(frame)
+
+
+def test_every_shape_of_impossible_candle_is_caught():
+    for column, value in [("high", 1.0), ("low", 1000.0)]:
+        frame = _minute_candles(2000)
+        frame.loc[0, column] = value
+        assert len(fetcher.drop_impossible_candles(frame)) == 1999, column
+
+    crossed = _minute_candles(2000)
+    crossed.loc[0, ["open", "high", "low", "close"]] = [100.0, 99.0, 101.0, 100.0]
+    assert len(fetcher.drop_impossible_candles(crossed)) == 1999
+
+
+def test_a_clean_chunk_is_passed_through_untouched():
+    frame = _minute_candles(50)
+
+    kept = fetcher.drop_impossible_candles(frame)
+
+    assert len(kept) == 50
+    assert kept.equals(frame)
