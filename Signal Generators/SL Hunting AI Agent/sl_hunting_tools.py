@@ -30,6 +30,7 @@ names are namespaced ``mcp__<server>__<tool>``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -124,9 +125,11 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "ITSELF THE ACTION -- it places a real order at the moment you call it. There "
         "is no HOLD action and there is no dry run: if your decision is to HOLD, or to "
         "keep an open position, DO NOT CALL THIS TOOL AT ALL. Note especially that an "
-        "EXIT is executed immediately and is NEVER rejected -- unlike an entry it is "
-        "not validated and cannot be corrected or undone, so an EXIT sent by mistake "
-        "closes the position for good. action is ENTER_LONG "
+        "EXIT is executed immediately and, unlike an entry, is not validated -- an "
+        "executed EXIT cannot be corrected or undone, so one sent by mistake closes "
+        "the position for good. THE ONLY THING THAT CAN SEND AN EXIT BACK IS OMITTING "
+        "THE REASON, and only ONCE: say why, or send the EXIT again and it is honoured "
+        "whatever it carries. action is ENTER_LONG "
         "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
         "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
         "BRACKET the current price on the correct side (LONG: stop below, target "
@@ -138,8 +141,9 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "NOT saved there, so this is your only chance to say why you acted. Give a real "
         f"one-line justification naming the setup and the trigger; it is trimmed to "
         f"{MAX_REASON_CHARS} printable characters, so put the point FIRST. A placeholder "
-        "or an empty string is REJECTED on entries (resend a real one), and on an exit it "
-        "is replaced by a sentinel recording that you supplied nothing. "
+        "or an empty string is REJECTED on entries (resend a real one); on an EXIT it is "
+        "sent back once, and if you repeat the EXIT it is honoured and a sentinel records "
+        "that you supplied nothing. "
         "exit_leg (EXIT only) is NIFTY, BNF or BOTH "
         "(default BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, "
         "and you may cut ONE leg on premise-invalidation while the other runs — but hard "
@@ -532,11 +536,38 @@ class SLHuntingToolContext:
                 # only because the model confessed on the next bar. Say it
                 # plainly instead, so the operator sees it the same session.
                 LOGGER.warning(
-                    "SL Hunting: EXIT (leg=%s) executed with NO reason from the model. "
+                    "SL Hunting: EXIT (leg=%s) arrived with NO reason from the model. "
                     "A deliberate exit always carries one, so treat this as a probable "
                     "UNINTENDED order and check whether the position should have been held.",
                     leg,
                 )
+                # SLH-018 (operator decision, 2026-09-16): send the FIRST one back
+                # once, and honour the next unconditionally. SLH-007's guarantee is
+                # narrowed, not reversed -- the promise it protects is that a
+                # position is never stranded, and a repeat exits on the very next
+                # attempt, so the worst case is one decision cycle. What this buys
+                # is the anomaly: on 16 Sep 09:16:38 a reasonless EXIT closed the
+                # day's only winner about 100 seconds before its target printed,
+                # and the model's own next decision called the call erroneous. A
+                # model that means it says so twice; a slip does not.
+                #
+                # The armed flag lives on the EXECUTOR, not on this context: a
+                # context is rebuilt every bar, so context-local state would bounce
+                # every first-of-bar attempt forever and could strand a position.
+                # The executor is created once per worker and outlives the pass.
+                if not bool(getattr(self.executor, "_reasonless_exit_armed", False)):
+                    with contextlib.suppress(Exception):
+                        self.executor._reasonless_exit_armed = True  # type: ignore[attr-defined]
+                    return {
+                        "accepted": False,
+                        "reason": (
+                            "EXIT refused ONCE because it carried no reason. A deliberate "
+                            "exit always states why, and that string is the permanent "
+                            "record. If the premise really is dead, send the EXIT again "
+                            "-- the next one is honoured whatever it carries. If this "
+                            "call was not intended, HOLD instead."
+                        ),
+                    }
             def executor_call() -> dict[str, Any]:
                 return self.executor.exit(exit_reason, self.last_price, leg=leg)
         else:
@@ -570,6 +601,12 @@ class SLHuntingToolContext:
                 # `_reason_meaning_problem` above rejects placeholders on entries.
                 self._execution_result = {**result, "model_reason": recorded_reason}
                 self.state = ToolContextState.CONSUMED
+                # SLH-018: the arm is per EPISODE, not per process. Any accepted
+                # order means the anomaly resolved itself -- the model restated
+                # its reason, repeated the exit, or opened something new -- so the
+                # next slip is bounced again rather than cashing in a stale arm.
+                with contextlib.suppress(Exception):
+                    self.executor._reasonless_exit_armed = False  # type: ignore[attr-defined]
             else:
                 # Rejected validation/execution may be corrected once within the
                 # same pass; only an accepted side effect consumes the context.

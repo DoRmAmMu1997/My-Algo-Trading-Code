@@ -201,24 +201,26 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_16_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 15 Sep transcript.
+def test_shipped_note_matches_september_17_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 16 Sep transcript.
 
-    This note INVERTS the previous one, which is the whole reason it is pinned:
-    14 Sep said every open shape buys, 15 Sep makes the side depend on the open.
-    Six things a summarising edit would flatten:
+    The branch SHAPE repeats 16 Sep's note, so the thing worth pinning is the
+    different reasoning underneath it: this is a who-got-trapped question, and
+    the evidence is a level that was NOT crossed. Six things an edit flattens:
 
-    1. The conditionality itself. An edit that keeps one branch turns a
-       two-sided plan into a directional call, which is how the previous note
-       would be "remembered" over this one.
-    2. Gap up means BUY, and the reason is that the gap TRAPS seated sellers --
-       a hunt. Lose the reason and it reads as a bullish forecast.
-    3. Flat or gap down means SELL because there is NOTHING TO HUNT, not
-       because the market is weak. That distinction is the method.
-    4. A gap down is his EASY case, not a warning. Habit reverses this.
-    5. Late sellers are the target, early ones are not. The sharpest line in
-       the video, and the one most likely to be dropped as a detail.
-    6. Profit PLUS confidence is what removes a crowd as prey -- both halves.
+    1. That the shape repeats but the reason does not. Merged with yesterday's
+       note it reads as one standing call rather than a fresh read.
+    2. The sell branch is about sellers who were trapped and LEFT -- the
+       sideways is what removed them. Lose it and "flat means sell" is arbitrary.
+    3. The buy branch keys off what price did NOT do. That is the whole tell,
+       and a summariser reaches for what price DID do instead.
+    4. "Retail did not do much work" is why only a deliberate buyer may be
+       seated. Without it the buy branch sounds like a crowd hunt, which is the
+       opposite of what he is describing.
+    5. The gap up is what CONFIRMS that buyer exists; the branch is not a
+       forecast.
+    6. SENSEX expiry is context, not a premise -- he flags it twice and trades
+       none of it.
     """
     import os
 
@@ -226,67 +228,62 @@ def test_shipped_note_matches_september_16_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-16"
-    assert "2siXRlm4_jo" in note.source
-    assert "gave back the prior day's whole positive move" in note.context
-    assert "that much selling has already happened" in note.context
-    assert "ALREADY negative" in note.context
-    assert "POSITIONAL SELLERS are now seated and in profit" in note.context
+    assert note.for_date == "2026-09-17"
+    assert "SQIo4PisLw0" in note.source
+    assert "broke down and then RECOVERED" in note.context
+    assert "without crossing the higher point or the round number" in note.context
+    assert "which side it trapped" in note.context
+    assert "SENSEX has its expiry tomorrow" in note.context
 
-    # 1. Both branches survive, and the note says the open decides first.
-    cond = next(line for line in note.plan if line.startswith("THE PLAN IS CONDITIONAL"))
-    assert "inverting yesterday's all-buy note" in cond
-    assert "a good GAP UP means BUY, FLAT or GAP DOWN means SELL" in cond
-    assert "the open picks the side before any setup is read" in cond
+    # 1. Same shape, different reason -- and the open is the discriminator.
+    shape = next(line for line in note.plan if line.startswith("SAME CONDITIONAL SHAPE"))
+    assert "DIFFERENT REASON" in shape
+    assert "gap up -> BUY, flat or gap down -> SELL" in shape
+    assert "WHICH crowd today trapped" in shape
 
-    # 2. The bull branch is a HUNT of trapped sellers, not a forecast.
-    up = next(line for line in note.plan if line.startswith("GAP UP ->"))
-    assert "because the gap traps the seated sellers" in up
-    assert "there can be POSITIONAL sellers here" in up
-    assert "if we get a good gap up we CAN target these sellers" in up
+    # 2. The sell branch: trapped, then removed by the sideways.
+    sell = next(line for line in note.plan if line.startswith("FLAT OR GAP DOWN ->"))
+    assert "only TRAPPED and never seated" in sell
+    assert "because the market stays SIDEWAYS they leave again" in sell
+    assert "no seller crowd is left to squeeze" in sell
 
-    # 3. The bear branch is about an absent target, not about weakness.
-    down = next(line for line in note.plan if line.startswith("FLAT OR GAP DOWN ->"))
-    assert "the ABSENCE of a target rather than weakness" in down
-    assert "they will already be sitting in confidence so we cannot target them" in down
-    assert "there we must go WITH the market" in down
+    # 3. The buy branch keys off the level that was NOT crossed.
+    buy = next(line for line in note.plan if line.startswith("GAP UP ->"))
+    assert "the tell is what price did NOT do" in buy
+    assert "it did not cross the round number, it did not cross its high point" in buy
+    assert "thin long inventory is the target" in buy
 
-    # 4. The branch habit is most likely to invert.
-    easy = next(line for line in note.plan if line.startswith("A GAP DOWN IS THE EASY CASE"))
-    assert "NOT A WARNING" in easy
-    assert "that is a very good thing" in easy
-    assert "walking with the market will be easy" in easy
-    assert "in flat there is no problem either" in easy
+    # 4 and 5. Why retail is absent, and what the gap up is FOR.
+    retail = next(line for line in note.plan if line.startswith("THE UNCROSSED HIGH"))
+    assert "retail did not do much work" in retail
+    assert "Only a deliberate buyer may be seated, never a crowd" in retail
+    assert "needs the gap up to confirm one exists" in retail
 
-    # 5. Which seller cohort is prey, and which is not.
-    late = next(line for line in note.plan if line.startswith("TARGET THE LATE SELLERS"))
-    assert "the upper-side seller we cannot make our target" in late
-    assert "those sitting having SOLD HERE can be targeted" in late
-    assert "The cohort that sold into today's lows is the marginal one" in late
-
-    # 6. Both halves of what disqualifies a crowd as prey.
-    profit = next(line for line in note.plan if line.startswith("SELLERS IN PROFIT"))
-    assert "the sellers will come into some profit" in profit
-    assert "confidence will stay inside them" in profit
-    assert "Profit plus confidence is what removes them as prey" in profit
+    # 6. Expiry is context.
+    expiry = next(line for line in note.plan if line.startswith("SENSEX EXPIRES TOMORROW"))
+    assert "flagged twice" in expiry
+    assert "not a premise of its own" in expiry
 
     assert [level.model_dump() for level in note.levels] == [
         {
+            # "2310" -- a digit short; confirmed with the operator as 23110.
             "index": "NIFTY",
-            "resistance": [23280.0, 23340.0],
-            "support": [23080.0, 23000.0],
+            "resistance": [23420.0, 23280.0],
+            "support": [23110.0, 23000.0],
         },
         {
-            # "5500" -- the first support arrived a digit short and was
-            # confirmed with the operator as 55500, matching the 300-350 point
-            # spacing of his other pairs and sitting below the ~55,850 close.
+            # "5500" again, and 55500 again, as on the 16 Sep note.
             "index": "BANKNIFTY",
-            "resistance": [56650.0, 56300.0],
-            "support": [55500.0, 55200.0],
+            "resistance": [56300.0, 56650.0],
+            "support": [55810.0, 55500.0],
         },
         {
+            # Worst garble yet: both pairs arrived as single runs, "7574500"
+            # and "7473650". The operator resolved them to round thousands --
+            # 75000/74500 and 74000/73650 -- which neither reconstruction I
+            # offered had guessed.
             "index": "SENSEX",
-            "resistance": [74800.0, 74500.0],
-            "support": [73800.0, 73650.0],
+            "resistance": [75000.0, 74500.0],
+            "support": [74000.0, 73650.0],
         },
     ]

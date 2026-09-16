@@ -7188,3 +7188,179 @@ it. A ninth mutation was written and discarded as invalid -- setting the
 exception branch to `float("inf")` is filtered by the `isfinite` guard and
 changes no behaviour, so it proved nothing; it was replaced by mutations that
 make the exception branch refuse and re-raise, both caught.
+## v5f - a one-way day seats nobody, and the next open is the receipt (16 Sep)
+
+Source: `TXiU5Odet04`, "Live Bank Nifty Option Trading", uploaded 2026-09-16
+10:09 IST. Compared against the agent's own session the same morning: four
+entries, all LONG, inside 53 minutes, basket **-Rs.863.75**.
+
+**Same note, same morning, opposite branch.** The pre-open note shipped for
+16 Sep (PR #171) was conditional: gap up -> BUY the trapped sellers, flat or
+gap down -> SELL with the market. NIFTY opened +82 points, +0.36%; BankNIFTY
++0.38%.
+
+- IH: "today we saw a FLAT opening, and with this kind of opening we are going
+  to follow the CONTINUED SELLING... if a VERY BIG gap up had opened we could
+  not have worked like this." He bought puts across all three indices, booked
+  around his 3-lakh target on a sharp simultaneous breakdown, and closed the
+  session a clear winner.
+- The agent: "NIFTY gapped +82pts (0.36%) and BankNIFTY +213pts (0.38%) above
+  prior close after a 457pt breakdown day that seated positional sellers,
+  satisfying the pre-open note's GAP-UP->BUY branch." All four entries LONG.
+
+**The proximate cause is a v4t violation, not a knowledge gap.** v4t already
+says the classification is a JUDGEMENT you make and state, already calibrates
+it ("a quarter of a percent is not a gap... something in the region of half a
+percent is where the gap reading starts to earn itself"), and already says
+that hesitation resolves to flat. 0.36% sits below that line. The number was
+computed and written into every one of the four entry rationales and never
+once tested against the rule. This is the THIRD session in the series decided
+by that one word: 31 Aug produced v4t, 01 Sep produced its v4u 3:15 sub-rule
+at a cost of Rs.1,488.25, and this one cost Rs.863.75.
+
+**What IS net-new is the premise UNDERNEATH the branch**, and it is the reason
+the agent wanted the gap-up branch at all. All four rationales asserted that
+the prior 457-point breakdown had "seated positional sellers". IH argues the
+exact opposite, with a mechanism: "when do sellers REMAIN seated? When a
+retracement happens. When there is no retracement, every trader keeps fearing
+that a retracement might come, that his trade might go wrong" -- so on
+continuous momentum "traders do come, but they also book their target and
+leave", and "the chances of HOLDING are low here". A violent one-way session
+ends with almost nobody carrying inventory, however large its range.
+
+He then supplies the falsification test, which is the part that can run before
+the trade: "but if sellers had been seated in good quantity, what would the
+market have opened as? We would have seen a straight gap up." The open is the
+RECEIPT for the premise. A small gap is not a weak version of that open; it is
+the evidence against it.
+
+Encoded as **A ONE-WAY DAY LEAVES NOBODY SEATED, AND THE NEXT OPEN IS THE
+RECEIPT (v5f)**, placed directly after the whole v4t block (including its v4u
+sub-bullet, which it must not split) so the model reads "decide which word
+describes the open" and then "here is what the open's size is measuring". It
+is v5c one scale up: there a retracement recruits a crowd inside the move,
+here a retracement is what lets a crowd survive into the NEXT session.
+
+Negative-tested 14 ways, all 14 caught, plus a control mutation of unasserted
+prose that correctly did not trip the test. One anchor initially matched zero
+times because it began mid-line ("That is v5c...") rather than at a line
+start; it was re-run line-contiguously and caught. That is the same
+wrap-spanning mistake the mutation harnesses keep inviting -- print the raw
+line boundaries first.
+
+**Considered and not encoded.** IH's "a retracement is what seats a crowd" is
+partly v5c already; only the cross-session half is new and that is what v5f
+carries. His loss-discipline material repeats v3y. His round-number caution
+("there is a round number here, a small problem will show, control your heart,
+do not run") is already covered by the round-number rules in BNF_SPECIFIC.
+
+Two runtime items were raised from this session. The first became SLH-017
+below. The second is recorded there too, and is NOT being built.
+
+## SLH-017 - the open is classified in code, not derived by the model
+
+Three sessions in this book were decided by one word, with two knowledge rules
+already in place specifically to get it right: 31 Aug produced v4t, 01 Sep
+produced its v4u sub-rule at a cost of Rs.1,488.25, and 16 Sep cost Rs.863.75.
+On 16 Sep the model computed the deciding number correctly -- "+82pts (0.36%)"
+-- wrote it into all four entry rationales, and never compared it with v4t's
+own calibration. That is the exact shape the corpus already has a law for:
+PROSE RULES DON'T BIND, and JUDGEMENT RULES GET TALKED PAST.
+
+`pivot_and_levels` now returns an `open_classification` block:
+
+    previous_close / today_open / gap_points / gap_pct
+    threshold_pct  (GAP_CLASSIFICATION_THRESHOLD_PCT = 0.5)
+    verdict        FLAT | GAP_UP | GAP_DOWN
+    reference      "previous session's last candle close, not the official
+                    15:30 close"
+
+The threshold is not invented: it is v4t's own calibration ("a quarter of a
+percent is not a gap... something in the region of half a percent is where the
+gap reading starts to earn itself"), and sub-threshold opens read FLAT in both
+directions because v4t also says hesitation resolves to flat. The reference is
+v4u's, for the reason v4u gives -- the closing auction carries settlement
+prints no crowd traded around.
+
+It flows to the model through the `levels` tool and, for BankNIFTY, through
+`bank_nifty`. Run against 16 Sep's real numbers both come back **FLAT**
+(NIFTY 0.355%, BankNIFTY 0.381%) -- which is IH's reading of that morning and
+the opposite of the one the agent acted on.
+
+**Wired, not just added.** v4t now carries an SLH-017 paragraph telling the
+model to READ the verdict and state it, and not to recompute or argue past it,
+because an unwired fact is one the model will simply re-derive its own way.
+The existing v4t marker test was extended rather than rewritten, so its old
+assertions still pin the original prose.
+
+**Scope.** This supplies the arithmetic and the threshold; it does not reject
+orders and does not judge what the classification MEANS. That part stays with
+the model, which is where the real reasoning is.
+
+Negative-tested 9 ways, all 9 caught, plus a control mutation of unasserted
+prose that correctly did not trip the tests. One mutation -- measuring from
+today's LAST price instead of its OPEN -- initially PASSED, because every
+fixture opened and closed at the same price. That is a real defect the tests
+could not see: a flat open would silently become a "gap up" by mid-morning and
+re-select the branch hours after the fact. A dedicated drift test was added
+and the mutation then caught.
+
+## SLH-018 - one round of friction on a reasonless EXIT (operator decision)
+
+The session's other item was that at 09:16:38 an EXIT with no reason executed
+and closed the day's only winner (+Rs.1,182 basket), about 100 seconds before
+that trade's 23276 target printed. The order tool logged it as "a probable
+UNINTENDED order" and honoured it anyway; the model's own next decision called
+the call erroneous.
+
+This was first raised and **declined**, because refusing such an exit reverses a
+standing decision: SLH-007 says an EXIT is never refused over its wording, since
+bouncing it would strand an open position; SLH-010 explicitly declined to reverse
+that and added the warning instead; and
+`test_exit_with_no_reason_still_executes_but_warns_loudly` existed so that "a
+later tightening cannot quietly turn the warning into a refusal".
+
+**The operator then took the decision explicitly (2026-09-16), choosing the
+one-round form**, on the reasoning that it "would filter out the anomalies and
+let SLH-007 work on genuine wordless exit cases". SLH-007's guarantee is
+NARROWED, not reversed, and the tightening is neither quiet nor unilateral.
+
+**The contract.** The first EXIT that resolves to the no-reason sentinel is sent
+back once, with a rejection naming both ways forward -- state the reason, or send
+the EXIT again. Any repeat is honoured unconditionally, whatever it carries. So
+the worst case is ONE decision cycle, never a stranded position, and the
+mechanical stop, target, max-loss and 15:15 square-off are host-owned throughout
+and are never gated by any of this.
+
+**Where the state lives matters.** The armed flag sits on the EXECUTOR, not on
+the tool context. A context is rebuilt every bar, so context-local state would
+bounce the first attempt of every bar forever and could genuinely strand a
+position -- the exact outcome SLH-007 forbids. The executor is created once per
+worker (`self._executor = MasterWorkerExecutor(self)`) and outlives the pass. It
+is set and cleared duck-typed through `getattr`/`setattr` under
+`contextlib.suppress`, because `TradeExecutor` is a Protocol and a third-party
+executor need not tolerate the attribute.
+
+**Scoped per episode.** Any ACCEPTED order clears the arm -- the repeat exit, a
+restated reason, or a new entry. A bounce spent on this morning's slip cannot buy
+a later position a free pass.
+
+**Placeholder reasons bounce too.** `_safe_exit_reason` maps "placeholder",
+"n/a" and friends to the same sentinel as an empty string, so they are the same
+class of anomaly and get the same single bounce.
+`test_do_order_never_rejects_an_exit_for_a_bad_reason` was rewritten as
+`test_a_junk_exit_reason_bounces_once_then_exits_and_records_the_sentinel`,
+keeping its real assertions: the position still comes out, and the junk still
+never becomes the permanent record.
+
+**The tool description had to change, or the model keeps a false contract.** It
+said an EXIT "is NEVER rejected". It now states the single exception and the way
+out of it, and a test asserts the stale absolute is GONE rather than merely that
+the new wording is present -- a model told exits can never be refused, that then
+receives a refusal, has been handed a contract its tool does not keep. That is
+the SLH-017 unwired-fact failure arriving from the other side.
+
+Negative-tested 7 ways, all 7 caught, plus a control mutation of an unasserted
+comment that correctly did not trip the tests. The two mutations that matter
+most are both caught: removing the bounce entirely, and never disarming (which
+would strand a position by refusing the second attempt as well).

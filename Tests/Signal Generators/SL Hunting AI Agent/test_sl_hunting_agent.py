@@ -796,8 +796,14 @@ def test_a_realistic_model_reason_is_accepted_unchanged():
     assert ex.pos.reason == realistic
 
 
-def test_do_order_never_rejects_an_exit_for_a_bad_reason():
-    """An exit must always be available -- blocking it would strand a position."""
+def test_a_junk_exit_reason_bounces_once_then_exits_and_records_the_sentinel():
+    """An exit is still always AVAILABLE -- now on the second attempt (SLH-018).
+
+    "placeholder" resolves to the very same no-reason sentinel as an empty
+    string, so it is the same class of anomaly and earns the same single
+    bounce. What SLH-007 guarantees is untouched: the position comes out, and
+    the junk never becomes the permanent record.
+    """
     ex = StandaloneExecutor()
     ctx = SLHuntingToolContext.build(_candles(), ex)
     price = ctx.last_price
@@ -805,8 +811,15 @@ def test_do_order_never_rejects_an_exit_for_a_bad_reason():
         "ENTER_LONG", stop=price - 30, target=price + 60, reason="pivot bounce with confirmation",
     )["accepted"] is True
 
-    exit_ctx = SLHuntingToolContext.build(_candles(), ex)
-    out = exit_ctx.do_order("EXIT", stop=0.0, target=0.0, reason="placeholder")
+    bounced = SLHuntingToolContext.build(_candles(), ex).do_order(
+        "EXIT", stop=0.0, target=0.0, reason="placeholder"
+    )
+    assert bounced["accepted"] is False
+    assert ex.snapshot()["in_position"] is True, "the bounce must not close anything"
+
+    out = SLHuntingToolContext.build(_candles(), ex).do_order(
+        "EXIT", stop=0.0, target=0.0, reason="placeholder"
+    )
     assert out["accepted"] is True
     assert ex.snapshot()["in_position"] is False
     # The junk never becomes the permanent record; it is replaced by a sentinel
@@ -1196,8 +1209,14 @@ def test_order_tool_description_says_hold_means_not_calling_the_tool():
 
     A model deliberating "HOLD vs EXIT" found no way to express HOLD through
     the tool, and EXIT was the nearest available option. It must also learn
-    that an EXIT is unlike an entry: never validated, never rejected, and not
-    correctable within the pass.
+    that an EXIT is unlike an entry: not validated, and not correctable once
+    it has executed.
+
+    SLH-018 narrowed the old "never rejected" wording, so the description must
+    now state the one exception exactly. A model told an EXIT can never be
+    refused, that then receives a refusal, has been handed a contract its tool
+    does not keep -- which is the same unwired-fact failure SLH-017 exists to
+    prevent, arriving from the other side.
     """
     from sl_hunting_tools import order_tool_description
 
@@ -1205,39 +1224,133 @@ def test_order_tool_description_says_hold_means_not_calling_the_tool():
     assert "calling this tool is itself the action" in text
     assert "do not call this tool at all" in text
     assert "there is no hold action" in text
-    # The asymmetry that made this expensive: entries bounce, exits do not.
-    assert "never rejected" in text
+    # Still not validated, and still final once it has gone through.
     assert "cannot be corrected or undone" in text
+    # The single, bounded exception -- and the way out of it.
+    assert "the only thing that can send an exit back is omitting the reason" in text
+    assert "only once" in text
+    assert "send the exit again and it is honoured" in text
+    # The stale absolute must be gone, or the model keeps the old contract.
+    assert "never rejected" not in text
 
 
-def test_exit_with_no_reason_still_executes_but_warns_loudly(caplog):
-    """SLH-007 is NOT reversed: the exit goes through regardless of wording.
+def _enter(ex):
+    """Open a position through a fresh context, as a real pass would."""
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    assert ctx.do_order(
+        "ENTER_SHORT", stop=25060, target=24950, reason="opening drive breakdown"
+    )["accepted"] is True
 
-    Blocking it would strand an open position, which the risk rules forbid.
-    What changes is that it stops being silent -- a deliberate exit always
-    carries a justification, so an empty one is the strongest signal available
-    that the call was unintended.
+
+def _exit_no_reason(ex, caplog=None):
+    """One reasonless EXIT through its own fresh context (one decision pass)."""
+    import logging
+
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    if caplog is None:
+        return ctx.do_order("EXIT", stop=0, target=0, reason="")
+    with caplog.at_level(logging.WARNING, logger="sl_hunting_tools"):
+        return ctx.do_order("EXIT", stop=0, target=0, reason="")
+
+
+def test_the_first_reasonless_exit_is_bounced_once_and_announced(caplog):
+    """SLH-018 narrows SLH-007 by an explicit operator decision (2026-09-16).
+
+    SLH-007 said an EXIT is never refused over its wording, because bouncing it
+    would strand a position. That still governs -- see the test below, where the
+    second attempt is honoured no matter what it carries. What changed is that
+    the FIRST one now gets sent back once, because on 16 Sep 09:16:38 a
+    reasonless EXIT closed the day's only winner (+Rs.1,182 basket) about 100
+    seconds before that trade's target printed, and the model's own next
+    decision called the call erroneous. One round of friction separates the slip
+    from the genuine wordless exit; it cannot strand anything, because the next
+    attempt goes through.
     """
     import logging
 
     ex = StandaloneExecutor()
-    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
-    assert ctx.do_order("ENTER_SHORT", stop=25060, target=24950, reason="opening drive breakdown")["accepted"] is True
+    _enter(ex)
 
-    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
-    with caplog.at_level(logging.WARNING, logger="sl_hunting_tools"):
-        result = ctx.do_order("EXIT", stop=0, target=0, reason="")
+    result = _exit_no_reason(ex, caplog)
 
-    # The exit is honoured.
-    assert result["accepted"] is True
-    assert ex.snapshot()["in_position"] is False
+    # Sent back, not executed.
+    assert result["accepted"] is False
+    assert ex.snapshot()["in_position"] is True, "the position must still be open"
+    # The rejection tells the model exactly how to proceed, both ways.
+    assert "reason" in result["reason"].lower()
+    assert "again" in result["reason"].lower()
 
-    # ...and it is announced.
+    # ...and the operator still hears about it the same session.
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "an EXIT with no reason must warn"
     message = warnings[0].getMessage().lower()
     assert "no reason" in message
     assert "unintended" in message
+
+
+def test_the_second_reasonless_exit_is_honoured_unconditionally():
+    """SLH-007's guarantee survives: a repeat cannot be refused.
+
+    This is the half that makes the bounce safe. A model that really means it
+    says so twice, and the position is out on the very next attempt -- so the
+    worst case is one decision cycle, never a stranded position.
+    """
+    ex = StandaloneExecutor()
+    _enter(ex)
+
+    assert _exit_no_reason(ex)["accepted"] is False
+    second = _exit_no_reason(ex)
+
+    assert second["accepted"] is True
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_a_reasoned_exit_is_never_bounced_even_after_a_bounce():
+    """The ordinary path is untouched: supplying the reason exits immediately."""
+    ex = StandaloneExecutor()
+    _enter(ex)
+
+    assert _exit_no_reason(ex)["accepted"] is False
+
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    result = ctx.do_order("EXIT", stop=0, target=0, reason="premise invalidated at the level")
+
+    assert result["accepted"] is True
+    assert ex.snapshot()["in_position"] is False
+
+
+def test_the_bounce_re_arms_for_each_new_position():
+    """Scoped per episode, not once per process.
+
+    A bounce spent on this morning's slip must not buy a later position a free
+    pass, so any accepted order clears the armed state.
+    """
+    ex = StandaloneExecutor()
+
+    _enter(ex)
+    assert _exit_no_reason(ex)["accepted"] is False
+    assert _exit_no_reason(ex)["accepted"] is True
+
+    # A brand-new position gets its own bounce.
+    _enter(ex)
+    assert _exit_no_reason(ex)["accepted"] is False
+    assert _exit_no_reason(ex)["accepted"] is True
+
+
+def test_a_reasoned_exit_clears_the_armed_state_too():
+    """Accepting ANY order resolves the anomaly, so the next slip bounces again."""
+    ex = StandaloneExecutor()
+    _enter(ex)
+
+    assert _exit_no_reason(ex)["accepted"] is False
+
+    ctx = SLHuntingToolContext.build(_candles(), ex, live_active=False, broker=None)
+    assert ctx.do_order("EXIT", stop=0, target=0, reason="real reason")["accepted"] is True
+
+    _enter(ex)
+    # Armed state was cleared by the accepted exit, so this bounces rather than
+    # cashing in the arm left over from before.
+    assert _exit_no_reason(ex)["accepted"] is False
 
 
 def test_exit_with_a_real_reason_does_not_warn(caplog):

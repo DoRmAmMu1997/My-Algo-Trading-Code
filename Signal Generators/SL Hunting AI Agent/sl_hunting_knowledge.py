@@ -579,6 +579,14 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   day. State the classification and the reason for it in your entry reasoning, so a
   wrong call is visible as a wrong CALL rather than hidden inside a good-looking
   setup.
+  SLH-017 NOW SUPPLIES THE ARITHMETIC, so the only part still yours is the
+  meaning. The `levels` tool returns an `open_classification` block carrying the
+  gap in points and in percent, measured against the previous session's last
+  candle, together with the threshold and a verdict of FLAT / GAP_UP / GAP_DOWN.
+  READ THAT VERDICT AND STATE IT. Do not recompute it, and do not argue past it
+  because a setup looks good on the other branch -- that is precisely how this
+  went wrong three times. What remains a judgement is what the classification
+  MEANS for the crowd, never whether the number clears the line.
   * COMPARE THE OPEN TO THE 3:15 LEVEL, NOT THE OFFICIAL CLOSE (v4u). IH is
     explicit that this is the reference he uses: "you will see BankNIFTY has
     closed somewhere here, but more than the closing, we go by where the market
@@ -595,6 +603,47 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
     SHARED-GAP REQUIREMENT applied in the direction it does not currently name:
     that rule covers a flat BankNIFTY beside a gapped NIFTY, and this is the
     mirror case. A gap in ONE index is not a gapped market.
+- A ONE-WAY DAY LEAVES NOBODY SEATED, AND THE NEXT OPEN IS THE RECEIPT (v5f).
+  The rule above decides which WORD describes the open. This one says what the
+  open's SIZE is actually measuring, which is the question the branch was asking
+  all along: is the crowd you plan to hunt even there?
+  A BIG MOVE IS NOT EVIDENCE OF A SEATED CROWD, and this is the half that gets
+  assumed rather than checked. IH gives the mechanism plainly: "when do sellers
+  REMAIN seated? When a retracement happens. When there is no retracement, every
+  trader keeps fearing that a retracement might come, that his trade might go
+  wrong." So on continuous momentum "traders do come, but they also book their
+  target and leave", and "the chances of HOLDING are low here". A violent one-way
+  session therefore ends with almost NOBODY carrying inventory, however large its
+  range. That is v5c one scale up: there a retracement recruits a crowd inside
+  the move, here a retracement is what lets a crowd survive into the NEXT session.
+  THE OPEN IS THE MEASUREMENT, AND IT CAN FALSIFY THE PREMISE BEFORE YOU ACT ON
+  IT. "But if sellers had been seated in good quantity, what would the market
+  have opened as? We would have seen a straight gap up." Run that as a test, in
+  that order: state what the open WOULD look like if your trapped crowd existed,
+  then look at what it actually did. A small gap is not a weak version of that
+  open -- it is the evidence AGAINST it, because the crowd that would have forced
+  a big gap is not there to force one.
+  MEASURED ON THIS BOOK (2026-09-16), and it inverted the entire day. The prior
+  session ran 457 points in one continuous direction and closed at the bottom of
+  its range. Four entries inside 53 minutes all asserted that this had "seated
+  positional sellers", and all four took the pre-open note's gap-up-to-BUY branch
+  on an open of +0.36% on NIFTY and +0.38% on BankNIFTY. IH read the SAME open as
+  FLAT, followed the selling, and booked a large profit. The book lost on three of
+  the four, and its only winner was closed by an erroneous exit rather than by a
+  decision. The 0.36% was computed and written into the entry rationale every
+  time, and never once tested against the calibration above, which puts the gap
+  reading near half a percent and says that hesitation resolves to flat.
+  THIS IS THE THIRD SESSION DECIDED BY THAT ONE WORD, so treat the classification
+  as the highest-leverage judgement of the morning rather than a label: 31 Aug
+  read "gap-down" where IH read flat and produced the rule above; 01 Sep measured
+  against the official close instead of the 3:15 level, flipped the branch and
+  cost 1,488.25; this one cost 863.75. Nothing downstream was wrong on any of the
+  three.
+  PRACTICAL FORM, two questions in order, before any gap branch is cited after a
+  big directional session: did yesterday RETRACE? If it ran one way, assume no
+  seated crowd and stop there. If it did retrace, is today's gap the size that
+  crowd would have produced? If it is not, the crowd is absent, and the plan is
+  to FOLLOW the move rather than to hunt it.
 - THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (v4t). After a session opens and
   moves directly one way, the small pull-back that follows is usually there to keep
   the crowd OUT of the move, not to end it. IH, on exactly that: "when it opens flat
