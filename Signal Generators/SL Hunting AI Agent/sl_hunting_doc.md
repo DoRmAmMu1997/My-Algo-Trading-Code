@@ -7188,3 +7188,89 @@ it. A ninth mutation was written and discarded as invalid -- setting the
 exception branch to `float("inf")` is filtered by the `isfinite` guard and
 changes no behaviour, so it proved nothing; it was replaced by mutations that
 make the exception branch refuse and re-raise, both caught.
+## v5f - a one-way day seats nobody, and the next open is the receipt (16 Sep)
+
+Source: `TXiU5Odet04`, "Live Bank Nifty Option Trading", uploaded 2026-09-16
+10:09 IST. Compared against the agent's own session the same morning: four
+entries, all LONG, inside 53 minutes, basket **-Rs.863.75**.
+
+**Same note, same morning, opposite branch.** The pre-open note shipped for
+16 Sep (PR #171) was conditional: gap up -> BUY the trapped sellers, flat or
+gap down -> SELL with the market. NIFTY opened +82 points, +0.36%; BankNIFTY
++0.38%.
+
+- IH: "today we saw a FLAT opening, and with this kind of opening we are going
+  to follow the CONTINUED SELLING... if a VERY BIG gap up had opened we could
+  not have worked like this." He bought puts across all three indices, booked
+  around his 3-lakh target on a sharp simultaneous breakdown, and closed the
+  session a clear winner.
+- The agent: "NIFTY gapped +82pts (0.36%) and BankNIFTY +213pts (0.38%) above
+  prior close after a 457pt breakdown day that seated positional sellers,
+  satisfying the pre-open note's GAP-UP->BUY branch." All four entries LONG.
+
+**The proximate cause is a v4t violation, not a knowledge gap.** v4t already
+says the classification is a JUDGEMENT you make and state, already calibrates
+it ("a quarter of a percent is not a gap... something in the region of half a
+percent is where the gap reading starts to earn itself"), and already says
+that hesitation resolves to flat. 0.36% sits below that line. The number was
+computed and written into every one of the four entry rationales and never
+once tested against the rule. This is the THIRD session in the series decided
+by that one word: 31 Aug produced v4t, 01 Sep produced its v4u 3:15 sub-rule
+at a cost of Rs.1,488.25, and this one cost Rs.863.75.
+
+**What IS net-new is the premise UNDERNEATH the branch**, and it is the reason
+the agent wanted the gap-up branch at all. All four rationales asserted that
+the prior 457-point breakdown had "seated positional sellers". IH argues the
+exact opposite, with a mechanism: "when do sellers REMAIN seated? When a
+retracement happens. When there is no retracement, every trader keeps fearing
+that a retracement might come, that his trade might go wrong" -- so on
+continuous momentum "traders do come, but they also book their target and
+leave", and "the chances of HOLDING are low here". A violent one-way session
+ends with almost nobody carrying inventory, however large its range.
+
+He then supplies the falsification test, which is the part that can run before
+the trade: "but if sellers had been seated in good quantity, what would the
+market have opened as? We would have seen a straight gap up." The open is the
+RECEIPT for the premise. A small gap is not a weak version of that open; it is
+the evidence against it.
+
+Encoded as **A ONE-WAY DAY LEAVES NOBODY SEATED, AND THE NEXT OPEN IS THE
+RECEIPT (v5f)**, placed directly after the whole v4t block (including its v4u
+sub-bullet, which it must not split) so the model reads "decide which word
+describes the open" and then "here is what the open's size is measuring". It
+is v5c one scale up: there a retracement recruits a crowd inside the move,
+here a retracement is what lets a crowd survive into the NEXT session.
+
+Negative-tested 14 ways, all 14 caught, plus a control mutation of unasserted
+prose that correctly did not trip the test. One anchor initially matched zero
+times because it began mid-line ("That is v5c...") rather than at a line
+start; it was re-run line-contiguously and caught. That is the same
+wrap-spanning mistake the mutation harnesses keep inviting -- print the raw
+line boundaries first.
+
+**Considered and not encoded.** IH's "a retracement is what seats a crowd" is
+partly v5c already; only the cross-session half is new and that is what v5f
+carries. His loss-discipline material repeats v3y. His round-number caution
+("there is a round number here, a small problem will show, control your heart,
+do not run") is already covered by the round-number rules in BNF_SPECIFIC.
+
+**Open, NOT fixed here, and the strongest code-gate candidate yet.** Two
+runtime items from this session:
+
+1. **The open classification should stop being prose.** Three sessions, two
+   existing rules, same failure. The corpus's own law -- PROSE RULES DON'T
+   BIND, and JUDGEMENT RULES GET TALKED PAST -- says the checkable arm belongs
+   at the tool boundary. The gap percentage against the 3:15 reference is
+   computable before the first decision, and the model could be handed it as a
+   fact with the classification already made, rather than being trusted to
+   derive and apply it.
+2. **An EXIT carrying no reason executed and closed the day's only winner.**
+   At 09:16:38 the order tool logged "EXIT (leg=BOTH) executed with NO reason
+   from the model. A deliberate exit always carries one, so treat this as a
+   probable UNINTENDED order" -- and then executed it anyway, closing a
+   +Rs.1,182 basket. The model's own next decision called it "an erroneous
+   EXIT call closed both legs of a working long position that had no valid
+   exit trigger (premise intact, price 23234.80 well clear of stop 23183.0,
+   approaching target 23276.0)". The trade's 23276 target printed at 09:18,
+   about 100 seconds after it was closed. The warning exists; the refusal does
+   not.

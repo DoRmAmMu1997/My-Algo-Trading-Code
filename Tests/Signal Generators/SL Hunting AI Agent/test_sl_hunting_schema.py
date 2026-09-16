@@ -2789,3 +2789,68 @@ def test_v5e_the_stop_must_clear_the_level_the_premise_named():
     assert "THE STOP IS A DISTANCE FROM THE FILL" in rule
     assert "the answer is NO TRADE, never the nearer stop that happens to fit" in rule
     assert "in both the thing that gives is the SIZE, never the stop" in rule
+
+
+def test_v5f_a_one_way_day_seats_nobody_and_the_open_is_the_receipt():
+    """v5f (16 Sep): the premise UNDER the branch, not the branch itself.
+
+    Four entries assumed a 457-point one-way session had seated sellers, then
+    read a 0.36% open as the gap-up that would trap them. IH read the same open
+    as flat, followed the selling, and won. Seven ways an edit breaks it:
+
+    1. Losing the tie to v4t -- that rule picks the WORD, this one says what the
+       SIZE measures. Apart, they read as two opinions about gaps.
+    2. Losing the mechanism: a crowd survives only through a RETRACEMENT, and
+       continuous momentum makes everyone book and leave. Without it, "a big
+       move seats a crowd" is the intuitive default and wins again.
+    3. Losing the link to v5c, which supplies the same mechanism one scale down.
+    4. Losing the falsification test, which is the only part that is actionable
+       BEFORE the trade: say what the open would look like if the crowd existed.
+    5. Softening "a small gap is evidence AGAINST" into "weaker evidence for".
+       That inversion is the whole rule; a summariser will flatten it.
+    6. Losing the three-strike history. One loss reads as bad luck; three
+       sessions decided by one word is what makes it the morning's key call.
+    7. Losing the ordered practical form, where the retracement question comes
+       FIRST and can stop the enquiry on its own.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A ONE-WAY DAY LEAVES NOBODY SEATED")
+
+    # 1. Explicitly the size-half of the classification v4t makes.
+    assert "AND THE NEXT OPEN IS THE RECEIPT" in rule
+    assert "The rule above decides which WORD describes the open" in rule
+    assert "what the open's SIZE is actually measuring" in rule
+
+    # 2. The mechanism, in IH's words, both directions.
+    assert "when do sellers REMAIN seated? When a retracement happens" in rule
+    assert "every trader keeps fearing that a retracement might come" in rule
+    assert "traders do come, but they also book their target and leave" in rule
+    assert "the chances of HOLDING are low here" in rule
+    assert "ends with almost NOBODY carrying inventory, however large its range" in rule
+
+    # 3. The scale relationship to v5c.
+    assert "That is v5c one scale up" in rule
+    assert "a retracement is what lets a crowd survive into the NEXT session" in rule
+
+    # 4. The test that can run before the entry, in its stated order.
+    assert "if sellers had been seated in good quantity, what would the market have opened as" in rule
+    assert "state what the open WOULD look like if your trapped crowd existed" in rule
+
+    # 5. Evidence AGAINST, not weaker evidence for.
+    assert "A small gap is not a weak version of that open" in rule
+    assert "it is the evidence AGAINST it" in rule
+    assert "the crowd that would have forced a big gap is not there to force one" in rule
+
+    # 6. The measured case and the repeat history that gives it weight.
+    assert "ran 457 points in one continuous direction" in rule
+    assert "+0.36% on NIFTY and +0.38% on BankNIFTY" in rule
+    assert "IH read the SAME open as FLAT" in rule
+    assert "its only winner was closed by an erroneous exit" in rule
+    assert "never once tested against the calibration above" in rule
+    assert "THIS IS THE THIRD SESSION DECIDED BY THAT ONE WORD" in rule
+    assert "Nothing downstream was wrong on any of the three" in rule
+
+    # 7. The ordered form, including the early stop.
+    assert "did yesterday RETRACE?" in rule
+    assert "If it ran one way, assume no seated crowd and stop there" in rule
+    assert "the plan is to FOLLOW the move rather than to hunt it" in rule
