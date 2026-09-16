@@ -346,7 +346,15 @@ def normalize_response_data(data) -> pd.DataFrame:
     out = validate_ohlc_frame(out)
 
     volume = pd.to_numeric(out["volume"], errors="coerce")
-    if volume.isna().any() or not volume.map(math.isfinite).all() or (volume < 0).any():
+    # An ABSENT volume column is already zero (see the frame built above), and a
+    # missing CELL is the same statement about the same thing, so it gets the
+    # same answer. Index instruments carry no meaningful volume at all -- Dhan
+    # returns zeros for the whole of 2021, and every backtest loader in this repo
+    # forces Volume to 0 regardless -- so a null here is an absent number rather
+    # than a corrupt one. A NEGATIVE or infinite volume is still corrupt, and
+    # still refused.
+    volume = volume.fillna(0.0)
+    if not volume.map(math.isfinite).all() or (volume < 0).any():
         raise MarketDataValidationError("Dhan chunk contains invalid volume")
     out["volume"] = volume
 

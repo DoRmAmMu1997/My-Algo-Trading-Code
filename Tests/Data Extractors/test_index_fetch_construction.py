@@ -340,3 +340,28 @@ def test_a_clean_chunk_is_passed_through_untouched():
 
     assert len(kept) == 50
     assert kept.equals(frame)
+
+
+def test_a_missing_volume_cell_is_zero_not_a_failure():
+    """Dhan leaves volume null on some index bars; an index has none anyway.
+
+    An absent volume COLUMN is already treated as zero, so an absent cell is the
+    same statement about the same thing. This blocked the backfill at chunk 3.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [float("nan"), 5.0]
+
+    frame = fetcher.normalize_response_data(payload)
+
+    assert list(frame["volume"]) == [0.0, 5.0]
+
+
+def test_a_negative_or_infinite_volume_is_still_refused():
+    """Absent is not the same as corrupt."""
+
+    for bad in (-1.0, float("inf")):
+        payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+        payload["volume"] = [bad, 5.0]
+        with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
+            fetcher.normalize_response_data(payload)
