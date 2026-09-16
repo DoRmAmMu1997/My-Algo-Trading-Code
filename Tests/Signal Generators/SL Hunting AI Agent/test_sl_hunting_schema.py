@@ -2032,6 +2032,15 @@ def test_v4t_open_classification_rule_is_behavioural_and_carries_its_calibration
     assert "on the wrong side of the day" in rule
     assert "State the classification and the reason for it" in rule
 
+    # SLH-017 wiring: the arithmetic is supplied, so the rule must say so and
+    # must forbid re-deriving it. An unwired fact is one the model will simply
+    # recompute its own way, which is the failure this whole rule is about.
+    assert "SLH-017 NOW SUPPLIES THE ARITHMETIC" in rule
+    assert "open_classification" in rule
+    assert "READ THAT VERDICT AND STATE IT" in rule
+    assert "Do not recompute it" in rule
+    assert "never whether the number clears the line" in rule
+
 
 def test_v4t_early_retracement_rule_points_at_follow_not_fade():
     """v4t: the first pull-back keeps the crowd OUT, so nobody gets seated.

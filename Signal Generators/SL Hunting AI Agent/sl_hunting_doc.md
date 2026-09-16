@@ -7254,23 +7254,78 @@ carries. His loss-discipline material repeats v3y. His round-number caution
 ("there is a round number here, a small problem will show, control your heart,
 do not run") is already covered by the round-number rules in BNF_SPECIFIC.
 
-**Open, NOT fixed here, and the strongest code-gate candidate yet.** Two
-runtime items from this session:
+Two runtime items were raised from this session. The first became SLH-017
+below. The second is recorded there too, and is NOT being built.
 
-1. **The open classification should stop being prose.** Three sessions, two
-   existing rules, same failure. The corpus's own law -- PROSE RULES DON'T
-   BIND, and JUDGEMENT RULES GET TALKED PAST -- says the checkable arm belongs
-   at the tool boundary. The gap percentage against the 3:15 reference is
-   computable before the first decision, and the model could be handed it as a
-   fact with the classification already made, rather than being trusted to
-   derive and apply it.
-2. **An EXIT carrying no reason executed and closed the day's only winner.**
-   At 09:16:38 the order tool logged "EXIT (leg=BOTH) executed with NO reason
-   from the model. A deliberate exit always carries one, so treat this as a
-   probable UNINTENDED order" -- and then executed it anyway, closing a
-   +Rs.1,182 basket. The model's own next decision called it "an erroneous
-   EXIT call closed both legs of a working long position that had no valid
-   exit trigger (premise intact, price 23234.80 well clear of stop 23183.0,
-   approaching target 23276.0)". The trade's 23276 target printed at 09:18,
-   about 100 seconds after it was closed. The warning exists; the refusal does
-   not.
+## SLH-017 - the open is classified in code, not derived by the model
+
+Three sessions in this book were decided by one word, with two knowledge rules
+already in place specifically to get it right: 31 Aug produced v4t, 01 Sep
+produced its v4u sub-rule at a cost of Rs.1,488.25, and 16 Sep cost Rs.863.75.
+On 16 Sep the model computed the deciding number correctly -- "+82pts (0.36%)"
+-- wrote it into all four entry rationales, and never compared it with v4t's
+own calibration. That is the exact shape the corpus already has a law for:
+PROSE RULES DON'T BIND, and JUDGEMENT RULES GET TALKED PAST.
+
+`pivot_and_levels` now returns an `open_classification` block:
+
+    previous_close / today_open / gap_points / gap_pct
+    threshold_pct  (GAP_CLASSIFICATION_THRESHOLD_PCT = 0.5)
+    verdict        FLAT | GAP_UP | GAP_DOWN
+    reference      "previous session's last candle close, not the official
+                    15:30 close"
+
+The threshold is not invented: it is v4t's own calibration ("a quarter of a
+percent is not a gap... something in the region of half a percent is where the
+gap reading starts to earn itself"), and sub-threshold opens read FLAT in both
+directions because v4t also says hesitation resolves to flat. The reference is
+v4u's, for the reason v4u gives -- the closing auction carries settlement
+prints no crowd traded around.
+
+It flows to the model through the `levels` tool and, for BankNIFTY, through
+`bank_nifty`. Run against 16 Sep's real numbers both come back **FLAT**
+(NIFTY 0.355%, BankNIFTY 0.381%) -- which is IH's reading of that morning and
+the opposite of the one the agent acted on.
+
+**Wired, not just added.** v4t now carries an SLH-017 paragraph telling the
+model to READ the verdict and state it, and not to recompute or argue past it,
+because an unwired fact is one the model will simply re-derive its own way.
+The existing v4t marker test was extended rather than rewritten, so its old
+assertions still pin the original prose.
+
+**Scope.** This supplies the arithmetic and the threshold; it does not reject
+orders and does not judge what the classification MEANS. That part stays with
+the model, which is where the real reasoning is.
+
+Negative-tested 9 ways, all 9 caught, plus a control mutation of unasserted
+prose that correctly did not trip the tests. One mutation -- measuring from
+today's LAST price instead of its OPEN -- initially PASSED, because every
+fixture opened and closed at the same price. That is a real defect the tests
+could not see: a flat open would silently become a "gap up" by mid-morning and
+re-select the branch hours after the fact. A dedicated drift test was added
+and the mutation then caught.
+
+### NOT built: refusing an EXIT that carries no reason
+
+The session's other item was that at 09:16:38 an EXIT with no reason executed
+and closed the day's only winner (+Rs.1,182 basket), about 100 seconds before
+that trade's 23276 target printed. The order tool logged it as "a probable
+UNINTENDED order" and honoured it anyway; the model's next decision called it
+erroneous itself.
+
+Turning that warning into a refusal was considered and **rejected, because it
+reverses a standing operator decision**. SLH-007 states that an EXIT is never
+refused over its wording -- bouncing it would strand an open position, which
+the risk rules forbid -- and SLH-010 explicitly declined to reverse it, adding
+the warning instead. `test_exit_with_no_reason_still_executes_but_warns_loudly`
+exists precisely so that "a later tightening cannot quietly turn the warning
+into a refusal", and it asserts the exit is accepted.
+
+So the change would mean deleting a guard written to prevent it. If it is ever
+revisited, the narrow form worth considering is a ONE-ROUND bounce: reject the
+first reasonless EXIT with a message asking for the justification, and honour
+the next EXIT unconditionally whatever it carries. That cannot strand a
+position beyond a single decision cycle, and the mechanical stop, target,
+max-loss and 15:15 square-off are host-owned throughout and never gated. It
+still needs an explicit operator decision, because it is SLH-007 that is being
+narrowed.

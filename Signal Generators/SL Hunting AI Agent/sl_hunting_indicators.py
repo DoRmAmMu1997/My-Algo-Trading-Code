@@ -39,6 +39,14 @@ import pandas as pd
 _RETRACEMENTS = (0.5, 0.618, 0.786)
 _EXTENSIONS = (1.272, 1.618, 2.618)
 
+# SLH-017: where "flat" stops and "gap" starts, as a PERCENTAGE of the prior
+# session's close. The number is not arbitrary -- it is the calibration v4t
+# already carries in the knowledge: a quarter of a percent is not a gap, and
+# "something in the region of half a percent" is where the gap reading starts
+# to earn itself. Anything below reads FLAT, because v4t also says that
+# hesitation between the two words resolves to flat.
+GAP_CLASSIFICATION_THRESHOLD_PCT = 0.5
+
 
 @dataclass(frozen=True)
 class SLHuntingIndicatorConfig:
@@ -277,12 +285,58 @@ def pivot_and_levels(
         pts = round(last_price - level, 2)
         return {"level": round(level, 2), "points_away": pts, "pct_away": round(100.0 * pts / max(level, 1e-9), 3)}
 
+    # SLH-017: classify the open HERE rather than leaving the model to derive
+    # it. This one word selects the branch of a conditional pre-open plan, and
+    # three sessions in this book were decided by getting it wrong (31 Aug,
+    # 01 Sep, 16 Sep) -- on 16 Sep the model computed "+82pts (0.36%)"
+    # correctly, called it a gap-up anyway, and took four losing longs. The
+    # arithmetic and the threshold are mechanical, so they belong in code; what
+    # the classification MEANS is still the model's to reason about.
+    if prev_day is None:
+        open_classification: dict[str, Any] = {
+            "available": False,
+            "verdict": None,
+            "reason": "no previous session in the candle window to measure against",
+        }
+    else:
+        prev_close = float(prev_day["close"])
+        today_open = float(cast(float, today_levels["open"]))
+        gap_points = round(today_open - prev_close, 2)
+        gap_pct = round(100.0 * gap_points / max(abs(prev_close), 1e-9), 3)
+        if abs(gap_pct) >= GAP_CLASSIFICATION_THRESHOLD_PCT:
+            verdict = "GAP_UP" if gap_points > 0 else "GAP_DOWN"
+        else:
+            verdict = "FLAT"
+        open_classification = {
+            "available": True,
+            "previous_close": round(prev_close, 2),
+            "today_open": round(today_open, 2),
+            "gap_points": gap_points,
+            "gap_pct": gap_pct,
+            "threshold_pct": GAP_CLASSIFICATION_THRESHOLD_PCT,
+            "verdict": verdict,
+            # v4u: the prior session's LAST CANDLE, deliberately not the
+            # official 15:30 close -- the closing auction carries settlement
+            # prints no crowd traded around, and positioning is the only thing
+            # this classification is trying to read.
+            "reference": (
+                "previous session's last candle close, not the official 15:30 close"
+            ),
+            "note": (
+                "This verdict selects the branch of a conditional pre-open plan. "
+                "It is measured, not estimated -- do not re-derive it. Below the "
+                "threshold the open is FLAT whatever the sign, because a move too "
+                "small to act before the crowd can decide has recruited nobody."
+            ),
+        }
+
     return {
         "available": True,
         "last_price": round(last_price, 2),
         "pivot": pivot,
         "previous_day_ohlc": prev_day,
         "previous_close": prev_day["close"] if prev_day else None,
+        "open_classification": open_classification,
         "today": today_levels,
         "psych_levels": psych,
         "psych_step": step,

@@ -579,6 +579,14 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   day. State the classification and the reason for it in your entry reasoning, so a
   wrong call is visible as a wrong CALL rather than hidden inside a good-looking
   setup.
+  SLH-017 NOW SUPPLIES THE ARITHMETIC, so the only part still yours is the
+  meaning. The `levels` tool returns an `open_classification` block carrying the
+  gap in points and in percent, measured against the previous session's last
+  candle, together with the threshold and a verdict of FLAT / GAP_UP / GAP_DOWN.
+  READ THAT VERDICT AND STATE IT. Do not recompute it, and do not argue past it
+  because a setup looks good on the other branch -- that is precisely how this
+  went wrong three times. What remains a judgement is what the classification
+  MEANS for the crowd, never whether the number clears the line.
   * COMPARE THE OPEN TO THE 3:15 LEVEL, NOT THE OFFICIAL CLOSE (v4u). IH is
     explicit that this is the reference he uses: "you will see BankNIFTY has
     closed somewhere here, but more than the closing, we go by where the market
