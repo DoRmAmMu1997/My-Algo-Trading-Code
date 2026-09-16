@@ -14,16 +14,20 @@ High-level flow used by the wrapper scripts:
 3. Break the full range into smaller chunks because Dhan minute API does not
    allow a very large range in a single request.
 4. Download each chunk, normalize the broker response into a clean OHLC table,
-   and combine the chunks.
-5. Save the final result as a CSV that your backtests can read later.
+   and append it to the CSV as it arrives.
+5. Record the progress in a manifest beside the CSV, so an interrupted run
+   resumes from the last completed chunk instead of downloading five years
+   again.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -157,6 +161,11 @@ def parse_args(defaults: IndexFetchDefaults):
     )
     parser.add_argument("--start-date", default="")
     parser.add_argument("--end-date", default="")
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore any existing manifest and download the whole range again.",
+    )
     args = parser.parse_args()
     # Attach the token AFTER parsing so it can never be supplied (or leaked)
     # through the command line; downstream code keeps reading args.access_token.
@@ -407,7 +416,13 @@ def normalize_exchange_segment(segment: str) -> str:
     return mapping.get(value, segment)
 
 
-def fetch_1m_history(args, defaults: IndexFetchDefaults) -> pd.DataFrame:
+def fetch_1m_history(
+    args,
+    defaults: IndexFetchDefaults,
+    *,
+    on_chunk: Callable[[pd.DataFrame, date], None] | None = None,
+    resume_after: date | None = None,
+) -> pd.DataFrame:
     """
     Download the full requested date range in many smaller pieces.
 
@@ -416,6 +431,17 @@ def fetch_1m_history(args, defaults: IndexFetchDefaults) -> pd.DataFrame:
       in one request.
     - So we walk from start date to end date chunk by chunk, save each chunk,
       and then merge them into one final DataFrame.
+
+    `on_chunk` is how the resumable path takes delivery. It is called with every
+    chunk AND that chunk's end date -- EMPTY ones included, so a run of holidays
+    still moves the resume point forward instead of being re-requested next
+    time. When it is supplied, chunks are handed over as they arrive and never
+    accumulated, so memory stays flat across five years and the returned frame
+    is empty. With no `on_chunk` the original behaviour is unchanged: collect
+    everything and return it in one frame.
+
+    `resume_after` skips any chunk ending on or before it, because those rows
+    are already on disk.
     """
     start_dt, end_dt = resolve_date_range(args)
     # dhanhq >= 2.1 (we pin 2.2.0) takes a DhanContext(client_id, access_token),
@@ -437,6 +463,12 @@ def fetch_1m_history(args, defaults: IndexFetchDefaults) -> pd.DataFrame:
 
     while cursor <= end_dt:
         chunk_end = min(cursor + timedelta(days=args.chunk_days - 1), end_dt)
+
+        if resume_after is not None and chunk_end <= resume_after:
+            print(f"Already fetched, skipping: {cursor} -> {chunk_end}")
+            cursor = chunk_end + timedelta(days=1)
+            continue
+
         print(f"Requesting chunk: {cursor} -> {chunk_end}")
 
         chunk_df = fetch_chunk(
@@ -453,7 +485,9 @@ def fetch_1m_history(args, defaults: IndexFetchDefaults) -> pd.DataFrame:
         total_rows += row_count
         print(f"Chunk rows: {row_count} | Running total: {total_rows}")
 
-        if not chunk_df.empty:
+        if on_chunk is not None:
+            on_chunk(chunk_df, chunk_end)
+        elif not chunk_df.empty:
             all_chunks.append(chunk_df)
 
         cursor = chunk_end + timedelta(days=1)
@@ -493,6 +527,175 @@ def atomic_write_csv(frame: pd.DataFrame, output: str | os.PathLike[str]) -> Non
         temporary.unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Resumable writing
+# ---------------------------------------------------------------------------
+#
+# A five-year pull is ~21 requests over ~10 minutes. Accumulating every chunk in
+# memory and writing once at the end means a failure in the last request throws
+# away every earlier one, which is a bad trade for a download you repeat each
+# time you refresh the data. Chunks are therefore appended as they arrive and a
+# manifest records how far the run got.
+#
+# This mirrors the expired-options engine's manifest
+# (`expired_options_fetch_dhan_common.py`), deliberately: the same failure modes
+# apply, and one shape to learn is better than two.
+
+
+#: Suffix of the progress file, alongside the CSV it describes.
+MANIFEST_SUFFIX = ".manifest.json"
+
+#: Reserved key describing the run the progress belongs to. Progress lives under
+#: "progress", so a dunder name cannot collide with it.
+RUN_SIGNATURE_KEY = "__run__"
+
+
+def manifest_path_for(output: str | os.PathLike[str]) -> Path:
+    """The progress file that belongs to one output CSV."""
+
+    return Path(str(output) + MANIFEST_SUFFIX)
+
+
+def load_manifest(path: Path) -> dict[str, object]:
+    """Read the resume manifest, treating any damage as 'start over'."""
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def manifest_int(value: object, default: int = 0) -> int:
+    """Read one integer out of manifest JSON without trusting its type.
+
+    The manifest is a file on disk that anything could have written, so every
+    field is `object` until proved otherwise. A wrong type means "no progress",
+    which costs a re-download and never a corrupt file.
+    """
+
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def manifest_text(value: object) -> str | None:
+    """Read one string out of manifest JSON, or None if it is anything else."""
+
+    return value if isinstance(value, str) else None
+
+
+def save_manifest(path: Path, manifest: dict[str, object]) -> None:
+    """Write the manifest atomically so a crash cannot leave it half-written."""
+
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def run_signature(args, start: date) -> dict[str, object]:
+    """Identify the run that a manifest's progress belongs to.
+
+    Every field here changes what a row MEANS or where the chunk boundaries
+    fall, so a change to any of them makes stored progress meaningless. The END
+    date is deliberately absent: extending it is the normal case and is exactly
+    what resuming is for.
+    """
+
+    return {
+        "start": start.isoformat(),
+        "interval": int(args.interval),
+        "chunk_days": int(args.chunk_days),
+        "security_id": str(args.security_id),
+        "exchange_segment": normalize_exchange_segment(args.exchange_segment),
+        "instrument_type": str(args.instrument_type),
+    }
+
+
+def resumable_manifest(
+    manifest: dict[str, object], signature: dict[str, object]
+) -> tuple[dict[str, object], str | None]:
+    """Decide whether stored progress may be resumed, and say why not.
+
+    The dangerous case is a manifest from a NARROWER or EARLIER run -- a one
+    month smoke test, say, followed by the five-year backfill. Every chunk
+    ending on or before the stored `last_to_date` would be skipped, so the
+    earlier years would never be fetched and the command would report success
+    over a file missing most of its history.
+
+    Progress is therefore resumable only when it came from a run with the same
+    identity AND the same start date. Anything else starts over.
+
+    Returns ``(manifest_to_use, reason_it_was_discarded)``.
+    """
+
+    stored = manifest.get(RUN_SIGNATURE_KEY)
+    if not manifest:
+        return {}, None
+    if not isinstance(stored, dict):
+        return {}, "the existing manifest predates run signatures"
+
+    differing = [
+        f"{field}: {stored.get(field)!r} -> {value!r}"
+        for field, value in signature.items()
+        if stored.get(field) != value
+    ]
+    if differing:
+        return {}, "this run does not continue the stored one (" + "; ".join(differing) + ")"
+    return manifest, None
+
+
+def append_chunk(
+    csv_path: Path, frame: pd.DataFrame, *, last_timestamp: str | None
+) -> tuple[int, int, str | None]:
+    """Append one chunk to the output CSV.
+
+    Returns ``(rows_written, file_size, newest_timestamp)``. Rows at or before
+    ``last_timestamp`` are dropped, which is what makes a re-run idempotent and
+    what absorbs the duplicated boundary bar between adjacent chunks. Each chunk
+    has already been through `validate_ohlc_frame`, which REJECTS unordered
+    timestamps rather than sorting them, so appending preserves the file's
+    ascending order without re-sorting five years of rows.
+    """
+
+    if last_timestamp is not None and not frame.empty:
+        frame = frame[frame["timestamp"] > pd.Timestamp(last_timestamp)]
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    if frame.empty:
+        size = csv_path.stat().st_size if csv_path.exists() else 0
+        return 0, size, last_timestamp
+
+    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+    with csv_path.open("a", encoding="utf-8", newline="") as handle:
+        frame.to_csv(handle, header=write_header, index=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    newest = str(frame["timestamp"].iloc[-1])
+    return len(frame), csv_path.stat().st_size, newest
+
+
+def truncate_to(csv_path: Path, size: int) -> None:
+    """Roll the CSV back to its last manifest-recorded byte length.
+
+    The manifest is written after the data, so a crash between the two leaves a
+    file LONGER than the manifest believes. Those trailing bytes are a partly
+    written chunk; discarding them is what lets the resume start from a
+    known-good boundary.
+    """
+
+    if not csv_path.exists():
+        return
+    actual = csv_path.stat().st_size
+    if actual > size:
+        print(f"Trimming {csv_path.name} from {actual} to {size} bytes (interrupted chunk)")
+        with csv_path.open("r+b") as handle:
+            handle.truncate(size)
+
+
 def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     """
     Main script flow used by each wrapper.
@@ -516,11 +719,88 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     if args.chunk_days <= 0 or args.chunk_days > 90:
         raise ValueError("--chunk-days must be between 1 and 90.")
 
-    df = fetch_1m_history(args, defaults)
+    output_path = Path(args.output)
+    manifest_path = manifest_path_for(output_path)
 
-    output_dir = os.path.dirname(args.output)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-    atomic_write_csv(df, args.output)
+    if args.no_resume:
+        # The original all-at-once behaviour, kept as the escape hatch: collect
+        # every chunk, replace the file in one atomic write, and leave no
+        # manifest behind for the next run to trust.
+        frame = fetch_1m_history(args, defaults)
+        output_dir = os.path.dirname(args.output)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        atomic_write_csv(frame, args.output)
+        manifest_path.unlink(missing_ok=True)
+        print(f"Saved {len(frame)} rows to: {args.output}")
+        return
 
-    print(f"Saved {len(df)} rows to: {args.output}")
+    # `fetch_1m_history` resolves the range again for itself. Under --lookback
+    # that reads the clock, so a run straddling midnight signs the manifest with
+    # one start date and fetches from another; the signature check then discards
+    # the progress and downloads again. Wasteful on one day of the year, never
+    # wrong -- which is the direction this has to fail in.
+    start_dt, _ = resolve_date_range(args)
+    signature = run_signature(args, start_dt)
+
+    manifest, discarded = resumable_manifest(load_manifest(manifest_path), signature)
+    if discarded:
+        print(f"Starting over: {discarded}")
+
+    stored = manifest.get("progress")
+    progress: dict[str, object] = stored if isinstance(stored, dict) else {}
+
+    if progress and manifest_int(progress.get("rows")) and not output_path.exists():
+        # Progress claiming rows that are no longer on disk. Honouring it would
+        # skip every chunk it covers and write a CSV missing its own history.
+        #
+        # Progress claiming ZERO rows is a different thing and perfectly normal:
+        # a range that opens on holidays has a resume point and no file yet, and
+        # treating that as damage would re-request those empty windows forever.
+        print(f"Ignoring the manifest: {output_path.name} is gone, starting over")
+        manifest, progress = {}, {}
+    elif progress:
+        truncate_to(output_path, manifest_int(progress.get("bytes")))
+        print(
+            f"Resuming after {progress.get('last_to_date')}: "
+            f"{progress.get('rows', 0)} rows already on disk"
+        )
+    elif output_path.exists():
+        # A CSV with no usable progress -- a deleted manifest, or a file written
+        # by --no-resume or by this script before it kept one. There is no last
+        # timestamp to de-duplicate against, so the only safe move is to start
+        # the file over rather than append a second copy of the history.
+        print(f"Ignoring existing {output_path.name}: no usable resume state, starting over")
+        output_path.unlink()
+
+    stored_to = manifest_text(progress.get("last_to_date"))
+    resume_after = date.fromisoformat(stored_to) if stored_to else None
+
+    rows_on_disk = manifest_int(progress.get("rows"))
+    last_timestamp = manifest_text(progress.get("last_timestamp"))
+
+    def record(frame: pd.DataFrame, chunk_end: date) -> None:
+        """Append one chunk and checkpoint, so a crash costs one chunk."""
+
+        nonlocal rows_on_disk, last_timestamp
+
+        written, size, newest = append_chunk(
+            output_path, frame, last_timestamp=last_timestamp
+        )
+        rows_on_disk += written
+        last_timestamp = newest
+        # The manifest is written AFTER the rows on purpose: it may lag the file
+        # (which `truncate_to` repairs) but must never claim rows that are not
+        # there, which nothing could repair.
+        manifest[RUN_SIGNATURE_KEY] = signature
+        manifest["progress"] = {
+            "rows": rows_on_disk,
+            "bytes": size,
+            "last_timestamp": last_timestamp,
+            "last_to_date": chunk_end.isoformat(),
+        }
+        save_manifest(manifest_path, manifest)
+
+    fetch_1m_history(args, defaults, on_chunk=record, resume_after=resume_after)
+
+    print(f"Saved {rows_on_disk} rows to: {args.output}")
