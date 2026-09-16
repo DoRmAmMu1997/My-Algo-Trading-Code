@@ -1,46 +1,45 @@
 {
-  "for_date": "2026-09-16",
-  "source": "Intraday Hunter, 'Prediction For 16 SEP 2026' (2siXRlm4_jo, uploaded 2026-09-15)",
-  "context": "15 Sep gave back the prior day's whole positive move -- 'as much positive momentum as came a day before, that much selling has already happened'. The market is ALREADY negative, so POSITIONAL SELLERS are now seated and in profit.",
+  "for_date": "2026-09-17",
+  "source": "Intraday Hunter, 'Prediction For 17 SEP 2026' (SQIo4PisLw0, uploaded 2026-09-16)",
+  "context": "Today's selling broke down and then RECOVERED, without crossing the higher point or the round number. The session therefore leaves one question open -- which side it trapped -- and SENSEX has its expiry tomorrow.",
   "plan": [
-    "THE PLAN IS CONDITIONAL ON THE OPEN, inverting yesterday's all-buy note: a good GAP UP means BUY, FLAT or GAP DOWN means SELL. He repeats it for all three indices, so the open picks the side before any setup is read.",
-    "GAP UP -> BUY, because the gap traps the seated sellers: 'the market is already negative and made good momentum today too, so there can be POSITIONAL sellers here -- if we get a good gap up we CAN target these sellers'.",
-    "FLAT OR GAP DOWN -> SELL, and the reason is the ABSENCE of a target rather than weakness: 'they will already be sitting in confidence so we cannot target them -- there we must go WITH the market'.",
-    "A GAP DOWN IS THE EASY CASE, NOT A WARNING: 'if a gap down opens that is a very good thing, because momentum is already good, so walking with the market will be easy'. Flat is fine too -- 'in flat there is no problem either'.",
-    "TARGET THE LATE SELLERS, NOT THE EARLY ONES: 'the upper-side seller we cannot make our target, but those sitting having SOLD HERE can be targeted'. The cohort that sold into today's lows is the marginal one.",
-    "SELLERS IN PROFIT CANNOT BE HUNTED QUICKLY: 'the sellers will come into some profit, and second, confidence will stay inside them, so we cannot make a target quickly'. Profit plus confidence is what removes them as prey."
+    "SAME CONDITIONAL SHAPE AS YESTERDAY, DIFFERENT REASON: gap up -> BUY, flat or gap down -> SELL, stated for all three indices. The question underneath is WHICH crowd today trapped, and the open is what answers it.",
+    "FLAT OR GAP DOWN -> SELL, because the sellers were only TRAPPED and never seated: 'seeing the retracement, who comes here? SELLERS come. But because the market stays SIDEWAYS they leave again' -- so no seller crowd is left to squeeze.",
+    "GAP UP -> BUY, the tell is what price did NOT do: 'it did not cross the round number, it did not cross its high point', so 'maybe some good trader slowly bought here and other people could not buy'. That thin long inventory is the target.",
+    "THE UNCROSSED HIGH IS WHY RETAIL IS ABSENT: 'because the higher point was not crossed, retail did not do much work'. Only a deliberate buyer may be seated, never a crowd, which is why the buy branch needs the gap up to confirm one exists.",
+    "SENSEX EXPIRES TOMORROW, flagged twice -- in his opening line and again at its levels. That is context for the triple-index read, not a premise of its own."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23280,
-        23340
+        23420,
+        23280
       ],
       "support": [
-        23080,
+        23110,
         23000
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56650,
-        56300
+        56300,
+        56650
       ],
       "support": [
-        55500,
-        55200
+        55810,
+        55500
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        74800,
+        75000,
         74500
       ],
       "support": [
-        73800,
+        74000,
         73650
       ]
     }
