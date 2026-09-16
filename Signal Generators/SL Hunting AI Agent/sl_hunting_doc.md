@@ -7305,27 +7305,62 @@ could not see: a flat open would silently become a "gap up" by mid-morning and
 re-select the branch hours after the fact. A dedicated drift test was added
 and the mutation then caught.
 
-### NOT built: refusing an EXIT that carries no reason
+## SLH-018 - one round of friction on a reasonless EXIT (operator decision)
 
 The session's other item was that at 09:16:38 an EXIT with no reason executed
 and closed the day's only winner (+Rs.1,182 basket), about 100 seconds before
 that trade's 23276 target printed. The order tool logged it as "a probable
-UNINTENDED order" and honoured it anyway; the model's next decision called it
-erroneous itself.
+UNINTENDED order" and honoured it anyway; the model's own next decision called
+the call erroneous.
 
-Turning that warning into a refusal was considered and **rejected, because it
-reverses a standing operator decision**. SLH-007 states that an EXIT is never
-refused over its wording -- bouncing it would strand an open position, which
-the risk rules forbid -- and SLH-010 explicitly declined to reverse it, adding
-the warning instead. `test_exit_with_no_reason_still_executes_but_warns_loudly`
-exists precisely so that "a later tightening cannot quietly turn the warning
-into a refusal", and it asserts the exit is accepted.
+This was first raised and **declined**, because refusing such an exit reverses a
+standing decision: SLH-007 says an EXIT is never refused over its wording, since
+bouncing it would strand an open position; SLH-010 explicitly declined to reverse
+that and added the warning instead; and
+`test_exit_with_no_reason_still_executes_but_warns_loudly` existed so that "a
+later tightening cannot quietly turn the warning into a refusal".
 
-So the change would mean deleting a guard written to prevent it. If it is ever
-revisited, the narrow form worth considering is a ONE-ROUND bounce: reject the
-first reasonless EXIT with a message asking for the justification, and honour
-the next EXIT unconditionally whatever it carries. That cannot strand a
-position beyond a single decision cycle, and the mechanical stop, target,
-max-loss and 15:15 square-off are host-owned throughout and never gated. It
-still needs an explicit operator decision, because it is SLH-007 that is being
-narrowed.
+**The operator then took the decision explicitly (2026-09-16), choosing the
+one-round form**, on the reasoning that it "would filter out the anomalies and
+let SLH-007 work on genuine wordless exit cases". SLH-007's guarantee is
+NARROWED, not reversed, and the tightening is neither quiet nor unilateral.
+
+**The contract.** The first EXIT that resolves to the no-reason sentinel is sent
+back once, with a rejection naming both ways forward -- state the reason, or send
+the EXIT again. Any repeat is honoured unconditionally, whatever it carries. So
+the worst case is ONE decision cycle, never a stranded position, and the
+mechanical stop, target, max-loss and 15:15 square-off are host-owned throughout
+and are never gated by any of this.
+
+**Where the state lives matters.** The armed flag sits on the EXECUTOR, not on
+the tool context. A context is rebuilt every bar, so context-local state would
+bounce the first attempt of every bar forever and could genuinely strand a
+position -- the exact outcome SLH-007 forbids. The executor is created once per
+worker (`self._executor = MasterWorkerExecutor(self)`) and outlives the pass. It
+is set and cleared duck-typed through `getattr`/`setattr` under
+`contextlib.suppress`, because `TradeExecutor` is a Protocol and a third-party
+executor need not tolerate the attribute.
+
+**Scoped per episode.** Any ACCEPTED order clears the arm -- the repeat exit, a
+restated reason, or a new entry. A bounce spent on this morning's slip cannot buy
+a later position a free pass.
+
+**Placeholder reasons bounce too.** `_safe_exit_reason` maps "placeholder",
+"n/a" and friends to the same sentinel as an empty string, so they are the same
+class of anomaly and get the same single bounce.
+`test_do_order_never_rejects_an_exit_for_a_bad_reason` was rewritten as
+`test_a_junk_exit_reason_bounces_once_then_exits_and_records_the_sentinel`,
+keeping its real assertions: the position still comes out, and the junk still
+never becomes the permanent record.
+
+**The tool description had to change, or the model keeps a false contract.** It
+said an EXIT "is NEVER rejected". It now states the single exception and the way
+out of it, and a test asserts the stale absolute is GONE rather than merely that
+the new wording is present -- a model told exits can never be refused, that then
+receives a refusal, has been handed a contract its tool does not keep. That is
+the SLH-017 unwired-fact failure arriving from the other side.
+
+Negative-tested 7 ways, all 7 caught, plus a control mutation of an unasserted
+comment that correctly did not trip the tests. The two mutations that matter
+most are both caught: removing the bounce entirely, and never disarming (which
+would strand a position by refusing the second attempt as well).
