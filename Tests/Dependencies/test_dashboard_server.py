@@ -451,3 +451,177 @@ def test_every_element_the_page_script_looks_up_exists_in_the_markup():
         "dashboard.js looks up element ids that index.html does not define: "
         f"{sorted(looked_up - declared)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# History paging
+# ---------------------------------------------------------------------------
+HISTORY_PAGES = {
+    "1:0": b'{"tf":"1","page":0,"pages":2,"bars":[{"time":300}]}',
+    "1:1": b'{"tf":"1","page":1,"pages":2,"bars":[{"time":100}]}',
+    "D:0": b'{"tf":"D","page":0,"pages":1,"bars":[{"time":1}]}',
+}
+
+
+def _serve(history_builder, *, refresh_seconds=30.0):
+    """A dashboard whose history comes from `history_builder`."""
+
+    return start_dashboard(
+        port=0,
+        refresh_seconds=refresh_seconds,
+        builder=lambda: {"generated_at": "10:00:00", "chart": {"series_version": 1}},
+        renderer=_render,
+        chart_builder=lambda: {"series_version": 1, "bars": []},
+        history_builder=history_builder,
+        log=QUIET,
+    )
+
+
+def _await_history(url, *, expect=200, tries=50):
+    """History loads on the builder thread just after the first payload."""
+
+    for _ in range(tries):
+        status, headers, body = get(url)
+        if status == expect:
+            return status, headers, body
+        threading.Event().wait(0.05)
+    return get(url)
+
+
+@pytest.fixture()
+def history_server():
+    running = _serve(lambda: HISTORY_PAGES)
+    assert running is not None
+    try:
+        yield running
+    finally:
+        running.stop(timeout=2.0)
+
+
+def test_a_history_page_is_served(history_server):
+    status, headers, body = _await_history(history_server.url + "api/history?tf=1&page=0")
+
+    assert status == 200
+    assert headers["Content-Type"] == "application/json; charset=utf-8"
+    assert headers["Cache-Control"] == "no-store"
+    assert json.loads(body)["bars"] == [{"time": 300}]
+
+
+def test_an_older_page_is_a_separate_request(history_server):
+    _await_history(history_server.url + "api/history?tf=1&page=0")
+    status, _, body = get(history_server.url + "api/history?tf=1&page=1")
+
+    assert status == 200
+    assert json.loads(body)["page"] == 1
+
+
+def test_a_page_past_the_start_of_history_is_404(history_server):
+    """How the browser learns to stop asking for older candles."""
+
+    _await_history(history_server.url + "api/history?tf=1&page=0")
+    status, _, _ = get(history_server.url + "api/history?tf=1&page=2")
+
+    assert status == 404
+
+
+def test_an_unknown_timeframe_is_refused(history_server):
+    """The frozen set is the whole contract; nothing is inferred from the store."""
+
+    _await_history(history_server.url + "api/history?tf=1&page=0")
+    for timeframe in ("15", "", "../secrets", "1;DROP"):
+        status, _, _ = get(history_server.url + f"api/history?tf={timeframe}&page=0")
+        assert status == 404, timeframe
+
+
+def test_a_page_that_is_not_a_number_is_a_bad_request(history_server):
+    _await_history(history_server.url + "api/history?tf=1&page=0")
+    for page in ("abc", "1.5", "0x1", ""):
+        status, _, _ = get(history_server.url + f"api/history?tf=1&page={page}")
+        assert status == 400, page
+
+
+def test_a_negative_page_is_a_bad_request(history_server):
+    _await_history(history_server.url + "api/history?tf=1&page=0")
+    status, _, _ = get(history_server.url + "api/history?tf=1&page=-1")
+
+    assert status == 400
+
+
+def test_without_history_every_page_is_404_and_the_live_view_is_fine(server):
+    """The operator may never have downloaded any of it."""
+
+    status, _, _ = get(server.url + "api/history?tf=1&page=0")
+    assert status == 404
+
+    status, _, body = get(server.url + "api/state")
+    assert status == 200
+    assert json.loads(body)["generated_at"]
+
+
+def test_a_history_builder_that_raises_costs_only_the_scroll_back():
+    """History is a luxury; the session is not."""
+
+    def explode():
+        raise RuntimeError("no disk today")
+
+    running = _serve(explode)
+    assert running is not None
+    try:
+        status, _, _ = get(running.url + "api/history?tf=1&page=0")
+        assert status == 404
+
+        status, _, body = get(running.url + "api/state")
+        assert status == 200, "the live view must be untouched by a history failure"
+        assert json.loads(body)["generated_at"]
+    finally:
+        running.stop(timeout=2.0)
+
+
+def test_a_query_string_still_does_not_reach_the_other_routes(server):
+    """`do_GET` splits the query off before routing; that must stay true."""
+
+    status, _, body = get(server.url + "api/state?cachebust=1")
+
+    assert status == 200
+    assert json.loads(body)["generated_at"]
+
+
+def test_the_live_view_keeps_rebuilding_while_history_loads():
+    """Half a minute of CSV must not freeze the page into its staleness banner.
+
+    Building the real five-year history measured 29.5 seconds. On the builder
+    thread that would stop the live document rebuilding for that whole time,
+    and the page decides the runner has stopped after five quiet intervals.
+    History therefore loads on a thread of its own, and this is what says so.
+    """
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_history():
+        started.set()
+        release.wait(timeout=10.0)
+        return HISTORY_PAGES
+
+    running = _serve(slow_history, refresh_seconds=0.05)
+    assert running is not None
+    try:
+        assert started.wait(timeout=5.0), "history load never began"
+
+        # History is still blocked here. The live view must keep advancing.
+        first = get(running.url + "api/state")[1]["ETag"]
+        for _ in range(60):
+            threading.Event().wait(0.05)
+            latest = get(running.url + "api/state")[1]["ETag"]
+            if latest != first:
+                break
+        else:
+            raise AssertionError("the live view froze while history loaded")
+
+        # And history still arrives once it finishes.
+        release.set()
+        status, _, _ = _await_history(running.url + "api/history?tf=1&page=0")
+        assert status == 200
+    finally:
+        release.set()
+        running.stop(timeout=2.0)
