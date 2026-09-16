@@ -210,3 +210,69 @@ def test_token_is_read_from_dhan_access_token_with_legacy_fallback(monkeypatch):
 
     monkeypatch.delenv("DHAN_TOKEN_ID")
     assert fetcher.parse_args(defaults).access_token == ""
+
+
+def _session_payload(times, closes=None):
+    """A Dhan-shaped intraday payload from IST wall-clock strings."""
+
+    stamps = [pd.Timestamp(value) for value in times]
+    epoch = [
+        int((stamp.tz_localize("Asia/Kolkata")).timestamp()) for stamp in stamps
+    ]
+    closes = closes or [100.0 + index for index in range(len(stamps))]
+    return {
+        "timestamp": epoch,
+        "open": closes,
+        "high": [value + 1.0 for value in closes],
+        "low": [value - 1.0 for value in closes],
+        "close": closes,
+        "volume": [0.0] * len(closes),
+    }
+
+
+def test_bars_outside_the_session_are_dropped_before_validation():
+    """Dhan's older index windows run to 17:59; a real session ends at 15:30.
+
+    These rows are minute-ALIGNED, so the validator accepts them. That makes
+    them more dangerous than malformed rows, not less: left in, they drag a
+    day's high, low and close with them.
+    """
+
+    frame = fetcher.normalize_response_data(
+        _session_payload([
+            "2026-09-15 09:00:00",   # pre-open
+            "2026-09-15 09:15:00",
+            "2026-09-15 15:29:00",
+            "2026-09-15 16:45:00",   # after the close
+            "2026-09-15 17:59:00",   # the far end of the old-era junk
+        ])
+    )
+
+    kept = [str(value) for value in frame["timestamp"]]
+    assert kept == ["2026-09-15 09:15:00", "2026-09-15 15:29:00"]
+
+
+def test_the_synthetic_current_day_bar_is_dropped():
+    """Dhan stamps a flat wall-clock bar on the current day; it is not a candle."""
+
+    frame = fetcher.normalize_response_data(
+        _session_payload(["2026-09-15 15:29:00", "2026-09-15 18:44:00"])
+    )
+
+    assert [str(value) for value in frame["timestamp"]] == ["2026-09-15 15:29:00"]
+
+
+def test_a_chunk_entirely_outside_the_session_is_empty_not_an_error():
+    """An empty result is a holiday-shaped answer, not a failure."""
+
+    frame = fetcher.normalize_response_data(_session_payload(["2026-09-15 18:44:00"]))
+
+    assert frame.empty
+
+
+def test_the_session_window_is_market_data_healths_own():
+    """The extractor and the runner must agree on what a session is."""
+
+    start, end = fetcher.MARKET_SESSION_START, fetcher.MARKET_SESSION_END
+    assert (start.hour, start.minute) == (9, 15)
+    assert (end.hour, end.minute) == (15, 30)

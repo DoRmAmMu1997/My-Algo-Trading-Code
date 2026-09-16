@@ -49,9 +49,16 @@ if str(_REPO_ROOT) not in sys.path:
 if TYPE_CHECKING:
     # mypy_path includes Dependencies/, where this module is known by its bare
     # name. Runtime entry points execute from the repository root instead.
-    from market_data_health import MarketDataValidationError, validate_ohlc_frame
+    from market_data_health import (
+        MARKET_SESSION_END,
+        MARKET_SESSION_START,
+        MarketDataValidationError,
+        validate_ohlc_frame,
+    )
 else:
     from Dependencies.market_data_health import (
+        MARKET_SESSION_END,
+        MARKET_SESSION_START,
         MarketDataValidationError,
         validate_ohlc_frame,
     )
@@ -329,6 +336,12 @@ def normalize_response_data(data) -> pd.DataFrame:
     # timezone your backtest data uses across the project.
     out["timestamp"] = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
     out = out.drop(columns=["timestamp_raw"])
+    # Drop the non-session rows BEFORE validating: they are the bulk of what an
+    # older window returns, and validating them first would either pass junk
+    # through (they are minute-aligned) or fail the chunk on rows nobody wants.
+    out = clip_to_session(out)
+    if out.empty:
+        return out
     out = validate_ohlc_frame(out)
 
     volume = pd.to_numeric(out["volume"], errors="coerce")
@@ -337,6 +350,33 @@ def normalize_response_data(data) -> pd.DataFrame:
     out["volume"] = volume
 
     return out[["timestamp", "open", "high", "low", "close", "volume"]]
+
+
+def clip_to_session(frame: pd.DataFrame) -> pd.DataFrame:
+    """Keep only the bars that belong to a trading session.
+
+    Dhan's index history carries rows that are not session data, and they differ
+    by era:
+
+    - windows before roughly mid-2022 come back with ~650 bars a day running out
+      to 17:59, against the 375 a real session has;
+    - the CURRENT day carries a synthetic "now" bar stamped at the wall clock
+      with flat OHLC and no volume.
+
+    Both are minute-ALIGNED, so `validate_ohlc_frame` accepts them -- which makes
+    them more dangerous than the malformed kind, not less: they would land in the
+    CSV and drag a day's high, low and close with them. Clipping to the session
+    is what makes a 2021 chunk and a 2026 chunk mean the same thing.
+
+    The window is `market_data_health`'s own 09:15-15:30, so the extractor and the
+    runner agree on what a session is.
+    """
+
+    if frame.empty:
+        return frame
+    clock = frame["timestamp"].dt.time
+    inside = (clock >= MARKET_SESSION_START) & (clock <= MARKET_SESSION_END)
+    return frame.loc[inside].reset_index(drop=True)
 
 
 def fetch_chunk(
