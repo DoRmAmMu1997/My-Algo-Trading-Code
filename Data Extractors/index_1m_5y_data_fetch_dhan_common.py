@@ -264,7 +264,7 @@ def validate_single_epoch_unit(values: pd.Series) -> None:
         )
 
 
-def normalize_response_data(data) -> pd.DataFrame:
+def normalize_response_data(data, *, instrument_type: str = "") -> pd.DataFrame:
     """
     Convert the raw broker payload into one clean OHLC DataFrame.
 
@@ -345,17 +345,28 @@ def normalize_response_data(data) -> pd.DataFrame:
         return out
     out = validate_ohlc_frame(out)
 
-    volume = pd.to_numeric(out["volume"], errors="coerce")
     # An ABSENT volume column is already zero (see the frame built above), and a
     # missing CELL is the same statement about the same thing, so it gets the
-    # same answer. Index instruments carry no meaningful volume at all -- Dhan
-    # returns zeros for the whole of 2021, and every backtest loader in this repo
-    # forces Volume to 0 regardless -- so a null here is an absent number rather
-    # than a corrupt one. A NEGATIVE or infinite volume is still corrupt, and
-    # still refused.
-    volume = volume.fillna(0.0)
-    if not volume.map(math.isfinite).all() or (volume < 0).any():
-        raise MarketDataValidationError("Dhan chunk contains invalid volume")
+    # same answer.
+    volume = pd.to_numeric(out["volume"], errors="coerce").fillna(0.0)
+    invalid = ~volume.map(math.isfinite) | (volume < 0)
+    if invalid.any():
+        if str(instrument_type).strip().upper() == "INDEX":
+            # An index has no traded volume. Dhan returns zeros for the whole of
+            # 2021 and small negative counters (-1, -2, -3) on some 2022 bars --
+            # 221 of them in one 90-day window -- and every backtest loader in
+            # this repo forces Volume to 0 regardless.
+            #
+            # The PRICES on those bars are sound: once weekends and out-of-hours
+            # rows are clipped, every session in that window holds exactly 375
+            # bars. Dropping 221 real price bars to protect a field nobody reads
+            # would lose information for nothing, so the field is zeroed and the
+            # count is reported.
+            print(f"Zeroing {int(invalid.sum())} invalid index volume value(s)")
+            volume = volume.mask(invalid, 0.0)
+        else:
+            # Anywhere volume is a real quantity, a negative one is corruption.
+            raise MarketDataValidationError("Dhan chunk contains invalid volume")
     out["volume"] = volume
 
     return out[["timestamp", "open", "high", "low", "close", "volume"]]
@@ -421,6 +432,9 @@ def clip_to_session(frame: pd.DataFrame) -> pd.DataFrame:
 
     - windows before roughly mid-2022 come back with ~650 bars a day running out
       to 17:59, against the 375 a real session has;
+    - the same era carries rows on WEEKENDS, whose prices are visibly not the
+      index: measured on Saturday 2022-04-09, the close jumps 18396 -> 18584 ->
+      18371 -> 18842 inside one hour;
     - the CURRENT day carries a synthetic "now" bar stamped at the wall clock
       with flat OHLC and no volume.
 
@@ -436,7 +450,8 @@ def clip_to_session(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
     clock = frame["timestamp"].dt.time
-    inside = (clock >= MARKET_SESSION_START) & (clock <= MARKET_SESSION_END)
+    weekday = frame["timestamp"].dt.dayofweek < 5
+    inside = weekday & (clock >= MARKET_SESSION_START) & (clock <= MARKET_SESSION_END)
     return frame.loc[inside].reset_index(drop=True)
 
 
@@ -485,7 +500,7 @@ def fetch_chunk(
             f"API failed for {chunk_start} -> {chunk_end}: status={status}, details={remarks}"
         )
 
-    normalized = normalize_response_data(resp.get("data"))
+    normalized = normalize_response_data(resp.get("data"), instrument_type=instrument_type)
     if normalized.empty:
         return normalized
 

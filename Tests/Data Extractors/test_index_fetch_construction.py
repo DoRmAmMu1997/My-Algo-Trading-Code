@@ -108,7 +108,9 @@ def test_normalize_rejects_mixed_epoch_units_and_non_finite_candles():
 
 
 def test_fetch_chunk_rejects_timestamp_outside_requested_window():
-    outside = int(datetime(2026, 1, 3, 9, 15).timestamp())
+    # A WEEKDAY outside the window: the session clip drops weekend rows before
+    # the window check ever runs, so a Saturday would prove nothing here.
+    outside = int(datetime(2026, 1, 5, 9, 15).timestamp())
     dhan = SimpleNamespace(
         intraday_minute_data=lambda **_kwargs: {
             "status": "success",
@@ -365,3 +367,53 @@ def test_a_negative_or_infinite_volume_is_still_refused():
         payload["volume"] = [bad, 5.0]
         with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
             fetcher.normalize_response_data(payload)
+
+
+def test_weekend_rows_are_dropped():
+    """The older windows carry Saturday rows whose prices are not the index.
+
+    Measured on Saturday 2022-04-09: the close jumps 18396 -> 18584 -> 18371 ->
+    18842 inside one hour. They sit INSIDE session hours, so a time-of-day clip
+    alone lets them through.
+    """
+
+    frame = fetcher.normalize_response_data(
+        _session_payload([
+            "2026-09-11 09:15:00",   # Friday
+            "2026-09-12 11:30:00",   # Saturday, mid-session by the clock
+            "2026-09-13 11:30:00",   # Sunday
+            "2026-09-14 09:15:00",   # Monday
+        ])
+    )
+
+    kept = [str(value) for value in frame["timestamp"]]
+    assert kept == ["2026-09-11 09:15:00", "2026-09-14 09:15:00"]
+
+
+def test_an_index_bar_with_negative_volume_keeps_its_price(capsys):
+    """An index has no volume, so the field is zeroed rather than the bar dropped.
+
+    Dhan returns small negative counters (-1, -2, -3) on some 2022 index bars --
+    221 in one 90-day window. The PRICES on those bars are sound: once weekends
+    and out-of-hours rows go, every session in that window holds exactly 375
+    bars. Dropping them to protect a field nobody reads would lose real data.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [-2.0, 5.0]
+
+    frame = fetcher.normalize_response_data(payload, instrument_type="INDEX")
+
+    assert len(frame) == 2, "the price bar survives"
+    assert list(frame["volume"]) == [0.0, 5.0]
+    assert "Zeroing 1" in capsys.readouterr().out
+
+
+def test_a_non_index_with_negative_volume_is_still_refused():
+    """Where volume is a real quantity, a negative one is corruption."""
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [-2.0, 5.0]
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
+        fetcher.normalize_response_data(payload, instrument_type="EQUITY")
