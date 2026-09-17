@@ -217,13 +217,6 @@ class HistorySeries:
     first_bar: str
     last_bar: str
 
-    def page(self, index: int) -> bytes | None:
-        """The rendered page, or None when it is past the start of history."""
-
-        if index < 0 or index >= len(self.pages):
-            return None
-        return self.pages[index]
-
 
 @dataclass(frozen=True)
 class DashboardHistory:
@@ -237,23 +230,20 @@ class DashboardHistory:
     available: bool = False
     unavailable_reason: str | None = None
 
-    def summary(self) -> dict[str, object]:
-        """What the live payload advertises so the browser knows what exists."""
+    def describe(self) -> str:
+        """One line for the operator's log: what loaded, and from when to when.
 
-        return {
-            "available": bool(self.available),
-            "source": self.source,
-            "unavailable_reason": self.unavailable_reason,
-            "timeframes": {
-                key: {
-                    "pages": len(item.pages),
-                    "bars": item.bars,
-                    "first_bar": item.first_bar,
-                    "last_bar": item.last_bar,
-                }
-                for key, item in self.series.items()
-            },
-        }
+        A page count alone says nothing checkable. The DATE RANGE is the part an
+        operator can hold against what they meant to download -- a backfill that
+        quietly starts two years late looks identical by page count.
+        """
+
+        if not self.available:
+            return f"unavailable ({self.unavailable_reason})"
+        pages = sum(len(item.pages) for item in self.series.values())
+        minute = self.series.get("1")
+        span = f"{minute.bars} bars {minute.first_bar} -> {minute.last_bar}" if minute else "no 1m series"
+        return f"{span}, {pages} pages, from {self.source}"
 
 
 def build_series(
@@ -271,17 +261,22 @@ def build_series(
     bars so a page's arrays and its candles cannot drift apart.
     """
 
-    records: Sequence[Mapping[str, object]] = bar_records(frame)
-    total = len(records)
+    total = len(frame)
+    count = page_count(total, page_size)
     pages: list[bytes] = []
-    for index in range(page_count(total, page_size)):
+    for index in range(count):
         start, stop = page_bounds(total, index, page_size)
+        # Serialised one page at a time. Calling `bar_records` over the whole
+        # frame first and slicing the result builds every bar as a dict before
+        # any of it is needed -- on the order of 150-250 MB for the 459,152-bar
+        # minute series, all of it live at once alongside the rendered pages.
+        # This keeps the peak to a single page.
         payload: dict[str, object] = {
             "tf": key,
             "minutes": int(minutes),
             "page": index,
-            "pages": page_count(total, page_size),
-            "bars": list(records[start:stop]),
+            "pages": count,
+            "bars": bar_records(frame.iloc[start:stop]),
         }
         for name, values in (columns or {}).items():
             payload[name] = list(values[start:stop])

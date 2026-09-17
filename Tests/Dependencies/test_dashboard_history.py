@@ -69,7 +69,7 @@ def test_a_missing_csv_degrades_instead_of_raising(tmp_path):
     assert history.available is False
     assert history.series == {}
     assert "no history CSV" in (history.unavailable_reason or "")
-    assert history.summary()["available"] is False
+    assert "unavailable" in history.describe()
 
 
 def test_an_unreadable_csv_degrades_too(tmp_path):
@@ -227,7 +227,7 @@ def test_every_bar_appears_exactly_once_across_the_pages(tmp_path):
 
     seen: list[int] = []
     for index in range(len(series.pages)):
-        page = json.loads(series.page(index))
+        page = json.loads(series.pages[index])
         assert page["page"] == index
         assert page["pages"] == 4
         seen = [bar["time"] for bar in page["bars"]] + seen
@@ -237,14 +237,23 @@ def test_every_bar_appears_exactly_once_across_the_pages(tmp_path):
     assert seen == sorted(seen), "the reassembled series is ascending"
 
 
-def test_a_page_beyond_the_end_is_none_not_an_error(tmp_path):
-    target = _csv(tmp_path, _minutes("2026-09-15", 50))
+def test_the_page_map_holds_exactly_the_pages_that_exist(tmp_path):
+    """A MISSING key is the "nothing older" answer the endpoint serves as 404.
+
+    The transport does no bounds arithmetic of its own, precisely so it cannot
+    disagree with this map -- so what the map contains IS the contract.
+    """
+
+    target = _csv(tmp_path, _minutes("2026-09-15", 250))
     history = dashboard_history.build_history(
         path=target, renderer=_renderer, resample=_resample, page_size=100
     )
 
-    assert history.series["1"].page(99) is None
-    assert history.series["1"].page(-1) is None
+    pages = dashboard_history.page_map(history)
+
+    assert {"1:0", "1:1", "1:2"} <= set(pages)
+    assert "1:3" not in pages, "one page past the end must simply not be there"
+    assert "1:-1" not in pages
 
 
 # ------------------------------------------------------------- the document
@@ -264,17 +273,31 @@ def test_every_timeframe_is_built(tmp_path):
     assert history.available is True
 
 
-def test_the_summary_says_what_exists(tmp_path):
+def test_the_log_line_names_the_range_that_loaded(tmp_path):
+    """A page count alone is not checkable; a date range is.
+
+    A backfill that quietly starts two years late looks identical by page
+    count, so the line the operator reads carries the span.
+    """
+
     target = _csv(tmp_path, _minutes("2026-09-15", 60))
 
-    summary = dashboard_history.build_history(
+    described = dashboard_history.build_history(
         path=target, renderer=_renderer, resample=_resample
-    ).summary()
+    ).describe()
 
-    assert summary["available"] is True
-    assert summary["timeframes"]["1"]["bars"] == 60
-    assert summary["timeframes"]["1"]["pages"] == 1
-    assert summary["timeframes"]["1"]["last_bar"] == "2026-09-15 10:14:00"
+    assert "60 bars" in described
+    assert "2026-09-15 09:15:00 -> 2026-09-15 10:14:00" in described
+    assert str(target) in described
+
+
+def test_the_log_line_says_so_when_there_is_no_history(tmp_path):
+    described = dashboard_history.build_history(
+        path=tmp_path / "nothing.csv", renderer=_renderer, resample=_resample
+    ).describe()
+
+    assert described.startswith("unavailable")
+    assert "no history CSV" in described
 
 
 def test_pages_survive_the_strict_json_renderer(tmp_path):
@@ -504,7 +527,7 @@ def test_the_daily_series_carries_its_own_stochastic(tmp_path):
         stochastic_settings={"k_period": 2, "d_period": 2, "smooth_k": 1},
     )
 
-    page = json.loads(history.series["D"].page(0))
+    page = json.loads(history.series["D"].pages[0])
     assert len(page["bars"]) == 3
     assert len(page["stoch_k"]) == 3, "the column is sliced beside its bars"
     assert len(page["stoch_d"]) == 3
@@ -523,7 +546,7 @@ def test_the_minute_series_carry_no_indicator_columns(tmp_path):
         stochastic_fn=_fake_stochastic,
     )
 
-    page = json.loads(history.series["1"].page(0))
+    page = json.loads(history.series["1"].pages[0])
     assert "stoch_k" not in page
     assert "vwap" not in page
 
@@ -540,6 +563,6 @@ def test_a_broken_stochastic_costs_the_column_not_the_chart(tmp_path):
         stochastic_fn=explode,
     )
 
-    page = json.loads(history.series["D"].page(0))
+    page = json.loads(history.series["D"].pages[0])
     assert len(page["bars"]) == 2, "the daily candles still arrive"
     assert "stoch_k" not in page

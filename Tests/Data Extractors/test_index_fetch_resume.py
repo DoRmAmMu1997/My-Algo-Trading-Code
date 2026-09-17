@@ -277,3 +277,46 @@ def test_a_manifest_with_nonsense_types_does_not_crash_the_run(tmp_path):
     assert fetcher.manifest_int(7) == 7
     assert fetcher.manifest_text(7) is None
     assert fetcher.manifest_text("2026-01-05") == "2026-01-05"
+
+
+def test_a_manifest_describing_a_different_file_is_refused(tmp_path):
+    """The byte count says how MUCH; the first row says WHICH.
+
+    Same filename, different contents -- a restore, a hand edit, a rewrite by
+    another tool -- and the stored length still "fits". Truncating on it would
+    cut at a boundary that means nothing, and the resume would then append from
+    the stored last timestamp, straight past whatever was lost. The result
+    still looks ascending and de-duplicated, which is what makes it worth
+    catching.
+    """
+
+    args = _args(tmp_path)
+    respond, _ = _responder()
+    _run(args, respond)
+
+    # Same name, different file.
+    Path(args.output).write_text(
+        "timestamp,open,high,low,close,volume\n2020-01-01 09:15:00,1,2,0.5,1.5,0\n",
+        encoding="utf-8",
+    )
+
+    respond, seen = _responder()
+    _run(args, respond)
+
+    assert seen == [date(2026, 1, 1), date(2026, 1, 6)], "every chunk must be fetched again"
+    saved = pd.read_csv(args.output)
+    assert len(saved) == 6
+    assert "2020-01-01 09:15:00" not in set(saved["timestamp"]), "the foreign file is gone"
+
+
+def test_the_manifest_records_which_file_it_describes(tmp_path):
+    args = _args(tmp_path)
+    respond, _ = _responder()
+    _run(args, respond)
+
+    progress = _manifest(args)["progress"]
+    with Path(args.output).open(encoding="utf-8") as handle:
+        handle.readline()
+        first_data_row = handle.readline().strip()
+
+    assert progress["first_row"] == first_data_row

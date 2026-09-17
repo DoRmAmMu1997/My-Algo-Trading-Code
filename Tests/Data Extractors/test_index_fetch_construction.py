@@ -344,7 +344,7 @@ def test_a_clean_chunk_is_passed_through_untouched():
     assert kept.equals(frame)
 
 
-def test_a_missing_volume_cell_is_zero_not_a_failure():
+def test_a_missing_volume_cell_is_zero_for_an_index():
     """Dhan leaves volume null on some index bars; an index has none anyway.
 
     An absent volume COLUMN is already treated as zero, so an absent cell is the
@@ -354,9 +354,25 @@ def test_a_missing_volume_cell_is_zero_not_a_failure():
     payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
     payload["volume"] = [float("nan"), 5.0]
 
-    frame = fetcher.normalize_response_data(payload)
+    frame = fetcher.normalize_response_data(payload, instrument_type="INDEX")
 
     assert list(frame["volume"]) == [0.0, 5.0]
+
+
+def test_a_missing_volume_cell_is_still_refused_off_an_index():
+    """The forgiveness is scoped to instruments that have no volume to give.
+
+    An earlier version filled NaN in before the validity test, which quietly
+    exempted EVERY instrument -- including the equity and F&O segments this
+    engine also serves, where an absent volume is corruption rather than a
+    non-answer.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [float("nan"), 5.0]
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
+        fetcher.normalize_response_data(payload, instrument_type="EQUITY")
 
 
 def test_a_negative_or_infinite_volume_is_still_refused():
@@ -417,3 +433,19 @@ def test_a_non_index_with_negative_volume_is_still_refused():
 
     with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
         fetcher.normalize_response_data(payload, instrument_type="EQUITY")
+
+
+def test_an_unparseable_timestamp_refuses_the_chunk():
+    """A row that will not parse must fail loudly, not vanish.
+
+    `errors="coerce"` turns it into NaT, and NaT compares False against a
+    `datetime.time`, so the session clip would silently DROP it -- the chunk
+    comes back quietly short, is appended, and advances the resume point past a
+    gap nobody was told about.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["timestamp"] = [payload["timestamp"][0], "not-a-timestamp"]
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="unparseable timestamp"):
+        fetcher.normalize_response_data(payload, instrument_type="INDEX")

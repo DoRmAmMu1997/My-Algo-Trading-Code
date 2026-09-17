@@ -126,6 +126,14 @@
   /* One `/api/chart` request at a time. It is fired without `await` from the
    * poll loop, so back-to-back polls could otherwise put two in the air. */
   let chartFetchInFlight = false;
+  /* The bars the chart currently holds. Kept so a CPR checkbox can redraw the
+   * levels alone instead of re-uploading every candle. */
+  let lastMergedBars = [];
+  /* When history was first asked for and refused. A 404 before any page has
+   * loaded means "still building" -- but only for so long; after this the
+   * answer is simply that there is none. */
+  let historyFirstRefusalAt = 0;
+  const HISTORY_GIVE_UP_MS = 5 * 60 * 1000;
 
   /* ------------------------------------------------------------ formatting */
   const DASH = '<span class="dash">—</span>';
@@ -571,6 +579,20 @@
     let start = bars.length - 1;
     while (start > 0 && Math.floor(bars[start - 1].time / 86400) === lastDay) start -= 1;
     const session = bars.slice(start);
+    const sessionOpen = lastDay * 86400 + 9 * 3600 + 15 * 60;
+
+    if (session[0].time > sessionOpen) {
+      /* The live window does not reach the open -- the runner was started
+       * mid-session, which this system explicitly supports. Its open, high and
+       * low then describe PART of the day while being stamped as the whole of
+       * it, and because the stamp collides with history's own bar for today the
+       * partial one would REPLACE the complete one rather than lose to it.
+       * History's bar wins when there is one; when there is not, a partial bar
+       * still beats today missing from the timeframe entirely. */
+      const stored = historyBars["D"] || [];
+      if (stored.length && stored[stored.length - 1].time === sessionOpen) return [];
+    }
+
     let high = session[0].high;
     let low = session[0].low;
     for (const bar of session) {
@@ -578,7 +600,7 @@
       if (bar.low < low) low = bar.low;
     }
     return [{
-      time: lastDay * 86400 + 9 * 3600 + 15 * 60,
+      time: sessionOpen,
       open: session[0].open,
       high,
       low,
@@ -775,6 +797,7 @@
     const bars = mergedBars(live, cut);
     candleSeries.setData(bars);
     renderedBarCount = bars.length;
+    lastMergedBars = bars;
 
     /* On the minute timeframes the indicator columns cover the LIVE window
      * alone -- history pages carry candles and nothing else, because VWAP and a
@@ -875,7 +898,16 @@
          * building -- measured at 29.5 seconds on the five-year file -- and
          * treating it as exhausted would disable scroll-back for the whole
          * session over a few seconds of startup. */
-        if ((historyBars[timeframe] || []).length) historyExhausted[timeframe] = true;
+        if (!historyFirstRefusalAt) historyFirstRefusalAt = Date.now();
+        const loaded = (historyBars[timeframe] || []).length;
+        const waitedOutTheBuild = Date.now() - historyFirstRefusalAt > HISTORY_GIVE_UP_MS;
+        /* Bounded by TIME, not by a retry count: `applyTimeframe` can fire
+         * several times in the first second -- boot, a checkbox, the first
+         * chart render -- and a count would be spent before the server has
+         * finished building. Five minutes comfortably covers the 29.5s measured
+         * on the five-year file, and then stops asking every minute forever for
+         * history that is simply not there. */
+        if (loaded || waitedOutTheBuild) historyExhausted[timeframe] = true;
         return;
       }
       const doc = await response.json();
@@ -1098,7 +1130,11 @@
       savePrefs();
       if (key === "vwap" && vwapSeries) vwapSeries.applyOptions({ visible: prefs.vwap });
       else if (key === "stoch") applyStochVisibility();
-      else if (chartPayload) applyTimeframe();
+      /* Only the CPR series change, so only those are redrawn. Going through
+       * `applyTimeframe` here re-uploaded every candle, VWAP point and
+       * stochastic point -- hundreds of thousands of bars once the operator has
+       * scrolled back -- for a toggle that touches none of them. */
+      else if (chartPayload) renderCprLines(lastMergedBars);
     });
   }
   setTimeframe(["1", "5", "D"].includes(prefs.tf) ? prefs.tf : "1");

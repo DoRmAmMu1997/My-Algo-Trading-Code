@@ -18309,6 +18309,10 @@ def _dashboard_history_pages() -> dict[str, bytes]:
             history.unavailable_reason,
         )
         return {}
+
+    # What actually loaded, not just how many pages: the date range is the part
+    # an operator can check against what they expected to download.
+    logger.info("Monitoring dashboard chart history ready: %s.", history.describe())
     return dashboard_history.page_map(history)
 
 

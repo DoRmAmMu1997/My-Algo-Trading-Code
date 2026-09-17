@@ -336,6 +336,15 @@ def normalize_response_data(data, *, instrument_type: str = "") -> pd.DataFrame:
     # timezone your backtest data uses across the project.
     out["timestamp"] = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
     out = out.drop(columns=["timestamp_raw"])
+    # A timestamp that would not parse is refused HERE, before anything filters
+    # it away. `errors="coerce"` turns it into NaT, and NaT compares False
+    # against a `datetime.time`, so the session clip below would silently drop
+    # the row instead: the chunk would come back quietly short, be appended, and
+    # advance the resume point past a gap nobody was told about.
+    if out["timestamp"].isna().any():
+        raise MarketDataValidationError(
+            f"Dhan chunk has {int(out['timestamp'].isna().sum())} unparseable timestamp(s)"
+        )
     # Drop the non-session rows BEFORE validating: they are the bulk of what an
     # older window returns, and validating them first would either pass junk
     # through (they are minute-aligned) or fail the chunk on rows nobody wants.
@@ -345,17 +354,20 @@ def normalize_response_data(data, *, instrument_type: str = "") -> pd.DataFrame:
         return out
     out = validate_ohlc_frame(out)
 
-    # An ABSENT volume column is already zero (see the frame built above), and a
-    # missing CELL is the same statement about the same thing, so it gets the
-    # same answer.
-    volume = pd.to_numeric(out["volume"], errors="coerce").fillna(0.0)
+    # NaN belongs in `invalid`, not filled away before the test. An absent
+    # volume is exactly as wrong as a negative one for an instrument where
+    # volume MEANS something, and filling it first quietly exempted EVERY
+    # instrument from a guard that is only meant to be relaxed for indices.
+    volume = pd.to_numeric(out["volume"], errors="coerce")
     invalid = ~volume.map(math.isfinite) | (volume < 0)
     if invalid.any():
         if str(instrument_type).strip().upper() == "INDEX":
             # An index has no traded volume. Dhan returns zeros for the whole of
-            # 2021 and small negative counters (-1, -2, -3) on some 2022 bars --
-            # 221 of them in one 90-day window -- and every backtest loader in
-            # this repo forces Volume to 0 regardless.
+            # 2021, small negative counters (-1, -2, -3) on some 2022 bars --
+            # 221 of them in one 90-day window -- and sometimes nothing at all,
+            # and every backtest loader in this repo forces Volume to 0
+            # regardless. All three are the same non-answer about a field the
+            # instrument does not have.
             #
             # The PRICES on those bars are sound: once weekends and out-of-hours
             # rows are clipped, every session in that window holds exactly 375
@@ -794,6 +806,26 @@ def append_chunk(
     return len(frame), csv_path.stat().st_size, newest
 
 
+def csv_first_row(csv_path: Path) -> str | None:
+    """The first DATA line of the CSV, or None if there is not one yet.
+
+    The manifest's byte count says how much of a file belongs to it; this says
+    WHICH file. Without it a rewritten, restored or hand-edited CSV of the same
+    name is trusted on length alone, and `truncate_to` cuts it at a boundary
+    that means nothing -- leaving a hole the resume then skips straight over,
+    because it appends from the stored `last_timestamp`. The result still looks
+    ascending and de-duplicated, which is what makes it worth checking.
+    """
+
+    try:
+        with csv_path.open("r", encoding="utf-8") as handle:
+            handle.readline()  # the header
+            row = handle.readline().strip()
+    except OSError:
+        return None
+    return row or None
+
+
 def truncate_to(csv_path: Path, size: int) -> None:
     """Roll the CSV back to its last manifest-recorded byte length.
 
@@ -866,7 +898,10 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     stored = manifest.get("progress")
     progress: dict[str, object] = stored if isinstance(stored, dict) else {}
 
-    if progress and manifest_int(progress.get("rows")) and not output_path.exists():
+    stored_first_row = manifest_text(progress.get("first_row"))
+    claims_rows = bool(manifest_int(progress.get("rows")))
+
+    if progress and claims_rows and not output_path.exists():
         # Progress claiming rows that are no longer on disk. Honouring it would
         # skip every chunk it covers and write a CSV missing its own history.
         #
@@ -875,6 +910,16 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
         # treating that as damage would re-request those empty windows forever.
         print(f"Ignoring the manifest: {output_path.name} is gone, starting over")
         manifest, progress = {}, {}
+    elif progress and claims_rows and stored_first_row != csv_first_row(output_path):
+        # Same name, different file. The byte count would still "fit", so
+        # truncating on it would cut at a boundary that means nothing and the
+        # resume would then append past whatever was lost.
+        print(
+            f"Ignoring the manifest: {output_path.name} is not the file it describes, "
+            "starting over"
+        )
+        manifest, progress = {}, {}
+        output_path.unlink()
     elif progress:
         truncate_to(output_path, manifest_int(progress.get("bytes")))
         print(
@@ -894,17 +939,22 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
 
     rows_on_disk = manifest_int(progress.get("rows"))
     last_timestamp = manifest_text(progress.get("last_timestamp"))
+    first_row = stored_first_row if progress else None
 
     def record(frame: pd.DataFrame, chunk_end: date) -> None:
         """Append one chunk and checkpoint, so a crash costs one chunk."""
 
-        nonlocal rows_on_disk, last_timestamp
+        nonlocal rows_on_disk, last_timestamp, first_row
 
         written, size, newest = append_chunk(
             output_path, frame, last_timestamp=last_timestamp
         )
         rows_on_disk += written
         last_timestamp = newest
+        if first_row is None and written:
+            # Captured once, on the first append: this is what identifies the
+            # file the byte count belongs to.
+            first_row = csv_first_row(output_path)
         # The manifest is written AFTER the rows on purpose: it may lag the file
         # (which `truncate_to` repairs) but must never claim rows that are not
         # there, which nothing could repair.
@@ -912,6 +962,7 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
         manifest["progress"] = {
             "rows": rows_on_disk,
             "bytes": size,
+            "first_row": first_row,
             "last_timestamp": last_timestamp,
             "last_to_date": chunk_end.isoformat(),
         }
