@@ -201,26 +201,25 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_17_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 16 Sep transcript.
+def test_shipped_note_matches_september_18_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 17 Sep transcript.
 
-    The branch SHAPE repeats 16 Sep's note, so the thing worth pinning is the
-    different reasoning underneath it: this is a who-got-trapped question, and
-    the evidence is a level that was NOT crossed. Six things an edit flattens:
+    Third consecutive note with the SAME branch shape, so the thing the test
+    exists to protect is that the shape is not all there is: the reason moves,
+    and here it is a multi-day negative run that MAY have seated sellers. Five
+    things an edit would flatten:
 
-    1. That the shape repeats but the reason does not. Merged with yesterday's
-       note it reads as one standing call rather than a fresh read.
-    2. The sell branch is about sellers who were trapped and LEFT -- the
-       sideways is what removed them. Lose it and "flat means sell" is arbitrary.
-    3. The buy branch keys off what price did NOT do. That is the whole tell,
-       and a summariser reaches for what price DID do instead.
-    4. "Retail did not do much work" is why only a deliberate buyer may be
-       seated. Without it the buy branch sounds like a crowd hunt, which is the
-       opposite of what he is describing.
-    5. The gap up is what CONFIRMS that buyer exists; the branch is not a
-       forecast.
-    6. SENSEX expiry is context, not a premise -- he flags it twice and trades
-       none of it.
+    1. That this is the third repeat. Without it a summariser treats the shape
+       as settled doctrine rather than a fresh conditional read each evening.
+    2. The sell branch's premise, stated outright on NIFTY -- sellers are NOT
+       much seated -- which is why flat means follow rather than fade.
+    3. That the gap up is what MAKES the sellers real. They are hypothetical
+       until the open shows them, and an edit that asserts them inverts the
+       whole conditional.
+    4. The retracement-then-rejection shape, which is the reason the question
+       is open rather than answered.
+    5. SENSEX's supports, which came through as the same mangled run as the
+       previous night and were confirmed to the same values.
     """
     import os
 
@@ -228,62 +227,56 @@ def test_shipped_note_matches_september_17_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-17"
-    assert "SQIo4PisLw0" in note.source
-    assert "broke down and then RECOVERED" in note.context
-    assert "without crossing the higher point or the round number" in note.context
-    assert "which side it trapped" in note.context
-    assert "SENSEX has its expiry tomorrow" in note.context
+    assert note.for_date == "2026-09-18"
+    assert "I7gORF7zm4o" in note.source
+    assert "printed a REJECTION on top of it" in note.context
+    assert "negative for many days" in note.context
+    assert "sellers MAY now be seated" in note.context
+    assert "only a gap up would prove it" in note.context
 
-    # 1. Same shape, different reason -- and the open is the discriminator.
-    shape = next(line for line in note.plan if line.startswith("SAME CONDITIONAL SHAPE"))
-    assert "DIFFERENT REASON" in shape
+    # 1. The repeat is named, and so is what actually varies.
+    shape = next(line for line in note.plan if line.startswith("THIRD DAY RUNNING"))
     assert "gap up -> BUY, flat or gap down -> SELL" in shape
-    assert "WHICH crowd today trapped" in shape
+    assert "What changes each day is the REASON" in shape
+    assert "has finally seated sellers" in shape
 
-    # 2. The sell branch: trapped, then removed by the sideways.
+    # 2. The sell branch keeps its premise, in his words.
     sell = next(line for line in note.plan if line.startswith("FLAT OR GAP DOWN ->"))
-    assert "only TRAPPED and never seated" in sell
-    assert "because the market stays SIDEWAYS they leave again" in sell
-    assert "no seller crowd is left to squeeze" in sell
+    assert "going WITH the market" in sell
+    assert "sellers are not much seated here" in sell
+    assert "nobody to squeeze" in sell
 
-    # 3. The buy branch keys off the level that was NOT crossed.
+    # 3. The gap up CREATES the target; it does not assume it.
     buy = next(line for line in note.plan if line.startswith("GAP UP ->"))
-    assert "the tell is what price did NOT do" in buy
-    assert "it did not cross the round number, it did not cross its high point" in buy
-    assert "thin long inventory is the target" in buy
+    assert "only a gap up makes those sellers real" in buy
+    assert "there COULD be sellers here" in buy
+    assert "Absent the gap they stay hypothetical" in buy
 
-    # 4 and 5. Why retail is absent, and what the gap up is FOR.
-    retail = next(line for line in note.plan if line.startswith("THE UNCROSSED HIGH"))
-    assert "retail did not do much work" in retail
-    assert "Only a deliberate buyer may be seated, never a crowd" in retail
-    assert "needs the gap up to confirm one exists" in retail
-
-    # 6. Expiry is context.
-    expiry = next(line for line in note.plan if line.startswith("SENSEX EXPIRES TOMORROW"))
-    assert "flagged twice" in expiry
-    assert "not a premise of its own" in expiry
+    # 4. Why the question is open at all.
+    shape2 = next(line for line in note.plan if line.startswith("TODAY'S SHAPE"))
+    assert "RETRACEMENT THEN REJECTION" in shape2
+    assert "momentum turned positive but a rejection also formed" in shape2
+    assert "left OPEN for the open to answer" in shape2
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # "2310" -- a digit short; confirmed with the operator as 23110.
             "index": "NIFTY",
-            "resistance": [23420.0, 23280.0],
-            "support": [23110.0, 23000.0],
+            "resistance": [23500.0, 23360.0],
+            "support": [23100.0, 23000.0],
         },
         {
-            # "5500" again, and 55500 again, as on the 16 Sep note.
+            # Unchanged from the 17 Sep note, and clean in the transcript both
+            # nights -- which is itself the check that nothing drifted.
             "index": "BANKNIFTY",
-            "resistance": [56300.0, 56650.0],
+            "resistance": [56650.0, 56300.0],
             "support": [55810.0, 55500.0],
         },
         {
-            # Worst garble yet: both pairs arrived as single runs, "7574500"
-            # and "7473650". The operator resolved them to round thousands --
-            # 75000/74500 and 74000/73650 -- which neither reconstruction I
-            # offered had guessed.
+            # "7473650" again, byte-identical to the previous night's garble,
+            # and confirmed with the operator to the same 74000 / 73650. The
+            # resistances came through clean this time.
             "index": "SENSEX",
-            "resistance": [75000.0, 74500.0],
+            "resistance": [75200.0, 74700.0],
             "support": [74000.0, 73650.0],
         },
     ]

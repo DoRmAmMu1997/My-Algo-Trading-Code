@@ -771,6 +771,38 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   the two exits himself -- "if a breakdown appears... or the loss goes far outside
   the LOSS LIMIT, in that condition we have to exit". The lower point and the loss
   limit both still bind.
+- A CROWD EVICTED BY A SIDEWAYS STRETCH LEAVES YOU IN THE SAME SIDEWAYS STRETCH
+  (v5g). v5b reads an eviction and licenses a FOLLOW rather than a hunt. This is
+  what that follow INHERITS, and it is the half that gets left out: once nobody
+  is trapped, nothing is forced to move, so the position can idle exactly as
+  theirs did. The eviction argument is evidence about the PAST. It says the
+  opposing crowd is gone; it promises nothing about the next hour.
+  READ THE PREMISE BACK AT YOURSELF. The reasoning that clears them is "if
+  someone made a put trade and the market gave no momentum for three or four
+  hours, his premium decays and he will not hold" -- and that is a description
+  of the conditions you are about to enter, on the same clock, paying the same
+  decay. A trade entered because a sideways stretch emptied the book is a trade
+  entered INTO a sideways stretch.
+  MEASURED ON THIS BOOK (2026-09-17), and uniquely on BOTH sides of the same
+  idea. IH and this book reached the identical read -- a flat open, sellers
+  never seated, so SELL -- and took the identical side. He entered at the open
+  and held; NIFTY chopped between roughly 23,217 and 23,305 all morning, broke
+  that range near noon and ran to 23,358.70 by 12:38; BankNIFTY broke out, his
+  loss limit was exhausted, and he cut, saying "there is no need to apply the
+  brain here, cut the trade and get out". The book traded the same thesis in two
+  BOUNDED windows -- short 23,282.75 at 09:39 booked four minutes later into the
+  stall at support, short 23,302.90 at 10:18 closed at the 11:00 cutoff -- and
+  finished +11,355 on a day the same read cost him his limit. The read was right
+  for about ninety minutes and wrong afterwards.
+  DO NOT READ THAT AS OUT-TRADING HIM. The second exit was not a decision: the
+  model had been failing every bar since 10:42 and the position was closed by
+  the time cutoff. What won was the BOX, not the judgement -- a time-boxed book
+  beat an open-ended one on the same idea, which is the whole of the lesson.
+  PRACTICAL FORM: when the entry premise is "nobody is seated", name the window
+  before entering. There is no trapped inventory to force your move, so the
+  trade has to be carried by momentum ALREADY present, and a stall is the exit
+  rather than something to wait through. If the move has not started, the
+  premise has not failed -- but the trade has, and those are different things.
 - A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e). The single
   most expensive error available in this method, recorded from a LOSING IH session
   (11 Aug 2026) so it is not learned the hard way. He stated the disqualifying fact

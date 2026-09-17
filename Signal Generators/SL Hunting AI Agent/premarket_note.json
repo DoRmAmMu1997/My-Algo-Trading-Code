@@ -1,31 +1,30 @@
 {
-  "for_date": "2026-09-17",
-  "source": "Intraday Hunter, 'Prediction For 17 SEP 2026' (SQIo4PisLw0, uploaded 2026-09-16)",
-  "context": "Today's selling broke down and then RECOVERED, without crossing the higher point or the round number. The session therefore leaves one question open -- which side it trapped -- and SENSEX has its expiry tomorrow.",
+  "for_date": "2026-09-18",
+  "source": "Intraday Hunter, 'Prediction For 18 SEP 2026' (I7gORF7zm4o, uploaded 2026-09-17)",
+  "context": "Today's momentum turned positive but printed a REJECTION on top of it, after a retracement. The market has been negative for many days, so sellers MAY now be seated -- and only a gap up would prove it.",
   "plan": [
-    "SAME CONDITIONAL SHAPE AS YESTERDAY, DIFFERENT REASON: gap up -> BUY, flat or gap down -> SELL, stated for all three indices. The question underneath is WHICH crowd today trapped, and the open is what answers it.",
-    "FLAT OR GAP DOWN -> SELL, because the sellers were only TRAPPED and never seated: 'seeing the retracement, who comes here? SELLERS come. But because the market stays SIDEWAYS they leave again' -- so no seller crowd is left to squeeze.",
-    "GAP UP -> BUY, the tell is what price did NOT do: 'it did not cross the round number, it did not cross its high point', so 'maybe some good trader slowly bought here and other people could not buy'. That thin long inventory is the target.",
-    "THE UNCROSSED HIGH IS WHY RETAIL IS ABSENT: 'because the higher point was not crossed, retail did not do much work'. Only a deliberate buyer may be seated, never a crowd, which is why the buy branch needs the gap up to confirm one exists.",
-    "SENSEX EXPIRES TOMORROW, flagged twice -- in his opening line and again at its levels. That is context for the triple-index read, not a premise of its own."
+    "THIRD DAY RUNNING ON THE SAME CONDITIONAL SHAPE: gap up -> BUY, flat or gap down -> SELL, for all three indices. What changes each day is the REASON, and today it is whether a multi-day negative run has finally seated sellers.",
+    "FLAT OR GAP DOWN -> SELL, going WITH the market. On NIFTY he gives that branch its premise outright -- 'sellers are not much seated here' -- so there is nobody to squeeze and the plan is simply to follow the selling.",
+    "GAP UP -> BUY, and only a gap up makes those sellers real: 'because the market has been negative for many days, there COULD be sellers here, so in a gap-up case they can be targeted'. Absent the gap they stay hypothetical.",
+    "TODAY'S SHAPE IS RETRACEMENT THEN REJECTION -- 'momentum turned positive but a rejection also formed' -- which is exactly why the seated question is left OPEN for the open to answer rather than settled in advance."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23420,
-        23280
+        23500,
+        23360
       ],
       "support": [
-        23110,
+        23100,
         23000
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56300,
-        56650
+        56650,
+        56300
       ],
       "support": [
         55810,
@@ -35,8 +34,8 @@
     {
       "index": "SENSEX",
       "resistance": [
-        75000,
-        74500
+        75200,
+        74700
       ],
       "support": [
         74000,

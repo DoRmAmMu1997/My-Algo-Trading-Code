@@ -7364,3 +7364,113 @@ Negative-tested 7 ways, all 7 caught, plus a control mutation of an unasserted
 comment that correctly did not trip the tests. The two mutations that matter
 most are both caught: removing the bounce entirely, and never disarming (which
 would strand a position by refusing the second attempt as well).
+## v5g - an eviction leaves you in the same sideways stretch (17 Sep)
+
+Source: `ICw5RD1xTVg`, "Live Bank Nifty Option Trading", uploaded 2026-09-17
+10:08 IST. Compared against the agent's own session: two trades, both SHORT,
+basket **+Rs.11,355.00**.
+
+### First, the part that worked
+
+This was the first live session with the 17 Sep pre-open note, SLH-017 and
+SLH-018 all active, and **SLH-017 did exactly what it was built for**. Both
+entry rationales read the computed verdict off the tool and stated it:
+
+- 09:39 - "Open classified FLAT on both NIFTY (-0.096%) and BankNIFTY
+  (-0.295%), triggering the pre-open note's FLAT-open SELL branch"
+- 10:18 - "Flat open (NIFTY -0.10%, BankNIFTY -0.30%, both below the 0.5%
+  threshold) matches the pre-open note's SELL branch"
+
+Yesterday the model computed 0.36% by hand and called it a gap-up, taking the
+wrong branch four times. Today it was handed FLAT, cited the threshold, and
+took the branch the note prescribed. SLH-018 never fired - no reasonless exit
+arrived - which is the correct behaviour for a guard.
+
+**IH reached the same read and took the same side**, and his reasoning is the
+note's flat branch almost verbatim: "when the market moves UP and does not
+cross the round number, sellers gradually come there too. But the market keeps
+HOLDING in one place... even if someone made a trade, they do not hold a
+positional trade. So if sellers are not seated here, we got a flat to slightly
+gap-down open... Overall we should get selling."
+
+### Then the part worth encoding: he LOST and the book WON on it
+
+He entered at the open and held. NIFTY chopped between roughly 23,217 and
+23,305 all morning, broke that range near noon, and ran to 23,358.70 by 12:38.
+BankNIFTY broke out, his loss limit was exhausted, and he cut - "there is no
+need to apply the brain here, cut the trade and get out."
+
+The book traded the same thesis in two BOUNDED windows:
+
+| | entry | exit | basket |
+|---|---|---|---|
+| 1 | SHORT 23,282.75 at 09:39 | 09:43, booked into the stall at support | +2,820.00 |
+| 2 | SHORT 23,302.90 at 10:18 | 11:00 TIME_CUTOFF | +8,535.00 |
+
+The read was right for about ninety minutes and wrong afterwards.
+
+**The net-new claim is the reflexive one, and it is the missing half of v5b.**
+v5b reads an eviction and licenses a FOLLOW rather than a hunt. What that
+follow inherits is that nobody is trapped, so nothing is forced to move - and
+the reasoning that clears the crowd ("if someone made a put trade and the
+market gave no momentum for three or four hours, his premium decays and he
+will not hold") is a description of the conditions you are about to enter, on
+the same clock, paying the same decay. The eviction argument is evidence about
+the PAST; it promises nothing about the next hour.
+
+Encoded as **A CROWD EVICTED BY A SIDEWAYS STRETCH LEAVES YOU IN THE SAME
+SIDEWAYS STRETCH (v5g)**, placed after the WHOLE v5c block rather than beside
+v5b, because v5c opens "The twin of the rule above" and that reference points
+at v5b - inserting between them would have silently re-aimed it. (The same
+class of mistake as splitting v4t from its v4u sub-bullet the day before.)
+
+### The honesty clause is part of the rule, not commentary
+
+Trade 2's exit was NOT a decision. The agent had been failing every bar since
+10:42 - 19 `agent_error` rows, a canned `SLHuntingAgentError` per bar for the
+last eighteen minutes - and the position was closed by the 11:00 cutoff. What
+won was the BOX, not the judgement: a time-boxed book beat an open-ended one on
+the same idea. The rule says so in its own text, and a mutation that removes
+that sentence is caught, because without it the day reads as the agent
+out-trading him, which is false and flattering.
+
+Worth noting plainly: the 11:00 cutoff is the operator's Pro-plan constraint,
+not a trading rule, and today it booked the second short within about six
+points of the session's post-entry low before a reversal that ran 140 points
+the other way. That is the constraint earning its keep by accident, and it is
+exactly why the rule asks for the window to be named DELIBERATELY.
+
+Negative-tested 11 ways, all 11 caught, plus a control mutation of unasserted
+prose that correctly did not trip the test.
+
+**Considered and not encoded.** His long emotion/rule-discipline passage - "the
+more you think about things, the more your decisions will be wrong", "the
+easiest way to control emotion is to follow the rule" - is the third session
+running to make that point and is already carried by v3y BEING DIRECTIONALLY
+RIGHT DOES NOT EARN THE HOLD plus the RISK section's loss-limit rules. His
+"if the loss limit is exhausted there is no need to apply the brain" is v5c's
+WHAT IT DOES NOT SAY clause stated from the other side.
+
+**Confirmed, not open.** The 18-minute outage from 10:42 was the Pro plan's
+5-hour usage window expiring - confirmed by the operator the same evening.
+Nothing is broken, and no code change is wanted.
+
+What it adds to the existing constraint is a NUMBER. The 11:00 cutoff is sized
+to that plan window, but the window does not END at 11:00: today it ran out at
+about 10:42, roughly eighteen minutes early. So **the agent can go dark before
+its own cutoff**, and anything open in that gap is unmanaged - no premise
+check, no agent exit, nothing but the host's mechanical risk (stop, target,
+max-loss, 15:15 square-off) and then the cutoff flatten.
+
+Today that gap was worth +8,535, because the cutoff happened to book the
+second short about six points off the session's post-entry low, minutes before
+a reversal that ran 140 points the other way. That is luck, not design, and it
+could as easily run the other way on a day the position is offside. The answer
+already in this book is v5g's PRACTICAL FORM - name the window before
+entering - which is worth more here than any new guard, because a position
+sized and reasoned for a window that ends at 11:00 is really operating on one
+that can end at 10:40.
+
+NOTE FOR NEXT TIME: the cause is not recoverable from the log. SLH-004 logs
+this class with CANNED, content-free messages on purpose, so a future outage
+of the same shape will again need the operator to say which it was.
