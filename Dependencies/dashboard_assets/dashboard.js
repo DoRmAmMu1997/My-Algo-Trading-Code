@@ -58,6 +58,7 @@
     vwapFootnote: el("vwap-footnote"),
     tf1: el("tf-1"),
     tf5: el("tf-5"),
+    tfD: el("tf-d"),
   };
 
   let etag = null;
@@ -81,7 +82,14 @@
    * the timeframe toggle redraws from memory instead of issuing a request
    * that could fail and leave a blank chart. */
   let chartPayload = null;
-  let cprLines = [];
+  /* The per-day and per-month CPR ladders, fetched once. Each entry is one
+   * band: a time span and the levels that belong to it. */
+  let cprLadders = null;
+  let cprLaddersInFlight = false;
+  /* Series handles, NOT price-line handles. A price line in this library is
+   * full chart width by definition -- that is the API, not a style -- so a band
+   * that stops at the end of its own day has to be a LineSeries. */
+  let cprSeries = [];
   let cprSignature = null;
   /* Which timeframe the series currently hold. Switching changes both the bar
    * spacing and the span, so the visible range has to be refit -- but ONLY
@@ -91,6 +99,41 @@
   /* Set whenever the visible range needs refitting, cleared once a fit has
    * actually landed. See `requestFit`. */
   let pendingFit = false;
+
+  /* ------------------------------------------------------------- history */
+  /* Years of candles, fetched a page at a time as the operator scrolls back
+   * and kept for the session. Page 0 is the NEWEST slice, so scrolling left
+   * just asks for the next number.
+   *
+   * These are held SEPARATELY from `chartPayload`, which is replaced wholesale
+   * every time a minute closes. Merging them at draw time is what stops that
+   * once-a-minute refresh from throwing away everything scrolled back to. */
+  const historyBars = { "1": [], "5": [], "D": [] };
+  /* Indicator columns that came WITH the history pages, kept the same length as
+   * `historyBars` so a slice of one lines up with a slice of the other. Only
+   * the Daily series carries any: its stochastic is computed on daily candles,
+   * which is a different statement from the live payload's minute one. */
+  const historyCols = { "1": {}, "5": {}, "D": {} };
+  const historyNextPage = { "1": 0, "5": 0, "D": 0 };
+  const historyExhausted = { "1": false, "5": false, "D": false };
+  let historyInFlight = false;
+  /* How many bars the series currently hold, so a prepend can work out how far
+   * the logical indices moved and put the viewport back where it was. */
+  let renderedBarCount = 0;
+  /* Start fetching while this many bars are still to the left of the viewport,
+   * so the next page is usually there before the operator reaches it. */
+  const HISTORY_PREFETCH_BARS = 200;
+  /* One `/api/chart` request at a time. It is fired without `await` from the
+   * poll loop, so back-to-back polls could otherwise put two in the air. */
+  let chartFetchInFlight = false;
+  /* The bars the chart currently holds. Kept so a CPR checkbox can redraw the
+   * levels alone instead of re-uploading every candle. */
+  let lastMergedBars = [];
+  /* When history was first asked for and refused. A 404 before any page has
+   * loaded means "still building" -- but only for so long; after this the
+   * answer is simply that there is none. */
+  let historyFirstRefusalAt = 0;
+  const HISTORY_GIVE_UP_MS = 5 * 60 * 1000;
 
   /* ------------------------------------------------------------ formatting */
   const DASH = '<span class="dash">—</span>';
@@ -423,6 +466,15 @@
     } catch (error) {
       /* No ResizeObserver: the per-render retry below still covers it. */
     }
+
+    /* Scrolling left past the start of what is loaded fetches the next older
+     * page. `from` is a LOGICAL index and goes negative once the operator
+     * scrolls past the first bar, so the test is "close to, or past, the left
+     * edge" rather than a positive threshold. */
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range) return;
+      if (range.from <= HISTORY_PREFETCH_BARS) loadNextHistoryPage();
+    });
   }
 
   function requestFit() {
@@ -466,44 +518,243 @@
     return points;
   }
 
-  function renderCprLines(cpr) {
-    if (!candleSeries) return;
-    /* EVERY group pref belongs in here. One left out means ticking its box
-     * updates the pref and then this function early-returns on an unchanged
-     * signature, so the line never appears and the bug looks like the box
-     * doing nothing. */
+  /* History and the live window, spliced into one strictly ascending array.
+   *
+   * lightweight-charts DROPS bars silently when times are not strictly
+   * ascending, so the seam matters: the live block and the newest history page
+   * overlap, and the live copy wins because it is the one that keeps updating.
+   */
+  /* The CPR ladders, fetched once and kept. They are static: the server
+   * renders them when it loads history and they never change after that. */
+  async function ensureCprLadders() {
+    if (cprLadders || cprLaddersInFlight) return;
+    cprLaddersInFlight = true;
+    try {
+      const response = await fetch("/api/history?tf=cpr&page=0", { cache: "no-store" });
+      if (!response.ok) return;          /* no history: today's band still draws */
+      cprLadders = await response.json();
+      if (chartPayload) applyTimeframe();
+    } catch (error) {
+      /* Without them the chart shows today's band alone, which is what it did
+       * before per-day CPR existed. The next redraw tries again. */
+    } finally {
+      cprLaddersInFlight = false;
+    }
+  }
+
+  function historyCut(liveBars) {
+    const history = historyBars[prefs.tf] || [];
+    if (!liveBars.length) return history.length;
+    const firstLive = liveBars[0].time;
+    let cut = history.length;
+    while (cut > 0 && history[cut - 1].time >= firstLive) cut -= 1;
+    return cut;
+  }
+
+  function mergedBars(liveBars, cut) {
+    const history = historyBars[prefs.tf] || [];
+    if (!history.length) return liveBars;
+    return history.slice(0, cut).concat(liveBars);
+  }
+
+  /* One indicator column over the merged series: the stored part where history
+   * carried it, then the live part. */
+  function mergedColumn(name, liveValues, cut) {
+    const history = historyBars[prefs.tf] || [];
+    const stored = (historyCols[prefs.tf] || {})[name] || new Array(history.length).fill(null);
+    return stored.slice(0, cut).concat(liveValues || []);
+  }
+
+  /* Today, as ONE daily candle, folded out of the live minute bars.
+   *
+   * The runner's store holds minutes, so the Daily timeframe would otherwise
+   * stop at yesterday -- the history CSV is only as fresh as the last download.
+   * Stamped at 09:15 of the session exactly as the server stamps its own daily
+   * bars, so today lands on the same grid instead of a slot of its own. */
+  function dailyLiveBars() {
+    const minute = chartPayload && chartPayload.timeframes && chartPayload.timeframes["1"];
+    const bars = (minute && minute.bars) || [];
+    if (!bars.length) return [];
+    const lastDay = Math.floor(bars[bars.length - 1].time / 86400);
+    let start = bars.length - 1;
+    while (start > 0 && Math.floor(bars[start - 1].time / 86400) === lastDay) start -= 1;
+    const session = bars.slice(start);
+    const sessionOpen = lastDay * 86400 + 9 * 3600 + 15 * 60;
+
+    if (session[0].time > sessionOpen) {
+      /* The live window does not reach the open -- the runner was started
+       * mid-session, which this system explicitly supports. Its open, high and
+       * low then describe PART of the day while being stamped as the whole of
+       * it, and because the stamp collides with history's own bar for today the
+       * partial one would REPLACE the complete one rather than lose to it.
+       * History's bar wins when there is one; when there is not, a partial bar
+       * still beats today missing from the timeframe entirely. */
+      const stored = historyBars["D"] || [];
+      if (stored.length && stored[stored.length - 1].time === sessionOpen) return [];
+    }
+
+    let high = session[0].high;
+    let low = session[0].low;
+    for (const bar of session) {
+      if (bar.high > high) high = bar.high;
+      if (bar.low < low) low = bar.low;
+    }
+    return [{
+      time: sessionOpen,
+      open: session[0].open,
+      high,
+      low,
+      close: session[session.length - 1].close,
+    }];
+  }
+
+  /* Which bands belong on the chart right now.
+   *
+   * Two rules, and both matter. The ladder follows the timeframe: minutes get
+   * the DAILY bands, the Daily timeframe gets the MONTHLY ones, because a daily
+   * band on a daily candle is one bar wide and says nothing.
+   *
+   * And bands are clipped to the bars actually loaded. Every series shares one
+   * time scale built from the UNION of their times, so handing over five years
+   * of bands while only a week of candles is loaded would stretch the scale
+   * across five years of empty chart. */
+  function cprBandsForView(bars) {
+    if (!bars.length) return [];
+    const monthly = prefs.tf === "D";
+    const ladder = (cprLadders && (monthly ? cprLadders.month : cprLadders.day)) || [];
+    const leftEdge = bars[0].time;
+    const rightEdge = bars[bars.length - 1].time;
+
+    /* Where today starts, so the live band covers exactly today and the stored
+     * ones stop before it. Bar times are IST wall-clock labelled UTC, so a
+     * plain division by a day lands on the session date. */
+    const lastDay = Math.floor(rightEdge / 86400);
+    let todayFrom = bars.length - 1;
+    while (todayFrom > 0 && Math.floor(bars[todayFrom - 1].time / 86400) === lastDay) {
+      todayFrom -= 1;
+    }
+    const todayStart = bars[todayFrom].time;
+
+    /* `band.to < todayStart` exists ONLY to clear the way for the live band
+     * pushed below, and there is no live band on the monthly ladder. Applying it
+     * there dropped the CURRENT month every time: each daily bar is its own day,
+     * so `todayStart` is simply the last bar, which is exactly where the newest
+     * month band ends. The chart then showed last month's levels while the
+     * caption named this month's -- 24167.97 drawn against 24282.77 captioned. */
+    const bands = ladder.filter(
+      (band) => band.to >= leftEdge
+        && band.from <= rightEdge
+        && (monthly || band.to < todayStart),
+    );
+
+    /* Today's band comes from the LIVE payload, never the stored ladder: the
+     * history CSV can be days old, and today is the one the operator is
+     * trading. On the Daily timeframe the monthly ladder already covers the
+     * current month, so there is nothing to add. */
+    const live = chartPayload && chartPayload.cpr;
+    if (!monthly && live && live.available) {
+      bands.push({ from: todayStart, to: rightEdge, levels: live });
+    }
+    return bands;
+  }
+
+  /* The month band the Daily caption describes, plus the month its numbers
+   * came FROM -- which is the month before it, and the thing worth naming. */
+  function newestMonthBand() {
+    const ladder = (cprLadders && cprLadders.month) || [];
+    if (!ladder.length) return { levels: null };
+    const band = ladder[ladder.length - 1];
+    const previous = ladder.length > 1 ? ladder[ladder.length - 2].month : null;
+    return { levels: band.levels, previous: previous || "" };
+  }
+
+  function renderCprLines(bars) {
+    if (!chart || !candleSeries) return;
+    const bands = cprBandsForView(bars || []);
+
+    /* EVERY group pref belongs in this signature. One left out means ticking
+     * its box updates the pref and then this function early-returns on an
+     * unchanged signature, so the band never appears and the bug looks like the
+     * box doing nothing.
+     *
+     * Keying on a single pivot is no longer enough either, now that there are
+     * hundreds of bands: the set is identified by its extent and its newest
+     * pivot, so a new session, a newly loaded page and a timeframe switch each
+     * change it. */
+    const newest = bands.length ? bands[bands.length - 1] : null;
     const signature = JSON.stringify([
-      cpr && cpr.available ? cpr.pivot : null,
+      prefs.tf === "D" ? "month" : "day",
+      bands.length,
+      bands.length ? bands[0].from : null,
+      newest ? newest.to : null,
+      newest ? newest.levels.pivot : null,
       prefs.cpr, prefs.cprPD, prefs.cprRS1, prefs.cprRS3,
     ]);
     if (signature === cprSignature) return;
     cprSignature = signature;
 
-    for (const handle of cprLines) candleSeries.removePriceLine(handle);
-    cprLines = [];
-    if (!cpr || !cpr.available || !prefs.cpr) return;
+    for (const handle of cprSeries) chart.removeSeries(handle);
+    cprSeries = [];
+    if (!bands.length || !prefs.cpr) return;
+
+    /* A whitespace point -- a time with no value -- is what BREAKS the line
+     * between one day's band and the next. Without it the series would draw a
+     * diagonal from yesterday's pivot to today's, straight across the gap.
+     * One second past the band's end, so it cannot collide with a real bar. */
+    const gap = 1;
 
     for (const level of CPR_LEVELS) {
       const on = level.group === "core"
         || (level.group === "pd" && prefs.cprPD)
         || (level.group === "rs1" && prefs.cprRS1)
         || (level.group === "rs3" && prefs.cprRS3);
-      const price = cpr[level.key];
-      if (!on || price === null || price === undefined) continue;
-      cprLines.push(candleSeries.createPriceLine({
-        price,
+      if (!on) continue;
+
+      const points = [];
+      for (const band of bands) {
+        const price = band.levels[level.key];
+        if (price === null || price === undefined) continue;
+        points.push({ time: band.from, value: price });
+        if (band.to > band.from) points.push({ time: band.to, value: price });
+        points.push({ time: band.to + gap });
+      }
+      if (!points.length) continue;
+
+      const series = chart.addSeries(LightweightCharts.LineSeries, {
         color: level.color,
         lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Solid,
-        axisLabelVisible: true,
-        /* The "(chart)" suffix travels with a screenshot of just the chart,
-         * where none of the page's other captions would. */
+        priceLineVisible: false,
+        /* The last value still gets an axis label, and `title` puts the level's
+         * NAME beside it -- so the "(chart)" caveat still travels with a
+         * screenshot of just the chart, as it did when these were price lines
+         * and none of the page's other captions would. */
+        lastValueVisible: true,
         title: `${level.title} (chart)`,
-      }));
+      }, 0);
+      series.setData(points);
+      cprSeries.push(series);
     }
   }
 
-  function renderCprProvenance(cpr) {
+  function renderCprProvenance(cpr, monthly) {
+    /* On the Daily timeframe the bands are MONTHLY, so the daily payload's
+     * caption would describe a session nobody is looking at. Describe the month
+     * band instead, from its own numbers. */
+    if (monthly) {
+      if (!monthly.levels) {
+        nodes.cprProvenance.hidden = true;
+        return;
+      }
+      const levels = monthly.levels;
+      nodes.cprProvenance.textContent = [
+        `Prior month ${monthly.previous || ""}`.trim(),
+        `H ${levels.prev_high} L ${levels.prev_low}`,
+        `pivot ${levels.pivot} (chart)`,
+        "sessions truncated at 15:15",
+      ].join(" · ");
+      nodes.cprProvenance.hidden = false;
+      return;
+    }
     if (!cpr || !cpr.available) {
       nodes.cprProvenance.hidden = false;
       nodes.cprProvenance.textContent = cpr && cpr.unavailable_reason
@@ -532,13 +783,36 @@
 
   function applyTimeframe() {
     if (!chartPayload || !candleSeries) return;
-    const block = chartPayload.timeframes[prefs.tf] || chartPayload.timeframes["1"];
+    /* The runner publishes minute timeframes only. The Daily series is
+     * history plus today folded out of the live minutes, so it has a block of
+     * its own rather than one from the payload. */
+    const daily = prefs.tf === "D";
+    const block = daily
+      ? { minutes: 0, bars: [], vwap: [], stoch_k: [], stoch_d: [] }
+      : (chartPayload.timeframes[prefs.tf] || chartPayload.timeframes["1"]);
     if (!block) return;
 
-    candleSeries.setData(block.bars || []);
-    vwapSeries.setData(pointsFrom(block.bars || [], block.vwap));
-    kSeries.setData(pointsFrom(block.bars || [], block.stoch_k));
-    dSeries.setData(pointsFrom(block.bars || [], block.stoch_d));
+    const live = daily ? dailyLiveBars() : (block.bars || []);
+    const cut = historyCut(live);
+    const bars = mergedBars(live, cut);
+    candleSeries.setData(bars);
+    renderedBarCount = bars.length;
+    lastMergedBars = bars;
+
+    /* On the minute timeframes the indicator columns cover the LIVE window
+     * alone -- history pages carry candles and nothing else, because VWAP and a
+     * minute stochastic are statements about the session being traded. On Daily
+     * the stochastic comes the other way round, out of the history pages, since
+     * it is computed on daily candles. Either way the arrays are index-aligned
+     * with the bars they were sliced beside. */
+    vwapSeries.setData(pointsFrom(bars, mergedColumn("vwap", block.vwap, cut)));
+    kSeries.setData(pointsFrom(bars, mergedColumn("stoch_k", block.stoch_k, cut)));
+    dSeries.setData(pointsFrom(bars, mergedColumn("stoch_d", block.stoch_d, cut)));
+
+    /* A session VWAP has no meaning on a daily candle, so it is hidden rather
+     * than drawn as a line that looks like it means something. */
+    vwapSeries.applyOptions({ visible: prefs.vwap && !daily });
+    nodes.vwapLabel.classList.toggle("disabled", daily);
 
     if (renderedTimeframe !== prefs.tf) {
       renderedTimeframe = prefs.tf;
@@ -555,24 +829,137 @@
     }
 
     const minutes = block.minutes || 1;
-    nodes.chartTitle.textContent =
-      `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
-      + `${(chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15"} (chart only)`;
-    renderCprLines(chartPayload.cpr);
-    renderCprProvenance(chartPayload.cpr);
+    const window = (chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15";
+    nodes.chartTitle.textContent = daily
+      ? "NIFTY · daily · CPR from the prior MONTH (chart only)"
+      : `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
+        + `${window} (chart only)`;
+    renderCprLines(bars);
+    renderCprProvenance(chartPayload.cpr, daily ? newestMonthBand() : null);
+    ensureCprLadders();
 
     const vwapMeta = (chartPayload.indicators || {}).vwap || {};
     nodes.vwapLabel.title = vwapMeta.note || "";
     nodes.vwapFootnote.hidden = vwapMeta.is_proxy === false;
+
+    /* Fetch the first page outright rather than waiting for a range event to
+     * say the viewport is near the left edge.
+     *
+     * That event only lands if a FIT has landed, and `applyPendingFit` refuses
+     * to fit a zero-width container -- which is the state a chart can sit in
+     * indefinitely, because the ResizeObserver meant to catch the layout has
+     * been measured NOT firing in some panes. Waiting on it meant a chart that
+     * silently never loaded any history at all. The re-entrant call is stopped
+     * by `historyInFlight`, and by history existing once a page has landed. */
+    if (!(historyBars[prefs.tf] || []).length && !historyExhausted[prefs.tf]) {
+      loadNextHistoryPage();
+    }
+  }
+
+  /* Redraw after prepending history, WITHOUT moving what the operator is
+   * looking at.
+   *
+   * `fitContent` is deliberately not used here. It is the only fit call site
+   * and it exists for timeframe switches; firing it on a prepend would yank
+   * the viewport back to the whole series every time a page arrived, which is
+   * the opposite of what scrolling back is for. Prepending N bars shifts every
+   * logical index by N, so the range is simply moved by the same N. */
+  function redrawKeepingViewport() {
+    const scale = chart ? chart.timeScale() : null;
+    const before = scale ? scale.getVisibleLogicalRange() : null;
+    const previousCount = renderedBarCount;
+    applyTimeframe();
+    const added = renderedBarCount - previousCount;
+    if (scale && before && added > 0) {
+      scale.setVisibleLogicalRange({ from: before.from + added, to: before.to + added });
+    }
+    return added;
+  }
+
+  /* Fetch the next older page for the CURRENT timeframe.
+   *
+   * A 404 means there is nothing older -- the server answers that way whether
+   * history was never loaded or the operator has reached the start of it -- so
+   * the timeframe is marked exhausted and stops asking. */
+  async function loadNextHistoryPage() {
+    const timeframe = prefs.tf;
+    if (historyInFlight || historyExhausted[timeframe]) return;
+    historyInFlight = true;
+    try {
+      const page = historyNextPage[timeframe];
+      const response = await fetch(
+        `/api/history?tf=${encodeURIComponent(timeframe)}&page=${page}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        /* A 404 has two meanings and they must not be confused. Once a page has
+         * loaded it means the operator has reached the start of history, and
+         * asking again is pointless. BEFORE that it means the server is still
+         * building -- measured at 29.5 seconds on the five-year file -- and
+         * treating it as exhausted would disable scroll-back for the whole
+         * session over a few seconds of startup. */
+        if (!historyFirstRefusalAt) historyFirstRefusalAt = Date.now();
+        const loaded = (historyBars[timeframe] || []).length;
+        const waitedOutTheBuild = Date.now() - historyFirstRefusalAt > HISTORY_GIVE_UP_MS;
+        /* Bounded by TIME, not by a retry count: `applyTimeframe` can fire
+         * several times in the first second -- boot, a checkbox, the first
+         * chart render -- and a count would be spent before the server has
+         * finished building. Five minutes comfortably covers the 29.5s measured
+         * on the five-year file, and then stops asking every minute forever for
+         * history that is simply not there. */
+        if (loaded || waitedOutTheBuild) historyExhausted[timeframe] = true;
+        return;
+      }
+      const doc = await response.json();
+      const bars = doc.bars || [];
+      if (!bars.length) {
+        historyExhausted[timeframe] = true;
+        return;
+      }
+      historyBars[timeframe] = bars.concat(historyBars[timeframe] || []);
+      for (const name of ["stoch_k", "stoch_d"]) {
+        /* A page without the column still contributes its LENGTH, as nulls, so
+         * the arrays stay index-aligned with the bars either way. */
+        const incoming = doc[name] || new Array(bars.length).fill(null);
+        const columns = historyCols[timeframe];
+        columns[name] = incoming.concat(columns[name] || []);
+      }
+      historyNextPage[timeframe] = page + 1;
+      if (doc.pages && historyNextPage[timeframe] >= doc.pages) {
+        historyExhausted[timeframe] = true;
+      }
+      /* Only redraw if the operator has not switched timeframe while this was
+       * in the air; otherwise the bars belong to a chart nobody is looking at. */
+      const added = prefs.tf === timeframe ? redrawKeepingViewport() : 0;
+
+      if (!added && !historyExhausted[timeframe]) {
+        /* Every bar in that page was already inside the live window, so the
+         * merge dropped all of it: the chart gained nothing and the viewport
+         * did not move, which means NO range event will arrive to ask for the
+         * next page. Without this the scroll-back would simply stop.
+         *
+         * It happens whenever a page is shorter than the live window -- not at
+         * the shipped sizes (2,000 against 375) but `DASHBOARD_CHART_BARS` goes
+         * up to 2,200, which would silently break it. Deferred rather than
+         * recursive so `historyInFlight` has been cleared first; it ends as
+         * soon as one page reaches back past the live window, or at the 404. */
+        setTimeout(loadNextHistoryPage, 0);
+      }
+    } catch (error) {
+      /* A failed page costs the scroll-back, never the chart. The next scroll
+       * tries again; the timeframe is deliberately NOT marked exhausted. */
+    } finally {
+      historyInFlight = false;
+    }
   }
 
   function setTimeframe(value) {
     prefs.tf = value;
     savePrefs();
-    nodes.tf1.classList.toggle("active", value === "1");
-    nodes.tf5.classList.toggle("active", value === "5");
-    nodes.tf1.setAttribute("aria-pressed", String(value === "1"));
-    nodes.tf5.setAttribute("aria-pressed", String(value === "5"));
+    for (const [button, key] of [[nodes.tf1, "1"], [nodes.tf5, "5"], [nodes.tfD, "D"]]) {
+      button.classList.toggle("active", value === key);
+      button.setAttribute("aria-pressed", String(value === key));
+    }
     /* Switching redraws from the payload the browser ALREADY holds: no fetch,
      * so the toggle has no way to fail. */
     applyTimeframe();
@@ -591,17 +978,26 @@
      * times a session rather than once per poll. In between, the forming
      * candle is updated in place, which is what makes the chart move
      * tick-by-tick under MARKET_DATA_SOURCE=WEBSOCKET for a few hundred bytes. */
-    if (info.series_version !== seriesVersion) {
+    if (info.series_version !== seriesVersion && !chartFetchInFlight) {
+      /* Guarded: this runs from `render`, which the poll loop calls WITHOUT
+       * awaiting, so two polls landing close together could otherwise put two
+       * requests in the air for the same version. */
+      chartFetchInFlight = true;
       try {
         const response = await fetch("/api/chart", { cache: "no-store" });
         if (response.ok) {
           chartPayload = await response.json();
           seriesVersion = info.series_version;
-          applyTimeframe();
+          /* Keeping the viewport, not refitting: by now the operator may have
+           * scrolled back through years of history, and a minute closing must
+           * not drag them back to today. */
+          redrawKeepingViewport();
         }
       } catch (error) {
         /* Leave the previous series on screen; the next poll retries. */
         return;
+      } finally {
+        chartFetchInFlight = false;
       }
     }
 
@@ -720,6 +1116,7 @@
    * toggling never costs a redraw of the series it keeps. */
   nodes.tf1.addEventListener("click", () => setTimeframe("1"));
   nodes.tf5.addEventListener("click", () => setTimeframe("5"));
+  nodes.tfD.addEventListener("click", () => setTimeframe("D"));
 
   for (const [id, key] of [
     ["ind-cpr", "cpr"], ["ind-cpr-pd", "cprPD"],
@@ -733,10 +1130,14 @@
       savePrefs();
       if (key === "vwap" && vwapSeries) vwapSeries.applyOptions({ visible: prefs.vwap });
       else if (key === "stoch") applyStochVisibility();
-      else if (chartPayload) renderCprLines(chartPayload.cpr);
+      /* Only the CPR series change, so only those are redrawn. Going through
+       * `applyTimeframe` here re-uploaded every candle, VWAP point and
+       * stochastic point -- hundreds of thousands of bars once the operator has
+       * scrolled back -- for a toggle that touches none of them. */
+      else if (chartPayload) renderCprLines(lastMergedBars);
     });
   }
-  setTimeframe(prefs.tf === "5" ? "5" : "1");
+  setTimeframe(["1", "5", "D"].includes(prefs.tf) ? prefs.tf : "1");
 
   document.addEventListener("visibilitychange", () => {
     /* Bring the NEXT poll forward rather than starting a second loop. */

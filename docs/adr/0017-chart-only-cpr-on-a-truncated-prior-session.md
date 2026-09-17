@@ -59,6 +59,28 @@ than be warned one exists.
 
 The operator chose one consistent window over textbook CPR.
 
+## Amendment: one band per day, and a monthly ladder on Daily
+
+The decision above is unchanged -- the window, the chart-only divergence and
+the test that proves the algebra has not forked all still hold. What changed is
+how many bands are drawn and how far each one reaches.
+
+The chart originally drew ONE CPR across the whole of history, because it drew
+it with `createPriceLine` and a price line is full chart width by definition.
+That is wrong in the same way a single day's levels applied to last month would
+be wrong: the levels are a statement about ONE session. Each level is now a
+LineSeries carrying two points per band plus a whitespace point -- a time with
+no value -- to break the line before the next day.
+
+The Daily timeframe takes a **monthly** ladder instead, each month's levels
+from the month before it. A daily band on a daily candle is one bar wide and
+says nothing. The truncation rule carries over unchanged: a month's close is
+the close of its last session at 15:15, for the same reason a day's is.
+
+Today's band always comes from the LIVE payload rather than the stored ladder,
+because the history CSV is only as fresh as the last download and today is the
+day being traded.
+
 ## Options considered
 
 | Option | Verdict |

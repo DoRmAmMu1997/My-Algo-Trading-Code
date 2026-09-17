@@ -43,9 +43,19 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 #: Loopback only. Deliberately NOT configurable -- see the module docstring.
 DASHBOARD_BIND_HOST = "127.0.0.1"
+
+#: Series `/api/history` will answer for: the three timeframes, plus the CPR
+#: ladders, which are the same kind of thing -- static chart data, rendered once
+#: and handed out as bytes.
+#:
+#: A frozen set rather than "whatever the store happens to hold": this is the
+#: ONLY endpoint that takes input from the request, so what it accepts is
+#: written down rather than inferred from state that could change.
+HISTORY_SERIES = frozenset({"1", "5", "D", "cpr"})
 
 #: Where the page's own files live. Read into memory once at start.
 ASSETS_DIR = Path(__file__).resolve().parent / "dashboard_assets"
@@ -155,6 +165,11 @@ class DashboardPublisher:
         # candle alone (~120 bytes) instead of the whole session's history.
         self._chart_payload: bytes = b""
         self._chart_etag: str = ""
+        # Years of history, already cut into pages and rendered ONCE at startup.
+        # Immutable for the life of the process, so request threads only ever
+        # read it -- the same "hand out finished bytes" contract as the other
+        # two slots, just filled once instead of every cycle.
+        self._history: dict[str, bytes] = {}
         self._lock = threading.Lock()
 
     def publish(self, payload: bytes, etag: str, generated_at: str = "") -> None:
@@ -175,6 +190,18 @@ class DashboardPublisher:
     def current_chart(self) -> tuple[bytes, str]:
         with self._lock:
             return self._chart_payload, self._chart_etag
+
+    def publish_history(self, pages: Mapping[str, bytes]) -> None:
+        """Install the rendered history pages. Called once, from the builder."""
+
+        with self._lock:
+            self._history = dict(pages)
+
+    def current_history(self, key: str) -> bytes:
+        """One rendered page, or empty bytes when there is no such page."""
+
+        with self._lock:
+            return self._history.get(key, b"")
 
     @property
     def generated_at(self) -> str:
@@ -202,12 +229,14 @@ class DashboardBuilderThread(threading.Thread):
         refresh_seconds: float,
         log: logging.Logger,
         chart_builder: Callable[[], Mapping[str, Any]] | None = None,
+        history_builder: Callable[[], Mapping[str, bytes]] | None = None,
     ) -> None:
         super().__init__(name="DashboardBuilder", daemon=True)
         self._builder = builder
         self._renderer = renderer
         self._publisher = publisher
         self._chart_builder = chart_builder
+        self._history_builder = history_builder
         self._refresh_seconds = max(0.05, float(refresh_seconds))
         self._log = log
         # NOT `_stop`: `threading.Thread` has a private `_stop()` METHOD that
@@ -268,11 +297,52 @@ class DashboardBuilderThread(threading.Thread):
         self._publisher.publish_chart(self._renderer(series), etag=f'W/"chart-{version}"')
         self._chart_version = version
 
+    def _start_history_load(self) -> None:
+        """Load the chart's back-history on a thread of its OWN.
+
+        Measured on the real five-year file: 29.5 seconds to read ~30 MB of CSV
+        and cut it into 277 pages. Running that between two build cycles would
+        stop the live view rebuilding for half a minute -- long enough for the
+        page to decide the runner had stopped and show the staleness banner.
+        The builder keeps its one-second cadence and history arrives when it
+        arrives.
+        """
+
+        if self._history_builder is None:
+            return
+        threading.Thread(
+            target=self._load_history_once, name="DashboardHistory", daemon=True
+        ).start()
+
+    def _load_history_once(self) -> None:
+        """Read and render years of candles. Never on the trading path.
+
+        Deliberately not in `main()` either: the runner starts trading while
+        this happens, and a failure costs the scroll-back rather than the
+        session.
+        """
+
+        if self._history_builder is None:
+            return
+        try:
+            pages = self._history_builder()
+        except Exception:  # noqa: BLE001 - history is a luxury, trading is not
+            self._log.exception(
+                "Monitoring dashboard could not load chart history; the chart "
+                "shows the live session only."
+            )
+            return
+        self._publisher.publish_history(pages)
+        self._log.info("Monitoring dashboard chart history ready (%d pages).", len(pages))
+
     def run(self) -> None:
         # Build immediately so the first page load is never empty, then settle
         # into the cadence. `Event.wait` rather than `sleep` so a stop request
         # is honoured at once instead of after a full interval.
         self.build_once()
+        # After the first payload, never before it: the live view is what the
+        # operator needs on screen, and history can arrive later.
+        self._start_history_load()
         while not self._stop_event.wait(self._refresh_seconds):
             self.build_once()
 
@@ -414,12 +484,62 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/history":
+            self._serve_history()
+            return
+
         asset = self.server.assets.get(path)  # type: ignore[attr-defined]
         if asset is None:
             self._plain(HTTPStatus.NOT_FOUND, "Not found.\n")
             return
         body, content_type = asset
         self._send(HTTPStatus.OK, body, content_type, Cache_Control="no-store")
+
+    def _serve_history(self) -> None:
+        """One page of the chart's back-history.
+
+        This is the only endpoint that reads anything from the request, so it
+        validates rather than infers: the series must be one of a frozen set
+        and the page must be a plain non-negative integer. Everything else is a
+        4xx with a one-line body, never a traceback.
+
+        No ETag here, deliberately. Every response on this server is
+        `no-store`, so the browser keeps nothing to revalidate AGAINST and a 304
+        would leave it with no body to draw. The page holds its history in
+        memory for the session instead, which is what makes scroll-back
+        instant on the second pass.
+        """
+
+        # `keep_blank_values` so an explicitly EMPTY parameter is seen and
+        # refused rather than silently reading as absent: `?page=` is a client
+        # bug, and this endpoint validates rather than infers.
+        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+        timeframe = (query.get("tf") or [""])[0]
+        if timeframe not in HISTORY_SERIES:
+            self._plain(HTTPStatus.NOT_FOUND, "Unknown series.\n")
+            return
+
+        raw_page = (query.get("page") or ["0"])[0]
+        try:
+            page = int(raw_page)
+        except ValueError:
+            self._plain(HTTPStatus.BAD_REQUEST, "The page must be an integer.\n")
+            return
+        if page < 0:
+            self._plain(HTTPStatus.BAD_REQUEST, "The page must not be negative.\n")
+            return
+
+        payload = self.server.publisher.current_history(  # type: ignore[attr-defined]
+            f"{timeframe}:{page}"
+        )
+        if not payload:
+            # Either history was never loaded or the operator has scrolled past
+            # the start of it. Both mean "there is nothing older", and the page
+            # simply stops asking.
+            self._plain(HTTPStatus.NOT_FOUND, "No such history page.\n")
+            return
+
+        self._send(HTTPStatus.OK, payload, _JSON_CONTENT_TYPE, Cache_Control="no-store")
 
     # -- everything else -------------------------------------------------
     def _method_not_allowed(self) -> None:
@@ -523,6 +643,7 @@ def start_dashboard(
     renderer: Callable[[Mapping[str, Any]], bytes],
     log: logging.Logger,
     chart_builder: Callable[[], Mapping[str, Any]] | None = None,
+    history_builder: Callable[[], Mapping[str, bytes]] | None = None,
     assets_dir: Path = ASSETS_DIR,
 ) -> DashboardServer | None:
     """Bind, wire and start the dashboard, or return None and log why.
@@ -569,6 +690,7 @@ def start_dashboard(
         refresh_seconds=refresh_seconds,
         log=log,
         chart_builder=chart_builder,
+        history_builder=history_builder,
     )
     server = DashboardServer(httpd=httpd, builder_thread=builder_thread, log=log)
     server.start()

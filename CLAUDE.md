@@ -85,9 +85,16 @@ One process, cooperating threads:
   `Dependencies/dashboard_snapshot.py`, chart indicators in `dashboard_indicators.py`,
   transport in `dashboard_server.py`, the collector in the master beside
   `_worker_session_state_snapshot`; see `docs/adr/0016`.
-  The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a 1m/5m
-  toggle (both timeframes ride in ONE `/api/chart` payload, so switching needs no
-  fetch). VWAP and the stochastic are the strategies' OWN objects, reached through
+  The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a
+  1m/5m/**D** toggle (the two minute timeframes ride in ONE `/api/chart` payload,
+  so switching between them needs no fetch). It also scrolls back through years
+  of history: `Dependencies/dashboard_history.py` reads the CSV
+  `algo.py fetch-data` writes and serves it from `/api/history` in pages of 2,000
+  bars, loaded once on a thread of its own (~29.5s, ~63 MB for five years) and
+  never on the trading path. A missing CSV is not an error -- the chart shows the
+  live session alone. CPR is drawn as one band **per day**, spanning that day
+  only, from that day's predecessor; the Daily timeframe takes a **monthly**
+  ladder instead, and hides VWAP, which means nothing on a daily candle. VWAP and the stochastic are the strategies' OWN objects, reached through
   `load_module` under BARE names so `sys.modules` returns the already-loaded instance
   rather than a second copy. CPR is the one deliberate divergence and is labelled
   CHART-ONLY everywhere: it reads the prior session 09:15-15:15 inclusive (high, low

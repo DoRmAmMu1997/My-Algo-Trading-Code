@@ -108,7 +108,9 @@ def test_normalize_rejects_mixed_epoch_units_and_non_finite_candles():
 
 
 def test_fetch_chunk_rejects_timestamp_outside_requested_window():
-    outside = int(datetime(2026, 1, 3, 9, 15).timestamp())
+    # A WEEKDAY outside the window: the session clip drops weekend rows before
+    # the window check ever runs, so a Saturday would prove nothing here.
+    outside = int(datetime(2026, 1, 5, 9, 15).timestamp())
     dhan = SimpleNamespace(
         intraday_minute_data=lambda **_kwargs: {
             "status": "success",
@@ -210,3 +212,240 @@ def test_token_is_read_from_dhan_access_token_with_legacy_fallback(monkeypatch):
 
     monkeypatch.delenv("DHAN_TOKEN_ID")
     assert fetcher.parse_args(defaults).access_token == ""
+
+
+def _session_payload(times, closes=None):
+    """A Dhan-shaped intraday payload from IST wall-clock strings."""
+
+    stamps = [pd.Timestamp(value) for value in times]
+    epoch = [
+        int((stamp.tz_localize("Asia/Kolkata")).timestamp()) for stamp in stamps
+    ]
+    closes = closes or [100.0 + index for index in range(len(stamps))]
+    return {
+        "timestamp": epoch,
+        "open": closes,
+        "high": [value + 1.0 for value in closes],
+        "low": [value - 1.0 for value in closes],
+        "close": closes,
+        "volume": [0.0] * len(closes),
+    }
+
+
+def test_bars_outside_the_session_are_dropped_before_validation():
+    """Dhan's older index windows run to 17:59; a real session ends at 15:30.
+
+    These rows are minute-ALIGNED, so the validator accepts them. That makes
+    them more dangerous than malformed rows, not less: left in, they drag a
+    day's high, low and close with them.
+    """
+
+    frame = fetcher.normalize_response_data(
+        _session_payload([
+            "2026-09-15 09:00:00",   # pre-open
+            "2026-09-15 09:15:00",
+            "2026-09-15 15:29:00",
+            "2026-09-15 16:45:00",   # after the close
+            "2026-09-15 17:59:00",   # the far end of the old-era junk
+        ])
+    )
+
+    kept = [str(value) for value in frame["timestamp"]]
+    assert kept == ["2026-09-15 09:15:00", "2026-09-15 15:29:00"]
+
+
+def test_the_synthetic_current_day_bar_is_dropped():
+    """Dhan stamps a flat wall-clock bar on the current day; it is not a candle."""
+
+    frame = fetcher.normalize_response_data(
+        _session_payload(["2026-09-15 15:29:00", "2026-09-15 18:44:00"])
+    )
+
+    assert [str(value) for value in frame["timestamp"]] == ["2026-09-15 15:29:00"]
+
+
+def test_a_chunk_entirely_outside_the_session_is_empty_not_an_error():
+    """An empty result is a holiday-shaped answer, not a failure."""
+
+    frame = fetcher.normalize_response_data(_session_payload(["2026-09-15 18:44:00"]))
+
+    assert frame.empty
+
+
+def test_the_session_window_is_market_data_healths_own():
+    """The extractor and the runner must agree on what a session is."""
+
+    start, end = fetcher.MARKET_SESSION_START, fetcher.MARKET_SESSION_END
+    assert (start.hour, start.minute) == (9, 15)
+    assert (end.hour, end.minute) == (15, 30)
+
+
+def _minute_candles(count, start="2022-03-25 09:15:00"):
+    """`count` identical, perfectly well-formed one-minute candles."""
+
+    base = pd.Timestamp(start)
+    return pd.DataFrame(
+        {
+            "timestamp": [base + pd.Timedelta(minutes=index) for index in range(count)],
+            "open": [100.0] * count,
+            "high": [101.0] * count,
+            "low": [99.0] * count,
+            "close": [100.5] * count,
+            "volume": [0.0] * count,
+        }
+    )
+
+
+def test_a_stray_self_contradicting_candle_is_dropped_and_named(capsys):
+    """The real one that blocked the backfill: an open ABOVE its own high.
+
+    Measured at 2022-03-25 09:15 -- open 17289.00, high 17287.10 -- one row in
+    23,380. No reading of a candle makes that right, so it goes; failing five
+    years of history on it would be the wrong trade.
+    """
+
+    frame = _minute_candles(2000)
+    frame.loc[0, ["open", "high", "low", "close"]] = [17289.0, 17287.0996, 17264.85, 17266.30]
+
+    kept = fetcher.drop_impossible_candles(frame)
+
+    assert len(kept) == 1999
+    assert pd.Timestamp("2022-03-25 09:15:00") not in set(kept["timestamp"])
+    assert "2022-03-25 09:15:00" in capsys.readouterr().out, "a dropped bar must be named"
+
+
+def test_a_chunk_that_is_mostly_impossible_still_fails():
+    """Many bad candles is not noise -- it says this is not the series we asked for."""
+
+    frame = _minute_candles(10)
+    frame.loc[0, "high"] = 1.0
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="too many to be stray"):
+        fetcher.drop_impossible_candles(frame)
+
+
+def test_every_shape_of_impossible_candle_is_caught():
+    for column, value in [("high", 1.0), ("low", 1000.0)]:
+        frame = _minute_candles(2000)
+        frame.loc[0, column] = value
+        assert len(fetcher.drop_impossible_candles(frame)) == 1999, column
+
+    crossed = _minute_candles(2000)
+    crossed.loc[0, ["open", "high", "low", "close"]] = [100.0, 99.0, 101.0, 100.0]
+    assert len(fetcher.drop_impossible_candles(crossed)) == 1999
+
+
+def test_a_clean_chunk_is_passed_through_untouched():
+    frame = _minute_candles(50)
+
+    kept = fetcher.drop_impossible_candles(frame)
+
+    assert len(kept) == 50
+    assert kept.equals(frame)
+
+
+def test_a_missing_volume_cell_is_zero_for_an_index():
+    """Dhan leaves volume null on some index bars; an index has none anyway.
+
+    An absent volume COLUMN is already treated as zero, so an absent cell is the
+    same statement about the same thing. This blocked the backfill at chunk 3.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [float("nan"), 5.0]
+
+    frame = fetcher.normalize_response_data(payload, instrument_type="INDEX")
+
+    assert list(frame["volume"]) == [0.0, 5.0]
+
+
+def test_a_missing_volume_cell_is_still_refused_off_an_index():
+    """The forgiveness is scoped to instruments that have no volume to give.
+
+    An earlier version filled NaN in before the validity test, which quietly
+    exempted EVERY instrument -- including the equity and F&O segments this
+    engine also serves, where an absent volume is corruption rather than a
+    non-answer.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [float("nan"), 5.0]
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
+        fetcher.normalize_response_data(payload, instrument_type="EQUITY")
+
+
+def test_a_negative_or_infinite_volume_is_still_refused():
+    """Absent is not the same as corrupt."""
+
+    for bad in (-1.0, float("inf")):
+        payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+        payload["volume"] = [bad, 5.0]
+        with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
+            fetcher.normalize_response_data(payload)
+
+
+def test_weekend_rows_are_dropped():
+    """The older windows carry Saturday rows whose prices are not the index.
+
+    Measured on Saturday 2022-04-09: the close jumps 18396 -> 18584 -> 18371 ->
+    18842 inside one hour. They sit INSIDE session hours, so a time-of-day clip
+    alone lets them through.
+    """
+
+    frame = fetcher.normalize_response_data(
+        _session_payload([
+            "2026-09-11 09:15:00",   # Friday
+            "2026-09-12 11:30:00",   # Saturday, mid-session by the clock
+            "2026-09-13 11:30:00",   # Sunday
+            "2026-09-14 09:15:00",   # Monday
+        ])
+    )
+
+    kept = [str(value) for value in frame["timestamp"]]
+    assert kept == ["2026-09-11 09:15:00", "2026-09-14 09:15:00"]
+
+
+def test_an_index_bar_with_negative_volume_keeps_its_price(capsys):
+    """An index has no volume, so the field is zeroed rather than the bar dropped.
+
+    Dhan returns small negative counters (-1, -2, -3) on some 2022 index bars --
+    221 in one 90-day window. The PRICES on those bars are sound: once weekends
+    and out-of-hours rows go, every session in that window holds exactly 375
+    bars. Dropping them to protect a field nobody reads would lose real data.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [-2.0, 5.0]
+
+    frame = fetcher.normalize_response_data(payload, instrument_type="INDEX")
+
+    assert len(frame) == 2, "the price bar survives"
+    assert list(frame["volume"]) == [0.0, 5.0]
+    assert "Zeroing 1" in capsys.readouterr().out
+
+
+def test_a_non_index_with_negative_volume_is_still_refused():
+    """Where volume is a real quantity, a negative one is corruption."""
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["volume"] = [-2.0, 5.0]
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="invalid volume"):
+        fetcher.normalize_response_data(payload, instrument_type="EQUITY")
+
+
+def test_an_unparseable_timestamp_refuses_the_chunk():
+    """A row that will not parse must fail loudly, not vanish.
+
+    `errors="coerce"` turns it into NaT, and NaT compares False against a
+    `datetime.time`, so the session clip would silently DROP it -- the chunk
+    comes back quietly short, is appended, and advances the resume point past a
+    gap nobody was told about.
+    """
+
+    payload = _session_payload(["2026-09-15 09:15:00", "2026-09-15 09:16:00"])
+    payload["timestamp"] = [payload["timestamp"][0], "not-a-timestamp"]
+
+    with pytest.raises(fetcher.MarketDataValidationError, match="unparseable timestamp"):
+        fetcher.normalize_response_data(payload, instrument_type="INDEX")

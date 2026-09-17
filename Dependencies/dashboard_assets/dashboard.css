@@ -157,6 +157,9 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
   user-select: none;
 }
 .chart-controls input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+/* A session VWAP says nothing about a daily candle, so on the Daily
+ * timeframe its control is dimmed rather than silently doing nothing. */
+.chart-controls label.disabled { opacity: 0.4; }
 
 .tf-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
 .tf-switch .tf {

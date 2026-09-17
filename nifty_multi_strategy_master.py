@@ -279,7 +279,7 @@ import requests
 # when MARKET_DATA_SOURCE=WEBSOCKET selects the tick-driven producer below.
 from dhanhq import DhanContext, DhanLogin, MarketFeed, dhanhq
 
-from Dependencies import dashboard_indicators, dashboard_snapshot
+from Dependencies import dashboard_history, dashboard_indicators, dashboard_snapshot
 from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
 from Dependencies.dashboard_server import DashboardEventSink, DashboardServer, start_dashboard
 from Dependencies.execution_ledger import (
@@ -704,6 +704,14 @@ DASHBOARD_PORT = _env_int("DASHBOARD_PORT", 8787)
 DASHBOARD_REFRESH_SECONDS = min(max(_env_float("DASHBOARD_REFRESH_SECONDS", 1.0), 0.25), 30.0)
 # Candles the chart shows. 375 is one full session.
 DASHBOARD_CHART_BARS = min(max(_env_int("DASHBOARD_CHART_BARS", 375), 60), 2200)
+
+#: Where the chart's back-history comes from: the CSV `algo.py fetch-data`
+#: writes. A module constant with deliberately NO `.env` knob, for the same
+#: reason `DASHBOARD_BIND_HOST` has none -- there is one right answer and a
+#: second place to configure it is a second place for it to be wrong. A missing
+#: file is not an error: the chart simply shows the live session, exactly as it
+#: did before history existed.
+DASHBOARD_HISTORY_CSV = ROOT_DIR / "Backtest Outputs" / "nifty_renko_futures_5y_1min_data.csv"
 # Trade events the dashboard mirrors in memory for its closed-trade table. A
 # normal day is around 170.
 DASHBOARD_MAX_TRADE_EVENTS = min(max(_env_int("DASHBOARD_MAX_TRADE_EVENTS", 2000), 100), 20000)
@@ -18267,6 +18275,47 @@ def _chart_state_block(cache: _DashboardChartCache) -> dict:
     }
 
 
+def _dashboard_history_pages() -> dict[str, bytes]:
+    """Read the history CSV and render its pages, ready for the transport.
+
+    Runs ONCE, on the dashboard's own builder thread, after the first live
+    payload is already on screen. Nothing here touches the market-data store, a
+    worker, the broker or the session state -- it opens one file -- so the
+    dashboard's safety contract is untouched by it.
+
+    The resampler is the strategies' OWN `resample_ohlc_from_1m`, the same
+    object the live chart uses. Two resamplers would eventually disagree about a
+    bucket boundary and the chart would show a seam exactly where history meets
+    the live session.
+    """
+
+    history = dashboard_history.build_history(
+        path=DASHBOARD_HISTORY_CSV,
+        renderer=dashboard_snapshot.render_document_bytes,
+        resample=_DASHBOARD_CHART_DEPS.resample,
+        higher_timeframe_minutes=_DASHBOARD_HIGHER_TIMEFRAME_MINUTES,
+        stochastic_fn=_DASHBOARD_CHART_DEPS.stochastic_fn,
+        stochastic_settings={
+            "k_period": _DASHBOARD_CHART_DEPS.k_period,
+            "d_period": _DASHBOARD_CHART_DEPS.d_period,
+            "smooth_k": _DASHBOARD_CHART_DEPS.smooth_k,
+        },
+    )
+    if not history.available:
+        logger.info(
+            "Monitoring dashboard chart history unavailable (%s); the chart shows "
+            "the live session only. Run `python algo.py fetch-data --index nifty` "
+            "to populate it.",
+            history.unavailable_reason,
+        )
+        return {}
+
+    # What actually loaded, not just how many pages: the date range is the part
+    # an operator can check against what they expected to download.
+    logger.info("Monitoring dashboard chart history ready: %s.", history.describe())
+    return dashboard_history.page_map(history)
+
+
 def _dashboard_chart_series(
     cache: _DashboardChartCache, deps: _DashboardChartDeps = _DASHBOARD_CHART_DEPS
 ) -> dict:
@@ -19611,6 +19660,7 @@ def main() -> None:
                     workers, store, dashboard_sink, chart_cache
                 ),
                 chart_builder=lambda: _dashboard_chart_series(chart_cache),
+                history_builder=_dashboard_history_pages,
                 renderer=dashboard_snapshot.render_document_bytes,
                 log=logger,
             )

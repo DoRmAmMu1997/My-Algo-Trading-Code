@@ -103,15 +103,16 @@ from `store.get_ltp_by_secid`, which never calls the broker; a mark is "stale"
 when the same read with `max_age_seconds=DASHBOARD_STALE_MARK_SECONDS` returns
 nothing while the unbounded read returns a price.
 
-### Chart indicators and the 1m/5m toggle
+### Chart indicators and the 1m/5m/D toggle
 
-Three overlays, and a toggle because several strategies derive 5-minute bars.
+Three overlays, and a toggle because several strategies derive 5-minute bars --
+plus a Daily timeframe for the next-session macro read.
 
 | Indicator | Source | Note |
 |---|---|---|
-| CPR | `dashboard_indicators.chart_cpr` | **Chart-only.** Prior session 09:15-15:15 inclusive -- high, low AND close -- against the strategies' full session. Drawn with `createPriceLine`, so it is timeframe-independent by construction. Thirteen levels in four toggle groups: `core` (pivot/BC/TC) and `pd` (PDH/PDL, the prior session's traded extremes) on by default, the two R/S ladders opt-in. All solid, matching VWAP. See [`ADR-0017`](../adr/0017-chart-only-cpr-on-a-truncated-prior-session.md). |
+| CPR | `dashboard_indicators.chart_cpr` (today) + `dashboard_history.cpr_segments` (every earlier day) | **Chart-only.** Prior session 09:15-15:15 inclusive -- high, low AND close -- against the strategies' full session. One band **per day**, spanning that day alone, from that day's predecessor. On the Daily timeframe the ladder is **monthly** instead. Thirteen levels in four toggle groups: `core` (pivot/BC/TC) and `pd` (PDH/PDL, the prior session's traded extremes) on by default, the two R/S ladders opt-in. All solid, matching VWAP. See [`ADR-0017`](../adr/0017-chart-only-cpr-on-a-truncated-prior-session.md). |
 | VWAP | `regime_common.attach_session_vwap`, injected | The strategies' own object. Always an equal-weight proxy in live running -- the index feed carries no volume -- so it is labelled `VWAP*` with a footnote. |
-| Stochastic %K/%D | `misc_strategy_common.stochastic`, injected | The same TA-Lib `STOCH` and the same `STOCHASTIC_*` periods the Stochastic Oscillator strategy trades on. Own pane, 80/20 guides. |
+| Stochastic %K/%D | `misc_strategy_common.stochastic`, injected | The same TA-Lib `STOCH` and the same `STOCHASTIC_*` periods the Stochastic Oscillator strategy trades on. Own pane, 80/20 guides. The **Daily** series carries its own, computed on daily candles -- the live payload's is a statement about one-minute bars. |
 
 The helpers are reached with `load_module` under **bare** names, which returns
 `sys.modules[name]` when already loaded -- so these are the very objects the
@@ -141,6 +142,45 @@ Two things that look like details and are not:
   lightweight-charts requires strictly ascending times -- one repeat makes it
   silently drop bars, with nothing in the console to say why.
 
+### Back-history
+
+`Dependencies/dashboard_history.py` reads the CSV `algo.py fetch-data` writes
+and serves it as the chart's scroll-back. It is a module of its own because
+`dashboard_indicators` is pure -- a test AST-asserts it never imports `os` --
+and nothing that opens a file can live there.
+
+It never touches the market-data store, a worker, the broker or the session
+state. It reads one file. That is what lets the chart gain five years without
+adding a single call to the trading path.
+
+Measured on the real five-year download (459,152 bars, 28.8 MB, 1,226
+sessions):
+
+- **~45 MB of JSON**, so it is **paged**: 2,000 bars a page (~160 KB), page 0
+  the NEWEST, because that is the order a browser wants them -- scroll left,
+  ask for 0, then 1. A missing key IS the "nothing older" answer, so the
+  endpoint needs no bounds arithmetic that could disagree with the store.
+- **29.5 seconds** to read and render 277 pages, which is why it loads on a
+  thread of its OWN. On the builder thread the live view would stop rebuilding
+  for half a minute and the page would show its staleness banner.
+- **~63 MB of RSS.** Real; the dashboard stays opt-in and off by default.
+
+A missing or unreadable CSV is not an error: the chart shows the live session
+alone, exactly as it did before history existed, and the log says how to
+populate it.
+
+The loader repeats the extractor's session and weekday checks rather than
+trusting the file. A resumed download can leave one CSV cleaned by two rule
+versions -- which is exactly what happened: 509 weekend rows survived in the
+chunks fetched before the extractor learned the weekday rule.
+
+History and the live window are spliced in the BROWSER, at draw time. History
+is cut at the first live timestamp and the live copy wins, because it is the
+one that keeps updating. Prepending never refits: `fitContent` exists for
+timeframe switches, and firing it when a page arrives would yank the viewport
+back to the whole series. Prepending N bars shifts every logical index by N,
+so the range is moved by the same N.
+
 ### The chart
 
 `store.get("1")` copies a ~2,200-row DataFrame, which is the wrong price for a
@@ -168,6 +208,7 @@ no volume column and synthesising one would be a fabrication.
 | `GET /` `/dashboard.css` `/dashboard.js` `/vendor/…js` | Frozen whitelist, loaded into memory once at start |
 | `GET /api/state` | The whole document; `ETag` + `If-None-Match` → `304`; `Cache-Control: no-store` |
 | `GET /api/chart` | The full candle array; fetched only when `series_version` moves |
+| `GET /api/history?tf=<1\|5\|D\|cpr>&page=<n>` | One page of back-history, or the CPR ladders. The only endpoint that reads the request, so it validates rather than infers: `tf` from a frozen set, `page` a plain non-negative integer, blanks included (`keep_blank_values`, so `?page=` is refused rather than read as absent). Past the start of history → `404`, which is how the browser learns to stop asking. No `ETag`: every response here is `no-store`, so a `304` would leave the browser with no body to draw |
 | anything else | `404` |
 | any non-GET | `405` + `Allow: GET` |
 
@@ -277,6 +318,37 @@ the same way in production on 3.12.
 deliberately unions the running interpreter's `dir(threading.Thread)` with the
 names newer versions deleted: reflection alone is blind to this on exactly the
 interpreter that is not failing.
+
+**A scroll-back trigger that depends on a fit.** Loading the first history
+page from a visible-range event looks natural and silently never fires: the
+event only arrives once a FIT has landed, and `applyPendingFit` refuses a
+zero-width container -- a state the chart can sit in indefinitely, because the
+`ResizeObserver` meant to catch the layout has been measured NOT firing in some
+panes. The first page is fetched outright instead.
+
+**A 404 has two meanings.** Past the start of history it means "nothing older";
+before the server has finished building -- 29.5 seconds on the five-year file --
+it means "not yet". Treating the second as the first disables scroll-back for
+the whole session. It only counts as exhausted once a page has actually landed.
+
+**A history page can add nothing.** If every bar in it falls inside the live
+window the merge drops all of it: the chart does not grow, the viewport does
+not move, and no range event arrives to ask for the next page -- scroll-back
+just stops. Not reachable at the shipped sizes (2,000 against 375), but
+`DASHBOARD_CHART_BARS` goes to 2,200. A page that adds nothing pulls the next.
+
+**CPR bands must be clipped to the bars loaded.** Every series shares one time
+scale built from the UNION of their times, so handing over five years of bands
+while a week of candles is loaded stretches the scale across five years of
+empty chart.
+
+**The memo cannot key on one pivot.** With hundreds of bands it has to key on
+the set's extent and its newest pivot, or a new session, a newly loaded page
+and a timeframe switch all look identical to it.
+
+**Assets are read into memory at startup.** Editing `dashboard.js` on disk does
+nothing to a running server; restart it, or spend a while debugging code that
+is not the code being served.
 
 ## Vendored code
 
