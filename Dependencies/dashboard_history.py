@@ -33,7 +33,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from Dependencies.dashboard_indicators import bar_records
+from Dependencies.dashboard_indicators import (
+    CPR_SESSION_END,
+    CPR_SESSION_START,
+    bar_records,
+    pivot_levels,
+    round_or_none,
+)
 
 #: The trading session. Bars outside it are not session data: Dhan's older index
 #: windows run to 17:59, carry rows dated Saturday and Sunday, and the current
@@ -57,6 +63,22 @@ HISTORY_PAGE_BARS: int = 2000
 DAILY_BAR_CLOCK: time = time(9, 15)
 
 _REQUIRED_COLUMNS = ("timestamp", "open", "high", "low", "close")
+
+#: Epoch for bar times. Integer-dividing a Timedelta is independent of the
+#: frame's RESOLUTION -- pandas 3 defaults to microseconds, so the obvious
+#: `astype("int64") // 10**9` is silently a thousand times too small and draws
+#: the whole chart in 1970.
+_EPOCH = pd.Timestamp("1970-01-01")
+
+#: The levels each CPR segment carries, in the order the chart draws them.
+CPR_LEVEL_KEYS = (
+    "pivot", "bc", "tc", "prev_high", "prev_low",
+    "r1", "r2", "r3", "r4", "s1", "s2", "s3", "s4",
+)
+
+
+def _epoch_seconds(value: pd.Timestamp) -> int:
+    return int((value - _EPOCH) // pd.Timedelta(seconds=1))
 
 
 class HistoryUnavailable(RuntimeError):
@@ -202,6 +224,9 @@ class DashboardHistory:
     """Every timeframe's paged history, plus what it came from."""
 
     series: Mapping[str, HistorySeries]
+    #: The per-day and per-month CPR ladders, already rendered. Static for the
+    #: life of the process, like the pages.
+    cpr: bytes = b""
     source: str = ""
     available: bool = False
     unavailable_reason: str | None = None
@@ -262,6 +287,85 @@ def build_series(
     )
 
 
+def _cpr_inputs(frame: pd.DataFrame, key: pd.Series) -> pd.DataFrame:
+    """High, low and close of each group's 09:15-15:15 window.
+
+    The truncated window is the CHART-ONLY divergence the dashboard already
+    makes deliberately, and it is the operator's own rule: the day's closing
+    price is settled by the call auction and can be distorted, so the level that
+    matters is where the market actually was at 15:15. `CPR_SESSION_START/END`
+    are `dashboard_indicators`' own constants so the two cannot drift.
+    """
+
+    clock = frame["timestamp"].dt.time
+    inside = (clock >= CPR_SESSION_START) & (clock <= CPR_SESSION_END)
+    window = frame.loc[inside]
+    if window.empty:
+        return pd.DataFrame(columns=["high", "low", "close"])
+    return (
+        window.assign(_key=key.loc[window.index])
+        .groupby("_key", sort=True)
+        .agg(high=("high", "max"), low=("low", "min"), close=("close", "last"))
+    )
+
+
+def _segments(frame: pd.DataFrame, key: pd.Series, label: str) -> list[dict[str, object]]:
+    """One CPR band per group, derived from the group BEFORE it.
+
+    This is the `_add_daily_cpr` shape the CPR strategy already uses -- group,
+    aggregate, then shift by one -- rather than a second way of saying it. The
+    first group has no predecessor and so has no band at all, which is correct
+    and is why it is skipped rather than given zeros.
+    """
+
+    stats = _cpr_inputs(frame, key)
+    spans = (
+        frame.assign(_key=key)
+        .groupby("_key", sort=True)["timestamp"]
+        .agg(["min", "max"])
+    )
+
+    segments: list[dict[str, object]] = []
+    previous = None
+    for group, span in spans.iterrows():
+        if previous is not None and previous in stats.index:
+            row = stats.loc[previous]
+            levels = pivot_levels(float(row["high"]), float(row["low"]), float(row["close"]))
+            levels["prev_high"] = float(row["high"])
+            levels["prev_low"] = float(row["low"])
+            rounded = {name: round_or_none(levels.get(name)) for name in CPR_LEVEL_KEYS}
+            # `allow_nan=False` turns one NaN into a frozen dashboard for the
+            # rest of the session, so a level that cannot be computed is dropped
+            # rather than carried as a number that is not one.
+            segments.append(
+                {
+                    label: str(group),
+                    "from": _epoch_seconds(span["min"]),
+                    "to": _epoch_seconds(span["max"]),
+                    "levels": {k: v for k, v in rounded.items() if v is not None},
+                }
+            )
+        previous = group
+    return segments
+
+
+def cpr_segments(frame: pd.DataFrame, days: pd.DataFrame) -> dict[str, object]:
+    """Per-day and per-month CPR bands for the whole history.
+
+    Two ladders, drawn on different timeframes. The daily one spans each
+    session and comes from the session before it; the monthly one spans each
+    month of DAILY bars and comes from the month before it, which is what makes
+    the Daily timeframe usable for the next session's macro read.
+    """
+
+    return {
+        "day": _segments(frame, frame["timestamp"].dt.date, "date"),
+        "month": _segments(
+            days, days["timestamp"].dt.to_period("M").astype(str), "month"
+        ),
+    }
+
+
 def page_map(history: DashboardHistory) -> dict[str, bytes]:
     """Flatten the history into the `"<tf>:<page>"` keys the transport serves.
 
@@ -270,11 +374,16 @@ def page_map(history: DashboardHistory) -> dict[str, bytes]:
     no bounds arithmetic of its own, and cannot disagree with this one.
     """
 
-    return {
+    pages = {
         f"{series.key}:{index}": payload
         for series in history.series.values()
         for index, payload in enumerate(series.pages)
     }
+    if history.cpr:
+        # The CPR ladders ride the same endpoint because they are the same kind
+        # of thing: static chart data, rendered once, handed out as bytes.
+        pages["cpr:0"] = history.cpr
+    return pages
 
 
 def build_history(
@@ -325,4 +434,9 @@ def build_history(
             key="D", minutes=0, frame=days, renderer=renderer, page_size=page_size
         )
 
-    return DashboardHistory(series=series, source=str(path), available=True)
+    return DashboardHistory(
+        series=series,
+        cpr=renderer(cpr_segments(frame, days)),
+        source=str(path),
+        available=True,
+    )

@@ -81,7 +81,14 @@
    * the timeframe toggle redraws from memory instead of issuing a request
    * that could fail and leave a blank chart. */
   let chartPayload = null;
-  let cprLines = [];
+  /* The per-day and per-month CPR ladders, fetched once. Each entry is one
+   * band: a time span and the levels that belong to it. */
+  let cprLadders = null;
+  let cprLaddersInFlight = false;
+  /* Series handles, NOT price-line handles. A price line in this library is
+   * full chart width by definition -- that is the API, not a style -- so a band
+   * that stops at the end of its own day has to be a LineSeries. */
+  let cprSeries = [];
   let cprSignature = null;
   /* Which timeframe the series currently hold. Switching changes both the bar
    * spacing and the span, so the visible range has to be refit -- but ONLY
@@ -503,6 +510,24 @@
    * ascending, so the seam matters: the live block and the newest history page
    * overlap, and the live copy wins because it is the one that keeps updating.
    */
+  /* The CPR ladders, fetched once and kept. They are static: the server
+   * renders them when it loads history and they never change after that. */
+  async function ensureCprLadders() {
+    if (cprLadders || cprLaddersInFlight) return;
+    cprLaddersInFlight = true;
+    try {
+      const response = await fetch("/api/history?tf=cpr&page=0", { cache: "no-store" });
+      if (!response.ok) return;          /* no history: today's band still draws */
+      cprLadders = await response.json();
+      if (chartPayload) applyTimeframe();
+    } catch (error) {
+      /* Without them the chart shows today's band alone, which is what it did
+       * before per-day CPR existed. The next redraw tries again. */
+    } finally {
+      cprLaddersInFlight = false;
+    }
+  }
+
   function mergedBars(liveBars) {
     const history = historyBars[prefs.tf] || [];
     if (!history.length) return liveBars;
@@ -513,40 +538,115 @@
     return history.slice(0, cut).concat(liveBars);
   }
 
-  function renderCprLines(cpr) {
-    if (!candleSeries) return;
-    /* EVERY group pref belongs in here. One left out means ticking its box
-     * updates the pref and then this function early-returns on an unchanged
-     * signature, so the line never appears and the bug looks like the box
-     * doing nothing. */
+  /* Which bands belong on the chart right now.
+   *
+   * Two rules, and both matter. The ladder follows the timeframe: minutes get
+   * the DAILY bands, the Daily timeframe gets the MONTHLY ones, because a daily
+   * band on a daily candle is one bar wide and says nothing.
+   *
+   * And bands are clipped to the bars actually loaded. Every series shares one
+   * time scale built from the UNION of their times, so handing over five years
+   * of bands while only a week of candles is loaded would stretch the scale
+   * across five years of empty chart. */
+  function cprBandsForView(bars) {
+    if (!bars.length) return [];
+    const monthly = prefs.tf === "D";
+    const ladder = (cprLadders && (monthly ? cprLadders.month : cprLadders.day)) || [];
+    const leftEdge = bars[0].time;
+    const rightEdge = bars[bars.length - 1].time;
+
+    /* Where today starts, so the live band covers exactly today and the stored
+     * ones stop before it. Bar times are IST wall-clock labelled UTC, so a
+     * plain division by a day lands on the session date. */
+    const lastDay = Math.floor(rightEdge / 86400);
+    let todayFrom = bars.length - 1;
+    while (todayFrom > 0 && Math.floor(bars[todayFrom - 1].time / 86400) === lastDay) {
+      todayFrom -= 1;
+    }
+    const todayStart = bars[todayFrom].time;
+
+    const bands = ladder.filter(
+      (band) => band.to >= leftEdge && band.from <= rightEdge && band.to < todayStart,
+    );
+
+    /* Today's band comes from the LIVE payload, never the stored ladder: the
+     * history CSV can be days old, and today is the one the operator is
+     * trading. On the Daily timeframe the monthly ladder already covers the
+     * current month, so there is nothing to add. */
+    const live = chartPayload && chartPayload.cpr;
+    if (!monthly && live && live.available) {
+      bands.push({ from: todayStart, to: rightEdge, levels: live });
+    }
+    return bands;
+  }
+
+  const BAR_SECONDS = { "1": 60, "5": 300, "D": 86400 };
+
+  function renderCprLines(bars) {
+    if (!chart || !candleSeries) return;
+    const bands = cprBandsForView(bars || []);
+
+    /* EVERY group pref belongs in this signature. One left out means ticking
+     * its box updates the pref and then this function early-returns on an
+     * unchanged signature, so the band never appears and the bug looks like the
+     * box doing nothing.
+     *
+     * Keying on a single pivot is no longer enough either, now that there are
+     * hundreds of bands: the set is identified by its extent and its newest
+     * pivot, so a new session, a newly loaded page and a timeframe switch each
+     * change it. */
+    const newest = bands.length ? bands[bands.length - 1] : null;
     const signature = JSON.stringify([
-      cpr && cpr.available ? cpr.pivot : null,
+      prefs.tf === "D" ? "month" : "day",
+      bands.length,
+      bands.length ? bands[0].from : null,
+      newest ? newest.to : null,
+      newest ? newest.levels.pivot : null,
       prefs.cpr, prefs.cprPD, prefs.cprRS1, prefs.cprRS3,
     ]);
     if (signature === cprSignature) return;
     cprSignature = signature;
 
-    for (const handle of cprLines) candleSeries.removePriceLine(handle);
-    cprLines = [];
-    if (!cpr || !cpr.available || !prefs.cpr) return;
+    for (const handle of cprSeries) chart.removeSeries(handle);
+    cprSeries = [];
+    if (!bands.length || !prefs.cpr) return;
+
+    /* A whitespace point -- a time with no value -- is what BREAKS the line
+     * between one day's band and the next. Without it the series would draw a
+     * diagonal from yesterday's pivot to today's, straight across the gap.
+     * One second past the band's end, so it cannot collide with a real bar. */
+    const gap = 1;
 
     for (const level of CPR_LEVELS) {
       const on = level.group === "core"
         || (level.group === "pd" && prefs.cprPD)
         || (level.group === "rs1" && prefs.cprRS1)
         || (level.group === "rs3" && prefs.cprRS3);
-      const price = cpr[level.key];
-      if (!on || price === null || price === undefined) continue;
-      cprLines.push(candleSeries.createPriceLine({
-        price,
+      if (!on) continue;
+
+      const points = [];
+      for (const band of bands) {
+        const price = band.levels[level.key];
+        if (price === null || price === undefined) continue;
+        points.push({ time: band.from, value: price });
+        if (band.to > band.from) points.push({ time: band.to, value: price });
+        points.push({ time: band.to + gap });
+      }
+      if (!points.length) continue;
+
+      const series = chart.addSeries(LightweightCharts.LineSeries, {
         color: level.color,
         lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Solid,
-        axisLabelVisible: true,
-        /* The "(chart)" suffix travels with a screenshot of just the chart,
-         * where none of the page's other captions would. */
+        priceLineVisible: false,
+        /* The last value still gets an axis label, and `title` puts the level's
+         * NAME beside it -- so the "(chart)" caveat still travels with a
+         * screenshot of just the chart, as it did when these were price lines
+         * and none of the page's other captions would. */
+        lastValueVisible: true,
         title: `${level.title} (chart)`,
-      }));
+      }, 0);
+      series.setData(points);
+      cprSeries.push(series);
     }
   }
 
@@ -614,8 +714,9 @@
     nodes.chartTitle.textContent =
       `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
       + `${(chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15"} (chart only)`;
-    renderCprLines(chartPayload.cpr);
+    renderCprLines(bars);
     renderCprProvenance(chartPayload.cpr);
+    ensureCprLadders();
 
     const vwapMeta = (chartPayload.indicators || {}).vwap || {};
     nodes.vwapLabel.title = vwapMeta.note || "";
@@ -892,7 +993,7 @@
       savePrefs();
       if (key === "vwap" && vwapSeries) vwapSeries.applyOptions({ visible: prefs.vwap });
       else if (key === "stoch") applyStochVisibility();
-      else if (chartPayload) renderCprLines(chartPayload.cpr);
+      else if (chartPayload) applyTimeframe();
     });
   }
   setTimeframe(prefs.tf === "5" ? "5" : "1");

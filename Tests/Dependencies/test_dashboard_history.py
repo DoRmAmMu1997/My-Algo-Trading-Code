@@ -289,3 +289,142 @@ def test_pages_survive_the_strict_json_renderer(tmp_path):
     for series in history.series.values():
         for page in series.pages:
             json.loads(page)
+
+
+# --------------------------------------------------------- CPR segments
+
+
+def _session(day: str, closes) -> pd.DataFrame:
+    """One session whose closes are given minute by minute from 09:15."""
+
+    base = pd.Timestamp(f"{day} 09:15")
+    return pd.DataFrame(
+        {
+            "timestamp": [base + pd.Timedelta(minutes=i) for i in range(len(closes))],
+            "open": list(closes),
+            "high": [c + 1.0 for c in closes],
+            "low": [c - 1.0 for c in closes],
+            "close": list(closes),
+        }
+    )
+
+
+def test_each_day_takes_its_levels_from_the_day_before():
+    """The whole point: one CPR per day, derived from that day's predecessor."""
+
+    frame = pd.concat(
+        [_session("2026-09-14", [100.0, 110.0, 105.0]), _session("2026-09-15", [200.0, 210.0])],
+        ignore_index=True,
+    )
+
+    day = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["day"]
+
+    assert len(day) == 1, "only the second day can have a band"
+    assert day[0]["date"] == "2026-09-15"
+    # 14th: high 111, low 99, close 105 -> pivot = (111 + 99 + 105) / 3
+    assert day[0]["levels"]["pivot"] == pytest.approx((111.0 + 99.0 + 105.0) / 3, abs=0.01)
+    assert day[0]["levels"]["prev_high"] == 111.0
+    assert day[0]["levels"]["prev_low"] == 99.0
+
+
+def test_the_first_day_has_no_band_at_all():
+    """It has no predecessor, so zeros would be an invention."""
+
+    frame = _session("2026-09-15", [100.0, 101.0])
+
+    segments = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))
+
+    assert segments["day"] == []
+
+
+def test_the_levels_are_the_repositorys_own_algebra():
+    """Computed through `pivot_levels`, not a second copy of the formulas."""
+
+    from Dependencies.dashboard_indicators import pivot_levels
+
+    frame = pd.concat(
+        [_session("2026-09-14", [100.0, 120.0, 110.0]), _session("2026-09-15", [200.0])],
+        ignore_index=True,
+    )
+
+    got = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["day"][0]
+    expected = pivot_levels(121.0, 99.0, 110.0)
+
+    for name in ("pivot", "bc", "tc", "r1", "r2", "r3", "r4", "s1", "s2", "s3", "s4"):
+        assert got["levels"][name] == pytest.approx(expected[name], abs=0.01), name
+
+
+def test_the_prior_session_is_truncated_at_1515():
+    """The operator's own rule: the closing auction can distort the day's close.
+
+    A bar after 15:15 must not become the close the levels are built on.
+    """
+
+    early = _session("2026-09-14", [100.0] * 3)
+    late = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2026-09-14 15:20")],
+            "open": [500.0], "high": [500.0], "low": [500.0], "close": [500.0],
+        }
+    )
+    frame = pd.concat([early, late, _session("2026-09-15", [200.0])], ignore_index=True)
+
+    day = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["day"]
+
+    assert day[0]["levels"]["prev_high"] == 101.0, "the 15:20 spike must be excluded"
+    assert day[0]["levels"]["pivot"] == pytest.approx((101.0 + 99.0 + 100.0) / 3, abs=0.01)
+
+
+def test_a_band_spans_only_its_own_session():
+    """A band must stop at the end of its day, not run across the chart."""
+
+    frame = pd.concat(
+        [_session("2026-09-14", [100.0] * 3), _session("2026-09-15", [200.0] * 4)],
+        ignore_index=True,
+    )
+
+    day = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["day"][0]
+
+    assert day["from"] == int(pd.Timestamp("2026-09-15 09:15").timestamp())
+    assert day["to"] == int(pd.Timestamp("2026-09-15 09:18").timestamp())
+
+
+def test_months_take_their_levels_from_the_month_before():
+    """On the Daily timeframe the ladder is MONTHLY, not daily."""
+
+    frame = pd.concat(
+        [
+            _session("2026-08-10", [100.0, 150.0]),
+            _session("2026-08-11", [120.0]),
+            _session("2026-09-14", [300.0]),
+            _session("2026-09-15", [310.0]),
+        ],
+        ignore_index=True,
+    )
+
+    months = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["month"]
+
+    assert len(months) == 1, "only the second month can have a band"
+    assert months[0]["month"] == "2026-09"
+    # August across both sessions: high 151, low 99, last close 120
+    assert months[0]["levels"]["prev_high"] == 151.0
+    assert months[0]["levels"]["prev_low"] == 99.0
+    assert months[0]["levels"]["pivot"] == pytest.approx((151.0 + 99.0 + 120.0) / 3, abs=0.01)
+
+
+def test_the_cpr_ladders_survive_the_strict_renderer(tmp_path):
+    """One NaN freezes the dashboard for the rest of the session."""
+
+    frame = pd.concat(
+        [_session("2026-09-14", [100.0, 110.0]), _session("2026-09-15", [200.0])],
+        ignore_index=True,
+    )
+    target = _csv(tmp_path, frame)
+
+    history = dashboard_history.build_history(
+        path=target, renderer=_renderer, resample=_resample
+    )
+
+    ladders = json.loads(history.cpr)
+    assert ladders["day"] and isinstance(ladders["month"], list)
+    assert "cpr:0" in dashboard_history.page_map(history)

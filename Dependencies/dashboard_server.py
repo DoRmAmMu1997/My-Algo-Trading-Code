@@ -48,10 +48,14 @@ from urllib.parse import parse_qs, urlsplit
 #: Loopback only. Deliberately NOT configurable -- see the module docstring.
 DASHBOARD_BIND_HOST = "127.0.0.1"
 
-#: Timeframes `/api/history` will answer for. A frozen set rather than "whatever
-#: the store happens to hold": this is the ONLY endpoint that takes input from
-#: the request, so what it accepts is written down rather than inferred.
-HISTORY_TIMEFRAMES = frozenset({"1", "5", "D"})
+#: Series `/api/history` will answer for: the three timeframes, plus the CPR
+#: ladders, which are the same kind of thing -- static chart data, rendered once
+#: and handed out as bytes.
+#:
+#: A frozen set rather than "whatever the store happens to hold": this is the
+#: ONLY endpoint that takes input from the request, so what it accepts is
+#: written down rather than inferred from state that could change.
+HISTORY_SERIES = frozenset({"1", "5", "D", "cpr"})
 
 #: Where the page's own files live. Read into memory once at start.
 ASSETS_DIR = Path(__file__).resolve().parent / "dashboard_assets"
@@ -495,7 +499,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         """One page of the chart's back-history.
 
         This is the only endpoint that reads anything from the request, so it
-        validates rather than infers: the timeframe must be one of a frozen set
+        validates rather than infers: the series must be one of a frozen set
         and the page must be a plain non-negative integer. Everything else is a
         4xx with a one-line body, never a traceback.
 
@@ -511,8 +515,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # bug, and this endpoint validates rather than infers.
         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
         timeframe = (query.get("tf") or [""])[0]
-        if timeframe not in HISTORY_TIMEFRAMES:
-            self._plain(HTTPStatus.NOT_FOUND, "Unknown timeframe.\n")
+        if timeframe not in HISTORY_SERIES:
+            self._plain(HTTPStatus.NOT_FOUND, "Unknown series.\n")
             return
 
         raw_page = (query.get("page") or ["0"])[0]
