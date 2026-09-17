@@ -412,6 +412,53 @@ def test_months_take_their_levels_from_the_month_before():
     assert months[0]["levels"]["pivot"] == pytest.approx((151.0 + 99.0 + 120.0) / 3, abs=0.01)
 
 
+def test_the_month_is_truncated_at_1515_like_the_day_is():
+    """A month's close is its last session's 15:15 close, not the auction's.
+
+    Reading the month off the DAILY bars looks equivalent and is not: every
+    daily bar is stamped 09:15, so the 09:15-15:15 filter matches all of them
+    and truncates nothing. That shipped, and the caption said "sessions
+    truncated at 15:15" while the numbers were the full session's -- August 2026
+    carried a pivot of 24282.77 against the truncated 24249.25, high 70.4 out.
+    """
+
+    august = pd.concat(
+        [_session("2026-08-10", [100.0] * 3), _session("2026-08-11", [110.0] * 3)],
+        ignore_index=True,
+    )
+    auction = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2026-08-11 15:25")],
+            "open": [500.0], "high": [500.0], "low": [500.0], "close": [500.0],
+        }
+    )
+    frame = pd.concat(
+        [august, auction, _session("2026-09-14", [300.0])], ignore_index=True
+    )
+
+    months = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["month"]
+
+    assert months[0]["month"] == "2026-09"
+    assert months[0]["levels"]["prev_high"] == 111.0, "the 15:25 print must not set the high"
+    assert months[0]["levels"]["pivot"] == pytest.approx((111.0 + 99.0 + 110.0) / 3, abs=0.01)
+
+
+def test_a_month_band_spans_the_daily_bars_not_the_minutes():
+    """The levels come from minutes; the span is the timeframe it is drawn on."""
+
+    frame = pd.concat(
+        [_session("2026-08-10", [100.0] * 3), _session("2026-09-14", [300.0] * 3),
+         _session("2026-09-15", [310.0] * 3)],
+        ignore_index=True,
+    )
+
+    months = dashboard_history.cpr_segments(frame, dashboard_history.daily_bars(frame))["month"]
+
+    # Daily bars are stamped at the session open, so the band runs open-to-open.
+    assert months[0]["from"] == int(pd.Timestamp("2026-09-14 09:15").timestamp())
+    assert months[0]["to"] == int(pd.Timestamp("2026-09-15 09:15").timestamp())
+
+
 def test_the_cpr_ladders_survive_the_strict_renderer(tmp_path):
     """One NaN freezes the dashboard for the rest of the session."""
 

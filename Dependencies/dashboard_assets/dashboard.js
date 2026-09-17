@@ -613,8 +613,16 @@
     }
     const todayStart = bars[todayFrom].time;
 
+    /* `band.to < todayStart` exists ONLY to clear the way for the live band
+     * pushed below, and there is no live band on the monthly ladder. Applying it
+     * there dropped the CURRENT month every time: each daily bar is its own day,
+     * so `todayStart` is simply the last bar, which is exactly where the newest
+     * month band ends. The chart then showed last month's levels while the
+     * caption named this month's -- 24167.97 drawn against 24282.77 captioned. */
     const bands = ladder.filter(
-      (band) => band.to >= leftEdge && band.from <= rightEdge && band.to < todayStart,
+      (band) => band.to >= leftEdge
+        && band.from <= rightEdge
+        && (monthly || band.to < todayStart),
     );
 
     /* Today's band comes from the LIVE payload, never the stored ladder: the

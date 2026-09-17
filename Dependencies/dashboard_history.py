@@ -318,16 +318,29 @@ def _cpr_inputs(frame: pd.DataFrame, key: pd.Series) -> pd.DataFrame:
     )
 
 
-def _segments(frame: pd.DataFrame, key: pd.Series, label: str) -> list[dict[str, object]]:
+def _segments(
+    *,
+    levels_frame: pd.DataFrame,
+    levels_key: pd.Series,
+    spans_frame: pd.DataFrame,
+    spans_key: pd.Series,
+    label: str,
+) -> list[dict[str, object]]:
     """One CPR band per group, derived from the group BEFORE it.
 
     This is the `_add_daily_cpr` shape the CPR strategy already uses -- group,
     aggregate, then shift by one -- rather than a second way of saying it. The
     first group has no predecessor and so has no band at all, which is correct
     and is why it is skipped rather than given zeros.
+
+    The levels and the span come from DIFFERENT frames on purpose. The levels
+    must always be read off MINUTE bars, because that is the only frame where
+    truncating at 15:15 means anything -- a daily bar has one timestamp and its
+    close is already the auction's. The span is whatever timeframe the band will
+    be drawn on: minutes for the daily ladder, daily bars for the monthly one.
     """
 
-    stats = _cpr_inputs(frame, key)
+    stats = _cpr_inputs(levels_frame, levels_key)
     # Read once into plain floats, keyed by group. `stats.loc[group]` would do
     # the same work per row and hands back something pandas-stubs cannot narrow.
     inputs = {
@@ -335,7 +348,7 @@ def _segments(frame: pd.DataFrame, key: pd.Series, label: str) -> list[dict[str,
         for group, row in stats.iterrows()
     }
     spans = (
-        frame.assign(_key=key)
+        spans_frame.assign(_key=spans_key)
         .groupby("_key", sort=True)["timestamp"]
         .agg(["min", "max"])
     )
@@ -371,12 +384,31 @@ def cpr_segments(frame: pd.DataFrame, days: pd.DataFrame) -> dict[str, object]:
     session and comes from the session before it; the monthly one spans each
     month of DAILY bars and comes from the month before it, which is what makes
     the Daily timeframe usable for the next session's macro read.
+
+    BOTH read their levels off the MINUTE frame. Deriving the month's high, low
+    and close from the daily bars instead looks equivalent and is not: every
+    daily bar is stamped 09:15, so the 09:15-15:15 filter matches all of them
+    and truncates nothing, and the month's close silently becomes the auction
+    close ADR-0017 exists to keep out. Measured when it did: August 2026 shipped
+    a pivot of 24282.77 against the truncated 24249.25, with the high 70.4
+    points out.
     """
 
+    minutes_month = frame["timestamp"].dt.to_period("M").astype(str)
     return {
-        "day": _segments(frame, frame["timestamp"].dt.date, "date"),
+        "day": _segments(
+            levels_frame=frame,
+            levels_key=frame["timestamp"].dt.date,
+            spans_frame=frame,
+            spans_key=frame["timestamp"].dt.date,
+            label="date",
+        ),
         "month": _segments(
-            days, days["timestamp"].dt.to_period("M").astype(str), "month"
+            levels_frame=frame,
+            levels_key=minutes_month,
+            spans_frame=days,
+            spans_key=days["timestamp"].dt.to_period("M").astype(str),
+            label="month",
         ),
     }
 
