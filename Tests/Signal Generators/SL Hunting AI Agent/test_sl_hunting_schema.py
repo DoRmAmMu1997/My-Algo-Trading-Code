@@ -2863,3 +2863,67 @@ def test_v5f_a_one_way_day_seats_nobody_and_the_open_is_the_receipt():
     assert "did yesterday RETRACE?" in rule
     assert "If it ran one way, assume no seated crowd and stop there" in rule
     assert "the plan is to FOLLOW the move rather than to hunt it" in rule
+
+
+def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
+    """v5g (17 Sep): the reflexive half of v5b, measured on both sides at once.
+
+    IH and this book reached the identical read, took the identical side, and
+    finished the day in opposite columns -- he at his loss limit, the book
+    +11,355. The difference was the box, not the judgement. Seven ways an edit
+    breaks it:
+
+    1. Losing the tie to v5b. Alone this reads as generic "cut quickly" advice
+       rather than the specific thing a FOLLOW inherits.
+    2. Losing why the follow is exposed: nobody trapped means nothing forced to
+       move. That is the mechanism; without it the rule is a mood.
+    3. Losing that the eviction argument is about the PAST. It is the single
+       sentence that stops "they are gone" being read as "so it will run".
+    4. Losing the reflexive read-back -- the decay clock that emptied them is
+       the clock you are about to sit on. This is the whole idea.
+    5. Losing the both-sides measurement. One side alone reads as luck; the
+       pair is what makes it evidence.
+    6. Losing the honesty clause. The winning exit was the cutoff firing while
+       the model was down, and an edit that drops it turns the day into the
+       agent out-trading him, which is false and flattering.
+    7. Losing the distinction at the end -- the premise can still be intact
+       while the trade is already dead.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A CROWD EVICTED BY A SIDEWAYS STRETCH")
+
+    # 1 and 2. What the follow inherits, and why it is exposed.
+    assert "LEAVES YOU IN THE SAME SIDEWAYS STRETCH" in rule
+    assert "v5b reads an eviction and licenses a FOLLOW rather than a hunt" in rule
+    assert "once nobody is trapped, nothing is forced to move" in rule
+    assert "the position can idle exactly as theirs did" in rule
+
+    # 3. Evidence about the past, not a promise about the next hour.
+    assert "The eviction argument is evidence about the PAST" in rule
+    assert "it promises nothing about the next hour" in rule
+
+    # 4. The reflexive read-back, in IH's own reasoning.
+    assert "READ THE PREMISE BACK AT YOURSELF" in rule
+    assert "his premium decays and he will not hold" in rule
+    assert "on the same clock, paying the same decay" in rule
+    assert "a trade entered INTO a sideways stretch" in rule
+
+    # 5. Both sides of the same idea, with the numbers that make it evidence.
+    assert "uniquely on BOTH sides of the same idea" in rule
+    assert "took the identical side" in rule
+    assert "23,358.70 by 12:38" in rule
+    assert "there is no need to apply the brain here, cut the trade and get out" in rule
+    assert "in two BOUNDED windows" in rule
+    assert "finished +11,355 on a day the same read cost him his limit" in rule
+    assert "right for about ninety minutes and wrong afterwards" in rule
+
+    # 6. The honesty clause -- this was not superior judgement.
+    assert "DO NOT READ THAT AS OUT-TRADING HIM" in rule
+    assert "the model had been failing every bar since 10:42" in rule
+    assert "What won was the BOX, not the judgement" in rule
+
+    # 7. The practical form, including the closing distinction.
+    assert "name the window before entering" in rule
+    assert "carried by momentum ALREADY present" in rule
+    assert "a stall is the exit rather than something to wait through" in rule
+    assert "the premise has not failed -- but the trade has" in rule
