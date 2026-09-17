@@ -7451,10 +7451,26 @@ RIGHT DOES NOT EARN THE HOLD plus the RISK section's loss-limit rules. His
 "if the loss limit is exhausted there is no need to apply the brain" is v5c's
 WHAT IT DOES NOT SAY clause stated from the other side.
 
-**Open.** The 18-minute inference outage from 10:42 is unexplained. The log
-carries only the canned content-free message by design (SLH-004), so the cause
-is not recoverable from it. The Pro plan's 5-hour window expiring around then
-is the obvious candidate and matches the operator's stated constraint, in
-which case nothing is broken - but a run of 19 consecutive failures while
-holding a live position is worth confirming rather than assuming, since the
-position was unmanaged for that entire stretch.
+**Confirmed, not open.** The 18-minute outage from 10:42 was the Pro plan's
+5-hour usage window expiring - confirmed by the operator the same evening.
+Nothing is broken, and no code change is wanted.
+
+What it adds to the existing constraint is a NUMBER. The 11:00 cutoff is sized
+to that plan window, but the window does not END at 11:00: today it ran out at
+about 10:42, roughly eighteen minutes early. So **the agent can go dark before
+its own cutoff**, and anything open in that gap is unmanaged - no premise
+check, no agent exit, nothing but the host's mechanical risk (stop, target,
+max-loss, 15:15 square-off) and then the cutoff flatten.
+
+Today that gap was worth +8,535, because the cutoff happened to book the
+second short about six points off the session's post-entry low, minutes before
+a reversal that ran 140 points the other way. That is luck, not design, and it
+could as easily run the other way on a day the position is offside. The answer
+already in this book is v5g's PRACTICAL FORM - name the window before
+entering - which is worth more here than any new guard, because a position
+sized and reasoned for a window that ends at 11:00 is really operating on one
+that can end at 10:40.
+
+NOTE FOR NEXT TIME: the cause is not recoverable from the log. SLH-004 logs
+this class with CANNED, content-free messages on purpose, so a future outage
+of the same shape will again need the operator to say which it was.
