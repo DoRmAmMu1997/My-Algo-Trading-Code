@@ -433,15 +433,27 @@ def test_every_element_the_page_script_looks_up_exists_in_the_markup():
     Two lookup shapes are checked: a literal `el("x")` / `getElementById("x")`,
     and the `["element-id", "prefKey"]` pairs the checkbox loop iterates, where
     the id never appears next to `el(` at all.
+
+    The pair shape is read from INSIDE the wiring loop rather than from any
+    two-string array in the file. Matching those wherever they appeared made an
+    ordinary `for (const name of ["stoch_k", "stoch_d"])` look like a wired
+    element id, and failed the test for something that is not one.
     """
 
     assets = ASSETS_DIR
     script = (assets / "dashboard.js").read_text(encoding="utf-8")
     markup = (assets / "index.html").read_text(encoding="utf-8")
 
+    wiring = re.search(r"for \(const \[id, key\] of \[(.*?)\]\) \{", script, re.DOTALL)
+    assert wiring, "the control-wiring loop was not found; this test is checking nothing"
+
     looked_up = set(
         re.findall(r'(?:el|getElementById)\(\s*"([A-Za-z0-9_-]+)"\s*\)', script)
-    ) | set(re.findall(r'\[\s*"([A-Za-z0-9_-]+)"\s*,\s*"[A-Za-z0-9_]+"\s*\]', script))
+    ) | set(
+        re.findall(
+            r'\[\s*"([A-Za-z0-9_-]+)"\s*,\s*"[A-Za-z0-9_]+"\s*\]', wiring.group(1)
+        )
+    )
     declared = set(re.findall(r'\bid="([A-Za-z0-9_-]+)"', markup))
 
     # Sanity check: if the patterns stop matching, this test would "pass" while

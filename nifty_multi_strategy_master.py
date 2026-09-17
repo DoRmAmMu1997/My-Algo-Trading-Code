@@ -18294,6 +18294,12 @@ def _dashboard_history_pages() -> dict[str, bytes]:
         renderer=dashboard_snapshot.render_document_bytes,
         resample=_DASHBOARD_CHART_DEPS.resample,
         higher_timeframe_minutes=_DASHBOARD_HIGHER_TIMEFRAME_MINUTES,
+        stochastic_fn=_DASHBOARD_CHART_DEPS.stochastic_fn,
+        stochastic_settings={
+            "k_period": _DASHBOARD_CHART_DEPS.k_period,
+            "d_period": _DASHBOARD_CHART_DEPS.d_period,
+            "smooth_k": _DASHBOARD_CHART_DEPS.smooth_k,
+        },
     )
     if not history.available:
         logger.info(

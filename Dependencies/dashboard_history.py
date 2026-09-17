@@ -33,12 +33,18 @@ from pathlib import Path
 
 import pandas as pd
 
+# The package name, matching how the master imports every other module here.
+# NOT the bare name `mypy_path` also resolves: one file under two module names
+# makes mypy refuse to check either. This module is type-checked through
+# `mypy nifty_multi_strategy_master.py`, which follows and checks its imports --
+# the same way `execution_ledger` and `startup_exposure` are covered.
 from Dependencies.dashboard_indicators import (
     CPR_SESSION_END,
     CPR_SESSION_START,
     bar_records,
     pivot_levels,
     round_or_none,
+    stochastic_values,
 )
 
 #: The trading session. Bars outside it are not session data: Dhan's older index
@@ -257,26 +263,29 @@ def build_series(
     frame: pd.DataFrame,
     renderer: Callable[[Mapping[str, object]], bytes],
     page_size: int = HISTORY_PAGE_BARS,
+    columns: Mapping[str, Sequence[float | None]] | None = None,
 ) -> HistorySeries:
-    """Cut one timeframe into rendered pages, newest first."""
+    """Cut one timeframe into rendered pages, newest first.
+
+    `columns` are indicator values already aligned to `frame`, sliced with the
+    bars so a page's arrays and its candles cannot drift apart.
+    """
 
     records: Sequence[Mapping[str, object]] = bar_records(frame)
     total = len(records)
     pages: list[bytes] = []
     for index in range(page_count(total, page_size)):
         start, stop = page_bounds(total, index, page_size)
-        window = list(records[start:stop])
-        pages.append(
-            renderer(
-                {
-                    "tf": key,
-                    "minutes": int(minutes),
-                    "page": index,
-                    "pages": page_count(total, page_size),
-                    "bars": window,
-                }
-            )
-        )
+        payload: dict[str, object] = {
+            "tf": key,
+            "minutes": int(minutes),
+            "page": index,
+            "pages": page_count(total, page_size),
+            "bars": list(records[start:stop]),
+        }
+        for name, values in (columns or {}).items():
+            payload[name] = list(values[start:stop])
+        pages.append(renderer(payload))
     return HistorySeries(
         key=key,
         minutes=int(minutes),
@@ -319,6 +328,12 @@ def _segments(frame: pd.DataFrame, key: pd.Series, label: str) -> list[dict[str,
     """
 
     stats = _cpr_inputs(frame, key)
+    # Read once into plain floats, keyed by group. `stats.loc[group]` would do
+    # the same work per row and hands back something pandas-stubs cannot narrow.
+    inputs = {
+        group: (float(row["high"]), float(row["low"]), float(row["close"]))
+        for group, row in stats.iterrows()
+    }
     spans = (
         frame.assign(_key=key)
         .groupby("_key", sort=True)["timestamp"]
@@ -328,11 +343,11 @@ def _segments(frame: pd.DataFrame, key: pd.Series, label: str) -> list[dict[str,
     segments: list[dict[str, object]] = []
     previous = None
     for group, span in spans.iterrows():
-        if previous is not None and previous in stats.index:
-            row = stats.loc[previous]
-            levels = pivot_levels(float(row["high"]), float(row["low"]), float(row["close"]))
-            levels["prev_high"] = float(row["high"])
-            levels["prev_low"] = float(row["low"])
+        if previous is not None and previous in inputs:
+            high, low, close = inputs[previous]
+            levels = pivot_levels(high, low, close)
+            levels["prev_high"] = high
+            levels["prev_low"] = low
             rounded = {name: round_or_none(levels.get(name)) for name in CPR_LEVEL_KEYS}
             # `allow_nan=False` turns one NaN into a frozen dashboard for the
             # rest of the session, so a level that cannot be computed is dropped
@@ -393,6 +408,8 @@ def build_history(
     resample: Callable[[pd.DataFrame, int], pd.DataFrame],
     higher_timeframe_minutes: int = 5,
     page_size: int = HISTORY_PAGE_BARS,
+    stochastic_fn: Callable[..., tuple[pd.Series, pd.Series]] | None = None,
+    stochastic_settings: Mapping[str, int] | None = None,
 ) -> DashboardHistory:
     """Load the CSV and render every timeframe's pages.
 
@@ -430,8 +447,31 @@ def build_history(
     if not days.empty:
         # `minutes` is the bucket width and a session is not a fixed number of
         # them, so 0 means "not a minute timeframe" rather than a bad value.
+        # The DAILY series carries its own stochastic. The live payload's is
+        # computed on one-minute bars, which says nothing about a daily candle,
+        # and the Daily timeframe exists precisely for the slower read.
+        #
+        # The minute timeframes deliberately do NOT get indicator columns here:
+        # scrolled-back candles show the CPR bands and nothing else, because
+        # VWAP and the stochastic are about the session being traded.
+        columns: dict[str, Sequence[float | None]] = {}
+        if stochastic_fn is not None:
+            settings = dict(stochastic_settings or {})
+            try:
+                k_values, d_values = stochastic_values(
+                    days,
+                    stochastic_fn=stochastic_fn,
+                    k_period=int(settings.get("k_period", 14)),
+                    d_period=int(settings.get("d_period", 3)),
+                    smooth_k=int(settings.get("smooth_k", 3)),
+                )
+                columns = {"stoch_k": k_values, "stoch_d": d_values}
+            except Exception:  # noqa: BLE001 - an indicator costs its own line, never the chart
+                columns = {}
+
         series["D"] = build_series(
-            key="D", minutes=0, frame=days, renderer=renderer, page_size=page_size
+            key="D", minutes=0, frame=days, renderer=renderer,
+            page_size=page_size, columns=columns,
         )
 
     return DashboardHistory(

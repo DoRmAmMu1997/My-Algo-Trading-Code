@@ -428,3 +428,71 @@ def test_the_cpr_ladders_survive_the_strict_renderer(tmp_path):
     ladders = json.loads(history.cpr)
     assert ladders["day"] and isinstance(ladders["month"], list)
     assert "cpr:0" in dashboard_history.page_map(history)
+
+
+# ------------------------------------------------- indicator columns
+
+
+def _fake_stochastic(frame, k_period, d_period, smooth_k):
+    """A stand-in with the shape the strategies' own helper returns."""
+
+    close = frame["close"]
+    return close.rolling(2, min_periods=1).mean(), close.rolling(3, min_periods=1).mean()
+
+
+def test_the_daily_series_carries_its_own_stochastic(tmp_path):
+    """A minute stochastic says nothing about a daily candle.
+
+    The Daily timeframe exists for the slower read, so its oscillator has to be
+    computed on daily bars rather than borrowed from the live minute payload.
+    """
+
+    frame = pd.concat(
+        [_minutes(day, 4) for day in ("2026-09-08", "2026-09-09", "2026-09-10")],
+        ignore_index=True,
+    )
+    history = dashboard_history.build_history(
+        path=_csv(tmp_path, frame), renderer=_renderer, resample=_resample,
+        stochastic_fn=_fake_stochastic,
+        stochastic_settings={"k_period": 2, "d_period": 2, "smooth_k": 1},
+    )
+
+    page = json.loads(history.series["D"].page(0))
+    assert len(page["bars"]) == 3
+    assert len(page["stoch_k"]) == 3, "the column is sliced beside its bars"
+    assert len(page["stoch_d"]) == 3
+
+
+def test_the_minute_series_carry_no_indicator_columns(tmp_path):
+    """Deliberate: VWAP and a minute stochastic are about the session traded.
+
+    Scrolled-back candles show the CPR bands and nothing else, which keeps the
+    pages small and the statement honest.
+    """
+
+    frame = pd.concat([_minutes(d, 4) for d in ("2026-09-08", "2026-09-09")], ignore_index=True)
+    history = dashboard_history.build_history(
+        path=_csv(tmp_path, frame), renderer=_renderer, resample=_resample,
+        stochastic_fn=_fake_stochastic,
+    )
+
+    page = json.loads(history.series["1"].page(0))
+    assert "stoch_k" not in page
+    assert "vwap" not in page
+
+
+def test_a_broken_stochastic_costs_the_column_not_the_chart(tmp_path):
+    """An indicator failure must never take the Daily timeframe down with it."""
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("no talib today")
+
+    frame = pd.concat([_minutes(d, 4) for d in ("2026-09-08", "2026-09-09")], ignore_index=True)
+    history = dashboard_history.build_history(
+        path=_csv(tmp_path, frame), renderer=_renderer, resample=_resample,
+        stochastic_fn=explode,
+    )
+
+    page = json.loads(history.series["D"].page(0))
+    assert len(page["bars"]) == 2, "the daily candles still arrive"
+    assert "stoch_k" not in page

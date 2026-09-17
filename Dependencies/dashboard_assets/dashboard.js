@@ -58,6 +58,7 @@
     vwapFootnote: el("vwap-footnote"),
     tf1: el("tf-1"),
     tf5: el("tf-5"),
+    tfD: el("tf-d"),
   };
 
   let etag = null;
@@ -108,6 +109,11 @@
    * every time a minute closes. Merging them at draw time is what stops that
    * once-a-minute refresh from throwing away everything scrolled back to. */
   const historyBars = { "1": [], "5": [], "D": [] };
+  /* Indicator columns that came WITH the history pages, kept the same length as
+   * `historyBars` so a slice of one lines up with a slice of the other. Only
+   * the Daily series carries any: its stochastic is computed on daily candles,
+   * which is a different statement from the live payload's minute one. */
+  const historyCols = { "1": {}, "5": {}, "D": {} };
   const historyNextPage = { "1": 0, "5": 0, "D": 0 };
   const historyExhausted = { "1": false, "5": false, "D": false };
   let historyInFlight = false;
@@ -528,14 +534,56 @@
     }
   }
 
-  function mergedBars(liveBars) {
+  function historyCut(liveBars) {
     const history = historyBars[prefs.tf] || [];
-    if (!history.length) return liveBars;
-    if (!liveBars.length) return history.slice();
+    if (!liveBars.length) return history.length;
     const firstLive = liveBars[0].time;
     let cut = history.length;
     while (cut > 0 && history[cut - 1].time >= firstLive) cut -= 1;
+    return cut;
+  }
+
+  function mergedBars(liveBars, cut) {
+    const history = historyBars[prefs.tf] || [];
+    if (!history.length) return liveBars;
     return history.slice(0, cut).concat(liveBars);
+  }
+
+  /* One indicator column over the merged series: the stored part where history
+   * carried it, then the live part. */
+  function mergedColumn(name, liveValues, cut) {
+    const history = historyBars[prefs.tf] || [];
+    const stored = (historyCols[prefs.tf] || {})[name] || new Array(history.length).fill(null);
+    return stored.slice(0, cut).concat(liveValues || []);
+  }
+
+  /* Today, as ONE daily candle, folded out of the live minute bars.
+   *
+   * The runner's store holds minutes, so the Daily timeframe would otherwise
+   * stop at yesterday -- the history CSV is only as fresh as the last download.
+   * Stamped at 09:15 of the session exactly as the server stamps its own daily
+   * bars, so today lands on the same grid instead of a slot of its own. */
+  function dailyLiveBars() {
+    const minute = chartPayload && chartPayload.timeframes && chartPayload.timeframes["1"];
+    const bars = (minute && minute.bars) || [];
+    if (!bars.length) return [];
+    const lastDay = Math.floor(bars[bars.length - 1].time / 86400);
+    let start = bars.length - 1;
+    while (start > 0 && Math.floor(bars[start - 1].time / 86400) === lastDay) start -= 1;
+    const session = bars.slice(start);
+    let high = session[0].high;
+    let low = session[0].low;
+    for (const bar of session) {
+      if (bar.high > high) high = bar.high;
+      if (bar.low < low) low = bar.low;
+    }
+    return [{
+      time: lastDay * 86400 + 9 * 3600 + 15 * 60,
+      open: session[0].open,
+      high,
+      low,
+      close: session[session.length - 1].close,
+    }];
   }
 
   /* Which bands belong on the chart right now.
@@ -580,7 +628,15 @@
     return bands;
   }
 
-  const BAR_SECONDS = { "1": 60, "5": 300, "D": 86400 };
+  /* The month band the Daily caption describes, plus the month its numbers
+   * came FROM -- which is the month before it, and the thing worth naming. */
+  function newestMonthBand() {
+    const ladder = (cprLadders && cprLadders.month) || [];
+    if (!ladder.length) return { levels: null };
+    const band = ladder[ladder.length - 1];
+    const previous = ladder.length > 1 ? ladder[ladder.length - 2].month : null;
+    return { levels: band.levels, previous: previous || "" };
+  }
 
   function renderCprLines(bars) {
     if (!chart || !candleSeries) return;
@@ -650,7 +706,25 @@
     }
   }
 
-  function renderCprProvenance(cpr) {
+  function renderCprProvenance(cpr, monthly) {
+    /* On the Daily timeframe the bands are MONTHLY, so the daily payload's
+     * caption would describe a session nobody is looking at. Describe the month
+     * band instead, from its own numbers. */
+    if (monthly) {
+      if (!monthly.levels) {
+        nodes.cprProvenance.hidden = true;
+        return;
+      }
+      const levels = monthly.levels;
+      nodes.cprProvenance.textContent = [
+        `Prior month ${monthly.previous || ""}`.trim(),
+        `H ${levels.prev_high} L ${levels.prev_low}`,
+        `pivot ${levels.pivot} (chart)`,
+        "sessions truncated at 15:15",
+      ].join(" · ");
+      nodes.cprProvenance.hidden = false;
+      return;
+    }
     if (!cpr || !cpr.available) {
       nodes.cprProvenance.hidden = false;
       nodes.cprProvenance.textContent = cpr && cpr.unavailable_reason
@@ -679,22 +753,35 @@
 
   function applyTimeframe() {
     if (!chartPayload || !candleSeries) return;
-    const block = chartPayload.timeframes[prefs.tf] || chartPayload.timeframes["1"];
+    /* The runner publishes minute timeframes only. The Daily series is
+     * history plus today folded out of the live minutes, so it has a block of
+     * its own rather than one from the payload. */
+    const daily = prefs.tf === "D";
+    const block = daily
+      ? { minutes: 0, bars: [], vwap: [], stoch_k: [], stoch_d: [] }
+      : (chartPayload.timeframes[prefs.tf] || chartPayload.timeframes["1"]);
     if (!block) return;
 
-    const live = block.bars || [];
-    const bars = mergedBars(live);
+    const live = daily ? dailyLiveBars() : (block.bars || []);
+    const cut = historyCut(live);
+    const bars = mergedBars(live, cut);
     candleSeries.setData(bars);
     renderedBarCount = bars.length;
 
-    /* The indicator columns cover the LIVE window only -- history pages carry
-     * candles and nothing else. That is fine and needs no padding, because
-     * these are {time, value} points: lightweight-charts places them by time,
-     * so they simply stop where the live window starts rather than sliding out
-     * of step with the bars underneath. */
-    vwapSeries.setData(pointsFrom(live, block.vwap));
-    kSeries.setData(pointsFrom(live, block.stoch_k));
-    dSeries.setData(pointsFrom(live, block.stoch_d));
+    /* On the minute timeframes the indicator columns cover the LIVE window
+     * alone -- history pages carry candles and nothing else, because VWAP and a
+     * minute stochastic are statements about the session being traded. On Daily
+     * the stochastic comes the other way round, out of the history pages, since
+     * it is computed on daily candles. Either way the arrays are index-aligned
+     * with the bars they were sliced beside. */
+    vwapSeries.setData(pointsFrom(bars, mergedColumn("vwap", block.vwap, cut)));
+    kSeries.setData(pointsFrom(bars, mergedColumn("stoch_k", block.stoch_k, cut)));
+    dSeries.setData(pointsFrom(bars, mergedColumn("stoch_d", block.stoch_d, cut)));
+
+    /* A session VWAP has no meaning on a daily candle, so it is hidden rather
+     * than drawn as a line that looks like it means something. */
+    vwapSeries.applyOptions({ visible: prefs.vwap && !daily });
+    nodes.vwapLabel.classList.toggle("disabled", daily);
 
     if (renderedTimeframe !== prefs.tf) {
       renderedTimeframe = prefs.tf;
@@ -711,11 +798,13 @@
     }
 
     const minutes = block.minutes || 1;
-    nodes.chartTitle.textContent =
-      `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
-      + `${(chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15"} (chart only)`;
+    const window = (chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15";
+    nodes.chartTitle.textContent = daily
+      ? "NIFTY · daily · CPR from the prior MONTH (chart only)"
+      : `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
+        + `${window} (chart only)`;
     renderCprLines(bars);
-    renderCprProvenance(chartPayload.cpr);
+    renderCprProvenance(chartPayload.cpr, daily ? newestMonthBand() : null);
     ensureCprLadders();
 
     const vwapMeta = (chartPayload.indicators || {}).vwap || {};
@@ -788,6 +877,13 @@
         return;
       }
       historyBars[timeframe] = bars.concat(historyBars[timeframe] || []);
+      for (const name of ["stoch_k", "stoch_d"]) {
+        /* A page without the column still contributes its LENGTH, as nulls, so
+         * the arrays stay index-aligned with the bars either way. */
+        const incoming = doc[name] || new Array(bars.length).fill(null);
+        const columns = historyCols[timeframe];
+        columns[name] = incoming.concat(columns[name] || []);
+      }
       historyNextPage[timeframe] = page + 1;
       if (doc.pages && historyNextPage[timeframe] >= doc.pages) {
         historyExhausted[timeframe] = true;
@@ -820,10 +916,10 @@
   function setTimeframe(value) {
     prefs.tf = value;
     savePrefs();
-    nodes.tf1.classList.toggle("active", value === "1");
-    nodes.tf5.classList.toggle("active", value === "5");
-    nodes.tf1.setAttribute("aria-pressed", String(value === "1"));
-    nodes.tf5.setAttribute("aria-pressed", String(value === "5"));
+    for (const [button, key] of [[nodes.tf1, "1"], [nodes.tf5, "5"], [nodes.tfD, "D"]]) {
+      button.classList.toggle("active", value === key);
+      button.setAttribute("aria-pressed", String(value === key));
+    }
     /* Switching redraws from the payload the browser ALREADY holds: no fetch,
      * so the toggle has no way to fail. */
     applyTimeframe();
@@ -980,6 +1076,7 @@
    * toggling never costs a redraw of the series it keeps. */
   nodes.tf1.addEventListener("click", () => setTimeframe("1"));
   nodes.tf5.addEventListener("click", () => setTimeframe("5"));
+  nodes.tfD.addEventListener("click", () => setTimeframe("D"));
 
   for (const [id, key] of [
     ["ind-cpr", "cpr"], ["ind-cpr-pd", "cprPD"],
@@ -996,7 +1093,7 @@
       else if (chartPayload) applyTimeframe();
     });
   }
-  setTimeframe(prefs.tf === "5" ? "5" : "1");
+  setTimeframe(["1", "5", "D"].includes(prefs.tf) ? prefs.tf : "1");
 
   document.addEventListener("visibilitychange", () => {
     /* Bring the NEXT poll forward rather than starting a second loop. */
