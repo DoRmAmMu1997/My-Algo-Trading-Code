@@ -2927,3 +2927,63 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "carried by momentum ALREADY present" in rule
     assert "a stall is the exit rather than something to wait through" in rule
     assert "the premise has not failed -- but the trade has" in rule
+
+
+def test_v5h_a_range_makes_the_crowd_read_unpayable():
+    """v5h (18 Sep): learned on a day the book was RIGHT and still gave it back.
+
+    Four shorts, every one correctly on the note's flat branch off the computed
+    FLAT verdict, inside a 44-point session. The first made +4,466.25; the next
+    three netted MINUS 158 between them. Seven ways an edit breaks it:
+
+    1. Losing that this is v5g's general case -- apart they look like two
+       moods about quiet markets rather than one rule and its limit.
+    2. Losing that it is a limit on the METHOD, stated by its own source. That
+       provenance is what stops it being read as generic caution.
+    3. Losing "whether you find out the SLs or NOT" -- the claim is that
+       correctness is not the variable, which is the surprising part.
+    4. Losing IH's own retrospective, which is what makes it a pattern rather
+       than one bad day.
+    5. Losing the measured asymmetry. "Four trades, small profit" is a
+       different and much weaker fact than "the first was the whole day".
+    6. Losing the checkable tell. Without the new-extreme test the rule needs
+       the model to first agree it is in a range, which is the judgement that
+       fails in real time.
+    7. Losing the standing-premise clause, which explains why the note could be
+       cited four times and why v3q's gate did not catch any of them.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "IN A RANGE THE CROWD READ CANNOT PAY")
+
+    # 1 and 2. Its relationship to v5g, and whose limit it is.
+    assert "HOWEVER RIGHT IT IS" in rule
+    assert "The general case of the rule above" in rule
+    assert "the only limit on this whole method stated by the person it came from" in rule
+    assert "hunt or follow, correct or not" in rule
+
+    # 3. The surprising claim, in his words.
+    assert "IH PUTS THE LIMIT ON HIS OWN METHOD" in rule
+    assert "whether you find out the SLs or NOT, the market can give you a loss" in rule
+    assert "Correctness is not the variable" in rule
+
+    # 4. His own retrospective on the prior session.
+    assert "sellers' SLs were not available there either" in rule
+    assert "When the market works inside a RANGE, that is where loss happens" in rule
+
+    # 5. The measured asymmetry, with the numbers that carry it.
+    assert "on a day it was RIGHT and still learned this" in rule
+    assert "about 44 points (23,292.55 to 23,336)" in rule
+    assert "+4,466.25 in fourteen minutes" in rule
+    assert "MINUS 158 between them" in rule
+    assert "the session simply had nothing left to pay" in rule
+
+    # 6. The checkable tell, and why it is phrased that way.
+    assert "is a judgement and your own re-entry is not" in rule
+    assert "REQUIRE A NEW EXTREME BEYOND YOUR PREVIOUS EXIT" in rule
+    assert "the next trade is a tax rather than a trade" in rule
+    assert "the market never made a new low after the first exit" in rule
+
+    # 7. Why a standing premise supplies no freshness, and why v3q missed it.
+    assert "A STANDING PREMISE IS NOT A SECOND REASON" in rule
+    assert "it selects a SIDE, it does not refresh" in rule
+    assert "asks for a nameable NEW trapped crowd, which is vacuous on a follow" in rule

@@ -7474,3 +7474,95 @@ that can end at 10:40.
 NOTE FOR NEXT TIME: the cause is not recoverable from the log. SLH-004 logs
 this class with CANNED, content-free messages on purpose, so a future outage
 of the same shape will again need the operator to say which it was.
+## v5h - in a range the crowd read cannot pay (18 Sep)
+
+Source: `Z3D-p6RvPc0`, "Live Bank Nifty Option Trading", uploaded 2026-09-18
+10:50 IST. Compared against the agent's own session: four trades, all SHORT,
+basket **+Rs.4,308.25**.
+
+### The day both sides got right
+
+Third session running where IH and the book reached the same read and took the
+same side. The open was +0.275% on NIFTY and +0.209% on BankNIFTY -- a small UP
+gap that SLH-017 classified FLAT, which is exactly the case the classification
+was built for. All four entries cited the verdict and the threshold explicitly,
+and took the note's flat branch. IH: "almost flat opening... until these levels
+are crossed we can follow the continued selling", and he bought puts.
+
+He booked one trade, took the profit, and stopped -- "because we had a loss
+yesterday and a loss the day before, this week we have not made much, so if we
+are getting a chance to make profit today, let us take the exit."
+
+### What the book did instead
+
+| # | entry | exit | held | basket |
+|---|---|---|---|---|
+| 1 | SHORT 23,322.60 09:20 | 09:34 momentum stall | 14m | **+4,466.25** |
+| 2 | SHORT 23,310.05 09:47 | 09:54 bullish engulfing at the stop | 7m | -1,959.00 |
+| 3 | SHORT 23,319.00 10:04 | 10:08 profit decay | 3.5m | +338.00 |
+| 4 | SHORT 23,318.95 10:23 | 10:27 profit growth stalled | 3.5m | +1,463.00 |
+
+The first trade was the day. Trades 2, 3 and 4 netted **MINUS 158** between
+them, for three more entries, three more mirrored baskets and three more
+exposures. The session's entire range was about 44 points (23,292.55 to
+23,336), and **the market never made a new low after trade 1's exit** -- all
+three re-entries went in without one.
+
+Nothing was misread. Every entry correctly applied the classification and the
+note; every exit cited a real rule by name (v4f, v4w, BOOK WHEN THE PROFIT
+STOPS GROWING) and booked into a stall rather than waiting. The exit discipline
+was good enough that three trades in a dead range still came out roughly flat.
+
+### The net-new claim
+
+IH states the limit on his own method, which nothing in the corpus had:
+
+> "when it has to give momentum in a direction, you will get the momentum
+> overall. But if it is a RANGE-BOUND market trading in a small range, or the
+> market simply does not want to give momentum -- a volatile market -- then
+> **whether you find out the SLs or NOT, the market can give you a loss**."
+
+Correctness is not the variable. And he says it while diagnosing his OWN loss
+from 17 Sep: "yesterday was the same situation when we sold, sellers' SLs were
+not available there either. But the market was very sideways... when the market
+works inside a RANGE, that is where loss happens." That is v5g, confirmed by
+its own source one day later and generalised: v5g says a FOLLOW can idle
+because nothing is trapped; v5h says the read itself -- hunt or follow, right
+or wrong -- stops being tradeable when the session refuses direction.
+
+Encoded as **IN A RANGE THE CROWD READ CANNOT PAY, HOWEVER RIGHT IT IS (v5h)**,
+placed directly after v5g as its general case.
+
+**It carries a checkable arm, because "is this a range?" is exactly the
+judgement that fails in real time.** BEFORE RE-ENTERING THE SAME SIDE, REQUIRE
+A NEW EXTREME BEYOND YOUR PREVIOUS EXIT. If price has not extended past where
+you booked, you are re-entering the same move and the session is ranging.
+
+**And it explains why nothing already in the book stopped this.** The pre-open
+note's branch is true from the open to the close -- it selects a SIDE, it does
+not refresh -- so it can be cited four times without ever going stale. All four
+entries did cite it, almost verbatim, each dressed in a different pattern name
+(`flat_open_failed_spike_breakdown`, `..._shooting_star_continuation`,
+`..._double_top_evening_star`, `..._seller_follow_bearish_cluster`). SLH-005's
+five-minute cooldown was cleared every time (13, 10 and 15 minutes apart), and
+v3q's re-entry gate asks for "a nameable NEW trapped crowd" -- which is vacuous
+on a FOLLOW whose whole premise is that nobody is seated. On a follow, the new
+extreme has to do that work instead.
+
+Negative-tested 10 ways, all 10 caught, plus a control mutation of unasserted
+prose that correctly did not trip the test.
+
+**Considered and not encoded.** IH's chart-repeat argument tonight -- "it is
+trying to make almost the same chart as yesterday, so the chances of the chart
+repeating become quite low", and "if the buyers made profit yesterday, today
+they should not get that profit" -- is v4f (THE CHART DOES NOT REPEAT TWO DAYS
+RUNNING), which already carries the same mechanism ("a shape everyone watched
+yesterday is a shape everyone is ready for today"). The cohort phrasing is
+sharper but adds no new test, so v4f stands unedited. His capital-sizing and
+emotional-discipline passage repeats v3y and the RISK section again.
+
+**Worth watching, not yet a rule.** v5g shipped last night and today's exits
+did book on stalls -- but they cited v4f and BOOK WHEN THE PROFIT STOPS GROWING,
+both of which predate it, so there is no evidence yet that v5g changed
+behaviour. Its distinctive claim (name the window BEFORE entering) did not
+appear in any entry rationale. One session is too few to judge; check again.
