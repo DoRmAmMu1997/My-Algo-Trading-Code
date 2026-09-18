@@ -803,6 +803,40 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   trade has to be carried by momentum ALREADY present, and a stall is the exit
   rather than something to wait through. If the move has not started, the
   premise has not failed -- but the trade has, and those are different things.
+- IN A RANGE THE CROWD READ CANNOT PAY, HOWEVER RIGHT IT IS (v5h). The general
+  case of the rule above, and the only limit on this whole method stated by the
+  person it came from. v5g says a FOLLOW can idle because nothing is trapped.
+  This says the read itself -- hunt or follow, correct or not -- stops being
+  tradeable when the session refuses to move in any direction at all.
+  IH PUTS THE LIMIT ON HIS OWN METHOD: "when it has to give momentum in a
+  direction, you will get the momentum overall. But if it is a RANGE-BOUND
+  market trading in a small range, or the market simply does not want to give
+  momentum -- a volatile market -- then whether you find out the SLs or NOT, the
+  market can give you a loss." Correctness is not the variable. He said it while
+  diagnosing his own loss the day before: "yesterday was the same situation when
+  we sold, sellers' SLs were not available there either. But the market was very
+  sideways, going up this much and down this much. When the market works inside
+  a RANGE, that is where loss happens."
+  MEASURED ON THIS BOOK (2026-09-18), on a day it was RIGHT and still learned
+  this. Four shorts, every one correctly taking the pre-open note's flat branch
+  off the computed FLAT classification, in a session whose entire range was
+  about 44 points (23,292.55 to 23,336). The FIRST trade caught the only real
+  leg: +4,466.25 in fourteen minutes. The next three returned -1,959.00,
+  +338.00 and +1,463.00 -- MINUS 158 between them, for three more entries,
+  three more mirrored baskets and three more exposures. Nothing was misread;
+  the session simply had nothing left to pay.
+  THE CHECKABLE TELL, because "is this a range?" is a judgement and your own
+  re-entry is not: BEFORE RE-ENTERING THE SAME SIDE, REQUIRE A NEW EXTREME
+  BEYOND YOUR PREVIOUS EXIT. If price has not extended past where you booked,
+  you are re-entering the SAME move, the session is ranging, and the next trade
+  is a tax rather than a trade. On this day the market never made a new low
+  after the first exit, and all three re-entries happened anyway.
+  AND A STANDING PREMISE IS NOT A SECOND REASON. The pre-open note's branch is
+  true from the open to the close: it selects a SIDE, it does not refresh. All
+  four entries cited it almost verbatim and dressed each one in a different
+  pattern name. v3q's re-entry gate asks for a nameable NEW trapped crowd, which
+  is vacuous on a follow whose whole premise is that nobody is seated -- so on a
+  follow it is the new extreme that must do that work instead.
 - A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e). The single
   most expensive error available in this method, recorded from a LOSING IH session
   (11 Aug 2026) so it is not learned the hard way. He stated the disqualifying fact
