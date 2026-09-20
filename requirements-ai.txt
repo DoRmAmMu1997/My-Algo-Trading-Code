@@ -11,7 +11,7 @@
 # -- SL Hunting (Claude Agent SDK) --------------------------------------------
 # The first three are the SDK's direct runtime dependencies; pinning them
 # prevents a fresh install from silently changing the agent transport.
-claude-agent-sdk==0.2.152
+claude-agent-sdk==0.2.154
 anyio==4.15.1
 sniffio==1.3.1
 

@@ -52,11 +52,11 @@ TA-Lib==0.6.8
 # `test_precommit_ruff_rev_matches_the_requirements_dev_pin` fails the build if
 # they separate.
 pytest==9.1.1
-ruff==0.16.7
+ruff==0.16.8
 mypy==2.3.1
 bandit==1.9.4
 pre-commit==4.6.2
-coverage==7.16.0
+coverage==7.16.1
 pytest-cov==7.1.0
 pip-audit==2.10.1
 # Type stubs for typed third-party usage in the mypy scope. pandas-stubs is
@@ -69,7 +69,7 @@ pip-audit==2.10.1
 # they describe. pandas-stubs tracks the pandas release it types, so keep this
 # on the same major as the pandas pin above.
 types-requests==2.33.0.20260906
-pandas-stubs==3.0.5.260730
+pandas-stubs==3.0.5.260914
 
 # ---- Exact optional dependency sets -----------------------------------------
 # Live broker compatibility manifest:
