@@ -668,6 +668,30 @@
     return { levels: band.levels, previous: previous || "" };
   }
 
+  /* The index of the first bar at or after `time`, or -1 if there is none.
+   *
+   * Every CPR point is placed on a bar time that already exists, which is what
+   * keeps the levels from adding COLUMNS to the shared time scale. Two things
+   * used to add them: a band's `to` of 15:29 is not a 5-minute bar (buckets end
+   * 15:25), and a band covering days the loaded candles do not have -- which
+   * happens whenever the history CSV is older than the live window -- sat in
+   * empty space entirely. */
+  function firstBarAtOrAfter(bars, time) {
+    let low = 0;
+    let high = bars.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (bars[mid].time >= time) {
+        found = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+    return found;
+  }
+
   function renderCprLines(bars) {
     if (!chart || !candleSeries) return;
     const bands = cprBandsForView(bars || []);
@@ -697,11 +721,17 @@
     cprSeries = [];
     if (!bands.length || !prefs.cpr) return;
 
-    /* A whitespace point -- a time with no value -- is what BREAKS the line
-     * between one day's band and the next. Without it the series would draw a
-     * diagonal from yesterday's pivot to today's, straight across the gap.
-     * One second past the band's end, so it cannot collide with a real bar. */
-    const gap = 1;
+    /* ONE point per band, at the bar its day opens on, drawn as a STEP.
+     *
+     * There is deliberately no whitespace point here. A whitespace item cannot
+     * break a line in lightweight-charts 5.2.1: the data layer runs
+     * `rows.filter(hasValue)` before the series ever sees them, so the stroke
+     * is one continuous path and the break never happened -- which is what drew
+     * a diagonal from yesterday's level to today's. `LineType.WithSteps` below
+     * is what actually separates the days: the renderer moves horizontally at
+     * the previous value and only then vertically, so each level runs flat
+     * across its session and steps at the next open. */
+    const lastBar = bars[bars.length - 1];
 
     for (const level of CPR_LEVELS) {
       const on = level.group === "core"
@@ -714,15 +744,28 @@
       for (const band of bands) {
         const price = band.levels[level.key];
         if (price === null || price === undefined) continue;
-        points.push({ time: band.from, value: price });
-        if (band.to > band.from) points.push({ time: band.to, value: price });
-        points.push({ time: band.to + gap });
+        const index = firstBarAtOrAfter(bars, band.from);
+        /* No loaded candle inside this band -- a gap in the history the chart
+         * cannot draw against. Skipping it leaves the previous level running,
+         * which is honest: nothing here says otherwise. */
+        if (index === -1 || bars[index].time > band.to) continue;
+        points.push({ time: bars[index].time, value: price });
       }
       if (!points.length) continue;
+      /* Carry the newest level to the right edge; a step ends at its last
+       * point, so without this the freshest band would stop at its own open. */
+      const newestValue = points[points.length - 1].value;
+      if (lastBar.time > points[points.length - 1].time) {
+        points.push({ time: lastBar.time, value: newestValue });
+      }
 
       const series = chart.addSeries(LightweightCharts.LineSeries, {
         color: level.color,
         lineWidth: 1,
+        /* The whole fix. `case 1` of the library's line renderer is
+         * `lineTo(x, previousY)` then `lineTo(x, y)` -- horizontal, then
+         * vertical -- so a diagonal is not reachable in this branch. */
+        lineType: LightweightCharts.LineType.WithSteps,
         priceLineVisible: false,
         /* The last value still gets an axis label, and `title` puts the level's
          * NAME beside it -- so the "(chart)" caveat still travels with a
