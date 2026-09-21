@@ -201,25 +201,32 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_18_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 17 Sep transcript.
+def test_shipped_note_matches_september_22_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 21 Sep transcript.
 
-    Third consecutive note with the SAME branch shape, so the thing the test
-    exists to protect is that the shape is not all there is: the reason moves,
-    and here it is a multi-day negative run that MAY have seated sellers. Five
-    things an edit would flatten:
+    The branch shape MOVED this time, so the thing the test exists to protect
+    is no longer "the reason varies under a fixed shape" -- it is the shape
+    itself. Five things an edit would flatten:
 
-    1. That this is the third repeat. Without it a summariser treats the shape
-       as settled doctrine rather than a fresh conditional read each evening.
-    2. The sell branch's premise, stated outright on NIFTY -- sellers are NOT
-       much seated -- which is why flat means follow rather than fade.
-    3. That the gap up is what MAKES the sellers real. They are hypothetical
-       until the open shows them, and an edit that asserts them inverts the
-       whole conditional.
-    4. The retracement-then-rejection shape, which is the reason the question
-       is open rather than answered.
-    5. SENSEX's supports, which came through as the same mangled run as the
-       previous night and were confirmed to the same values.
+    1. That BOTH gap branches reversed while the FLAT branch did NOT. A
+       summariser writes "the branches reversed" and loses the one branch that
+       carried over, which is the only one that did not need re-deriving.
+    2. The buy branch's whole mechanism: gradual rise -> no greed -> nobody
+       held -> nobody seated -> follow. Drop any link and "buyers came" reads
+       as a reason to FADE rather than to go with the market.
+    3. That the sell branch's premise is NOT the house default. Every note
+       before this one reasoned about who is TRAPPED; this one reasons about
+       who can PAY -- only operator money covers a fall. Substituting the
+       familiar reason looks harmless and silently replaces the claim.
+    4. That there is NO per-index qualification tonight. The absence is the
+       fact, and an absence is exactly what a summariser invents into: the
+       previous note DID carry one (NIFTY's small-gap-down limit).
+    5. The levels, which came through clean -- no garble to reconstruct for
+       the first time in several nights. SENSEX is an exact one-rung shift of
+       the 21 Sep ladder; NIFTY and BANKNIFTY lift without being clean shifts
+       (NIFTY keeps 23270 and 23500, BANKNIFTY keeps only 56100). That is the
+       cross-check that nothing was mis-heard, and it is deliberately NOT
+       stated as a uniform rule, because it is only uniform on one index.
     """
     import os
 
@@ -227,56 +234,57 @@ def test_shipped_note_matches_september_18_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-18"
-    assert "I7gORF7zm4o" in note.source
-    assert "printed a REJECTION on top of it" in note.context
-    assert "negative for many days" in note.context
-    assert "sellers MAY now be seated" in note.context
-    assert "only a gap up would prove it" in note.context
+    assert note.for_date == "2026-09-22"
+    assert "1ariOZ4dAVQ" in note.source
+    assert "GRADUAL, never sharp" in note.context
+    assert "did not cross its round number" in note.context
+    assert "A slow move breeds no greed" in note.context
+    assert "are NOT seated" in note.context
 
-    # 1. The repeat is named, and so is what actually varies.
-    shape = next(line for line in note.plan if line.startswith("THIRD DAY RUNNING"))
-    assert "gap up -> BUY, flat or gap down -> SELL" in shape
-    assert "What changes each day is the REASON" in shape
-    assert "has finally seated sellers" in shape
+    # 1. Both gap branches flipped; flat did not. Yesterday's and tonight's
+    #    shapes are BOTH spelled out, so the reversal cannot be read off wrong.
+    shape = next(line for line in note.plan if line.startswith("BOTH GAP BRANCHES REVERSE"))
+    assert "21 Sep was gap up -> SELL, flat or gap down -> BUY" in shape
+    assert "Tonight gap up -> BUY, gap down -> SELL, flat still -> BUY" in shape
+    assert "inverts both" in shape
 
-    # 2. The sell branch keeps its premise, in his words.
-    sell = next(line for line in note.plan if line.startswith("FLAT OR GAP DOWN ->"))
-    assert "going WITH the market" in sell
-    assert "sellers are not much seated here" in sell
-    assert "nobody to squeeze" in sell
+    # 2. The buy branch keeps the chain that makes following correct.
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP ->"))
+    assert "go WITH the market" in buy
+    assert "rise was gradual so no greed formed" in buy
+    assert "did not go holding the trade" in buy
+    assert "unseated buyer crowd is nobody to squeeze" in buy
 
-    # 3. The gap up CREATES the target; it does not assume it.
-    buy = next(line for line in note.plan if line.startswith("GAP UP ->"))
-    assert "only a gap up makes those sellers real" in buy
-    assert "there COULD be sellers here" in buy
-    assert "Absent the gap they stay hypothetical" in buy
+    # 3. The sell branch is NOT the seated-sellers argument, and says so.
+    sell = next(line for line in note.plan if line.startswith("GAP DOWN ->"))
+    assert "NOT because sellers are seated" in sell
+    assert "only covered if an OPERATOR commits money" in sell
+    assert "retail cannot" in sell
+    assert "we can get TRAPPED there" in sell
 
-    # 4. Why the question is open at all.
-    shape2 = next(line for line in note.plan if line.startswith("TODAY'S SHAPE"))
-    assert "RETRACEMENT THEN REJECTION" in shape2
-    assert "momentum turned positive but a rejection also formed" in shape2
-    assert "left OPEN for the open to answer" in shape2
+    # 4. The missing qualifier is asserted, because absences get invented into.
+    uniform = next(line for line in note.plan if line.startswith("SAME SHAPE ON ALL THREE"))
+    assert "NO per-index qualification" in uniform
+    assert "SMALL gap down" in uniform
 
     assert [level.model_dump() for level in note.levels] == [
         {
+            # Spoken supports-first tonight; recorded in the order he said them.
             "index": "NIFTY",
-            "resistance": [23500.0, 23360.0],
-            "support": [23100.0, 23000.0],
+            "resistance": [23500.0, 23570.0],
+            "support": [23350.0, 23270.0],
         },
         {
-            # Unchanged from the 17 Sep note, and clean in the transcript both
-            # nights -- which is itself the check that nothing drifted.
             "index": "BANKNIFTY",
-            "resistance": [56650.0, 56300.0],
-            "support": [55810.0, 55500.0],
+            "resistance": [57000.0, 57200.0],
+            "support": [56400.0, 56100.0],
         },
         {
-            # "7473650" again, byte-identical to the previous night's garble,
-            # and confirmed with the operator to the same 74000 / 73650. The
-            # resistances came through clean this time.
+            # 21 Sep's ladder was 75200/74700 resistance, 74350/74000 support:
+            # tonight's is that same ladder moved up one rung, and 75000 is the
+            # round number he says the gradual move never crossed.
             "index": "SENSEX",
-            "resistance": [75200.0, 74700.0],
-            "support": [74000.0, 73650.0],
+            "resistance": [75200.0, 75500.0],
+            "support": [74700.0, 74350.0],
         },
     ]

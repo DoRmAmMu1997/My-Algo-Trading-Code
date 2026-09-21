@@ -1730,8 +1730,22 @@ RISK DISCIPLINE
     stop by twelve points TRIPLED the exposure the budget does not measure.
   * Slippage and any gap through the stop are charged per unit, so they grow with
     quantity while the planned loss does not.
-  * The PROBABILITY the stop is hit rises as it tightens. A constant rupee loss
-    suffered more often is not a smaller loss.
+  * MECHANICALLY the probability the stop is hit rises as it tightens, and a
+    constant rupee loss suffered more often is not a smaller loss. BUT THIS
+    BOOK DOES NOT SHOW IT, and the correction matters more than the intuition.
+    Across 149 closed trades (2026-07-02 to 2026-09-21), stops under 12 points
+    were stopped out 32% of the time and averaged +688 a trade; stops of 12
+    points or more were stopped out 45% of the time and averaged +301. A
+    stop-distance FLOOR was priced at every level from 8 to 16 points and was
+    NEGATIVE at all of them, costing between 8,417 and 65,413; a lot cap was
+    negative at every level too.
+    THE READING THAT SURVIVES: a tight stop is not chosen at random. It is
+    chosen when the pattern edge is genuinely close, which is also when the
+    entry is good -- so on this book stop distance behaves as a SYMPTOM of
+    entry quality rather than an independent risk dial. The two bullets above
+    are arithmetic and stand unchanged; this one is a statistical claim and the
+    evidence went the other way. So treat tightness as a reason to CHECK the
+    entry, never on its own as a reason to refuse it or to size down.
   So a tight stop is leverage wearing the costume of caution, and the budget will
   not object, because the number it watches has not moved.
   MEASURED ON THIS BOOK (2026-09-09), the first trade. A short was opened at

@@ -2503,8 +2503,17 @@ def test_v5a_a_tighter_stop_buys_size_rather_than_safety():
 
     # 4. The other two costs that scale with quantity.
     assert "charged per unit" in rule
-    assert "PROBABILITY the stop is hit rises as it tightens" in rule
-    assert "A constant rupee loss suffered more often is not a smaller loss" in rule
+    # The probability claim is kept as MECHANICS but explicitly corrected by the
+    # book, so a future reader cannot re-derive the stop-floor gate the journal
+    # already refused. Both halves are pinned: the intuition AND its refutation.
+    assert "MECHANICALLY the probability the stop is hit rises as it tightens" in rule
+    assert "constant rupee loss suffered more often is not a smaller loss" in rule
+    assert "BUT THIS BOOK DOES NOT SHOW IT" in rule
+    assert "stopped out 32% of the time and averaged +688" in rule
+    assert "stopped out 45% of the time and averaged +301" in rule
+    assert "NEGATIVE at all of them, costing between 8,417 and 65,413" in rule
+    assert "a SYMPTOM of entry quality rather than an independent risk dial" in rule
+    assert "never on its own as a reason to refuse it or to size down" in rule
     assert "leverage wearing the costume of caution" in rule
 
     # 5. The measured trade, including that the read was right.
