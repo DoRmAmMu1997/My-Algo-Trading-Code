@@ -465,6 +465,60 @@ def test_every_element_the_page_script_looks_up_exists_in_the_markup():
     )
 
 
+def _render_cpr_lines_source() -> str:
+    """The body of `renderCprLines`, read out of the page script.
+
+    Brace counting rather than a regex: the function holds object literals,
+    template strings and block comments, and a lazy match would stop at the
+    first `}` inside any of them.
+    """
+
+    script = (ASSETS_DIR / "dashboard.js").read_text(encoding="utf-8")
+    start = script.index("function renderCprLines(")
+    opening = script.index("{", start)
+    depth = 0
+    for offset in range(opening, len(script)):
+        if script[offset] == "{":
+            depth += 1
+        elif script[offset] == "}":
+            depth -= 1
+            if depth == 0:
+                return script[start : offset + 1]
+    raise AssertionError("renderCprLines is not balanced; this test is checking nothing")
+
+
+def test_the_cpr_levels_are_drawn_as_steps_and_never_rely_on_whitespace():
+    """A whitespace point cannot break a CPR line, so the levels must step.
+
+    Lightweight-charts 5.2.1 filters valueless rows out in its data layer --
+    `rows.filter(hasValue)` -- before a line series ever sees them, so a point
+    with a `time` and no `value` contributes exactly one empty column and no
+    gap. The stroke stays continuous, and a level then draws a DIAGONAL from
+    one day's price to the next across the overnight gap. `LineType.WithSteps`
+    is what actually separates the days.
+
+    This is a source assertion because the repository has no JS runtime. It
+    exists so a future edit that "restores the gap" with a whitespace point --
+    the obvious-looking fix -- fails here instead of shipping the diagonal
+    back to the chart.
+    """
+
+    body = _render_cpr_lines_source()
+
+    assert "LightweightCharts.LineType.WithSteps" in body, (
+        "renderCprLines no longer sets LineType.WithSteps; without it the CPR "
+        "levels slope between days instead of stepping"
+    )
+
+    pushes = re.findall(r"points\.push\(\{(.*?)\}\)", body, re.DOTALL)
+    assert pushes, "no points.push() found in renderCprLines; this test is checking nothing"
+    valueless = [push.strip() for push in pushes if "value" not in push]
+    assert not valueless, (
+        "renderCprLines pushes a point with no value: " + repr(valueless) + ". "
+        "The library drops it, so it breaks nothing and only adds a column."
+    )
+
+
 # ---------------------------------------------------------------------------
 # History paging
 # ---------------------------------------------------------------------------
