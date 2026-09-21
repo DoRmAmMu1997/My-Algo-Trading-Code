@@ -7566,3 +7566,88 @@ did book on stalls -- but they cited v4f and BOOK WHEN THE PROFIT STOPS GROWING,
 both of which predate it, so there is no evidence yet that v5g changed
 behaviour. Its distinctive claim (name the window BEFORE entering) did not
 appear in any entry rationale. One session is too few to judge; check again.
+## 21 Sep - no net-new, and a THIRD v5a violation (diligence addendum)
+
+Source: `YLhsZu6D658`, "Live Bank Nifty Option Trading", uploaded 2026-09-21
+10:16 IST. Compared against the agent's session: two trades, both LONG, basket
+**-Rs.3,200.50**. Recorded the way v3b was -- **no knowledge change** -- because
+every idea in the video maps onto a rule already in the corpus, and the day's
+actual loss maps onto one that has now been violated three times.
+
+### The comparison
+
+Fourth session running where IH and the book reached the same read and took the
+same side. Both went LONG on a flat open. The note in force (written by another
+session, for 21 Sep) branched flat-to-gap-down -> BUY, and both entries cited
+the measured FLAT classification.
+
+| # | entry | exit | basket |
+|---|---|---|---|
+| 1 | LONG 23,387.25 09:26 | 09:32, profit stall at the 23,400 round number | +631.50 |
+| 2 | LONG 23,385.95 10:10 | 10:14, **AI_STOP** at 23,376.40 | **-3,832.00** |
+
+IH booked one long at his normal target and stopped, exiting on the
+two-break-out/one-lags setup. The book's first trade did the same thing and
+worked. Its second trade is the whole loss.
+
+### Why nothing was encoded
+
+Each candidate resolves to an existing rule:
+
+- **"Two indices break out while the third cannot cross -- their breakout
+  converts into a failure."** This is **v4i** (THE LAGGING INDEX DECIDES THE
+  BASKET'S EXIT, NOT THE LEADING ONE), which already records IH saying almost
+  exactly this -- "Sensex and NIFTY have momentum, BankNIFTY is trying to hold
+  itself back... we will have to book this profit and go" -- and already spells
+  out the equal-lot mirror consequence. Tonight's phrasing ("converts into a
+  failure") is sharper, but it adds no test v4i lacks, so v4i stands unedited.
+- **"At the open the biggest risk is the PREMIUM; adjustments are very large and
+  losses appear suddenly."** Covered by **PREMIUM NON-CONFIRMATION**'s sub-bullet
+  IT CAN GO NEGATIVE, NOT MERELY WEAK, which already carries the mechanism and a
+  measured case (a LONG held 105 seconds gained 4.65 spot points and still lost
+  Rs.5,300).
+- **The discipline passage** ("discipline matters most"; sitting in a loss while
+  exiting a profit quickly) is the fourth repeat in a week and is carried by v3y
+  plus the RISK section.
+
+### The finding: v5a, violated a third time, worst instance yet
+
+Trade 2 is the textbook v5a failure, and v5a already names every part of it.
+
+| | stop | lots | mirror premium deployed | outcome |
+|---|---|---|---|---|
+| Trade 1 | 15.25 pts | 2 | ~Rs.30,560 (60 x 509.40) | +631.50 |
+| Trade 2 | **9.45 pts** | **4** | **~Rs.61,570 (120 x 513.05)** | **-3,832.00** |
+
+A stop 38% tighter DOUBLED the size, and doubled the BankNIFTY exposure the
+risk budget does not measure. The stop was hit in **three minutes forty
+seconds**, at 23,376.40 against a stop of 23,376.50 -- a tenth of a point
+through. Of the 3,832 lost, **2,766 was the mirror leg alone**, which is 11%
+more than the entire Rs.2,500 risk budget, on a leg that has no stop of its own
+and that the NIFTY-measured AI_STOP never watches.
+
+The stop also sat 0.70 of a point below the pattern low the entry named
+(23,377.20), which is "just beyond the pattern" only in the most literal sense.
+
+That is now three measured instances of the same mechanism:
+
+| date | stop | consequence |
+|---|---|---|
+| 2026-09-08 | 24.40 pts | ~Rs.15,350 of mirror premium |
+| 2026-09-09 | 11.85 pts | ~Rs.46,845 of mirror premium; stop hit in 91 seconds, -1,202 |
+| **2026-09-21** | **9.45 pts** | **~Rs.61,570 of mirror premium; stop hit in 3m40s, -3,832** |
+
+### Recommendation, not built here
+
+v5a is prose, and the corpus's own law -- PROSE RULES DON'T BIND, and JUDGEMENT
+RULES GET TALKED PAST -- says a rule violated repeatedly while the reasoning
+sounds plausible belongs at the tool boundary. Every input is already available
+where the sizing happens: `risk_based_lots` knows the stop distance, the lot
+size and the resulting lot count, and the mirror multiplier is a constant.
+
+The obvious gate is a FLOOR on the stop distance, or a cap on the implied
+mirror premium, below which the entry is refused rather than silently
+up-sized. What the threshold should be is NOT obvious, and per BACKTEST A
+THRESHOLD BEFORE PICKING IT it should be priced against the journals first --
+replaying the stop distances against outcomes the way the SLH-005 cooldown was
+priced at 2/5/10/15 minutes before 5 was chosen. That work is not done here.
