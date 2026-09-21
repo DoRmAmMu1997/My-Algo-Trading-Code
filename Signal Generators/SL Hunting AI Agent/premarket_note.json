@@ -1,45 +1,45 @@
 {
-  "for_date": "2026-09-18",
-  "source": "Intraday Hunter, 'Prediction For 18 SEP 2026' (I7gORF7zm4o, uploaded 2026-09-17)",
-  "context": "Today's momentum turned positive but printed a REJECTION on top of it, after a retracement. The market has been negative for many days, so sellers MAY now be seated -- and only a gap up would prove it.",
+  "for_date": "2026-09-22",
+  "source": "Intraday Hunter, 'Prediction For 22 SEP 2026' (1ariOZ4dAVQ, uploaded 2026-09-21)",
+  "context": "Momentum was positive on all three indices but GRADUAL, never sharp -- SENSEX did not cross its round number. A slow move breeds no greed, so the buyers who came did not hold overnight and are NOT seated.",
   "plan": [
-    "THIRD DAY RUNNING ON THE SAME CONDITIONAL SHAPE: gap up -> BUY, flat or gap down -> SELL, for all three indices. What changes each day is the REASON, and today it is whether a multi-day negative run has finally seated sellers.",
-    "FLAT OR GAP DOWN -> SELL, going WITH the market. On NIFTY he gives that branch its premise outright -- 'sellers are not much seated here' -- so there is nobody to squeeze and the plan is simply to follow the selling.",
-    "GAP UP -> BUY, and only a gap up makes those sellers real: 'because the market has been negative for many days, there COULD be sellers here, so in a gap-up case they can be targeted'. Absent the gap they stay hypothetical.",
-    "TODAY'S SHAPE IS RETRACEMENT THEN REJECTION -- 'momentum turned positive but a rejection also formed' -- which is exactly why the seated question is left OPEN for the open to answer rather than settled in advance."
+    "BOTH GAP BRANCHES REVERSE FROM YESTERDAY AND THE FLAT BRANCH DOES NOT: 21 Sep was gap up -> SELL, flat or gap down -> BUY. Tonight gap up -> BUY, gap down -> SELL, flat still -> BUY. Carrying yesterday's gaps forward inverts both.",
+    "FLAT TO GAP UP -> BUY: identify buying-side setups and go WITH the market. The rise was gradual so no greed formed, buyers came but 'did not go holding the trade', and an unseated buyer crowd is nobody to squeeze.",
+    "GAP DOWN -> SELL: identify selling-side setups. NOT because sellers are seated -- because a fall is only covered if an OPERATOR commits money, retail cannot produce that bounce, and 'we can get TRAPPED there' planning for one.",
+    "SAME SHAPE ON ALL THREE INDICES: NIFTY, BANKNIFTY and SENSEX carry identical branches with NO per-index qualification tonight -- unlike 21 Sep, where NIFTY alone was limited to a SMALL gap down."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
         23500,
-        23360
+        23570
       ],
       "support": [
-        23100,
-        23000
+        23350,
+        23270
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56650,
-        56300
+        57000,
+        57200
       ],
       "support": [
-        55810,
-        55500
+        56400,
+        56100
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
         75200,
-        74700
+        75500
       ],
       "support": [
-        74000,
-        73650
+        74700,
+        74350
       ]
     }
   ]

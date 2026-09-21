@@ -7566,3 +7566,151 @@ did book on stalls -- but they cited v4f and BOOK WHEN THE PROFIT STOPS GROWING,
 both of which predate it, so there is no evidence yet that v5g changed
 behaviour. Its distinctive claim (name the window BEFORE entering) did not
 appear in any entry rationale. One session is too few to judge; check again.
+## 21 Sep - no net-new, and a gate the journal refused (diligence addendum)
+
+Source: `YLhsZu6D658`, "Live Bank Nifty Option Trading", uploaded 2026-09-21
+10:16 IST. Compared against the agent's session: two trades, both LONG, basket
+**-Rs.3,200.50**. Recorded the way v3b was -- **no knowledge change** -- because
+every idea in the video maps onto a rule already in the corpus, and the day's
+actual loss maps onto one that has now been violated three times.
+
+### The comparison
+
+Fourth session running where IH and the book reached the same read and took the
+same side. Both went LONG on a flat open. The note in force (written by another
+session, for 21 Sep) branched flat-to-gap-down -> BUY, and both entries cited
+the measured FLAT classification.
+
+| # | entry | exit | basket |
+|---|---|---|---|
+| 1 | LONG 23,387.25 09:26 | 09:32, profit stall at the 23,400 round number | +631.50 |
+| 2 | LONG 23,385.95 10:10 | 10:14, **AI_STOP** at 23,376.40 | **-3,832.00** |
+
+IH booked one long at his normal target and stopped, exiting on the
+two-break-out/one-lags setup. The book's first trade did the same thing and
+worked. Its second trade is the whole loss.
+
+### Why nothing was encoded
+
+Each candidate resolves to an existing rule:
+
+- **"Two indices break out while the third cannot cross -- their breakout
+  converts into a failure."** This is **v4i** (THE LAGGING INDEX DECIDES THE
+  BASKET'S EXIT, NOT THE LEADING ONE), which already records IH saying almost
+  exactly this -- "Sensex and NIFTY have momentum, BankNIFTY is trying to hold
+  itself back... we will have to book this profit and go" -- and already spells
+  out the equal-lot mirror consequence. Tonight's phrasing ("converts into a
+  failure") is sharper, but it adds no test v4i lacks, so v4i stands unedited.
+- **"At the open the biggest risk is the PREMIUM; adjustments are very large and
+  losses appear suddenly."** Covered by **PREMIUM NON-CONFIRMATION**'s sub-bullet
+  IT CAN GO NEGATIVE, NOT MERELY WEAK, which already carries the mechanism and a
+  measured case (a LONG held 105 seconds gained 4.65 spot points and still lost
+  Rs.5,300).
+- **The discipline passage** ("discipline matters most"; sitting in a loss while
+  exiting a profit quickly) is the fourth repeat in a week and is carried by v3y
+  plus the RISK section.
+
+### The finding: v5a, violated a third time, worst instance yet
+
+Trade 2 is the textbook v5a failure, and v5a already names every part of it.
+
+| | stop | lots | mirror premium deployed | outcome |
+|---|---|---|---|---|
+| Trade 1 | 15.25 pts | 2 | ~Rs.30,560 (60 x 509.40) | +631.50 |
+| Trade 2 | **9.45 pts** | **4** | **~Rs.61,570 (120 x 513.05)** | **-3,832.00** |
+
+A stop 38% tighter DOUBLED the size, and doubled the BankNIFTY exposure the
+risk budget does not measure. The stop was hit in **three minutes forty
+seconds**, at 23,376.40 against a stop of 23,376.50 -- a tenth of a point
+through. Of the 3,832 lost, **2,766 was the mirror leg alone**, which is 11%
+more than the entire Rs.2,500 risk budget, on a leg that has no stop of its own
+and that the NIFTY-measured AI_STOP never watches.
+
+The stop also sat 0.70 of a point below the pattern low the entry named
+(23,377.20), which is "just beyond the pattern" only in the most literal sense.
+
+That is now three measured instances of the same mechanism:
+
+| date | stop | consequence |
+|---|---|---|
+| 2026-09-08 | 24.40 pts | ~Rs.15,350 of mirror premium |
+| 2026-09-09 | 11.85 pts | ~Rs.46,845 of mirror premium; stop hit in 91 seconds, -1,202 |
+| **2026-09-21** | **9.45 pts** | **~Rs.61,570 of mirror premium; stop hit in 3m40s, -3,832** |
+
+### The gate was priced against the journal, and NOT BUILT
+
+The obvious gate was a FLOOR on the stop distance (or a cap on implied mirror
+premium), refusing the entry rather than silently up-sizing it. Per BACKTEST A
+THRESHOLD BEFORE PICKING IT that was priced against all 149 closed journal
+trades, 2026-07-02 to 2026-09-21, base total +57,988.50, before writing any
+code. **The data refuses the gate on both shapes.**
+
+A stop floor is negative at every level tested:
+
+| floor | trades refused | P&L of refused | delta to total |
+|---|---|---|---|
+| 8 pts | 3 | +14,208.75 | **-14,208.75** |
+| 10 pts | 16 | +28,458.75 | **-28,458.75** |
+| 12 pts | 34 | +23,393.25 | **-23,393.25** |
+| 14 pts | 58 | +65,413.00 | **-65,413.00** |
+| 16 pts | 85 | +36,906.50 | **-36,906.50** |
+
+A lot cap is negative at every level too: capping at 5 costs -8,417.25, at 3
+costs -18,305.00, at 2 costs -25,533.75.
+
+**The relationship runs the OTHER WAY in this book.** Split at 12 points:
+
+| | n | total | mean | win % | stopped out % |
+|---|---|---|---|---|---|
+| stop < 12 pts | 34 | +23,393.25 | **+688.04** | **53%** | **32%** |
+| stop >= 12 pts | 115 | +34,595.25 | +300.83 | 43% | 45% |
+
+Tighter stops earn more per trade, win more often, AND are stopped out LESS
+often. Today's -3,832 sits in the 8-10 point bucket, which is +14,250.00 across
+thirteen trades.
+
+**The three "instances" do not survive their own dates either.** Pulling every
+trade from the days the section above cites:
+
+- 2026-09-08: the 24.40-point stop LOST (-786.25); the 17.90-point stop WON
+  (+716.00). Neither is a tight-stop loss.
+- 2026-09-09: the 15.15-point stop lost -1,202.00; the TIGHTER 11.85-point stop
+  lost only -499.50.
+- 2026-09-21: the 15.25-point stop won +631.50; the 9.45-point stop lost
+  -3,832.00.
+
+So across the three dates the tighter stop was the worse trade exactly ONCE --
+today. The pattern this addendum opened by describing as "three measured
+instances of the same mechanism" is, on the full book, one instance and two
+counter-examples. That framing was wrong and is corrected here rather than
+quietly dropped.
+
+**What this means for v5a.** Its ARITHMETIC claims stand and are not in
+question: the mirror is equal-lot and sits outside the budget, and slippage
+scales with quantity. But its third claim -- "the PROBABILITY the stop is hit
+rises as it tightens" -- is contradicted by the book, 32% against 45%. The
+mechanical intuition is sound for a FIXED setup; what the journal shows is that
+a tight stop is not chosen at random. It is chosen when the pattern edge is
+genuinely close, which is also when the entry is good. The stop distance is a
+symptom of entry quality, not an independent risk dial.
+
+That claim lives inside a shipped rule. It was flagged rather than edited on the
+spot, the operator agreed to soften it, and **v5a now carries the correction
+itself**. The bullet keeps the mechanics -- "MECHANICALLY the probability the
+stop is hit rises as it tightens" -- and then states plainly that this book does
+not show it, with the 32%/45% stop-out split, the +688/+301 means, and the
+priced floor result. It closes by saying what to DO with tightness: treat it as
+a reason to CHECK the entry, never on its own as a reason to refuse it or to
+size down. The two arithmetic bullets beside it are unchanged.
+
+The correction is pinned by the v5a marker test, and a mutation that reverts the
+bullet to its original unqualified wording is CAUGHT -- so the stop-floor gate
+this addendum refused cannot be quietly re-derived from the rule later. Six
+mutations of the new text, all six caught, plus a passing control of unasserted
+prose.
+
+**Nothing was built.** This is the outcome BACKTEST A THRESHOLD BEFORE PICKING
+IT exists to produce -- the same way replaying 2/5/10/15-minute cooldowns
+showed that the "~15 bars" prose would have blocked 27 Jul's +18,858 winner.
+A gate built from today's three cherry-picked losses would have cost this book
+between 8,417 and 65,413 depending on where the line was drawn.

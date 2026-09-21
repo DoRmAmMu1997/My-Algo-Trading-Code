@@ -69,8 +69,24 @@ The chart originally drew ONE CPR across the whole of history, because it drew
 it with `createPriceLine` and a price line is full chart width by definition.
 That is wrong in the same way a single day's levels applied to last month would
 be wrong: the levels are a statement about ONE session. Each level is now a
-LineSeries carrying two points per band plus a whitespace point -- a time with
-no value -- to break the line before the next day.
+LineSeries carrying ONE point per band, placed on the first loaded candle at or
+after that band's start and drawn with `LineType.WithSteps`.
+
+**Correction.** This amendment first said each level carried two points per band
+plus a whitespace point -- a time with no value -- "to break the line before the
+next day." It does not: lightweight-charts 5.2.1 runs `rows.filter(hasValue)` in
+its data layer, so a valueless row never reaches the series and the stroke stays
+continuous. The whitespace contributed one empty column and no gap, and the
+levels drew a shallow DIAGONAL from one day's price to the next -- longest
+wherever the loaded candles span days the ladder has no band for, which is every
+session between the history CSV's last day and today. Stepping is the mechanism
+that actually separates the days: the renderer's step branch moves horizontally
+at the previous value and only then vertically, so a slope is unreachable. A
+band with no loaded candle inside it is now skipped rather than drawn into empty
+space, which also keeps the CPR series from adding columns to the shared time
+scale. `Tests/Dependencies/test_dashboard_server.py` asserts both properties
+against the page source, because the repository has no JS runtime to assert them
+in.
 
 The Daily timeframe takes a **monthly** ladder instead, each month's levels
 from the month before it. A daily band on a daily candle is one bar wide and

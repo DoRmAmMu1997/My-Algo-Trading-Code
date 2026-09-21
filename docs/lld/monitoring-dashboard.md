@@ -342,6 +342,28 @@ scale built from the UNION of their times, so handing over five years of bands
 while a week of candles is loaded stretches the scale across five years of
 empty chart.
 
+**A whitespace point does NOT break a line series.** Lightweight-charts 5.2.1
+runs `rows.filter(hasValue)` in its data layer, so a `{ time }` with no `value`
+never reaches the series: the stroke is one continuous path and the intended
+gap never existed. The CPR levels therefore drew a diagonal from one day's
+price to the next, longest across days the loaded candles cover but the ladder
+has no band for. `LineType.WithSteps` is the mechanism that separates the days;
+bands with no loaded candle are skipped, and every point sits on a real bar
+time so the levels add no columns to the shared scale.
+`test_the_cpr_levels_are_drawn_as_steps_and_never_rely_on_whitespace` fails if
+either property is edited away.
+
+**Verify a level by its SLOPE, not by column height.** The first check written
+for the per-day bands sampled each CPR colour and asserted no column was more
+than a pixel tall, to rule out a vertical connector. A shallow diagonal
+satisfies that by construction, so it passed while the bug was on screen. Track
+each coloured line left to right and sum its vertical travel instead: a level
+that spans 450 columns should accumulate 0, and the broken build accumulated 43
+to 66 pixels. Match the colour against the background BLEND rather than exactly,
+too -- a sloped one-pixel line is anti-aliased across two rows and an exact
+match sees neither of them. And pick colours the candles do not share: `#ef5f5f`
+and `#35c46b` are R1/R2 and S1/S2 *and* the down and up candles.
+
 **The memo cannot key on one pivot.** With hundreds of bands it has to key on
 the set's extent and its newest pivot, or a new session, a newly loaded page
 and a timeframe switch all look identical to it.
@@ -370,7 +392,7 @@ deliberately no host key.
 | Suite | Covers |
 |---|---|
 | `Tests/Dependencies/test_dashboard_snapshot.py` | Every pairing confidence, the Delta-0.2 / SL-Hunting-mirror / re-entry shapes, `EXIT_FAILED` not closing, malformed events, the honesty rules, NaN rejection |
-| `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read |
+| `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read; plus the page-source guards -- every wired element id exists, and the CPR levels step rather than lean on whitespace |
 | `Tests/Dependencies/test_dashboard_indicators.py` | CPR truncation and every degenerate session shape; **the equality test that pins the CPR algebra against `_add_daily_cpr`**; VWAP and stochastic equality with the strategies' helpers; the forming bucket; and every fixture rendered through `render_document_bytes` |
 | `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, the "never reaches the broker or a mutating gate" assertion, the recompute-cadence guards, and fail-soft when an indicator raises |
 
