@@ -7694,9 +7694,20 @@ a tight stop is not chosen at random. It is chosen when the pattern edge is
 genuinely close, which is also when the entry is good. The stop distance is a
 symptom of entry quality, not an independent risk dial.
 
-That is a claim inside a shipped rule, so it is flagged here rather than edited
-unilaterally: 149 observational trades with obvious confounding are grounds to
-re-examine the sentence, not to silently rewrite a live rule.
+That claim lives inside a shipped rule. It was flagged rather than edited on the
+spot, the operator agreed to soften it, and **v5a now carries the correction
+itself**. The bullet keeps the mechanics -- "MECHANICALLY the probability the
+stop is hit rises as it tightens" -- and then states plainly that this book does
+not show it, with the 32%/45% stop-out split, the +688/+301 means, and the
+priced floor result. It closes by saying what to DO with tightness: treat it as
+a reason to CHECK the entry, never on its own as a reason to refuse it or to
+size down. The two arithmetic bullets beside it are unchanged.
+
+The correction is pinned by the v5a marker test, and a mutation that reverts the
+bullet to its original unqualified wording is CAUGHT -- so the stop-floor gate
+this addendum refused cannot be quietly re-derived from the rule later. Six
+mutations of the new text, all six caught, plus a passing control of unasserted
+prose.
 
 **Nothing was built.** This is the outcome BACKTEST A THRESHOLD BEFORE PICKING
 IT exists to produce -- the same way replaying 2/5/10/15-minute cooldowns
