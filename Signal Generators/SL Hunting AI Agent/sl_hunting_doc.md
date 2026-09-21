@@ -7566,7 +7566,7 @@ did book on stalls -- but they cited v4f and BOOK WHEN THE PROFIT STOPS GROWING,
 both of which predate it, so there is no evidence yet that v5g changed
 behaviour. Its distinctive claim (name the window BEFORE entering) did not
 appear in any entry rationale. One session is too few to judge; check again.
-## 21 Sep - no net-new, and a THIRD v5a violation (diligence addendum)
+## 21 Sep - no net-new, and a gate the journal refused (diligence addendum)
 
 Source: `YLhsZu6D658`, "Live Bank Nifty Option Trading", uploaded 2026-09-21
 10:16 IST. Compared against the agent's session: two trades, both LONG, basket
@@ -7637,17 +7637,69 @@ That is now three measured instances of the same mechanism:
 | 2026-09-09 | 11.85 pts | ~Rs.46,845 of mirror premium; stop hit in 91 seconds, -1,202 |
 | **2026-09-21** | **9.45 pts** | **~Rs.61,570 of mirror premium; stop hit in 3m40s, -3,832** |
 
-### Recommendation, not built here
+### The gate was priced against the journal, and NOT BUILT
 
-v5a is prose, and the corpus's own law -- PROSE RULES DON'T BIND, and JUDGEMENT
-RULES GET TALKED PAST -- says a rule violated repeatedly while the reasoning
-sounds plausible belongs at the tool boundary. Every input is already available
-where the sizing happens: `risk_based_lots` knows the stop distance, the lot
-size and the resulting lot count, and the mirror multiplier is a constant.
+The obvious gate was a FLOOR on the stop distance (or a cap on implied mirror
+premium), refusing the entry rather than silently up-sizing it. Per BACKTEST A
+THRESHOLD BEFORE PICKING IT that was priced against all 149 closed journal
+trades, 2026-07-02 to 2026-09-21, base total +57,988.50, before writing any
+code. **The data refuses the gate on both shapes.**
 
-The obvious gate is a FLOOR on the stop distance, or a cap on the implied
-mirror premium, below which the entry is refused rather than silently
-up-sized. What the threshold should be is NOT obvious, and per BACKTEST A
-THRESHOLD BEFORE PICKING IT it should be priced against the journals first --
-replaying the stop distances against outcomes the way the SLH-005 cooldown was
-priced at 2/5/10/15 minutes before 5 was chosen. That work is not done here.
+A stop floor is negative at every level tested:
+
+| floor | trades refused | P&L of refused | delta to total |
+|---|---|---|---|
+| 8 pts | 3 | +14,208.75 | **-14,208.75** |
+| 10 pts | 16 | +28,458.75 | **-28,458.75** |
+| 12 pts | 34 | +23,393.25 | **-23,393.25** |
+| 14 pts | 58 | +65,413.00 | **-65,413.00** |
+| 16 pts | 85 | +36,906.50 | **-36,906.50** |
+
+A lot cap is negative at every level too: capping at 5 costs -8,417.25, at 3
+costs -18,305.00, at 2 costs -25,533.75.
+
+**The relationship runs the OTHER WAY in this book.** Split at 12 points:
+
+| | n | total | mean | win % | stopped out % |
+|---|---|---|---|---|---|
+| stop < 12 pts | 34 | +23,393.25 | **+688.04** | **53%** | **32%** |
+| stop >= 12 pts | 115 | +34,595.25 | +300.83 | 43% | 45% |
+
+Tighter stops earn more per trade, win more often, AND are stopped out LESS
+often. Today's -3,832 sits in the 8-10 point bucket, which is +14,250.00 across
+thirteen trades.
+
+**The three "instances" do not survive their own dates either.** Pulling every
+trade from the days the section above cites:
+
+- 2026-09-08: the 24.40-point stop LOST (-786.25); the 17.90-point stop WON
+  (+716.00). Neither is a tight-stop loss.
+- 2026-09-09: the 15.15-point stop lost -1,202.00; the TIGHTER 11.85-point stop
+  lost only -499.50.
+- 2026-09-21: the 15.25-point stop won +631.50; the 9.45-point stop lost
+  -3,832.00.
+
+So across the three dates the tighter stop was the worse trade exactly ONCE --
+today. The pattern this addendum opened by describing as "three measured
+instances of the same mechanism" is, on the full book, one instance and two
+counter-examples. That framing was wrong and is corrected here rather than
+quietly dropped.
+
+**What this means for v5a.** Its ARITHMETIC claims stand and are not in
+question: the mirror is equal-lot and sits outside the budget, and slippage
+scales with quantity. But its third claim -- "the PROBABILITY the stop is hit
+rises as it tightens" -- is contradicted by the book, 32% against 45%. The
+mechanical intuition is sound for a FIXED setup; what the journal shows is that
+a tight stop is not chosen at random. It is chosen when the pattern edge is
+genuinely close, which is also when the entry is good. The stop distance is a
+symptom of entry quality, not an independent risk dial.
+
+That is a claim inside a shipped rule, so it is flagged here rather than edited
+unilaterally: 149 observational trades with obvious confounding are grounds to
+re-examine the sentence, not to silently rewrite a live rule.
+
+**Nothing was built.** This is the outcome BACKTEST A THRESHOLD BEFORE PICKING
+IT exists to produce -- the same way replaying 2/5/10/15-minute cooldowns
+showed that the "~15 bars" prose would have blocked 27 Jul's +18,858 winner.
+A gate built from today's three cherry-picked losses would have cost this book
+between 8,417 and 65,413 depending on where the line was drawn.
