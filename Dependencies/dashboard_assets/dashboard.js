@@ -618,10 +618,30 @@
    * time scale built from the UNION of their times, so handing over five years
    * of bands while only a week of candles is loaded would stretch the scale
    * across five years of empty chart. */
+  /* The day ladder, with the sessions the CSV has not caught up with filled in.
+   *
+   * The stored ladder is built once from the history CSV; the candles beside it
+   * come from the runner's store, which is seeded with several days of REST
+   * history. So by the end of a week the chart draws sessions the ladder has
+   * never heard of -- and a level with no successor used to run flat straight
+   * across them, showing one day's pivot over another day's session.
+   *
+   * The stored band WINS on a date both hold: the CSV's sessions are complete
+   * downloads, while the store's oldest is whatever its window happens to
+   * reach back to. */
+  function dayLadder() {
+    const stored = (cprLadders && cprLadders.day) || [];
+    const live = (chartPayload && chartPayload.cpr_days) || [];
+    if (!live.length) return stored;
+    const known = new Set(stored.map((band) => band.date));
+    const filled = stored.concat(live.filter((band) => !known.has(band.date)));
+    return filled.sort((a, b) => a.from - b.from);
+  }
+
   function cprBandsForView(bars) {
     if (!bars.length) return [];
     const monthly = prefs.tf === "D";
-    const ladder = (cprLadders && (monthly ? cprLadders.month : cprLadders.day)) || [];
+    const ladder = monthly ? ((cprLadders && cprLadders.month) || []) : dayLadder();
     const leftEdge = bars[0].time;
     const rightEdge = bars[bars.length - 1].time;
 
@@ -692,6 +712,79 @@
     return found;
   }
 
+  /* Which session a bar time belongs to, and which month. The scale is IST
+   * wall-clock labelled UTC, so a plain division by a day lands on the date. */
+  function dayKey(time) {
+    return Math.floor(time / 86400);
+  }
+
+  function monthKey(time) {
+    const when = new Date(time * 1000);
+    return when.getUTCFullYear() * 12 + when.getUTCMonth();
+  }
+
+  /* Split the bands into RUNS of periods that sit next to each other.
+   *
+   * A band's `from`/`to` covers its own session and nothing else -- the server
+   * guarantees it, and a test there says so in as many words. The renderer has
+   * to honour that, and a stepped line on its own cannot: it runs flat from one
+   * point to the next, so a band with no successor stretches across every day
+   * between them. That is how 2026-09-16's levels came to be drawn over the
+   * 17th, 18th and 21st, which the stored ladder had no bands for.
+   *
+   * A run therefore ends where a whole PERIOD -- a session on the minute
+   * timeframes, a month on Daily -- lies between one band and the next, and
+   * each run is drawn as a series of its own, which simply stops.
+   *
+   * By period, and deliberately not "any bar in between": the store's copy of
+   * a day can hold a bar the CSV's copy does not (a 15:30 print, or anything
+   * before the open), and the two ladders meet exactly there. Splitting on
+   * that would put a second set of price labels down the axis for a seam
+   * nobody can see.
+   *
+   * Pure: no chart, no prefs, no levels. `bars` need only carry `time`,
+   * ascending. Returns `[{ anchors: [{ index, band }], endIndex }]`, where
+   * `endIndex` is the last loaded bar the run's final band owns. */
+  function cprRuns(bands, bars, keyOf) {
+    const runs = [];
+    if (!bands.length || !bars.length) return runs;
+
+    /* No loaded candle inside a band -- a stretch of the ladder the chart has
+     * nothing to draw against. It anchors no point, so it neither draws nor
+     * splits a run. */
+    const anchors = [];
+    for (const band of bands) {
+      const index = firstBarAtOrAfter(bars, band.from);
+      if (index === -1 || bars[index].time > band.to) continue;
+      anchors.push({ index, band });
+    }
+
+    let current = null;
+    for (let position = 0; position < anchors.length; position += 1) {
+      const anchor = anchors[position];
+      const next = anchors[position + 1];
+      const key = keyOf(bars[anchor.index].time);
+
+      /* Everything up to the next band, or to the right edge -- but never
+       * past this band's own period. */
+      let end = next ? next.index - 1 : bars.length - 1;
+      const broken = !next || keyOf(bars[end].time) !== key;
+      if (broken) {
+        while (end > anchor.index && keyOf(bars[end].time) !== key) end -= 1;
+      }
+
+      if (current) {
+        current.anchors.push(anchor);
+        current.endIndex = end;
+      } else {
+        current = { anchors: [anchor], endIndex: end };
+        runs.push(current);
+      }
+      if (broken) current = null;
+    }
+    return runs;
+  }
+
   function renderCprLines(bars) {
     if (!chart || !candleSeries) return;
     const bands = cprBandsForView(bars || []);
@@ -704,7 +797,11 @@
      * Keying on a single pivot is no longer enough either, now that there are
      * hundreds of bands: the set is identified by its extent and its newest
      * pivot, so a new session, a newly loaded page and a timeframe switch each
-     * change it. */
+     * change it.
+     *
+     * The BARS belong in it too, now that the runs are cut against them: a
+     * scroll that loads candles into a stretch no band covers splits a run in
+     * two without touching the band set at all. */
     const newest = bands.length ? bands[bands.length - 1] : null;
     const signature = JSON.stringify([
       prefs.tf === "D" ? "month" : "day",
@@ -712,6 +809,9 @@
       bands.length ? bands[0].from : null,
       newest ? newest.to : null,
       newest ? newest.levels.pivot : null,
+      bars.length,
+      bars.length ? bars[0].time : null,
+      bars.length ? bars[bars.length - 1].time : null,
       prefs.cpr, prefs.cprPD, prefs.cprRS1, prefs.cprRS3,
     ]);
     if (signature === cprSignature) return;
@@ -721,17 +821,20 @@
     cprSeries = [];
     if (!bands.length || !prefs.cpr) return;
 
-    /* ONE point per band, at the bar its day opens on, drawn as a STEP.
+    /* ONE point per band, at the bar its day opens on, drawn as a STEP, and
+     * one series per RUN of adjacent days.
      *
      * There is deliberately no whitespace point here. A whitespace item cannot
      * break a line in lightweight-charts 5.2.1: the data layer runs
      * `rows.filter(hasValue)` before the series ever sees them, so the stroke
      * is one continuous path and the break never happened -- which is what drew
      * a diagonal from yesterday's level to today's. `LineType.WithSteps` below
-     * is what actually separates the days: the renderer moves horizontally at
-     * the previous value and only then vertically, so each level runs flat
-     * across its session and steps at the next open. */
-    const lastBar = bars[bars.length - 1];
+     * is what separates one day from the NEXT: the renderer moves horizontally
+     * at the previous value and only then vertically, so each level runs flat
+     * across its session and steps at the next open. A separate series per run
+     * is what stops a level reaching across days that have no band at all. */
+    const runs = cprRuns(bands, bars, prefs.tf === "D" ? monthKey : dayKey);
+    if (!runs.length) return;
 
     for (const level of CPR_LEVELS) {
       const on = level.group === "core"
@@ -740,42 +843,51 @@
         || (level.group === "rs3" && prefs.cprRS3);
       if (!on) continue;
 
-      const points = [];
-      for (const band of bands) {
-        const price = band.levels[level.key];
-        if (price === null || price === undefined) continue;
-        const index = firstBarAtOrAfter(bars, band.from);
-        /* No loaded candle inside this band -- a gap in the history the chart
-         * cannot draw against. Skipping it leaves the previous level running,
-         * which is honest: nothing here says otherwise. */
-        if (index === -1 || bars[index].time > band.to) continue;
-        points.push({ time: bars[index].time, value: price });
-      }
-      if (!points.length) continue;
-      /* Carry the newest level to the right edge; a step ends at its last
-       * point, so without this the freshest band would stop at its own open. */
-      const newestValue = points[points.length - 1].value;
-      if (lastBar.time > points[points.length - 1].time) {
-        points.push({ time: lastBar.time, value: newestValue });
-      }
+      runs.forEach((run, runIndex) => {
+        const points = [];
+        for (const anchor of run.anchors) {
+          const price = anchor.band.levels[level.key];
+          if (price === null || price === undefined) continue;
+          points.push({ time: bars[anchor.index].time, value: price });
+        }
+        if (!points.length) return;
+        const newestRun = runIndex === runs.length - 1;
 
-      const series = chart.addSeries(LightweightCharts.LineSeries, {
-        color: level.color,
-        lineWidth: 1,
-        /* The whole fix. `case 1` of the library's line renderer is
-         * `lineTo(x, previousY)` then `lineTo(x, y)` -- horizontal, then
-         * vertical -- so a diagonal is not reachable in this branch. */
-        lineType: LightweightCharts.LineType.WithSteps,
-        priceLineVisible: false,
-        /* The last value still gets an axis label, and `title` puts the level's
-         * NAME beside it -- so the "(chart)" caveat still travels with a
-         * screenshot of just the chart, as it did when these were price lines
-         * and none of the page's other captions would. */
-        lastValueVisible: true,
-        title: `${level.title} (chart)`,
-      }, 0);
-      series.setData(points);
-      cprSeries.push(series);
+        /* Close the run on the last bar its final band owns. A step ends at
+         * its last point, so without this the freshest level would stop at
+         * its own open -- and the run would not stop anywhere at all. */
+        const end = bars[run.endIndex];
+        const last = points[points.length - 1];
+        if (end.time > last.time) points.push({ time: end.time, value: last.value });
+
+        const series = chart.addSeries(LightweightCharts.LineSeries, {
+          color: level.color,
+          lineWidth: 1,
+          /* `case 1` of the library's line renderer is `lineTo(x, previousY)`
+           * then `lineTo(x, y)` -- horizontal, then vertical -- so a diagonal
+           * is not reachable in this branch. */
+          lineType: LightweightCharts.LineType.WithSteps,
+          priceLineVisible: false,
+          /* The last value still gets an axis label, and `title` puts the
+           * level's NAME beside it -- so the "(chart)" caveat still travels
+           * with a screenshot of just the chart, as it did when these were
+           * price lines and none of the page's other captions would.
+           *
+           * Only on the NEWEST run: a label per run would stack one column of
+           * the price axis per gap in the ladder, which is thirteen more
+           * labels each time and none of them current.
+           *
+           * BOTH have to go, not just the value. The library draws two axis
+           * views per series, and the second is gated on
+           * `"" !== title || seriesLastValueMode === 0` -- `lastValueVisible`
+           * is nowhere in that test. An older run with a title kept therefore
+           * still printed "R1 (chart)" on the axis, with no number beside it. */
+          lastValueVisible: newestRun,
+          title: newestRun ? `${level.title} (chart)` : "",
+        }, 0);
+        series.setData(points);
+        cprSeries.push(series);
+      });
     }
   }
 

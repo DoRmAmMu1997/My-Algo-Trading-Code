@@ -381,6 +381,29 @@ def test_the_document_labels_the_vwap_as_a_proxy():
     assert document["indicators"]["vwap"]["label"] == "VWAP*"
     assert "no volume" in document["indicators"]["vwap"]["note"]
     assert document["indicators"]["stochastic"]["overbought"] == 80
+    assert document["cpr_days"] == [], "the key must always be present, empty or not"
+
+
+def test_the_document_carries_the_back_days_the_store_still_holds():
+    """The days the chart draws but the stored ladder has never heard of.
+
+    Same shape as a `/api/history?tf=cpr` band, and always present -- a page
+    that has to test for the key would go back to bleeding one day's levels
+    across the next the moment an older runner served it.
+    """
+
+    band = {"date": "2026-09-10", "from": 1757, "to": 1758, "levels": {"pivot": 24000.0}}
+    document = chart_document(
+        series_version=3,
+        timeframes={"1": timeframe_block(minutes=1, bars=[], vwap=[], stoch_k=[], stoch_d=[])},
+        cpr=ChartCpr(False),
+        cpr_days=[band],
+        vwap_is_proxy=True,
+        stochastic_settings={"k_period": 14, "d_period": 3, "smooth_k": 3},
+    )
+
+    assert document["cpr_days"] == [band]
+    assert render_document_bytes(document)  # allow_nan=False, must not raise
 
 
 # ---------------------------------------------------------------------------

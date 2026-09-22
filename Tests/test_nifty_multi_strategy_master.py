@@ -13734,6 +13734,92 @@ class TestDashboardChartIndicators(unittest.TestCase):
             master_file._dashboard_chart_payload(self.store, self.cache, traced)
         self.assertEqual(calls["n"], 1, "CPR recomputed more than once in a session")
 
+    # -- the back days the history CSV has not caught up with ------------
+    def _three_sessions(self):
+        """09-09, 09-10 and 09-11: two completed sessions and today."""
+        return pd.concat(
+            [
+                self._frame(375, "2026-09-09"),
+                self._frame(375, "2026-09-10"),
+                self._frame(40, "2026-09-11"),
+            ],
+            ignore_index=True,
+        )
+
+    def test_the_store_supplies_bands_for_the_days_the_csv_has_not_got(self):
+        """The chart draws days the stored ladder has never heard of.
+
+        That ladder is built once from the history CSV, which is only as fresh
+        as the last `fetch-data`, while the candles beside it come from a store
+        seeded with `INTRADAY_LOOKBACK_DAYS` of REST history. Those days used
+        to carry the previous band's levels, stretched across them.
+        """
+        ladder = master_file._live_day_ladder(self._three_sessions())
+
+        # 09-09 opens the frame, so it has no predecessor to take levels from;
+        # 09-11 is today and the page draws it from the live `cpr` block.
+        self.assertEqual([band["date"] for band in ladder], ["2026-09-10"])
+        self.assertIn("pivot", ladder[0]["levels"])
+
+    def test_those_bands_are_the_history_modules_own_algebra(self):
+        """One CPR implementation, called twice -- not two that agree today."""
+        frame = self._three_sessions()
+        clipped = master_file.dashboard_history.clip_to_session(frame)
+        expected = [
+            band
+            for band in master_file.dashboard_history.day_segments(clipped)
+            if band["date"] != "2026-09-11"
+        ]
+        self.assertEqual(master_file._live_day_ladder(frame), expected)
+
+    def test_a_partial_leading_session_is_dropped_rather_than_believed(self):
+        """Its high and low describe only the part of the day the store holds.
+
+        Nothing marks a number as partial once it is a number, so the band
+        taking its levels from that session would be quietly wrong -- worse
+        than absent, on a chart an operator reads levels off.
+        """
+        partial = pd.concat(
+            [
+                self._frame(60, "2026-09-08", "13:00"),  # store starts mid-session
+                self._frame(375, "2026-09-09"),
+                self._frame(375, "2026-09-10"),
+                self._frame(40, "2026-09-11"),
+            ],
+            ignore_index=True,
+        )
+        ladder = master_file._live_day_ladder(partial)
+
+        # 09-10 still gets its band, from the COMPLETE 09-09. What must not
+        # appear is 09-09's, which could only have come from the truncated day.
+        self.assertEqual([band["date"] for band in ladder], ["2026-09-10"])
+
+    def test_the_back_days_ride_in_the_chart_payload(self):
+        self.store.update("1", self._three_sessions())
+        master_file._dashboard_chart_payload(self.store, self.cache)
+        document = master_file._dashboard_chart_series(self.cache)
+
+        self.assertEqual([band["date"] for band in document["cpr_days"]], ["2026-09-10"])
+        # `allow_nan=False`: one NaN freezes the dashboard for the session.
+        json.loads(master_file.dashboard_snapshot.render_document_bytes(document))
+
+    def test_the_back_days_are_rebuilt_once_a_session_not_once_a_minute(self):
+        frame = self._three_sessions()
+        self.store.update("1", frame)
+        calls = {"n": 0}
+        original = master_file._live_day_ladder
+
+        def counting(inner):
+            calls["n"] += 1
+            return original(inner)
+
+        with patch.object(master_file, "_live_day_ladder", counting):
+            for extra in range(1, 11):
+                self.store.update("1", pd.concat(
+                    [frame, self._frame(extra, "2026-09-11", "09:56")], ignore_index=True))
+                master_file._dashboard_chart_payload(self.store, self.cache)
+        self.assertEqual(calls["n"], 1, "the back-day ladder was rebuilt mid-session")
+
     # -- fail-soft -------------------------------------------------------
     def test_a_broken_indicator_costs_its_own_line_and_nothing_else(self):
         """A chart with no stochastic still beats no chart at all."""
