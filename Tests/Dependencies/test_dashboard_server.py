@@ -20,7 +20,9 @@ import io
 import json
 import logging
 import re
+import shutil
 import socket
+import subprocess  # nosec B404 - runs `node` on this test's own generated script
 import sys
 import threading
 import urllib.error
@@ -465,16 +467,16 @@ def test_every_element_the_page_script_looks_up_exists_in_the_markup():
     )
 
 
-def _render_cpr_lines_source() -> str:
-    """The body of `renderCprLines`, read out of the page script.
+def _page_function_source(name: str) -> str:
+    """One named function, lifted whole out of the page script.
 
-    Brace counting rather than a regex: the function holds object literals,
+    Brace counting rather than a regex: these functions hold object literals,
     template strings and block comments, and a lazy match would stop at the
     first `}` inside any of them.
     """
 
     script = (ASSETS_DIR / "dashboard.js").read_text(encoding="utf-8")
-    start = script.index("function renderCprLines(")
+    start = script.index(f"function {name}(")
     opening = script.index("{", start)
     depth = 0
     for offset in range(opening, len(script)):
@@ -484,7 +486,11 @@ def _render_cpr_lines_source() -> str:
             depth -= 1
             if depth == 0:
                 return script[start : offset + 1]
-    raise AssertionError("renderCprLines is not balanced; this test is checking nothing")
+    raise AssertionError(f"{name} is not balanced; this test is checking nothing")
+
+
+def _render_cpr_lines_source() -> str:
+    return _page_function_source("renderCprLines")
 
 
 def test_the_cpr_levels_are_drawn_as_steps_and_never_rely_on_whitespace():
@@ -516,6 +522,125 @@ def test_the_cpr_levels_are_drawn_as_steps_and_never_rely_on_whitespace():
     assert not valueless, (
         "renderCprLines pushes a point with no value: " + repr(valueless) + ". "
         "The library drops it, so it breaks nothing and only adds a column."
+    )
+
+
+_DAY = 86_400
+
+
+def _session_times(day: int, bars: int) -> list[int]:
+    """Bar times for one session, 09:15 onward, on the chart's own scale."""
+
+    open_at = day * _DAY + 9 * 3600 + 15 * 60
+    return [open_at + 60 * index for index in range(bars)]
+
+
+def _band(day: int, bars: int = 5) -> dict:
+    times = _session_times(day, bars)
+    return {"date": str(day), "from": times[0], "to": times[-1], "levels": {"pivot": day * 100}}
+
+
+def _run_cpr_runs(bands_by_case: dict[str, list[dict]], times: list[int]) -> dict:
+    """Execute the page's own `cprRuns` under node and return what it built.
+
+    The repository has no JS runtime, so the page's logic has always been
+    checked by reading its SOURCE -- and source assertions have now let two
+    rendering bugs through: a whitespace point that the library silently
+    filtered away, and a level that ran across days it had no band for. This
+    lifts the two pure geometry functions out of the asset and actually RUNS
+    them, which is the only way either bug would have been caught here.
+
+    Skipped rather than failed where node is absent: it is not a dependency of
+    this project, only something CI runners happen to have.
+    """
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the JS geometry cannot be executed here")
+
+    harness = (
+        f"const bars = {json.dumps(times)}.map((time) => ({{ time }}));\n"
+        f"const cases = {json.dumps(bands_by_case)};\n"
+        "const out = {};\n"
+        "for (const [name, bands] of Object.entries(cases)) {\n"
+        "  out[name] = cprRuns(bands, bars, dayKey).map((run) => ({\n"
+        "    anchors: run.anchors.map((anchor) => anchor.index),\n"
+        "    endIndex: run.endIndex,\n"
+        "  }));\n"
+        "}\n"
+        "console.log(JSON.stringify(out));\n"
+    )
+    script = "\n".join(
+        [
+            _page_function_source("firstBarAtOrAfter"),
+            _page_function_source("dayKey"),
+            _page_function_source("cprRuns"),
+            harness,
+        ]
+    )
+    # A fixed argv, no shell, and the script is built here from this file's own
+    # literals plus the repository's own asset -- nothing user-supplied.
+    finished = subprocess.run(  # nosec B603
+        [node, "-e", script], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert finished.returncode == 0, finished.stderr
+    return json.loads(finished.stdout)
+
+
+def test_a_cpr_level_never_runs_across_a_day_that_has_no_band():
+    """The bug this guards: one day's levels drawn over another day's session.
+
+    A band covers its own session and nothing else -- `dashboard_history`
+    guarantees it and a test there says so. A stepped line cannot express that
+    on its own: it runs flat from one point to the next, so a band with no
+    successor stretches over every day in between. That is how 2026-09-16's
+    levels came to be drawn across the 17th, 18th and 21st, which the ladder
+    had no bands for because the history CSV was four sessions behind.
+
+    `cprRuns` is what honours the span: adjacent days share a series and step
+    between each other, a gap ends the series, and each run stops on the last
+    bar its final band owns.
+    """
+
+    times = _session_times(1, 5) + _session_times(2, 5) + _session_times(3, 5)
+    built = _run_cpr_runs(
+        {
+            "contiguous": [_band(1), _band(2), _band(3)],
+            "gapped": [_band(1), _band(3)],
+            "bandless": [
+                _band(1),
+                # A band whose days the chart has not loaded: it can anchor
+                # nothing, so it must neither draw nor split the run.
+                {"date": "99", "from": 99 * _DAY, "to": 99 * _DAY + 100, "levels": {}},
+                _band(2),
+            ],
+            # The seam where the stored ladder meets the live one: the store's
+            # copy of a session holds a bar the CSV's copy does not, so the
+            # band stops one bar short of the candles beside it.
+            "seam": [_band(1, bars=4), _band(2), _band(3)],
+        },
+        times,
+    )
+
+    assert built["contiguous"] == [{"anchors": [0, 5, 10], "endIndex": 14}], (
+        "days that sit next to each other must stay in ONE series, so the step "
+        "between them is still drawn"
+    )
+    assert built["gapped"] == [
+        {"anchors": [0], "endIndex": 4},
+        {"anchors": [10], "endIndex": 14},
+    ], (
+        "the middle day has candles and no band, so the first run must END on "
+        "its own last bar (index 4) instead of reaching across to index 10"
+    )
+    assert built["bandless"] == [{"anchors": [0, 5], "endIndex": 9}], (
+        "a band with no loaded candles anchors nothing; it must not split the "
+        "run either"
+    )
+    assert built["seam"] == [{"anchors": [0, 5, 10], "endIndex": 14}], (
+        "a band that stops a bar short of its own session's candles is the "
+        "seam between the two ladders, not a gap -- splitting there puts a "
+        "second set of price labels down the axis for nothing"
     )
 
 

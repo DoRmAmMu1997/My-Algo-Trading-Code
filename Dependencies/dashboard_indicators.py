@@ -500,13 +500,22 @@ def chart_document(
     cpr: ChartCpr,
     vwap_is_proxy: bool,
     stochastic_settings: Mapping[str, int],
+    cpr_days: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
-    """The whole `/api/chart` payload."""
+    """The whole `/api/chart` payload.
+
+    `cpr` is TODAY's band. `cpr_days` is the handful of COMPLETED sessions the
+    runner's own store still holds -- the days that have candles on the chart
+    but no band in the stored ladder, because that ladder is only as fresh as
+    the history CSV. Same shape as a `/api/history?tf=cpr` day band, so the
+    page can fill one from the other without a second reader.
+    """
 
     return {
         "series_version": int(series_version),
         "timeframes": {key: dict(value) for key, value in timeframes.items()},
         "cpr": cpr.as_dict(),
+        "cpr_days": [dict(band) for band in (cpr_days or ())],
         "indicators": {
             "vwap": {
                 "label": "VWAP*" if vwap_is_proxy else "VWAP",

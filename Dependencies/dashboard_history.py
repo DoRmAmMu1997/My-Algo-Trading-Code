@@ -372,6 +372,24 @@ def _segments(
     return segments
 
 
+def day_segments(frame: pd.DataFrame) -> list[dict[str, object]]:
+    """The per-day ladder on its own: one band per session, from the one before.
+
+    Public because the CSV is not the only source of sessions. The runner's own
+    store holds the last few days too, and they are the days the CSV has not
+    caught up with, so the master fills the ladder's tail by calling THIS -- not
+    by writing the shift-and-aggregate a second time in its own words.
+    """
+
+    return _segments(
+        levels_frame=frame,
+        levels_key=frame["timestamp"].dt.date,
+        spans_frame=frame,
+        spans_key=frame["timestamp"].dt.date,
+        label="date",
+    )
+
+
 def cpr_segments(frame: pd.DataFrame, days: pd.DataFrame) -> dict[str, object]:
     """Per-day and per-month CPR bands for the whole history.
 
@@ -391,13 +409,7 @@ def cpr_segments(frame: pd.DataFrame, days: pd.DataFrame) -> dict[str, object]:
 
     minutes_month = frame["timestamp"].dt.to_period("M").astype(str)
     return {
-        "day": _segments(
-            levels_frame=frame,
-            levels_key=frame["timestamp"].dt.date,
-            spans_frame=frame,
-            spans_key=frame["timestamp"].dt.date,
-            label="date",
-        ),
+        "day": day_segments(frame),
         "month": _segments(
             levels_frame=frame,
             levels_key=minutes_month,

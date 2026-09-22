@@ -353,6 +353,38 @@ time so the levels add no columns to the shared scale.
 `test_the_cpr_levels_are_drawn_as_steps_and_never_rely_on_whitespace` fails if
 either property is edited away.
 
+**The ladder is as fresh as the CSV; the candles are as fresh as the STORE.**
+They are not the same thing, and the gap between them widens every day the
+extractor is not run. The chart draws `INTRADAY_LOOKBACK_DAYS` of REST history
+out of the store while the stored ladder stops at the CSV's last row, so by the
+end of a week several sessions have candles and no band. Stepping alone then
+drew the newest band's levels flat across all of them. Two halves to the fix,
+and both are needed: the live payload carries `cpr_days` for the completed
+sessions in the store (built by `dashboard_history.day_segments`, so there is
+still one CPR implementation), and `cprRuns` cuts the levels into runs so a
+level ends on the last bar its own band owns. Days no band can be computed for
+show NO CPR -- the honest answer.
+
+**A run break is by PERIOD, never by "any bar in between".** The store's copy
+of a session can hold a bar the CSV's copy does not -- a 15:30 print, anything
+before the open -- and the two ladders meet precisely there. Splitting on one
+stray bar put a second set of price labels down the axis for a seam nobody can
+see. `cprRuns` takes the grouping as an argument for that reason: the session
+on the minute timeframes, the MONTH on Daily, where a per-day rule would split
+every band into its own run.
+
+**`lastValueVisible: false` does not remove a series' axis label.** The library
+draws two axis views per series and gates the second on
+`"" !== title || seriesLastValueMode === 0` -- `lastValueVisible` is nowhere in
+that test. An older run with its `title` kept still printed "R1 (chart)" on the
+axis with no number beside it. Clear BOTH.
+
+`test_a_cpr_level_never_runs_across_a_day_that_has_no_band` lifts
+`firstBarAtOrAfter`, `dayKey` and `cprRuns` out of the asset and runs them under
+node. It is the first test in this repository that EXECUTES the page's logic
+rather than reading it, and it exists because source assertions let two
+rendering bugs through in a row. It skips where node is absent.
+
 **Verify a level by its SLOPE, not by column height.** The first check written
 for the per-day bands sampled each CPR colour and asserted no column was more
 than a pixel tall, to rule out a vertical connector. A shallow diagonal
@@ -392,7 +424,7 @@ deliberately no host key.
 | Suite | Covers |
 |---|---|
 | `Tests/Dependencies/test_dashboard_snapshot.py` | Every pairing confidence, the Delta-0.2 / SL-Hunting-mirror / re-entry shapes, `EXIT_FAILED` not closing, malformed events, the honesty rules, NaN rejection |
-| `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read; plus the page-source guards -- every wired element id exists, and the CPR levels step rather than lean on whitespace |
+| `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read; plus the page guards -- every wired element id exists, the CPR levels step rather than lean on whitespace, and `cprRuns` executed under node so no level runs across a day with no band |
 | `Tests/Dependencies/test_dashboard_indicators.py` | CPR truncation and every degenerate session shape; **the equality test that pins the CPR algebra against `_add_daily_cpr`**; VWAP and stochastic equality with the strategies' helpers; the forming bucket; and every fixture rendered through `render_document_bytes` |
 | `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, the "never reaches the broker or a mutating gate" assertion, the recompute-cadence guards, and fail-soft when an indicator raises |
 

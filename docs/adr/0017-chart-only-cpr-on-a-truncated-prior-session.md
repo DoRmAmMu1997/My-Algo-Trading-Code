@@ -97,6 +97,31 @@ Today's band always comes from the LIVE payload rather than the stored ladder,
 because the history CSV is only as fresh as the last download and today is the
 day being traded.
 
+**A band's span is authoritative, and the renderer has to end on it.** Stepping
+separates one day from the NEXT; on its own it cannot stop a level that has no
+next. Where the stored ladder ran out -- the CSV four sessions behind the live
+window -- 2026-09-16's levels were drawn flat across the 17th, 18th and 21st,
+which is a statement about those sessions that nothing computed. The levels are
+now cut into RUNS of adjacent periods, one series each, and a run ends on the
+last bar its final band owns. A run break is by PERIOD, not by any bar in
+between: the store's copy of a session can hold a bar the CSV's copy does not,
+and the two ladders meet exactly there.
+
+**And the ladder itself now reaches as far as the candles do.** The chart draws
+whatever the runner's store holds -- `INTRADAY_LOOKBACK_DAYS` of REST history,
+several sessions -- while the stored ladder stops at the CSV. The live payload
+therefore carries `cpr_days`: bands for the completed sessions in the store,
+built by `dashboard_history.day_segments`, the same shift-and-aggregate the CSV
+ladder uses. A stored band wins on a date both hold, because the CSV's sessions
+are complete downloads and the store's oldest is only whatever its window
+reaches back to; a store session that does not start at 09:15 is dropped rather
+than believed, since nothing marks a high as partial once it is a number.
+
+Days that still have no band -- the cache too short, the day too old -- show no
+CPR at all. That is the honest answer and it is the point: a level drawn over a
+session it was not computed from is worse than no level, on a chart an operator
+reads levels off.
+
 ## Options considered
 
 | Option | Verdict |

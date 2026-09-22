@@ -18053,6 +18053,11 @@ class _DashboardChartCache:
         self.cpr: dashboard_indicators.ChartCpr = dashboard_indicators.ChartCpr(False)
         self.cpr_key: tuple[date, int] | None = None
 
+        # The COMPLETED sessions this store still holds, each with its own
+        # band. Same cadence as `cpr`, and for the same reason.
+        self.cpr_days: list[dict] = []
+        self.cpr_days_key: tuple[date, date, int] | None = None
+
 
 def _bar_record(row: pd.Series[Any]) -> dict:
     """One candle in the shape the charting library expects."""
@@ -18234,6 +18239,11 @@ def _dashboard_chart_payload(
             _refresh_chart_cpr(frame, cache, deps)
         except Exception:  # noqa: BLE001 - reporting only
             logger.debug("Dashboard CPR unavailable this minute.", exc_info=True)
+        # Its own guard: losing the back days must not cost today's band too.
+        try:
+            _refresh_chart_cpr_days(frame, cache)
+        except Exception:  # noqa: BLE001 - reporting only
+            logger.debug("Dashboard back-day CPR unavailable this minute.", exc_info=True)
         cache.source_candle_ts = source_candle_ts
 
     # TIER B, at most once a poll: only the two forming bars move.
@@ -18260,6 +18270,61 @@ def _refresh_chart_cpr(
         return
     cache.cpr = dashboard_indicators.chart_cpr(frame, width_classifier=deps.width_classifier)
     cache.cpr_key = key
+
+
+def _live_day_ladder(frame: pd.DataFrame) -> list[dict]:
+    """CPR bands for the completed sessions in the runner's own store.
+
+    The chart's stored ladder is built once, from the history CSV, and that
+    file is only as fresh as the last `algo.py fetch-data`. The store is seeded
+    over REST with `INTRADAY_LOOKBACK_DAYS` of history, so by the end of a week
+    the chart is drawing candles for days the ladder has never heard of. Those
+    days are what this fills.
+
+    Built by `dashboard_history.day_segments` -- the SAME shift-and-aggregate
+    the CSV ladder uses, so the two can only ever differ in the frame they read.
+
+    Two exclusions, both deliberate:
+
+    * a leading PARTIAL session, whose high and low describe only the part of
+      the day the store happens to reach back to. Nothing marks it as partial
+      once it is a number, and the very next band would take its levels from
+      it. The CSV path needs no such guard because a downloaded session is
+      whole;
+    * TODAY, whose band the page already draws from the live `cpr` block --
+      the one its caption describes.
+    """
+
+    clipped = dashboard_history.clip_to_session(frame)
+    if clipped.empty:
+        return []
+
+    dates = clipped["timestamp"].dt.date
+    first = dates.iloc[0]
+    if clipped.loc[dates == first, "timestamp"].iloc[0].time() > dashboard_indicators.CPR_SESSION_START:
+        clipped = clipped.loc[dates != first].reset_index(drop=True)
+        if clipped.empty:
+            return []
+        dates = clipped["timestamp"].dt.date
+
+    today = str(dates.iloc[-1])
+    return [band for band in dashboard_history.day_segments(clipped) if band["date"] != today]
+
+
+def _refresh_chart_cpr_days(frame: pd.DataFrame, cache: _DashboardChartCache) -> None:
+    """Recompute the store's own day ladder only when its sessions change.
+
+    Keyed on the frame's first and last date and how many sessions lie between
+    them, so it runs when a session opens or an old one rolls off the tail --
+    about once a day -- rather than once a minute.
+    """
+
+    dates = frame["timestamp"].dt.date
+    key = (dates.iloc[0], dates.iloc[-1], int(dates.nunique()))
+    if cache.cpr_days_key == key:
+        return
+    cache.cpr_days = _live_day_ladder(frame)
+    cache.cpr_days_key = key
 
 
 def _chart_state_block(cache: _DashboardChartCache) -> dict:
@@ -18352,6 +18417,7 @@ def _dashboard_chart_series(
         series_version=cache.series_version,
         timeframes=timeframes,
         cpr=cache.cpr,
+        cpr_days=cache.cpr_days,
         vwap_is_proxy=cache.vwap_is_proxy,
         stochastic_settings={
             "k_period": deps.k_period,
