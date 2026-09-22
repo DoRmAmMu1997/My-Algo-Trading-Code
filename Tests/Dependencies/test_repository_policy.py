@@ -90,7 +90,23 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # 54 source files against 3.0.5.260730. That is also the version the
     # operator's box already had installed while this file still asked for
     # 2.3.3, so `pip install -r requirements.txt` would have DOWNGRADED it.
-    assert "pandas-stubs==3.0.5.260730" in core
+    # 3.0.5.260730 -> 3.0.5.260914 (2026-09-22, PR #176). The pandas release
+    # being described does not move (3.0.5 both sides), so the matching-majors
+    # reason this pin exists for is untouched; only the stub snapshot advances.
+    # Typing-only again, so it was verified BEFORE the merge like the bump
+    # above: mypy checks all 80 source files against 3.0.5.260914 with ZERO
+    # errors in repo code. NOTE for anyone repeating that run -- the new stubs
+    # have to be staged on MYPYPATH as a plain `pandas/` tree (mypy only finds
+    # a `-stubs` package in site-packages), and staged that way mypy also
+    # analyses the stub package's own internals and reports ~24 errors inside
+    # it. Those are an artifact of the staging, not a signal: CI installs the
+    # stubs properly and never type-checks them.
+    # The one upstream change that could have reached us is "move stub-only
+    # helper types to _stubs_only" (#1935), which breaks anything importing
+    # pandas' private typing helpers -- and nothing here does: the repo has no
+    # `pandas._typing` or `_stubs_only` import at all. "Align Index subtraction
+    # overloads" (#1938) is the other TYP change, and the mypy run covers it.
+    assert "pandas-stubs==3.0.5.260914" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
     #
@@ -144,7 +160,22 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # because CI never spawns the bundled CLI: confirm on the next PAPER
     # session that decisions still return ("SLHuntingAgent decision cost
     # ~$..." in the log).
-    assert "claude-agent-sdk==0.2.152" in ai
+    # 0.2.152 -> 0.2.154 (2026-09-22, PR #176). Two releases, and only one of
+    # them has a Python surface at all. 0.2.154 is a bundled-CLI bump only
+    # (2.1.273 -> 2.1.274). 0.2.153 adds a `snapshot` field to
+    # `SystemPromptPreset` and a new `SystemPromptCustom` TypedDict -- both
+    # ADDITIVE, and both on the PRESET form of `system_prompt`. We never use
+    # that form: `SLHuntingAgent._system_prompt_as_file` passes the FILE form
+    # ({"type": "file", "path": ...}) because the prompt is far past Windows'
+    # 32,767-character command-line limit. So the new field cannot reach this
+    # agent even as a default, and the isinstance-chain reasoning that cleared
+    # every earlier bump does not need revisiting either.
+    # What actually moved is the bundled Claude CLI, 2.1.259 -> 2.1.274, and
+    # that is the part running the agent. Same standing check as every bump
+    # before it, because CI never spawns the bundled CLI: confirm on the next
+    # PAPER session that decisions still return ("SLHuntingAgent decision cost
+    # ~$..." in the log). If they stop, revert this pin first.
+    assert "claude-agent-sdk==0.2.154" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
