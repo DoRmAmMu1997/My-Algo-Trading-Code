@@ -837,6 +837,63 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   pattern name. v3q's re-entry gate asks for a nameable NEW trapped crowd, which
   is vacuous on a follow whose whole premise is that nobody is seated -- so on a
   follow it is the new extreme that must do that work instead.
+- WHEN NOBODY IS SEATED, YOUR OWN ENTRY IS WHAT SEATS THEM (v5i). Every rule
+  above keeps you OUTSIDE the crowd: v5f says a one-way day seats nobody, v5c
+  says a retracement recruits the crowd you hunt NEXT, v4e says do not forecast
+  one into existence. This is the one where you are INSIDE it. The empty-seat
+  read is a statement about the INSTANT you act on it, not a property of the
+  trade you go on holding.
+  IH NARRATES HIMSELF BECOMING THE CROWD (22 Sep 2026), which is what makes
+  this a rule rather than a caution. He bought the flat open on exactly the
+  premise the pre-open note carried: the previous day rose "slowly, slowly", so
+  "the trader must have made a call trade but would not have gone holding it",
+  and "if the buyers' SLs are not available then we can continue to follow the
+  market". Then the same slow grind kept working, and he narrated the cost of
+  it: "when the market takes support and then goes up slowly, it is possible
+  other people also start buying. Sellers move away -- AND WE HAD ALREADY
+  BOUGHT HERE TOO. All of their stops are around the same place, near the
+  closing price. So the market came down to target them." He was hunted as part
+  of the crowd his own read said was not there.
+  THIS IS THE MECHANISM UNDER v5h's "A STANDING PREMISE IS NOT A SECOND
+  REASON". The note's branch does not refresh because acting on it CONSUMES it
+  -- the seat you found empty is the seat you took. That is also why a second
+  entry feels so well supported and pays so badly: the premise is being cited
+  after it has already been spent.
+  WHAT THIS RULE DOES NOT LICENSE. Three repairs suggest themselves here, and
+  all three were priced against this book (151 closed trades, 2026-07-02 to
+  2026-09-22) before any of them could be written in. All three LOSE money, so
+  they are recorded as refused rather than left available to re-derive:
+  * NOT A TIME STOP. IH attributes the whole thing to time -- "the more the
+    market stalls, the more the chances of opposite momentum in your trade" --
+    and this book says the reverse. Hold time correlates POSITIVELY with P&L
+    (r = +0.21), winners averaged 7.4 minutes against losers' 4.0, and the
+    10-to-20-minute band ran an 80% win rate at +1,562 a trade. A time cap was
+    negative at every level from 5 to 30 minutes, costing between 8,535 and
+    53,184. The causation plainly runs the other way: a trade that works gets
+    held to its target and a trade that fails hits its stop fast. Duration is a
+    SYMPTOM of the outcome, never a dial you turn to get one -- the same shape
+    as v5a's correction, and the second time this book has said it.
+  * NOT A BAN ON RE-ENTERING AFTER A STOP. Those returned +358 a trade across
+    nine of them, ahead of the book's own first-trade-of-the-day mean of +128.
+    Refusing them would have cost 3,222.
+  * NOT A TIGHTER READING OF v5h's NEW-EXTREME TEST. After a STOP that test is
+    vacuous, because your exit sits on the ADVERSE side and any recovery clears
+    it; the obvious repair is to require the re-entry to extend past your prior
+    ENTRY instead. Priced, it is the worst of the three -- it forgoes 36,580 of
+    a 55,337 book, and the trades it blocks average +1,219 against -341 for the
+    ones it keeps. THE INVERSION IS THE FINDING: on this book, re-entering at a
+    price NOT beyond your last entry is the BETTER trade, because that is
+    fading back into the level rather than chasing away from it.
+  MEASURED ON THIS BOOK (2026-09-22), AND IT WOULD NOT HAVE CHANGED EITHER
+  TRADE. Both entries took the note's FLAT -> BUY branch and both were stopped
+  inside six minutes -- far too fast for any ageing mechanism to be what killed
+  them. The day was -2,651. What the session does record is the SECOND day
+  running on which every entry cited the standing premise, and one divergence
+  worth keeping: trade 1 lost 20.5 points on NIFTY and still finished +280,
+  because the mirror gained while the indices moved apart (NIFTY CE -767,
+  BankNIFTY CE +1,047). Trade 2 had both legs lose, -741 and -2,190. So the
+  rule is carried on IH's evidence, not on a claim that it would have saved
+  today -- and the three refusals above are the part this book actually proved.
 - A FORECAST OF WHO WILL ARRIVE IS NOT EVIDENCE OF WHO IS SEATED (v4e). The single
   most expensive error available in this method, recorded from a LOSING IH session
   (11 Aug 2026) so it is not learned the hard way. He stated the disqualifying fact

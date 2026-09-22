@@ -2938,6 +2938,65 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "the premise has not failed -- but the trade has" in rule
 
 
+def test_v5i_the_follow_trade_seats_the_crowd_it_was_entered_on():
+    """v5i (22 Sep): the only rule in the family where YOU are the crowd.
+
+    IH bought a flat open because "the buyers' SLs are not available", then
+    narrated his own position becoming the inventory that got hunted. Seven
+    ways an edit breaks it:
+
+    1. Losing that this one puts you INSIDE the crowd. Without that contrast
+       it reads as a restatement of v5c or v4e, which keep you outside.
+    2. Losing that the read is about the INSTANT of entry. That is the whole
+       claim -- a premise that is true when you act and false while you hold.
+    3. Losing IH's first-person narration. He is the evidence; paraphrased
+       into the third person it becomes a generic warning about crowds.
+    4. Losing the link to v5h's standing-premise clause, which is what this
+       rule supplies a mechanism for rather than merely repeating.
+    5. Losing ANY of the three refusals. Each is a plausible repair that this
+       book priced and rejected, and an unrefused repair gets re-derived --
+       the time stop especially, because IH states it himself.
+    6. Losing the inversion inside the third refusal. "Do not tighten it" is
+       advice; "the blocked trades made +1,219 and the kept ones lost 341" is
+       a finding, and it points the opposite way from the intuition.
+    7. Losing the admission that it would not have changed today. The rule is
+       carried on IH's book, and hiding that would make it look self-proving.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "WHEN NOBODY IS SEATED, YOUR OWN ENTRY IS WHAT SEATS THEM")
+
+    # 1 and 2. What is new: you are inside it, and the read expires on contact.
+    assert "This is the one where you are INSIDE it" in rule
+    assert "a statement about the INSTANT you act on it" in rule
+    assert "not a property of the trade you go on holding" in rule
+
+    # 3. His own words, in the first person.
+    assert "IH NARRATES HIMSELF BECOMING THE CROWD" in rule
+    assert "AND WE HAD ALREADY BOUGHT HERE TOO" in rule
+    assert "the crowd his own read said was not there" in rule
+
+    # 4. It explains v5h rather than repeating it.
+    assert "the seat you found empty is the seat you took" in rule
+    assert "after it has already been spent" in rule
+
+    # 5. All three refusals survive, with the numbers that make them refusals.
+    assert "NOT A TIME STOP" in rule
+    assert "correlates POSITIVELY with P&L" in rule
+    assert "costing between 8,535 and 53,184" in rule
+    assert "NOT A BAN ON RE-ENTERING AFTER A STOP" in rule
+    assert "+358 a trade across nine of them" in rule
+    assert "NOT A TIGHTER READING" in rule
+    assert "forgoes 36,580 of a 55,337 book" in rule
+
+    # 6. The inversion, which is the finding rather than the advice.
+    assert "THE INVERSION IS THE FINDING" in rule
+    assert "NOT beyond your last entry is the BETTER trade" in rule
+
+    # 7. The honest limit.
+    assert "IT WOULD NOT HAVE CHANGED EITHER TRADE" in rule
+    assert "not on a claim that it would have saved" in rule
+
+
 def test_v5h_a_range_makes_the_crowd_read_unpayable():
     """v5h (18 Sep): learned on a day the book was RIGHT and still gave it back.
 
