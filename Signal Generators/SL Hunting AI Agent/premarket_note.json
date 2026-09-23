@@ -1,34 +1,33 @@
 {
-  "for_date": "2026-09-22",
-  "source": "Intraday Hunter, 'Prediction For 22 SEP 2026' (1ariOZ4dAVQ, uploaded 2026-09-21)",
-  "context": "Momentum was positive on all three indices but GRADUAL, never sharp -- SENSEX did not cross its round number. A slow move breeds no greed, so the buyers who came did not hold overnight and are NOT seated.",
+  "for_date": "2026-09-23",
+  "source": "Intraday Hunter, 'Prediction For 23 SEP 2026' (FBDx9zcN9Sw, uploaded 2026-09-22)",
+  "context": "Selling ran continuously on all three indices with no BIG retracement. One came near 2 PM, but selling resumed after it with plenty of session left -- so he reads SELLERS as seated, on a market already negative from before.",
   "plan": [
-    "BOTH GAP BRANCHES REVERSE FROM YESTERDAY AND THE FLAT BRANCH DOES NOT: 21 Sep was gap up -> SELL, flat or gap down -> BUY. Tonight gap up -> BUY, gap down -> SELL, flat still -> BUY. Carrying yesterday's gaps forward inverts both.",
-    "FLAT TO GAP UP -> BUY: identify buying-side setups and go WITH the market. The rise was gradual so no greed formed, buyers came but 'did not go holding the trade', and an unseated buyer crowd is nobody to squeeze.",
-    "GAP DOWN -> SELL: identify selling-side setups. NOT because sellers are seated -- because a fall is only covered if an OPERATOR commits money, retail cannot produce that bounce, and 'we can get TRAPPED there' planning for one.",
-    "SAME SHAPE ON ALL THREE INDICES: NIFTY, BANKNIFTY and SENSEX carry identical branches with NO per-index qualification tonight -- unlike 21 Sep, where NIFTY alone was limited to a SMALL gap down."
+    "SAME WORD AS 22 SEP, OPPOSITE PREMISE: yesterday's BUY was a FOLLOW because nobody was seated; tonight's BUY is a HUNT because sellers ARE seated. The follow reason is spent and must not be cited for this one.",
+    "FLAT TO GAP UP -> BUY: identify buying-side setups to TARGET the seated sellers -- 'to make these sellers our target'. This is a squeeze of trapped inventory, not going with the market.",
+    "SMALL GAP DOWN -> SAME PLAN, STILL BUY (said as 'small' on BankNIFTY and SENSEX). On 22 Sep a gap down meant SELL. A LARGE gap down is not in his plan at all: there is no sell branch tonight, so do not invent one."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
         23500,
-        23570
+        23560
       ],
       "support": [
-        23350,
-        23270
+        23270,
+        23200
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        57000,
-        57200
+        56540,
+        57000
       ],
       "support": [
-        56400,
-        56100
+        56100,
+        55910
       ]
     },
     {
@@ -38,8 +37,8 @@
         75500
       ],
       "support": [
-        74700,
-        74350
+        74350,
+        74000
       ]
     }
   ]
