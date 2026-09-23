@@ -7714,3 +7714,115 @@ IT exists to produce -- the same way replaying 2/5/10/15-minute cooldowns
 showed that the "~15 bars" prose would have blocked 27 Jul's +18,858 winner.
 A gate built from today's three cherry-picked losses would have cost this book
 between 8,417 and 65,413 depending on where the line was drawn.
+
+
+## v5i - the follow trade seats the crowd it was entered on (22 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (FWgM1TFKWxA,
+uploaded 2026-09-22 11:20 IST), traded on the plan from the previous evening's
+'Prediction For 22 SEP 2026' (1ariOZ4dAVQ) -- plus this book's own two trades.
+
+### The rare part: both books agreed, and both lost
+
+IH and the agent took the SAME side, on the SAME premise, on the same session,
+and both were stopped. That agreement is what makes the day worth a rule: the
+loss cannot be blamed on the read, because two independent readers produced the
+same one.
+
+IH entered BUY at the open across all three indices (BankNIFTY 56,500 CE,
+SENSEX 75,000 CE, NIFTY 1,430 qty on its expiry day). His premise was the
+pre-open note's, almost word for word: the previous day rose but "there was no
+SHARP momentum... the market was going up slowly, slowly", so buyers came but
+"would not have gone holding the trade", and therefore "the buyers' SLs are not
+available -- and if the buyers' SLs are not available, we can continue to follow
+the market".
+
+The agent's two entries carried the same reasoning, both citing the note's
+FLAT -> BUY branch off SLH-017's computed verdict (+0.17% NIFTY, +0.03%
+BankNIFTY):
+
+| # | time | entry | stop | dist | lots | exit | outcome |
+|---|---|---|---|---|---|---|---|
+| 1 | 09:19 | 23,452.80 | 23,434.00 | 18.8 | 2 | 09:26 AI_STOP @ 23,432.30 | **+280.00** |
+| 2 | 09:52 | 23,459.45 | 23,450.00 | 9.45 | 4 | 09:57 AI_STOP @ 23,450.65 | **-2,931.00** |
+
+Day: **-2,651.00**.
+
+### The +280 is a mirror divergence, not a rounding artefact
+
+Trade 1 lost 20.5 points of NIFTY and still finished positive, which is worth
+recording because it looks wrong. The legs explain it:
+
+- NIFTY 23450 CE, 130 qty, 47.60 -> 41.70 = **-767.00**
+- BANKNIFTY 56600 CE, 60 qty, 420.50 -> 437.95 = **+1,047.00**
+
+The two indices moved APART inside the seven minutes the basket was open: NIFTY
+fell to its stop while BankNIFTY rose. The mirror carried the trade. Trade 2 had
+no such luck -- NIFTY -741.00 and BankNIFTY -2,190.00, both legs against.
+
+Note also that trade 1's stop is defined on NIFTY spot alone, so the NIFTY stop
+closed a basket that was in PROFIT at that moment. That is the tie described in
+CLAUDE.md working as designed, not a defect, but it is the first measured case
+of the single-index stop closing a winning basket.
+
+### What IH added, and it is net-new
+
+He narrated himself BECOMING the crowd he had entered because it was absent:
+
+> "When the market takes support and then goes up slowly, it is possible other
+> people also start buying. Sellers move away -- **and we had already bought
+> here too. All of their stops are around the same place, near the closing
+> price. So the market came down to target them.**"
+
+Every rule in this family keeps the reader OUTSIDE the crowd. v5f says a one-way
+day seats nobody; v5c says a retracement recruits the crowd you hunt next; v4e
+says do not forecast one into existence. None of them says what happens when the
+FOLLOW you took on an empty book is itself what fills it. That is v5i, and it
+supplies the mechanism under v5h's "a standing premise is not a second reason":
+the branch does not refresh because acting on it CONSUMES it.
+
+### Three repairs, all priced, all refused
+
+IH attributes the whole thing to TIME -- "the more the market stalls, the more
+the chances of opposite momentum in your trade", and "in option buying, if you
+spend too much time and then even one opposite candle comes, it can give you a
+big loss". That is a testable claim, so it was tested across all 151 closed
+journal trades before any of it was written into a live rule.
+
+**1. A time stop. Refused -- the book says the opposite.**
+
+| hold | n | total | mean | win % |
+|---|---|---|---|---|
+| 0-5 min | 86 | +2,153.25 | +25.04 | 36% |
+| 5-10 min | 41 | +9,245.00 | +225.49 | 44% |
+| 10-20 min | 20 | +31,245.25 | **+1,562.26** | **80%** |
+| 20-40 min | 3 | +4,159.00 | +1,386.33 | 100% |
+
+r(hold, P&L) = **+0.21**. Winners averaged 7.4 minutes, losers 4.0. A cap was
+negative at every level: -8,535 at 30 min, -14,482 at 15, -43,939 at 10,
+-53,184 at 5. The causation runs the other way -- a working trade is held to
+target, a failing one hits its stop fast -- so duration is a SYMPTOM, exactly as
+stop distance turned out to be in v5a's correction the day before.
+
+**2. No re-entry on the same side after a stop. Refused.** n=9, total +3,222.00,
+mean +358.00 -- ahead of the book's own first-trade-of-the-day mean of +128.22.
+
+**3. Tighten v5h's new-extreme test. Refused, and the reason inverts it.** After
+a STOP the test is vacuous: the exit sits on the adverse side, so any recovery
+clears it. Requiring the re-entry to extend past the prior ENTRY instead would
+forgo **36,580.50 of a 55,337.50 book**, and the trades it blocks average
+**+1,219.35** against **-341.24** for the ones it keeps. On this book,
+re-entering at a price NOT beyond your last entry is the better trade -- fading
+back into the level rather than chasing away from it.
+
+### The honest limit
+
+**v5i would not have changed either of today's trades.** Both were stopped
+inside six minutes, far too fast for any ageing mechanism to be what killed
+them. The rule is carried on IH's evidence, not on this book's, and the part
+this book actually proved is the three refusals. It is recorded that way in the
+rule itself, and a mutation that turns it into a self-proving claim is caught.
+
+What today does add to the record is the SECOND consecutive session on which
+every entry cited the standing pre-open premise -- 18 Sep had four, today had
+two. v5h named that failure; it has not yet changed the behaviour.

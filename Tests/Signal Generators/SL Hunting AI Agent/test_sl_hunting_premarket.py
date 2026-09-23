@@ -201,32 +201,31 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_22_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 21 Sep transcript.
+def test_shipped_note_matches_september_23_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 22 Sep transcript.
 
-    The branch shape MOVED this time, so the thing the test exists to protect
-    is no longer "the reason varies under a fixed shape" -- it is the shape
-    itself. Five things an edit would flatten:
+    Tonight's plan says BUY -- the same word as the night before -- for the
+    opposite reason, and that is the whole hazard. Five things an edit would
+    flatten:
 
-    1. That BOTH gap branches reversed while the FLAT branch did NOT. A
-       summariser writes "the branches reversed" and loses the one branch that
-       carried over, which is the only one that did not need re-deriving.
-    2. The buy branch's whole mechanism: gradual rise -> no greed -> nobody
-       held -> nobody seated -> follow. Drop any link and "buyers came" reads
-       as a reason to FADE rather than to go with the market.
-    3. That the sell branch's premise is NOT the house default. Every note
-       before this one reasoned about who is TRAPPED; this one reasons about
-       who can PAY -- only operator money covers a fall. Substituting the
-       familiar reason looks harmless and silently replaces the claim.
-    4. That there is NO per-index qualification tonight. The absence is the
-       fact, and an absence is exactly what a summariser invents into: the
-       previous note DID carry one (NIFTY's small-gap-down limit).
-    5. The levels, which came through clean -- no garble to reconstruct for
-       the first time in several nights. SENSEX is an exact one-rung shift of
-       the 21 Sep ladder; NIFTY and BANKNIFTY lift without being clean shifts
-       (NIFTY keeps 23270 and 23500, BANKNIFTY keeps only 56100). That is the
-       cross-check that nothing was mis-heard, and it is deliberately NOT
-       stated as a uniform rule, because it is only uniform on one index.
+    1. That the premise INVERTED under an unchanged word. 22 Sep bought as a
+       FOLLOW (nobody seated); 23 Sep buys as a HUNT (sellers seated). Carry the
+       old reason forward and the entry looks justified while citing a premise
+       v5i records as already spent.
+    2. That tonight's buy is a SQUEEZE of trapped sellers, not a follow. Those
+       want different entries: one waits for the trapped side to be forced, the
+       other rides whatever is already moving.
+    3. That a SMALL gap down flipped from SELL to BUY, and that a LARGE gap down
+       is not covered at all. There is no sell branch tonight. That absence is
+       asserted, because an absent branch is exactly what gets filled in by
+       analogy with the previous night.
+    4. The late retracement, which is the evidence the sellers are seated rather
+       than a reason to doubt it: it came near 2 PM and the selling resumed.
+    5. NIFTY's supports, which came through as "23 270 230". Read naturally that
+       is 23270 / 23230 -- and it is WRONG. The chart at 1:29 tags the two lines
+       23,271.75 and 23,201.20, so the second support is 23200. Resolved from
+       the frame rather than guessed, because two earlier garbles were guessed
+       wrong and caught only by the operator.
     """
     import os
 
@@ -234,57 +233,52 @@ def test_shipped_note_matches_september_22_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-22"
-    assert "1ariOZ4dAVQ" in note.source
-    assert "GRADUAL, never sharp" in note.context
-    assert "did not cross its round number" in note.context
-    assert "A slow move breeds no greed" in note.context
-    assert "are NOT seated" in note.context
+    assert note.for_date == "2026-09-23"
+    assert "FBDx9zcN9Sw" in note.source
+    assert "no BIG retracement" in note.context
+    assert "One came near 2 PM, but selling resumed after it" in note.context
+    assert "he reads SELLERS as seated" in note.context
 
-    # 1. Both gap branches flipped; flat did not. Yesterday's and tonight's
-    #    shapes are BOTH spelled out, so the reversal cannot be read off wrong.
-    shape = next(line for line in note.plan if line.startswith("BOTH GAP BRANCHES REVERSE"))
-    assert "21 Sep was gap up -> SELL, flat or gap down -> BUY" in shape
-    assert "Tonight gap up -> BUY, gap down -> SELL, flat still -> BUY" in shape
-    assert "inverts both" in shape
+    # 1. Same word, opposite premise -- both premises named, side by side.
+    shape = next(line for line in note.plan if line.startswith("SAME WORD AS 22 SEP"))
+    assert "OPPOSITE PREMISE" in shape
+    assert "yesterday's BUY was a FOLLOW because nobody was seated" in shape
+    assert "tonight's BUY is a HUNT because sellers ARE seated" in shape
+    assert "The follow reason is spent" in shape
 
-    # 2. The buy branch keeps the chain that makes following correct.
+    # 2. A squeeze, not a follow.
     buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP ->"))
-    assert "go WITH the market" in buy
-    assert "rise was gradual so no greed formed" in buy
-    assert "did not go holding the trade" in buy
-    assert "unseated buyer crowd is nobody to squeeze" in buy
+    assert "TARGET the seated sellers" in buy
+    assert "to make these sellers our target" in buy
+    assert "not going with the market" in buy
 
-    # 3. The sell branch is NOT the seated-sellers argument, and says so.
-    sell = next(line for line in note.plan if line.startswith("GAP DOWN ->"))
-    assert "NOT because sellers are seated" in sell
-    assert "only covered if an OPERATOR commits money" in sell
-    assert "retail cannot" in sell
-    assert "we can get TRAPPED there" in sell
-
-    # 4. The missing qualifier is asserted, because absences get invented into.
-    uniform = next(line for line in note.plan if line.startswith("SAME SHAPE ON ALL THREE"))
-    assert "NO per-index qualification" in uniform
-    assert "SMALL gap down" in uniform
+    # 3. The small gap down flipped, and the large one is deliberately absent.
+    gap = next(line for line in note.plan if line.startswith("SMALL GAP DOWN ->"))
+    assert "SAME PLAN, STILL BUY" in gap
+    assert "On 22 Sep a gap down meant SELL" in gap
+    assert "A LARGE gap down is not in his plan at all" in gap
+    assert "there is no sell branch tonight, so do not invent one" in gap
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # Spoken supports-first tonight; recorded in the order he said them.
+            # Resistances clean in speech and confirmed on the chart (23,500.15
+            # and 23,567.20). Recorded as SPOKEN, per the round-number
+            # convention -- so 23560, not the line's 23,567.20.
             "index": "NIFTY",
-            "resistance": [23500.0, 23570.0],
-            "support": [23350.0, 23270.0],
+            "resistance": [23500.0, 23560.0],
+            # 5. "23 270 230" resolved from the frame: 23,271.75 and 23,201.20.
+            "support": [23270.0, 23200.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [57000.0, 57200.0],
-            "support": [56400.0, 56100.0],
+            "resistance": [56540.0, 57000.0],
+            "support": [56100.0, 55910.0],
         },
         {
-            # 21 Sep's ladder was 75200/74700 resistance, 74350/74000 support:
-            # tonight's is that same ladder moved up one rung, and 75000 is the
-            # round number he says the gradual move never crossed.
+            # Resistances unchanged from the 22 Sep note; the supports stepped
+            # down one rung (74700 dropped, 74000 added) after a selling day.
             "index": "SENSEX",
             "resistance": [75200.0, 75500.0],
-            "support": [74700.0, 74350.0],
+            "support": [74350.0, 74000.0],
         },
     ]
