@@ -244,7 +244,9 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
 - **Tests:** EVERY suite lives under `Tests/`, mirroring the source tree — the test for
   `Signal Generators/<X>` sits at `Tests/Signal Generators/<X>`. Run the master suite with
   `python -m unittest Tests.test_nifty_multi_strategy_master` (loads the master via `importlib`,
-  mocks `dhanhq`; broker/SDK-specific cases skip when those deps are absent). Two rules when adding
+  mocks `dhanhq`, and switches `SL_HUNTING_ENABLED` on for the load only, so the SL Hunting worker
+  tests run wherever `pydantic` is installed -- a guard test fails rather than let them skip
+  silently again; broker/SDK-specific cases skip when those deps are absent). Two rules when adding
   a test: put it at the mirrored path, and keep its FILENAME unique repository-wide (pytest keys
   modules by basename — there are no `__init__.py` files). A `Tests/` folder mirroring a
   spaced-name source folder carries a `conftest.py` that puts the SOURCE folder on `sys.path`,
@@ -256,12 +258,13 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,
-  Bandit, and pre-commit. Coverage floors are 70% overall, 90% for new
+  Bandit, and pre-commit. Coverage floors are 73% overall, 90% for new
   execution/reconciliation/data-safety modules, and 80% per broker adapter.
   Judge the overall floor from CI, never from a local run: a machine with the
-  optional broker SDKs installed runs 7 tests CI's verify job skips and reads
-  ~2 points high (CI measures 70.2%). The floor only ever moves UP, and only
-  after a CI run shows headroom -- never lower it to make a red build pass.
+  optional extras CI does not install (the broker SDKs, scikit-learn) runs 9
+  tests CI's verify job skips and reads ~0.5 points high (CI measures 73.8%).
+  The floor only ever moves UP, and only after a CI run shows headroom -- never
+  lower it to make a red build pass.
 - **Dependencies:** `pip install -r requirements.txt` installs the runtime AND
   the dev/CI gate tooling (requirements-dev.txt was merged into it); add
   `requirements-ai.txt` for BOTH optional AI agents.

@@ -274,23 +274,31 @@ omit = [
 # enforced from coverage.json by the small policy script because Coverage.py has
 # only one global fail-under setting.
 #
-# 70.0 is set against CI's 70.2% (2026-09-02), measured identically on five
-# consecutive main runs -- this number is deterministic, not drifting, so the
-# margin is small BY DESIGN rather than by luck. USE THE CI NUMBER, NOT A LOCAL
-# ONE: a developer machine with the optional broker SDKs installed
-# (neo_api_client, pyotp) runs 7 tests that CI's verify job skips and reads
-# about 2 points high. CI installs core + dev + ai + codex-ai only, deliberately
-# (Kotak's official tag pins older pandas/requests and cannot share the audited
-# core environment), so the hosted number is the honest one.
+# 73.0 is set against CI's 73.8% (2026-09-23, PR #181), identical on Python
+# 3.12 and 3.13. The history matters: the previous floor, 70.0, sat under a CI
+# figure of 70.2% that was measured WITHOUT roughly sixty SL Hunting worker
+# tests -- the master imports those modules only behind SL_HUNTING_ENABLED,
+# which CI never set, so they skipped there and ran only on the operator's
+# machine. PR #181 made the test loader enable the import, CI's figure rose
+# 72.1% -> 73.8% on the same code, and the floor followed it up. The number is
+# deterministic, not drifting, so a small margin is a choice rather than luck.
 #
-# The margin at 70.0 is roughly 0.2pp, about 40 statements. That is deliberate
-# pressure: a PR that adds materially untested code should go red. It is NOT an
-# invitation to lower the floor when it does.
+# USE THE CI NUMBER, NOT A LOCAL ONE. CI installs core + dev + ai + codex-ai
+# only, deliberately (Kotak's official tag pins older pandas/requests and cannot
+# share the audited core environment), so it lacks the optional extras -- the
+# broker SDKs and scikit-learn. A developer machine that has them runs 9 tests
+# CI skips (2 in the master suite, 7 in pytest) and reads about half a point
+# high (74.3% against 73.8%). Before PR #181 that gap was about 2 points, most
+# of it the SL Hunting tests CI was not running.
+#
+# The margin at 73.0 is roughly 0.8pp, on the order of 230 statements and
+# branches. That is deliberate pressure: a PR that adds materially untested code
+# should go red. It is NOT an invitation to lower the floor when it does.
 #
 # Raising this is deliberate and one-way: only move it UP, and only after a CI
 # run shows real headroom. Lowering it to make a red build pass defeats the gate
 # -- fix the tests instead.
-fail_under = 70.0
+fail_under = 73.0
 precision = 1
 show_missing = true
 skip_covered = false

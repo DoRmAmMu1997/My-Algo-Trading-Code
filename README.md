@@ -179,7 +179,7 @@ python -m compileall -q .
 python -m ruff check .
 python -m mypy
 ```
-Coverage is branch-enabled: overall runtime coverage may not fall below 70% (CI measures 70.2%; a local run with the optional broker SDKs installed reads ~2 points higher because 7 SDK-gated tests skip in CI — trust the CI number), new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The two local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
+Coverage is branch-enabled: overall runtime coverage may not fall below 73% (CI measures 73.8%; a local run with the optional extras CI does not install — the broker SDKs, scikit-learn — runs 9 tests CI skips and reads ~0.5 points higher — trust the CI number), new execution/reconciliation/data-safety modules require 90%, and every broker adapter requires 80%. The two local audit commands check committed direct pins; CI additionally audits the complete resolved dependency tree in a clean hosted environment. `pyproject.toml` holds the coverage, Ruff, and mypy config (mypy is scoped to the identifier-named modules — the spaced-name master file is covered by `compileall` + the unittest suite instead). `.pre-commit-config.yaml` wires the check-only hooks; install them once with `pre-commit install`.
 
 # License
 Released under the MIT License — see [LICENSE](LICENSE).
