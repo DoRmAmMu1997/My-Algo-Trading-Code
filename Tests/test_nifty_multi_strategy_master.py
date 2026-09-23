@@ -47,8 +47,22 @@ sys.modules["master_file"] = master_file
 # the DhanHQ API. So we "mock" (fake) the API connections.
 # The patch of 'dhanhq.dhanhq' completely disables the real SDK while the
 # script loads.
+#
+# SL_HUNTING_ENABLED is switched on for the LOAD only, so the master imports the
+# optional SL Hunting modules and their worker tests actually run. Until this was
+# added they ran only on a machine whose private Dependencies/.env happened to
+# switch the agent on -- CI has no .env, so every one of them skipped there, under
+# a message blaming missing packages that were in fact installed. Production is
+# unaffected: the master reads the flag ONCE, into a module constant at import,
+# its default stays off, and patch.dict restores the environment the moment the
+# load finishes. The master loads .env with override=False, so this value also
+# wins on a machine whose .env says otherwise -- every environment agrees.
+_SL_HUNTING_ENV_BEFORE_LOAD = os.environ.get("SL_HUNTING_ENABLED")
 with (
-    patch.dict(os.environ, {"DHAN_CLIENT_CODE": "test", "DHAN_TOKEN_ID": "test"}),
+    patch.dict(
+        os.environ,
+        {"DHAN_CLIENT_CODE": "test", "DHAN_TOKEN_ID": "test", "SL_HUNTING_ENABLED": "true"},
+    ),
     patch("dhanhq.dhanhq"),
 ):
     try:
@@ -56,6 +70,32 @@ with (
         spec.loader.exec_module(master_file)
     except Exception as e:
         print(f"Failed to load master_file for testing: {e}")
+
+
+def _sl_hunting_skip_reason() -> str:
+    """Why the SL Hunting worker is missing -- the actual cause, never a guess.
+
+    The old messages all blamed claude-agent-sdk / pydantic being absent, when the
+    real cause was nearly always the flag being off. Only pydantic is needed at
+    import (the Claude Agent SDK loads lazily, at decision time), so a genuine
+    import failure and a switched-off flag are different problems with different
+    fixes, and the skip should name the right one.
+    """
+    if not hasattr(master_file, "SL_HUNTING_ENABLED"):
+        return "SL Hunting worker unavailable: the master module itself failed to load"
+    if not master_file.SL_HUNTING_ENABLED:
+        return (
+            "SL Hunting worker unavailable: SL_HUNTING_ENABLED is off, so the master "
+            "never imported the SL Hunting modules"
+        )
+    return (
+        "SL Hunting worker unavailable: SL_HUNTING_ENABLED is on but the SL Hunting "
+        "modules failed to import -- the master logged the cause at load as "
+        "'SL Hunting AI Agent unavailable (...)'"
+    )
+
+
+SL_HUNTING_SKIP_REASON = _sl_hunting_skip_reason()
 
 
 _LTP_WAIT_PATCHER = None
@@ -4154,7 +4194,7 @@ class TestVirtualTradingToggle(unittest.TestCase):
     def test_sl_hunting_prefix_respected(self):
         """The optional agent maps to SL_HUNTING; its virtual gate must work too."""
         if "SL Hunting AI" not in master_file.STRATEGY_ENV_PREFIX:
-            self.skipTest("SL Hunting worker not loaded in this environment.")
+            self.skipTest(SL_HUNTING_SKIP_REASON)
         with patch.dict(os.environ, {"SL_HUNTING_VIRTUAL_TRADING": "false"}):
             self.assertFalse(master_file._strategy_virtual_trading_enabled("SL Hunting AI"))
 
@@ -4797,10 +4837,49 @@ class TestLongStrangleWorker(unittest.TestCase):
         self.assertEqual(exit_modes, ["PAPER_FALLBACK"])
 
 
-@unittest.skipIf(
-    getattr(master_file, "SLHuntingAIWorker", None) is None,
-    "SL Hunting worker unavailable (claude-agent-sdk / pydantic absent)",
-)
+class TestSlHuntingWorkerActuallyLoads(unittest.TestCase):
+    """The SL Hunting worker tests must RUN wherever they can, not skip quietly.
+
+    Around sixty of this suite's tests exercise the SL Hunting worker -- the
+    BankNIFTY mirror, basket P&L, one-leg exits, the post-exit cooldown, the
+    executor's exit routing. For months CI skipped every one of them and still
+    reported OK, because the master imports those modules only behind a flag CI
+    never set. This test turns that silent skip into a failure: if pydantic (the
+    one thing the import needs) is installed, the worker MUST have loaded.
+    """
+
+    def test_the_worker_loads_whenever_its_one_dependency_is_installed(self):
+        try:
+            import pydantic  # noqa: F401  -- probing availability only
+        except ImportError:
+            self.skipTest("pydantic is not installed, so the SL Hunting worker cannot load here")
+        self.assertIsNotNone(getattr(master_file, "SLHuntingAIWorker", None), SL_HUNTING_SKIP_REASON)
+        self.assertIsNotNone(getattr(master_file, "SL_HUNTING_EXECUTOR_MODULE", None), SL_HUNTING_SKIP_REASON)
+
+    def test_the_flag_is_set_for_the_load_only(self):
+        """The suite must not leave SL_HUNTING_ENABLED behind for the tests that follow."""
+        self.assertEqual(os.environ.get("SL_HUNTING_ENABLED"), _SL_HUNTING_ENV_BEFORE_LOAD)
+
+    def test_the_skip_reason_names_the_real_cause(self):
+        """A switched-off flag and a failed import need different fixes, so the
+        message must say which -- the old one blamed packages that were installed."""
+        with patch.object(master_file, "SL_HUNTING_ENABLED", False):
+            flag_off = _sl_hunting_skip_reason()
+        with patch.object(master_file, "SL_HUNTING_ENABLED", True):
+            import_failed = _sl_hunting_skip_reason()
+        self.assertIn("SL_HUNTING_ENABLED is off", flag_off)
+        self.assertIn("failed to import", import_failed)
+        self.assertNotIn("failed to import", flag_off)
+        self.assertNotIn("is off", import_failed)
+
+    def test_production_default_stays_off(self):
+        """The fix is in the TEST loader. Flipping the runtime default instead would
+        make an opt-in, LLM-driven, live-capable strategy opt-OUT on every box."""
+        source = file_path.read_text(encoding="utf-8")
+        self.assertIn('SL_HUNTING_ENABLED = _env_bool("SL_HUNTING_ENABLED", False)', source)
+
+
+@unittest.skipIf(getattr(master_file, "SLHuntingAIWorker", None) is None, SL_HUNTING_SKIP_REASON)
 class TestSLHuntingBnfMirror(unittest.TestCase):
     """
     The Intraday-Hunter-style BankNIFTY mirror: every NIFTY entry opens an
@@ -5701,7 +5780,7 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         """The MasterWorkerExecutor routes NIFTY/BNF/BOTH to the right leg."""
         ex_mod = master_file.SL_HUNTING_EXECUTOR_MODULE
         if ex_mod is None:
-            self.skipTest("SL Hunting executor module not loaded in this environment.")
+            self.skipTest(SL_HUNTING_SKIP_REASON)
         worker, _ = self._make_worker()
         worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
         ex = ex_mod.MasterWorkerExecutor(worker)
@@ -5749,7 +5828,7 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
     def _executor(self, worker):
         ex_mod = master_file.SL_HUNTING_EXECUTOR_MODULE
         if ex_mod is None:
-            self.skipTest("SL Hunting executor module not loaded in this environment.")
+            self.skipTest(SL_HUNTING_SKIP_REASON)
         return ex_mod.MasterWorkerExecutor(worker)
 
     def test_lone_mirror_reads_as_in_position(self):
@@ -12770,7 +12849,7 @@ class SLHuntingStaleGenerationJournalTests(unittest.TestCase):
     def _consume(self, stub):
         worker_cls = getattr(master_file, "SLHuntingAIWorker", None)
         if worker_cls is None:
-            self.skipTest("SL Hunting agent deps not installed; worker class is None")
+            self.skipTest(SL_HUNTING_SKIP_REASON)
         worker_cls._consume_agent_decision(stub)
 
     def test_stale_pass_that_opened_a_position_is_journalled_and_warned(self):
@@ -12949,10 +13028,7 @@ class TestOwnedOpenPositions(unittest.TestCase):
             [slot for slot, _ in worker._owned_open_positions()], ["ce_pos", "pe_pos"]
         )
 
-    @unittest.skipIf(
-        getattr(master_file, "SLHuntingAIWorker", None) is None,
-        "SL Hunting AI Agent dependencies are not installed",
-    )
+    @unittest.skipIf(getattr(master_file, "SLHuntingAIWorker", None) is None, SL_HUNTING_SKIP_REASON)
     def test_sl_hunting_enumerates_the_banknifty_mirror_beside_the_nifty_leg(self):
         worker = master_file.SLHuntingAIWorker(
             store=master_file.SharedMarketDataStore(),
