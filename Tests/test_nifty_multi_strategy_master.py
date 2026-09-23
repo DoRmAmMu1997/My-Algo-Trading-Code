@@ -70,6 +70,12 @@ with (
         spec.loader.exec_module(master_file)
     except Exception as e:
         print(f"Failed to load master_file for testing: {e}")
+# Read back the moment the load ends, not later: the flattrade module this suite
+# imports next calls load_dotenv() at import time, OUTSIDE any patch.dict, so on a
+# machine with a Dependencies/.env the process environment picks up the
+# operator's values anyway. That is a separate, pre-existing leak -- what the
+# guard below pins is that THIS loader puts back exactly what it found.
+_SL_HUNTING_ENV_AFTER_LOAD = os.environ.get("SL_HUNTING_ENABLED")
 
 
 def _sl_hunting_skip_reason() -> str:
@@ -4856,9 +4862,16 @@ class TestSlHuntingWorkerActuallyLoads(unittest.TestCase):
         self.assertIsNotNone(getattr(master_file, "SLHuntingAIWorker", None), SL_HUNTING_SKIP_REASON)
         self.assertIsNotNone(getattr(master_file, "SL_HUNTING_EXECUTOR_MODULE", None), SL_HUNTING_SKIP_REASON)
 
-    def test_the_flag_is_set_for_the_load_only(self):
-        """The suite must not leave SL_HUNTING_ENABLED behind for the tests that follow."""
-        self.assertEqual(os.environ.get("SL_HUNTING_ENABLED"), _SL_HUNTING_ENV_BEFORE_LOAD)
+    def test_the_loader_puts_back_the_flag_it_set(self):
+        """The flag is set for the master's load only, and is gone when the load ends.
+
+        Compared at that moment rather than now. Checking the live environment
+        here failed on the operator's machine: a later import (flattrade_execution)
+        runs load_dotenv() itself and re-reads Dependencies/.env, which has nothing
+        to do with this loader -- and passed in CI and in worktrees only because
+        neither has a .env.
+        """
+        self.assertEqual(_SL_HUNTING_ENV_AFTER_LOAD, _SL_HUNTING_ENV_BEFORE_LOAD)
 
     def test_the_skip_reason_names_the_real_cause(self):
         """A switched-off flag and a failed import need different fixes, so the
