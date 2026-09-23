@@ -1849,6 +1849,56 @@ RISK DISCIPLINE
   This is the general form of BOOK BEFORE THE ROUND NUMBER (v4d): that rule names
   WHERE the late crowd's targets sit, this one names WHEN your own edge has been
   spent regardless of where price is.
+- JUDGE THE EXIT ON THE CHART, NOT ON THE PREMIUM (v5j). The rule above says
+  WHEN to leave -- once the move has stopped paying. This one says what to READ
+  that off, and the answer is price, never the rupee figure.
+  IH SAID IT MID-TRADE (23 Sep 2026), holding a three-index BUY through a dip:
+  "the profit increases, then comes down again and again. When it goes up you
+  feel like sitting; when it comes down you fear the market will turn -- there
+  is a lot of psychological pressure. So look at the trade LESS. Just focus on
+  the chart... the premiums are moving up and down a lot, so the chart looks
+  better than the premiums right now." He had named what would prove him wrong
+  as a PRICE -- "if it breaks down the closing price, the trade can go wrong" --
+  held while NIFTY and Sensex kept rejecting, and booked his target.
+  FOR THIS AGENT THE FIGURE IS WORSE THAN NOISY, IT IS LATE. position_state's
+  unrealised P&L is read at one moment inside a turn that takes about half a
+  minute (median 37.0s on 23 Sep; one turn in ten took over 53s). Across 31
+  exits whose reason quoted a basket figure, the realised result differed by a
+  median of 496.50, and FOUR booked what the agent believed was a profit and
+  realised a loss -- never the reverse. 23 Sep: "booking the still-positive
+  basket (+420)" filled at -1,173.75. The one-way flips have a mechanism: an
+  exit is usually triggered BY price turning against you, and half a minute
+  later you fill further into that same turn.
+  MEASURED ON THIS BOOK: 130 discretionary exits, each walked forward against
+  simply holding the original bracket. Exits whose reason rested on price
+  action beat holding by +241.25 points; exits that cited a rupee figure did
+  WORSE than holding, by -49.70. It survives splitting by outcome: among
+  winners +3.28 a trade against +0.92, among losers +2.08 against -7.38 -- so
+  cutting a loser on the rupee figure did worse than letting the stop fire.
+  THIS DOES NOT CONTRADICT v4f, IT TELLS YOU HOW TO READ IT. "The move has
+  stopped paying" is a fact about PRICE: no new extreme, a stall at a level,
+  the leading index turning. The rupee figure is a late, noisy proxy for that
+  fact, and when the two disagree it is the chart that is current.
+  AND IT IS NOT A LICENCE TO EXIT LESS. The same 130 exits beat holding the
+  bracket by +191.55 points overall -- your exit judgement is worth keeping.
+  23 Sep's first trade shows both halves at once: holding its bracket would
+  have been stopped at -11.75, worse than the -7.25 it exited at. The exit was
+  right; the rupee figure it gave as a reason was false.
+  THE CHECK, because "chart, not premium" is otherwise a mood: strike the rupee
+  figure out of your exit reason and read what is left. It must still name a
+  PRICE -- the level broken, reclaimed or stalled at -- that justifies leaving.
+  If the only thing you can say is a number from position_state, you do not
+  yet have an exit reason.
+  SLH-019 NOW PUTS BOTH NUMBERS IN FRONT OF YOU. position_state stamps its
+  figures with as_of, the moment they were marked, and an accepted EXIT reports
+  what it actually booked -- realised_pnl, any leg left open, and mark_you_read:
+  the figure you read and how many seconds before the fill you read it. When the
+  two differ, the realised figure is the fact. State that one in your final
+  reasoning, never the one you read.
+  LIMITS: one print a minute (closes, not highs and lows), reasons classified
+  by pattern-matching, and only ten rupee-citing losers. It is direction, not a
+  precise figure -- but it points the same way in both halves of the book and
+  the same way IH does.
 - THE HOLD IS LICENSED BY THE EARLY IMPULSE AND EXPIRES WHEN THE MOVE BECOMES
   OBVIOUS (v4q). A distinct exit trigger from v4f's rate-of-profit test and from
   v4b's second leg: this one keys on WHO ELSE CAN NOW SEE THE TRADE. IH, having

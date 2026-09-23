@@ -1,44 +1,45 @@
 {
-  "for_date": "2026-09-23",
-  "source": "Intraday Hunter, 'Prediction For 23 SEP 2026' (FBDx9zcN9Sw, uploaded 2026-09-22)",
-  "context": "Selling ran continuously on all three indices with no BIG retracement. One came near 2 PM, but selling resumed after it with plenty of session left -- so he reads SELLERS as seated, on a market already negative from before.",
+  "for_date": "2026-09-24",
+  "source": "Intraday Hunter, 'Prediction For 24 SEP 2026' (4BKhLKn4zHY, uploaded 2026-09-23)",
+  "context": "Positive momentum on all three indices with only a small retracement, no big one -- BankNIFTY held itself above 56500 -- so he reads BUYERS as possibly seated. SENSEX has its expiry on 24 Sep.",
   "plan": [
-    "SAME WORD AS 22 SEP, OPPOSITE PREMISE: yesterday's BUY was a FOLLOW because nobody was seated; tonight's BUY is a HUNT because sellers ARE seated. The follow reason is spent and must not be cited for this one.",
-    "FLAT TO GAP UP -> BUY: identify buying-side setups to TARGET the seated sellers -- 'to make these sellers our target'. This is a squeeze of trapped inventory, not going with the market.",
-    "SMALL GAP DOWN -> SAME PLAN, STILL BUY (said as 'small' on BankNIFTY and SENSEX). On 22 Sep a gap down meant SELL. A LARGE gap down is not in his plan at all: there is no sell branch tonight, so do not invent one."
+    "THE FLAT BRANCH FLIPPED FROM 23 SEP: last night a flat open meant BUY, to hunt seated sellers. Tonight the seated side is BUYERS, so a flat open means SELL. Carrying yesterday's flat-open branch forward inverts it.",
+    "FLAT TO GAP DOWN -> SELL: identify selling-side setups to TARGET the buyers who may be seated after a rise that gave no big retracement.",
+    "OPEN ABOVE THE HIGHER POINT -> BUY. The buy branch is a LEVEL, not a gap size: above the prior high -- on NIFTY especially above 23500 -- buyers stay confident, will not cut, and leave no SLs to hunt.",
+    "A GAP UP THAT OPENS BELOW THE PRIOR HIGH IS NOT IN HIS PLAN. A computed GAP_UP verdict alone does not select the buy branch: check where the open sits against the prior high first."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
         23500,
-        23560
+        23570
       ],
       "support": [
-        23270,
-        23200
+        23370,
+        23270
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56540,
+        56800,
         57000
       ],
       "support": [
-        56100,
-        55910
+        56370,
+        56100
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        75200,
-        75500
+        75100,
+        75300
       ],
       "support": [
-        74350,
-        74000
+        74650,
+        74430
       ]
     }
   ]

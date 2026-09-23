@@ -389,7 +389,11 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     # runs, so the floor was raised into the headroom it had accumulated. The
     # remaining margin is ~0.2pp by design; per pyproject's own rule this only
     # ever moves UP.
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 70.0
+    # 70.0 -> 73.0 (2026-09-23, PR #181), at the operator's direction. That PR
+    # made CI run the ~60 SL Hunting worker tests it had always skipped, and CI's
+    # figure rose 72.1% -> 73.8% on the same code, identically on 3.12 and 3.13.
+    # Margin ~0.8pp.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 73.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():

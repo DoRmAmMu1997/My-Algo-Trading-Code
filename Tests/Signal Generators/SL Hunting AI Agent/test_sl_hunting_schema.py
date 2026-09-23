@@ -2938,6 +2938,85 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "the premise has not failed -- but the trade has" in rule
 
 
+def test_v5j_the_exit_is_judged_on_price_not_on_the_rupee_figure():
+    """v5j (23 Sep): IH's "look at the chart, not the premium", measured here.
+
+    The book agreed with him independently, in both outcome classes. Eight
+    ways an edit breaks it:
+
+    1. Losing that it qualifies v4f rather than replacing it. It supplies the
+       INPUT to v4f's trigger; read as a new trigger it fights the rule above.
+    2. Losing IH's words, and that his own invalidation was a PRICE.
+    3. Losing why the figure is LATE for this agent specifically: the ~30s
+       turn, and the one-directional sign flips it produces.
+    4. Losing the measurement, especially that it survives the outcome split.
+       Unsplit, it could be read as "winners vs losers" in disguise.
+    5. Losing the reconciliation with v4f, which is what keeps the two rules
+       from being read as a contradiction.
+    6. Losing "not a licence to exit less". The same exits beat the bracket
+       overall, and 23 Sep's trade 1 would have been STOPPED if held -- without
+       that, the rule re-derives a hold-longer gate the book refuses.
+    7. Losing the check. Without a concrete test it is a mood, and moods are
+       what get talked past.
+    8. Losing the limits, which are what stop it being quoted as precise.
+    9. Losing the SLH-019 wiring, which names the fields the tools now supply
+       -- without it the model is never told the realised figure is there.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "JUDGE THE EXIT ON THE CHART, NOT ON THE PREMIUM")
+
+    # 1. It reads v4f's trigger; it does not replace it.
+    assert "The rule above says WHEN to leave" in rule
+    assert "the answer is price, never the rupee figure" in rule
+
+    # 2. His words, and his line was a price.
+    assert "IH SAID IT MID-TRADE" in rule
+    assert "So look at the trade LESS" in rule
+    assert "the chart looks better than the premiums right now" in rule
+    assert "He had named what would prove him wrong as a PRICE" in rule
+
+    # 3. Late, not just noisy -- and which way it fails.
+    assert "IT IS LATE" in rule
+    assert "a turn that takes about half a minute" in rule
+    assert "median 37.0s on 23 Sep" in rule
+    assert "differed by a median of 496.50" in rule
+    assert "FOUR booked what the agent believed was a profit and realised a loss" in rule
+    assert "never the reverse" in rule
+    assert "filled at -1,173.75" in rule
+
+    # 4. The measurement, split by outcome.
+    assert "beat holding by +241.25 points" in rule
+    assert "WORSE than holding, by -49.70" in rule
+    assert "It survives splitting by outcome" in rule
+    assert "among losers +2.08 against -7.38" in rule
+    assert "did worse than letting the stop fire" in rule
+
+    # 5. Reconciled with v4f.
+    assert "THIS DOES NOT CONTRADICT v4f, IT TELLS YOU HOW TO READ IT" in rule
+
+    # 6. Not a hold-longer rule.
+    assert "IT IS NOT A LICENCE TO EXIT LESS" in rule
+    assert "+191.55 points overall" in rule
+    assert "would have been stopped at -11.75" in rule
+    assert "The exit was right; the rupee figure it gave as a reason was false" in rule
+
+    # 7. The check.
+    assert "strike the rupee figure out of your exit reason" in rule
+    assert "It must still name a PRICE" in rule
+    assert "you do not yet have an exit reason" in rule
+
+    # 8. The limits.
+    assert "only ten rupee-citing losers" in rule
+    assert "It is direction, not a precise figure" in rule
+
+    # 9. SLH-019: the rule names the fields the code now supplies, and says which wins.
+    assert "SLH-019 NOW PUTS BOTH NUMBERS IN FRONT OF YOU" in rule
+    assert "position_state stamps its figures with as_of" in rule
+    assert "mark_you_read" in rule
+    assert "the realised figure is the fact" in rule
+    assert "never the one you read" in rule
+
+
 def test_v5i_the_follow_trade_seats_the_crowd_it_was_entered_on():
     """v5i (22 Sep): the only rule in the family where YOU are the crowd.
 

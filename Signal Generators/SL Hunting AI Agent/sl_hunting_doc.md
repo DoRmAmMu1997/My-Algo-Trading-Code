@@ -7826,3 +7826,205 @@ rule itself, and a mutation that turns it into a self-proving claim is caught.
 What today does add to the record is the SECOND consecutive session on which
 every entry cited the standing pre-open premise -- 18 Sep had four, today had
 two. v5h named that failure; it has not yet changed the behaviour.
+
+
+## v5j - judge the exit on the chart, not on the premium (23 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (-dvbW6vgjPc,
+uploaded 2026-09-23 11:40 IST), traded on the previous evening's 'Prediction
+For 23 SEP 2026' (FBDx9zcN9Sw) -- plus this book's own three trades.
+
+### Same premise, one basket against three
+
+Both books read the day identically: sellers seated from 22 Sep's one-way fall,
+a FLAT open (+0.099% on NIFTY, from 23,329.00 to 23,352.15), so BUY to hunt
+them. IH bought all three indices at the open, sat through a dip in which NIFTY
+and Sensex kept rejecting while BankNIFTY kept climbing, and booked his target.
+
+The agent opened three baskets:
+
+| # | open | entry | stop | lots | exit | NIFTY leg | BNF leg | basket |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 09:32 | 23,371.75 | 23,360.00 | 3 | 09:50 discretionary | -750.75 | -423.00 | **-1,173.75** |
+| 2 | 09:59 | 23,368.95 | 23,349.00 | 1 | 10:08 discretionary | +149.50 | +721.50 | **+871.00** |
+| 3 | 10:17 | 23,368.25 | 23,347.00 | 1 | 10:18 discretionary | +786.50 | +295.50 | **+1,082.00** |
+
+Day **+779.25**. It entered 20 points above IH's open, after the first spike to
+23,414.55; that is recorded, not encoded.
+
+### The reason trade 1 gave was false when it filled
+
+Trade 1's exit said it was "booking the still-positive basket (+420)". Both legs
+lost at the fill. The runner log explains how: the three decisions around it took
+33.9s, 36.0s and 32.7s, and across 21-23 Sep the median turn was 33.2s, 34.4s and
+37.0s, with one in ten over 45-53s. The turn that closed trade 1 began at about
+09:50:06, read `position_state` (a point-in-time basket mark), and sent the EXIT
+at 09:50:34.97. Whatever the mark showed when it was read, the fill was
+-1,173.75. No log records the `position_state` read itself, so the +420 cannot
+be checked against the moment it was taken -- only against the fill.
+
+Across the whole book, 31 exits quoted a basket figure in their reason:
+
+- mean gap (realised minus cited): **-14.63** -- no systematic bias
+- median absolute gap: **496.50**
+- **four** exits cited a profit and realised a loss (30 Jul: +3,618 -> -1,219.50;
+  7 Aug twice; 23 Sep). **None** went the other way.
+
+The one-way flips have a mechanism. An exit is usually triggered BY price
+turning against the position, and half a minute later the order fills further
+into that same turn.
+
+### An error of mine, corrected here
+
+While comparing the books I first priced trade 1 "held to trade 2's exit at
+10:08:40" -- same strikes, NIFTY +409.50, BankNIFTY +5,346.00, **+5,755.50** --
+and presented it as the cost of exiting. It is wrong. NIFTY fell to 23,349.55
+after the exit, through trade 1's 23,360 stop, so holding would have been
+STOPPED at -11.75 points, worse than the -7.25 it exited at. The exit was the
+better decision; the reason it gave was not.
+
+The real difference from IH is where the line was drawn:
+
+| level | price |
+|---|---|
+| agent's stop | 23,360.00 |
+| session low | 23,349.55 |
+| IH's line: a breakdown of the prior close | 23,329.00 |
+
+The prior close comes from CPR AI's frozen `previous_day` block (high 23,489.00,
+low 23,285.75, close 23,329.00); its pivot, 23,367.92, matches the agent's own.
+The low went 10.45 points through the agent's stop and held 20.55 above IH's
+line. That is a stop-placement observation, and a stop-distance floor has
+already been priced negative at every level on this book (21 Sep), so nothing
+is encoded from it.
+
+### What was measured, and what it refused
+
+All 130 discretionary exits were walked forward, one print a minute from the
+decisions log, against simply holding each trade's original bracket.
+
+**Holding the bracket is refused.** Exiting made +404.80 NIFTY points; holding
+would have made +213.25. Exiting won 84 to 46, and holding would have hit the
+stop 59 times against the target 17. "Exit less" loses 191.55 points.
+
+**But the BASIS of the exit matters:**
+
+| exit reason leans on | n | exit minus hold | exit won |
+|---|---|---|---|
+| price action only | 94 | **+241.25** | 68% |
+| cites a rupee / premium figure | 36 | **-49.70** | 56% |
+
+Rupee-citing exits are mostly profit bookings (mean +1,681 against +113), so the
+split could be winners against losers in disguise. Controlled for that:
+
+| class | basis | n | per exit vs hold |
+|---|---|---|---|
+| winners | price action only | 38 | **+3.28** |
+| winners | cites a rupee figure | 26 | +0.92 |
+| losers | price action only | 56 | **+2.08** |
+| losers | cites a rupee figure | 10 | **-7.38** |
+
+It survives in both. Cutting a loser on the rupee figure did worse than
+letting the stop fire.
+
+### v5j
+
+IH, mid-trade: "look at the trade LESS. Just focus on the chart... the premiums
+are moving up and down a lot, so the chart looks better than the premiums right
+now." The book agrees independently, so v5j sits directly after v4f and tells
+the agent how to read v4f's trigger rather than replacing it: "the move has
+stopped paying" is a fact about PRICE, and the rupee figure is a late, noisy
+proxy for it. It carries a concrete check -- strike the rupee figure out of the
+exit reason; what remains must still name a price -- and it states outright
+that it is NOT a licence to exit less.
+
+It would not have changed trade 1's outcome, whose reason also named price
+action (reversal clusters on both indices, six points from the stop). What it
+changes is the integrity of the reason: the +420 was false.
+
+Limits, stated in the rule: one print a minute (closes, not highs and lows),
+reasons classified by pattern-matching, and only ten rupee-citing losers.
+
+### Code follow-ups -- built as SLH-019
+
+Prose is the weakest lever this repo has, so two small code changes were named
+for the operator: an `as_of` timestamp on `position_state`, and the EXIT tool
+reporting the realised basket figure back into the turn. The operator approved
+both, and they ship in this PR as SLH-019 (next section).
+
+
+## SLH-019 - the mark is dated, and an EXIT reports what it booked
+
+Operator decision, 2026-09-23, as an addendum to the v5j PR. v5j tells the model
+to judge an exit on price rather than on the rupee figure. This gives it the two
+facts that make that checkable at the moment it matters.
+
+### What changed
+
+**`position_state` is dated.** When a position is open the payload carries
+`as_of` -- the moment its P&L figures were marked, from a clock injected on the
+tool context (naive local time, as every other timestamp this agent writes). A
+flat snapshot is returned unchanged. The tool description says what the stamp
+means: the figures are a point-in-time mark, and one turn takes about half a
+minute, so an order fills later and at a different price.
+
+**An accepted EXIT reports what it booked.**
+
+- `realised_pnl` -- the change in the worker's `realized_pnl` across the exit
+  call. Both legs book there, so the one figure is right for NIFTY, BNF and BOTH
+  alike, and it excludes whatever the day had booked before.
+- `open_legs_after` -- any leg still open afterwards.
+- `exited_at` -- when the exit returned.
+- `mark_you_read` -- the `position_state` mark read earlier in the same pass,
+  with how many seconds before the exit it was read. Omitted if none was read.
+
+The order tool's description tells the model these exist, and that where the
+mark and the booking disagree, the booking is the fact to state. v5j now names
+them too.
+
+### Why the delta, and why it is honest
+
+The master's worker already snapshots `realized_pnl` at entry to put the
+basket's figure on the journal row, so a before/after delta is the codebase's
+own method rather than a new one. It is also honest in the two cases that
+matter most:
+
+- **An unconfirmed live exit** returns before either leg books, and keeps the
+  position open. The result then says `realised_pnl: 0.0` and names the leg in
+  `open_legs_after` -- not a figure the model would read as done.
+- **A worker with no numeric `realized_pnl`** gets no `realised_pnl` at all. A
+  missing number is honest; an invented zero is not.
+
+The order tool calls the executor under the lock the worker's
+stop/target/square-off paths also hold, so no mechanical exit can book between
+the two readings.
+
+### What it cannot do
+
+The EXIT's `reason` is written BEFORE the fill and is the permanent journal
+record, so SLH-019 cannot correct it. What it corrects is the model's final
+decision reasoning -- the decisions log -- which is written after the tool
+returns. v5j's check (strike the rupee figure from the reason) is still what
+keeps the journal honest.
+
+### Tests
+
+Ten in the agent suite, on fakes: the booked figure excludes earlier trades; an
+unconfirmed exit reports zero and the open leg; no figure is invented for a
+worker that keeps none; a rejected exit carries no booking fields; the
+standalone executor keeps the same contract without changing its trade log;
+`as_of` appears only when there is a mark; 23 Sep replayed end to end through
+the order tool (+420 read at 09:50:06, filled at 09:50:34, `seconds_before_exit`
+28.0, realised -1,173.75); no mark reported when none was read; entries are not
+stamped as exits; and the tool descriptions.
+
+Two in the master suite, on the REAL `SLHuntingAIWorker` with option prices
+moved in the shared store: a BOTH exit with NIFTY down and BankNIFTY up reports
+exactly what both legs booked, and a NIFTY-only then BNF-only exit reports each
+leg alone with the right `open_legs_after`.
+
+**Those two run only when `SL_HUNTING_ENABLED` is set.** The master imports the
+SL Hunting modules only behind that flag, CI never sets it, and so CI's master
+suite reports `OK (skipped=60)` -- about 58 of them SL Hunting worker tests that
+have never run in CI. They pass locally with the flag set. That gap predates
+this change and is flagged as its own task rather than fixed here.
