@@ -5546,6 +5546,45 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertFalse(worker._mirror_pos.active)
         self.assertAlmostEqual(worker.realized_pnl, expected)
 
+    def test_slh019_exit_reports_the_basket_the_worker_actually_booked(self):
+        """SLH-019 on the REAL worker: the reported figure is what both legs booked.
+
+        Recreates 23 Sep's shape -- NIFTY against the trade, BankNIFTY for it -- so
+        a figure taken from one leg, or from the day's running total, is visibly
+        wrong. (Runs only with SL_HUNTING_ENABLED set; CI does not set it.)
+        """
+        worker, store = self._make_worker()
+        worker.realized_pnl = 250.0  # an earlier trade today must not leak in
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        nifty_qty, bnf_qty = worker.pos.quantity, worker._mirror_pos.quantity
+        store.update_ltp_map({
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 95.0,   # NIFTY option -5
+            (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0,  # BNF option  +20
+        })
+        res = self._executor(worker).exit("reversal cluster", 24295.0, leg="BOTH")
+        expected = -5.0 * nifty_qty + 20.0 * bnf_qty
+        self.assertTrue(res["accepted"])
+        self.assertAlmostEqual(res["realised_pnl"], round(expected, 2))
+        self.assertAlmostEqual(worker.realized_pnl - 250.0, expected)
+        self.assertEqual(res["open_legs_after"], [])
+
+    def test_slh019_a_one_leg_exit_reports_only_what_closed(self):
+        """Cutting one leg books that leg alone and says which leg is still open."""
+        worker, store = self._make_worker()
+        worker.enter_position("LONG", 24300.0, 24290.0, 24400.0)
+        nifty_qty, bnf_qty = worker.pos.quantity, worker._mirror_pos.quantity
+        store.update_ltp_map({
+            (master_file.OPTION_EXCHANGE_SEGMENT, 1001): 95.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 3003): 520.0,
+        })
+        ex = self._executor(worker)
+        first = ex.exit("nifty premise dead", 24295.0, leg="NIFTY")
+        self.assertAlmostEqual(first["realised_pnl"], round(-5.0 * nifty_qty, 2))
+        self.assertEqual(first["open_legs_after"], ["BNF"])
+        second = ex.exit("bnf premise dead", 24295.0, leg="BNF")
+        self.assertAlmostEqual(second["realised_pnl"], round(20.0 * bnf_qty, 2))
+        self.assertEqual(second["open_legs_after"], [])
+
     def test_mirror_failure_never_blocks_the_nifty_leg(self):
         worker, _ = self._make_worker()
         worker._bnf_resolver.get_atm_option.side_effect = ValueError("no BNF chain")

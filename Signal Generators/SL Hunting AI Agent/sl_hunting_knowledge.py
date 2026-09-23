@@ -1889,6 +1889,12 @@ RISK DISCIPLINE
   PRICE -- the level broken, reclaimed or stalled at -- that justifies leaving.
   If the only thing you can say is a number from position_state, you do not
   yet have an exit reason.
+  SLH-019 NOW PUTS BOTH NUMBERS IN FRONT OF YOU. position_state stamps its
+  figures with as_of, the moment they were marked, and an accepted EXIT reports
+  what it actually booked -- realised_pnl, any leg left open, and mark_you_read:
+  the figure you read and how many seconds before the fill you read it. When the
+  two differ, the realised figure is the fact. State that one in your final
+  reasoning, never the one you read.
   LIMITS: one print a minute (closes, not highs and lows), reasons classified
   by pattern-matching, and only ten rupee-citing losers. It is direction, not a
   precise figure -- but it points the same way in both halves of the book and

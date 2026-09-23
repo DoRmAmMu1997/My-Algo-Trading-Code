@@ -282,7 +282,9 @@ class StandaloneExecutor:
         }
         self.closed_trades.append(trade)
         self.pos = _PaperPosition()
-        return {"accepted": True, "action": "EXIT", **trade}
+        # SLH-019: the same reporting contract as the master executor. Here the
+        # booked figure IS the proxy, and there is no mirror leg to leave behind.
+        return {"accepted": True, "action": "EXIT", **trade, "realised_pnl": pnl, "open_legs_after": []}
 
     def snapshot(self) -> dict[str, Any]:
         """Return the current position as a dict for the `position_state` tool (or flat)."""
@@ -462,6 +464,17 @@ class MasterWorkerExecutor:
         - BNF   -> `exit_bnf_mirror_only` (closes only the mirror; NIFTY keeps running).
         Hard risk (stop/target/max-loss/square-off) is enforced elsewhere and always
         closes both. Falls back gracefully when the worker has no mirror hooks.
+
+        SLH-019: an accepted EXIT also reports what it actually BOOKED. The model
+        writes its reason from a position_state mark taken up to half a minute
+        before the fill, and on 2026-09-23 a basket it called "+420" filled at
+        -1,173.75. ``realised_pnl`` is the change in the worker's ``realized_pnl``
+        across this call -- both legs book there, so the figure is right for NIFTY,
+        BNF and BOTH alike -- and ``open_legs_after`` names any leg still open
+        afterwards. A live exit that did not confirm books nothing and leaves its
+        leg open, and the result says exactly that. The order tool makes this call
+        under the lock the worker's stop/target/square-off paths also hold, so no
+        mechanical exit can book in between the two readings.
         """
         leg = (leg or "BOTH").strip().upper()
         reason_s = _single_line_reason(reason, "AI_EXIT")
@@ -469,6 +482,7 @@ class MasterWorkerExecutor:
         nifty_active = pos is not None and getattr(pos, "active", False)
         mirror = getattr(self._w, "_mirror_pos", None)
         mirror_active = mirror is not None and getattr(mirror, "active", False)
+        before = self._realised()
 
         if leg == "BNF":
             closer = getattr(self._w, "exit_bnf_mirror_only", None)
@@ -477,7 +491,7 @@ class MasterWorkerExecutor:
             if not mirror_active:
                 return {"accepted": False, "reason": "BankNIFTY mirror is not open"}
             closer(reason_s)
-            return {"accepted": True, "action": "EXIT", "leg": "BNF", "reason": reason_s}
+            return self._booked({"accepted": True, "action": "EXIT", "leg": "BNF", "reason": reason_s}, before)
 
         if leg == "NIFTY":
             closer = getattr(self._w, "exit_nifty_leg_only", None)
@@ -485,17 +499,43 @@ class MasterWorkerExecutor:
                 return {"accepted": False, "reason": "no open NIFTY position to exit"}
             # Worker without the mirror hooks (standalone-style) just closes normally.
             (closer or self._w.exit_position)(reason_s)
-            return {"accepted": True, "action": "EXIT", "leg": "NIFTY", "reason": reason_s}
+            return self._booked({"accepted": True, "action": "EXIT", "leg": "NIFTY", "reason": reason_s}, before)
 
         # BOTH: close the NIFTY leg (which drags the mirror via after_exit). If only a
         # lone mirror remains (NIFTY already flat), still sweep it.
         if nifty_active:
             self._w.exit_position(reason_s)
-            return {"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}
+            return self._booked({"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}, before)
         if mirror_active and callable(getattr(self._w, "exit_bnf_mirror_only", None)):
             self._w.exit_bnf_mirror_only(reason_s)
-            return {"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}
+            return self._booked({"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}, before)
         return {"accepted": False, "reason": "no open position to exit"}
+
+    def _realised(self) -> float | None:
+        """The worker's realised P&L so far, or None when it keeps no numeric one."""
+        value = getattr(self._w, "realized_pnl", None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        return value if math.isfinite(value) else None
+
+    def _booked(self, result: dict[str, Any], before: float | None) -> dict[str, Any]:
+        """SLH-019: add what this EXIT booked and which legs are still open after it.
+
+        ``realised_pnl`` is omitted, never guessed, when the worker keeps no numeric
+        realised figure: a missing number is honest, an invented zero is not.
+        """
+        after = self._realised()
+        if before is not None and after is not None:
+            result["realised_pnl"] = round(after - before, 2)
+        pos = getattr(self._w, "pos", None)
+        mirror = getattr(self._w, "_mirror_pos", None)
+        result["open_legs_after"] = [
+            name
+            for name, leg_pos in (("NIFTY", pos), ("BNF", mirror))
+            if leg_pos is not None and bool(getattr(leg_pos, "active", False))
+        ]
+        return result
 
     def snapshot(self) -> dict[str, Any]:
         """Read the worker's open position (duck-typed) into the `position_state` shape.

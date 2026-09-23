@@ -7945,14 +7945,86 @@ changes is the integrity of the reason: the +420 was false.
 Limits, stated in the rule: one print a minute (closes, not highs and lows),
 reasons classified by pattern-matching, and only ten rupee-citing losers.
 
-### Not built -- possible code follow-ups
+### Code follow-ups -- built as SLH-019
 
-Prose is the weakest lever this repo has, so two small code changes are worth
-naming for the operator to decide on:
+Prose is the weakest lever this repo has, so two small code changes were named
+for the operator: an `as_of` timestamp on `position_state`, and the EXIT tool
+reporting the realised basket figure back into the turn. The operator approved
+both, and they ship in this PR as SLH-019 (next section).
 
-- give `position_state` an `as_of` timestamp, so the model can see how old the
-  mark is by the time it acts on it;
-- have the EXIT tool's result report the realised basket figure back into the
-  turn, so the reason written afterwards is checked against what happened.
 
-Neither is built here.
+## SLH-019 - the mark is dated, and an EXIT reports what it booked
+
+Operator decision, 2026-09-23, as an addendum to the v5j PR. v5j tells the model
+to judge an exit on price rather than on the rupee figure. This gives it the two
+facts that make that checkable at the moment it matters.
+
+### What changed
+
+**`position_state` is dated.** When a position is open the payload carries
+`as_of` -- the moment its P&L figures were marked, from a clock injected on the
+tool context (naive local time, as every other timestamp this agent writes). A
+flat snapshot is returned unchanged. The tool description says what the stamp
+means: the figures are a point-in-time mark, and one turn takes about half a
+minute, so an order fills later and at a different price.
+
+**An accepted EXIT reports what it booked.**
+
+- `realised_pnl` -- the change in the worker's `realized_pnl` across the exit
+  call. Both legs book there, so the one figure is right for NIFTY, BNF and BOTH
+  alike, and it excludes whatever the day had booked before.
+- `open_legs_after` -- any leg still open afterwards.
+- `exited_at` -- when the exit returned.
+- `mark_you_read` -- the `position_state` mark read earlier in the same pass,
+  with how many seconds before the exit it was read. Omitted if none was read.
+
+The order tool's description tells the model these exist, and that where the
+mark and the booking disagree, the booking is the fact to state. v5j now names
+them too.
+
+### Why the delta, and why it is honest
+
+The master's worker already snapshots `realized_pnl` at entry to put the
+basket's figure on the journal row, so a before/after delta is the codebase's
+own method rather than a new one. It is also honest in the two cases that
+matter most:
+
+- **An unconfirmed live exit** returns before either leg books, and keeps the
+  position open. The result then says `realised_pnl: 0.0` and names the leg in
+  `open_legs_after` -- not a figure the model would read as done.
+- **A worker with no numeric `realized_pnl`** gets no `realised_pnl` at all. A
+  missing number is honest; an invented zero is not.
+
+The order tool calls the executor under the lock the worker's
+stop/target/square-off paths also hold, so no mechanical exit can book between
+the two readings.
+
+### What it cannot do
+
+The EXIT's `reason` is written BEFORE the fill and is the permanent journal
+record, so SLH-019 cannot correct it. What it corrects is the model's final
+decision reasoning -- the decisions log -- which is written after the tool
+returns. v5j's check (strike the rupee figure from the reason) is still what
+keeps the journal honest.
+
+### Tests
+
+Ten in the agent suite, on fakes: the booked figure excludes earlier trades; an
+unconfirmed exit reports zero and the open leg; no figure is invented for a
+worker that keeps none; a rejected exit carries no booking fields; the
+standalone executor keeps the same contract without changing its trade log;
+`as_of` appears only when there is a mark; 23 Sep replayed end to end through
+the order tool (+420 read at 09:50:06, filled at 09:50:34, `seconds_before_exit`
+28.0, realised -1,173.75); no mark reported when none was read; entries are not
+stamped as exits; and the tool descriptions.
+
+Two in the master suite, on the REAL `SLHuntingAIWorker` with option prices
+moved in the shared store: a BOTH exit with NIFTY down and BankNIFTY up reports
+exactly what both legs booked, and a NIFTY-only then BNF-only exit reports each
+leg alone with the right `open_legs_after`.
+
+**Those two run only when `SL_HUNTING_ENABLED` is set.** The master imports the
+SL Hunting modules only behind that flag, CI never sets it, and so CI's master
+suite reports `OK (skipped=60)` -- about 58 of them SL Hunting worker tests that
+have never run in CI. They pass locally with the flag set. That gap predates
+this change and is flagged as its own task rather than fixed here.

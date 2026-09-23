@@ -2959,6 +2959,8 @@ def test_v5j_the_exit_is_judged_on_price_not_on_the_rupee_figure():
     7. Losing the check. Without a concrete test it is a mood, and moods are
        what get talked past.
     8. Losing the limits, which are what stop it being quoted as precise.
+    9. Losing the SLH-019 wiring, which names the fields the tools now supply
+       -- without it the model is never told the realised figure is there.
     """
     prompt = build_system_prompt()
     rule = _flat_rule(prompt, "JUDGE THE EXIT ON THE CHART, NOT ON THE PREMIUM")
@@ -3006,6 +3008,13 @@ def test_v5j_the_exit_is_judged_on_price_not_on_the_rupee_figure():
     # 8. The limits.
     assert "only ten rupee-citing losers" in rule
     assert "It is direction, not a precise figure" in rule
+
+    # 9. SLH-019: the rule names the fields the code now supplies, and says which wins.
+    assert "SLH-019 NOW PUTS BOTH NUMBERS IN FRONT OF YOU" in rule
+    assert "position_state stamps its figures with as_of" in rule
+    assert "mark_you_read" in rule
+    assert "the realised figure is the fact" in rule
+    assert "never the one you read" in rule
 
 
 def test_v5i_the_follow_trade_seats_the_crowd_it_was_entered_on():

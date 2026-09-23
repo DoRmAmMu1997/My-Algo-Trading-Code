@@ -38,6 +38,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -112,6 +113,16 @@ LOGGER = logging.getLogger(__name__)
 NO_REASON_SENTINEL = "AI_EXIT (no reason supplied by the model)"
 
 
+# SLH-019: kept out of `build_sl_hunting_mcp_server` (which needs the SDK) so tests
+# can assert on it, exactly as `order_tool_description` below is.
+POSITION_STATE_DESCRIPTION = (
+    "Your current open position (direction, entry, stop, target, unrealised P&L) "
+    "or 'flat'. The P&L figures are a point-in-time MARK stamped `as_of`; one turn "
+    "of yours takes about half a minute, so any order you send fills later than "
+    "that mark and at a different price."
+)
+
+
 def order_tool_description(venue: str, *, note_active: bool = False) -> str:
     """The order tool's description, as a function so tests can assert on it.
 
@@ -148,7 +159,13 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "(default BOTH): every NIFTY entry is mirrored by an equal-lot BankNIFTY ATM leg, "
         "and you may cut ONE leg on premise-invalidation while the other runs — but hard "
         "risk (stop/target/max-loss/square-off) always closes both. Returns whether "
-        "the order was accepted or rejected."
+        "the order was accepted or rejected. An accepted EXIT also reports what it "
+        "actually BOOKED: realised_pnl (both legs), open_legs_after (any leg that did "
+        "NOT close -- e.g. an unconfirmed live exit, in which case realised_pnl covers "
+        "only what did), exited_at, and mark_you_read (the position_state mark you "
+        "read this turn and how many seconds before the exit you read it). Where the "
+        "two differ, the realised figure is the fact: state that one in your final "
+        "reasoning, not the one you read."
         + (
             " note_check is REQUIRED on entries today because a pre-open analyst note "
             "applies to this session. Start it with AGREES, CONTRADICTS or "
@@ -304,8 +321,15 @@ class SLHuntingToolContext:
     generation: int = 0
     deadline_monotonic: float | None = None
     generation_is_current: Callable[[int], bool] | None = field(default=None, repr=False)
+    # SLH-019: the clock that stamps position_state's mark and an EXIT's fill time.
+    # Naive local time, like every other timestamp this agent writes; a field so
+    # tests can pin it.
+    now: Callable[[], datetime] = field(default=datetime.now, repr=False)
     state: ToolContextState = field(default=ToolContextState.ACTIVE, init=False)
     _execution_result: dict[str, Any] | None = field(default=None, init=False, repr=False)
+    # The mark the model read THIS pass (the context is rebuilt every bar), so an
+    # EXIT can report it beside what the exit actually booked.
+    _last_mark: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _execution_lock: Any = field(default_factory=threading.RLock, repr=False)
 
     @classmethod
@@ -373,7 +397,32 @@ class SLHuntingToolContext:
         return market_structure(self.candles, self.cfg)
 
     def position_state_payload(self) -> dict[str, Any]:
-        return self.executor.snapshot()
+        """The open position, stamped with WHEN its figures were marked (SLH-019).
+
+        The P&L inside is a point-in-time read and one agent turn takes about half
+        a minute, so the model is told the moment it was taken. The read is also
+        remembered for this pass, so an EXIT can report it beside what it booked.
+        A flat snapshot is returned unchanged: there is no mark to date.
+        """
+        snap = dict(self.executor.snapshot())
+        if snap.get("in_position"):
+            taken = self.now()
+            snap["as_of"] = taken.isoformat(timespec="seconds")
+            self._last_mark = {"at": taken, "unrealized_pnl": snap.get("unrealized_pnl")}
+        return snap
+
+    def _stamp_exit(self, result: dict[str, Any]) -> dict[str, Any]:
+        """SLH-019: put the fill time, and the mark read this pass, beside what was booked."""
+        exited = self.now()
+        stamped = {**result, "exited_at": exited.isoformat(timespec="seconds")}
+        if self._last_mark is not None:
+            read_at = self._last_mark["at"]
+            stamped["mark_you_read"] = {
+                "as_of": read_at.isoformat(timespec="seconds"),
+                "unrealized_pnl": self._last_mark["unrealized_pnl"],
+                "seconds_before_exit": round(max((exited - read_at).total_seconds(), 0.0), 1),
+            }
+        return stamped
 
     def bank_nifty_payload(self) -> dict[str, Any]:
         """BankNIFTY's own pivot/levels, structure and recent patterns (advisory)."""
@@ -594,6 +643,10 @@ class SLHuntingToolContext:
                 self.state = ToolContextState.EXPIRED
                 raise
             if bool(result.get("accepted")):
+                if action == "EXIT":
+                    # SLH-019: the fill time and the mark read earlier this pass,
+                    # beside what the exit actually booked.
+                    result = self._stamp_exit(result)
                 # SLH-011: keep the model's OWN justification on the result. If this
                 # pass later fails to return a parseable decision, the journal can
                 # record why the order was placed rather than a placeholder -- and
@@ -653,9 +706,7 @@ def build_sl_hunting_mcp_server(context: SLHuntingToolContext):
     async def _structure(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.market_structure_payload())
 
-    @tool("position_state",
-          "Your current open position (direction, entry, stop, target, unrealised P&L) "
-          "or 'flat'.", {})
+    @tool("position_state", POSITION_STATE_DESCRIPTION, {})
     async def _position(_args: dict[str, Any]) -> dict[str, Any]:
         return _as_tool_text(context.position_state_payload())
 

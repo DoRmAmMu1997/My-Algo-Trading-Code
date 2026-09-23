@@ -1593,3 +1593,146 @@ def test_fast_decision_does_not_warn(caplog, monkeypatch):
     assert not [
         r for r in caplog.records if r.levelno == logging.WARNING and "at or past the" in r.getMessage()
     ]
+
+
+# --------------------------------------------------------------------------
+# SLH-019: the mark is dated, and an accepted EXIT reports what it booked
+# --------------------------------------------------------------------------
+# On 2026-09-23 an exit reasoned "booking the still-positive basket (+420)" and
+# filled at -1,173.75: the mark was read early in a turn that takes about half a
+# minute. These pin both halves -- WHEN the mark was taken, and WHAT was booked.
+
+
+class _BookingWorker(_FakeWorker):
+    """Books a fixed figure into ``realized_pnl`` on exit, or -- when told the live
+    exit did not confirm -- books nothing and leaves the position open, exactly as
+    the master's base worker does."""
+
+    def __init__(self, books: float, confirms: bool = True):
+        super().__init__()
+        self.realized_pnl = 0.0
+        self._books = books
+        self._confirms = confirms
+
+    def exit_position(self, reason):
+        if not self._confirms:
+            return
+        self.realized_pnl += self._books
+        self.pos = _FakePos()
+
+
+def _in_position(worker):
+    ex = MasterWorkerExecutor(worker)
+    assert ex.enter("LONG", stop=23360, target=23414.5, reason="seller hunt", price=23371.75)["accepted"]
+    return ex
+
+
+def test_slh019_exit_reports_what_this_exit_booked_not_the_day_so_far():
+    w = _BookingWorker(books=-1173.75)
+    w.realized_pnl = 250.0  # an earlier trade today must not leak into this exit's figure
+    res = _in_position(w).exit("reversal cluster on both indices", price=23364.5)
+    assert res["accepted"] is True
+    assert res["realised_pnl"] == -1173.75
+    assert res["open_legs_after"] == []
+
+
+def test_slh019_an_unconfirmed_exit_says_nothing_was_booked_and_the_leg_is_open():
+    w = _BookingWorker(books=-1173.75, confirms=False)
+    res = _in_position(w).exit("reversal cluster on both indices", price=23364.5)
+    assert res["accepted"] is True
+    assert res["realised_pnl"] == 0.0
+    assert res["open_legs_after"] == ["NIFTY"]
+
+
+def test_slh019_no_figure_is_invented_for_a_worker_that_keeps_none():
+    res = _in_position(_FakeWorker()).exit("done", price=23364.5)
+    assert res["accepted"] is True
+    assert "realised_pnl" not in res
+    assert res["open_legs_after"] == []
+
+
+def test_slh019_a_rejected_exit_carries_no_booking_fields():
+    res = MasterWorkerExecutor(_FakeWorker()).exit("nothing is open", price=23364.5)
+    assert res["accepted"] is False
+    assert "realised_pnl" not in res and "open_legs_after" not in res
+
+
+def test_slh019_the_standalone_executor_keeps_the_same_contract():
+    ex = StandaloneExecutor(lot_size=65)
+    ex.enter("LONG", 25000.0, 25080.0, "pivot bounce", 25029.0)
+    res = ex.exit("done", 25019.0)
+    assert res["realised_pnl"] == res["pnl_proxy"] == -650.0
+    assert res["open_legs_after"] == []
+    # The session trade log keeps its shape; only the tool result grew.
+    assert "realised_pnl" not in ex.closed_trades[-1]
+
+
+def test_slh019_position_state_is_dated_only_when_there_is_a_mark():
+    from datetime import datetime
+
+    ex = StandaloneExecutor()
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    ctx.now = lambda: datetime(2026, 9, 23, 9, 50, 6)
+    assert ctx.position_state_payload() == {"in_position": False}
+
+    ex.enter("LONG", 25000.0, 25080.0, "pivot bounce", 25029.0)
+    snap = ctx.position_state_payload()
+    assert snap["in_position"] is True
+    assert snap["as_of"] == "2026-09-23T09:50:06"
+
+
+def test_slh019_an_exit_reports_the_mark_you_read_and_how_long_before_the_fill():
+    """23 Sep, replayed: +420 read at 09:50:06, the EXIT fills at 09:50:34."""
+    from datetime import datetime
+
+    w = _BookingWorker(books=-1173.75)
+    w._get_open_position_pnl = lambda: 420.0
+    ex = _in_position(w)
+    ctx = SLHuntingToolContext.build(_candles(), ex)
+    ticks = iter([datetime(2026, 9, 23, 9, 50, 6), datetime(2026, 9, 23, 9, 50, 34)])
+    ctx.now = lambda: next(ticks)
+
+    snap = ctx.position_state_payload()
+    assert snap["unrealized_pnl"] == 420.0 and snap["as_of"] == "2026-09-23T09:50:06"
+
+    res = ctx.do_order("EXIT", stop=0, target=0, reason="evening star on both indices, 6pts from stop")
+    assert res["accepted"] is True
+    assert res["realised_pnl"] == -1173.75
+    assert res["exited_at"] == "2026-09-23T09:50:34"
+    assert res["mark_you_read"] == {
+        "as_of": "2026-09-23T09:50:06",
+        "unrealized_pnl": 420.0,
+        "seconds_before_exit": 28.0,
+    }
+    # The authoritative record the agent keeps is the stamped one too.
+    assert ctx.execution_result["realised_pnl"] == -1173.75
+
+
+def test_slh019_no_mark_is_reported_when_none_was_read_this_pass():
+    w = _BookingWorker(books=500.0)
+    ctx = SLHuntingToolContext.build(_candles(), _in_position(w))
+    res = ctx.do_order("EXIT", stop=0, target=0, reason="target zone reached, stalling at 23400")
+    assert res["accepted"] is True
+    assert "exited_at" in res
+    assert "mark_you_read" not in res
+
+
+def test_slh019_entries_are_not_stamped_as_exits():
+    ctx = SLHuntingToolContext.build(_candles(), StandaloneExecutor())
+    res = ctx.do_order("ENTER_LONG", stop=25000, target=25080, reason="pivot bounce off 25000")
+    assert res["accepted"] is True
+    assert "exited_at" not in res and "mark_you_read" not in res
+
+
+def test_slh019_the_tools_tell_the_model_what_the_new_fields_mean():
+    from sl_hunting_tools import POSITION_STATE_DESCRIPTION, order_tool_description
+
+    assert "point-in-time MARK stamped `as_of`" in POSITION_STATE_DESCRIPTION
+    assert "about half a minute" in POSITION_STATE_DESCRIPTION
+    assert "fills later than that mark" in POSITION_STATE_DESCRIPTION
+    text = order_tool_description("paper")
+    assert "An accepted EXIT also reports what it actually BOOKED" in text
+    for name in ("realised_pnl", "open_legs_after", "exited_at", "mark_you_read"):
+        assert name in text
+    assert "realised_pnl covers only what did" in text
+    assert "the realised figure is the fact" in text
