@@ -1,45 +1,45 @@
 {
-  "for_date": "2026-09-24",
-  "source": "Intraday Hunter, 'Prediction For 24 SEP 2026' (4BKhLKn4zHY, uploaded 2026-09-23)",
-  "context": "Positive momentum on all three indices with only a small retracement, no big one -- BankNIFTY held itself above 56500 -- so he reads BUYERS as possibly seated. SENSEX has its expiry on 24 Sep.",
+  "for_date": "2026-09-25",
+  "source": "Intraday Hunter, 'Prediction For 25 SEP 2026' (mlKuAuR_U2I, uploaded 2026-09-24)",
+  "context": "A big gap-down on 24 Sep, then continuous selling on all three indices -- \"a big fall\" -- so he reads SELLERS as seated in the market.",
   "plan": [
-    "THE FLAT BRANCH FLIPPED FROM 23 SEP: last night a flat open meant BUY, to hunt seated sellers. Tonight the seated side is BUYERS, so a flat open means SELL. Carrying yesterday's flat-open branch forward inverts it.",
-    "FLAT TO GAP DOWN -> SELL: identify selling-side setups to TARGET the buyers who may be seated after a rise that gave no big retracement.",
-    "OPEN ABOVE THE HIGHER POINT -> BUY. The buy branch is a LEVEL, not a gap size: above the prior high -- on NIFTY especially above 23500 -- buyers stay confident, will not cut, and leave no SLs to hunt.",
-    "A GAP UP THAT OPENS BELOW THE PRIOR HIGH IS NOT IN HIS PLAN. A computed GAP_UP verdict alone does not select the buy branch: check where the open sits against the prior high first."
+    "THE FLAT BRANCH FLIPPED BACK FROM 24 SEP: last night a flat open meant SELL, to hunt seated buyers. Tonight the seated side is SELLERS, so a flat open means BUY. Carrying last night's flat branch forward inverts it.",
+    "FLAT TO GAP DOWN -> BUY: identify buying-side setups to TARGET the sellers seated after 24 Sep's big gap-down and continuous selling.",
+    "A GOOD GAP UP -> SELL, WITH THE MARKET: a good gap up lets the sellers run early, so their SLs are no longer near and nobody gets to target them; follow the selling already under way.",
+    "WITH THE MARKET MEANS WITH THE SELLING, NOT THE GAP: a GAP_UP verdict selects SELL here, not the OPENING DRIVE gap-up long. He says a GOOD gap up; a marginal positive open is the flat case, which buys."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23500,
-        23570
+        23200,
+        23270
       ],
       "support": [
-        23370,
-        23270
+        23000,
+        22900
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56800,
-        57000
+        55800,
+        56000
       ],
       "support": [
-        56370,
-        56100
+        55200,
+        55000
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        75100,
-        75300
+        74000,
+        74250
       ],
       "support": [
-        74650,
-        74430
+        73330,
+        73000
       ]
     }
   ]
