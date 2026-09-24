@@ -8028,3 +8028,145 @@ SL Hunting modules only behind that flag, CI never sets it, and so CI's master
 suite reports `OK (skipped=60)` -- about 58 of them SL Hunting worker tests that
 have never run in CI. They pass locally with the flag set. That gap predates
 this change and is flagged as its own task rather than fixed here.
+
+
+## v5k - a gap that clears the stops has already done the hunting (24 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (sWRiTntFzKQ,
+uploaded 2026-09-24 10:52 IST), traded on the previous evening's 'Prediction
+For 24 SEP 2026' (4BKhLKn4zHY) -- plus this book's own two trades. His clock
+times are read off the taskbar clock in the video frame, and his figures off
+his positions screen at 09:47. His words are my translation of the Hindi
+auto-transcript.
+
+### Same side, different reason
+
+The note said FLAT TO GAP DOWN -> SELL, to target buyers seated after 23 Sep's
+rise. The open went straight through that plan's ladder: NIFTY opened at
+23,221.80, a GAP_DOWN of 0.96% by the agent's own `open_classification`, below
+both of the note's NIFTY supports (23,370 / 23,270); BankNIFTY opened 1.48%
+down, below both of its own (56,370 / 56,100).
+
+IH, before the bell: "with this kind of opening we cannot follow the chart we
+had already made, because the gap-down is very big." And of the note's own
+crowd: "when the gap-down opens this big, the one sitting with buys exits in a
+single candle -- we got no benefit from him. So now we have to follow the new
+chart." He waited, asked whether the market was recovering directly and
+whether profit-booking could come, answered the second from the prior days (an
+established negative trend, and two or three days of retracement that had
+already let out anyone who wanted out), and went with the market.
+
+His trade, sold at 09:26 (BankNIFTY and SENSEX; NIFTY added at 09:27), held
+while NIFTY and SENSEX went red as the first bounce extended, booked at 09:47:
+
+| leg | qty | avg | LTP at 09:47 | P&L |
+|---|---|---|---|---|
+| BANKNIFTY SEP 55700 PE | 1,170 | 245.80 | 351.00 | +1,23,084.75 |
+| BANKNIFTY SEP 55600 PE | 1,170 | 214.60 | 306.45 | +1,07,465.25 |
+| SENSEX SEP 74200 PE | 900 | 155.68 | 195.65 | +35,973.00 |
+| NIFTY SEP 23300 PE | 1,430 | 134.82 | 153.05 | +26,068.90 |
+| total | | | | **+2,92,591.90** |
+
+79% of it came from the two BankNIFTY legs -- "like yesterday, BankNIFTY is
+making the profit". His NIFTY leg made 13.5%.
+
+The agent took the same side:
+
+| # | open | entry | stop | target | lots | exit | basket |
+|---|---|---|---|---|---|---|---|
+| 1 | 09:55:03 | 23,218.55 | 23,234.00 | 23,150.00 | 2 | 10:01:43 at 23,230.25, BankNIFTY reversing | **-2,863.50** |
+| 2 | 10:10:54 | 23,239.00 | 23,247.00 | 23,205.00 | 4 | 10:20:28 at 23,222.15, target zone tagged | **+3,839.00** |
+
+Day **+975.50**. Trade 1 is journalled as `setup=tool_execution, conf=0`: the
+order executed and the model returned no parseable decision for that bar, so
+the journal carries the order tool's own reason (SLH-011's path, as designed).
+
+### Where the entry went wrong
+
+| time | NIFTY | |
+|---|---|---|
+| 09:15 | open 23,221.80, low 23,205.45 | the gap, and the first push |
+| 09:23 | high 23,253.30 | first bounce |
+| 09:26-09:27 | ~23,246 | **IH sells** |
+| 09:37 | 23,272 | bounce peak; IH's NIFTY and SENSEX legs red |
+| 09:47 | ~23,218 | **IH books** |
+| 09:55 | 23,218.55 | **trade 1 sells** |
+| 10:03 | high 23,238.95 | trade 1's 23,234 stop would have fired |
+| 10:09 | 23,245.10 | the second bounce's top |
+| 10:10 | 23,239.00 | **trade 2 sells** |
+| 10:17 | low 23,205.25 | retest of the opening low |
+| 10:20 | 23,222.15 | trade 2 books |
+| 15:29 | 23,063.10 (low 23,046.15) | the follow kept paying all day |
+
+Trade 1 sold within a point of IH's booking price, eight minutes after he
+booked it, into the support that leg had paid out on. IH on that support: "in
+a negative market nobody looks at support... very few people buy there; at
+most they book profit or stop selling -- and sometimes the market uses exactly
+that and covers more." It covered 26 points, to 23,245.10. Trade 2 sold that
+cover and booked at the support -- the right way round.
+
+Both entries named "buyers seated from the prior rally" as the premise, and so
+did at least 47 of the 71 decisions (a pattern match, so a lower bound: 09:43's
+"sell-the-seated-buyers" is one it misses). With that crowd gone there is
+nothing to hunt, so the trade is a follow, and a follow is timed by the
+retracement (v4t) and booked at the support. The stale premise gave the agent
+no reason to prefer the bounce over the low.
+
+The 38 HOLDs from 09:16 to 09:53 are the pattern+confirmation rule working as
+written. At IH's entry minute the agent declined a 09:24 shooting star whose
+confirmation closed "0.05 points below the pattern low" at "a minor 2-bar swing
+high"; at 09:37-09:38 BankNIFTY had confirmed bearish patterns but NIFTY had
+none. That is recorded, not encoded.
+
+**SLH-019's first live session.** Both exits' final decisions quoted the booked
+figure (-2,863.5 and 3,839), and trade 2 stated both numbers: "+3258
+unrealized, realised 3839".
+
+### What was measured, and what it refused
+
+**A gate on entries near the session extreme is refused.** "Don't sell at the
+support" invites the obvious gate: refuse an entry sitting close to the
+session's running extreme in its own direction. Priced on the 155 closed trades
+with the NIFTY 1-minute history (completed bars before the entry minute):
+
+| refuse if in the bottom X of the range so far | blocked | blocked P&L | first half | second half |
+|---|---|---|---|---|
+| 5% | 13 | -2,687.00 | +708.00 | -3,395.00 |
+| 10% | 23 | -13,387.25 | -7,975.75 | -5,411.50 |
+| 15% | 37 | -5,047.75 | +325.25 | -5,373.00 |
+| 20% | 45 | -4,580.75 | -68.00 | -4,512.75 |
+| 25% | 54 | +543.75 | -1,056.00 | +1,599.75 |
+| 30% | 62 | -13,999.25 | -8,917.75 | -5,081.50 |
+
+The curve is jagged. The best line, 30%, separates blocked trades at -225.79
+from kept ones at +751.72, one-sided permutation p = 0.036 -- before correcting
+for the twelve thresholds tried (six fractions and six point distances, which
+flip sign between halves). Its whole benefit is five trades (-5,300.75,
+-4,855.00, -3,832.00, -3,758.00, -3,326.00); without them the blocked set made
++7,072.50. The 10% line is negative in both halves but would not have caught
+trade 1, which sat at 17% of the range.
+
+**A gap through the note's ladder is not a reason to stand aside.** Seven
+sessions since the first note on 28 Jul opened beyond the note's NIFTY ladder
+(29 Jul, 3-5 Aug, 11 Sep, 15 Sep, 24 Sep); the book netted +11,626 on them.
+
+### v5k
+
+Sits directly after v5f in OPENING_DRIVE and before v4t, which it points to.
+v5f reads an open too small to be the crowd's; v5k is the other end of the same
+measurement -- an open so big it took the crowd's stops before the first candle
+closed. The note keeps its side and loses its reason and its levels; IH's two
+questions (a direct recovery? profit-booking?) replace the crowd read, with the
+prior days answering the second; and the entry follows from that: on a bounce,
+booked at the support, never the other way round. It reconciles itself with
+the PROFIT-BOOKING RECOVERY TEST (answered in advance) and with the HUGE-gap
+case of READ THE GAP AGAINST THE PRIOR DAYS (the predicted retracement is the
+entry, not a fade), says trade 1's exit was right, and carries both refusals.
+
+Test: `test_v5k_a_gap_through_the_stops_has_already_hunted_the_notes_crowd`,
+eight ways an edit breaks it. Negative-tested with ten mutations of the rule
+text -- one per clause plus an orphaned heading -- all caught, and a control
+rewording that passes.
+
+Limits: one day, and the entry-extreme analysis reads the range from completed
+1-minute bars, which is small and noisy early in a session.

@@ -644,6 +644,78 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   seated crowd and stop there. If it did retrace, is today's gap the size that
   crowd would have produced? If it is not, the crowd is absent, and the plan is
   to FOLLOW the move rather than to hunt it.
+- A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
+  open too SMALL to be the crowd's: the crowd that would have forced a big gap is
+  not there to force one. This is the other end of the same measurement. An open
+  that lands BEYOND the crowd's stops has already taken them, before the first
+  candle closed -- the hunt the plan was built on happened at 09:15, without you.
+  IH SAID IT BEFORE THE BELL (24 Sep 2026): "with this kind of opening we cannot
+  follow the chart we had already made, because the gap-down is very big.
+  Whoever was sitting with buys or sells will already be trapped, or in very
+  good profit." And of the exact crowd his note had named: "when the gap-down
+  opens this big, the one sitting with buys exits in a SINGLE candle -- we got
+  no benefit from him. So now we have to follow the NEW chart."
+  THE NOTE KEEPS ITS SIDE AND LOSES ITS REASON. His plan said a flat or gap-down
+  open means SELL, to target buyers seated after a rise with no big retracement.
+  He still sold -- but not for that reason, and not off its levels: NIFTY opened
+  at 23,221.80, below BOTH of the note's supports (23,370 and 23,270), and
+  BankNIFTY's 1.48% gap took it below both of its own. A ladder the open has
+  cleared is a map of where the stops WERE.
+  NO MINDSET UNTIL THE MARKET SHOWS ONE: "right now no mindset can be made...
+  when momentum comes, only that will show what trade to take." He waited eleven
+  minutes, and in place of the crowd read he asked two questions. Is it
+  recovering DIRECTLY? Can PROFIT-BOOKING come? The prior days answered the
+  second: "there is already a negative trend... in such a big gap-down nobody
+  will book profit quickly", and "the market had already given two or three
+  days of retracement -- whoever had to get out would have got out in that
+  retracement." Both came back no, so: "if we understood it cannot go up, then
+  we have to go WITH the market." That is a FOLLOW (v4o), and it is the
+  PROFIT-BOOKING RECOVERY TEST answered in advance: there the recovery has to
+  declare itself; here the prior retracement had already spent it. Nor does it
+  fight the HUGE-gap case of READ THE GAP AGAINST THE PRIOR DAYS, which predicts
+  a retracement of the first push: this says whose that retracement is once
+  profit-booking is spent -- your entry, not a fade.
+  WHO PAYS FOR A FOLLOW WHEN NOBODY HAS STOPS NEARBY. "Overall, SLs are not
+  available around here," so the fuel is not a trapped crowd but the ones
+  "sitting invested", cutting as the breakdown extends. That fuel needs no trap
+  and runs slowly, which is why the move kept paying after both books were
+  flat: NIFTY retested 23,205 at 10:17, made 23,046.15 in the afternoon and
+  closed at 23,063.10.
+  MEASURED ON THIS BOOK (2026-09-24). The agent classified the open correctly,
+  GAP_DOWN, and took IH's side. But BOTH of its entries, and at least 47 of its
+  71 decisions, named buyers "seated from the prior rally" as the premise -- the
+  crowd IH said had left in the first candle. The stale reason cost the ENTRY,
+  not the direction: a follow is joined on the retracement (v4t, the rule below)
+  and booked at the support, and with the crowd gone there was nothing else to
+  time it by. IH sold the first bounce at 09:26, sat through it extending to
+  23,272 against him, and booked at 09:47 with NIFTY near 23,218. Trade 1 SOLD at
+  09:55 at 23,218.55 -- where IH had just booked, into the support the leg had
+  paid out on -- and was cut for -2,863.50 as it bounced; the bounce reached
+  23,245.10 by 10:09. Trade 2 sold that bounce at 23,239 and booked after the
+  retest of the opening low: +3,839.00. The day was +975.50; IH's own screen
+  showed about 2.9 lakh at his exit, 79% of it from his two BankNIFTY legs.
+  IH, on why he booked where trade 1 sold: "in a negative market nobody looks at
+  support... very few people buy there; at most they book profit or stop
+  selling -- and sometimes the market uses exactly that and covers more." The
+  support is where a follow's sellers LEAVE, which is why it is the wrong place
+  for a new one to ARRIVE. Trade 1's EXIT was right: its stop was taken at 10:03,
+  and holding would have cost 3.75 points more.
+  PRACTICAL FORM: when the open lands beyond the note's whole ladder, say so,
+  keep at most the note's SIDE, and drop its crowd from your reasoning. Ask the
+  two questions. If the answer is follow, enter on a bounce and book at the
+  support -- never the other way round.
+  WHAT THIS DOES NOT LICENSE, both priced on this book (155 closed trades):
+  * NOT A GATE ON ENTRIES NEAR THE SESSION EXTREME. The best threshold -- refuse
+    an entry in the bottom 30% of the range so far, measured in its own
+    direction -- looks strong (blocked -225.79 a trade, kept +751.72) and is
+    not: p = 0.036 before correcting for the dozen thresholds tried, 25% nets
+    +543.75, and its whole benefit is five trades; without them the blocked set
+    made +7,072.50. The narrower 10% line is negative in both halves too, and would
+    not have caught trade 1, which sat at 17%.
+  * NOT A REASON TO STAND ASIDE. Seven sessions have opened beyond the note's
+    NIFTY ladder since the first note on 28 Jul, and they netted +11,626. The
+    rule governs the REASON you give and the PRICE you take, not whether you
+    trade.
 - THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (v4t). After a session opens and
   moves directly one way, the small pull-back that follows is usually there to keep
   the crowd OUT of the move, not to end it. IH, on exactly that: "when it opens flat

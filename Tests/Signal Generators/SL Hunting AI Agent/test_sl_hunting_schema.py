@@ -2938,6 +2938,85 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "the premise has not failed -- but the trade has" in rule
 
 
+def test_v5k_a_gap_through_the_stops_has_already_hunted_the_notes_crowd():
+    """v5k (24 Sep): v5f's other end -- an open too BIG to leave the crowd.
+
+    Both books sold a 0.96% gap-down; both entries here named a crowd IH said
+    the open had flushed in one candle, and the first sold where he booked.
+    Eight ways an edit breaks it:
+
+    1. Losing the tie to v5f. Apart they read as two opinions about gap size;
+       together they are one measurement with two failure ends.
+    2. Losing IH's words, and that he said it BEFORE the bell. Said afterwards
+       it would read as a rationalisation of a trade that worked.
+    3. Losing "keeps its side and loses its reason". Without the split, the
+       rule reads as "ignore the note", which is not what he did -- he sold.
+    4. Losing the two questions, and that the PRIOR days answer the second.
+       That is the only part that can run before the entry.
+    5. Losing the reconciliations with the PROFIT-BOOKING RECOVERY TEST and
+       the HUGE-gap case. Unreconciled, the three read as a contradiction.
+    6. Losing the measured entry: trade 1 sold at IH's booking price, into the
+       support. That is where the stale reason actually cost money.
+    7. Losing "the EXIT was right". Without it, the rule re-derives a
+       hold-the-bracket gate the book has already refused.
+    8. Losing either refusal, with its numbers. The extreme-distance gate
+       looks significant until corrected; an unrefused gate gets re-derived.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+
+    # 1. The other end of v5f's measurement.
+    assert "v5f reads an open too SMALL to be the crowd's" in rule
+    assert "This is the other end of the same measurement" in rule
+    assert "the hunt the plan was built on happened at 09:15, without you" in rule
+
+    # 2. IH, before the bell, on the crowd his own note had named.
+    assert "IH SAID IT BEFORE THE BELL" in rule
+    assert "we cannot follow the chart we had already made" in rule
+    assert "exits in a SINGLE candle" in rule
+    assert "So now we have to follow the NEW chart" in rule
+
+    # 3. Side kept, reason and levels void.
+    assert "THE NOTE KEEPS ITS SIDE AND LOSES ITS REASON" in rule
+    assert "below BOTH of the note's supports (23,370 and 23,270)" in rule
+    assert "a map of where the stops WERE" in rule
+
+    # 4. The two questions, answered by the prior days.
+    assert "Is it recovering DIRECTLY? Can PROFIT-BOOKING come?" in rule
+    assert "The prior days answered the second" in rule
+    assert "whoever had to get out would have got out in that retracement" in rule
+    assert "we have to go WITH the market" in rule
+
+    # 5. Reconciled with the two rules it could be read against.
+    assert "PROFIT-BOOKING RECOVERY TEST answered in advance" in rule
+    assert "the prior retracement had already spent it" in rule
+    assert "Nor does it fight the HUGE-gap case" in rule
+    assert "your entry, not a fade" in rule
+
+    # 6. What the stale reason cost: the entry, not the direction.
+    assert "at least 47 of its 71 decisions" in rule
+    assert "The stale reason cost the ENTRY, not the direction" in rule
+    assert "Trade 1 SOLD at 09:55 at 23,218.55 -- where IH had just booked" in rule
+    assert "was cut for -2,863.50" in rule
+    assert "+3,839.00" in rule
+    assert "The day was +975.50" in rule
+    assert "where a follow's sellers LEAVE" in rule
+    assert "enter on a bounce and book at the support -- never the other way round" in rule
+
+    # 7. Not a hold-longer rule.
+    assert "Trade 1's EXIT was right" in rule
+    assert "holding would have cost 3.75 points more" in rule
+
+    # 8. Both refusals, with the numbers that make them refusals.
+    assert "NOT A GATE ON ENTRIES NEAR THE SESSION EXTREME" in rule
+    assert "p = 0.036 before correcting for the dozen thresholds tried" in rule
+    assert "its whole benefit is five trades" in rule
+    assert "the blocked set made +7,072" in rule
+    assert "would not have caught trade 1, which sat at 17%" in rule
+    assert "NOT A REASON TO STAND ASIDE" in rule
+    assert "they netted +11,626" in rule
+
+
 def test_v5j_the_exit_is_judged_on_price_not_on_the_rupee_figure():
     """v5j (23 Sep): IH's "look at the chart, not the premium", measured here.
 
