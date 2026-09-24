@@ -201,28 +201,30 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_24_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 23 Sep transcript.
+def test_shipped_note_matches_september_25_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 24 Sep transcript.
 
-    The seated side flipped overnight -- sellers on 23 Sep, buyers tonight -- and
-    the flat branch flipped with it. Six things an edit would flatten:
+    The seated side flipped back overnight -- buyers on 24 Sep, sellers tonight
+    -- and both branches flipped with it. Six things an edit would flatten:
 
-    1. That FLAT now means SELL. On 23 Sep a flat open meant BUY; carrying that
-       forward is exactly the half-right carry-over that reads as consistent.
-    2. The target: buyers who may be seated after a rise with no big
-       retracement. The sell is a hunt, not a follow.
-    3. That the BUY branch is a LEVEL -- an open above the prior high, on NIFTY
-       especially above 23500 -- and not a gap size. The agent's own open
-       classification is a percentage, so the two can disagree.
-    4. That a gap up opening BELOW the prior high is in neither branch. That
-       absence is asserted, because an absent case is what gets filled in.
-    5. SENSEX's expiry on 24 Sep, which he names before any level.
-    6. NIFTY's supports, which came through as "2360 2370" -- a string that
-       matches neither obvious reading. The 1080p frame at 1:44 tags the lines
-       23,369.60 and 23,271.75, so the levels are 23370 / 23270; the second is
-       the same line as the previous night's. The resistances are the previous
-       night's lines too (23,500.15 / 23,567.20), spoken as 23570 tonight where
-       23 Sep said 23560 -- recorded as spoken.
+    1. That FLAT now means BUY. Last night a flat open meant SELL; carrying that
+       forward is the half-right carry-over that reads as consistent.
+    2. The target: sellers seated after 24 Sep's big gap-down and continuous
+       selling. The buy is a hunt, not a follow.
+    3. That the GAP UP branch SELLS. A good gap up lets the sellers run at the
+       open, so their SLs are gone and there is nobody to target -- the same
+       mechanism as v5k, which he names tonight for the opposite gap.
+    4. That "with the market" means with the SELLING, not with the gap. A
+       GAP_UP verdict is what OPENING DRIVE's gap-up long keys on, so the two
+       point opposite ways; and he says a GOOD gap up, so a marginal positive
+       open is the flat case, which buys.
+    5. Three garbled level strings, each resolved from the 1080p frame:
+       BankNIFTY's "550 55000" is 55,209.90 / 55,005.50 (55200 / 55000);
+       NIFTY's "232900" is 23,001.75 / 22,900.85 (23000 / 22900); SENSEX's
+       "73 330" is a line tagged 73,327.34, recorded as spoken (73330).
+    6. NIFTY's 23270 resistance is the line tagged 23,271.75 -- the same drawn
+       line that was SUPPORT in the 23 and 24 Sep notes, broken by 24 Sep's
+       open. The other resistance is tagged 23,201.20.
     """
     import os
 
@@ -230,54 +232,53 @@ def test_shipped_note_matches_september_24_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-24"
-    assert "4BKhLKn4zHY" in note.source
-    assert "no big one" in note.context
-    assert "BankNIFTY held itself above 56500" in note.context
-    assert "he reads BUYERS as possibly seated" in note.context
-    assert "SENSEX has its expiry on 24 Sep" in note.context
+    assert note.for_date == "2026-09-25"
+    assert "mlKuAuR_U2I" in note.source
+    assert "A big gap-down on 24 Sep, then continuous selling on all three indices" in note.context
+    assert "he reads SELLERS as seated" in note.context
 
-    # 1. The flat branch flipped, with both nights spelled out.
-    flip = next(line for line in note.plan if line.startswith("THE FLAT BRANCH FLIPPED"))
-    assert "last night a flat open meant BUY" in flip
-    assert "the seated side is BUYERS, so a flat open means SELL" in flip
+    # 1. The flat branch flipped back, with both nights spelled out.
+    flip = next(line for line in note.plan if line.startswith("THE FLAT BRANCH FLIPPED BACK"))
+    assert "last night a flat open meant SELL" in flip
+    assert "the seated side is SELLERS, so a flat open means BUY" in flip
     assert "inverts it" in flip
 
-    # 2. A hunt of seated buyers.
-    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN ->"))
-    assert "SELL" in sell
-    assert "TARGET the buyers" in sell
-    assert "no big retracement" in sell
-
-    # 3. The buy branch is a level, not a gap size.
-    buy = next(line for line in note.plan if line.startswith("OPEN ABOVE THE HIGHER POINT ->"))
+    # 2. A hunt of seated sellers.
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN ->"))
     assert "BUY" in buy
-    assert "a LEVEL, not a gap size" in buy
-    assert "on NIFTY especially above 23500" in buy
-    assert "leave no SLs to hunt" in buy
+    assert "TARGET the sellers" in buy
+    assert "big gap-down and continuous selling" in buy
 
-    # 4. The uncovered case is named, not filled in.
-    gap = next(line for line in note.plan if line.startswith("A GAP UP THAT OPENS BELOW"))
-    assert "IS NOT IN HIS PLAN" in gap
-    assert "GAP_UP verdict alone does not select the buy branch" in gap
+    # 3. The gap-up branch sells, because the gap takes the sellers' stops.
+    gap_up = next(line for line in note.plan if line.startswith("A GOOD GAP UP ->"))
+    assert "SELL, WITH THE MARKET" in gap_up
+    assert "their SLs are no longer near and nobody gets to target them" in gap_up
+    assert "follow the selling already under way" in gap_up
+
+    # 4. With the selling, not the gap -- and only a GOOD gap up.
+    side = next(line for line in note.plan if line.startswith("WITH THE MARKET MEANS"))
+    assert "WITH THE SELLING, NOT THE GAP" in side
+    assert "a GAP_UP verdict selects SELL here, not the OPENING DRIVE gap-up long" in side
+    assert "a marginal positive open is the flat case, which buys" in side
 
     assert [level.model_dump() for level in note.levels] == [
         {
-            # Same drawn lines as 23 Sep (23,500.15 / 23,567.20). He called 23500
-            # the important psychological number and the upper line 23570.
             "index": "NIFTY",
-            "resistance": [23500.0, 23570.0],
-            # 6. "2360 2370" resolved from the frame: 23,369.60 and 23,271.75.
-            "support": [23370.0, 23270.0],
+            # 6. 23,201.20 and 23,271.75 -- the second was support two nights running.
+            "resistance": [23200.0, 23270.0],
+            # 5. "232900" resolved from the frame: 23,001.75 and 22,900.85.
+            "support": [23000.0, 22900.0],
         },
         {
             "index": "BANKNIFTY",
-            "resistance": [56800.0, 57000.0],
-            "support": [56370.0, 56100.0],
+            "resistance": [55800.0, 56000.0],
+            # 5. "550 55000" resolved from the frame: 55,209.90 and 55,005.50.
+            "support": [55200.0, 55000.0],
         },
         {
             "index": "SENSEX",
-            "resistance": [75100.0, 75300.0],
-            "support": [74650.0, 74430.0],
+            "resistance": [74000.0, 74250.0],
+            # 5. "73 330": the line is tagged 73,327.34; recorded as spoken.
+            "support": [73330.0, 73000.0],
         },
     ]
