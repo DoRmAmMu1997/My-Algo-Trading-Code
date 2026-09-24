@@ -13,7 +13,7 @@ import time
 import tomllib
 import unittest
 import warnings
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +41,40 @@ master_file = importlib.util.module_from_spec(spec)
 sys.modules["master_file"] = master_file
 
 # =============================================================================
+# KEEPING Dependencies/.env OUT OF THE SUITE
+# =============================================================================
+# Several repository modules call load_dotenv() on Dependencies/.env as they are
+# imported. Every repository import below goes through _isolated_from_dotenv, and
+# the environment is snapshotted before the first and after the last, so a guard
+# can prove the tests were handed back exactly the environment they started with.
+_ENV_BEFORE_REPO_IMPORTS = dict(os.environ)
+_DOTENV_ISOLATED_LOADS: list[str] = []
+
+
+@contextmanager
+def _isolated_from_dotenv(name: str, env: dict[str, str] | None = None):
+    """Run a repository module's import as if Dependencies/.env did not exist.
+
+    The master, dhan_execution and flattrade_execution all call load_dotenv() at
+    IMPORT time. Unguarded, that did two separate things on the trading machine,
+    and CI -- which has no .env -- saw neither:
+
+    * it copied the operator's whole .env (flags and broker credentials alike)
+      into os.environ for every test that followed; and
+    * it let those values decide the modules' import-time CONSTANTS, so a test
+      could pass in CI and fail on the operator's box, or the other way round.
+
+    Measured 2026-09-23 with a throwaway .env of 616 placeholder keys: all 616
+    leaked into os.environ and 21 tests changed outcome. Stubbing load_dotenv
+    stops the file being read at all; patch.dict restores the environment
+    exactly, and carries any value a load genuinely needs via ``env``.
+    """
+    _DOTENV_ISOLATED_LOADS.append(name)
+    with patch.dict(os.environ, env or {}), patch("dotenv.load_dotenv", return_value=False):
+        yield
+
+
+# =============================================================================
 # MOCKING (FAKE DATA) FOR SAFE TESTING
 # =============================================================================
 # We do not want our tests to accidentally place real trades or connect to
@@ -54,13 +88,13 @@ sys.modules["master_file"] = master_file
 # switch the agent on -- CI has no .env, so every one of them skipped there, under
 # a message blaming missing packages that were in fact installed. Production is
 # unaffected: the master reads the flag ONCE, into a module constant at import,
-# its default stays off, and patch.dict restores the environment the moment the
-# load finishes. The master loads .env with override=False, so this value also
-# wins on a machine whose .env says otherwise -- every environment agrees.
+# its default stays off, and the environment is restored the moment the load
+# finishes. The .env is not read during the load at all (see _isolated_from_dotenv
+# above), so every environment agrees.
 _SL_HUNTING_ENV_BEFORE_LOAD = os.environ.get("SL_HUNTING_ENABLED")
 with (
-    patch.dict(
-        os.environ,
+    _isolated_from_dotenv(
+        "master_file",
         {"DHAN_CLIENT_CODE": "test", "DHAN_TOKEN_ID": "test", "SL_HUNTING_ENABLED": "true"},
     ),
     patch("dhanhq.dhanhq"),
@@ -70,11 +104,10 @@ with (
         spec.loader.exec_module(master_file)
     except Exception as e:
         print(f"Failed to load master_file for testing: {e}")
-# Read back the moment the load ends, not later: the flattrade module this suite
-# imports next calls load_dotenv() at import time, OUTSIDE any patch.dict, so on a
-# machine with a Dependencies/.env the process environment picks up the
-# operator's values anyway. That is a separate, pre-existing leak -- what the
-# guard below pins is that THIS loader puts back exactly what it found.
+# Read back the moment the load ends, not later, so the guard below pins what THIS
+# loader put back, independent of anything imported after it. (Before the Flattrade
+# imports were isolated too, a later load_dotenv() re-read .env on the operator's
+# machine, which made the live environment the wrong thing to check.)
 _SL_HUNTING_ENV_AFTER_LOAD = os.environ.get("SL_HUNTING_ENABLED")
 
 
@@ -138,7 +171,8 @@ if flattrade_file_path.is_file():
     )
     flattrade_module = importlib.util.module_from_spec(flattrade_spec)
     sys.modules["flattrade_execution_under_test"] = flattrade_module
-    flattrade_spec.loader.exec_module(flattrade_module)
+    with _isolated_from_dotenv("flattrade_execution_under_test"):
+        flattrade_spec.loader.exec_module(flattrade_module)
 
 flattrade_diagnostic_path = (
     REPO_ROOT
@@ -157,8 +191,14 @@ if flattrade_diagnostic_path.is_file():
     sys.modules["diagnose_flattrade_symbol_under_test"] = flattrade_diagnostic_module
     # The diagnostic imports its sibling module by name, just like a standalone
     # invocation. Temporarily expose the already-loaded, network-free test copy.
-    with patch.dict(sys.modules, {"flattrade_execution": flattrade_module}):
+    with (
+        patch.dict(sys.modules, {"flattrade_execution": flattrade_module}),
+        _isolated_from_dotenv("diagnose_flattrade_symbol_under_test"),
+    ):
         flattrade_diagnostic_spec.loader.exec_module(flattrade_diagnostic_module)
+
+# The last module-level repository import. What the guards compare against.
+_ENV_AFTER_REPO_IMPORTS = dict(os.environ)
 
 
 # =============================================================================
@@ -4841,6 +4881,78 @@ class TestLongStrangleWorker(unittest.TestCase):
         exit_modes = [c.args[0].get("mode") for c in events.put_nowait.call_args_list
                       if c.args[0].get("action") == "EXIT"]
         self.assertEqual(exit_modes, ["PAPER_FALLBACK"])
+
+
+class TestSuiteImportsLeaveTheEnvironmentAlone(unittest.TestCase):
+    """The suite must run the same with or without a Dependencies/.env.
+
+    See _isolated_from_dotenv for what went wrong without this. Failures here name
+    environment variables ONLY, never their values: on the trading machine a value
+    can be a live broker credential.
+    """
+
+    def test_the_suites_imports_changed_no_environment_variable(self):
+        """Behavioural: catches ANY repository import that alters the environment,
+        wherever a .env exists. (Blind in CI, which has none -- hence the two below.)"""
+        before, after = _ENV_BEFORE_REPO_IMPORTS, _ENV_AFTER_REPO_IMPORTS
+        added = sorted(after.keys() - before.keys())
+        removed = sorted(before.keys() - after.keys())
+        changed = sorted(key for key in before.keys() & after.keys() if before[key] != after[key])
+        self.assertEqual(
+            (added, removed, changed),
+            ([], [], []),
+            "this module's imports altered os.environ (variable names only): "
+            f"added={added} removed={removed} changed={changed}",
+        )
+
+    def test_an_isolated_load_reads_nothing_from_a_real_dotenv(self):
+        """Provable anywhere, with no real .env: a throwaway module and .env in a temp
+        dir, loaded with the REAL load_dotenv. The bare load is the control -- it must
+        pick the value up, or this test would prove nothing."""
+        canary = "MAT_HERMETIC_IMPORT_CANARY"
+        self.assertNotIn(canary, os.environ)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text(f"{canary}=leaked\n", encoding="utf-8")
+            (root / "dotenv_probe.py").write_text(
+                "import os\n"
+                "from pathlib import Path\n"
+                "from dotenv import load_dotenv\n"
+                "load_dotenv(dotenv_path=Path(__file__).with_name('.env'), override=False)\n"
+                f"CAPTURED = os.environ.get({canary!r})\n",
+                encoding="utf-8",
+            )
+
+            def load(isolated: bool):
+                spec = importlib.util.spec_from_file_location("dotenv_probe", root / "dotenv_probe.py")
+                module = importlib.util.module_from_spec(spec)
+                if isolated:
+                    with _isolated_from_dotenv("dotenv_probe"):
+                        spec.loader.exec_module(module)
+                else:
+                    spec.loader.exec_module(module)
+                return module
+
+            try:
+                bare = load(isolated=False)
+                bare_leaked = canary in os.environ
+                os.environ.pop(canary, None)
+                isolated = load(isolated=True)
+                isolated_leaked = canary in os.environ
+            finally:
+                os.environ.pop(canary, None)
+
+        self.assertEqual(bare.CAPTURED, "leaked", "control failed: the probe never read its .env")
+        self.assertTrue(bare_leaked, "control failed: the bare load left nothing behind")
+        self.assertIsNone(isolated.CAPTURED, "an isolated load baked a .env value into a constant")
+        self.assertFalse(isolated_leaked, "an isolated load left a .env value in os.environ")
+
+    def test_every_dotenv_loading_import_goes_through_the_isolation(self):
+        """Structural, and the one that holds in CI: a bare exec_module for any of
+        these would pass there and misbehave only on the trading machine -- exactly
+        the green-in-CI, red-on-the-box failure this class exists for."""
+        for name in ("master_file", "flattrade_execution_under_test", "diagnose_flattrade_symbol_under_test"):
+            self.assertIn(name, _DOTENV_ISOLATED_LOADS)
 
 
 class TestSlHuntingWorkerActuallyLoads(unittest.TestCase):
