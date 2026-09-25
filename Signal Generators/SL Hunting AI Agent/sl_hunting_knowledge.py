@@ -2782,7 +2782,8 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
     — even if it gives no profit."
     So a trailing index must be classified before it is acted on, and the test is
     its SIGN, not its distance: an index that is FLAT or positive-but-slower has not
-    refused, it has not arrived yet. One that has gone NEGATIVE, or printed its own
+    refused, it has not arrived yet -- unless it moved BEFORE your entry (v5l,
+    below). One that has gone NEGATIVE, or printed its own
     confirmed reversal, is the disqualifying case — and that is THE
     STALL-OR-REVERSAL TEST in the basket rules, not this one.
     Measured on this book (2026-08-28): a long basket up +968.75 was closed 100
@@ -2794,6 +2795,42 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
     always right — the NIFTY leg was genuinely stalling at its pivot, which is a
     fair v4f book on its own — but the LAGGARD half of that reasoning was the
     wrong half, and it is the half this scope limit governs.
+  * AN INDEX THAT MOVED BEFORE YOUR ENTRY IS NOT LATE, IT IS SPENT (v5l). v4r's
+    test reads the trailing index's SIGN, and flat means "has not arrived yet".
+    That only holds for an index that has not moved. Ask WHEN it moved before you
+    ask where it is: if it made its move before you entered, flat now is not a
+    move still to come -- it is a move already made. Its first stall is then an
+    exit on its own, the leader-spent half of the tell above, and it does not
+    need the laggards to be absent: here they broke out and still could not
+    carry the trade.
+    IH LOST ON EXACTLY THIS (25 Sep 2026), and named it himself. He bought all
+    three indices at 09:20-09:21 to hunt sellers seated by 24 Sep's fall. By
+    09:31 "Sensex and NIFTY have given a good breakout, but BankNIFTY has tried
+    to stay back"; he held, as v4r would; at 09:37 all three rejected, and at
+    09:43 he cut at his limit, about 3.05 lakh down. His diagnosis: "BankNIFTY
+    created the most problem, because its positive momentum came FIRST. Then we
+    made the entry, and the rejection came later, and bigger. If it had held
+    itself up a little, we could have borne the Sensex and NIFTY rejection." His
+    own chart shows the whole BankNIFTY move in the opening candles, to about
+    55,640, before any entry was possible.
+    THE BOOK READ IT AND BOOKED. Its long from 23,093.05 at 09:23 was closed at
+    09:30 at 23,109.50 because BankNIFTY had double-topped (55,611.95 /
+    55,619.50) at resistance, below that opening high -- +648.75 -- and at 09:38
+    it sold the rejection IH sat through, +2,874.00. The day was +3,654.75
+    across four trades while the same read cost him his limit.
+    THE TWO CASES, SIDE BY SIDE. v4r's 28 Aug index was flat at entry and broke
+    out later in the session: it had not arrived, and holding paid. 25 Sep's
+    had arrived in the first candles and never made a new high: it was spent,
+    and holding lost. Same sign at the moment of the decision, opposite answer
+    -- decided by when the move happened.
+    PRACTICAL FORM: before keeping a trade on "only one index trails", find that
+    index's high (or low) of the session so far. If it was printed BEFORE your
+    entry and has not been exceeded since, the index is spent, and its stall at
+    that extreme -- a double top is the clean form -- is the exit, however well
+    the other two are doing.
+    LIMIT: carried on IH's session and one booked exit. The book cannot price it
+    yet -- the BankNIFTY history on disk stops in 2023 and the decisions log
+    holds no BankNIFTY prices -- so it is a scope on v4r, not a gate.
 - LAGGING-INDEX ENTRY LOCATOR: when the day direction is ALREADY established from
   retail positioning and the triple-index read, but NIFTY / Sensex are moving too
   quickly to offer a controlled entry, use the lagging index (often BankNIFTY) to
