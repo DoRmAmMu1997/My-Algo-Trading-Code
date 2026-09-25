@@ -289,7 +289,7 @@ def build_cpr_algo4_frame(ohlc: pd.DataFrame, config: CPRAlgo4Config | None = No
 # ---------------------------------------------------------------------------
 # Small pure helpers.
 # ---------------------------------------------------------------------------
-def _num(row: Mapping[str, Any], key: str) -> float:
+def _num(row: Mapping[Any, Any], key: str) -> float:
     """Read one numeric field as a float; missing or non-finite -> NaN."""
     value = row.get(key)
     if value is None:
@@ -506,7 +506,7 @@ class CPRAlgo4Engine:
         self._blocked_entry_bar = pd.Timestamp(exit_bar_ts)
 
     # -- per-bar entry point --------------------------------------------------
-    def on_bar(self, row: Mapping[str, Any], plan: CPRAlgo4TradePlan | None = None) -> CPRAlgo4Decision:
+    def on_bar(self, row: Mapping[Any, Any], plan: CPRAlgo4TradePlan | None = None) -> CPRAlgo4Decision:
         """Update the session state with one completed bar and return a decision.
 
         With `plan` given (a position is open) the answer is EXIT, SCALE_IN or
