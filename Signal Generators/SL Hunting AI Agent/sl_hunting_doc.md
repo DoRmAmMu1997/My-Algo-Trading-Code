@@ -8170,3 +8170,94 @@ rewording that passes.
 
 Limits: one day, and the entry-extreme analysis reads the range from completed
 1-minute bars, which is small and noisy early in a session.
+
+
+## v5l - an index that moved before your entry is not late, it is spent (25 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (Y0tPI9uWJVU,
+uploaded 2026-09-25 10:26 IST), traded on the previous evening's 'Prediction
+For 25 SEP 2026' (mlKuAuR_U2I) -- plus this book's own four trades. His clock
+times are read off the taskbar clock in the video frame and his figures off his
+positions screen at 09:43; his words are my translation of the Hindi
+auto-transcript. Written while the session was still open, so today's NIFTY
+path comes from the decisions log (one print a minute), not the 1-minute CSV.
+
+### Same read, opposite day
+
+Both books read the open the same way: FLAT (-0.12% on NIFTY and BankNIFTY,
+inside the note's ladder, so v5k did not apply), sellers seated by 24 Sep's
+gap-down and selling, so BUY to hunt them. IH bought all three indices at
+09:20-09:21 and held; the agent bought at 09:23 and booked seven minutes later.
+
+IH's positions at his exit, 09:43:
+
+| leg | qty | avg | LTP | P&L |
+|---|---|---|---|---|
+| BANKNIFTY SEP 55500 CE | 1,170 | 464.71 | 371.65 | -1,08,879.70 |
+| BANKNIFTY SEP 55600 CE | 1,170 | 391.65 | 315.55 | -89,036.50 |
+| SENSEX 1st OCT 73700 CE | 900 | 576.12 | 496.20 | -71,928.00 |
+| NIFTY SEP 23100 CE | 1,430 | 135.17 | 110.60 | -35,135.10 |
+| total | | | | **-3,04,979.30** |
+
+| time | IH | the agent |
+|---|---|---|
+| 09:15-09:17 | | BankNIFTY's whole up-move prints in the opening candles, to about 55,640 (his chart) |
+| 09:20-09:21 | buys all three | |
+| 09:23 | | LONG 23,093.05 |
+| 09:24 | "some loss" | |
+| 09:30 | | books 23,109.50: BankNIFTY double top 55,611.95 / 55,619.50 at resistance, **+648.75** |
+| 09:31 | "Sensex and NIFTY have given a good breakout, but BankNIFTY has tried to stay back" -- holds | |
+| 09:37 | "sudden rejection" in all three | |
+| 09:38 | | SHORT 23,090.30 into the rejection |
+| 09:43 | cuts at his limit, **-3,04,979.30** | |
+| 09:50 | | books 23,056.70 at the prior-day low, **+2,874.00** |
+| 10:04-10:11 | | LONG 23,068.35 on a closing-point reclaim, booked at 23,097.00: **+3,282.00** |
+| 10:28-10:31 | | SHORT 23,092.90, cut on BankNIFTY's reversal: **-3,150.00** |
+
+Day **+3,654.75**; IH -3,04,979.30. His own post-mortem: "BankNIFTY created the
+most problem, because its positive momentum came first. Then we made the entry,
+and the rejection came later, and bigger. If it had held itself up a little, we
+could have borne the Sensex and NIFTY rejection."
+
+Trade 2 went against the pre-open note's FLAT -> BUY branch ("live confirmed
+reversal price action overrides the advisory"), which is what the note channel
+was built to allow: it is advisory, and the agent's own read wins (SLH-006).
+
+### Trade 4: NIFTY right, basket wrong
+
+Trade 4 made +4.20 NIFTY points and lost -3,150.00 on the basket, so the
+BankNIFTY leg lost more than the whole basket. Two things stacked. The NIFTY
+stop was 10.1 points away, so risk sizing took 3 lots, and the mirror copies
+lot count; and in expiry week the mirror buys a 4-step ITM strike (BNF-002) --
+the 55900 PE was mostly intrinsic (about 372 of its 438.75 at entry), so it
+tracks BankNIFTY closely. The ~50-point BankNIFTY bounce the exit cited
+outweighed the NIFTY leg. The exit itself followed INDEX HIERARCHY ON THE WAY OUT. The mirror's
+extra risk is operator-accepted, so this is recorded, not encoded.
+
+### v5l
+
+A sub-bullet of LAGGARDS NEVER JOINED, directly after v4r, with a one-line
+pointer inside v4r. v4r says a trailing index that is flat has "not arrived
+yet" -- measured on 28 Aug, when the flat index broke out later and holding
+paid. v5l asks WHEN it moved: an index that made its move before your entry and
+has not exceeded that extreme since is spent, not late, and its stall there --
+a double top is the clean form -- is an exit on its own, even while the other
+two break out. Same sign at the decision on both days; opposite answer,
+decided by timing.
+
+Test: `test_v5l_an_index_that_moved_before_entry_is_spent_not_late`, seven
+clauses plus the pointer in v4r. Negative-tested with nine mutations of the
+rule text (one per clause, the pointer, and an orphaned heading) -- all caught
+-- and a control rewording that passes.
+
+### What it cannot claim
+
+It is not priced. The BankNIFTY 1-minute history on disk stops in 2023 and the
+decisions log carries no BankNIFTY prices, so "did the trailing index move
+before entry" cannot be replayed across the journal. It is carried on IH's
+session and one booked exit, as a scope on v4r and not a gate. Pricing it needs
+BankNIFTY bars for Jul-Sep 2026 -- a fetch best run after market hours, since
+the runner shares the Dhan session during the day.
+
+Also recorded: the first two decisions of the day were agent errors (a timeout
+at 09:16, then "previous agent call still running" at 09:17).

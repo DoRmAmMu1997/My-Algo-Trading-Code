@@ -2938,6 +2938,71 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "the premise has not failed -- but the trade has" in rule
 
 
+def test_v5l_an_index_that_moved_before_entry_is_spent_not_late():
+    """v5l (25 Sep): v4r's "flat = not arrived yet" needs a WHEN.
+
+    IH held a basket because only BankNIFTY trailed -- v4r's reading -- and
+    lost his limit; BankNIFTY had made its whole move before he entered. The
+    book booked on that index's double top and sold the rejection. Seven ways
+    an edit breaks it:
+
+    1. Losing that it SCOPES v4r rather than replacing it. Read alone it
+       contradicts v4r's sign test, which 28 Aug proved right.
+    2. Losing "does not need the laggards to be absent". Without it the rule
+       collapses into LAGGARDS NEVER JOINED, whose tell pairs a spent leader
+       WITH absent laggards -- and on 25 Sep the laggards broke out.
+    3. Losing IH's own diagnosis, in the first person. He is the evidence.
+    4. Losing the book's exit and what it then traded. That is the only
+       measured half, and it is what separates this from a story.
+    5. Losing the side-by-side with 28 Aug. The two sessions share a sign at
+       the decision and differ only in timing; apart, each looks like noise.
+    6. Losing the practical form -- the session extreme printed BEFORE entry
+       -- which is what turns "when did it move" into something checkable.
+    7. Losing the limit. Unpriced, it must not be quoted as a gate.
+    Plus the pointer from v4r itself, so v4r's reader meets the scope.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "AN INDEX THAT MOVED BEFORE YOUR ENTRY IS NOT LATE, IT IS SPENT")
+
+    # 1. A scope on v4r, and the question it adds.
+    assert "v4r's test reads the trailing index's SIGN" in rule
+    assert "That only holds for an index that has not moved" in rule
+    assert "Ask WHEN it moved before you ask where it is" in rule
+
+    # 2. Not LAGGARDS NEVER JOINED in disguise.
+    assert "the leader-spent half of the tell above" in rule
+    assert "it does not need the laggards to be absent" in rule
+
+    # 3. IH's diagnosis, first person.
+    assert "IH LOST ON EXACTLY THIS" in rule
+    assert "he held, as v4r would" in rule
+    assert "its positive momentum came FIRST" in rule
+    assert "the rejection came later, and bigger" in rule
+    assert "about 3.05 lakh down" in rule
+
+    # 4. What the book did.
+    assert "THE BOOK READ IT AND BOOKED" in rule
+    assert "BankNIFTY had double-topped (55,611.95 / 55,619.50)" in rule
+    assert "+648.75" in rule and "+2,874.00" in rule
+    assert "The day was +3,654.75" in rule
+
+    # 5. The two cases share a sign and differ in timing.
+    assert "v4r's 28 Aug index was flat at entry and broke out later" in rule
+    assert "Same sign at the moment of the decision, opposite answer" in rule
+
+    # 6. The checkable form.
+    assert "If it was printed BEFORE your entry and has not been exceeded since" in rule
+    assert "a double top is the clean form" in rule
+
+    # 7. Not a gate.
+    assert "The book cannot price it yet" in rule
+    assert "it is a scope on v4r, not a gate" in rule
+
+    # The pointer inside v4r, so its "not arrived yet" reading meets the scope.
+    v4r = _flat_rule(prompt, "LAGGARDS NEVER JOINED")
+    assert "it has not arrived yet -- unless it moved BEFORE your entry (v5l, below)" in v4r
+
+
 def test_v5k_a_gap_through_the_stops_has_already_hunted_the_notes_crowd():
     """v5k (24 Sep): v5f's other end -- an open too BIG to leave the crowd.
 
