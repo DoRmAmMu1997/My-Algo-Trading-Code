@@ -228,7 +228,7 @@ class ChartCpr:
             "unavailable_reason": self.unavailable_reason,
             "caveat": (
                 "Chart CPR reads the prior session 09:15-15:15 -- high, low AND close. "
-                "The live CPR, CPR Algo 3 and CPR AI strategies use the full session and "
+                "The live CPR, CPR Algo 3, CPR Algo 4 and CPR AI strategies use the full session and "
                 "its last intraday close, so their levels differ slightly. These lines are "
                 "for the eye only and move nothing."
             ),

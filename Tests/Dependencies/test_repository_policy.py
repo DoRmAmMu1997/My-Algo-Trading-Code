@@ -555,7 +555,7 @@ def test_cpr_ai_documentation_rejects_obsolete_arbiter_and_worker_disable_guidan
 
 
 def test_current_architecture_docs_distinguish_core_from_optional_agents():
-    """A 27-core description must not masquerade as the enabled total."""
+    """A 28-core description must not masquerade as the enabled total."""
 
     architecture_files = (
         ROOT / "README.md",
@@ -580,19 +580,31 @@ def test_current_architecture_docs_distinguish_core_from_optional_agents():
             )
 
         for line_number, line in enumerate(text.splitlines(), start=1):
-            normalized = line.lower().replace("twenty-seven", "27")
-            has_27_roster_claim = re.search(
-                r"(?<!\d)(?:~|approximately\s+)?27(?!\d)", normalized
-            ) and re.search(
+            normalized = (
+                line.lower().replace("twenty-eight", "28").replace("twenty-seven", "27")
+            )
+            names_a_roster = re.search(
                 r"\b(?:strategyworker|workers?|consumers?|strateg(?:y|ies))\b",
                 normalized,
             )
-            # Regime Adaptive legitimately makes the core approximately 27,
-            # but two optional agents mean 27 can no longer describe the
-            # complete configured or running worker total.
-            if has_27_roster_claim and "core" not in normalized:
+            if not names_a_roster:
+                continue
+            # CPR Algo 4 legitimately makes the core approximately 28, but two
+            # optional agents mean 28 can no longer describe the complete
+            # configured or running worker total.
+            if (
+                re.search(r"(?<!\d)(?:~|approximately\s+)?28(?!\d)", normalized)
+                and "core" not in normalized
+            ):
                 failures.append(
                     f"{path.relative_to(ROOT).as_posix()}:{line_number}: {line.strip()}"
+                )
+            # 27 was the core count before CPR Algo 4; a roster claim still
+            # using it is stale, the same way 26 became stale before it.
+            if re.search(r"(?<!\d)(?:~|approximately\s+)?27(?!\d)", normalized):
+                failures.append(
+                    f"{path.relative_to(ROOT).as_posix()}:{line_number}: stale 27-strategy roster: "
+                    f"{line.strip()}"
                 )
 
         if re.search(

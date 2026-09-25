@@ -36,6 +36,7 @@ component folder's own `Readme.md`.
 | SL Hunting AI Agent (optional, Claude) | [`lld/sl-hunting-ai-agent.md`](lld/sl-hunting-ai-agent.md) |
 | CPR Codex AI Agent (optional, Codex) | [`lld/cpr-codex-ai-agent.md`](lld/cpr-codex-ai-agent.md) |
 | Regime Adaptive router | [`lld/regime-adaptive.md`](lld/regime-adaptive.md) |
+| CPR Algo 4 (deterministic Intraday SRSI VWAP) | [`lld/cpr-algo4.md`](lld/cpr-algo4.md) |
 | Configuration and drift detection | [`lld/configuration.md`](lld/configuration.md) |
 | Telegram alerts, EOD P&L sheet, logging | [`lld/reporting-and-observability.md`](lld/reporting-and-observability.md) |
 | Read-only loopback monitoring dashboard (optional) | [`lld/monitoring-dashboard.md`](lld/monitoring-dashboard.md) |
@@ -63,6 +64,7 @@ component folder's own `Readme.md`.
 | [0015](adr/0015-rolling-relative-strike-expired-options.md) | Expired-options history kept in rolling relative-strike form, expiry date derived |
 | [0016](adr/0016-read-only-loopback-monitoring-dashboard.md) | A read-only loopback dashboard, served by the runner itself |
 | [0017](adr/0017-chart-only-cpr-on-a-truncated-prior-session.md) | The dashboard's CPR reads a truncated prior session; the strategies' does not |
+| [0018](adr/0018-cpr-algo4-as-separate-worker.md) | CPR Algo 4 is its own worker, not a fourth algo inside the CPR worker |
 
 ## Keeping these documents honest
 
