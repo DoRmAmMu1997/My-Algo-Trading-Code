@@ -9436,6 +9436,83 @@ class TestCPRAlgo4StrategyWorker(unittest.TestCase):
         naive_now = datetime(2026, 5, 6, 9, 59, 30)
         self.assertEqual(len(master_file.CPRAlgo4StrategyWorker._completed_minutes_only(frame, naive_now)), 2)
 
+    def test_frame_is_rebuilt_only_when_completed_minutes_change(self):
+        minutes = pd.DataFrame({
+            "timestamp": pd.date_range("2026-05-06 09:15", periods=10, freq="1min"),
+            "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0,
+        })
+        built = pd.DataFrame({"timestamp": [pd.Timestamp("2026-05-06 09:15")]})
+        with patch.object(master_file.CPR_ALGO4_LOGIC, "build_cpr_algo4_frame", return_value=built) as build:
+            first = self.worker.build_strategy_frame(minutes)
+            again = self.worker.build_strategy_frame(minutes.copy())  # the same completed minutes
+            self.assertEqual(build.call_count, 1)
+            self.assertIs(again, first)
+            one_more = pd.concat(
+                [minutes, minutes.tail(1).assign(timestamp=pd.Timestamp("2026-05-06 09:25"))],
+                ignore_index=True,
+            )
+            self.worker.build_strategy_frame(one_more)
+            self.assertEqual(build.call_count, 2)
+
+    def test_no_spurious_trend_flip_log_when_a_new_session_starts(self):
+        # Yesterday ended TRENDING UP; today's first bar resets the engine and
+        # the day type is not known until 09:25, so nothing must be logged.
+        self.worker._logged_regime_session = date(2026, 5, 5)
+        self.worker._logged_trend_dir = "UP"
+        self.worker.engine.on_bar(self._bar("09:15", 22025, 22030, 22020, 22028))
+        with self.assertNoLogs(self.worker.log, level="INFO"):
+            self.worker._log_session_state()
+
+    def test_paper_add_is_reported_as_its_own_open_position(self):
+        self._open()
+        self.assertEqual([slot for slot, _ in self.worker._owned_open_positions()], ["pos"])
+        self.worker._get_dealable_option_ltp = MagicMock(return_value=(114.0, True))
+        self.assertTrue(self.worker._execute_scale_in())
+        state = self.worker._algo4_state
+        slots = dict(self.worker._owned_open_positions())
+        self.assertEqual(set(slots), {"pos", "add_pos"})
+        self.assertIs(slots["pos"], self.worker.pos)
+        self.assertEqual(slots["add_pos"].quantity, state.add_quantity)
+        self.assertEqual(slots["add_pos"].entry_trade_price, 114.0)
+        # The primary position itself is untouched (the two-leg exit relies on it).
+        self.assertEqual(self.worker.pos.quantity, state.initial_filled_quantity)
+
+    def _one_poll(self):
+        """Run exactly one iteration of the (shared) run loop."""
+
+        def stop_after_this_poll():
+            raise StopIteration("one poll")
+
+        self.worker.wait_for_next_poll = stop_after_this_poll
+        self.worker.minimum_source_rows = lambda: 1
+        self.store.update("1", pd.DataFrame([{
+            "timestamp": pd.Timestamp("2026-05-06 09:35"),
+            "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1,
+        }]))
+        with patch.object(master_file, "is_before_time", return_value=False), \
+                patch.object(master_file, "is_after_time", return_value=False), \
+                patch.object(self.worker, "_handle_market_data_health", return_value=False), \
+                self.assertRaisesRegex(StopIteration, "one poll"):
+            self.worker.run()
+
+    def test_run_checks_the_spot_stop_every_poll_before_any_bar_work(self):
+        calls = MagicMock()
+        calls.spot.return_value = False
+        calls.build.return_value = pd.DataFrame()
+        self.worker._check_spot_boundaries = calls.spot
+        self.worker.build_strategy_frame = calls.build
+        self._one_poll()
+        self.assertEqual([name for name, _args, _kwargs in calls.mock_calls][:2], ["spot", "build"])
+
+    def test_run_skips_bar_work_on_a_poll_that_attempted_an_exit(self):
+        calls = MagicMock()
+        calls.spot.return_value = True
+        self.worker._check_spot_boundaries = calls.spot
+        self.worker.build_strategy_frame = calls.build
+        self._one_poll()
+        calls.spot.assert_called_once()
+        calls.build.assert_not_called()
+
     def test_entry_cutoff_blocks_new_entries(self):
         with patch.object(self.worker, "_at_or_after_entry_cutoff", return_value=True):
             self.worker._act_on_decision(

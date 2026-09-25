@@ -119,6 +119,7 @@ def _gap_aware_fill(plan: CPRAlgo4TradePlan, reason: str, level: float, bar_open
 
 
 def _points(trade: _OpenTrade, exit_price: float) -> float:
+    """Spot points for the whole trade: the primary unit plus the R1 add, if one was taken."""
     sign = 1.0 if trade.plan.is_long else -1.0
     points = sign * (exit_price - trade.plan.entry)
     if math.isfinite(trade.add_price):

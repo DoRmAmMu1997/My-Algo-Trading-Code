@@ -569,6 +569,17 @@ def test_current_architecture_docs_distinguish_core_from_optional_agents():
         ROOT / "docs/hld/system-overview.md",
     )
     failures: list[str] = []
+
+    def roster_claim(count: int) -> re.Pattern[str]:
+        # The count used AS a roster size ("~28", "approximately 28", "28 core",
+        # "28-strategy", "28 workers") -- never a bare number such as the day of
+        # a date ("2026-10-28: ... strategy"), which would fail CI for nothing.
+        return re.compile(
+            rf"(?:~|approximately\s+){count}(?!\d)"
+            rf"|(?<![\d-]){count}[\s-]+(?:core|strateg|workers?|consumers?)"
+        )
+
+    current_core, stale_core = roster_claim(28), roster_claim(27)
     for path in architecture_files:
         text = path.read_text(encoding="utf-8")
         lower = text.lower()
@@ -592,16 +603,13 @@ def test_current_architecture_docs_distinguish_core_from_optional_agents():
             # CPR Algo 4 legitimately makes the core approximately 28, but two
             # optional agents mean 28 can no longer describe the complete
             # configured or running worker total.
-            if (
-                re.search(r"(?<!\d)(?:~|approximately\s+)?28(?!\d)", normalized)
-                and "core" not in normalized
-            ):
+            if current_core.search(normalized) and "core" not in normalized:
                 failures.append(
                     f"{path.relative_to(ROOT).as_posix()}:{line_number}: {line.strip()}"
                 )
             # 27 was the core count before CPR Algo 4; a roster claim still
             # using it is stale, the same way 26 became stale before it.
-            if re.search(r"(?<!\d)(?:~|approximately\s+)?27(?!\d)", normalized):
+            if stale_core.search(normalized):
                 failures.append(
                     f"{path.relative_to(ROOT).as_posix()}:{line_number}: stale 27-strategy roster: "
                     f"{line.strip()}"

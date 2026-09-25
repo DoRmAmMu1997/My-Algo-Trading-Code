@@ -41,10 +41,11 @@ The operator's "Intraday SRSI VWAP" document splits every day in two:
      - skip the trade if the stop is more than 30 NIFTY points away;
      - skip it if the next CPR level (less a 2-point buffer: "cut the trade 2
        points short of the next level") is closer than 1:1;
-     - TARGET exit mode books at the earlier of 1:1 and that buffered level
-       (sideways trades may also book at the first-30-minute high/low when the
-       operator turns that option on). Because of the 1:1 entry rule, the next
-       level is never nearer than 1:1, so in practice TARGET mode books at 1R;
+     - TARGET exit mode books at the earlier of 1:1 and that buffered level.
+       Because of the 1:1 entry rule, the next level is never nearer than 1:1,
+       so in practice TARGET mode books at 1R;
+     - sideways trades may also book at the first-30-minute high/low when the
+       operator turns that option on ("target 4") -- in either exit mode;
      - TRAIL exit mode instead moves the stop to breakeven at the first
        milestone and then trails candle by candle (exit when a candle closes
        below the previous candle's low, or above its high for puts). Reversal
@@ -207,7 +208,7 @@ class CPRAlgo4TradePlan:
     current_stop: float
     first_milestone: float
     following_milestone: float
-    target: float  # NaN in TRAIL mode (no fixed target)
+    target: float  # NaN in TRAIL mode unless the first-30-minute target applies
     final_target: float  # buffered R2 / S2: always books
     exit_mode: str
     entry_bar_ts: pd.Timestamp | None = None
@@ -217,6 +218,7 @@ class CPRAlgo4TradePlan:
 
     @property
     def is_long(self) -> bool:
+        """True for a bought CALL (a bullish trade)."""
         return self.direction == "LONG"
 
     def ratchet_stop(self, candidate: float) -> None:
@@ -302,6 +304,7 @@ def _num(row: Mapping[Any, Any], key: str) -> float:
 
 
 def _finite(*values: float) -> bool:
+    """True only when every value is a real number (no NaN or infinity)."""
     return all(math.isfinite(value) for value in values)
 
 
@@ -400,18 +403,19 @@ def build_trade_plan(
     following_level = _earliest(long, beyond_first) if beyond_first else final_target
     following_milestone = _earliest(long, [two_r, following_level])
 
-    target = math.nan
-    if config.exit_mode == "TARGET":
-        candidates = [one_r, milestone]
-        # The optional first-30-minute extreme only counts when it lies ahead of entry.
-        first30_ahead = (
-            first30_extreme is not None
-            and math.isfinite(first30_extreme)
-            and (first30_extreme > entry if long else first30_extreme < entry)
-        )
-        if first30_ahead and first30_extreme is not None:
-            candidates.append(float(first30_extreme))
-        target = _earliest(long, candidates)
+    # TARGET mode books at the earlier of 1R and the buffered next level. The
+    # optional first-30-minute extreme ("target 4") is a booking level in BOTH
+    # modes -- in TRAIL mode it is the only fixed one -- but only when it lies
+    # ahead of entry.
+    candidates = [one_r, milestone] if config.exit_mode == "TARGET" else []
+    first30_ahead = (
+        first30_extreme is not None
+        and math.isfinite(first30_extreme)
+        and (first30_extreme > entry if long else first30_extreme < entry)
+    )
+    if first30_ahead and first30_extreme is not None:
+        candidates.append(float(first30_extreme))
+    target = _earliest(long, candidates) if candidates else math.nan
 
     plan = CPRAlgo4TradePlan(
         direction="LONG" if long else "SHORT",
@@ -479,6 +483,7 @@ class CPRAlgo4Engine:
 
     # -- session memory -------------------------------------------------------
     def _reset_session(self, session: date | None) -> None:
+        """Forget everything about the previous session (called on a new date)."""
         self.session_date: date | None = session
         self.regime: str | None = None
         self.trend_dir: str | None = None  # "UP" / "DOWN" on trending days
@@ -538,6 +543,7 @@ class CPRAlgo4Engine:
 
     # -- state updates ----------------------------------------------------------
     def _update_regime(self, ts: pd.Timestamp, close: float, levels: Mapping[str, float]) -> None:
+        """Decide the day type once, from the 09:25 bar's close; a missing 09:25 bar means NO_TRADE."""
         if self.regime is not None:
             return
         bar_time = ts.time()
@@ -552,6 +558,7 @@ class CPRAlgo4Engine:
             self.regime = REGIME_NO_TRADE
 
     def _update_first30(self, ts: pd.Timestamp, bar: Mapping[str, float]) -> None:
+        """Track the high/low of the first 30 minutes (the 09:15-09:40 bars) for target 4."""
         if self._first30_complete:
             return
         if ts.time() > self.config.first30_last_bar:
@@ -629,6 +636,7 @@ class CPRAlgo4Engine:
 
     # -- entries ------------------------------------------------------------------
     def _bar_before_cutoff(self, ts: pd.Timestamp) -> bool:
+        """True when this bar ENDS before the entry cutoff (the 14:55 bar ends at 15:00: too late)."""
         bar_end = ts + pd.Timedelta(minutes=self.config.bar_minutes)
         return bar_end.date() == ts.date() and bar_end.time() < self.config.entry_cutoff
 
@@ -641,6 +649,12 @@ class CPRAlgo4Engine:
         flipped: str | None,
         reversal_ready: bool,
     ) -> CPRAlgo4Decision:
+        """Entry gates shared by both day types, then the day type's own setup.
+
+        No entry before the day type is known (or on NO_TRADE days), on the bar
+        a trend flips, on the bar an exit happened, or on a bar ending at or
+        after the cutoff.
+        """
         if self.regime in (None, REGIME_NO_TRADE) or ts.time() <= self.config.regime_bar:
             return CPRAlgo4Decision(reason="no_regime")
         if prev is None or flipped is not None:
@@ -660,6 +674,7 @@ class CPRAlgo4Engine:
         prev: Mapping[str, float],
         levels: Mapping[str, float],
     ) -> CPRAlgo4Decision:
+        """SIDEWAYS: a Stochastic RSI cross inside the oversold (calls) or overbought (puts) zone."""
         k, d, prev_k, prev_d = bar["srsi_k"], bar["srsi_d"], prev["srsi_k"], prev["srsi_d"]
         if not _finite(k, d, prev_k, prev_d):
             return CPRAlgo4Decision(reason="srsi_unavailable")
@@ -668,15 +683,19 @@ class CPRAlgo4Engine:
         if not (cross_up or cross_down):
             return CPRAlgo4Decision(reason="no_setup")
         long = cross_up
+        entry = bar["close"]
+        # The doc's "last swing low" (high for puts) must sit on the losing side
+        # of entry. In the usual oversold-bounce shape price has already broken
+        # the NEWEST confirmed swing, so walk back to the most recent confirmed
+        # swing still below (above) price instead of rejecting the setup.
         swings = self._swing_lows if long else self._swing_highs
-        if not swings:
+        stop = next((swing for swing in reversed(swings) if (swing < entry if long else swing > entry)), None)
+        if stop is None:
             return CPRAlgo4Decision(reason="missing_swing_stop")
         first30 = None
         if self.config.first30_target and self._first30_complete:
             first30 = self._first30_high if long else self._first30_low
-        return self._enter(
-            ts, "LONG" if long else "SHORT", PREMISE_SIDEWAYS, bar["close"], swings[-1], levels, first30
-        )
+        return self._enter(ts, "LONG" if long else "SHORT", PREMISE_SIDEWAYS, entry, stop, levels, first30)
 
     def _trending_entry(
         self,
@@ -686,6 +705,11 @@ class CPRAlgo4Engine:
         levels: Mapping[str, float],
         reversal_ready: bool,
     ) -> CPRAlgo4Decision:
+        """TRENDING: the reversal sequence after a flip, otherwise the continuation pattern.
+
+        Either way the RSI/EMA filters must agree and the stop is the entry
+        candle's low (calls) or high (puts).
+        """
         long = self.trend_dir == "UP"
         if self.reversal_pending:
             if not reversal_ready:
@@ -736,6 +760,7 @@ class CPRAlgo4Engine:
         levels: Mapping[str, float],
         first30: float | None,
     ) -> CPRAlgo4Decision:
+        """Run the risk rules on a triggered setup: an ENTER decision, or HOLD with the reason."""
         plan, reason = build_trade_plan(
             direction=direction,
             premise=premise,
@@ -765,6 +790,7 @@ class CPRAlgo4Engine:
         plan: CPRAlgo4TradePlan,
         flipped: str | None,
     ) -> CPRAlgo4Decision:
+        """Completed-bar management of an open trade: premise exits, the trail, the R1 add."""
         long = plan.is_long
         # 1. Premise exits: the reason for being in the trade has gone.
         if plan.premise == PREMISE_SIDEWAYS:
@@ -789,6 +815,7 @@ class CPRAlgo4Engine:
         return CPRAlgo4Decision(debug={"current_stop": plan.current_stop, "trail_stage": plan.trail_stage})
 
     def _srsi_reversal_against(self, bar: Mapping[str, float], prev: Mapping[str, float], long: bool) -> bool:
+        """A sideways trade's premise exit: the opposite Stochastic RSI cross inside the opposite zone."""
         k, d, prev_k, prev_d = bar["srsi_k"], bar["srsi_d"], prev["srsi_k"], prev["srsi_d"]
         if not _finite(k, d, prev_k, prev_d):
             return False

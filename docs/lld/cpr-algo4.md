@@ -47,8 +47,9 @@ next-next expiry through the shared `enter_position` path.
 - **Stop:** the latest *confirmed* swing low (high) of **today's** session. A swing is a strict
   fractal, 2 bars each side, confirmed 2 bars later. If no swing exists yet, there is no trade.
 - **Premise exit:** a Stochastic RSI cross back inside the *opposite* zone (`CPR_ALGO4_SRSI_EXIT`).
-- **Target 4 (opt-in, `CPR_ALGO4_FIRST30_TARGET`):** the first-30-minute high (low) joins the target
-  set when it lies ahead of entry. The doc places this under the sideways section only.
+- **Target 4 (opt-in, `CPR_ALGO4_FIRST30_TARGET`):** the first-30-minute high (low) becomes a
+  booking level when it lies ahead of entry: in TARGET mode alongside 1:1, in TRAIL mode as the
+  only fixed target. The doc places this under the sideways section only.
 - The RSI/EMA filters do **not** apply: an oversold SRSI buy almost never has RSI > 45 and rising
   EMAs. CPR AI makes the same call.
 
@@ -109,9 +110,14 @@ filter. The TRAIL first milestone is likewise effectively 1R. Stops only ever ra
   their start minute.
 - **Catch-up replay.** Every unseen bar of today's session is fed to the engine in order. Exposure is
   opened or added only on the **newest** bar; EXIT decisions are honoured on any bar.
-- **Per-poll safety.** In a `run()` of Donchian shape, `_check_spot_boundaries()` checks the spot
-  stop, the TARGET-mode target and the final level on every poll. It also retries a one-shot premise
-  exit whose live close did not confirm flat.
+- **Per-poll safety.** The worker uses the shared run loop and overrides its `poll_safety_checks()`
+  hook (a no-op for other workers), so `_check_spot_boundaries()` checks the spot stop, the fixed
+  target and the final level on every poll. It also retries a one-shot premise exit whose live close
+  did not confirm flat.
+- **Frame cost.** The CPR builder takes ~0.7 s on a 7-day snapshot, so the built frame is cached on
+  (row count, newest completed minute) and rebuilt at most once a minute, not on every poll.
+- **Reporting.** The R1 add is reported as its own `add_pos` slot through `_owned_open_positions()`,
+  so the dashboard and the crash-durable snapshot see the full open quantity.
 - **Add-leg ledger.** This is a standalone copy of the CPR AI worker's mechanics, so a fix to one copy
   must be mirrored in the other:
   - the add is a separate role-A ledger leg;
@@ -133,7 +139,7 @@ filter. The TRAIL first milestone is likewise effectively 1R. Stops only ever ra
 | `CPR_ALGO4_ENTRY_CUTOFF_HOUR/_MINUTE` | 15:00 | Live requires start < cutoff ≤ square-off. An impossible value runs paper on 15:00 and blocks live. |
 | `CPR_ALGO4_SQUARE_OFF_HOUR/_MINUTE` | 15:15 | |
 | `CPR_ALGO4_EXIT_MODE` | TARGET | Any value other than TARGET/TRAIL runs paper as TARGET and blocks live. |
-| `CPR_ALGO4_FIRST30_TARGET` | false | Target 4, sideways only. |
+| `CPR_ALGO4_FIRST30_TARGET` | false | Target 4, sideways only; a booking level in either exit mode. |
 | `CPR_ALGO4_SCALE_IN_ENABLED` | true | The one R1 add. |
 | `CPR_ALGO4_MAX_SPREAD_PCT` / `_MIN_LIQUIDITY_SCORE` | 0 / 0 | Shared market-quality gates; they also gate the add. |
 | `CPR_ALGO4_VIRTUAL_TRADING` / `_LIVE_TRADING` | true / false | The standard double gate. |

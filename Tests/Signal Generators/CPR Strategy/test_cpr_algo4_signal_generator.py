@@ -411,6 +411,11 @@ class TestTradePlan(unittest.TestCase):
         plan, _ = self.plan(first30_extreme=21940.0)
         self.assertEqual(plan.target, 21940.0)
 
+    def test_first30_target_is_a_booking_level_in_trail_mode_too(self):
+        plan, _ = self.plan(config=algo4.CPRAlgo4Config(exit_mode="TRAIL"), first30_extreme=21940.0)
+        self.assertEqual(plan.target, 21940.0)
+        self.assertEqual(plan.exit_mode, "TRAIL")
+
     def test_first30_extreme_behind_entry_is_ignored(self):
         plan, _ = self.plan(first30_extreme=21925.0)
         self.assertEqual(plan.target, 21945.0)
@@ -447,6 +452,25 @@ class TestSidewaysEntries(unittest.TestCase):
         decision = feed(algo4.CPRAlgo4Engine(), rows)
         self.assertEqual(decision.action, "HOLD")
         self.assertEqual(decision.reason, "missing_swing_stop")
+
+    def test_stop_walks_back_to_the_latest_swing_below_entry(self):
+        # Two confirmed swing lows -- 21915, then a HIGHER 21940. Price slides to
+        # 21930, below the newest swing, and SRSI crosses up: the stop must be the
+        # most recent confirmed swing still below price (21915), not a rejection.
+        rows = [
+            bar("09:15", 21955, 21960, 21950, 21955),
+            bar("09:20", 21950, 21955, 21945, 21950),
+            bar("09:25", 21935, 21940, 21915, 21930),  # swing low 1
+            bar("09:30", 21955, 21960, 21950, 21955),
+            bar("09:35", 21960, 21965, 21955, 21960),  # confirms swing low 1
+            bar("09:40", 21945, 21950, 21940, 21945),  # swing low 2 (higher)
+            bar("09:45", 21950, 21955, 21948, 21950),
+            bar("09:50", 21950, 21955, 21945, 21950, srsi_k=10.0, srsi_d=15.0),  # confirms swing low 2
+            bar("09:55", 21931, 21936, 21928, 21930, srsi_k=18.0, srsi_d=14.0),  # cross up at 21930
+        ]
+        decision = feed(algo4.CPRAlgo4Engine(), rows)
+        self.assertEqual(decision.action, "ENTER_LONG")
+        self.assertEqual(decision.plan.original_stop, 21915.0)
 
     def test_swing_stop_wider_than_thirty_points_holds(self):
         decision = feed(algo4.CPRAlgo4Engine(), sideways_long_rows(swing_low=21890.0))

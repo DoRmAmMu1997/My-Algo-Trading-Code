@@ -265,7 +265,7 @@ import time
 import uuid
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
@@ -6510,6 +6510,18 @@ class BasePaperStrategyWorker(threading.Thread):
 
         return MIN_BARS
 
+    def poll_safety_checks(self) -> bool:
+        """Optional every-poll risk hook, run right after the pre-open gate.
+
+        Most strategies only act when a new bar arrives. A worker whose stop or
+        target must be checked on EVERY poll overrides this and returns
+        ``True`` when it attempted an exit, so the rest of that poll is skipped.
+        Keeping it a hook (rather than copying the whole run loop) means every
+        future change to the shared loop still reaches that worker.
+        """
+
+        return False
+
     def process_pending_entry(self, ohlc: pd.DataFrame) -> bool:
         """Optional pre-signal hook for entries tied to an observed future slot.
 
@@ -6913,6 +6925,8 @@ class BasePaperStrategyWorker(threading.Thread):
            there is still strategy activity to process.
         3. Pre-open wait third -> no analysis before the strategy start
            time so we never enter off a half-formed morning bar.
+        3a. `poll_safety_checks()` -> an optional every-poll exit hook
+           (default no-op) for workers whose stop must not wait for a bar.
         4. Read the latest 1-min snapshot from the shared store. Bail out
            politely if the fetcher has not published enough bars yet.
         5. Build the strategy-specific frame (resampled + indicators) and
@@ -6956,6 +6970,13 @@ class BasePaperStrategyWorker(threading.Thread):
                     self.wait_for_next_poll()
                     continue
                 self.preopen_wait_logged = False
+
+                # Optional every-poll risk hook (default no-op). A worker whose
+                # spot stop/target must not wait for its next bar overrides it
+                # and returns True when it attempted an exit.
+                if self.poll_safety_checks():
+                    self.wait_for_next_poll()
+                    continue
 
                 snapshot = self.store.get(self.timeframe)
                 if snapshot is None or snapshot.frame.empty:
@@ -9955,8 +9976,19 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
         self.entry_submit_count = 0
         self.exit_count = 0
         self.scale_in_count = 0
+        # The built 5-minute frame, reused until the completed minutes change
+        # (see build_strategy_frame).
+        self._frame_cache_key: tuple[int, pd.Timestamp] | None = None
+        self._frame_cache: pd.DataFrame | None = None
+        if CPR_ALGO4_CONFIG_ERROR:
+            self.log.warning(
+                "CPR Algo 4 .env configuration was rejected (%s); paper runs on "
+                "the default settings and live trading is refused.",
+                CPR_ALGO4_CONFIG_ERROR,
+            )
 
     def summary_text(self) -> str:
+        """One-line counters for the end-of-day summary."""
         return (
             f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
             f"Adds={self.scale_in_count} | Exits={self.exit_count} | "
@@ -9978,23 +10010,44 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
 
         Candles carry their START minute, so at 09:59:30 the 09:59 row is still
         printing. Without this, the complete-bucket resampler would accept the
-        09:55 bucket as finished during its fifth minute.
+        09:55 bucket as finished during its fifth minute. The boundary is the
+        shared `newest_completed_minute_timestamp` (the same rule the feed-health
+        gate uses), so the two can never disagree about which minute is done.
         """
 
         if ohlc is None or ohlc.empty or "timestamp" not in ohlc.columns:
             return ohlc
+        newest = newest_completed_minute_timestamp(ohlc, now=now)
+        if newest is None:
+            return ohlc.iloc[0:0]
+        cutoff = pd.Timestamp(newest)
+        if cutoff.tzinfo is not None:
+            cutoff = cutoff.tz_convert(IST_TIMEZONE).tz_localize(None)
         stamps = pd.to_datetime(ohlc["timestamp"])
         if stamps.dt.tz is not None:
             stamps = stamps.dt.tz_convert(IST_TIMEZONE).dt.tz_localize(None)
-        aware_now = now if now.tzinfo is not None else now.replace(tzinfo=IST_TIMEZONE)
-        current_minute = aware_now.astimezone(IST_TIMEZONE).replace(
-            tzinfo=None, second=0, microsecond=0
-        )
-        return ohlc.loc[(stamps < current_minute).to_numpy()]
+        return ohlc.loc[(stamps <= cutoff).to_numpy()]
 
     def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        """The completed 5-minute Algo 4 frame, rebuilt only when completed minutes change.
+
+        The shared CPR builder takes ~0.7 s on a 7-day snapshot (it also runs
+        Algo 1/2's zone, swing and divergence loops) and the run loop calls this
+        on every 5-second poll. A new complete 5-minute bucket can only appear
+        when a completed minute is added or a REST hole is filled, so the frame
+        is cached on (row count, newest completed minute): at most one rebuild
+        a minute instead of twelve.
+        """
+
         completed = self._completed_minutes_only(ohlc, _ist_now())
-        return CPR_ALGO4_LOGIC.build_cpr_algo4_frame(completed, self.config)
+        key: tuple[int, pd.Timestamp] | None = None
+        if completed is not None and not completed.empty and "timestamp" in completed.columns:
+            key = (len(completed), pd.Timestamp(pd.to_datetime(completed["timestamp"]).max()))
+        if key is not None and key == self._frame_cache_key and self._frame_cache is not None:
+            return self._frame_cache
+        frame = CPR_ALGO4_LOGIC.build_cpr_algo4_frame(completed, self.config)
+        self._frame_cache_key, self._frame_cache = key, frame
+        return frame
 
     def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
         """Feed every not-yet-seen completed bar of today's session to the engine."""
@@ -10014,6 +10067,12 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
             self._feed_bar(row, is_newest=index == len(rows) - 1)
 
     def _feed_bar(self, row: dict[Any, Any], *, is_newest: bool) -> None:
+        """Hand one completed bar (and the open plan, if any) to the engine and act on it.
+
+        `is_newest` is False for bars replayed after a gap or a restart; those
+        may still close a position but never open or add one.
+        """
+
         bar_ts = pd.Timestamp(row["timestamp"])
         state = self._algo4_state
         plan = state.plan if state is not None and self.pos.active else None
@@ -10031,6 +10090,13 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
             self._processing_bar_ts = None
 
     def _log_session_state(self) -> None:
+        """Log the day type once per session, and every later trend flip.
+
+        Before the 09:25 bar decides the day type the engine has no regime and
+        no trend yet (it resets at the first bar of a session), so nothing is
+        logged then -- otherwise yesterday's direction would look like a flip.
+        """
+
         engine = self.engine
         if engine.regime is not None and self._logged_regime_session != engine.session_date:
             self._logged_regime_session = engine.session_date
@@ -10039,7 +10105,7 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
                 "CPR Algo 4 day type %s: %s (trend=%s)",
                 engine.session_date, engine.regime, engine.trend_dir or "-",
             )
-        elif engine.trend_dir != self._logged_trend_dir:
+        elif engine.regime is not None and engine.trend_dir != self._logged_trend_dir:
             self.log.info(
                 "CPR Algo 4 trend flipped %s -> %s (reversal sequence armed)",
                 self._logged_trend_dir, engine.trend_dir,
@@ -10047,6 +10113,8 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
             self._logged_trend_dir = engine.trend_dir
 
     def _act_on_decision(self, decision: Any, *, is_newest: bool) -> None:
+        """Execute one engine decision: exits always, entries and adds only on the newest bar."""
+
         action = decision.action
         if action == "EXIT":
             # Risk-reducing, so honoured even for a replayed (catch-up) bar.
@@ -10064,6 +10132,13 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
             self._enter_algo4(decision.plan)
 
     def _enter_algo4(self, plan: Any) -> None:
+        """Open the plan through the shared ATM entry path; on a fill, keep its sidecar.
+
+        The spot stop and booking level go onto the PaperPosition for reporting;
+        the engine is told about the fill so a reversal trade re-enables the
+        continuation setups.
+        """
+
         self.signal_count += 1
         if self._at_or_after_entry_cutoff():
             return
@@ -10099,11 +10174,18 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
     # Exits
     # ------------------------------------------------------------------
     def _exit_algo4(self, reason: str) -> None:
+        """Close the trade, remembering the reason if a live close is still unconfirmed."""
+
         self.exit_position(reason)
         # A live close that is not broker-confirmed keeps the position open;
         # remember why so the next poll retries instead of forgetting a
         # one-shot premise exit.
         self._pending_exit_reason = reason if self.pos.active else None
+
+    def poll_safety_checks(self) -> bool:
+        """The shared run loop's every-poll hook: the spot stop/target check below."""
+
+        return self._check_spot_boundaries()
 
     def _check_spot_boundaries(self) -> bool:
         """Every poll: retry a pending exit, then the spot stop/target/final level.
@@ -10180,6 +10262,42 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
             live,
             add_quantity,
         )
+
+    def _paper_positions_active(self) -> bool:
+        """The add only exists while the primary is open, so the primary's flag covers both."""
+
+        return super()._paper_positions_active()
+
+    def _owned_open_positions(self) -> tuple[tuple[str, Any], ...]:
+        """The primary leg from the base class, plus the R1 add as its own slot.
+
+        The add lives in the sidecar, not in `self.pos`, so without this the
+        dashboard's open MTM and the crash-durable snapshot would show only the
+        primary quantity after an add. The add is reported as a copy of the
+        primary position carrying the add's own quantity (the ledger's
+        conservative risk quantity for a live add), entry basis and ledger leg.
+        Pure attribute reads, as the reporting contract requires.
+        """
+
+        positions = super()._owned_open_positions()
+        state = self._algo4_state
+        if not positions or state is None:
+            return positions
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_quantity = int(state.add_live_leg.risk_quantity)
+        else:
+            add_quantity = int(state.add_quantity)
+        if add_quantity <= 0:
+            return positions
+        primary = positions[0][1]
+        add_view = replace(
+            primary,
+            quantity=add_quantity,
+            entry_trade_price=self._add_entry_accounting_price(state),
+            entry_price_quality=state.add_entry_price_quality,
+            live_leg=state.add_live_leg,
+        )
+        return (*positions, ("add_pos", add_view))
 
     def _add_entry_accounting_price(self, state: CPRAlgo4TradeState) -> float:
         """A conservative non-zero add basis: broker fill, then saved mark, then primary fill.
@@ -10448,86 +10566,6 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
         )
         self.after_exit(closed, reason)
         self.pos = PaperPosition()
-
-    # ------------------------------------------------------------------
-    # Main loop
-    # ------------------------------------------------------------------
-    def run(self) -> None:
-        """
-        Same shape as `BasePaperStrategyWorker.run` with one extra step:
-        `_check_spot_boundaries()` runs on every poll while a position is open,
-        so the spot stop, the TARGET-mode target and the R2/S2 booking level do
-        not wait for the 5-minute close. If an exit fires, the rest of that
-        poll is skipped.
-        """
-        self.log.info("Starting %s strategy worker.", self.strategy_name)
-        if CPR_ALGO4_CONFIG_ERROR:
-            self.log.warning(
-                "CPR Algo 4 .env configuration was rejected (%s); paper runs on "
-                "the default settings and live trading is refused.",
-                CPR_ALGO4_CONFIG_ERROR,
-            )
-        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
-            try:
-                if self._run_shutdown_cycle_if_requested():
-                    self._wait_for_shutdown_retry()
-                    continue
-
-                breached, total_pnl, open_pnl = self.is_max_loss_breached()
-                if breached:
-                    self.handle_max_loss_and_stop(total_pnl, open_pnl)
-                    continue
-
-                if is_after_time(self.square_off_hour, self.square_off_minute):
-                    self.handle_square_off_and_stop()
-                    continue
-
-                if self._handle_market_data_health():
-                    self.wait_for_next_poll()
-                    continue
-
-                if is_before_time(self.trading_start_hour, self.trading_start_minute):
-                    if not self.preopen_wait_logged:
-                        self.log.info(
-                            "Before strategy start (%02d:%02d). Waiting to begin processing.",
-                            self.trading_start_hour,
-                            self.trading_start_minute,
-                        )
-                        self.preopen_wait_logged = True
-                    self.wait_for_next_poll()
-                    continue
-                self.preopen_wait_logged = False
-
-                if self._check_spot_boundaries():
-                    self.wait_for_next_poll()
-                    continue
-
-                snapshot = self.store.get(self.timeframe)
-                if snapshot is None or snapshot.frame.empty:
-                    self.wait_for_next_poll()
-                    continue
-
-                strategy_frame = self.build_strategy_frame(snapshot.frame)
-                if strategy_frame is None or strategy_frame.empty:
-                    self.wait_for_next_poll()
-                    continue
-
-                frame_signature = build_last_row_signature(strategy_frame)
-                if frame_signature is None:
-                    self.wait_for_next_poll()
-                    continue
-                if self.last_processed_frame_signature == frame_signature:
-                    self.wait_for_next_poll()
-                    continue
-
-                self.last_processed_frame_signature = frame_signature
-                self.process_strategy_frame(strategy_frame)
-            except Exception as exc:
-                self.log.exception("Main loop error: %s", exc)
-
-            self.wait_for_next_poll()
-
-        self.log.info("%s strategy worker exited.", self.strategy_name)
 
 
 # =============================================================================
