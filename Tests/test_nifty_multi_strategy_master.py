@@ -4168,7 +4168,8 @@ class TestStrategyEnvPrefixMap(unittest.TestCase):
             master_file.HeikinAshiStrategyWorker, master_file.ProfitShooterStrategyWorker,
             master_file.GoldmineStrategyWorker, master_file.MoneyMachineStrategyWorker,
             master_file.OpeningStrikePCRVWAPATRWorker, master_file.CPRStrategyWorker,
-            master_file.CPRAlgo3StrategyWorker, master_file.CPRAIWorker,
+            master_file.CPRAlgo3StrategyWorker, master_file.CPRAlgo4StrategyWorker,
+            master_file.CPRAIWorker,
             master_file.SupertrendBullishWorker, master_file.DonchianBearishWorker,
             master_file.Delta20HedgedSpreadWorker, master_file.LongStrangleWorker,
         ]
@@ -9219,6 +9220,390 @@ class TestCPRAlgo3StrategyWorker(unittest.TestCase):
 
     def test_paper_by_default(self):
         self.assertFalse(self.worker.live_trading)
+
+
+class TestCPRAlgo4StrategyWorker(unittest.TestCase):
+    """
+    CPR Algo 4 worker WIRING: engine decisions reaching the shared ATM entry,
+    catch-up replay, the every-poll spot exits, the copied R1-add and two-leg
+    exit mechanics, and the live-config refusals. The playbook's decision LOGIC
+    is covered by the generator's own suite
+    (Tests/Signal Generators/CPR Strategy/test_cpr_algo4_signal_generator.py).
+    """
+
+    TREND_LEVELS = {
+        "s2": 21700.0, "s1": 21800.0, "prev_low": 21780.0, "cpr_lower": 21895.0,
+        "pivot": 21900.0, "cpr_upper": 21905.0, "prev_high": 22020.0, "r1": 22000.0,
+        "r2": 22100.0,
+    }
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.broker = MagicMock()
+        self.worker = master_file.CPRAlgo4StrategyWorker(
+            store=self.store, stop_event=threading.Event(), broker=self.broker
+        )
+        self.worker.contract_resolver = MagicMock()
+        self.worker.contract_resolver.get_atm_option.return_value = {
+            "security_id": 49081, "exchange_segment": master_file.OPTION_EXCHANGE_SEGMENT,
+            "trading_symbol": "NIFTY-22050-CE", "custom_symbol": "NIFTY 22050 CE",
+            "strike": 22050.0, "option_type": "CE",
+            "expiry_date": date.today() + timedelta(days=10), "days_to_expiry": 10,
+            "lot_size": 50, "spot_reference": 22040.0, "atm_strike_rounded": 22050.0,
+        }
+        self.store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): 22040.0,
+            (master_file.OPTION_EXCHANGE_SEGMENT, 49081): 100.0,
+        })
+        # Wall-clock independent: the cutoff itself has a dedicated test below.
+        cutoff = patch.object(self.worker, "_at_or_after_entry_cutoff", return_value=False)
+        cutoff.start()
+        self.addCleanup(cutoff.stop)
+
+    # -- helpers --------------------------------------------------------------
+    def _plan(self, **overrides):
+        values = {
+            "direction": "LONG",
+            "premise": master_file.CPR_ALGO4_LOGIC.PREMISE_CONTINUATION,
+            "entry": 22040.0,
+            "risk": 10.0,
+            "original_stop": 22030.0,
+            "current_stop": 22030.0,
+            "first_milestone": 22050.0,
+            "following_milestone": 22060.0,
+            "target": 22050.0,
+            "final_target": 22098.0,
+            "exit_mode": "TARGET",
+        }
+        values.update(overrides)
+        return master_file.CPR_ALGO4_LOGIC.CPRAlgo4TradePlan(**values)
+
+    def _open(self, plan=None):
+        plan = plan or self._plan()
+        self.worker._act_on_decision(
+            SimpleNamespace(action="ENTER_LONG", plan=plan, reason=""), is_newest=True
+        )
+        self.assertTrue(self.worker.pos.active)
+        return plan
+
+    def _bar(self, clock, o, h, lo, c, **extra):
+        row = {
+            "timestamp": pd.Timestamp(f"2026-05-06 {clock}"),
+            "open": float(o), "high": float(h), "low": float(lo), "close": float(c),
+            "vwap": float(c), "rsi": 50.0, "ema5": float(c), "ema20": float(c),
+            "srsi_k": 50.0, "srsi_d": 50.0, **self.TREND_LEVELS,
+        }
+        row.update(extra)
+        return row
+
+    def _continuation_rows(self):
+        """TRENDING UP day: close below VWAP at 09:30, back above it at 09:35."""
+        return [
+            self._bar("09:15", 22025, 22030, 22020, 22028),
+            self._bar("09:20", 22028, 22034, 22024, 22030),
+            self._bar("09:25", 22030, 22036, 22026, 22032),
+            self._bar("09:30", 22032, 22034, 22028, 22030, vwap=22031.0, ema5=22031.0, ema20=22028.0),
+            self._bar("09:35", 22030, 22042, 22029, 22040, vwap=22032.0, rsi=58.0, ema5=22033.0, ema20=22029.0),
+        ]
+
+    @staticmethod
+    def _live_state(role, *, filled=50, confirmed=None, indeterminate=False, entry_price=10.0,
+                    latest_attempt=None, closing_started=False, close_price=0.0):
+        confirmed_quantity = filled if confirmed is None else confirmed
+        spec = master_file.LegSpec(
+            strategy="CPRAlgo4", correlation_id=f"ABCD123{role}", role=role, underlying="NIFTY",
+            symbol="NIFTY-LOCKED", option_type="CE", strike=25000.0, expiry=date(2026, 8, 13),
+            opening_side="BUY", target_quantity=50, owner_id="EFGH5678",
+        )
+        closed_quantity = filled - confirmed_quantity
+        return master_file.LiveLegState(
+            exposure_id=f"test-{role}", spec=spec, requested_quantity=50, filled_quantity=filled,
+            remaining_quantity=50 - filled, confirmed_live_quantity=confirmed_quantity,
+            exposure_indeterminate=indeterminate, latest_attempt=latest_attempt,
+            closing_started=closing_started,
+            entry_priced_quantity=filled if entry_price > 0 else 0,
+            entry_fill_notional=filled * entry_price,
+            close_priced_quantity=closed_quantity if close_price > 0 else 0,
+            close_fill_notional=closed_quantity * close_price,
+        )
+
+    def _live_position(self, plan=None, add_live_leg=None):
+        self.worker.live_trading = True
+        self.worker.pos = master_file.PaperPosition(
+            active=True, direction="LONG", symbol="NIFTY-LOCKED", quantity=50,
+            entry_trade_price=10.0, option_security_id=123, option_exchange_segment="NSE_FNO",
+            option_right="CE", option_strike=25000.0, option_expiry=date(2026, 8, 13),
+            live_leg=self._live_state("N", entry_price=10.0),
+        )
+        self.worker._algo4_state = master_file.CPRAlgo4TradeState(
+            plan=plan or self._plan(), initial_filled_quantity=50,
+            primary_entry_trade_price=10.0, add_live_leg=add_live_leg,
+        )
+        return self.worker._algo4_state
+
+    # -- registration -----------------------------------------------------------
+    def test_paper_by_default_and_registered(self):
+        self.assertFalse(self.worker.live_trading)
+        self.assertEqual(master_file.STRATEGY_ENV_PREFIX["CPRAlgo4"], "CPR_ALGO4")
+        self.assertEqual(master_file._PNL_SHEET_ROW_LABELS["CPRAlgo4"], "CPR Algo 4 Strategy")
+
+    # -- engine decisions -> shared ATM path -------------------------------------
+    def test_real_engine_entry_reaches_the_shared_atm_path_once(self):
+        frame = pd.DataFrame(self._continuation_rows())
+        self.worker.process_strategy_frame(frame)
+        self.assertTrue(self.worker.pos.active)
+        self.assertEqual(self.worker.pos.direction, "LONG")
+        self.assertEqual(self.worker.pos.option_security_id, 49081)
+        self.assertEqual(self.worker.pos.stop_underlying, 22029.0)  # entry candle low
+        self.assertEqual(self.worker.pos.target_underlying, 22051.0)  # 1R
+        self.assertEqual(self.worker._algo4_state.initial_filled_quantity, self.worker.pos.quantity)
+        # The same frame again feeds nothing new, so nothing is re-entered.
+        self.worker.process_strategy_frame(frame)
+        self.assertEqual(self.worker.entry_submit_count, 1)
+
+    def test_replayed_bar_never_opens_exposure(self):
+        # The entry bar arrives together with a later bar (a catch-up after a
+        # gap): its ENTER is stale and must be ignored.
+        rows = [*self._continuation_rows(), self._bar("09:40", 22040, 22044, 22036, 22041)]
+        self.worker.process_strategy_frame(pd.DataFrame(rows))
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.worker.entry_submit_count, 0)
+
+    def test_exit_on_a_replayed_bar_is_still_honoured(self):
+        self._open()
+        decisions = iter([
+            SimpleNamespace(action="EXIT", reason="CPR_ALGO4_SRSI_EXIT", plan=None),
+            SimpleNamespace(action="HOLD", reason="", plan=None),
+        ])
+        self.worker.engine.on_bar = MagicMock(side_effect=lambda row, plan: next(decisions))
+        self.worker.process_strategy_frame(pd.DataFrame(self._continuation_rows()[-2:]))
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.worker.exit_count, 1)
+
+    def test_trailing_ratchet_is_mirrored_onto_the_position(self):
+        plan = self._open(self._plan(exit_mode="TRAIL", target=float("nan")))
+
+        def ratchet(row, open_plan):
+            open_plan.ratchet_stop(22040.0)
+            return SimpleNamespace(action="HOLD", reason="", plan=None)
+
+        self.worker.engine.on_bar = MagicMock(side_effect=ratchet)
+        self.worker.process_strategy_frame(pd.DataFrame(self._continuation_rows()[-1:]))
+        self.assertEqual(plan.current_stop, 22040.0)
+        self.assertEqual(self.worker.pos.stop_underlying, 22040.0)
+
+    # -- every-poll exits -------------------------------------------------------
+    def test_every_poll_spot_stop_exits_between_bars(self):
+        self._open()
+        with patch.object(self.worker, "_get_underlying_spot", return_value=22035.0):
+            self.assertFalse(self.worker._check_spot_boundaries())
+        self.assertTrue(self.worker.pos.active)
+        with patch.object(self.worker, "_get_underlying_spot", return_value=22029.5):
+            self.assertTrue(self.worker._check_spot_boundaries())
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.worker.exit_count, 1)
+
+    def test_every_poll_target_books(self):
+        self._open()
+        with patch.object(self.worker, "_get_underlying_spot", return_value=22050.0):
+            self.assertTrue(self.worker._check_spot_boundaries())
+        self.assertFalse(self.worker.pos.active)
+
+    def test_intrabar_exit_blocks_reentry_on_the_forming_bar(self):
+        self.worker._last_fed_ts = pd.Timestamp("2026-05-06 09:35")
+        self._open()
+        with patch.object(self.worker, "_get_underlying_spot", return_value=22000.0):
+            self.worker._check_spot_boundaries()
+        self.assertEqual(self.worker.engine._blocked_entry_bar, pd.Timestamp("2026-05-06 09:40"))
+
+    def test_one_shot_exit_is_retried_every_poll_until_flat(self):
+        self._open()
+        self.worker.exit_position = MagicMock()  # a live close that has not confirmed flat
+        self.worker._exit_algo4("CPR_ALGO4_SRSI_EXIT")
+        self.assertEqual(self.worker._pending_exit_reason, "CPR_ALGO4_SRSI_EXIT")
+        self.assertTrue(self.worker._check_spot_boundaries())
+        self.worker.exit_position.assert_called_with("CPR_ALGO4_SRSI_EXIT")
+        self.assertEqual(self.worker.exit_position.call_count, 2)
+
+    def test_forming_minute_is_dropped_before_resampling(self):
+        frame = pd.DataFrame({
+            "timestamp": pd.to_datetime(["2026-05-06 09:57", "2026-05-06 09:58", "2026-05-06 09:59"]),
+            "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0,
+        })
+        now = datetime(2026, 5, 6, 9, 59, 30, tzinfo=master_file.IST_TIMEZONE)
+        kept = master_file.CPRAlgo4StrategyWorker._completed_minutes_only(frame, now)
+        self.assertEqual(list(kept["timestamp"].dt.strftime("%H:%M")), ["09:57", "09:58"])
+        naive_now = datetime(2026, 5, 6, 9, 59, 30)
+        self.assertEqual(len(master_file.CPRAlgo4StrategyWorker._completed_minutes_only(frame, naive_now)), 2)
+
+    def test_entry_cutoff_blocks_new_entries(self):
+        with patch.object(self.worker, "_at_or_after_entry_cutoff", return_value=True):
+            self.worker._act_on_decision(
+                SimpleNamespace(action="ENTER_LONG", plan=self._plan(), reason=""), is_newest=True
+            )
+        self.assertFalse(self.worker.pos.active)
+        self.assertEqual(self.worker.signal_count, 1)
+
+    # -- the R1 add ---------------------------------------------------------------
+    def test_paper_add_books_the_initial_quantity_once_and_counts_in_max_loss(self):
+        plan = self._open()
+        state = self.worker._algo4_state
+        self.worker._get_dealable_option_ltp = MagicMock(return_value=(114.0, True))
+        self.assertTrue(self.worker._execute_scale_in())
+        self.assertTrue(plan.scale_in_used)
+        self.assertEqual(state.add_quantity, state.initial_filled_quantity)
+        self.assertFalse(self.worker._execute_scale_in())
+        quantity = state.initial_filled_quantity
+        with patch.object(self.worker, "_get_option_ltp", return_value=90.0):
+            expected = (90.0 - self.worker.pos.entry_trade_price) * quantity + (90.0 - 114.0) * quantity
+            self.assertAlmostEqual(self.worker._get_open_position_pnl(), expected)
+
+    def test_add_refused_for_short_sideways_or_disabled(self):
+        logic = master_file.CPR_ALGO4_LOGIC
+        cases = {
+            "short": (self._plan(direction="SHORT", current_stop=22060.0, original_stop=22060.0), None),
+            "sideways": (self._plan(premise=logic.PREMISE_SIDEWAYS), None),
+            "disabled": (self._plan(), logic.CPRAlgo4Config(scale_in_enabled=False)),
+        }
+        for label, (plan, config) in cases.items():
+            with self.subTest(label):
+                if config is not None:
+                    self.worker.config = config
+                self.worker.pos = master_file.PaperPosition(
+                    active=True, direction=plan.direction, quantity=50, entry_trade_price=10.0,
+                    option_security_id=123, option_exchange_segment="NSE_FNO",
+                )
+                self.worker._algo4_state = master_file.CPRAlgo4TradeState(plan=plan, initial_filled_quantity=50)
+                self.worker._get_dealable_option_ltp = MagicMock(return_value=(114.0, True))
+                self.assertFalse(self.worker._execute_scale_in())
+                self.assertFalse(plan.scale_in_used)
+                self.worker._get_dealable_option_ltp.assert_not_called()
+
+    def test_live_partial_or_unknown_add_is_never_retried(self):
+        for status in (master_file.OrderStatus.PARTIAL, master_file.OrderStatus.UNKNOWN):
+            with self.subTest(status=status):
+                plan = self._plan()
+                state = self._live_position(plan)
+                self.worker._get_dealable_option_ltp = MagicMock(return_value=(11.0, True))
+                filled = 25 if status is master_file.OrderStatus.PARTIAL else 0
+                add_state = self._live_state("A", filled=filled, indeterminate=True, entry_price=12.0)
+
+                def place(_side, leg, *, opens_exposure, outcome=add_state, outcome_status=status,
+                          outcome_filled=filled):
+                    self.assertTrue(opens_exposure)
+                    self.assertEqual(leg["role"], "A")
+                    self.assertEqual(leg["quantity"], 50)
+                    leg["live_leg"] = outcome
+                    return master_file.OrderResult(
+                        order_id="ADD", requested_quantity=50, filled_quantity=outcome_filled,
+                        remaining_quantity=50 - outcome_filled, status=outcome_status,
+                        broker_state=outcome_status.value, reason="synthetic",
+                        average_fill_price=12.0 if outcome_filled else 0.0,
+                    )
+
+                self.worker._place_real_leg = MagicMock(side_effect=place)
+                self.assertFalse(self.worker._execute_scale_in())
+                self.assertTrue(plan.scale_in_used)
+                self.assertIs(state.add_live_leg, add_state)
+                self.assertFalse(self.worker._execute_scale_in())
+                self.assertEqual(self.worker._place_real_leg.call_count, 1)
+
+    def test_unknown_live_add_counts_its_full_risk_quantity(self):
+        add_state = self._live_state("A", filled=0, indeterminate=True, entry_price=0.0)
+        state = self._live_position(add_live_leg=add_state)
+        state.add_entry_trade_price = 11.0
+        with patch.object(self.worker, "_get_option_ltp", return_value=8.0):
+            expected = (8.0 - 10.0) * 50 + (8.0 - 11.0) * int(add_state.risk_quantity)
+            self.assertAlmostEqual(self.worker._get_open_position_pnl(), expected)
+        self.assertGreater(add_state.risk_quantity, 0)
+
+    def test_two_live_legs_keep_state_until_both_are_confirmed_flat(self):
+        add_open = self._live_state("A", filled=25, entry_price=12.0)
+        state = self._live_position(add_live_leg=add_open)
+        state.add_quantity = 25
+        self.worker.store.unregister_option_subscription = MagicMock()
+        self.worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
+
+        def attempt(tag, requested, filled, status, terminal):
+            return OrderAttempt(
+                intent=master_file.OrderIntent.CLOSE, sequence=2, order_tag=tag,
+                requested_quantity=requested, filled_quantity=filled,
+                remaining_quantity=requested - filled, order_id=tag, status=status,
+                broker_state=status.value, reason="synthetic", terminal=terminal,
+                average_fill_price=8.0,
+            )
+
+        filled_status = master_file.OrderStatus.FILLED
+        primary_flat = self._live_state(
+            "N", confirmed=0, latest_attempt=attempt("N", 50, 50, filled_status, True),
+            closing_started=True, close_price=8.0,
+        )
+        add_still_open = self._live_state(
+            "A", filled=25, confirmed=15, entry_price=12.0,
+            latest_attempt=attempt("A1", 25, 10, master_file.OrderStatus.PARTIAL, False),
+            closing_started=True, close_price=8.0,
+        )
+        add_flat = self._live_state(
+            "A", filled=25, confirmed=0, entry_price=12.0,
+            latest_attempt=attempt("A2", 15, 15, filled_status, True),
+            closing_started=True, close_price=8.0,
+        )
+        rounds = {"add": 0}
+
+        def close_leg(_side, leg, *, opens_exposure):
+            self.assertFalse(opens_exposure)
+            if leg["role"] == "N":
+                leg["live_leg"] = primary_flat
+            else:
+                leg["live_leg"] = add_still_open if rounds["add"] == 0 else add_flat
+                rounds["add"] += 1
+            return self.worker._synthetic_order_result(
+                int(leg["quantity"]), filled_status, "synthetic close", filled_quantity=int(leg["quantity"])
+            )
+
+        self.worker._place_real_leg = MagicMock(side_effect=close_leg)
+        self.worker._exit_algo4("CPR_ALGO4_STOP")
+        self.assertTrue(self.worker.pos.active)
+        self.assertIs(self.worker._algo4_state, state)
+        self.assertEqual(self.worker._pending_exit_reason, "CPR_ALGO4_STOP")
+        self.worker.store.unregister_option_subscription.assert_not_called()
+
+        self.assertTrue(self.worker._check_spot_boundaries())  # the retry
+        self.assertFalse(self.worker.pos.active)
+        self.assertIsNone(self.worker._algo4_state)
+        self.assertIsNone(self.worker._pending_exit_reason)
+        self.assertEqual(self.worker.completed_trades, 1)
+        # Primary (8-10)*50 plus add (8-12)*25.
+        self.assertAlmostEqual(self.worker.realized_pnl, -200.0)
+        self.worker.store.unregister_option_subscription.assert_called_once()
+
+    # -- live configuration ---------------------------------------------------------
+    def _algo4_errors(self):
+        errors = master_file._live_config_errors(self.worker, "CPR_ALGO4")
+        return [error for error in errors if "ALGO4" in error or "Algo 4" in error]
+
+    def test_default_configuration_is_live_valid(self):
+        self.assertEqual(self._algo4_errors(), [])
+
+    def test_unknown_exit_mode_runs_paper_as_target_but_blocks_live(self):
+        with patch.object(master_file, "CPR_ALGO4_EXIT_MODE_RAW", "SOMETIMES"):
+            self.assertIn("CPR_ALGO4_EXIT_MODE must be TARGET or TRAIL", self._algo4_errors())
+        self.assertEqual(master_file.CPR_ALGO4_EXIT_MODE, "TARGET")
+
+    def test_entry_cutoff_must_sit_between_start_and_square_off(self):
+        for hour, minute in ((9, 0), (15, 30)):
+            with self.subTest(cutoff=(hour, minute)), \
+                    patch.object(master_file, "CPR_ALGO4_ENTRY_CUTOFF_HOUR", hour), \
+                    patch.object(master_file, "CPR_ALGO4_ENTRY_CUTOFF_MINUTE", minute):
+                self.assertTrue(self._algo4_errors())
+
+    def test_impossible_cutoff_falls_back_for_paper_and_is_reported_for_live(self):
+        with patch.object(master_file, "CPR_ALGO4_ENTRY_CUTOFF_HOUR", 25):
+            config, error = master_file._build_cpr_algo4_config()
+        self.assertTrue(error)
+        self.assertEqual(config.entry_cutoff, master_file.dt_time(15, 0))
+        with patch.object(master_file, "CPR_ALGO4_CONFIG_ERROR", error):
+            self.assertTrue(any("configuration was rejected" in e for e in self._algo4_errors()))
 
 
 class TestStartupLiveExposureWiring(unittest.TestCase):

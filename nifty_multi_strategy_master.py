@@ -69,7 +69,16 @@ as library code with no worker of their own, so the router can never double up o
 a candidate's signal. Read that folder's REGIME_PORTING_NOTES.md before
 enabling it live: this runner has no volume, so its VWAP is an equal-weight proxy.
 
-Together they form an approximately TWENTY-SEVEN-strategy core roster: 23 ATM
+CPR Algo 4 followed: the operator's "Intraday SRSI VWAP" playbook with every
+decision made by fixed rules -- the same ideas the optional CPR Codex AI Agent
+below judges with a model. The 09:25 close against [MIN(S1, PDL), MAX(R1, PDH)]
+fixes the day type: SIDEWAYS days trade Stochastic RSI reversals, TRENDING days
+trade VWAP pullbacks and flip direction on swing structure. It trades the ATM
+CE/PE of the next-next expiry like the rest of the family; its broker-free
+engine lives in "Signal Generators/CPR Strategy/cpr_algo4_signal_generator.py"
+and the backtest drives exactly the same code.
+
+Together they form an approximately TWENTY-EIGHT-strategy core roster: 24 ATM
 single-leg + 2 Hedged Puts + 1 Delta-0.2 + 1 Long Strangle. Per-strategy virtual
 gates decide which subset actually runs.
 
@@ -94,7 +103,7 @@ only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
 The other is the CPR Codex AI Agent, an independent five-minute SRSI/VWAP worker
 whose model judgment remains behind deterministic host risk and execution gates.
 When both optional agents are enabled, the configured roster can reach approximately
-29 workers; enable and virtual-trading gates keep the running total configuration-dependent.
+30 workers; enable and virtual-trading gates keep the running total configuration-dependent.
 
 EXPIRY RULES (the explicit if-else the user asked for)
 ------------------------------------------------------
@@ -114,7 +123,8 @@ ATM workers select this via the `_entry_expiry()` hook, which returns None
 (= the resolver's next-next default) unless a subclass overrides it.
 
 (CPR Algo 3 is "else" -- it TRADES the next-next ATM -- even though its read-only
-observation legs use the current-week expiry. CPR AI TRENDING also remains "else".)
+observation legs use the current-week expiry. CPR Algo 4 and CPR AI TRENDING also
+remain "else".)
 
 One deliberate exception (BNF-001): the SL Hunting BankNIFTY MIRROR leg uses
 OptionsContractResolver.get_nearest_monthly_expiry() -- the NEAREST BankNIFTY
@@ -143,7 +153,7 @@ audit later without chasing a hidden flag.
 
 STRIKE RULES (also explicit per family)
 ---------------------------------------
-- ATM family (the 23 core ATM workers plus any optional ATM agents) ->
+- ATM family (the 24 core ATM workers plus any optional ATM agents) ->
   resolver.get_atm_option(spot, dir).
   Picks the strike whose round-50 value is nearest to live spot.
 - Hedged family (Supertrend Bullish + Donchian Bearish) -> the strike
@@ -211,6 +221,7 @@ CLASS HIERARCHY OVERVIEW
         |       +-- OpeningStrikePCRVWAPATRWorker
         |       +-- CPRStrategyWorker
         |       +-- CPRAlgo3StrategyWorker      (multi-instrument: spot + ITM CE + ITM PE)
+        |       +-- CPRAlgo4StrategyWorker      (Intraday SRSI VWAP: day type -> SRSI or VWAP)
         |       +-- (+ 13 TradingBot ports, built via _build_signal_gen_worker_class:
         |             SMA Crossover, Bollinger Bands, Keltner Squeeze, Mean Reversion
         |             Z-Score, ML Ensemble, Multi-Timeframe, Opening Range Breakout,
@@ -866,6 +877,43 @@ CPR_ALGO3_ITM_OFFSET = _env_float("CPR_ALGO3_ITM_OFFSET", 100.0)
 
 
 # =============================================================================
+# CPR ALGO 4 STRATEGY CONSTANTS (deterministic "Intraday SRSI VWAP" playbook)
+# =============================================================================
+# Algo 4 is the rule-based twin of the optional CPR AI agent's SRSI/VWAP
+# playbook: the 09:25 close against [MIN(S1,PDL), MAX(R1,PDH)] decides a
+# SIDEWAYS day (Stochastic RSI reversals) or a TRENDING day (VWAP pullbacks).
+# Every signal BUYS the ATM CE/PE of the next-next expiry like the rest of the
+# ATM family. See `Signal Generators/CPR Strategy/cpr_algo4_signal_generator.py`.
+CPR_ALGO4_LOTS = _scaled_int("CPR_ALGO4", "CPR_ALGO4_LOTS", 1)
+CPR_ALGO4_MAX_LOSS = _scaled_float("CPR_ALGO4", "CPR_ALGO4_MAX_LOSS", 5500.0)
+CPR_ALGO4_POLL_SECONDS = _env_int("CPR_ALGO4_POLL_SECONDS", 5)
+# Processing starts at 09:30, once the 09:25 candle that decides the day type
+# has completed; the earlier bars are still replayed for swings and the regime.
+CPR_ALGO4_TRADING_START_HOUR = _env_int("CPR_ALGO4_TRADING_START_HOUR", 9)
+CPR_ALGO4_TRADING_START_MINUTE = _env_int("CPR_ALGO4_TRADING_START_MINUTE", 30)
+# "Avoid trade after 3 PM": no new entry or add on a candle ending at/after this.
+CPR_ALGO4_ENTRY_CUTOFF_HOUR = _env_int("CPR_ALGO4_ENTRY_CUTOFF_HOUR", 15)
+CPR_ALGO4_ENTRY_CUTOFF_MINUTE = _env_int("CPR_ALGO4_ENTRY_CUTOFF_MINUTE", 0)
+CPR_ALGO4_SQUARE_OFF_HOUR = _env_int("CPR_ALGO4_SQUARE_OFF_HOUR", 15)
+CPR_ALGO4_SQUARE_OFF_MINUTE = _env_int("CPR_ALGO4_SQUARE_OFF_MINUTE", 15)
+# TARGET books at the earlier of 1:1 and the next CPR level (less 2 points);
+# TRAIL moves the stop to breakeven there and then trails candle by candle.
+# An unknown value runs PAPER as TARGET and is refused for live by
+# `_live_config_errors`.
+CPR_ALGO4_EXIT_MODE_RAW = _env_str("CPR_ALGO4_EXIT_MODE", "TARGET").strip().upper()
+CPR_ALGO4_EXIT_MODE = (
+    CPR_ALGO4_EXIT_MODE_RAW if CPR_ALGO4_EXIT_MODE_RAW in ("TARGET", "TRAIL") else "TARGET"
+)
+# Opt-in: sideways trades may also book at the first-30-minute high/low.
+CPR_ALGO4_FIRST30_TARGET = _env_bool("CPR_ALGO4_FIRST30_TARGET", False)
+# The one equal-size add after a red-then-green pair at R1 (trending longs only).
+CPR_ALGO4_SCALE_IN_ENABLED = _env_bool("CPR_ALGO4_SCALE_IN_ENABLED", True)
+# Optional market-quality gates (0 = off), exactly as for the other ATM workers.
+CPR_ALGO4_MAX_SPREAD_PCT = _env_float("CPR_ALGO4_MAX_SPREAD_PCT", 0.0)
+CPR_ALGO4_MIN_LIQUIDITY_SCORE = _env_float("CPR_ALGO4_MIN_LIQUIDITY_SCORE", 0.0)
+
+
+# =============================================================================
 # CPR CODEX AI AGENT CONSTANTS (optional independent five-minute worker)
 # =============================================================================
 # This agent is opt-in and independent from CPR Algo 1/2/3. Configuration uses
@@ -1358,6 +1406,12 @@ CPR_ALGO3_LOGIC = load_module(
     "master_cpr_algo3_signal_generator",
     ROOT_DIR / "Signal Generators" / "CPR Strategy" / "cpr_algo3_signal_generator.py",
 )
+# CPR Algo 4 imports the same bare `cpr_strategy_logic` name aliased above, so
+# it shares that already-loaded engine too.
+CPR_ALGO4_LOGIC = load_module(
+    "master_cpr_algo4_signal_generator",
+    ROOT_DIR / "Signal Generators" / "CPR Strategy" / "cpr_algo4_signal_generator.py",
+)
 
 # CPR Codex AI modules are loaded from a directory whose name contains spaces,
 # so their cross-file imports use bare ``cpr_ai_*`` sibling names. The collision
@@ -1823,6 +1877,30 @@ CPR_STRATEGY_CONFIG = CPR_LOGIC.CPRStrategyConfig()
 # CPR Algo 3 wraps the same indicator config (so its CPR/VWAP/RSI/ARSI match the
 # other CPR algos) plus the PDF's 45/60 RSI-vs-ARSI thresholds (its own defaults).
 CPR_ALGO3_CONFIG = CPR_ALGO3_LOGIC.CPRAlgo3Config()
+
+
+def _build_cpr_algo4_config() -> tuple[Any, str]:
+    """Build CPR Algo 4's config from `.env` without ever crashing the runner.
+
+    An impossible entry cutoff (hour 25, or one not after the 09:25 day-type
+    bar) falls back to the default cutoff for PAPER. The rejection text is
+    returned alongside, and `_live_config_errors` turns it into a refusal to
+    trade Algo 4 live.
+    """
+
+    options = {
+        "exit_mode": CPR_ALGO4_EXIT_MODE,
+        "first30_target": CPR_ALGO4_FIRST30_TARGET,
+        "scale_in_enabled": CPR_ALGO4_SCALE_IN_ENABLED,
+    }
+    try:
+        cutoff = dt_time(CPR_ALGO4_ENTRY_CUTOFF_HOUR, CPR_ALGO4_ENTRY_CUTOFF_MINUTE)
+        return CPR_ALGO4_LOGIC.CPRAlgo4Config(entry_cutoff=cutoff, **options), ""
+    except ValueError as exc:
+        return CPR_ALGO4_LOGIC.CPRAlgo4Config(**options), str(exc)
+
+
+CPR_ALGO4_CONFIG, CPR_ALGO4_CONFIG_ERROR = _build_cpr_algo4_config()
 
 # Profit Shooter also uses a config dataclass. Same idea: every tunable goes
 # through `_env_*` so the env can override defaults without editing code.
@@ -9784,6 +9862,675 @@ class CPRAlgo3StrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
+# CPR ALGO 4 WORKER (deterministic "Intraday SRSI VWAP" playbook)
+# =============================================================================
+@dataclass
+class CPRAlgo4TradeState:
+    """Algo 4's memory for one open trade, kept beside the generic position.
+
+    :class:`PaperPosition` stays authoritative for the locked option contract,
+    the primary quantity, the primary fill and the broker ledger. This sidecar
+    holds the engine's spot-price ``plan`` (stop, milestones, targets, trail
+    stage) plus the optional one-time R1 add. A live add keeps its own
+    :class:`LiveLegState` so partial or unknown exposure is reconciled rather
+    than invented as a paper fill -- the same model as the CPR AI worker, copied
+    here so the two strategies can evolve independently.
+    """
+
+    # CPR_ALGO4_LOGIC.CPRAlgo4TradePlan (the module is loaded dynamically).
+    plan: Any
+    initial_filled_quantity: int
+    primary_entry_trade_price: float = 0.0
+    add_quantity: int = 0
+    add_entry_trade_price: float = 0.0
+    add_entry_price_quality: str = PRICE_QUALITY_UNKNOWN
+    add_live_leg: LiveLegState | None = None
+
+    @property
+    def has_add(self) -> bool:
+        """True once an add was booked OR a live add submission may have exposure."""
+
+        return self.add_quantity > 0 or self.add_live_leg is not None
+
+
+class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
+    """
+    CPR Algo 4 -- the operator's "Intraday SRSI VWAP" playbook, fully mechanical.
+
+    The 09:25 close against [MIN(S1, PDL), MAX(R1, PDH)] fixes the day type:
+    SIDEWAYS days trade Stochastic RSI reversals with a confirmed-swing stop,
+    TRENDING days trade VWAP pullbacks and flip direction on swing structure.
+    All of that logic lives in the broker-free `CPRAlgo4Engine`
+    (`cpr_algo4_signal_generator.py`), which the backtest drives identically.
+
+    This worker only EXECUTES the engine's answers:
+    - it feeds the engine EVERY completed 5-minute bar of today's session in
+      order (replaying any it missed after a gap or a restart) but opens or adds
+      exposure only on the NEWEST bar -- exits are honoured on any bar;
+    - it checks the spot stop / target / R2-S2 level on EVERY poll, so a stop
+      does not wait for the 5-minute close;
+    - each signal BUYS the ATM CE (LONG) / PE (SHORT) of the next-next expiry
+      through the shared `enter_position` path, like the rest of the ATM family;
+    - the one R1 add and the two-leg exit are a standalone copy of the CPR AI
+      worker's mechanics (separate ledger leg, never retried on PARTIAL/UNKNOWN,
+      local state kept until both legs are broker-confirmed flat).
+
+    CPR Algo 4 coexists with CPR, CPR Algo 3 and CPR AI: separate position,
+    separate live gate (`CPR_ALGO4_LIVE_TRADING`) and a separate Sheet row.
+    """
+
+    strategy_name = "CPRAlgo4"
+    timeframe = "1"
+    poll_seconds = CPR_ALGO4_POLL_SECONDS
+    lots = CPR_ALGO4_LOTS
+    max_loss = CPR_ALGO4_MAX_LOSS
+    trading_start_hour = CPR_ALGO4_TRADING_START_HOUR
+    trading_start_minute = CPR_ALGO4_TRADING_START_MINUTE
+    square_off_hour = CPR_ALGO4_SQUARE_OFF_HOUR
+    square_off_minute = CPR_ALGO4_SQUARE_OFF_MINUTE
+    max_spread_pct = CPR_ALGO4_MAX_SPREAD_PCT
+    min_liquidity_score = CPR_ALGO4_MIN_LIQUIDITY_SCORE
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        stop_event: threading.Event,
+        broker: DhanBrokerClient,
+        *,
+        config: Any = None,
+    ) -> None:
+        super().__init__(store, stop_event, broker)
+        self.config = config if config is not None else CPR_ALGO4_CONFIG
+        self.engine = CPR_ALGO4_LOGIC.CPRAlgo4Engine(self.config)
+        self._algo4_state: CPRAlgo4TradeState | None = None
+        # Newest bar already fed to the engine, and the bar being fed right now.
+        self._last_fed_ts: pd.Timestamp | None = None
+        self._processing_bar_ts: pd.Timestamp | None = None
+        # A one-shot exit (SRSI / structure / trail) whose live close did not
+        # confirm flat is retried on every poll until the books are flat.
+        self._pending_exit_reason: str | None = None
+        self._logged_regime_session: date | None = None
+        self._logged_trend_dir: str | None = None
+        self.signal_count = 0
+        self.entry_submit_count = 0
+        self.exit_count = 0
+        self.scale_in_count = 0
+
+    def summary_text(self) -> str:
+        return (
+            f"Signals={self.signal_count} | Entries={self.entry_submit_count} | "
+            f"Adds={self.scale_in_count} | Exits={self.exit_count} | "
+            f"Trades={self.completed_trades} | RealizedPnL={self.realized_pnl:.2f}"
+        )
+
+    def minimum_strategy_rows(self) -> int:
+        # The engine fails closed on its own (no previous session -> NO_TRADE,
+        # no warmed Stochastic RSI -> no sideways entry), so any non-empty
+        # frame may be inspected.
+        return 1
+
+    # ------------------------------------------------------------------
+    # Completed 5-minute bars
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _completed_minutes_only(ohlc: pd.DataFrame, now: datetime) -> pd.DataFrame:
+        """Drop the still-forming minute (stamped with the CURRENT minute).
+
+        Candles carry their START minute, so at 09:59:30 the 09:59 row is still
+        printing. Without this, the complete-bucket resampler would accept the
+        09:55 bucket as finished during its fifth minute.
+        """
+
+        if ohlc is None or ohlc.empty or "timestamp" not in ohlc.columns:
+            return ohlc
+        stamps = pd.to_datetime(ohlc["timestamp"])
+        if stamps.dt.tz is not None:
+            stamps = stamps.dt.tz_convert(IST_TIMEZONE).dt.tz_localize(None)
+        aware_now = now if now.tzinfo is not None else now.replace(tzinfo=IST_TIMEZONE)
+        current_minute = aware_now.astimezone(IST_TIMEZONE).replace(
+            tzinfo=None, second=0, microsecond=0
+        )
+        return ohlc.loc[(stamps < current_minute).to_numpy()]
+
+    def build_strategy_frame(self, ohlc: pd.DataFrame) -> pd.DataFrame:
+        completed = self._completed_minutes_only(ohlc, _ist_now())
+        return CPR_ALGO4_LOGIC.build_cpr_algo4_frame(completed, self.config)
+
+    def process_strategy_frame(self, strategy_frame: pd.DataFrame) -> None:
+        """Feed every not-yet-seen completed bar of today's session to the engine."""
+
+        if strategy_frame is None or strategy_frame.empty:
+            return
+        stamps = pd.to_datetime(strategy_frame["timestamp"])
+        session = stamps.iloc[-1].date()
+        if self.engine.session_date != session:
+            # First call, or a new trading day: replay today from its first bar.
+            self._last_fed_ts = None
+        keep = stamps.dt.date == session
+        if self._last_fed_ts is not None:
+            keep &= stamps > self._last_fed_ts
+        rows = strategy_frame.loc[keep.to_numpy()].to_dict("records")
+        for index, row in enumerate(rows):
+            self._feed_bar(row, is_newest=index == len(rows) - 1)
+
+    def _feed_bar(self, row: dict[Any, Any], *, is_newest: bool) -> None:
+        bar_ts = pd.Timestamp(row["timestamp"])
+        state = self._algo4_state
+        plan = state.plan if state is not None and self.pos.active else None
+        self._processing_bar_ts = bar_ts
+        try:
+            decision = self.engine.on_bar(row, plan)
+            self._last_fed_ts = bar_ts
+            self._log_session_state()
+            if plan is not None:
+                # The engine ratchets trailing stops inside the plan; mirror the
+                # authoritative stop onto the position for reporting surfaces.
+                self.pos.stop_underlying = float(plan.current_stop)
+            self._act_on_decision(decision, is_newest=is_newest)
+        finally:
+            self._processing_bar_ts = None
+
+    def _log_session_state(self) -> None:
+        engine = self.engine
+        if engine.regime is not None and self._logged_regime_session != engine.session_date:
+            self._logged_regime_session = engine.session_date
+            self._logged_trend_dir = engine.trend_dir
+            self.log.info(
+                "CPR Algo 4 day type %s: %s (trend=%s)",
+                engine.session_date, engine.regime, engine.trend_dir or "-",
+            )
+        elif engine.trend_dir != self._logged_trend_dir:
+            self.log.info(
+                "CPR Algo 4 trend flipped %s -> %s (reversal sequence armed)",
+                self._logged_trend_dir, engine.trend_dir,
+            )
+            self._logged_trend_dir = engine.trend_dir
+
+    def _act_on_decision(self, decision: Any, *, is_newest: bool) -> None:
+        action = decision.action
+        if action == "EXIT":
+            # Risk-reducing, so honoured even for a replayed (catch-up) bar.
+            if self.pos.active:
+                self._exit_algo4(decision.reason)
+            return
+        if not is_newest:
+            # Never open or add exposure off a bar that is no longer current.
+            return
+        if action == "SCALE_IN":
+            if self.pos.active and self._execute_scale_in():
+                self.scale_in_count += 1
+            return
+        if action in ("ENTER_LONG", "ENTER_SHORT") and not self.pos.active:
+            self._enter_algo4(decision.plan)
+
+    def _enter_algo4(self, plan: Any) -> None:
+        self.signal_count += 1
+        if self._at_or_after_entry_cutoff():
+            return
+        # PaperPosition carries one target for reporting: the fixed TARGET-mode
+        # level, or the always-on R2/S2 booking level in TRAIL mode.
+        booking_target = plan.target if math.isfinite(plan.target) else plan.final_target
+        if not self.enter_position(plan.direction, plan.entry, plan.current_stop, booking_target):
+            return
+        self.entry_submit_count += 1
+        self._algo4_state = CPRAlgo4TradeState(
+            plan=plan,
+            initial_filled_quantity=int(self.pos.quantity),
+            primary_entry_trade_price=float(self.pos.entry_trade_price),
+        )
+        self.engine.on_entry_filled(plan)
+        self.log.info(
+            "CPR Algo 4 ENTRY %s | premise=%s | entry=%.2f stop=%.2f target=%.2f final=%.2f | mode=%s",
+            plan.direction, plan.premise, plan.entry, plan.current_stop,
+            booking_target, plan.final_target, plan.exit_mode,
+        )
+
+    def _at_or_after_entry_cutoff(self) -> bool:
+        """No new entry or add at/after the configured cutoff (default 15:00).
+
+        Read from the validated config rather than the raw env integers, so a
+        malformed cutoff (paper falls back to 15:00) can never raise here.
+        """
+
+        cutoff = self.config.entry_cutoff
+        return is_after_time(cutoff.hour, cutoff.minute)
+
+    # ------------------------------------------------------------------
+    # Exits
+    # ------------------------------------------------------------------
+    def _exit_algo4(self, reason: str) -> None:
+        self.exit_position(reason)
+        # A live close that is not broker-confirmed keeps the position open;
+        # remember why so the next poll retries instead of forgetting a
+        # one-shot premise exit.
+        self._pending_exit_reason = reason if self.pos.active else None
+
+    def _check_spot_boundaries(self) -> bool:
+        """Every poll: retry a pending exit, then the spot stop/target/final level.
+
+        Returns True when an exit was attempted, so the caller skips the rest of
+        that poll.
+        """
+
+        state = self._algo4_state
+        if not self.pos.active or state is None:
+            return False
+        if self._pending_exit_reason is not None:
+            self._exit_algo4(self._pending_exit_reason)
+            return True
+        spot = self._get_underlying_spot(fallback=0.0)
+        if spot <= 0:
+            return False
+        hit = CPR_ALGO4_LOGIC.check_intrabar_exit(state.plan, high=spot, low=spot)
+        if hit is None:
+            return False
+        self._exit_algo4(hit[0])
+        return True
+
+    def _exit_bar_ts(self) -> pd.Timestamp | None:
+        """The 5-minute bar during which an exit happened (for the no-re-entry rule)."""
+
+        if self._processing_bar_ts is not None:
+            return self._processing_bar_ts
+        if self._last_fed_ts is not None:
+            # An intra-bar exit happens while the NEXT bar is still forming.
+            return self._last_fed_ts + pd.Timedelta(minutes=self.config.bar_minutes)
+        return None
+
+    def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
+        """Clear the sidecar only after the (possibly two-leg) exit is confirmed flat."""
+
+        del closed_position, reason
+        self.exit_count += 1
+        self._algo4_state = None
+        self._pending_exit_reason = None
+        exit_bar = self._exit_bar_ts()
+        if exit_bar is not None:
+            self.engine.on_exit(exit_bar)
+
+    # ------------------------------------------------------------------
+    # The one R1 add (standalone copy of CPR AI's mechanics)
+    # ------------------------------------------------------------------
+    def _get_open_position_pnl(self) -> float:
+        """Primary MTM plus a conservative MTM for any paper/live add.
+
+        For partial or unknown broker results, ``risk_quantity`` assumes the
+        ambiguous remainder may be live -- omitting it could hide losses from
+        the aggregate max-loss kill switch.
+        """
+
+        primary = super()._get_open_position_pnl()
+        state = self._algo4_state
+        if not self.pos.active or state is None:
+            return primary
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_quantity = int(state.add_live_leg.risk_quantity)
+        else:
+            add_quantity = int(state.add_quantity)
+        if add_quantity <= 0:
+            return primary
+        live = self._get_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+            fallback=self.pos.entry_trade_price,
+        )
+        return primary + self._option_leg_pnl(
+            self.pos.option_opening_side,
+            self._add_entry_accounting_price(state),
+            live,
+            add_quantity,
+        )
+
+    def _add_entry_accounting_price(self, state: CPRAlgo4TradeState) -> float:
+        """A conservative non-zero add basis: broker fill, then saved mark, then primary fill.
+
+        A zero basis would turn an ambiguous add into artificial profit.
+        """
+
+        if isinstance(state.add_live_leg, LiveLegState):
+            ledger_price = float(state.add_live_leg.entry_average_fill_price)
+            if ledger_price > 0:
+                return ledger_price
+        if state.add_entry_trade_price > 0:
+            return float(state.add_entry_trade_price)
+        return float(self.pos.entry_trade_price)
+
+    def _execute_scale_in(self) -> bool:
+        """Attempt the one equal-size R1 add in the locked primary contract.
+
+        Quantity is the ORIGINAL filled quantity (not the configured lots) and
+        the symbol/strike/expiry come from the open position. The add must pass
+        the same spread/liquidity gates as an entry. Paper consumes the add only
+        once it is booked; live consumes it immediately before submission,
+        because a PARTIAL or UNKNOWN response may already be real exposure and
+        must never be retried or turned into an invented paper fill.
+        """
+
+        state = self._algo4_state
+        if (
+            state is None
+            or not self.pos.active
+            or not self.config.scale_in_enabled
+            or state.plan.scale_in_used
+            or state.plan.direction != "LONG"
+            or state.plan.premise
+            not in (CPR_ALGO4_LOGIC.PREMISE_CONTINUATION, CPR_ALGO4_LOGIC.PREMISE_REVERSAL)
+            or self.pos.option_opening_side != "BUY"
+            or self._at_or_after_entry_cutoff()
+        ):
+            return False
+        quantity = int(state.initial_filled_quantity)
+        if quantity <= 0:
+            return False
+        mark, mark_is_fresh = self._get_dealable_option_ltp(
+            self.pos.option_exchange_segment,
+            self.pos.option_security_id,
+        )
+        primary_is_live = isinstance(self.pos.live_leg, LiveLegState)
+        if mark <= 0 or (primary_is_live and not mark_is_fresh):
+            return False
+        # Same market-quality checks as the original entry. A rejection keeps
+        # the add unused, so a later bar may reconsider it.
+        if not self._spread_gate_allows_entry(
+            self.pos.direction,
+            self.pos.symbol,
+            self.pos.option_strike,
+            self.pos.option_right,
+            self.pos.option_expiry,
+        ):
+            return False
+        if not self._liquidity_gate_allows_entry(
+            self.pos.direction,
+            self.pos.symbol,
+            self.pos.option_expiry,
+        ):
+            return False
+        if not primary_is_live:
+            # Paper (including a live-enabled worker whose primary explicitly
+            # rejected with zero fill and fell back to paper).
+            state.plan.scale_in_used = True
+            state.primary_entry_trade_price = float(self.pos.entry_trade_price)
+            state.add_quantity = quantity
+            state.add_entry_trade_price = float(mark)
+            state.add_entry_price_quality = (
+                PRICE_QUALITY_PAPER_FRESH_MARK if mark_is_fresh else PRICE_QUALITY_STALE_MARK
+            )
+            return True
+
+        leg = {
+            "option_type": self.pos.option_right,
+            "strike": self.pos.option_strike,
+            "expiry": self.pos.option_expiry,
+            "quantity": quantity,
+            "dhan_symbol": self.pos.symbol,
+            "role": "A",
+        }
+        state.plan.scale_in_used = True
+        # A non-zero accounting fallback until the broker reports a priced fill.
+        state.add_entry_trade_price = float(mark)
+        state.add_entry_price_quality = PRICE_QUALITY_MARK_FALLBACK
+        result = self._place_real_leg("BUY", leg, opens_exposure=True)
+        live_state = leg.get("live_leg")
+        if isinstance(live_state, LiveLegState):
+            state.add_live_leg = live_state
+        if (
+            result.status is not OrderStatus.FILLED
+            or not isinstance(live_state, LiveLegState)
+            or not live_state.entry_complete
+        ):
+            return False
+        add_price, quality = self._accounting_price(
+            live_state,
+            mark,
+            mark_is_fresh=mark_is_fresh,
+            phase="ENTRY",
+        )
+        state.add_quantity = int(live_state.filled_quantity)
+        state.add_entry_trade_price = float(add_price)
+        state.add_entry_price_quality = quality
+        return state.add_quantity > 0
+
+    def exit_position(self, reason: str) -> None:
+        """Close the trade; with an add, close BOTH legs and keep state until both are flat.
+
+        Without an add this is exactly the shared single-leg exit. With one,
+        every live ledger leg is closed through the shared execution path using
+        its conservative risk quantity; local position/state and realized P&L
+        are cleared only after BOTH ledgers report broker-confirmed flat.
+        """
+
+        state = self._algo4_state
+        if not self.pos.active or state is None or not state.has_add:
+            super().exit_position(reason)
+            return
+        closed = self.pos
+        mark, mark_is_fresh = self._get_dealable_option_ltp(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+        )
+        if mark <= 0:
+            mark, mark_is_fresh = closed.entry_trade_price, False
+
+        primary_leg = {
+            "option_type": closed.option_right,
+            "strike": closed.option_strike,
+            "expiry": closed.option_expiry,
+            "quantity": closed.quantity,
+            "dhan_symbol": closed.symbol,
+            "role": "N",
+            "live_leg": closed.live_leg,
+        }
+        add_close_quantity = state.initial_filled_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_close_quantity = max(1, int(state.add_live_leg.risk_quantity))
+        elif state.add_quantity > 0:
+            add_close_quantity = int(state.add_quantity)
+        add_leg = {
+            "option_type": closed.option_right,
+            "strike": closed.option_strike,
+            "expiry": closed.option_expiry,
+            "quantity": add_close_quantity,
+            "dhan_symbol": closed.symbol,
+            "role": "A",
+            "live_leg": state.add_live_leg,
+        }
+        # Role N is the entry and role A the add: one contract, two ledgers,
+        # because either close can be partial, rejected or unknown.
+        for leg, is_live in (
+            (primary_leg, closed.live_leg is not None),
+            (add_leg, state.add_live_leg is not None),
+        ):
+            if not is_live:
+                continue
+            self._place_real_leg(
+                self._option_close_side(closed.option_opening_side),
+                leg,
+                opens_exposure=False,
+            )
+
+        primary_state = primary_leg.get("live_leg")
+        add_state = add_leg.get("live_leg")
+        if isinstance(primary_state, LiveLegState):
+            closed.live_leg = primary_state
+        if isinstance(add_state, LiveLegState):
+            state.add_live_leg = add_state
+        live_states = tuple(
+            leg_state
+            for leg_state in (closed.live_leg, state.add_live_leg)
+            if isinstance(leg_state, LiveLegState)
+        )
+        # Never erase a ledger merely because a SELL was submitted.
+        if any(not leg_state.broker_confirmed_flat for leg_state in live_states):
+            self.log.error(
+                "CPR Algo 4 exit retained local state: both execution-ledger legs "
+                "are not yet broker-confirmed flat."
+            )
+            return
+
+        primary_exit, primary_quality = self._accounting_price(
+            closed.live_leg,
+            mark,
+            mark_is_fresh=mark_is_fresh,
+            phase="EXIT",
+        )
+        primary_pnl = self._option_leg_pnl(
+            closed.option_opening_side,
+            closed.entry_trade_price,
+            primary_exit,
+            state.initial_filled_quantity,
+        )
+        add_quantity = state.add_quantity
+        if isinstance(state.add_live_leg, LiveLegState):
+            add_quantity = int(state.add_live_leg.filled_quantity)
+        add_pnl = 0.0
+        add_exit = primary_exit
+        add_quality = primary_quality
+        add_entry = self._add_entry_accounting_price(state)
+        if add_quantity > 0:
+            add_exit, add_quality = self._accounting_price(
+                state.add_live_leg,
+                mark,
+                mark_is_fresh=mark_is_fresh,
+                phase="EXIT",
+            )
+            add_pnl = self._option_leg_pnl(
+                closed.option_opening_side,
+                add_entry,
+                add_exit,
+                add_quantity,
+            )
+        pnl = primary_pnl + add_pnl
+        self.realized_pnl += pnl
+        self.completed_trades += 1
+        self.log.info(
+            "CPR Algo 4 EXIT %s | reason=%s primary_qty=%s add_qty=%s pnl=%.2f",
+            closed.direction,
+            reason,
+            state.initial_filled_quantity,
+            add_quantity,
+            pnl,
+        )
+        self.publish_trade_event(
+            {
+                "action": "EXIT",
+                "mode": "LIVE" if live_states else "PAPER",
+                "direction": closed.direction,
+                "reason": reason,
+                "quantity": state.initial_filled_quantity + add_quantity,
+                "pnl": pnl,
+                "legs": [
+                    {
+                        "symbol": closed.symbol,
+                        "side": self._option_close_side(closed.option_opening_side),
+                        "right": closed.option_right,
+                        "strike": closed.option_strike,
+                        "entry_price": closed.entry_trade_price,
+                        "exit_price": primary_exit,
+                        "exit_price_quality": primary_quality,
+                    },
+                    {
+                        "symbol": closed.symbol,
+                        "side": self._option_close_side(closed.option_opening_side),
+                        "right": closed.option_right,
+                        "strike": closed.option_strike,
+                        "entry_price": add_entry,
+                        "exit_price": add_exit,
+                        "exit_price_quality": add_quality,
+                        "quantity": add_quantity,
+                    },
+                ],
+            }
+        )
+        self.store.unregister_option_subscription(
+            closed.option_exchange_segment,
+            closed.option_security_id,
+            owner_id=self._execution_owner_id,
+        )
+        self.after_exit(closed, reason)
+        self.pos = PaperPosition()
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+    def run(self) -> None:
+        """
+        Same shape as `BasePaperStrategyWorker.run` with one extra step:
+        `_check_spot_boundaries()` runs on every poll while a position is open,
+        so the spot stop, the TARGET-mode target and the R2/S2 booking level do
+        not wait for the 5-minute close. If an exit fires, the rest of that
+        poll is skipped.
+        """
+        self.log.info("Starting %s strategy worker.", self.strategy_name)
+        if CPR_ALGO4_CONFIG_ERROR:
+            self.log.warning(
+                "CPR Algo 4 .env configuration was rejected (%s); paper runs on "
+                "the default settings and live trading is refused.",
+                CPR_ALGO4_CONFIG_ERROR,
+            )
+        while self.lifecycle.snapshot().state is not LifecycleState.STOPPED:
+            try:
+                if self._run_shutdown_cycle_if_requested():
+                    self._wait_for_shutdown_retry()
+                    continue
+
+                breached, total_pnl, open_pnl = self.is_max_loss_breached()
+                if breached:
+                    self.handle_max_loss_and_stop(total_pnl, open_pnl)
+                    continue
+
+                if is_after_time(self.square_off_hour, self.square_off_minute):
+                    self.handle_square_off_and_stop()
+                    continue
+
+                if self._handle_market_data_health():
+                    self.wait_for_next_poll()
+                    continue
+
+                if is_before_time(self.trading_start_hour, self.trading_start_minute):
+                    if not self.preopen_wait_logged:
+                        self.log.info(
+                            "Before strategy start (%02d:%02d). Waiting to begin processing.",
+                            self.trading_start_hour,
+                            self.trading_start_minute,
+                        )
+                        self.preopen_wait_logged = True
+                    self.wait_for_next_poll()
+                    continue
+                self.preopen_wait_logged = False
+
+                if self._check_spot_boundaries():
+                    self.wait_for_next_poll()
+                    continue
+
+                snapshot = self.store.get(self.timeframe)
+                if snapshot is None or snapshot.frame.empty:
+                    self.wait_for_next_poll()
+                    continue
+
+                strategy_frame = self.build_strategy_frame(snapshot.frame)
+                if strategy_frame is None or strategy_frame.empty:
+                    self.wait_for_next_poll()
+                    continue
+
+                frame_signature = build_last_row_signature(strategy_frame)
+                if frame_signature is None:
+                    self.wait_for_next_poll()
+                    continue
+                if self.last_processed_frame_signature == frame_signature:
+                    self.wait_for_next_poll()
+                    continue
+
+                self.last_processed_frame_signature = frame_signature
+                self.process_strategy_frame(strategy_frame)
+            except Exception as exc:
+                self.log.exception("Main loop error: %s", exc)
+
+            self.wait_for_next_poll()
+
+        self.log.info("%s strategy worker exited.", self.strategy_name)
+
+
+# =============================================================================
 # CPR CODEX AI WORKER (optional independent SRSI/VWAP policy worker)
 # =============================================================================
 @dataclass
@@ -15080,6 +15827,7 @@ STRATEGY_ENV_PREFIX = {
     "OpeningStrike": "OPENING_STRIKE",
     "CPR": "CPR",
     "CPRAlgo3": "CPR_ALGO3",
+    "CPRAlgo4": "CPR_ALGO4",
     "CPR AI": "CPR_AI",
     "SupertrendBullish": "BULLISH",
     "DonchianBearish": "BEARISH",
@@ -16767,6 +17515,7 @@ _PNL_SHEET_ROW_LABELS = {
     "OpeningStrike": "Opening Strike PCR VWAP ATR Strategy",
     "CPR": "CPR Strategy",
     "CPRAlgo3": "CPR Algo 3 Strategy",
+    "CPRAlgo4": "CPR Algo 4 Strategy",
     # CPR AI uses three physical rows: this base label for PAPER plus the
     # automatically suffixed ``[LIVE]`` and ``[MIXED]`` rows. Keeping modes
     # separate prevents broker-backed results from contaminating paper history.
@@ -17374,6 +18123,12 @@ def _live_config_errors(
             ),
         })
 
+    if normalized_prefix == "CPR_ALGO4":
+        raw_rules.update({
+            "CPR_ALGO4_ENTRY_CUTOFF_HOUR": ("integer_range", (0, 23)),
+            "CPR_ALGO4_ENTRY_CUTOFF_MINUTE": ("integer_range", (0, 59)),
+        })
+
     for name, (rule, bounds) in raw_rules.items():
         raw = os.getenv(name)
         if raw is None or not raw.strip():
@@ -17499,6 +18254,29 @@ def _live_config_errors(
         ):
             errors.append(
                 "resolved SL Hunting no-new-entry cutoff must be a valid HH:MM value"
+            )
+
+    if normalized_prefix == "CPR_ALGO4":
+        # Paper quietly falls back to TARGET / the 15:00 cutoff; live refuses.
+        exit_mode_raw = globals().get("CPR_ALGO4_EXIT_MODE_RAW")
+        if exit_mode_raw not in CPR_ALGO4_LOGIC.EXIT_MODES:
+            errors.append("CPR_ALGO4_EXIT_MODE must be TARGET or TRAIL")
+        config_error = globals().get("CPR_ALGO4_CONFIG_ERROR")
+        if config_error:
+            errors.append(f"CPR Algo 4 configuration was rejected: {config_error}")
+        entry_cutoff = (
+            globals().get("CPR_ALGO4_ENTRY_CUTOFF_HOUR"),
+            globals().get("CPR_ALGO4_ENTRY_CUTOFF_MINUTE"),
+        )
+        start = (getattr(worker, "trading_start_hour", None), getattr(worker, "trading_start_minute", None))
+        square_off = (getattr(worker, "square_off_hour", None), getattr(worker, "square_off_minute", None))
+        clocks = (*entry_cutoff, *start, *square_off)
+        if not all(isinstance(value, int) and not isinstance(value, bool) for value in clocks):
+            errors.append("resolved CPR Algo 4 entry cutoff must be a valid HH:MM value")
+        elif not start < entry_cutoff <= square_off:
+            errors.append(
+                "CPR Algo 4 entry cutoff must be after the trading start and no later "
+                "than the square-off"
             )
 
     return tuple(dict.fromkeys(errors))
@@ -19438,9 +20216,10 @@ def main() -> None:
 
     logger.info(
         "Starting NIFTY Multi Strategy MASTER paper runner (dhanhq) | "
-        "ATM single-leg family (23): 9 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
+        "ATM single-leg family (24): 10 core - Renko 1m, EMA 5m, HeikinAshi 1m, "
         "ProfitShooter 5m, Goldmine 5m, MoneyMachine 5m, OpeningStrike 5m "
-        "PCR/VWAP/ATR, CPR 5m, CPR Algo 3 5m (multi-instrument); + 13 TradingBot ports (%dm) - SMA Crossover, "
+        "PCR/VWAP/ATR, CPR 5m, CPR Algo 3 5m (multi-instrument), CPR Algo 4 5m (SRSI/VWAP); "
+        "+ 13 TradingBot ports (%dm) - SMA Crossover, "
         "Bollinger Bands, Keltner Squeeze, Mean Reversion Z-Score, ML Ensemble, "
         "Multi-Timeframe, Opening Range Breakout, Parabolic SAR, RSI Divergence, "
         "RSI Reversal, Stochastic, Supertrend, Volatility Breakout; "
@@ -19455,7 +20234,7 @@ def main() -> None:
     store = SharedMarketDataStore()
     stop_event = threading.Event()
 
-    # One producer (fetcher) serves the approximately 27 core consumers plus
+    # One producer (fetcher) serves the approximately 28 core consumers plus
     # independently opt-in SL Hunting and CPR Codex AI agents. Per-strategy
     # virtual gates determine the final consumer set. The producer class comes from
     # MARKET_DATA_SOURCE: REST polling (default) or the Dhan websocket feed;
@@ -19489,6 +20268,9 @@ def main() -> None:
         # CPR Algo 3: multi-instrument (spot + ITM CE + ITM PE observation); trades
         # the ATM CE/PE next-next expiry like the rest of this family.
         CPRAlgo3StrategyWorker(store, stop_event, broker),
+        # CPR Algo 4: the deterministic Intraday SRSI VWAP playbook (09:25 day
+        # type -> Stochastic RSI reversals or VWAP pullbacks) on 5-min candles.
+        CPRAlgo4StrategyWorker(store, stop_event, broker),
     ]
     # Same family, different sources: the 13 TradingBot ports and the Regime
     # Adaptive router are ALSO AtmSingleLegStrategyWorker subclasses (built from a
