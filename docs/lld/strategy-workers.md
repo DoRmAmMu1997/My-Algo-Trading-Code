@@ -39,6 +39,7 @@ threading.Thread
      │   ├─ OpeningStrikePCRVWAPATRWorker
      │   ├─ CPRStrategyWorker
      │   ├─ CPRAlgo3StrategyWorker     (multi-instrument: spot + ITM CE + ITM PE)
+     │   ├─ CPRAlgo4StrategyWorker     (Intraday SRSI VWAP — see cpr-algo4.md)
      │   ├─ CPRAIWorker                (optional — see cpr-codex-ai-agent.md)
      │   ├─ 14 factory-built ports     (_build_signal_gen_worker_class)
      │   │                              13 TradingBot ports + Regime Adaptive
@@ -156,9 +157,11 @@ basket is confirmed flat — a lone surviving leg must not run the timer down.
 
 ## 7. Coexistence
 
-`CPR`, `CPRAlgo3`, `Regime Adaptive` and `CPR AI` are independent strategies
-that may run together with independent positions and independent P&L. They are
-not variants of one another and none disables another.
+`CPR`, `CPRAlgo3`, `CPRAlgo4`, `Regime Adaptive` and `CPR AI` are independent
+strategies that may run together with independent positions and independent P&L.
+They are not variants of one another and none disables another. CPR Algo 4 is
+deliberately a worker of its own rather than a fourth algo inside `CPRStrategyWorker`
+— see [`cpr-algo4.md`](cpr-algo4.md) and ADR [0018](../adr/0018-cpr-algo4-as-separate-worker.md).
 
 Regime Adaptive's two candidate rules live in
 `Signal Generators/Regime Adaptive Strategy/regime_candidates.py` as library
@@ -188,4 +191,7 @@ can never take the same signal twice. See [`regime-adaptive.md`](regime-adaptive
 4. Size knobs read through `_scaled_int` / `_scaled_float`, never the raw
    `_env_*` helpers. A drift-guard test fails otherwise.
 5. Tests under `Tests/`, mirroring where the code lives.
-6. Update this document if the worker introduces a new *shape* of strategy.
+6. A `_PNL_SHEET_ROW_LABELS` entry (and the worker in `_tracked_workers()` in the
+   master suite, which checks both maps), plus the matching rows in the operator's
+   Sheet. Without it the strategy trades normally but its P&L never reaches the Sheet.
+7. Update this document if the worker introduces a new *shape* of strategy.

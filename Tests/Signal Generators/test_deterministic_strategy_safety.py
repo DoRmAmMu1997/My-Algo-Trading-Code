@@ -179,6 +179,12 @@ def test_opening_strike_is_consumed_only_after_entry_acknowledgement():
             {"call_arsi_min": float("nan")},
         ),
         (
+            "CPR Strategy/cpr_algo4_signal_generator.py",
+            "mat106_cpr4_config",
+            "CPRAlgo4Config",
+            {"max_stop_points": float("inf")},
+        ),
+        (
             "opening_strike_pcr_vwap_atr_signal_generator.py",
             "mat106_opening_config",
             "NiftyOpeningStrikePCRVWAPATRConfig",

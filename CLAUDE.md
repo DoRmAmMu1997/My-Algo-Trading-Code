@@ -8,7 +8,7 @@
 ## What this project is
 A NIFTY index-options, multi-strategy trading system. The flow is: **fetch** 1-minute OHLC history from
 the DhanHQ API → **backtest** strategies on it → **run** a multithreaded "front test" whose approximately
-27-strategy core roster and independently opt-in agents execute together — on paper by default, and live
+28-strategy core roster and independently opt-in agents execute together — on paper by default, and live
 through a real broker when explicitly enabled.
 Running live since May 2026; daily per-strategy results are tracked in a Google Sheet.
 
@@ -20,9 +20,10 @@ One process, cooperating threads:
   swaps in `WebSocketMarketDataFetcher`: Dhan marketfeed ticks build the bars/LTPs
   (pure helpers in `Dependencies/tick_bar_builder.py`), with REST kept for warmup and a
   once-per-minute true-up against official candles.
-- **Approximately 27 core strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
+- **Approximately 28 core strategy worker threads** read that store and decide trades: the `AtmSingleLegStrategyWorker`
   family (Renko / EMA / Heikin-Ashi / Profit-Shooter / Goldmine / Money-Machine / CPR / CPR Algo 3
-  (multi-instrument: spot + ITM CE + ITM PE) / Opening-Strike + 13 ported TradingBot strategies + the
+  (multi-instrument: spot + ITM CE + ITM PE) / CPR Algo 4 (deterministic Intraday SRSI VWAP) /
+  Opening-Strike + 13 ported TradingBot strategies + the
   **Regime Adaptive** router), two **hedged-puts** workers, one **Delta-0.2** hedged-spread worker,
   and one **long-strangle** worker (time-based dual-leg BUY of OTM1 CE+PE, with momentum re-entry).
   **Regime Adaptive** (ported from the MIT-licensed
@@ -37,13 +38,23 @@ One process, cooperating threads:
   response and refuses an entry wider than the cap in paper AND live, while an unreadable quote
   refuses LIVE only. The source's VIX and breadth vetoes remain unimplemented — absent by choice,
   not for want of data (the source runs on Dhan too).
+  **CPR Algo 4** (`CPRAlgo4StrategyWorker`, `CPR_ALGO4_*`) is the deterministic twin of the CPR AI
+  playbook below: the 09:25 5-min close against [MIN(S1,PDL), MAX(R1,PDH)] fixes a SIDEWAYS day
+  (Stochastic RSI 20/80 reversals, swing stop) or a TRENDING day (VWAP pullbacks with RSI/EMA
+  filters that flip on LH+LL / HH+HL structure and re-enter via a reversal sequence); every signal
+  BUYS the ATM CE/PE. Its broker-free engine (`Signal Generators/CPR Strategy/
+  cpr_algo4_signal_generator.py`) is driven identically by the worker and `cpr_algo4_backtest.py`.
+  It is its own worker, NOT a fourth algo inside `CPRStrategyWorker` (that worker has one position
+  slot, one live gate and one Sheet row) -- see `docs/adr/0018`. Its R1 add and two-leg exit are a
+  deliberate standalone copy of the CPR AI worker's mechanics, so a fix to one must be mirrored.
   An **optional, opt-in CPR Codex AI Agent** is an independent five-minute SRSI/VWAP worker. It
   freezes completed-bar context behind four frozen no-argument MCP tools; Codex judges regime,
   setup, and premise exits, while the host owns deterministic entry/risk gates and execution. It is
   disabled by default, live-disabled by default, and uses the normal global-plus-strategy double gate.
   Accepted SIDEWAYS setups sell naked current-expiry ATM premium (bullish PE, bearish CE); TRENDING
   setups retain the existing option buys and expiry. Spot stops trigger exits but cannot guarantee fills.
-  Ordinary CPR, CPR Algo 3, Regime Adaptive, and CPR AI may coexist with independent positions and P&L.
+  Ordinary CPR, CPR Algo 3, CPR Algo 4, Regime Adaptive, and CPR AI may coexist with independent
+  positions and P&L.
   Another **optional, opt-in** worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via
   `claude-agent-sdk`) — off by default (`SL_HUNTING_ENABLED`), it decides once per completed 1-min bar
   (with BankNIFTY cross-confirmation, fetched per bar like CPR Algo 3, and dynamic ~₹2500 risk-based
@@ -68,7 +79,7 @@ One process, cooperating threads:
   read, BankNIFTY as the "major index", expiry-day priority, round-number magnets) that is **advisory
   context for the cross-index read — execution stays NIFTY-only** — plus general lessons merged into
   the existing sections (distilled from Intraday Hunter videos; provenance in `sl_hunting_doc.md`).
-  With both optional agents enabled, the configured roster can reach approximately 29 workers, but
+  With both optional agents enabled, the configured roster can reach approximately 30 workers, but
   enable and virtual-trading gates keep the running roster configuration-dependent.
 - An **optional, opt-in read-only monitoring dashboard** (`DASHBOARD_ENABLED`, default
   false) serves a browser page on `127.0.0.1` answering "where do I stand right now":
@@ -98,7 +109,7 @@ One process, cooperating threads:
   `load_module` under BARE names so `sys.modules` returns the already-loaded instance
   rather than a second copy. CPR is the one deliberate divergence and is labelled
   CHART-ONLY everywhere: it reads the prior session 09:15-15:15 inclusive (high, low
-  AND close) while CPR / CPR Algo 3 / CPR AI keep using the full session and its last
+  AND close) while CPR / CPR Algo 3 / CPR Algo 4 / CPR AI keep using the full session and its last
   intraday close -- those strategies are untouched, only the input WINDOW differs, and
   a test feeds an untruncated session through both to prove the algebra has not forked.
   See `docs/adr/0017`.

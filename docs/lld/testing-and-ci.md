@@ -33,7 +33,7 @@ Tests/
     ├── test_deterministic_strategy_safety.py  test_renko_bounds.py
     ├── test_trading_bot_ports.py
     ├── CPR AI Agent/          conftest.py + 4 suites
-    ├── CPR Strategy/          1 suite
+    ├── CPR Strategy/          2 suites
     ├── Regime Adaptive Strategy/ conftest.py + 1 suite
     ├── SL Hunting AI Agent/   conftest.py + 8 suites
     └── Subhamoy Strategies/   1 suite

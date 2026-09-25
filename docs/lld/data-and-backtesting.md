@@ -104,6 +104,7 @@ on. Pacing goes through the shared `RollingWindowRateLimiter`.
    ema_trend_strategy_backtest.py
    heikin_ashi_futures_5y_backtest.py
    cpr_strategy_backtest.py
+   cpr_algo4_backtest.py        (plain replay of the live engine, spot points -- see cpr-algo4.md)
    profit_shooter_backtest.py
    Subhamoy Strategies/
      goldmine_strategy_backtest.py

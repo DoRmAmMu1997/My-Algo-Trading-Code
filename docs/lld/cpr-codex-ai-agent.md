@@ -15,8 +15,10 @@ setup, and premise exits, while the host owns every deterministic entry and risk
 gate plus all execution.
 
 It is *not* an arbiter over the other CPR strategies. Ordinary CPR, CPR Algo 3,
-Regime Adaptive and CPR AI are **independent strategies that may run together
-with independent positions and independent P&L**.
+CPR Algo 4, Regime Adaptive and CPR AI are **independent strategies that may run
+together with independent positions and independent P&L**. CPR Algo 4 trades the
+same SRSI/VWAP playbook with fixed rules instead of a model judgment, which makes
+it the natural paper baseline for this agent — see [`cpr-algo4.md`](cpr-algo4.md).
 
 ---
 

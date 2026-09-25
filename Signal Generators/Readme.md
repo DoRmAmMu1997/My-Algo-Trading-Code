@@ -21,6 +21,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/cpr_algo2_signal_generator.py` | Algo 2 sideways/reversal CPR wrapper | CPR sideways/reversal callers |
 | `CPR Strategy/cpr_combined_signal_generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
 | `CPR Strategy/cpr_algo3_signal_generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
+| `CPR Strategy/cpr_algo4_signal_generator.py` | Deterministic "Intraday SRSI VWAP" engine: 09:25 day type (SIDEWAYS -> Stochastic RSI, TRENDING -> VWAP pullbacks), fed every completed 5-min bar, plus a pure `check_intrabar_exit` | front-test master (`CPRAlgo4StrategyWorker`) and `cpr_algo4_backtest.py`, which drive the same engine |
 | `CPR AI Agent/` | Frozen five-minute context, four no-argument tools, Codex judgment, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
@@ -99,7 +100,7 @@ This is not another deterministic CPR wrapper. `CPRAIWorker` freezes completed
 five-minute SRSI/VWAP context behind four no-argument tools, asks Codex for a
 regime/setup or premise-exit judgment, and then applies host-owned entry, sizing,
 time, lifecycle, and execution gates. It is disabled by default and live-disabled
-by default. Ordinary CPR, CPR Algo 3, Regime Adaptive, SL Hunting, and CPR AI have
+by default. Ordinary CPR, CPR Algo 3, CPR Algo 4, Regime Adaptive, SL Hunting, and CPR AI have
 independent prefixes, workers, positions, and P&L and may coexist when their own
 enable and virtual-trading gates permit it. See `CPR AI Agent/README.md` for the
 isolation boundary and order-free synthetic smoke command.

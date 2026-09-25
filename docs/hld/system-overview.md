@@ -9,7 +9,7 @@
 ## 1. What the system is
 
 A single-machine, single-process trading system for NIFTY index options. It runs
-an approximately 27-strategy core roster plus two independently opt-in AI agents
+an approximately 28-strategy core roster plus two independently opt-in AI agents
 concurrently against one shared market-data feed, decides entries and exits per
 strategy, and executes those decisions either on paper (default) or through a
 real broker (explicitly enabled, per strategy).
@@ -23,7 +23,7 @@ total can be read off the core number:
 | **SL Hunting AI Agent** | Claude (`claude-agent-sdk`) | off (`SL_HUNTING_ENABLED`) | [`lld/sl-hunting-ai-agent.md`](../lld/sl-hunting-ai-agent.md) |
 | **CPR Codex AI Agent** | Codex (subprocess + MCP) | off (`CPR_AI_ENABLED`) | [`lld/cpr-codex-ai-agent.md`](../lld/cpr-codex-ai-agent.md) |
 
-With both enabled the configured roster reaches about 29 workers, while the
+With both enabled the configured roster reaches about 30 workers, while the
 per-strategy enable and virtual-trading gates keep the *running* roster
 configuration-dependent.
 
@@ -140,7 +140,7 @@ silently affect order placement, or vice versa.
  │  │   BasePaperStrategyWorker                                              │  │
  │  │    └─ AtmSingleLegStrategyWorker ── Renko, EMA, HeikinAshi,            │  │
  │  │        │                            ProfitShooter, OpeningStrike,      │  │
- │  │        │                            CPR, CPRAlgo3, CPR AI,             │  │
+ │  │        │                            CPR, CPRAlgo3, CPRAlgo4, CPR AI,   │  │
  │  │        │                            + 14 factory-built ports           │  │
  │  │        └─ NextOpenAtmStrategyWorker ── Goldmine, MoneyMachine          │  │
  │  │    ├─ SupertrendBullishWorker / DonchianBearishWorker (hedged puts)    │  │
@@ -261,7 +261,7 @@ the month can be backfilled from the same log.
 | Thread | Count | Role |
 |---|---|---|
 | Market data producer | 1 | Poll or stream; write the shared store |
-| Strategy workers | ~27 core + up to 2 optional agents, minus disabled ones | Read the store, decide, execute |
+| Strategy workers | ~28 core + up to 2 optional agents, minus disabled ones | Read the store, decide, execute |
 | Telegram worker | 1 (if enabled) | Drain the event queue |
 | Main | 1 | Start, supervise, shut down |
 
