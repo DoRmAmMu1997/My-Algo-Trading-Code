@@ -166,6 +166,8 @@ files = [
     "Signal Generators/CPR Strategy/cpr_algo1_signal_generator.py",
     "Signal Generators/CPR Strategy/cpr_algo2_signal_generator.py",
     "Signal Generators/CPR Strategy/cpr_combined_signal_generator.py",
+    # CPR Algo 4 (the deterministic Intraday SRSI VWAP playbook), typed from the start.
+    "Signal Generators/CPR Strategy/cpr_algo4_signal_generator.py",
     "Signal Generators/Subhamoy Strategies/goldmine_signal_generator.py",
     "Signal Generators/Subhamoy Strategies/money_machine_signal_generator.py",
     "Signal Generators/CPR AI Agent/cpr_ai_agent.py",
