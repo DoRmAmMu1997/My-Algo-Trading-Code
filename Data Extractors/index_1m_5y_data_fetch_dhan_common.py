@@ -743,7 +743,10 @@ def run_signature(args, start: date) -> dict[str, object]:
 
 
 def resumable_manifest(
-    manifest: dict[str, object], signature: dict[str, object]
+    manifest: dict[str, object],
+    signature: dict[str, object],
+    *,
+    rolling_start: bool = False,
 ) -> tuple[dict[str, object], str | None]:
     """Decide whether stored progress may be resumed, and say why not.
 
@@ -756,6 +759,14 @@ def resumable_manifest(
     Progress is therefore resumable only when it came from a run with the same
     identity AND the same start date. Anything else starts over.
 
+    The one exception is `rolling_start`, set for a `--lookback` run: its start
+    is "today minus N days", so it moves forward every day. A stored start that
+    is EARLIER than this run's means the file already holds a SUPERSET of the
+    history asked for -- the dangerous direction above is the opposite one -- so
+    the run resumes and fetches only the new tail. Refusing it forced a full
+    five-year re-download every single day (and, before the rebuild was made
+    atomic, deleted the CSV first; see 2026-09-27).
+
     Returns ``(manifest_to_use, reason_it_was_discarded)``.
     """
 
@@ -765,10 +776,22 @@ def resumable_manifest(
     if not isinstance(stored, dict):
         return {}, "the existing manifest predates run signatures"
 
+    differing_fields = [
+        field for field, value in signature.items() if stored.get(field) != value
+    ]
+    stored_start = stored.get("start")
+    if (
+        rolling_start
+        and differing_fields == ["start"]
+        and isinstance(stored_start, str)
+        # ISO dates compare correctly as text.
+        and stored_start <= str(signature["start"])
+    ):
+        return manifest, None
+
     differing = [
-        f"{field}: {stored.get(field)!r} -> {value!r}"
-        for field, value in signature.items()
-        if stored.get(field) != value
+        f"{field}: {stored.get(field)!r} -> {signature[field]!r}"
+        for field in differing_fields
     ]
     if differing:
         return {}, "this run does not continue the stored one (" + "; ".join(differing) + ")"
@@ -844,6 +867,53 @@ def truncate_to(csv_path: Path, size: int) -> None:
             handle.truncate(size)
 
 
+def rebuild_atomically(
+    args,
+    defaults: IndexFetchDefaults,
+    output_path: Path,
+    manifest_path: Path,
+    signature: dict[str, object],
+    end_dt: date,
+) -> None:
+    """Replace an existing CSV with a fresh full download -- only on success.
+
+    Used whenever the run has to start over but a CSV is already on disk. The
+    streaming path appends into the output file itself, which means starting
+    over used to begin by DELETING it: on 2026-09-27 an expired token failed the
+    first chunk and a 461,777-row, five-year file was gone with nothing to show
+    for it. Here the whole range is collected in memory (as `--no-resume` does),
+    written to a sibling temporary file and moved over the old one in one
+    `os.replace`. Any failure before that leaves the old file byte-identical,
+    and its old manifest too, so the next run makes the same decision again.
+
+    A fresh manifest is written AFTER the replace, describing the new file, so
+    the next run resumes from it instead of rebuilding again.
+    """
+
+    frame = fetch_1m_history(args, defaults)
+    if frame.empty:
+        # A successful fetch that returned nothing is not a replacement for a
+        # file that has rows in it.
+        raise RuntimeError(
+            f"The download returned no rows; keeping the existing {output_path.name} untouched."
+        )
+    atomic_write_csv(frame, output_path)
+    save_manifest(
+        manifest_path,
+        {
+            RUN_SIGNATURE_KEY: signature,
+            "progress": {
+                "rows": len(frame),
+                "bytes": output_path.stat().st_size,
+                "first_row": csv_first_row(output_path),
+                "last_timestamp": str(frame["timestamp"].iloc[-1]),
+                "last_to_date": end_dt.isoformat(),
+            },
+        },
+    )
+    print(f"Saved {len(frame)} rows to: {output_path}")
+
+
 def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     """
     Main script flow used by each wrapper.
@@ -888,10 +958,15 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     # one start date and fetches from another; the signature check then discards
     # the progress and downloads again. Wasteful on one day of the year, never
     # wrong -- which is the direction this has to fail in.
-    start_dt, _ = resolve_date_range(args)
+    start_dt, end_dt = resolve_date_range(args)
     signature = run_signature(args, start_dt)
+    # Mirrors `resolve_date_range`: without BOTH explicit dates the start is
+    # "today minus the lookback", which moves forward every day.
+    rolling_start = not (args.start_date and args.end_date)
 
-    manifest, discarded = resumable_manifest(load_manifest(manifest_path), signature)
+    manifest, discarded = resumable_manifest(
+        load_manifest(manifest_path), signature, rolling_start=rolling_start
+    )
     if discarded:
         print(f"Starting over: {discarded}")
 
@@ -901,6 +976,10 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
     stored_first_row = manifest_text(progress.get("first_row"))
     claims_rows = bool(manifest_int(progress.get("rows")))
 
+    # NOTHING below may delete or truncate a CSV this script cannot rebuild
+    # from the progress it trusts. Every "start over" with a file on disk goes
+    # through `rebuild_atomically`, which replaces it only once the full
+    # download has succeeded.
     if progress and claims_rows and not output_path.exists():
         # Progress claiming rows that are no longer on disk. Honouring it would
         # skip every chunk it covers and write a CSV missing its own history.
@@ -910,16 +989,22 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
         # treating that as damage would re-request those empty windows forever.
         print(f"Ignoring the manifest: {output_path.name} is gone, starting over")
         manifest, progress = {}, {}
-    elif progress and claims_rows and stored_first_row != csv_first_row(output_path):
+    elif (
+        progress
+        and output_path.exists()
+        and stored_first_row != csv_first_row(output_path)
+    ):
         # Same name, different file. The byte count would still "fit", so
         # truncating on it would cut at a boundary that means nothing and the
-        # resume would then append past whatever was lost.
+        # resume would then append past whatever was lost. (A zero-row manifest
+        # beside a CSV with rows is the same mismatch: truncating to its byte
+        # count would empty that file.)
         print(
             f"Ignoring the manifest: {output_path.name} is not the file it describes, "
-            "starting over"
+            "rebuilding it (the existing file is kept until the rebuild succeeds)"
         )
-        manifest, progress = {}, {}
-        output_path.unlink()
+        rebuild_atomically(args, defaults, output_path, manifest_path, signature, end_dt)
+        return
     elif progress:
         truncate_to(output_path, manifest_int(progress.get("bytes")))
         print(
@@ -927,12 +1012,22 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
             f"{progress.get('rows', 0)} rows already on disk"
         )
     elif output_path.exists():
-        # A CSV with no usable progress -- a deleted manifest, or a file written
-        # by --no-resume or by this script before it kept one. There is no last
-        # timestamp to de-duplicate against, so the only safe move is to start
-        # the file over rather than append a second copy of the history.
-        print(f"Ignoring existing {output_path.name}: no usable resume state, starting over")
-        output_path.unlink()
+        # A CSV with no usable progress -- a deleted manifest, a different run,
+        # or a file written by --no-resume or by this script before it kept one.
+        # There is no last timestamp to de-duplicate against, so appending would
+        # write a second copy of the history; the file is rebuilt instead.
+        print(
+            f"Ignoring existing {output_path.name}: no usable resume state, rebuilding it "
+            "(the existing file is kept until the rebuild succeeds)"
+        )
+        rebuild_atomically(args, defaults, output_path, manifest_path, signature, end_dt)
+        return
+
+    stored_signature = manifest.get(RUN_SIGNATURE_KEY)
+    if isinstance(stored_signature, dict):
+        # A resumed rolling run keeps the ORIGINAL start: that is still where
+        # the file begins, and it is what the next day's run must compare with.
+        signature = stored_signature
 
     stored_to = manifest_text(progress.get("last_to_date"))
     resume_after = date.fromisoformat(stored_to) if stored_to else None

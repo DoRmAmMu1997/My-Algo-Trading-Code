@@ -16,7 +16,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -320,3 +320,168 @@ def test_the_manifest_records_which_file_it_describes(tmp_path):
         first_data_row = handle.readline().strip()
 
     assert progress["first_row"] == first_data_row
+
+
+# ------------------------------------------ never lose a good file (2026-09-27)
+#
+# A `--lookback 5y` run signs its manifest with "today minus five years", so the
+# signature changed every day, the manifest was discarded, and the "start over"
+# branch DELETED the CSV before fetching a single chunk. The day the Dhan token
+# had expired (DH-901) the first chunk failed and a 461,777-row file was gone.
+
+
+class _Clock(datetime):
+    """`datetime` with a settable `now()`, for lookback runs."""
+
+    today_value = datetime(2026, 1, 10, 12, 0)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.today_value
+
+
+def _lookback_args(tmp_path: Path, **overrides):
+    """A rolling 7-day lookback: two 5-day chunks ending "today"."""
+
+    return _args(tmp_path, start_date="", end_date="", lookback="7d", **overrides)
+
+
+def _run_on(day: datetime, args, respond) -> None:
+    _Clock.today_value = day
+    with patch.object(fetcher, "datetime", _Clock):
+        _run(args, respond)
+
+
+def _expired_token(**_kwargs):
+    raise RuntimeError("API failed: status=failure, details={'errorCode': 'DH-901'}")
+
+
+def test_an_expired_token_on_a_moved_lookback_start_leaves_the_csv_byte_identical(tmp_path):
+    """The exact 2026-09-27 sequence: yesterday's run, then today's with a dead token."""
+
+    args = _lookback_args(tmp_path)
+    respond, _ = _responder()
+    _run_on(datetime(2026, 1, 10, 12), args, respond)
+    before = Path(args.output).read_bytes()
+
+    with pytest.raises(RuntimeError, match="DH-901"):
+        _run_on(datetime(2026, 1, 11, 12), args, _expired_token)
+
+    assert Path(args.output).read_bytes() == before
+
+
+def test_a_moved_lookback_start_fetches_only_the_new_tail(tmp_path):
+    """The start moving LATER is a subset of what is on disk, not a new run."""
+
+    args = _lookback_args(tmp_path)
+    respond, _ = _responder()
+    _run_on(datetime(2026, 1, 10, 12), args, respond)  # chunks 01-03, 01-08
+    before = Path(args.output).read_bytes()
+
+    respond, seen = _responder()
+    _run_on(datetime(2026, 1, 11, 12), args, respond)  # start is now 01-04
+
+    # 01-04..01-08 ends before the stored 01-10 and is skipped; only the chunk
+    # holding the new day is requested.
+    assert seen == [date(2026, 1, 9)]
+    after = Path(args.output).read_bytes()
+    assert after.startswith(before), "the existing history was appended to, not rewritten"
+    saved = pd.read_csv(args.output)
+    assert len(saved) == 9
+    assert saved["timestamp"].is_monotonic_increasing
+    # The file still begins where it began, so the manifest keeps that start.
+    assert _manifest(args)["__run__"]["start"] == "2026-01-03"
+
+
+def test_an_explicit_later_start_is_still_a_different_run(tmp_path):
+    """Only a rolling lookback may resume across a start change."""
+
+    args = _args(tmp_path)
+    respond, _ = _responder()
+    _run(args, respond)
+
+    later = _args(tmp_path, start_date="2026-01-02")
+    respond, seen = _responder()
+    _run(later, respond)
+
+    assert seen == [date(2026, 1, 2), date(2026, 1, 7)], "rebuilt from the new start"
+
+
+def _drop_manifest(args):
+    Path(args.output + ".manifest.json").unlink()
+    return args
+
+
+def _change_interval(args):
+    return _args(Path(args.output).parent, interval=5)
+
+
+def _foreign_file(args):
+    Path(args.output).write_text(
+        "timestamp,open,high,low,close,volume\n2020-01-01 09:15:00,1,2,0.5,1.5,0\n",
+        encoding="utf-8",
+    )
+    return args
+
+
+def _zero_row_manifest(args):
+    manifest = _manifest(args)
+    manifest["progress"].update(rows=0, bytes=0, first_row=None)
+    Path(args.output + ".manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return args
+
+
+@pytest.mark.parametrize(
+    "disturb",
+    [_drop_manifest, _change_interval, _foreign_file, _zero_row_manifest],
+    ids=["no-manifest", "different-run", "not-the-file-it-describes", "zero-row-manifest"],
+)
+def test_a_failed_rebuild_leaves_the_existing_csv_byte_identical(tmp_path, disturb):
+    """Every "start over" branch keeps the old file until the new one is whole."""
+
+    args = _args(tmp_path)
+    respond, _ = _responder()
+    _run(args, respond)
+    rerun_args = disturb(args)
+    before = Path(args.output).read_bytes()
+
+    # Fail on the SECOND chunk, so a partial replacement had every chance to land.
+    respond, _ = _responder(fail_on=date(2026, 1, 6))
+    with pytest.raises(RuntimeError):
+        _run(rerun_args, respond)
+
+    assert Path(args.output).read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp")), "no temporary file is left behind"
+
+
+def test_a_rebuild_that_returns_no_rows_keeps_the_existing_csv(tmp_path):
+    """An empty download is not a replacement for a file with rows in it."""
+
+    args = _args(tmp_path)
+    respond, _ = _responder()
+    _run(args, respond)
+    _drop_manifest(args)
+    before = Path(args.output).read_bytes()
+
+    respond, _ = _responder(empty=True)
+    with pytest.raises(RuntimeError, match="no rows"):
+        _run(args, respond)
+
+    assert Path(args.output).read_bytes() == before
+
+
+def test_a_rebuilt_file_gets_a_manifest_so_the_next_run_resumes(tmp_path):
+    """A rebuild must not become a rebuild EVERY time."""
+
+    args = _args(tmp_path)
+    respond, _ = _responder()
+    _run(args, respond)
+    _drop_manifest(args)
+
+    respond, _ = _responder()
+    _run(args, respond)  # the rebuild
+
+    respond, seen = _responder()
+    _run(args, respond)
+    assert seen == [], "the rebuilt file is resumed, not rebuilt again"
+    assert len(pd.read_csv(args.output)) == 6
