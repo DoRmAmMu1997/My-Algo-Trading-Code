@@ -10949,10 +10949,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         """Run load-bearing risk checks before any bar or model work.
 
         Ordering is intentionally risk-first: requested shutdown, aggregate
-        max-loss, 15:15 square-off, stale/unhealthy feed handling, then fresh
-        spot stop/target. For an already-open position, the same sequence is
-        repeated after a slow inference before HOLD or scale-in completes. A
-        flat entry instead uses the narrower post-inference exposure gate for
+        max-loss, 15:15 square-off, stale/unhealthy feed handling, then the
+        fresh VWAP spot stop. For an already-open position, the same sequence is
+        repeated after a slow inference before HOLD is honored. A flat entry
+        instead uses the narrower post-inference exposure gate for
         stop/lifecycle/feed/time changes before ``enter_position`` runs.
         """
 

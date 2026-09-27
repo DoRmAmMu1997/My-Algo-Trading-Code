@@ -742,7 +742,7 @@ class CPRAgent:
         outcome = self.policy.validate(context, proposal)
         # The SDK boundary has proved that this was a contemporaneous, pinned
         # regime classification.  Preserve it even when hard execution gates
-        # reject the proposed entry or scale-in.
+        # reject the proposed entry.
         if outcome.accepted_regime is None and outcome.validation_code not in {
             "invalid_position_state",
             "invalid_frozen_context",
