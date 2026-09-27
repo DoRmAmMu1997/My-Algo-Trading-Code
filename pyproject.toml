@@ -181,6 +181,7 @@ files = [
     "Signal Generators/CPR AI Agent/cpr_ai_schema.py",
     "Signal Generators/CPR AI Agent/cpr_ai_signals.py",
     "Signal Generators/CPR AI Agent/cpr_ai_tools.py",
+    "Signal Generators/CPR AI Agent/cpr_ai_trend_day.py",
     "Signal Generators/Regime Adaptive Strategy/regime_common.py",
     "Signal Generators/Regime Adaptive Strategy/regime_candidates.py",
     "Signal Generators/Subhamoy Strategies/goldmine_strategy_logic.py",
