@@ -10700,6 +10700,26 @@ class TestCPRAIMasterImportBoundary(unittest.TestCase):
         )
 
 
+_TREND_DAY_CANDIDATE = {
+    "eligible": True,
+    "reason": "eligible",
+    "direction": "LONG",
+    "bar_start": "2026-08-03T11:30:00",
+    "entry": 100.0,
+    "stop": 95.0,
+    "confluence_score": 2,
+}
+
+
+def _eligible_structure(*, direction: str = "LONG") -> dict[str, object]:
+    """A frozen ``market_structure`` holding an eligible Trend-Day Rider candidate."""
+
+    candidate = dict(_TREND_DAY_CANDIDATE, direction=direction)
+    if direction == "SHORT":
+        candidate["stop"] = 105.0
+    return {"trend_day_candidate": candidate}
+
+
 class TestCPRAIWorkerFoundation(unittest.TestCase):
     """Specify CPR AI cadence, mechanics, provenance, and live-ledger safety.
 
@@ -10745,10 +10765,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             tool_evidence=(),
             entry_price=None,
             stop_price=None,
-            milestone_price=None,
-            final_target_price=None,
             risk_points=None,
-            scale_in_permitted=False,
         )
         logger = MagicMock()
         worker = master_file.CPRAIWorker(
@@ -10775,11 +10792,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
     ):
         """Build a live-leg ledger with controllable fill and close certainty.
 
-        Role ``N`` represents the primary leg and role ``A`` the one-time add.
+        Role ``N`` is the position's only leg (CPR AI no longer has an add).
         ``filled`` models opening fills, ``confirmed`` models remaining broker
         exposure after a close, and ``indeterminate`` exercises conservative
         reconciliation/MTM behavior. ``opening_side`` defaults to the historical
-        BUY path; SIDEWAYS tests override it to prove BUY-to-close semantics.
+        BUY path; sold-premium tests override it to prove BUY-to-close semantics.
         """
 
         target = 50
@@ -10814,12 +10831,13 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             close_fill_notional=closed_quantity * close_price,
         )
 
-    def _scale_in_race_worker(self, signature):
-        """Build an open live long poised at the post-inference scale-in gate.
+    def _open_long_worker(self, signature):
+        """Build an open live long (a sold ATM PE) poised at the post-inference boundary.
 
         The frozen context is intentionally minimal and hand-authored: these
         race tests isolate lifecycle/health/spot changes after inference rather
-        than retesting deterministic indicator calculations.
+        than retesting deterministic indicator calculations. The default
+        accepted outcome is HOLD; tests switch it to EXIT when needed.
         """
 
         worker, agent, logger = self._worker()
@@ -10832,31 +10850,25 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             entry_trade_price=10.0,
             option_security_id=123,
             option_exchange_segment="NSE_FNO",
-            option_right="CE",
+            option_right="PE",
             option_strike=25000.0,
             option_expiry=date(2026, 8, 13),
-            live_leg=self._live_state("N", entry_price=10.0),
+            option_opening_side="SELL",
+            live_leg=self._live_state("N", entry_price=10.0, opening_side="SELL"),
         )
         worker._cpr_state = master_file.CPRAITradeState(
             original_entry_price=100.0,
             original_risk_points=5.0,
             original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
+            premise="TREND_DAY_CONTINUATION",
             accepted_regime="TRENDING",
-            initial_filled_quantity=50,
+            candidate={},
         )
         worker._latest_frozen_context = lambda: {
             "session_levels": {
                 "prior_accepted_regime": worker._prior_accepted_regime,
             },
-            "momentum_vwap": {
-                "stochastic_rsi": {"cross_down": False, "cross_up": False},
-                "candle": {"close": 101.0},
-            },
+            "momentum_vwap": {"candle": {"close": 101.0}},
             "market_structure": {},
             "position_state": {"is_flat": False, "direction": "LONG"},
         }
@@ -10877,9 +10889,9 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._get_dealable_option_ltp = MagicMock(return_value=(11.0, True))
         worker._place_real_leg = MagicMock()
         outcome = agent.decide.return_value
-        outcome.action = "SCALE_IN"
+        outcome.action = "HOLD"
         outcome.accepted = True
-        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        outcome.proposal = SimpleNamespace(setup="NONE")
         return worker, agent, logger, outcome
 
     def test_worker_inherits_directly_and_has_no_legacy_cpr_decision_dependency(self):
@@ -10911,7 +10923,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         frozen = {
             "session_levels": {"prior_accepted_regime": None},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         worker._latest_frozen_context = lambda: frozen
@@ -10943,17 +10955,16 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         outcome.accepted = True
         outcome.entry_price = 100.0
         outcome.stop_price = 95.0
-        outcome.final_target_price = 118.0
         outcome.validation_current_signature = "validated-0930"
         worker._latest_frozen_context = lambda: {
             "session_levels": {},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         worker._completed_bar_signature = lambda _frame: "frozen-0930"
         worker._current_completed_spot_signature = lambda: "validated-0930"
-        worker._post_inference_exposure_block_reason = lambda: "entry_cutoff"
+        worker._post_inference_exposure_block_reason = lambda **_kwargs: "entry_cutoff"
         # These sentinels stand for the exact five one-minute REST rows that
         # produced the decided 09:30 bucket. PRE_ACTION and POST_ACTION must
         # retain this same frozen list instead of resampling a newer store.
@@ -10990,7 +11001,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._latest_frozen_context = lambda: {
             "session_levels": {"prior_accepted_regime": None},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         start = datetime(2026, 8, 3, 9, 15)
@@ -11042,7 +11053,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._latest_frozen_context = lambda: {
             "session_levels": {"prior_accepted_regime": None},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         start = pd.Timestamp("2026-08-03 09:55:00")
@@ -11158,7 +11169,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._latest_frozen_context = lambda: {
             "session_levels": {"prior_accepted_regime": None},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         original = pd.DataFrame(
@@ -11193,10 +11204,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             with self.subTest(name=name):
                 worker, agent, logger = self._worker()
                 worker.live_trading = live_trading
+                worker._get_underlying_spot = MagicMock(return_value=100.0)
                 worker._latest_frozen_context = lambda: {
                     "session_levels": {},
                     "momentum_vwap": {},
-                    "market_structure": {},
+                    "market_structure": _eligible_structure(),
                     "position_state": {"is_flat": True},
                 }
                 worker._completed_bar_signature = lambda _frame, value=name: value
@@ -11206,10 +11218,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 outcome.accepted = True
                 outcome.entry_price = 100.0
                 outcome.stop_price = 95.0
-                outcome.milestone_price = 108.0
-                outcome.final_target_price = 118.0
                 outcome.risk_points = 5.0
-                outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+                outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
 
                 def enter(
                     direction,
@@ -11220,6 +11230,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                     state=live_state,
                     accepted=submitted,
                     current_worker=worker,
+                    **_terms,
                 ):
                     del entry, stop, target
                     if accepted:
@@ -11270,11 +11281,10 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                     live_leg=live_state,
                 )
                 worker._cpr_state = MagicMock()
-                worker._manage_completed_bar = MagicMock(return_value=False)
                 worker._latest_frozen_context = lambda: {
                     "session_levels": {},
                     "momentum_vwap": {},
-                    "market_structure": {},
+                    "market_structure": _eligible_structure(),
                     "position_state": {"is_flat": False, "direction": "LONG"},
                 }
                 worker._completed_bar_signature = lambda _frame, value=name: value
@@ -11323,7 +11333,6 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(master_file.CPR_AI_TRADING_START_MINUTE, 30)
         self.assertEqual(master_file.CPR_AI_ENTRY_CUTOFF_MINUTE, 0)
         self.assertEqual(master_file.CPR_AI_BAR_MINUTES, 5)
-        self.assertEqual(master_file.CPR_AI_MAX_SCALE_INS, 1)
 
     def test_flat_skips_at_1500_but_open_position_still_gets_exit_inference(self):
         """The entry cutoff does not silence premise exits before 15:15."""
@@ -11340,13 +11349,9 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             original_entry_price=100.0,
             original_risk_points=5.0,
             original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
+            premise="TREND_DAY_CONTINUATION",
             accepted_regime="TRENDING",
-            initial_filled_quantity=50,
+            candidate={},
         )
         opened._latest_frozen_context = lambda: {
             "session_levels": {},
@@ -11354,7 +11359,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 "stochastic_rsi": {"cross_down": False, "cross_up": False},
                 "candle": {"close": 101.0},
             },
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": False, "direction": "LONG"},
         }
         opened._completed_bar_signature = lambda _frame: "after-cutoff"
@@ -11368,31 +11373,29 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         open_agent.decide.assert_called_once()
         opened.exit_position.assert_called_once_with("CPR_AI_PREMISE_EXIT")
 
-    def test_spot_stop_and_final_target_exit_without_calling_the_agent(self):
-        """Latest spot owns hard protection and final R2/S2 booking each poll."""
+    def test_vwap_spot_stop_exits_without_calling_the_agent_and_there_is_no_target(self):
+        """Latest spot owns the fixed VWAP stop each poll; no price books a target."""
 
-        worker, agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(active=True, direction="LONG")
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-        )
-        worker.exit_position = MagicMock()
+        for direction, stop, safe, breach in (("LONG", 95.0, 1000.0, 95.0), ("SHORT", 105.0, 1.0, 105.0)):
+            with self.subTest(direction=direction):
+                worker, agent, _logger = self._worker()
+                worker.pos = master_file.PaperPosition(active=True, direction=direction)
+                worker._cpr_state = master_file.CPRAITradeState(
+                    original_entry_price=100.0,
+                    original_risk_points=5.0,
+                    original_protective_stop=stop,
+                    premise="TREND_DAY_CONTINUATION",
+                    accepted_regime="TRENDING",
+                    candidate={},
+                )
+                worker.exit_position = MagicMock()
 
-        self.assertTrue(worker._check_cpr_spot_boundaries(95.0))
-        worker.exit_position.assert_called_once_with("CPR_AI_HARD_STOP")
-        worker.exit_position.reset_mock()
-        self.assertTrue(worker._check_cpr_spot_boundaries(118.0))
-        worker.exit_position.assert_called_once_with("CPR_AI_FINAL_TARGET")
-        agent.decide.assert_not_called()
+                # Any favourable distance is held: there is no target to book.
+                self.assertFalse(worker._check_cpr_spot_boundaries(safe))
+                worker.exit_position.assert_not_called()
+                self.assertTrue(worker._check_cpr_spot_boundaries(breach))
+                worker.exit_position.assert_called_once_with("CPR_AI_VWAP_STOP")
+                agent.decide.assert_not_called()
 
     def test_prebar_safety_checks_latest_spot_on_every_poll(self):
         """Hard protection runs even when no new five-minute bar exists."""
@@ -11410,708 +11413,14 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._check_cpr_spot_boundaries.assert_called_once_with(95.0)
         agent.decide.assert_not_called()
 
-    def test_completed_bar_srsi_precedes_agent_and_reversal_stages_never_loosen_stop(self):
-        """SRSI exits first; reversal milestones ratchet from risk to BE then 1R."""
-
-        worker, agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(active=True, direction="LONG")
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_REVERSAL",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-        )
-        worker.exit_position = MagicMock()
-        reversal = {
-            "momentum_vwap": {
-                "stochastic_rsi": {"cross_down": True, "cross_up": False},
-                "candle": {"close": 104.0},
-            }
-        }
-
-        self.assertTrue(worker._manage_completed_bar(reversal))
-        worker.exit_position.assert_called_once_with("CPR_AI_SRSI_REVERSAL")
-        agent.decide.assert_not_called()
-
-        worker.exit_position.reset_mock()
-        reversal["momentum_vwap"]["stochastic_rsi"]["cross_down"] = False
-        reversal["momentum_vwap"]["candle"]["close"] = 105.0
-        self.assertFalse(worker._manage_completed_bar(reversal))
-        self.assertEqual(worker._cpr_state.current_hard_stop, 100.0)
-        reversal["momentum_vwap"]["candle"]["close"] = 110.0
-        self.assertFalse(worker._manage_completed_bar(reversal))
-        self.assertEqual(worker._cpr_state.current_hard_stop, 105.0)
-        self.assertTrue(worker._cpr_state.trail_armed)
-
-    def test_reversal_stage_two_uses_the_following_buffered_cpr_milestone(self):
-        """The second ratchet uses the next CPR level, not only R2/final target."""
-
-        worker, _agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            quantity=50,
-            entry_trade_price=10.0,
-        )
-        outcome = SimpleNamespace(
-            entry_price=100.0,
-            stop_price=80.0,
-            risk_points=20.0,
-            milestone_price=128.0,
-            final_target_price=148.0,
-            accepted_regime="TRENDING",
-            proposal=SimpleNamespace(setup="TRENDING_VWAP_REVERSAL"),
-        )
-        context = {
-            "session_levels": {
-                "next_levels": {
-                    "ordered": [
-                        {"name": "r1", "price": 130.0},
-                        {"name": "pivot_extension", "price": 135.0},
-                        {"name": "r2", "price": 150.0},
-                    ]
-                }
-            }
-        }
-
-        worker._initialize_trade_state(outcome, context)
-
-        self.assertEqual(worker._cpr_state.first_milestone, 120.0)
-        self.assertEqual(worker._cpr_state.following_milestone, 133.0)
-
-    def test_completed_bar_mechanical_exit_suppresses_that_bars_agent_turn(self):
-        """A bar consumed by SRSI/trailing cannot also ask for a reversal."""
-
-        worker, agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(active=True, direction="LONG")
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="SIDEWAYS_SRSI",
-            accepted_regime="SIDEWAYS",
-            initial_filled_quantity=50,
-        )
-        worker._latest_frozen_context = lambda: {
-            "session_levels": {},
-            "momentum_vwap": {
-                "stochastic_rsi": {"cross_down": True, "cross_up": False},
-                "candle": {"close": 99.0},
-            },
-            "market_structure": {},
-            "position_state": {"is_flat": False, "direction": "LONG"},
-        }
-        worker._completed_bar_signature = lambda _frame: "exit-bar"
-        worker.exit_position = MagicMock()
-
-        worker.process_strategy_frame(pd.DataFrame([{"close": 99.0}]))
-
-        worker.exit_position.assert_called_once_with("CPR_AI_SRSI_REVERSAL")
-        agent.decide.assert_not_called()
-
-    def test_paper_scale_in_adds_initial_quantity_once_and_uses_weighted_price(self):
-        """The add reuses the locked contract and aggregates its separate mark."""
-
-        worker, _agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            symbol="NIFTY-LOCKED",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-            option_right="CE",
-            option_strike=25000.0,
-            option_expiry=date(2026, 8, 13),
-            option_lot_size=50,
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-        )
-        worker._get_dealable_option_ltp = MagicMock(return_value=(14.0, True))
-        worker.contract_resolver = MagicMock()
-
-        self.assertTrue(worker._execute_scale_in())
-
-        self.assertTrue(worker._cpr_state.scale_in_used)
-        self.assertEqual(worker._cpr_state.add_quantity, 50)
-        self.assertEqual(worker._cpr_state.aggregate_quantity, 100)
-        self.assertEqual(worker._cpr_state.aggregate_entry_price, 12.0)
-        self.assertFalse(worker._execute_scale_in())
-        worker.contract_resolver.get_atm_option.assert_not_called()
-
-    def test_failed_paper_pricing_does_not_consume_the_one_successful_add(self):
-        """Paper marks scale-in used only after it can actually book the add."""
-
-        worker, _agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-        )
-        worker._get_dealable_option_ltp = MagicMock(return_value=(0.0, False))
-
-        self.assertFalse(worker._execute_scale_in())
-        self.assertFalse(worker._cpr_state.scale_in_used)
-
-    def test_live_scale_in_uses_role_a_and_never_falls_back_to_paper(self):
-        """Filled, rejected, partial, and unknown adds keep ledger semantics."""
-
-        for status in (
-            master_file.OrderStatus.FILLED,
-            master_file.OrderStatus.REJECTED,
-            master_file.OrderStatus.PARTIAL,
-            master_file.OrderStatus.UNKNOWN,
-        ):
-            with self.subTest(status=status):
-                worker, _agent, _logger = self._worker()
-                worker.live_trading = True
-                primary_state = self._live_state("N", entry_price=10.0)
-                worker.pos = master_file.PaperPosition(
-                    active=True,
-                    direction="LONG",
-                    symbol="NIFTY-LOCKED",
-                    quantity=50,
-                    entry_trade_price=10.0,
-                    option_security_id=123,
-                    option_exchange_segment="NSE_FNO",
-                    option_right="CE",
-                    option_strike=25000.0,
-                    option_expiry=date(2026, 8, 13),
-                    live_leg=primary_state,
-                )
-                worker._cpr_state = master_file.CPRAITradeState(
-                    original_entry_price=100.0,
-                    original_risk_points=5.0,
-                    original_protective_stop=95.0,
-                    current_hard_stop=100.0,
-                    first_milestone=105.0,
-                    following_milestone=110.0,
-                    final_target=118.0,
-                    premise="TRENDING_VWAP_CONTINUATION",
-                    accepted_regime="TRENDING",
-                    initial_filled_quantity=50,
-                )
-                worker._get_dealable_option_ltp = MagicMock(return_value=(11.0, True))
-                spec = master_file.LegSpec(
-                    strategy="CPR AI",
-                    correlation_id="ABCD1234",
-                    role="A",
-                    underlying="NIFTY",
-                    symbol="NIFTY-LOCKED",
-                    option_type="CE",
-                    strike=25000.0,
-                    expiry=date(2026, 8, 13),
-                    opening_side="BUY",
-                    target_quantity=50,
-                    owner_id="EFGH5678",
-                )
-                filled = (
-                    50
-                    if status is master_file.OrderStatus.FILLED
-                    else 25
-                    if status is master_file.OrderStatus.PARTIAL
-                    else 0
-                )
-                live_state = master_file.LiveLegState(
-                    exposure_id="test-add",
-                    spec=spec,
-                    requested_quantity=50,
-                    filled_quantity=filled,
-                    remaining_quantity=50 - filled,
-                    confirmed_live_quantity=filled,
-                    exposure_indeterminate=status in {master_file.OrderStatus.PARTIAL, master_file.OrderStatus.UNKNOWN},
-                    entry_priced_quantity=filled,
-                    entry_fill_notional=filled * 12.0,
-                )
-                result = master_file.OrderResult(
-                    order_id="ADD",
-                    requested_quantity=50,
-                    filled_quantity=filled,
-                    remaining_quantity=50 - filled,
-                    status=status,
-                    broker_state=status.value,
-                    reason="synthetic",
-                    average_fill_price=12.0 if filled else 0.0,
-                )
-
-                def place(
-                    _side,
-                    leg,
-                    *,
-                    opens_exposure,
-                    outcome_status=status,
-                    outcome_state=live_state,
-                    outcome_result=result,
-                ):
-                    self.assertTrue(opens_exposure)
-                    self.assertEqual(leg["role"], "A")
-                    self.assertEqual(leg["dhan_symbol"], "NIFTY-LOCKED")
-                    if outcome_status is not master_file.OrderStatus.REJECTED:
-                        leg["live_leg"] = outcome_state
-                    return outcome_result
-
-                worker._place_real_leg = MagicMock(side_effect=place)
-
-                confirmed = worker._execute_scale_in()
-
-                self.assertEqual(confirmed, status is master_file.OrderStatus.FILLED)
-                self.assertTrue(worker._cpr_state.scale_in_used)
-                self.assertEqual(
-                    worker._cpr_state.add_quantity,
-                    50 if status is master_file.OrderStatus.FILLED else 0,
-                )
-
-    def test_live_enabled_paper_fallback_primary_gets_only_a_paper_add(self):
-        """Execution provenance, not the worker flag, classifies the add mode."""
-
-        worker, _agent, _logger = self._worker()
-        worker.live_trading = True
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            symbol="NIFTY-LOCKED",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-            option_right="CE",
-            option_strike=25000.0,
-            option_expiry=date(2026, 8, 13),
-            live_leg=None,
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-        )
-        worker._get_dealable_option_ltp = MagicMock(return_value=(14.0, True))
-        worker._place_real_leg = MagicMock()
-
-        self.assertTrue(worker._execute_scale_in())
-
-        worker._place_real_leg.assert_not_called()
-        self.assertEqual(worker._cpr_state.add_quantity, 50)
-        self.assertEqual(worker._cpr_state.add_entry_trade_price, 14.0)
-        self.assertIsNone(worker._cpr_state.add_live_leg)
-
-    def test_exit_books_weighted_primary_and_add_on_pnl_then_unsubscribes_once(self):
-        """A scaled paper trade realizes both locked-contract entry marks."""
-
-        worker, _agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            symbol="NIFTY-LOCKED",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-            option_right="CE",
-            option_strike=25000.0,
-            option_expiry=date(2026, 8, 13),
-            option_lot_size=50,
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-            scale_in_used=True,
-            add_quantity=50,
-            add_entry_trade_price=14.0,
-        )
-        worker._get_dealable_option_ltp = MagicMock(return_value=(15.0, True))
-        worker.store.unregister_option_subscription = MagicMock()
-
-        worker.exit_position("TEST_EXIT")
-
-        self.assertFalse(worker.pos.active)
-        self.assertEqual(worker.realized_pnl, 300.0)
-        self.assertEqual(worker.completed_trades, 1)
-        worker.store.unregister_option_subscription.assert_called_once()
-
-    def test_partial_live_add_uses_ledger_fill_for_mtm_and_realized_pnl(self):
-        """Primary 50@10 plus partial add 25@12 at 8 equals minus 200."""
-
-        worker, _agent, _logger = self._worker()
-        worker.live_trading = True
-        primary_open = self._live_state("N", entry_price=10.0)
-        partial_attempt = OrderAttempt(
-            intent=master_file.OrderIntent.OPEN,
-            sequence=1,
-            order_tag="PARTIAL-A",
-            requested_quantity=50,
-            filled_quantity=25,
-            remaining_quantity=25,
-            order_id="ADD-PARTIAL",
-            status=master_file.OrderStatus.PARTIAL,
-            broker_state="CANCELLED",
-            reason="terminal partial",
-            terminal=True,
-            average_fill_price=12.0,
-        )
-        add_open = self._live_state(
-            "A",
-            filled=25,
-            confirmed=25,
-            entry_price=12.0,
-            latest_attempt=partial_attempt,
-        )
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            symbol="NIFTY-LOCKED",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-            option_right="CE",
-            option_strike=25000.0,
-            option_expiry=date(2026, 8, 13),
-            live_leg=primary_open,
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-            scale_in_used=True,
-            add_entry_trade_price=0.0,
-            add_live_leg=add_open,
-        )
-        worker._get_option_ltp = MagicMock(return_value=8.0)
-
-        self.assertEqual(worker._get_open_position_pnl(), -200.0)
-
-        primary_close_attempt = OrderAttempt(
-            intent=master_file.OrderIntent.CLOSE,
-            sequence=2,
-            order_tag="CLOSE-N",
-            requested_quantity=50,
-            filled_quantity=50,
-            remaining_quantity=0,
-            order_id="PRIMARY-CLOSE",
-            status=master_file.OrderStatus.FILLED,
-            broker_state="COMPLETE",
-            reason="flat",
-            terminal=True,
-            average_fill_price=8.0,
-        )
-        add_close_attempt = OrderAttempt(
-            intent=master_file.OrderIntent.CLOSE,
-            sequence=2,
-            order_tag="CLOSE-A",
-            requested_quantity=25,
-            filled_quantity=25,
-            remaining_quantity=0,
-            order_id="ADD-CLOSE",
-            status=master_file.OrderStatus.FILLED,
-            broker_state="COMPLETE",
-            reason="flat",
-            terminal=True,
-            average_fill_price=8.0,
-        )
-        flat_states = {
-            "N": self._live_state(
-                "N",
-                confirmed=0,
-                entry_price=10.0,
-                latest_attempt=primary_close_attempt,
-                closing_started=True,
-                close_price=8.0,
-            ),
-            "A": self._live_state(
-                "A",
-                filled=25,
-                confirmed=0,
-                entry_price=12.0,
-                latest_attempt=add_close_attempt,
-                closing_started=True,
-                close_price=8.0,
-            ),
-        }
-
-        def close_leg(_side, leg, *, opens_exposure):
-            self.assertFalse(opens_exposure)
-            leg["live_leg"] = flat_states[leg["role"]]
-            return worker._synthetic_order_result(
-                int(leg["quantity"]),
-                master_file.OrderStatus.FILLED,
-                "synthetic close",
-                filled_quantity=int(leg["quantity"]),
-            )
-
-        worker._place_real_leg = MagicMock(side_effect=close_leg)
-        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
-
-        worker.exit_position("PARTIAL_ADD_EXIT")
-
-        self.assertFalse(worker.pos.active)
-        self.assertEqual(worker.realized_pnl, -200.0)
-
-    def test_two_live_legs_remain_until_both_are_confirmed_flat(self):
-        """One retained ledger leg prevents cleanup until a later flat retry."""
-
-        worker, _agent, _logger = self._worker()
-        worker.live_trading = True
-        primary_open = self._live_state("N", entry_price=10.0)
-        add_open = self._live_state("A", filled=25, entry_price=12.0)
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            symbol="NIFTY-LOCKED",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-            option_right="CE",
-            option_strike=25000.0,
-            option_expiry=date(2026, 8, 13),
-            live_leg=primary_open,
-        )
-        original_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-            scale_in_used=True,
-            add_live_leg=add_open,
-        )
-        worker._cpr_state = original_state
-        worker.store.unregister_option_subscription = MagicMock()
-        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
-
-        primary_close = OrderAttempt(
-            intent=master_file.OrderIntent.CLOSE,
-            sequence=2,
-            order_tag="CLOSE-N",
-            requested_quantity=50,
-            filled_quantity=50,
-            remaining_quantity=0,
-            order_id="PRIMARY-CLOSE",
-            status=master_file.OrderStatus.FILLED,
-            broker_state="COMPLETE",
-            reason="flat",
-            terminal=True,
-            average_fill_price=8.0,
-        )
-        add_partial_close = OrderAttempt(
-            intent=master_file.OrderIntent.CLOSE,
-            sequence=2,
-            order_tag="CLOSE-A-PARTIAL",
-            requested_quantity=25,
-            filled_quantity=10,
-            remaining_quantity=15,
-            order_id="ADD-CLOSE-PARTIAL",
-            status=master_file.OrderStatus.PARTIAL,
-            broker_state="PARTIAL",
-            reason="still open",
-            terminal=False,
-            average_fill_price=8.0,
-        )
-        add_final_close = OrderAttempt(
-            intent=master_file.OrderIntent.CLOSE,
-            sequence=3,
-            order_tag="CLOSE-A-FINAL",
-            requested_quantity=15,
-            filled_quantity=15,
-            remaining_quantity=0,
-            order_id="ADD-CLOSE-FINAL",
-            status=master_file.OrderStatus.FILLED,
-            broker_state="COMPLETE",
-            reason="flat",
-            terminal=True,
-            average_fill_price=8.0,
-        )
-        primary_flat = self._live_state(
-            "N",
-            confirmed=0,
-            entry_price=10.0,
-            latest_attempt=primary_close,
-            closing_started=True,
-            close_price=8.0,
-        )
-        add_still_open = self._live_state(
-            "A",
-            filled=25,
-            confirmed=15,
-            entry_price=12.0,
-            latest_attempt=add_partial_close,
-            closing_started=True,
-            close_price=8.0,
-        )
-        add_flat = self._live_state(
-            "A",
-            filled=25,
-            confirmed=0,
-            entry_price=12.0,
-            latest_attempt=add_final_close,
-            closing_started=True,
-            close_price=8.0,
-        )
-        close_round = {"number": 0}
-
-        def close_leg(_side, leg, *, opens_exposure):
-            self.assertFalse(opens_exposure)
-            if leg["role"] == "N":
-                leg["live_leg"] = primary_flat
-            else:
-                leg["live_leg"] = (
-                    add_still_open if close_round["number"] == 0 else add_flat
-                )
-                close_round["number"] += 1
-            return worker._synthetic_order_result(
-                int(leg["quantity"]),
-                master_file.OrderStatus.FILLED,
-                "synthetic close",
-                filled_quantity=int(leg["quantity"]),
-            )
-
-        worker._place_real_leg = MagicMock(side_effect=close_leg)
-
-        worker.exit_position("FIRST_EXIT_ATTEMPT")
-
-        self.assertTrue(worker.pos.active)
-        self.assertIs(worker._cpr_state, original_state)
-        self.assertEqual(worker._cpr_state.add_live_leg.confirmed_live_quantity, 15)
-        worker.store.unregister_option_subscription.assert_not_called()
-
-        worker.exit_position("SECOND_EXIT_ATTEMPT")
-
-        self.assertFalse(worker.pos.active)
-        self.assertIsNone(worker._cpr_state)
-        self.assertEqual(worker.realized_pnl, -200.0)
-        self.assertEqual(worker.completed_trades, 1)
-        worker.store.unregister_option_subscription.assert_called_once_with(
-            "NSE_FNO",
-            123,
-            owner_id=worker._execution_owner_id,
-        )
-
-    def test_unknown_live_add_counts_full_risk_quantity_with_nonzero_fallback_basis(self):
-        """Indeterminate exposure is never omitted or priced from a zero basis."""
-
-        worker, _agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=123,
-            option_exchange_segment="NSE_FNO",
-        )
-        unknown_attempt = OrderAttempt(
-            intent=master_file.OrderIntent.OPEN,
-            sequence=1,
-            order_tag="UNKNOWN-A",
-            requested_quantity=50,
-            filled_quantity=0,
-            remaining_quantity=50,
-            order_id="ADD-UNKNOWN",
-            status=master_file.OrderStatus.UNKNOWN,
-            broker_state="PENDING",
-            reason="response lost",
-            terminal=False,
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=100.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="TRENDING_VWAP_CONTINUATION",
-            accepted_regime="TRENDING",
-            initial_filled_quantity=50,
-            scale_in_used=True,
-            add_entry_trade_price=0.0,
-            add_live_leg=self._live_state(
-                "A",
-                filled=0,
-                confirmed=0,
-                indeterminate=True,
-                entry_price=0.0,
-                latest_attempt=unknown_attempt,
-            ),
-        )
-        worker._get_option_ltp = MagicMock(return_value=8.0)
-        worker.max_loss = 150.0
-
-        self.assertEqual(worker._cpr_state.add_live_leg.risk_quantity, 50)
-        self.assertEqual(worker._get_open_position_pnl(), -200.0)
-        breached, total, open_pnl = worker.is_max_loss_breached()
-        self.assertTrue(breached)
-        self.assertEqual((total, open_pnl), (-200.0, -200.0))
-
     def test_audit_failure_blocks_entries_but_does_not_block_an_open_position_exit(self):
         """An audit outage fails closed for exposure and fail-open for reduction."""
 
         worker, agent, logger = self._worker()
         logger.write.side_effect = OSError("disk full")
         worker._latest_frozen_context = lambda: {
-            "session_levels": {}, "momentum_vwap": {}, "market_structure": {}, "position_state": {"is_flat": True}
+            "session_levels": {}, "momentum_vwap": {}, "market_structure": _eligible_structure(),
+            "position_state": {"is_flat": True},
         }
         worker._completed_bar_signature = lambda _frame: "entry"
         worker._current_completed_spot_signature = lambda: "entry"
@@ -12120,10 +11429,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         agent.decide.return_value.accepted = True
         agent.decide.return_value.entry_price = 100.0
         agent.decide.return_value.stop_price = 95.0
-        agent.decide.return_value.milestone_price = 108.0
-        agent.decide.return_value.final_target_price = 118.0
         agent.decide.return_value.risk_points = 5.0
-        agent.decide.return_value.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        agent.decide.return_value.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
         worker.enter_position = MagicMock(return_value=True)
 
         worker.process_strategy_frame(pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-03 09:30"), "close": 100.0}]))
@@ -12135,9 +11442,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
 
         worker, agent, logger = self._worker()
         worker._latest_frozen_context = lambda: {
-            "session_levels": {}, "momentum_vwap": {}, "market_structure": {}, "position_state": {"is_flat": True}
+            "session_levels": {}, "momentum_vwap": {}, "market_structure": _eligible_structure(),
+            "position_state": {"is_flat": True},
         }
         worker._completed_bar_signature = lambda _frame: "accepted-entry"
+        worker._get_underlying_spot = MagicMock(return_value=100.0)
         worker._current_completed_spot_signature = lambda: "accepted-entry"
         outcome = agent.decide.return_value
         outcome.action = "ENTER_LONG"
@@ -12145,12 +11454,10 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         outcome.accepted_regime = "TRENDING"
         outcome.entry_price = 100.0
         outcome.stop_price = 95.0
-        outcome.milestone_price = 108.0
-        outcome.final_target_price = 118.0
         outcome.risk_points = 5.0
-        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
 
-        def enter(direction, entry, stop, target):
+        def enter(direction, entry, stop, target, **_terms):
             worker.pos = master_file.PaperPosition(
                 active=True,
                 direction=direction,
@@ -12165,117 +11472,73 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker.enter_position = MagicMock(side_effect=enter)
         worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
 
-        worker.enter_position.assert_called_once_with("LONG", 100.0, 95.0, 118.0)
+        worker.enter_position.assert_called_once_with(
+            "LONG",
+            100.0,
+            95.0,
+            0.0,
+            option_opening_side="SELL",
+            option_contract_direction="SHORT",
+            use_current_expiry=True,
+        )
+        # The sidecar keeps the host geometry and the candidate it was taken on.
+        self.assertEqual(worker._cpr_state.original_protective_stop, 95.0)
+        self.assertEqual(worker._cpr_state.candidate["direction"], "LONG")
         self.assertEqual(logger.write.call_count, 2)
         self.assertEqual(
             logger.write.call_args.kwargs["execution"],
             {"mode": "PAPER", "submitted": True, "status": "ENTRY_SUBMITTED"},
         )
 
-    def test_entry_setup_maps_only_sideways_to_current_expiry_short_premium(self):
-        """Regime changes execution terms without changing economic direction.
+    def test_every_entry_sells_the_opposite_atm_option_on_current_expiry(self):
+        """Economic direction stays LONG/SHORT; the option expression is always a sale.
 
-        The table covers both directions in each regime. An empty keyword map is
-        intentional for TRENDING: it proves those calls still use every legacy
-        BUY/right/expiry default rather than merely producing a similar contract.
+        Bullish sells the PE (contract direction SHORT) and bearish sells the
+        CE (contract direction LONG), both on the current weekly expiry, with
+        no target.
         """
 
-        cases = (
-            (
-                "sideways_bullish",
-                "ENTER_LONG",
-                "SIDEWAYS",
-                "SIDEWAYS_SRSI",
-                "LONG",
-                {
-                    "option_opening_side": "SELL",
-                    "option_contract_direction": "SHORT",
-                    "use_current_expiry": True,
-                },
-            ),
-            (
-                "sideways_bearish",
-                "ENTER_SHORT",
-                "SIDEWAYS",
-                "SIDEWAYS_SRSI",
-                "SHORT",
-                {
-                    "option_opening_side": "SELL",
-                    "option_contract_direction": "LONG",
-                    "use_current_expiry": True,
-                },
-            ),
-            (
-                "trending_bullish",
-                "ENTER_LONG",
-                "TRENDING",
-                "TRENDING_VWAP_CONTINUATION",
-                "LONG",
-                {},
-            ),
-            (
-                "trending_bearish",
-                "ENTER_SHORT",
-                "TRENDING",
-                "TRENDING_VWAP_REVERSAL",
-                "SHORT",
-                {},
-            ),
-        )
-        for label, action, regime, setup, direction, expected_kwargs in cases:
-            with self.subTest(label=label):
+        for action, direction, stop, contract_direction in (
+            ("ENTER_LONG", "LONG", 95.0, "SHORT"),
+            ("ENTER_SHORT", "SHORT", 105.0, "LONG"),
+        ):
+            with self.subTest(direction=direction):
                 worker, agent, _logger = self._worker()
-                worker._latest_frozen_context = lambda: {
+                worker._latest_frozen_context = lambda direction=direction: {
                     "session_levels": {},
                     "momentum_vwap": {},
-                    "market_structure": {},
+                    "market_structure": _eligible_structure(direction=direction),
                     "position_state": {"is_flat": True},
                 }
-                worker._completed_bar_signature = lambda _frame, value=label: value
-                worker._current_completed_spot_signature = lambda value=label: value
+                worker._completed_bar_signature = lambda _frame, value=direction: value
+                worker._current_completed_spot_signature = lambda value=direction: value
+                worker._get_underlying_spot = MagicMock(return_value=100.0)
                 outcome = agent.decide.return_value
                 outcome.action = action
                 outcome.accepted = True
-                outcome.accepted_regime = regime
+                outcome.accepted_regime = "TRENDING"
                 outcome.entry_price = 100.0
-                outcome.stop_price = 95.0 if direction == "LONG" else 105.0
-                outcome.milestone_price = 108.0 if direction == "LONG" else 92.0
-                outcome.final_target_price = 118.0 if direction == "LONG" else 82.0
+                outcome.stop_price = stop
                 outcome.risk_points = 5.0
-                outcome.proposal = SimpleNamespace(setup=setup)
+                outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
+                worker.enter_position = MagicMock(return_value=False)
 
-                def enter(*args, active_worker=worker, **kwargs):
-                    active_worker.pos = master_file.PaperPosition(
-                        active=True,
-                        direction=args[0],
-                        quantity=50,
-                        entry_underlying=args[1],
-                        stop_underlying=args[2],
-                        target_underlying=args[3],
-                        entry_trade_price=10.0,
-                        option_opening_side=kwargs.get(
-                            "option_opening_side",
-                            "BUY",
-                        ),
-                    )
-                    return True
-
-                worker.enter_position = MagicMock(side_effect=enter)
-                worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
+                worker.process_strategy_frame(
+                    pd.DataFrame([{"timestamp": pd.Timestamp("2026-08-03 11:30"), "close": 100.0}])
+                )
 
                 call = worker.enter_position.call_args
+                self.assertEqual(call.args, (direction, 100.0, stop, 0.0))
                 self.assertEqual(
-                    call.args,
-                    (
-                        direction,
-                        100.0,
-                        95.0 if direction == "LONG" else 105.0,
-                        118.0 if direction == "LONG" else 82.0,
-                    ),
+                    call.kwargs,
+                    {
+                        "option_opening_side": "SELL",
+                        "option_contract_direction": contract_direction,
+                        "use_current_expiry": True,
+                    },
                 )
-                self.assertEqual(call.kwargs, expected_kwargs)
 
-    def test_sideways_short_premium_mtm_and_paper_exit_use_sell_math(self):
+    def test_sold_premium_mtm_and_paper_exit_use_sell_math(self):
         """CPR aggregate accounting treats falling sold premium as profit."""
 
         worker, _agent, _logger = self._worker()
@@ -12299,20 +11562,16 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             original_entry_price=100.0,
             original_risk_points=5.0,
             original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="SIDEWAYS_SRSI",
-            accepted_regime="SIDEWAYS",
-            initial_filled_quantity=50,
+            premise="TREND_DAY_CONTINUATION",
+            accepted_regime="TRENDING",
+            candidate={},
         )
         worker._get_option_ltp = MagicMock(return_value=8.0)
         worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
         worker.publish_trade_event = MagicMock()
 
         self.assertEqual(worker._get_open_position_pnl(), 100.0)
-        worker.exit_position("SIDEWAYS_TARGET")
+        worker.exit_position("CPR_AI_PREMISE_EXIT")
 
         self.assertFalse(worker.pos.active)
         self.assertEqual(worker.realized_pnl, 100.0)
@@ -12320,7 +11579,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertEqual(event["direction"], "LONG")
         self.assertEqual(event["legs"][0]["side"], "BUY")
 
-    def test_rising_sideways_short_premium_counts_toward_max_loss(self):
+    def test_rising_sold_premium_counts_toward_max_loss(self):
         """A sold option getting dearer is an open loss, never hidden profit."""
 
         worker, _agent, _logger = self._worker()
@@ -12338,13 +11597,9 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             original_entry_price=100.0,
             original_risk_points=5.0,
             original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="SIDEWAYS_SRSI",
-            accepted_regime="SIDEWAYS",
-            initial_filled_quantity=50,
+            premise="TREND_DAY_CONTINUATION",
+            accepted_regime="TRENDING",
+            candidate={},
         )
         worker._get_option_ltp = MagicMock(return_value=12.0)
         worker.max_loss = 50.0
@@ -12354,7 +11609,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         self.assertTrue(breached)
         self.assertEqual((total_pnl, open_pnl), (-100.0, -100.0))
 
-    def test_live_sideways_short_closes_with_buy_and_broker_fill_pnl(self):
+    def test_live_sold_premium_closes_with_buy_and_broker_fill_pnl(self):
         """A confirmed live SELL leg is reduced only by a confirmed BUY fill."""
 
         worker, _agent, _logger = self._worker()
@@ -12384,13 +11639,9 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             original_entry_price=100.0,
             original_risk_points=5.0,
             original_protective_stop=105.0,
-            current_hard_stop=105.0,
-            first_milestone=95.0,
-            following_milestone=90.0,
-            final_target=82.0,
-            premise="SIDEWAYS_SRSI",
-            accepted_regime="SIDEWAYS",
-            initial_filled_quantity=50,
+            premise="TREND_DAY_CONTINUATION",
+            accepted_regime="TRENDING",
+            candidate={},
         )
         worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
         # Broker-confirmed flat requires a terminal CLOSE attempt in addition to
@@ -12434,56 +11685,19 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             )
 
         worker._place_real_leg = MagicMock(side_effect=close)
-        worker.exit_position("SIDEWAYS_LIVE_EXIT")
+        worker.exit_position("CPR_AI_VWAP_STOP")
 
         worker._place_real_leg.assert_called_once()
         self.assertFalse(worker.pos.active)
         self.assertEqual(worker.realized_pnl, 100.0)
-
-    def test_short_premium_position_cannot_use_trending_scale_in_path(self):
-        """Defense in depth: a sold SIDEWAYS leg never reaches role-A submission."""
-
-        worker, _agent, _logger = self._worker()
-        worker.pos = master_file.PaperPosition(
-            active=True,
-            direction="LONG",
-            symbol="NIFTY-CURRENT-PE",
-            quantity=50,
-            entry_trade_price=10.0,
-            option_security_id=456,
-            option_exchange_segment="NSE_FNO",
-            option_right="PE",
-            option_strike=25000.0,
-            option_expiry=date(2026, 8, 27),
-            option_opening_side="SELL",
-        )
-        worker._cpr_state = master_file.CPRAITradeState(
-            original_entry_price=100.0,
-            original_risk_points=5.0,
-            original_protective_stop=95.0,
-            current_hard_stop=95.0,
-            first_milestone=105.0,
-            following_milestone=110.0,
-            final_target=118.0,
-            premise="SIDEWAYS_SRSI",
-            accepted_regime="SIDEWAYS",
-            initial_filled_quantity=50,
-        )
-        worker._get_dealable_option_ltp = MagicMock(return_value=(8.0, True))
-        worker._spread_gate_allows_entry = MagicMock(return_value=True)
-        worker._liquidity_gate_allows_entry = MagicMock(return_value=True)
-        worker._place_real_leg = MagicMock()
-
-        self.assertFalse(worker._execute_scale_in())
-        self.assertFalse(worker._cpr_state.scale_in_used)
-        worker._place_real_leg.assert_not_called()
 
     def test_entry_cutoff_is_rechecked_after_inference_before_submission(self):
         """A turn accepted before 15:00 cannot enter after the clock crosses it."""
 
         worker, agent, logger = self._worker()
         worker._latest_frozen_context = lambda: {
-            "session_levels": {}, "momentum_vwap": {}, "market_structure": {}, "position_state": {"is_flat": True}
+            "session_levels": {}, "momentum_vwap": {}, "market_structure": _eligible_structure(),
+            "position_state": {"is_flat": True},
         }
         worker._completed_bar_signature = lambda _frame: "late-cutoff"
         worker._current_completed_spot_signature = lambda: "late-cutoff"
@@ -12493,10 +11707,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         outcome.accepted = True
         outcome.entry_price = 100.0
         outcome.stop_price = 95.0
-        outcome.milestone_price = 108.0
-        outcome.final_target_price = 118.0
         outcome.risk_points = 5.0
-        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
         worker.enter_position = MagicMock(return_value=True)
 
         worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
@@ -12514,7 +11726,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._latest_frozen_context = lambda: {
             "session_levels": {},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         worker._completed_bar_signature = lambda _frame: "late-market-health"
@@ -12525,10 +11737,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         outcome.accepted = True
         outcome.entry_price = 100.0
         outcome.stop_price = 95.0
-        outcome.milestone_price = 108.0
-        outcome.final_target_price = 118.0
         outcome.risk_points = 5.0
-        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
         worker.enter_position = MagicMock(return_value=True)
 
         worker.process_strategy_frame(pd.DataFrame([{"close": 100.0}]))
@@ -12548,7 +11758,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker._latest_frozen_context = lambda: {
             "session_levels": {},
             "momentum_vwap": {},
-            "market_structure": {},
+            "market_structure": _eligible_structure(),
             "position_state": {"is_flat": True},
         }
         worker._completed_bar_signature = lambda _frame: "late-square-off"
@@ -12558,10 +11768,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         outcome.accepted = True
         outcome.entry_price = 100.0
         outcome.stop_price = 95.0
-        outcome.milestone_price = 108.0
-        outcome.final_target_price = 118.0
         outcome.risk_points = 5.0
-        outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+        outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
 
         def cross_square_off(*_args, **_kwargs):
             self._ist_now.return_value = datetime(
@@ -12603,7 +11811,7 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 worker._latest_frozen_context = lambda: {
                     "session_levels": {},
                     "momentum_vwap": {},
-                    "market_structure": {},
+                    "market_structure": _eligible_structure(),
                     "position_state": {"is_flat": True},
                 }
                 signature = f"late-{transition}"
@@ -12614,10 +11822,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 outcome.accepted = True
                 outcome.entry_price = 100.0
                 outcome.stop_price = 95.0
-                outcome.milestone_price = 108.0
-                outcome.final_target_price = 118.0
                 outcome.risk_points = 5.0
-                outcome.proposal = SimpleNamespace(setup="TRENDING_VWAP_CONTINUATION")
+                outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
 
                 def decide(
                     *_args,
@@ -12643,93 +11849,10 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                     expected_reason,
                 )
 
-    def test_scale_in_rechecks_exposure_gates_after_inference(self):
-        """Any exposure gate changing during inference blocks the role-A add.
+    def test_hold_rechecks_fresh_spot_stop_after_inference(self):
+        """A VWAP stop crossed during a slow turn exits before HOLD is honored."""
 
-        This matrix holds the accepted proposal and open position constant while
-        changing one mutable host gate at a time. It isolates the post-inference
-        recheck from deterministic setup validation and broker submission.
-        """
-
-        for transition, expected_reason in (
-            ("stop_event", "stop_event"),
-            ("lifecycle", "worker_not_running"),
-            ("market_data", "market_data_unhealthy"),
-            ("entry_cutoff", "entry_cutoff"),
-        ):
-            with self.subTest(transition=transition):
-                worker, agent, logger, outcome = self._scale_in_race_worker(
-                    f"scale-in-{transition}"
-                )
-                market_state = {"healthy": True}
-                worker._market_data_entries_allowed = (
-                    lambda state=market_state: state["healthy"]
-                )
-
-                def decide(
-                    *_args,
-                    transition_name=transition,
-                    active_worker=worker,
-                    accepted_outcome=outcome,
-                    market_state_ref=market_state,
-                    **_kwargs,
-                ):
-                    if transition_name == "stop_event":
-                        active_worker.stop_event.set()
-                    elif transition_name == "lifecycle":
-                        active_worker.lifecycle.request_shutdown("TEST_TRANSITION")
-                    elif transition_name == "market_data":
-                        market_state_ref["healthy"] = False
-                    else:
-                        self._ist_now.return_value = datetime(
-                            2026,
-                            8,
-                            3,
-                            15,
-                            0,
-                            tzinfo=master_file.IST_TIMEZONE,
-                        )
-                    return accepted_outcome
-
-                agent.decide.side_effect = decide
-
-                worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
-
-                self.assertTrue(worker.pos.active)
-                self.assertFalse(worker._cpr_state.scale_in_used)
-                self.assertEqual(worker._cpr_state.add_quantity, 0)
-                self.assertIsNone(worker._cpr_state.add_live_leg)
-                for call in worker._place_real_leg.call_args_list:
-                    self.assertFalse(call.kwargs["opens_exposure"])
-                self.assertEqual(
-                    logger.write.call_args.kwargs["execution"],
-                    {
-                        "mode": "LIVE",
-                        "submitted": False,
-                        "status": "SCALE_IN_BLOCKED",
-                        "blocked_reason": expected_reason,
-                    },
-                )
-
-    def test_scale_in_rechecks_fresh_spot_stop_after_inference(self):
-        """A stop crossed during a slow turn exits instead of adding exposure."""
-
-        worker, agent, _logger, outcome = self._scale_in_race_worker(
-            "scale-in-late-stop"
-        )
-        state = worker._cpr_state
-        worker.store.update_ltp_map(
-            {
-                (
-                    master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
-                    master_file.NIFTY_INDEX_SECURITY_ID,
-                ): 101.0,
-                (
-                    worker.pos.option_exchange_segment,
-                    worker.pos.option_security_id,
-                ): 10.0,
-            }
-        )
+        worker, agent, _logger, outcome = self._open_long_worker("hold-late-stop")
 
         def decide(*_args, **_kwargs):
             worker.store.update_ltp_map(
@@ -12751,18 +11874,13 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
 
         worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
 
-        worker.exit_position.assert_called_once_with("CPR_AI_HARD_STOP")
-        worker._place_real_leg.assert_not_called()
+        worker.exit_position.assert_called_once_with("CPR_AI_VWAP_STOP")
         self.assertFalse(worker.pos.active)
-        self.assertFalse(state.scale_in_used)
 
-    def test_scale_in_rechecks_fresh_max_loss_after_inference(self):
-        """A mark loss incurred during inference flattens before any add."""
+    def test_hold_rechecks_fresh_max_loss_after_inference(self):
+        """A mark loss incurred during inference flattens the sold leg."""
 
-        worker, agent, _logger, outcome = self._scale_in_race_worker(
-            "scale-in-late-max-loss"
-        )
-        state = worker._cpr_state
+        worker, agent, _logger, outcome = self._open_long_worker("hold-late-max-loss")
         worker.max_loss = 400.0
         option_key = (
             worker.pos.option_exchange_segment,
@@ -12771,7 +11889,8 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker.store.update_ltp_map({option_key: 10.0})
 
         def decide(*_args, **_kwargs):
-            worker.store.update_ltp_map({option_key: 1.0})
+            # A sold option getting dearer (10 -> 19) is a 450-rupee open loss.
+            worker.store.update_ltp_map({option_key: 19.0})
             return outcome
 
         def handle_max_loss(_total_pnl, _open_pnl):
@@ -12784,18 +11903,16 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
         worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
 
         worker.handle_max_loss_and_stop.assert_called_once_with(-450.0, -450.0)
-        worker._place_real_leg.assert_not_called()
         self.assertFalse(worker.pos.active)
-        self.assertFalse(state.scale_in_used)
 
-    def test_stale_scale_in_cannot_apply_to_a_replacement_position(self):
-        """A decision frozen for a closed trade cannot add to its successor."""
+    def test_stale_exit_cannot_close_a_replacement_position(self):
+        """A decision frozen for a closed trade cannot act on its successor."""
 
-        worker, agent, logger, outcome = self._scale_in_race_worker(
-            "scale-in-replaced-position"
-        )
+        worker, agent, logger, outcome = self._open_long_worker("exit-replaced-position")
         worker._prior_accepted_regime = "SIDEWAYS"
+        outcome.action = "EXIT"
         outcome.accepted_regime = "TRENDING"
+        outcome.proposal = SimpleNamespace(setup="PREMISE_EXIT")
 
         def decide(*_args, **_kwargs):
             worker.pos = master_file.PaperPosition(
@@ -12806,41 +11923,29 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
                 entry_trade_price=20.0,
                 option_security_id=456,
                 option_exchange_segment="NSE_FNO",
-                option_right="CE",
+                option_right="PE",
                 option_strike=25100.0,
                 option_expiry=date(2026, 8, 13),
-                live_leg=self._live_state("N", entry_price=20.0),
+                option_opening_side="SELL",
+                live_leg=self._live_state("N", entry_price=20.0, opening_side="SELL"),
             )
             worker._cpr_state = master_file.CPRAITradeState(
                 original_entry_price=110.0,
                 original_risk_points=5.0,
                 original_protective_stop=105.0,
-                current_hard_stop=105.0,
-                first_milestone=115.0,
-                following_milestone=120.0,
-                final_target=128.0,
-                premise="TRENDING_VWAP_CONTINUATION",
+                premise="TREND_DAY_CONTINUATION",
                 accepted_regime="TRENDING",
-                initial_filled_quantity=50,
-            )
-            worker.store.update_ltp_map(
-                {
-                    ("NSE_FNO", 456): 20.0,
-                    (
-                        master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
-                        master_file.NIFTY_INDEX_SECURITY_ID,
-                    ): 110.0,
-                }
+                candidate={},
             )
             return outcome
 
         agent.decide.side_effect = decide
+        worker.exit_position = MagicMock()
 
         worker.process_strategy_frame(pd.DataFrame([{"close": 101.0}]))
 
-        worker._place_real_leg.assert_not_called()
+        worker.exit_position.assert_not_called()
         self.assertEqual(worker.pos.symbol, "NIFTY-REPLACEMENT")
-        self.assertFalse(worker._cpr_state.scale_in_used)
         logger.write.assert_called_once()
         self.assertEqual(
             logger.write.call_args.kwargs["execution"],
@@ -12851,81 +11956,11 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             },
         )
         self.assertEqual(worker._prior_accepted_regime, "SIDEWAYS")
-        self.assertEqual(
-            worker._latest_frozen_context()["session_levels"][
-                "prior_accepted_regime"
-            ],
-            "SIDEWAYS",
-        )
-
-    def test_scale_in_rejects_a_wide_locked_contract_spread_without_consuming_add(self):
-        """The one-time add remains eligible when its locked quote is too wide."""
-
-        master_file._option_chain_quote_cache.clear()
-        self.addCleanup(master_file._option_chain_quote_cache.clear)
-        worker, _agent, _logger, _outcome = self._scale_in_race_worker(
-            "scale-in-wide-spread"
-        )
-        worker.max_spread_pct = 2.0
-        worker.min_liquidity_score = 0.0
-        worker.broker.fetch_option_chain.return_value = {
-            "status": "success",
-            "data": {
-                "oc": {
-                    "25000.000000": {
-                        "ce": {
-                            "top_bid_price": 90.0,
-                            "top_ask_price": 110.0,
-                            "oi": 5000,
-                        }
-                    }
-                }
-            },
-        }
-
-        self.assertFalse(worker._execute_scale_in())
-
-        worker._place_real_leg.assert_not_called()
-        self.assertFalse(worker._cpr_state.scale_in_used)
-        self.assertEqual(worker._cpr_state.add_quantity, 0)
-        self.assertEqual(worker._cpr_state.add_entry_trade_price, 0.0)
-
-    def test_scale_in_rejects_failed_liquidity_score_without_consuming_add(self):
-        """An illiquid chain cannot consume or submit the one-time add."""
-
-        master_file._option_chain_quote_cache.clear()
-        self.addCleanup(master_file._option_chain_quote_cache.clear)
-        worker, _agent, _logger, _outcome = self._scale_in_race_worker(
-            "scale-in-low-liquidity"
-        )
-        worker.max_spread_pct = 0.0
-        worker.min_liquidity_score = 30.0
-        worker.broker.fetch_option_chain.return_value = {
-            "status": "success",
-            "data": {
-                "oc": {
-                    "25000.000000": {
-                        "ce": {
-                            "top_bid_price": 90.0,
-                            "top_ask_price": 110.0,
-                            "oi": 100,
-                        }
-                    }
-                }
-            },
-        }
-
-        self.assertFalse(worker._execute_scale_in())
-
-        worker._place_real_leg.assert_not_called()
-        self.assertFalse(worker._cpr_state.scale_in_used)
-        self.assertEqual(worker._cpr_state.add_quantity, 0)
-        self.assertEqual(worker._cpr_state.add_entry_trade_price, 0.0)
 
     def test_post_inference_exposure_gate_does_not_block_exit(self):
         """Risk-reducing EXIT remains fail-open when entry gates close."""
 
-        worker, agent, logger, outcome = self._scale_in_race_worker("exit-race")
+        worker, agent, logger, outcome = self._open_long_worker("exit-race")
         outcome.action = "EXIT"
 
         def decide(*_args, **_kwargs):
@@ -12947,6 +11982,177 @@ class TestCPRAIWorkerFoundation(unittest.TestCase):
             logger.write.call_args.kwargs["execution"]["status"],
             "EXIT_CONFIRMED",
         )
+
+    def _entry_worker(self, *, submitted=True, live_state=None):
+        """Flat worker whose Codex turn accepts the bullish candidate at 11:30."""
+
+        worker, agent, logger = self._worker()
+        worker._latest_frozen_context = lambda: {
+            "session_levels": {},
+            "momentum_vwap": {},
+            "market_structure": _eligible_structure(),
+            "position_state": {"is_flat": True, "entries_today": worker._entries_today()},
+        }
+        # The mocked agent never compares signatures; bar identity (the
+        # timestamp) is what the worker itself dedupes on.
+        worker._completed_bar_signature = lambda frame: str(frame.iloc[-1]["timestamp"])
+        worker._get_underlying_spot = MagicMock(return_value=100.0)
+        outcome = agent.decide.return_value
+        outcome.action = "ENTER_LONG"
+        outcome.accepted = True
+        outcome.accepted_regime = "TRENDING"
+        outcome.entry_price = 100.0
+        outcome.stop_price = 95.0
+        outcome.risk_points = 5.0
+        outcome.proposal = SimpleNamespace(setup="TREND_DAY_CONTINUATION")
+
+        def enter(direction, entry, stop, target, **_terms):
+            if submitted:
+                worker.pos = master_file.PaperPosition(
+                    active=True, direction=direction, quantity=50, entry_trade_price=10.0,
+                    entry_underlying=entry, stop_underlying=stop, option_opening_side="SELL",
+                )
+            elif live_state is not None:
+                worker._orphan_live_legs = [{"live_leg": live_state}]
+            return submitted
+
+        worker.enter_position = MagicMock(side_effect=enter)
+        return worker, agent, logger
+
+    @staticmethod
+    def _bar(stamp):
+        """One completed bar starting at ``stamp`` (naive IST)."""
+
+        return pd.DataFrame([{"timestamp": pd.Timestamp(stamp), "close": 100.0}])
+
+    def test_flat_worker_never_consults_codex_without_a_host_candidate(self):
+        """No eligible candidate means nothing to accept or veto: no model turn at all."""
+
+        for structure in ({}, {"trend_day_candidate": {"eligible": False, "reason": "range_not_expanded"}}):
+            with self.subTest(structure=structure):
+                worker, agent, logger = self._worker()
+                worker._latest_frozen_context = lambda structure=structure: {
+                    "session_levels": {},
+                    "momentum_vwap": {},
+                    "market_structure": structure,
+                    "position_state": {"is_flat": True},
+                }
+                worker._completed_bar_signature = lambda _frame: "no-candidate"
+
+                worker.process_strategy_frame(self._bar("2026-08-03 11:30"))
+
+                agent.decide.assert_not_called()
+                logger.write.assert_not_called()
+
+    def test_one_entry_per_session_then_no_codex_until_the_next_session(self):
+        """After today's entry -- even once flat again -- Codex is not consulted until tomorrow."""
+
+        worker, agent, _logger = self._entry_worker()
+        worker.process_strategy_frame(self._bar("2026-08-03 11:30"))
+        worker.enter_position.assert_called_once()
+        self.assertEqual(worker._position_state_payload()["entries_today"], 1)
+
+        worker.pos = master_file.PaperPosition()  # stopped out, flat again
+        worker._cpr_state = None
+        agent.decide.reset_mock()
+        worker.process_strategy_frame(self._bar("2026-08-03 11:35"))
+        agent.decide.assert_not_called()
+
+        worker.process_strategy_frame(self._bar("2026-08-04 11:30"))
+        agent.decide.assert_called_once()
+        self.assertEqual(worker.enter_position.call_count, 2)
+
+    def test_clean_refusal_keeps_the_entry_but_indeterminate_exposure_consumes_it(self):
+        """A clean broker/host refusal can retry on a later bar; possible exposure cannot."""
+
+        refused, _agent, _logger = self._entry_worker(submitted=False)
+        refused.process_strategy_frame(self._bar("2026-08-03 11:30"))
+        refused.process_strategy_frame(self._bar("2026-08-03 11:35"))
+        self.assertEqual(refused.enter_position.call_count, 2)
+
+        unknown = self._live_state("N", filled=0, confirmed=0, indeterminate=True, entry_price=0.0)
+        risky, _agent, _logger = self._entry_worker(submitted=False, live_state=unknown)
+        risky.process_strategy_frame(self._bar("2026-08-03 11:30"))
+        risky.process_strategy_frame(self._bar("2026-08-03 11:35"))
+        self.assertEqual(risky.enter_position.call_count, 1)
+
+    def test_entry_is_blocked_when_fresh_spot_already_crossed_the_vwap_stop(self):
+        """A slow turn cannot open a trade its own stop would close on the first poll."""
+
+        for spot, reason in ((95.0, "stop_already_breached"), (0.0, "spot_unavailable")):
+            with self.subTest(reason=reason):
+                worker, _agent, logger = self._entry_worker()
+                worker._get_underlying_spot = MagicMock(return_value=spot)
+
+                worker.process_strategy_frame(self._bar("2026-08-03 11:30"))
+
+                worker.enter_position.assert_not_called()
+                self.assertEqual(logger.write.call_args.kwargs["execution"]["blocked_reason"], reason)
+                # The blocked bar did not use up the session's single entry.
+                self.assertEqual(worker._entries_today(), 0)
+
+    def test_open_position_payload_exposes_fixed_stop_and_entries_today(self):
+        """Codex sees the fixed VWAP stop and the used entry, never quantities or symbols."""
+
+        worker, _agent, _logger = self._worker()
+        worker._decision_session_date = date(2026, 8, 3)
+        worker._entry_session_date = date(2026, 8, 3)
+        worker.pos = master_file.PaperPosition(active=True, direction="SHORT", symbol="SECRET", quantity=50)
+        worker._cpr_state = master_file.CPRAITradeState(
+            original_entry_price=100.0,
+            original_risk_points=6.0,
+            original_protective_stop=106.0,
+            premise="TREND_DAY_CONTINUATION",
+            accepted_regime="TRENDING",
+            candidate={},
+        )
+
+        payload = worker._position_state_payload()
+
+        self.assertEqual(
+            payload,
+            {
+                "is_flat": False,
+                "direction": "SHORT",
+                "original_entry_price": 100.0,
+                "original_risk_points": 6.0,
+                "original_protective_stop": 106.0,
+                "current_protective_stop": 106.0,
+                "premise": "TREND_DAY_CONTINUATION",
+                "setup": "TREND_DAY_CONTINUATION",
+                "entries_today": 1,
+            },
+        )
+        # The payload must pass the real, strict allowlist.
+        self.assertEqual(
+            master_file.CPR_AI_CONTEXT_LOGIC.validate_position_state(payload)["entries_today"], 1
+        )
+
+    def test_rejected_live_exit_keeps_the_sold_leg_and_its_stop_open(self):
+        """An unconfirmed BUY-to-close leaves the position and sidecar for reconciliation."""
+
+        worker, _agent, _logger, _outcome = self._open_long_worker("exit-rejected")
+        state = worker._cpr_state
+
+        def reject(side, leg, *, opens_exposure):
+            self.assertEqual(side, "BUY")
+            self.assertFalse(opens_exposure)
+            return master_file.OrderResult(
+                order_id="",
+                requested_quantity=50,
+                filled_quantity=0,
+                remaining_quantity=50,
+                status=master_file.OrderStatus.REJECTED,
+                broker_state="REJECTED",
+                reason="synthetic rejection",
+            )
+
+        worker._place_real_leg = MagicMock(side_effect=reject)
+        worker.exit_position("CPR_AI_VWAP_STOP")
+
+        self.assertTrue(worker.pos.active)
+        self.assertIs(worker._cpr_state, state)
+        self.assertEqual(worker.realized_pnl, 0.0)
 
 
 class TestSessionStatePersistence(unittest.TestCase):

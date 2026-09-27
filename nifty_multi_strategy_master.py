@@ -100,8 +100,9 @@ dep simply disables it without touching the rest of the runner. It can also lear
 its own trades (v3): a per-trade journal feeds an off-loop reflection coach that
 proposes lessons, which the operator promotes into lessons.json and the agent injects
 only when SL_HUNTING_LESSONS_ENABLED (human-gated, paper-first, off by default).
-The other is the CPR Codex AI Agent, an independent five-minute SRSI/VWAP worker
-whose model judgment remains behind deterministic host risk and execution gates.
+The other is the CPR Codex AI Agent, an independent five-minute Trend-Day Rider:
+the host flags trend-day candidates, Codex may only accept or veto them (and judge
+premise exits), and every entry sells the opposite current-week ATM option.
 When both optional agents are enabled, the configured roster can reach approximately
 30 workers; enable and virtual-trading gates keep the running total configuration-dependent.
 
@@ -112,7 +113,7 @@ in a single overloaded method, every worker is explicit about which
 expiry rule it uses:
 
     if strategy belongs to the "Hedged Puts" family, is the Long Strangle,
-    is SL Hunting's NIFTY leg (SLH-008), or is a CPR AI SIDEWAYS entry
+    is SL Hunting's NIFTY leg (SLH-008), or is a CPR AI (Trend-Day Rider) entry
         -> use OptionsContractResolver.get_current_week_expiry()
            (the FIRST expiry on or after today)
     else
@@ -123,8 +124,7 @@ ATM workers select this via the `_entry_expiry()` hook, which returns None
 (= the resolver's next-next default) unless a subclass overrides it.
 
 (CPR Algo 3 is "else" -- it TRADES the next-next ATM -- even though its read-only
-observation legs use the current-week expiry. CPR Algo 4 and CPR AI TRENDING also
-remain "else".)
+observation legs use the current-week expiry. CPR Algo 4 also remains "else".)
 
 One deliberate exception (BNF-001): the SL Hunting BankNIFTY MIRROR leg uses
 OptionsContractResolver.get_nearest_monthly_expiry() -- the NEAREST BankNIFTY
@@ -230,7 +230,7 @@ CLASS HIERARCHY OVERVIEW
         |       +-- (+ Regime Adaptive, same factory, different source project:
         |             an ADX router over an opening-range breakout and a VWAP fade)
         |       +-- SLHuntingAIWorker         (OPTIONAL opt-in: LLM/Claude-agent driven)
-        |       +-- CPRAIWorker               (OPTIONAL opt-in: Codex SRSI/VWAP agent)
+        |       +-- CPRAIWorker               (OPTIONAL opt-in: Codex Trend-Day Rider)
         |
         +-- SupertrendBullishWorker    (hedged PE spread)
         +-- DonchianBearishWorker      (hedged CE spread)
@@ -879,8 +879,8 @@ CPR_ALGO3_ITM_OFFSET = _env_float("CPR_ALGO3_ITM_OFFSET", 100.0)
 # =============================================================================
 # CPR ALGO 4 STRATEGY CONSTANTS (deterministic "Intraday SRSI VWAP" playbook)
 # =============================================================================
-# Algo 4 is the rule-based twin of the optional CPR AI agent's SRSI/VWAP
-# playbook: the 09:25 close against [MIN(S1,PDL), MAX(R1,PDH)] decides a
+# Algo 4 is the rule-based version of the SRSI/VWAP playbook the optional CPR
+# AI agent traded before its Trend-Day Rider replacement: the 09:25 close against [MIN(S1,PDL), MAX(R1,PDH)] decides a
 # SIDEWAYS day (Stochastic RSI reversals) or a TRENDING day (VWAP pullbacks).
 # Every signal BUYS the ATM CE/PE of the next-next expiry like the rest of the
 # ATM family. See `Signal Generators/CPR Strategy/cpr_algo4_signal_generator.py`.
@@ -935,10 +935,6 @@ CPR_AI_ENTRY_CUTOFF_MINUTE = _env_int("CPR_AI_ENTRY_CUTOFF_MINUTE", 0)
 CPR_AI_SQUARE_OFF_HOUR = _env_int("CPR_AI_SQUARE_OFF_HOUR", 15)
 CPR_AI_SQUARE_OFF_MINUTE = _env_int("CPR_AI_SQUARE_OFF_MINUTE", 15)
 CPR_AI_BAR_MINUTES = 5
-CPR_AI_MAX_STOP_POINTS = 30.0
-CPR_AI_LEVEL_BUFFER_POINTS = 2.0
-CPR_AI_MIN_BODY_FRACTION = 0.40
-CPR_AI_MAX_SCALE_INS = 1
 CPR_AI_DECISION_LOGGING_ENABLED = _env_bool(
     "CPR_AI_DECISION_LOGGING_ENABLED", True
 )
@@ -2160,8 +2156,8 @@ class PaperPosition:
     option_strike: float = 0.0
     option_expiry: date | None = None
     option_lot_size: int = 0
-    # BUY is the historical ATM-family default. CPR AI SIDEWAYS trades may use
-    # SELL, which makes both premium P&L and the eventual close side invert.
+    # BUY is the historical ATM-family default. CPR AI (Trend-Day Rider) trades
+    # use SELL, which makes both premium P&L and the eventual close side invert.
     option_opening_side: str = "BUY"
     # Immutable quantity snapshot for the real broker leg. ``None`` means this
     # is paper (including an explicit zero-fill fallback). Exit attempts replace
@@ -7556,8 +7552,8 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
 
         SL Hunting overrides it (SLH-008): it holds positions for minutes, so a
         next-next contract is the wrong instrument, and Kotak's RMS refuses MIS
-        orders on it outright. CPR AI keeps this default for TRENDING entries and
-        uses the explicit current-expiry entry keyword for SIDEWAYS only.
+        orders on it outright. CPR AI never reaches this default: every
+        Trend-Day Rider entry passes the explicit current-expiry keyword.
         """
         return None
 
@@ -7578,9 +7574,10 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         Open a new paper position on an ATM option selected by explicit terms.
 
         Existing callers omit the keyword-only terms and retain the historical
-        BUY, economic-direction option right, and worker expiry. CPR AI SIDEWAYS
-        supplies SELL, the opposite option-contract direction, and current expiry
-        while keeping its LONG/SHORT spot direction unchanged.
+        BUY, economic-direction option right, and worker expiry. CPR AI (every
+        Trend-Day Rider entry) supplies SELL, the opposite option-contract
+        direction, and current expiry while keeping its LONG/SHORT spot direction
+        unchanged.
 
         ``option_contract_direction`` is used only by the resolver's established
         LONG->CE / SHORT->PE mapping. ``use_current_expiry`` selects the first
@@ -9932,9 +9929,10 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
       does not wait for the 5-minute close;
     - each signal BUYS the ATM CE (LONG) / PE (SHORT) of the next-next expiry
       through the shared `enter_position` path, like the rest of the ATM family;
-    - the one R1 add and the two-leg exit are a standalone copy of the CPR AI
-      worker's mechanics (separate ledger leg, never retried on PARTIAL/UNKNOWN,
-      local state kept until both legs are broker-confirmed flat).
+    - the one R1 add and the two-leg exit started as a copy of the former CPR
+      AI worker's mechanics (separate ledger leg, never retried on
+      PARTIAL/UNKNOWN, local state kept until both legs are broker-confirmed
+      flat). CPR AI's Trend-Day Rider has no add, so this is now the only copy.
 
     CPR Algo 4 coexists with CPR, CPR Algo 3 and CPR AI: separate position,
     separate live gate (`CPR_ALGO4_LIVE_TRADING`) and a separate Sheet row.
@@ -10231,7 +10229,7 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
             self.engine.on_exit(exit_bar)
 
     # ------------------------------------------------------------------
-    # The one R1 add (standalone copy of CPR AI's mechanics)
+    # The one R1 add (copied from CPR AI's former mechanics; now the only copy)
     # ------------------------------------------------------------------
     def _get_open_position_pnl(self) -> float:
         """Primary MTM plus a conservative MTM for any paper/live add.
@@ -10569,92 +10567,47 @@ class CPRAlgo4StrategyWorker(AtmSingleLegStrategyWorker):
 
 
 # =============================================================================
-# CPR CODEX AI WORKER (optional independent SRSI/VWAP policy worker)
+# CPR CODEX AI WORKER (optional Trend-Day Rider; Codex vetoes host candidates)
 # =============================================================================
 @dataclass
 class CPRAITradeState:
-    """Keep CPR-specific risk memory beside, not inside, the generic position.
+    """Keep the Trend-Day Rider's spot geometry beside, not inside, the position.
 
     :class:`PaperPosition` remains authoritative for the locked option contract,
-    primary quantity, primary fill, and broker ledger.  This sidecar remembers
-    only the accepted spot geometry, premise/regime, monotonic trailing state,
-    and the optional equal-size role-A add.  Separating them lets the shared
-    execution code stay generic while CPR exits remain fully mechanical.
-
-    ``original_*`` values never move.  ``current_hard_stop`` may ratchet only
-    toward profit.  A live add keeps its own :class:`LiveLegState` so partial or
-    unknown exposure is reconciled instead of being invented as a paper fill.
+    quantity, fill, and broker ledger. This sidecar remembers only the accepted
+    spot entry, the VWAP stop, the premise, the model's regime, and the frozen
+    candidate the entry was taken on (kept for the audit trail). The stop never
+    moves: the backtest showed every trailing or breakeven rule reduced returns,
+    so the trade is held to the stop, the 15:15 square-off, or a premise exit.
     """
 
     original_entry_price: float
     original_risk_points: float
     original_protective_stop: float
-    current_hard_stop: float
-    first_milestone: float
-    following_milestone: float
-    final_target: float
     premise: str
     accepted_regime: str | None
-    initial_filled_quantity: int
-    trailing_stage: str = "NONE"
-    trail_armed: bool = False
-    prior_completed_close: float | None = None
-    scale_in_used: bool = False
-    add_quantity: int = 0
-    add_entry_trade_price: float = 0.0
-    add_entry_price_quality: str = PRICE_QUALITY_UNKNOWN
-    add_live_leg: LiveLegState | None = None
-
-    @property
-    def aggregate_quantity(self) -> int:
-        """Return the primary fill plus the accounted add-on fill.
-
-        Indeterminate live risk uses the ledger's conservative quantity in MTM
-        paths instead; this property represents confirmed/paper accounting only.
-        """
-
-        return self.initial_filled_quantity + self.add_quantity
-
-    @property
-    def aggregate_entry_price(self) -> float:
-        """Return the quantity-weighted option entry across primary and add.
-
-        The spot entry used for CPR risk geometry is deliberately unrelated to
-        this option-premium average, which exists only for trade accounting.
-        """
-
-        total = self.aggregate_quantity
-        if total <= 0:
-            return 0.0
-        # The caller supplies the primary price separately when no add exists;
-        # this property is finalized by ``set_primary_entry_trade_price``.
-        primary_total = self._primary_entry_trade_price * self.initial_filled_quantity
-        return (primary_total + self.add_entry_trade_price * self.add_quantity) / total
-
-    _primary_entry_trade_price: float = 0.0
-
-    def set_primary_entry_trade_price(self, price: float) -> None:
-        """Remember the primary option fill used in weighted P&L accounting."""
-
-        self._primary_entry_trade_price = float(price)
+    candidate: dict[str, Any]
 
 
 class CPRAIWorker(AtmSingleLegStrategyWorker):
-    """Run the independent five-minute CPR context through one optional agent.
+    """Run the Trend-Day Rider: host candidates, Codex veto, sold ATM options.
 
     The worker deliberately starts from the generic ATM execution base rather
-    than an older CPR worker. Market evidence comes only from the independent
-    CPR/SRSI/VWAP context package. Codex can classify regime/setup and may veto
-    or request a documented action; this host owns completed-bar cadence,
-    lifecycle/market-health checks, authoritative prices, the pre-entry audit
-    hook,
-    contract resolution, paper/live execution, trailing exits, and broker
-    reconciliation.
+    than an older CPR worker. On each completed five-minute bar the independent
+    context package decides whether the bar is a trend-day candidate
+    (``cpr_ai_trend_day``, the same gate the backtest replays). Codex is
+    consulted only on a candidate while flat -- to accept or veto it -- and on
+    every bar while a position is open, to hold or make a premise exit. This
+    host owns completed-bar cadence, lifecycle/market-health checks,
+    authoritative prices, the pre-entry audit hook, contract resolution,
+    paper/live execution, and broker reconciliation.
 
-    Mechanical risk is evaluated on every configured poll and does not wait for
-    a model call. New exposure stops at 15:00, premise exits may continue through
-    15:15, and the standard double gate controls whether confirmed orders are
-    paper or live.
+    Every accepted entry SELLS the opposite ATM option on the current weekly
+    expiry (bullish -> PE, bearish -> CE) with a fixed VWAP spot stop checked
+    every poll. One entry per session, no target, no trailing, no add. New
+    exposure stops at 15:00, exits continue through the 15:15 square-off, and
+    the standard double gate controls whether confirmed orders are paper or
+    live.
     """
 
     strategy_name = "CPR AI"
@@ -10708,6 +10661,11 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         self._waiting_for_official_bar_identity: str | None = None
         self._prior_accepted_regime: str | None = None
         self._cpr_state: CPRAITradeState | None = None
+        # One entry per session: the session of the bar being decided, and
+        # the session in which this worker last took (or may have taken) an
+        # entry. Session dates come from bar data, never the wall clock.
+        self._decision_session_date: date | None = None
+        self._entry_session_date: date | None = None
 
     def minimum_source_rows(self) -> int:
         """Delegate history sufficiency to the independent context builder.
@@ -10886,37 +10844,47 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             ),
         }
 
+    @classmethod
+    def _bar_session_date(cls, strategy_frame: pd.DataFrame) -> date | None:
+        """Return the newest bar's IST session date, or None when it has no timestamp."""
+
+        if strategy_frame.empty or "timestamp" not in strategy_frame.columns:
+            return None
+        timestamp = cls._naive_ist_timestamp(strategy_frame.iloc[-1]["timestamp"])
+        return None if timestamp is None else timestamp.date()
+
+    def _entries_today(self) -> int:
+        """Return 1 once this session has used its single entry, else 0."""
+
+        return int(
+            self._entry_session_date is not None
+            and self._entry_session_date == self._decision_session_date
+        )
+
     def _position_state_payload(self) -> dict[str, object]:
         """Expose allowlisted premise/risk facts, never execution capabilities.
 
-        Codex can see direction, original risk, current protection, trail stage,
-        milestones, and whether the single add remains eligible. It cannot see
+        Codex can see direction, original risk, the fixed protective stop, the
+        premise, and whether today's single entry is used. It cannot see
         symbol, quantity, broker, venue, order IDs, or a mutable position handle.
         """
 
+        entries_today = self._entries_today()
         if not self.pos.active:
-            return {"is_flat": True}
+            return {"is_flat": True, "entries_today": entries_today}
         state = self._cpr_state
         if state is None:
-            return {"is_flat": False, "direction": self.pos.direction}
+            return {"is_flat": False, "direction": self.pos.direction, "entries_today": entries_today}
         return {
             "is_flat": False,
             "direction": self.pos.direction,
             "original_entry_price": state.original_entry_price,
             "original_risk_points": state.original_risk_points,
             "original_protective_stop": state.original_protective_stop,
-            "current_protective_stop": state.current_hard_stop,
-            "trailing_stage": state.trailing_stage,
-            "milestone_price": state.first_milestone,
-            "final_target_price": state.final_target,
+            "current_protective_stop": state.original_protective_stop,
             "premise": state.premise,
             "setup": state.premise,
-            "scale_in_eligible": bool(
-                self.pos.direction == "LONG"
-                and state.premise.startswith("TRENDING_")
-                and not state.scale_in_used
-            ),
-            "scale_in_count": 1 if state.scale_in_used else 0,
+            "entries_today": entries_today,
         }
 
     def _latest_frozen_context(self) -> dict[str, dict[str, Any]]:
@@ -10955,51 +10923,25 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             for record in tool_evidence
         ]
 
-    @staticmethod
-    def _crossed(direction: str, value: float, threshold: float) -> bool:
-        """Apply one favorable-threshold comparison to either trade direction."""
-
-        return value >= threshold if direction == "LONG" else value <= threshold
-
-    def _set_hard_stop(self, candidate: float) -> None:
-        """Ratchet protection toward profit without ever loosening the stop.
-
-        Long protection can only rise and short protection can only fall.  The
-        generic position copy is updated at the same time so every intrabar
-        safety path sees the same authoritative stop.
-        """
-
-        state = self._cpr_state
-        if state is None:
-            return
-        if self.pos.direction == "LONG":
-            state.current_hard_stop = max(state.current_hard_stop, float(candidate))
-        else:
-            state.current_hard_stop = min(state.current_hard_stop, float(candidate))
-        self.pos.stop_underlying = state.current_hard_stop
-
     def _check_cpr_spot_boundaries(self, spot: float) -> bool:
-        """Apply the spot hard stop and buffered R2/S2 exit on every poll.
+        """Apply the fixed VWAP spot stop on every poll.
 
-        These are intrabar mechanical boundaries. They run independently of
-        completed-bar cadence and Codex availability, and return ``True`` when
-        an exit was attempted so the caller stops further work that poll.
+        This is an intrabar mechanical boundary. It runs independently of
+        completed-bar cadence and Codex availability, and returns ``True`` when
+        an exit was attempted so the caller stops further work that poll. There
+        is no target: the trade is held to this stop or the 15:15 square-off.
         """
 
         state = self._cpr_state
         if not self.pos.active or state is None or spot <= 0:
             return False
         stopped = (
-            spot <= state.current_hard_stop
+            spot <= state.original_protective_stop
             if self.pos.direction == "LONG"
-            else spot >= state.current_hard_stop
+            else spot >= state.original_protective_stop
         )
         if stopped:
-            self.exit_position("CPR_AI_HARD_STOP")
-            return True
-        final_hit = self._crossed(self.pos.direction, spot, state.final_target)
-        if final_hit:
-            self.exit_position("CPR_AI_FINAL_TARGET")
+            self.exit_position("CPR_AI_VWAP_STOP")
             return True
         return False
 
@@ -11028,77 +10970,6 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         spot = self._get_underlying_spot(fallback=0.0)
         return self._check_cpr_spot_boundaries(spot)
 
-    def _manage_completed_bar(self, frozen_context: dict[str, dict[str, Any]]) -> bool:
-        """Run SRSI reversal, staged ratchets, then prior-close trailing.
-
-        A contrary SRSI cross exits first.  Normal/sideways/continuation trades
-        move to breakeven and arm the prior-close trail at 1R or the next CPR
-        milestone. Reversal trades move to breakeven at stage one, then lock 1R
-        and arm the trail at 2R or the following milestone.
-
-        The arming bar becomes the first reference. Each later completed close
-        is compared with the immediately preceding accepted close; a favorable
-        or flat close advances the reference. Hard-stop ratchets use
-        :meth:`_set_hard_stop`, so no stage can loosen protection.
-        """
-
-        state = self._cpr_state
-        if not self.pos.active or state is None:
-            return False
-        momentum = frozen_context["momentum_vwap"]
-        srsi = momentum["stochastic_rsi"]
-        bearish = self.pos.direction == "LONG" and srsi.get("cross_down") is True
-        bullish = self.pos.direction == "SHORT" and srsi.get("cross_up") is True
-        if bearish or bullish:
-            self.exit_position("CPR_AI_SRSI_REVERSAL")
-            return True
-        close = float(momentum["candle"]["close"])
-
-        # A completed-bar reversal in the close sequence is checked before
-        # advancing the reference; otherwise the losing close would erase the
-        # very threshold it is supposed to break.
-        if state.trail_armed and state.prior_completed_close is not None:
-            trail_exit = (
-                close < state.prior_completed_close
-                if self.pos.direction == "LONG"
-                else close > state.prior_completed_close
-            )
-            if trail_exit:
-                self.exit_position("CPR_AI_PRIOR_CLOSE_TRAIL")
-                return True
-
-        # Reversal trades get the approved two-stage ratchet. All other setups
-        # use the simpler breakeven-plus-prior-close trail at stage one.
-        if state.premise == "TRENDING_VWAP_REVERSAL":
-            if state.trailing_stage == "NONE" and self._crossed(
-                self.pos.direction, close, state.first_milestone
-            ):
-                self._set_hard_stop(state.original_entry_price)
-                state.trailing_stage = "BREAKEVEN"
-            if state.trailing_stage == "BREAKEVEN" and self._crossed(
-                self.pos.direction, close, state.following_milestone
-            ):
-                locked = (
-                    state.original_entry_price + state.original_risk_points
-                    if self.pos.direction == "LONG"
-                    else state.original_entry_price - state.original_risk_points
-                )
-                self._set_hard_stop(locked)
-                state.trailing_stage = "R1_LOCKED"
-                state.trail_armed = True
-                state.prior_completed_close = close
-        elif state.trailing_stage == "NONE" and self._crossed(
-            self.pos.direction, close, state.first_milestone
-        ):
-            self._set_hard_stop(state.original_entry_price)
-            state.trailing_stage = "TRAILING"
-            state.trail_armed = True
-            state.prior_completed_close = close
-
-        if state.trail_armed:
-            state.prior_completed_close = close
-        return False
-
     def _at_or_after_entry_cutoff(self) -> bool:
         """Return whether new entries/adds are barred at 15:00 IST.
 
@@ -11108,70 +10979,8 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
 
         return is_after_time(CPR_AI_ENTRY_CUTOFF_HOUR, CPR_AI_ENTRY_CUTOFF_MINUTE)
 
-    def _get_open_position_pnl(self) -> float:
-        """Aggregate primary MTM with conservative paper/live add exposure.
-
-        For partial or unknown broker results, ``risk_quantity`` assumes the
-        ambiguous remainder may be live.  Omitting it could hide losses from the
-        aggregate max-loss kill switch. Both primary and add use the persisted
-        opening side: rising premium hurts a SIDEWAYS sell, while it helps the
-        unchanged TRENDING buy.
-        """
-
-        if not self.pos.active:
-            return 0.0
-        live = self._get_option_ltp(
-            self.pos.option_exchange_segment,
-            self.pos.option_security_id,
-            fallback=self.pos.entry_trade_price,
-        )
-        primary = self._option_leg_pnl(
-            self.pos.option_opening_side,
-            self.pos.entry_trade_price,
-            live,
-            self.pos.quantity,
-        )
-        state = self._cpr_state
-        if state is None:
-            return primary
-        if isinstance(state.add_live_leg, LiveLegState):
-            # ``risk_quantity`` deliberately rounds indeterminate opening
-            # exposure up. Max-loss must assume the ambiguous remainder filled,
-            # never omit it merely because the broker response was incomplete.
-            add_quantity = int(state.add_live_leg.risk_quantity)
-        else:
-            add_quantity = int(state.add_quantity)
-        if add_quantity <= 0:
-            return primary
-        add_entry = self._add_entry_accounting_price(state)
-        return primary + self._option_leg_pnl(
-            self.pos.option_opening_side,
-            add_entry,
-            live,
-            add_quantity,
-        )
-
-    def _add_entry_accounting_price(self, state: CPRAITradeState) -> float:
-        """Return a conservative nonzero add basis for MTM and realized P&L.
-
-        Broker average fill is strongest, the saved submission mark is next,
-        and the same-contract primary fill is the final fallback.  A zero basis
-        would incorrectly turn an ambiguous add into artificial profit.
-        """
-
-        if isinstance(state.add_live_leg, LiveLegState):
-            ledger_price = float(state.add_live_leg.entry_average_fill_price)
-            if ledger_price > 0:
-                return ledger_price
-        if state.add_entry_trade_price > 0:
-            return float(state.add_entry_trade_price)
-        # Unknown exposure without a priced broker fill still needs a
-        # conservative, nonzero basis for MTM. The primary is the same locked
-        # option contract, so its actual fill is the safest available fallback.
-        return float(self.pos.entry_trade_price)
-
     def _position_execution_mode(self) -> str:
-        """Classify the basket from actual ledger state, not requested mode.
+        """Classify the position from actual ledger state, not requested mode.
 
         ``PAPER_FALLBACK`` means live was enabled but an explicit zero-fill
         rejection left only a paper position. ``LIVE_INDETERMINATE`` means
@@ -11179,23 +10988,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         clean live fill.
         """
 
-        state = self._cpr_state
-        live_states = tuple(
-            leg_state
-            for leg_state in (
-                self.pos.live_leg,
-                state.add_live_leg if state is not None else None,
-            )
-            if isinstance(leg_state, LiveLegState)
-        )
-        if any(
-            leg_state.exposure_indeterminate
-            or (leg_state.exposure_possible and not leg_state.entry_complete)
-            for leg_state in live_states
-        ):
-            return "LIVE_INDETERMINATE"
-        if any(leg_state.exposure_possible for leg_state in live_states):
-            return "LIVE"
+        leg_state = self.pos.live_leg
+        if isinstance(leg_state, LiveLegState):
+            if leg_state.exposure_indeterminate or (leg_state.exposure_possible and not leg_state.entry_complete):
+                return "LIVE_INDETERMINATE"
+            if leg_state.exposure_possible:
+                return "LIVE"
         return "PAPER_FALLBACK" if self.live_trading else "PAPER"
 
     def _entry_execution_mode(self, submitted: bool) -> str:
@@ -11233,365 +11031,25 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             return "LIVE_INDETERMINATE"
         return before_exit
 
-    def _execute_scale_in(self) -> bool:
-        """Attempt the one equal-size R1 add in the locked primary contract.
-
-        Quantity is the original filled quantity, not the configured lot count,
-        and symbol/strike/expiry come from the existing position. Both paper and
-        live adds must pass current spread/liquidity checks. Paper bookkeeping is
-        atomic; live marks the opportunity used before submission because a
-        PARTIAL or UNKNOWN response may already represent real exposure and must
-        never be retried or converted into an invented paper fill.
-
-        The early guard also requires a BUY opening side and a TRENDING premise.
-        Host policy already forbids SIDEWAYS adds; repeating the invariant here
-        prevents a malformed direct caller from increasing naked short exposure.
-        """
-
-        state = self._cpr_state
-        if (
-            state is None
-            or not self.pos.active
-            or state.scale_in_used
-            or self._at_or_after_entry_cutoff()
-            or self.pos.option_opening_side != "BUY"
-            or not state.premise.startswith("TRENDING_")
-        ):
-            return False
-        quantity = int(state.initial_filled_quantity)
-        if quantity <= 0:
-            return False
-        mark, mark_is_fresh = self._get_dealable_option_ltp(
-            self.pos.option_exchange_segment,
-            self.pos.option_security_id,
-        )
-        primary_is_live = isinstance(self.pos.live_leg, LiveLegState)
-        if mark <= 0 or (primary_is_live and not mark_is_fresh):
-            return False
-        # An add increases exposure in the same locked contract, so it must pass
-        # the same current market-quality checks as the original entry. Keep the
-        # one-use flag untouched when either gate rejects; a later completed bar
-        # may reconsider the still-unused add after market quality recovers.
-        if not self._spread_gate_allows_entry(
-            self.pos.direction,
-            self.pos.symbol,
-            self.pos.option_strike,
-            self.pos.option_right,
-            self.pos.option_expiry,
-        ):
-            return False
-        if not self._liquidity_gate_allows_entry(
-            self.pos.direction,
-            self.pos.symbol,
-            self.pos.option_expiry,
-        ):
-            return False
-        if not primary_is_live:
-            # Paper has no ambiguous submission. Consume the one add only when
-            # a real mark exists and the bookkeeping can be completed. This
-            # includes a live-enabled worker whose primary explicitly rejected
-            # with zero fill and therefore fell back to paper.
-            state.scale_in_used = True
-            state.set_primary_entry_trade_price(self.pos.entry_trade_price)
-            state.add_quantity = quantity
-            state.add_entry_trade_price = float(mark)
-            state.add_entry_price_quality = (
-                PRICE_QUALITY_PAPER_FRESH_MARK
-                if mark_is_fresh
-                else PRICE_QUALITY_STALE_MARK
-            )
-            return True
-
-        leg = {
-            "option_type": self.pos.option_right,
-            "strike": self.pos.option_strike,
-            "expiry": self.pos.option_expiry,
-            "quantity": quantity,
-            "dhan_symbol": self.pos.symbol,
-            "role": "A",
-        }
-        # Live consumes the add immediately before its first broker submission.
-        # PARTIAL/UNKNOWN responses may already represent real exposure, so the
-        # same scale-in can never be retried as though nothing happened.
-        state.scale_in_used = True
-        # Preserve the submission-time mark as a nonzero accounting fallback.
-        # A partial/unknown ledger result will replace it with its broker entry
-        # average as soon as the broker reports priced fills.
-        state.add_entry_trade_price = float(mark)
-        state.add_entry_price_quality = PRICE_QUALITY_MARK_FALLBACK
-        result = self._place_real_leg("BUY", leg, opens_exposure=True)
-        live_state = leg.get("live_leg")
-        if isinstance(live_state, LiveLegState):
-            state.add_live_leg = live_state
-        if result.status is not OrderStatus.FILLED or not isinstance(
-            live_state, LiveLegState
-        ) or not live_state.entry_complete:
-            return False
-        add_price, quality = self._accounting_price(
-            live_state,
-            mark,
-            mark_is_fresh=mark_is_fresh,
-            phase="ENTRY",
-        )
-        state.add_quantity = int(live_state.filled_quantity)
-        state.add_entry_trade_price = float(add_price)
-        state.add_entry_price_quality = quality
-        return state.add_quantity > 0
-
-    @staticmethod
-    def _directional_earlier(direction: str, first: float, second: float) -> float:
-        """Choose whichever favorable milestone is reached first by direction."""
-
-        return min(first, second) if direction == "LONG" else max(first, second)
-
-    @staticmethod
-    def _following_buffered_milestone(
-        direction: str,
-        first_milestone: float,
-        final_target: float,
-        frozen_context: dict[str, dict[str, Any]],
-    ) -> float:
-        """Return the next buffered CPR level beyond the first milestone.
-
-        If no intermediate level remains, the buffered final target is used.
-        This gives reversal trades a deterministic second-stage alternative to
-        2R without inventing a new price.
-        """
-
-        ordered = (
-            frozen_context.get("session_levels", {})
-            .get("next_levels", {})
-            .get("ordered", [])
-        )
-        candidates: list[float] = []
-        for item in ordered:
-            if not isinstance(item, dict) or not isinstance(
-                item.get("price"), (int, float)
-            ):
-                continue
-            raw = float(item["price"])
-            buffered = (
-                raw - CPR_AI_LEVEL_BUFFER_POINTS
-                if direction == "LONG"
-                else raw + CPR_AI_LEVEL_BUFFER_POINTS
-            )
-            if (direction == "LONG" and buffered > first_milestone) or (
-                direction == "SHORT" and buffered < first_milestone
-            ):
-                candidates.append(buffered)
-        if not candidates:
-            return final_target
-        return min(candidates) if direction == "LONG" else max(candidates)
-
     def _initialize_trade_state(self, outcome, frozen_context: dict[str, dict[str, Any]]) -> None:
         """Freeze host-derived spot geometry immediately after an adopted entry.
 
-        The first stage is the earlier of 1R and the next buffered CPR level.
-        Reversal stage two is the earlier of 2R and the following CPR level. The
-        actual primary option fill/quantity are copied from the adopted position,
-        never from Codex or configuration assumptions.
+        Entry, stop, and risk come from the validated outcome, which the host
+        policy derived from the frozen candidate -- never from Codex. The
+        candidate itself is copied for the audit trail.
         """
 
-        direction = self.pos.direction
-        entry = float(outcome.entry_price)
-        risk = float(outcome.risk_points)
-        one_r = entry + risk if direction == "LONG" else entry - risk
-        two_r = entry + 2 * risk if direction == "LONG" else entry - 2 * risk
-        first = self._directional_earlier(
-            direction, one_r, float(outcome.milestone_price)
-        )
-        following_cpr = self._following_buffered_milestone(
-            direction,
-            float(outcome.milestone_price),
-            float(outcome.final_target_price),
-            frozen_context,
-        )
-        following = self._directional_earlier(
-            direction, two_r, following_cpr
-        )
         self._cpr_state = CPRAITradeState(
-            original_entry_price=entry,
-            original_risk_points=risk,
+            original_entry_price=float(outcome.entry_price),
+            original_risk_points=float(outcome.risk_points),
             original_protective_stop=float(outcome.stop_price),
-            current_hard_stop=float(outcome.stop_price),
-            first_milestone=first,
-            following_milestone=following,
-            final_target=float(outcome.final_target_price),
             premise=str(outcome.proposal.setup),
             accepted_regime=outcome.accepted_regime,
-            initial_filled_quantity=int(self.pos.quantity),
+            candidate=dict(frozen_context["market_structure"]["trend_day_candidate"]),
         )
-        self._cpr_state.set_primary_entry_trade_price(self.pos.entry_trade_price)
-
-    def exit_position(self, reason: str) -> None:
-        """Close primary and add-on legs, retaining state until both are flat.
-
-        Paper legs need no broker call. Every live ledger leg is closed through
-        the shared execution path using its conservative risk quantity. BUY
-        entries close with SELL; SIDEWAYS SELL entries close with BUY. Local
-        position/state, subscriptions, and realized P&L are cleared only after
-        *both* live ledgers report broker-confirmed flat; otherwise exits remain
-        retryable and reconciliation retains the possible exposure.
-        """
-
-        state = self._cpr_state
-        if not self.pos.active or state is None:
-            super().exit_position(reason)
-            return
-        closed = self.pos
-        mark, mark_is_fresh = self._get_dealable_option_ltp(
-            closed.option_exchange_segment,
-            closed.option_security_id,
-        )
-        if mark <= 0:
-            mark, mark_is_fresh = closed.entry_trade_price, False
-
-        primary_leg = {
-            "option_type": closed.option_right,
-            "strike": closed.option_strike,
-            "expiry": closed.option_expiry,
-            "quantity": closed.quantity,
-            "dhan_symbol": closed.symbol,
-            "role": "N",
-            "live_leg": closed.live_leg,
-        }
-        add_close_quantity = state.initial_filled_quantity
-        if isinstance(state.add_live_leg, LiveLegState):
-            add_close_quantity = max(1, int(state.add_live_leg.risk_quantity))
-        elif state.add_quantity > 0:
-            add_close_quantity = int(state.add_quantity)
-        add_leg = {
-            "option_type": closed.option_right,
-            "strike": closed.option_strike,
-            "expiry": closed.option_expiry,
-            "quantity": add_close_quantity,
-            "dhan_symbol": closed.symbol,
-            "role": "A",
-            "live_leg": state.add_live_leg,
-        }
-        # Role N is the normal entry and role A is the optional add. They share
-        # a contract but keep independent ledgers because either close can be
-        # partial, rejected, or unknown.
-        for leg, is_live in (
-            (primary_leg, closed.live_leg is not None),
-            (add_leg, state.add_live_leg is not None),
-        ):
-            if not is_live:
-                continue
-            self._place_real_leg(
-                self._option_close_side(closed.option_opening_side),
-                leg,
-                opens_exposure=False,
-            )
-
-        primary_state = primary_leg.get("live_leg")
-        add_state = add_leg.get("live_leg")
-        if isinstance(primary_state, LiveLegState):
-            closed.live_leg = primary_state
-        if isinstance(add_state, LiveLegState):
-            state.add_live_leg = add_state
-        live_states = tuple(
-            leg_state
-            for leg_state in (closed.live_leg, state.add_live_leg)
-            if isinstance(leg_state, LiveLegState)
-        )
-        # Never erase a ledger merely because a SELL was submitted. Only broker
-        # confirmation that both quantities are flat authorizes local cleanup.
-        if any(not leg_state.broker_confirmed_flat for leg_state in live_states):
-            self.log.error(
-                "CPR AI exit retained local state: both execution-ledger legs "
-                "are not yet broker-confirmed flat."
-            )
-            return
-
-        primary_exit, primary_quality = self._accounting_price(
-            closed.live_leg,
-            mark,
-            mark_is_fresh=mark_is_fresh,
-            phase="EXIT",
-        )
-        primary_pnl = self._option_leg_pnl(
-            closed.option_opening_side,
-            closed.entry_trade_price,
-            primary_exit,
-            state.initial_filled_quantity,
-        )
-        add_quantity = state.add_quantity
-        if isinstance(state.add_live_leg, LiveLegState):
-            add_quantity = int(state.add_live_leg.filled_quantity)
-        add_pnl = 0.0
-        add_exit = primary_exit
-        add_quality = primary_quality
-        add_entry = self._add_entry_accounting_price(state)
-        if add_quantity > 0:
-            add_exit, add_quality = self._accounting_price(
-                state.add_live_leg,
-                mark,
-                mark_is_fresh=mark_is_fresh,
-                phase="EXIT",
-            )
-            add_pnl = self._option_leg_pnl(
-                closed.option_opening_side,
-                add_entry,
-                add_exit,
-                add_quantity,
-            )
-        pnl = primary_pnl + add_pnl
-        self.realized_pnl += pnl
-        self.completed_trades += 1
-        self.log.info(
-            "CPR AI EXIT %s | reason=%s primary_qty=%s add_qty=%s pnl=%.2f",
-            closed.direction,
-            reason,
-            state.initial_filled_quantity,
-            add_quantity,
-            pnl,
-        )
-        self.publish_trade_event(
-            {
-                "action": "EXIT",
-                "mode": "LIVE" if live_states else "PAPER",
-                "direction": closed.direction,
-                "reason": reason,
-                "quantity": state.initial_filled_quantity + add_quantity,
-                "pnl": pnl,
-                "legs": [
-                    {
-                        "symbol": closed.symbol,
-                        "side": self._option_close_side(
-                            closed.option_opening_side
-                        ),
-                        "right": closed.option_right,
-                        "strike": closed.option_strike,
-                        "entry_price": closed.entry_trade_price,
-                        "exit_price": primary_exit,
-                        "exit_price_quality": primary_quality,
-                    },
-                    {
-                        "symbol": closed.symbol,
-                        "side": self._option_close_side(
-                            closed.option_opening_side
-                        ),
-                        "right": closed.option_right,
-                        "strike": closed.option_strike,
-                        "entry_price": add_entry,
-                        "exit_price": add_exit,
-                        "exit_price_quality": add_quality,
-                        "quantity": add_quantity,
-                    },
-                ],
-            }
-        )
-        self.store.unregister_option_subscription(
-            closed.option_exchange_segment,
-            closed.option_security_id,
-            owner_id=self._execution_owner_id,
-        )
-        self.after_exit(closed, reason)
-        self.pos = PaperPosition()
 
     def after_exit(self, closed_position: PaperPosition, reason: str) -> None:
-        """Clear the CPR sidecar only after the combined exit is confirmed flat."""
+        """Clear the sidecar; the base exit calls this only once flat is confirmed."""
 
         del closed_position, reason
         self._cpr_state = None
@@ -11630,13 +11088,20 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 "CPR AI final execution audit failed (%s).", type(exc).__name__
             )
 
-    def _post_inference_exposure_block_reason(self) -> str:
+    def _post_inference_exposure_block_reason(
+        self,
+        *,
+        direction: str | None = None,
+        stop: float | None = None,
+    ) -> str:
         """Recheck mutable host gates after a potentially slow model turn.
 
         Stop requests, lifecycle state, feed health, 15:15 square-off, and the
-        15:00 entry cutoff can all change during inference. Entries and adds fail
-        closed when any gate changed; risk-reducing EXIT is intentionally handled
-        before this exposure-only check.
+        15:00 entry cutoff can all change during inference. When an entry's
+        direction and VWAP stop are supplied, the fresh spot must still be on
+        the protective side of that stop; otherwise the entry would be stopped
+        out on its first poll. Entries fail closed when any gate changed;
+        risk-reducing EXIT is intentionally handled before this check.
         """
 
         if self.stop_event.is_set():
@@ -11653,6 +11118,12 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             return "square_off_cutoff"
         if self._at_or_after_entry_cutoff():
             return "entry_cutoff"
+        if direction is not None and stop is not None:
+            spot = self._get_underlying_spot(fallback=0.0)
+            if spot <= 0:
+                return "spot_unavailable"
+            if (direction == "LONG" and spot <= stop) or (direction == "SHORT" and spot >= stop):
+                return "stop_already_breached"
         return ""
 
     def process_strategy_frame(
@@ -11661,15 +11132,16 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         *,
         audit_metadata: dict[str, object] | None = None,
     ) -> None:
-        """Evaluate one completed bucket through mechanics, Codex, and host gates.
+        """Evaluate one completed bucket through the host gate, Codex, and safety.
 
-        Flat workers skip new turns after 15:00; open workers continue for
-        premise exits. Bucket identity is consumed before inference, while the
-        content signature protects against true-ups. Completed-bar SRSI/trailing
-        exits run before Codex. After the turn, position identity and the audit
-        hook are checked first. Every entry/add then rechecks stop requests,
-        lifecycle, feed health, and time cutoffs; an open position additionally
-        reruns max-loss and fresh spot stop/target safety before an add.
+        Flat workers skip new turns after 15:00 and after the session's single
+        entry; open workers continue for premise exits. Bucket identity is
+        consumed before inference, while the content signature protects against
+        true-ups. A flat worker consults Codex only when the frozen context holds
+        an eligible trend-day candidate -- otherwise there is nothing to decide.
+        After the turn, position identity and the audit hook are checked first.
+        An entry then rechecks stop requests, lifecycle, feed health, time
+        cutoffs, and that the fresh spot has not already crossed the VWAP stop.
         """
 
         if not self.pos.active and self._at_or_after_entry_cutoff():
@@ -11685,6 +11157,10 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
         bar_signature = self._completed_bar_signature(strategy_frame)
         if not bar_signature:
             return
+        self._decision_session_date = self._bar_session_date(strategy_frame)
+        if not self.pos.active and self._entries_today():
+            # One entry per session, and no re-entry or flip after an exit.
+            return
         if audit_metadata is None:
             # Tests and direct diagnostics can invoke this method outside the
             # normal ``run`` loop. Capture a conservative local snapshot once
@@ -11693,8 +11169,19 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 self.store.get(self.timeframe), strategy_frame, bar_signature
             )
         frozen_context = self._latest_frozen_context()
-        if self.pos.active and self._manage_completed_bar(frozen_context):
-            return
+        if not self.pos.active:
+            candidate = frozen_context["market_structure"].get("trend_day_candidate")
+            if not isinstance(candidate, dict) or candidate.get("eligible") is not True:
+                # No host candidate: nothing for Codex to accept or veto.
+                return
+            self.log.info(
+                "Trend-day candidate %s at bar %s (entry %.2f, VWAP stop %.2f, confluence %s); consulting Codex.",
+                candidate.get("direction"),
+                candidate.get("bar_start"),
+                float(candidate.get("entry") or 0.0),
+                float(candidate.get("stop") or 0.0),
+                candidate.get("confluence_score"),
+            )
         # Keep the exact position objects that the frozen context described.
         # Reconciliation may complete on another thread while inference waits;
         # in that case its eventual response belongs to an obsolete position.
@@ -11719,7 +11206,7 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
             # including accepted-regime memory used by the next model turn.
             self._prior_accepted_regime = outcome.accepted_regime
         # Invoke the configured audit hook before increasing exposure. When
-        # logging is enabled, a raised disk/logger failure blocks entry/add; an
+        # logging is enabled, a raised disk/logger failure blocks an entry; an
         # explicitly disabled logger is a deliberate no-op. An already-open EXIT
         # remains a risk-reducing decision and is still honored below.
         audit_ok = True
@@ -11788,55 +11275,21 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                     audit_metadata,
                 )
                 return
-            if outcome.action == "SCALE_IN" and audit_ok:
-                blocked_reason = self._post_inference_exposure_block_reason()
-                if blocked_reason:
-                    self._write_final_execution(
-                        frozen_context,
-                        outcome,
-                        {
-                            "mode": self._position_execution_mode(),
-                            "submitted": False,
-                            "status": "SCALE_IN_BLOCKED",
-                            "blocked_reason": blocked_reason,
-                        },
-                        audit_metadata,
-                    )
-                    # A closed exposure gate prevents the add immediately. The
-                    # normal safety pass also performs any associated lifecycle,
-                    # square-off, or stale-feed flattening before this turn ends.
-                    self._run_prebar_safety()
-                    return
             # Inference may take up to the configured timeout. Run the normal
             # mechanical safety sequence again with fresh shared-market facts
-            # before honoring HOLD or any exposure-increasing scale-in.
-            if self._run_prebar_safety():
-                return
-            if outcome.action == "SCALE_IN" and audit_ok:
-                confirmed = self._execute_scale_in()
-                self._write_final_execution(
-                    frozen_context,
-                    outcome,
-                    {
-                        "mode": self._position_execution_mode(),
-                        "submitted": bool(
-                            self._cpr_state and self._cpr_state.scale_in_used
-                        ),
-                        "status": (
-                            "SCALE_IN_CONFIRMED"
-                            if confirmed
-                            else "SCALE_IN_UNCONFIRMED"
-                        ),
-                    },
-                    audit_metadata,
-                )
+            # before honoring HOLD.
+            self._run_prebar_safety()
             return
         if not audit_ok or outcome.action not in {"ENTER_LONG", "ENTER_SHORT"}:
             return
         # A flat entry reaches this boundary only after the configured audit
         # hook returned without error. Re-read all mutable gates now; the
         # pre-inference checks may be up to the configured SDK timeout old.
-        blocked_reason = self._post_inference_exposure_block_reason()
+        direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
+        blocked_reason = self._post_inference_exposure_block_reason(
+            direction=direction,
+            stop=float(outcome.stop_price),
+        )
         if blocked_reason:
             self._write_final_execution(
                 frozen_context,
@@ -11850,33 +11303,26 @@ class CPRAIWorker(AtmSingleLegStrategyWorker):
                 audit_metadata,
             )
             return
-        direction = "LONG" if outcome.action == "ENTER_LONG" else "SHORT"
-        if str(outcome.proposal.setup) == "SIDEWAYS_SRSI":
-            # Economic direction stays LONG/SHORT for every spot stop, target,
-            # trail, and premise check. Only the host-owned option expression
-            # changes: bullish sells PE, bearish sells CE, both on current expiry.
-            submitted = self.enter_position(
-                direction,
-                float(outcome.entry_price),
-                float(outcome.stop_price),
-                float(outcome.final_target_price),
-                option_opening_side="SELL",
-                option_contract_direction=(
-                    "SHORT" if direction == "LONG" else "LONG"
-                ),
-                use_current_expiry=True,
-            )
-        else:
-            # TRENDING keeps the historical BUY CE/PE and worker expiry path.
-            submitted = self.enter_position(
-                direction,
-                float(outcome.entry_price),
-                float(outcome.stop_price),
-                float(outcome.final_target_price),
-            )
+        # Economic direction stays LONG/SHORT for the spot stop and premise
+        # checks. The host-owned option expression is always a SOLD ATM option
+        # on the current weekly expiry: bullish sells the PE, bearish sells the
+        # CE. There is no target -- the trade is held to the stop or 15:15.
+        submitted = self.enter_position(
+            direction,
+            float(outcome.entry_price),
+            float(outcome.stop_price),
+            0.0,
+            option_opening_side="SELL",
+            option_contract_direction="SHORT" if direction == "LONG" else "LONG",
+            use_current_expiry=True,
+        )
         if submitted:
             self._initialize_trade_state(outcome, frozen_context)
         entry_mode = self._entry_execution_mode(bool(submitted))
+        if submitted or entry_mode == "LIVE_INDETERMINATE":
+            # Real or possible exposure uses up the session's single entry. A
+            # clean refusal (spread gate, contract lookup) leaves it available.
+            self._entry_session_date = self._decision_session_date
         self._write_final_execution(
             frozen_context,
             outcome,
