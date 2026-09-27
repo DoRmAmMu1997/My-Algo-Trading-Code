@@ -1,134 +1,125 @@
-# CPR Codex AI Agent
+# CPR Codex AI Agent — the Trend-Day Rider
 
-This optional worker is an independent five-minute SRSI/VWAP strategy. It does
-not import or arbitrate CPR Algo 1, Algo 2, or Algo 3. Those strategies may run
-at the same time as CPR AI, and all three keep independent positions and
-independent P&L.
+This optional worker trades one five-minute strategy, the **Trend-Day Rider**. It does not import or
+arbitrate CPR Algo 1, 2, 3 or 4. Those strategies may run at the same time as CPR AI, and each keeps
+its own position and P&L.
 
-CPR AI separates judgment from authority. A fresh ephemeral Codex turn makes a
-nondeterministic, dynamic regime/setup judgment and may declare an existing
-premise invalid. The deterministic Python host owns the completed-bar cadence,
-entry and risk gates, quantity, contract, lifecycle checks, audit, and every
-broker submission. Missing, stale, contradictory, timed-out, or malformed model
-evidence becomes `HOLD` rather than an executable action.
+CPR AI separates judgment from authority:
+- **The host proposes.** A deterministic gate (`cpr_ai_trend_day.py`) decides whether the newest
+  completed bar is a trend-day candidate.
+- **Codex disposes.** A fresh ephemeral Codex turn may accept or veto that candidate, and may declare
+  an open position's premise broken.
+- **The host executes.** The Python host owns the cadence, every price and gate, quantity, contract,
+  lifecycle, audit, and every broker submission.
+
+Missing, stale, contradictory, timed-out or malformed model evidence becomes `HOLD`, never an
+executable action.
+
+## The strategy
+
+**Thesis.** By late morning, a NIFTY session that has already out-ranged its recent average and is
+pinned at one extreme, on the trend side of VWAP, is a trend day, and trend days tend to close near
+their extremes. The strategy sells the ATM option on the side the market is leaving, so time decay
+works with the drift.
+
+**Candidate** (all must hold on the newest completed five-minute bar):
+- the bar starts between 11:00 and 13:30 IST;
+- today's high−low is greater than 1.0 × ATR5, the mean high−low of up to the five prior sessions
+  (fewer than three sessions: no candidate);
+- the close is in the top 15% of today's range and above session VWAP (bullish), or in the bottom
+  15% and below VWAP (bearish);
+- **bullish only:** at least two of: close above R1, a gap up from the prior close, close more than
+  0.35 × ATR5 from VWAP. Bearish candidates need none.
+
+**Trade:**
+- bullish → **sell the ATM PE**; bearish → **sell the ATM CE**, both on the current weekly expiry;
+- stop: that bar's VWAP on NIFTY spot, fixed, checked every poll;
+- no target, no trailing, no add: hold until the stop, 15:15, or a premise exit;
+- one entry per session: no re-entry and no flip after an exit.
+
+**Evidence** (5 years, real weekly option premiums, 2-point costs, entry two minutes after the bar):
+264 trades, +9.6 premium points per trade, profit factor 1.69, every year positive (2025 and 2026 the
+weakest). Buying the directional option instead managed PF 1.27. ADR-0019 lists the ideas that
+did **not** work, including OI walls, narrow-CPR trend days and BankNIFTY confirmation. Reproduce
+the numbers with:
+
+```powershell
+python algo.py backtest --strategy cpr-ai-trend-day
+```
 
 ## Four frozen tools
 
-Each turn must call all four no-argument MCP tools exactly once. They return
-deep-copy views of the same frozen completed-bar context:
+Each turn must call all four no-argument MCP tools exactly once. They return deep-copy views of the
+same frozen completed-bar context:
 
-- `session_levels`: previous-session CPR, R1/R2/S1/S2, opening corridors, the
-  current completed close, buffered next levels, and prior accepted regime.
-- `momentum_vwap`: TradingView-style Stoch RSI (RSI 14, stochastic 14, K 3,
-  D 3, zones 20/80), RSI14, EMA5/EMA20 order and slopes, candle facts, and
-  deterministic VWAP sequence/body evidence. RSI/SRSI/EMA use continuous
-  completed five-minute history across sessions, including the overnight price
-  change, so they are already warmed near the open. VWAP, its recent sequence,
-  and candle evidence use only the current session and reset every trading day.
-- `market_structure`: confirmed swing highs/lows, HH/LH/HL/LL comparisons, and
-  the host-computed long R1 add candidate.
-- `position_state`: an allowlist of market-position facts needed to judge
-  `HOLD`, premise `EXIT`, or the one permitted `SCALE_IN` request.
+- `session_levels`: previous-day H/L/C, CPR and R1/R2/S1/S2, the opening gap, ATR5 with the prior
+  session ranges it used, opening corridors, the current close, and the prior accepted regime.
+- `momentum_vwap`: session VWAP (its method, distance, distance in ATR, and the share of bars above
+  and below it), the newest candle, and the last six candles with their VWAP.
+- `market_structure`: confirmed swing highs/lows with HH/LH/HL/LL comparisons, bars since the
+  session high and low, and the host's `trend_day_candidate` verdict with every measured fact and the
+  reason it did or did not qualify.
+- `position_state`: an allowlist of position facts (direction, original entry/risk/stop, premise,
+  `entries_today`), never symbols, quantities or order details.
 
-The snapshot contains no order surface, account, credential, broker, venue, or
-execution object. The immediate turn request repeats the four exact tool names
-in addition to the developer prompt. A repair is considered only when a missing
-or failed required tool is the sole remaining defect: the first response must
-also still match the current bar, strict schema, configured model/prompt, and
-deterministic host policy. The repair uses the same immutable snapshot and only
-the time left in the original CPR turn wall-clock deadline, including isolated
-child-process overhead. A second incomplete result, a duplicate/unapproved
-tool, or any unexpected agent action invalidates the turn and produces `HOLD`.
+VWAP and candle facts use only the current session and reset every trading day. The snapshot
+contains no order surface, account, credential, broker, venue or execution object. A repair turn is
+considered only when a missing or failed required tool is the sole remaining defect, reuses the same
+immutable snapshot, and gets only the time left in the original deadline. A second incomplete result,
+a duplicate or unapproved tool, or any unexpected agent action produces `HOLD`.
 
 ## Decision contract and host gates
 
 Codex must return the strict `CPRAgentDecision` schema with exactly these fields:
 
-- `action`: `HOLD`, `ENTER_LONG`, `ENTER_SHORT`, `EXIT`, or `SCALE_IN`
-- `regime`: `SIDEWAYS`, `TRENDING`, or `UNDECIDED`
-- `setup`: `NONE`, `SIDEWAYS_SRSI`, `TRENDING_VWAP_CONTINUATION`,
-  `TRENDING_VWAP_REVERSAL`, `PREMISE_EXIT`, or `R1_SCALE_IN`
+- `action`: `HOLD`, `ENTER_LONG`, `ENTER_SHORT`, or `EXIT`
+- `regime`: `TRENDING`, `SIDEWAYS` (not a trend day), or `UNDECIDED`
+- `setup`: `NONE`, `TREND_DAY_CONTINUATION`, or `PREMISE_EXIT`
 - `confidence`, `reasoning`, `model_used`, and `prompt_version`
 
-Codex cannot supply entry, stop, target, trail, lots, quantity, symbol, expiry,
-broker, venue, order, or any other execution field. Extra fields fail schema
-validation. For a proposed entry, the host independently derives the completed
-five-minute close, protective stop, risk, next buffered milestone, and buffered
-R2/S2 final target. It rejects risk above 30 NIFTY points, reward below one R,
-invalid geometry, or a missing deterministic setup gate.
-
-The agent may dynamically label a completed bar `SIDEWAYS`, `TRENDING`, or
-`UNDECIDED`; a convincing completed-bar break can change that judgment. The
-host then enforces the selected framework:
-
-- Sideways entries need a Stoch RSI K/D cross in the 20 or 80 zone and a
-  confirmed swing for the protective stop. The host expresses an accepted
-  bullish setup by selling the current-expiry ATM PE, and an accepted bearish
-  setup by selling the current-expiry ATM CE. These are naked short-premium
-  positions; Codex never chooses the right, side, strike, expiry, or quantity.
-- Trend continuation needs the directional three-bar VWAP sequence. Trend
-  reversal needs a completed reclaim/loss of VWAP. Both require at least 0.40
-  of the entry candle body on the trade side, directional RSI, EMA order and
-  slopes, and the completed candle extreme as stop. TRENDING entries remain the
-  existing option buys: bullish buys ATM CE and bearish buys ATM PE on the
-  worker's existing next-next expiry rule.
-- Open positions can receive a model-requested premise exit, while mechanical
-  hard stops, SRSI reversals, max loss, stale-data handling, and square-off do
-  not wait for model permission.
-- Trailing is staged: the host ratchets to breakeven at the first milestone;
-  reversal trades add a second risk/CPR milestone before prior-close trailing.
-  Buffered R2 for longs or S2 for shorts is the final booking level.
-- Only a trending long may request one equal-size R1 add, after the host's
-  bearish-touch/bullish-reclaim pattern. The cap is fixed at one and cannot be
-  raised by configuration. Shorts, sold-premium legs, and sideways-origin
-  positions cannot add.
+Codex cannot supply entry, stop, target, lots, quantity, symbol, expiry, broker, venue, order, or any
+other execution field; extra fields fail validation. The host accepts an entry only if it names the
+candidate's own direction, regime `TRENDING` and setup `TREND_DAY_CONTINUATION`, the candidate
+describes the frozen close, and no entry has been taken this session. The entry price is that close
+and the stop is the candidate's VWAP, both host-derived. An open position may only hold or exit.
 
 ## Session cadence
 
-- Before 09:30 IST the worker waits.
-- It polls mechanical safety every five seconds and calls Codex at most once for
-  each newly completed five-minute candle. A start-stamped one-minute candle is
-  not complete until the next minute begins, and all five exact minute slots
-  must exist once.
-- Retained prior-session bars warm RSI, Stoch RSI, and EMA calculations; they do
-  not enter current-session VWAP, opening-range, swing, or candle calculations.
-- In websocket mode, clock completeness alone is not enough. The REST producer
-  records only a stable generation: a source minute is eligible exactly when
-  its timestamp is strictly before `floor(request_started_at - true_up_delay)`.
-  Every shared OHLC snapshot atomically carries that exact immutable set as
-  `official_completed_minutes`. A 09:55 five-minute bucket needs all five exact
-  source minutes, 09:55 through 09:59; the final watermark alone is insufficient
-  because an intermediate REST hole must still block inference. This is a
-  condition check rather than a hard-coded sleep. A later official revision can
-  still invalidate an in-flight result, but it cannot create a second model call
-  for an already-consumed bucket.
-- At 15:00 IST new entries and adds stop; management and exits continue.
-- At 15:15 IST the host square-off closes exposure and stops the worker.
+- Before 09:30 IST the worker waits. Mechanical safety (max-loss, stale feed, square-off, VWAP stop)
+  runs on every poll regardless.
+- Each newly completed five-minute bucket is evaluated once; a start-stamped one-minute candle is not
+  complete until the next minute begins, and all five exact minute slots must exist once. In websocket
+  mode the host also waits until all five **official** REST source minutes are present, so an
+  intermediate REST hole blocks inference instead of letting invented OHLC through.
+- **Flat:** Codex is called only when the bar is an eligible candidate, and never after today's
+  entry. On most bars of most days there is no model call at all.
+- **Open:** Codex is called once per completed bar for HOLD or a premise exit.
+- At 15:00 new entries stop; exits continue. At 15:15 the host squares off and stops the worker.
 
 ## Live safety
 
-Defaults are `CPR_AI_ENABLED=false`, `CPR_AI_VIRTUAL_TRADING=true`, and
-`CPR_AI_LIVE_TRADING=false`. A real CPR AI order is possible only through the
-standard double gate: both global `LIVE_TRADING_ENABLED=true` and strategy-level
-`CPR_AI_LIVE_TRADING=true`, after normal startup exposure audit and configuration
-validation. CPR, CPR Algo 3, and CPR AI do not need to be disabled for one
-another; they may coexist as separate ledgers.
+Defaults are `CPR_AI_ENABLED=false`, `CPR_AI_VIRTUAL_TRADING=true` and `CPR_AI_LIVE_TRADING=false`.
+A real order is possible only through the standard double gate: both global
+`LIVE_TRADING_ENABLED=true` and `CPR_AI_LIVE_TRADING=true`, after the normal startup exposure audit
+and configuration validation.
 
-The same double gate authorizes SIDEWAYS naked sells; there is no third short-
-premium switch. The spot stop is a strict host trigger, not a guaranteed fill:
-gaps, illiquidity, broker latency, or a rejected buy-to-close can exceed the
-planned loss. Max-loss, stale-feed liquidation, reconciliation, and square-off
-remain active, but they do not turn a naked option into defined-risk exposure.
+**Every CPR AI entry is a naked short option.** The double gate authorizes it; there is no third
+short-premium switch. Budget naked-option margin (roughly ₹1.5–2 lakh per lot). The spot stop is a
+strict host trigger, not a guaranteed fill: gaps, illiquidity, broker latency, or a rejected
+buy-to-close can exceed the planned loss. The worst backtest trade lost 268 premium points on an
+expiry-day crash.
 
-The one R1 add reuses the primary leg's exact option contract and initial filled
-quantity. A live add has a separate execution-ledger leg. Once a live add is
-submitted, an ambiguous, partial, unknown, or rejected response cannot create a
-paper fill or retry the same add. Exit handling retains local state until both
-the primary and add legs are broker-confirmed flat.
+**Max-loss.** `CPR_AI_MAX_LOSS` (default ₹5,500) is checked on the sold leg's mark-to-market. At a
+75-unit lot that is about 73 premium points. In the backtest it closed sold legs that dipped and
+later recovered, cutting PF from 1.69 to 1.52; ₹10,000 kept PF at 1.63. The default is unchanged;
+choosing it is an operator decision.
 
-Every exposure-increasing action requires a successful pre-action audit and a
-fresh post-inference recheck of lifecycle, market-data health, entry cutoff, and
-square-off state. Risk-reducing exits remain available if decision logging fails.
+Every exposure-increasing action requires a successful pre-action audit and a fresh post-inference
+recheck of lifecycle, market-data health, entry cutoff, square-off, and that the fresh spot has not
+already crossed the VWAP stop (`stop_already_breached`). A submitted entry, or possible live
+exposure, uses up the session's single entry; a clean refusal leaves it available for a later bar. A
+live close that is not broker-confirmed flat keeps the position open for reconciliation.
+Risk-reducing exits remain available if decision logging fails.
 
 ## Isolated Codex runtime
 
@@ -168,14 +159,17 @@ missing row with a warning; the labels remain separate from legacy CPR workers.
 With `CPR_AI_DECISION_LOGGING_ENABLED=true`, the host appends sanitized JSONL to
 `Backtest Outputs/cpr_ai_decisions.jsonl` by default. Each row has an IST
 `recorded_at` timestamp and an `audit_stage`: `PRE_ACTION` is the host record
-before an entry/add may increase exposure, and `POST_ACTION` records the actual
+before an entry may increase exposure, and `POST_ACTION` records the actual
 submission/confirmation result afterward. Direct diagnostic callers retain the
 safe `DIRECT` stage.
 
-The `bar` object records the start timestamp, frozen signature, the one current
-signature captured when the host finalizes validation or a terminal fail-closed
-outcome, all five required official minute stamps, the required stamps present
-in the inference snapshot, and the resulting exact coverage boolean.
+Each row keeps the full frozen context, including the `trend_day_candidate`
+verdict, so a vetoed candidate can later be scored against the deterministic
+baseline. The `bar` object records the start timestamp, frozen signature, the
+one current signature captured when the host finalizes validation or a terminal
+fail-closed outcome, all five required official minute stamps, the required
+stamps present in the inference snapshot, and the resulting exact coverage
+boolean.
 
 Each `attempt_evidence` item records only its request kind (`normal` or the fixed
 `tool_repair`), typed evidence result, safe tool name/status records, and token
@@ -188,7 +182,7 @@ Credential-like mapping fields are removed recursively before serialization, and
 the logger deliberately omits model reasoning/final responses, auth data, local
 paths, broker/order/venue details, symbols, quantities, and SDK error text.
 Logging never makes a proposal executable, and an enabled log must succeed before
-an entry or add may be submitted.
+an entry may be submitted.
 
 ## Zero-order smoke commands
 
@@ -210,4 +204,6 @@ python "Signal Generators/CPR AI Agent/cpr_ai_runner.py" --synthetic --authentic
 Future discretionary prompt knowledge belongs in the modular
 `operator_approved_knowledge`/`discretionary_context` extension seam. Keep every
 addition advisory, operator-approved, and host-validated; never move levels,
-sizing, risk, execution, or exit authority into the model or an MCP tool.
+sizing, risk, execution, or exit authority into the model or an MCP tool. Any
+change to the prompt's evidence numbers should come from a fresh run of
+`cpr_ai_trend_day_backtest.py`, with a prompt-version bump.

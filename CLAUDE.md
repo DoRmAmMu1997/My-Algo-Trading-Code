@@ -38,21 +38,27 @@ One process, cooperating threads:
   response and refuses an entry wider than the cap in paper AND live, while an unreadable quote
   refuses LIVE only. The source's VIX and breadth vetoes remain unimplemented — absent by choice,
   not for want of data (the source runs on Dhan too).
-  **CPR Algo 4** (`CPRAlgo4StrategyWorker`, `CPR_ALGO4_*`) is the deterministic twin of the CPR AI
-  playbook below: the 09:25 5-min close against [MIN(S1,PDL), MAX(R1,PDH)] fixes a SIDEWAYS day
-  (Stochastic RSI 20/80 reversals, swing stop) or a TRENDING day (VWAP pullbacks with RSI/EMA
-  filters that flip on LH+LL / HH+HL structure and re-enter via a reversal sequence); every signal
-  BUYS the ATM CE/PE. Its broker-free engine (`Signal Generators/CPR Strategy/
-  cpr_algo4_signal_generator.py`) is driven identically by the worker and `cpr_algo4_backtest.py`.
-  It is its own worker, NOT a fourth algo inside `CPRStrategyWorker` (that worker has one position
-  slot, one live gate and one Sheet row) -- see `docs/adr/0018`. Its R1 add and two-leg exit are a
-  deliberate standalone copy of the CPR AI worker's mechanics, so a fix to one must be mirrored.
-  An **optional, opt-in CPR Codex AI Agent** is an independent five-minute SRSI/VWAP worker. It
-  freezes completed-bar context behind four frozen no-argument MCP tools; Codex judges regime,
-  setup, and premise exits, while the host owns deterministic entry/risk gates and execution. It is
-  disabled by default, live-disabled by default, and uses the normal global-plus-strategy double gate.
-  Accepted SIDEWAYS setups sell naked current-expiry ATM premium (bullish PE, bearish CE); TRENDING
-  setups retain the existing option buys and expiry. Spot stops trigger exits but cannot guarantee fills.
+  **CPR Algo 4** (`CPRAlgo4StrategyWorker`, `CPR_ALGO4_*`) is the deterministic version of the
+  SRSI/VWAP playbook CPR AI traded before its Trend-Day Rider (below): the 09:25 5-min close against
+  [MIN(S1,PDL), MAX(R1,PDH)] fixes a SIDEWAYS day (Stochastic RSI 20/80 reversals, swing stop) or a
+  TRENDING day (VWAP pullbacks with RSI/EMA filters that flip on LH+LL / HH+HL structure and
+  re-enter via a reversal sequence); every signal BUYS the ATM CE/PE. Its broker-free engine
+  (`Signal Generators/CPR Strategy/cpr_algo4_signal_generator.py`) is driven identically by the
+  worker and `cpr_algo4_backtest.py`. It is its own worker, NOT a fourth algo inside
+  `CPRStrategyWorker` (that worker has one position slot, one live gate and one Sheet row) -- see
+  `docs/adr/0018`. Its R1 add and two-leg exit began as a copy of CPR AI's former mechanics; CPR AI
+  no longer has an add, so Algo 4 now holds the only copy.
+  An **optional, opt-in CPR Codex AI Agent** runs the **Trend-Day Rider** (`docs/adr/0019`, chosen
+  from a five-year study on real weekly option premiums). On a completed 5-min bar starting
+  11:00-13:30 the host flags a candidate when the session range exceeds ATR5 and the close sits in
+  the outer 15% of that range on the trend side of VWAP (bullish also needs 2 of 3 confluence
+  factors: beyond R1, a gap up, more than 0.35 x ATR5 from VWAP). That gate lives in
+  `cpr_ai_trend_day.py` and is shared with `cpr_ai_trend_day_backtest.py`. Codex, behind four frozen
+  no-argument MCP tools, is consulted only on a candidate (accept or veto -- never reverse
+  it) and, while a position is open, for premise exits; the host owns every price, gate and order.
+  Every entry SELLS the opposite current-week ATM option (bullish PE, bearish CE) with a fixed VWAP
+  spot stop, no target, and one entry per session. It is disabled and live-disabled by default under
+  the normal global-plus-strategy double gate. Spot stops trigger exits but cannot guarantee fills.
   Ordinary CPR, CPR Algo 3, CPR Algo 4, Regime Adaptive, and CPR AI may coexist with independent
   positions and P&L.
   Another **optional, opt-in** worker is LLM-driven: the **SL Hunting AI Agent** (a Claude agent via

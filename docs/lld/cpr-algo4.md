@@ -51,7 +51,7 @@ next-next expiry through the shared `enter_position` path.
   booking level when it lies ahead of entry: in TARGET mode alongside 1:1, in TRAIL mode as the
   only fixed target. The doc places this under the sideways section only.
 - The RSI/EMA filters do **not** apply: an oversold SRSI buy almost never has RSI > 45 and rising
-  EMAs. CPR AI makes the same call.
+  EMAs. CPR AI made the same call while it traded this playbook.
 
 ### 3.2 TRENDING
 - **Continuation**, in the day's direction:
@@ -118,8 +118,8 @@ filter. The TRAIL first milestone is likewise effectively 1R. Stops only ever ra
   (row count, newest completed minute) and rebuilt at most once a minute, not on every poll.
 - **Reporting.** The R1 add is reported as its own `add_pos` slot through `_owned_open_positions()`,
   so the dashboard and the crash-durable snapshot see the full open quantity.
-- **Add-leg ledger.** This is a standalone copy of the CPR AI worker's mechanics, so a fix to one copy
-  must be mirrored in the other:
+- **Add-leg ledger.** This began as a copy of the CPR AI worker's former mechanics. CPR AI's
+  Trend-Day Rider has no add, so this is now the only copy (ADR-0019):
   - the add is a separate role-A ledger leg;
   - live marks the add used *before* submission, so it is never retried after PARTIAL/UNKNOWN;
   - max-loss counts the add at the ledger's conservative `risk_quantity`;

@@ -480,18 +480,26 @@ def test_cpr_ai_env_defaults_match_the_independent_host_contract():
         "# CPR Codex AI Agent", maxsplit=1
     )[1].split("# Supertrend Bullish strategy", maxsplit=1)[0]
     lower = cpr_ai_section.lower()
+    # The Trend-Day Rider's code-owned gate and its sold-option expression must
+    # stay explained next to the knobs an operator actually edits.
     for required_explanation in (
-        "completed five-minute candles",
-        "one equal-size add",
-        "30 nifty points",
-        "2 nifty points",
-        "0.40",
-        "rsi 14 / stochastic 14 / k 3 / d 3 / zones 20 and 80",
+        "starting 11:00-13:30",
+        "range > atr5",
+        "outer 15%",
+        "2 of 3 confluence factors",
+        "may only accept or veto",
+        "cpr_ai_trend_day.py",
+        "sells the opposite atm",
+        "fixed vwap spot stop",
+        "no extra naked-sell",
         "live_trading_enabled=true",
         "cpr_ai_live_trading=true",
         "independent positions and p&l",
     ):
         assert required_explanation in lower
+    # The retired SRSI/VWAP playbook's invariants must not linger as if live.
+    for retired in ("one equal-size add", "30 nifty points", "sideways setups", "stochastic 14"):
+        assert retired not in lower
     assert "paper only" not in lower
 
 

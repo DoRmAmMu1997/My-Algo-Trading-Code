@@ -12,6 +12,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 - Claude Opus 4.8 Max: Ported 13 strategies from the public TradingBot project (the `Nifty * Signal Generator.py` files listed below) plus the shared `misc_strategy_common.py`, and wired them into the front-test master
 - Claude Opus 4.8 Max: Built the **SL Hunting AI Agent** (`SL Hunting AI Agent/`) — an LLM-driven strategy (a Claude agent), unlike the deterministic generators above (see its own README)
 - Codex: Built the independent, opt-in **CPR Codex AI Agent** (`CPR AI Agent/`) — a five-minute SRSI/VWAP worker whose host owns every mechanical risk and execution gate
+- Claude Opus 5.5: Replaced that agent's playbook with the **Trend-Day Rider** (`CPR AI Agent/cpr_ai_trend_day.py`), chosen from a five-year study on real weekly option premiums (see `docs/adr/0019`)
 
 # Where each generator is used
 | File | Shape | Used by |
@@ -22,7 +23,7 @@ Signal generator expects the OHLC data DataFrame as an argument(which will be pr
 | `CPR Strategy/cpr_combined_signal_generator.py` | Full CPR PDF strategy wrapper (Algo 1 + Algo 2, single-chart) | CPR backtest + future front-test integration |
 | `CPR Strategy/cpr_algo3_signal_generator.py` | Multi-instrument CPR Algo 3 (spot + ITM CE + ITM PE); takes three frames, returns a `CPRDecision` | front-test master — the `CPRAlgo3StrategyWorker` fetches the ITM CE/PE feeds on demand |
 | `CPR Strategy/cpr_algo4_signal_generator.py` | Deterministic "Intraday SRSI VWAP" engine: 09:25 day type (SIDEWAYS -> Stochastic RSI, TRENDING -> VWAP pullbacks), fed every completed 5-min bar, plus a pure `check_intrabar_exit` | front-test master (`CPRAlgo4StrategyWorker`) and `cpr_algo4_backtest.py`, which drive the same engine |
-| `CPR AI Agent/` | Frozen five-minute context, four no-argument tools, Codex judgment, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master |
+| `CPR AI Agent/` | Trend-Day Rider: the deterministic candidate gate (`cpr_ai_trend_day.py`), frozen five-minute context, four no-argument tools, Codex accept/veto, and host-owned risk/execution policy | independently opt-in `CPRAIWorker` in the front-test master; `cpr_ai_trend_day_backtest.py` replays the same gate |
 | `Subhamoy Strategies/goldmine_strategy_logic.py` | Stateful Goldmine pullback/engulfing engine | Goldmine backtest + future front-test integration |
 | `Subhamoy Strategies/money_machine_strategy_logic.py` | Stateful Money Machine compression/Hulk engine | Money Machine backtest + future front-test integration |
 | `Subhamoy Strategies/goldmine_signal_generator.py` | Thin NIFTY Goldmine wrapper | Goldmine callers that prefer wrapper functions |
@@ -96,10 +97,12 @@ Two things to know before touching it:
    has several clean sessions.
 
 # CPR Codex AI Agent (`CPR AI Agent/`) — independent, opt-in worker
-This is not another deterministic CPR wrapper. `CPRAIWorker` freezes completed
-five-minute SRSI/VWAP context behind four no-argument tools, asks Codex for a
-regime/setup or premise-exit judgment, and then applies host-owned entry, sizing,
-time, lifecycle, and execution gates. It is disabled by default and live-disabled
+This is not another deterministic CPR wrapper. `CPRAIWorker` runs the
+Trend-Day Rider: a deterministic gate (`cpr_ai_trend_day.py`) flags midday
+trend-day candidates, Codex -- behind four frozen no-argument tools -- may accept
+or veto each one and judge premise exits, and the host owns every price, sizing,
+time, lifecycle, and execution gate. Every entry sells the opposite current-week
+ATM option with a VWAP spot stop. It is disabled by default and live-disabled
 by default. Ordinary CPR, CPR Algo 3, CPR Algo 4, Regime Adaptive, SL Hunting, and CPR AI have
 independent prefixes, workers, positions, and P&L and may coexist when their own
 enable and virtual-trading gates permit it. See `CPR AI Agent/README.md` for the

@@ -105,6 +105,7 @@ on. Pacing goes through the shared `RollingWindowRateLimiter`.
    heikin_ashi_futures_5y_backtest.py
    cpr_strategy_backtest.py
    cpr_algo4_backtest.py        (plain replay of the live engine, spot points -- see cpr-algo4.md)
+   cpr_ai_trend_day_backtest.py (CPR AI's Trend-Day Rider gate, priced on expired-option premiums -- see cpr-codex-ai-agent.md)
    profit_shooter_backtest.py
    Subhamoy Strategies/
      goldmine_strategy_backtest.py
