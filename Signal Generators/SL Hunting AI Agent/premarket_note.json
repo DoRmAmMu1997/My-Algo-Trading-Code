@@ -1,12 +1,12 @@
 {
-  "for_date": "2026-09-25",
-  "source": "Intraday Hunter, 'Prediction For 25 SEP 2026' (mlKuAuR_U2I, uploaded 2026-09-24)",
-  "context": "A big gap-down on 24 Sep, then continuous selling on all three indices -- \"a big fall\" -- so he reads SELLERS as seated in the market.",
+  "for_date": "2026-09-28",
+  "source": "Intraday Hunter, 'Prediction For 28 SEP 2026' (E55DWhSiEW4, uploaded 2026-09-27)",
+  "context": "Little momentum on 25 Sep -- BankNIFTY roamed around 55500 -- so buyers and sellers both came, but the afternoon breakout drove the SELLERS out, and it is trying to go down again.",
   "plan": [
-    "THE FLAT BRANCH FLIPPED BACK FROM 24 SEP: last night a flat open meant SELL, to hunt seated buyers. Tonight the seated side is SELLERS, so a flat open means BUY. Carrying last night's flat branch forward inverts it.",
-    "FLAT TO GAP DOWN -> BUY: identify buying-side setups to TARGET the sellers seated after 24 Sep's big gap-down and continuous selling.",
-    "A GOOD GAP UP -> SELL, WITH THE MARKET: a good gap up lets the sellers run early, so their SLs are no longer near and nobody gets to target them; follow the selling already under way.",
-    "WITH THE MARKET MEANS WITH THE SELLING, NOT THE GAP: a GAP_UP verdict selects SELL here, not the OPENING DRIVE gap-up long. He says a GOOD gap up; a marginal positive open is the flat case, which buys."
+    "THE BRANCHES FLIPPED AGAIN FROM 25 SEP: on Friday flat to gap-down meant BUY and a gap up meant SELL. Tonight flat to gap-down means SELL and a gap up with momentum means BUY. Carrying Friday's branches forward inverts both.",
+    "FLAT TO GAP DOWN -> SELL, WITH THE MARKET: the breakout already drove the sellers out, so there is no seated seller to hunt upward; identify selling-side setups as it tries to go down again. A follow, not a hunt.",
+    "GAP UP WITH POSITIVE MOMENTUM FROM THE OPEN -> BUY: the market may trap sellers who try to sell the gap, then rise slowly and go much higher; identify buying-side setups.",
+    "A GAP UP THAT STARTS FALLING HAS NO PLAN: he says no plan can be made then. A computed GAP_UP verdict alone does not select the buy branch; the momentum after the open decides."
   ],
   "levels": [
     {
