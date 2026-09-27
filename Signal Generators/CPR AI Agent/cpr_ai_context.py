@@ -1,16 +1,18 @@
 """Turn raw one-minute candles into the CPR agent's deterministic evidence.
 
 This file owns the part of the strategy that must give the same answer every
-time: completed five-minute bars, prior-session CPR levels, indicators,
-confirmed swing points, and position facts.  It intentionally does not import
-the older CPR Strategy package, so those strategies and this agent can evolve
-and run independently.
+time: completed five-minute bars, prior-session CPR levels, the recent-range
+ATR, session VWAP, confirmed swing points, the host's Trend-Day Rider
+candidate, and position facts. It intentionally does not import the older CPR
+Strategy package, so those strategies and this agent evolve independently.
 
 The important boundary for a new maintainer is that this module describes the
-market; it does not interpret it.  Regime classification and premise judgment
-belong to Codex, while order permission, prices, and risk checks belong to the
-host.  Keeping those responsibilities separate prevents model prose from
-quietly becoming executable trading data.
+market; it does not interpret it. The candidate itself comes from
+``cpr_ai_trend_day`` -- the same code the backtest replays -- and the host
+policy trusts only that frozen verdict. Codex may accept or veto it and judge
+premise exits; prices and risk belong to the host. Keeping those
+responsibilities separate prevents model prose from quietly becoming
+executable trading data.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 from cpr_ai_schema import validate_position_state
+from cpr_ai_trend_day import evaluate_trend_day_candidate, session_atr, session_vwap
 
 if TYPE_CHECKING:
     # mypy_path exposes Dependencies by its bare module name. The importlib
@@ -37,9 +40,10 @@ else:
         newest_completed_minute_timestamp,
     )
 
+
 _REQUIRED_COLUMNS = ("timestamp", "open", "high", "low", "close")
-_LEVEL_BUFFER_POINTS = 2.0
 _IST = ZoneInfo("Asia/Kolkata")
+_RECENT_CANDLES = 6
 
 
 def _as_float(value: Any) -> float | None:
@@ -148,66 +152,6 @@ def build_completed_five_minute_bars(
     return pd.concat(completed, ignore_index=True)
 
 
-def _rsi_wilder(closes: pd.Series, length: int = 14) -> pd.Series:
-    """Calculate TradingView-style Wilder RSI from a close series.
-
-    Wilder's method is not pandas' default exponentially weighted mean.  It
-    starts with a simple average of the first ``length`` gains/losses and then
-    applies the recursive ``(old * (length - 1) + new) / length`` update.  The
-    explicit implementation keeps our values aligned with charting evidence.
-    """
-
-    if length <= 0:
-        raise ValueError("Wilder RSI length must be positive.")
-    values = pd.to_numeric(closes, errors="coerce").astype(float)
-    result = pd.Series(np.nan, index=values.index, dtype=float)
-    if len(values) <= length:
-        return result
-
-    changes = values.diff()
-    gains = changes.clip(lower=0.0)
-    losses = -changes.clip(upper=0.0)
-    # Seed both averages with the first complete window.  Starting the
-    # recurrence at the first price change would produce a different RSI path.
-    average_gain = float(gains.iloc[1 : length + 1].mean())
-    average_loss = float(losses.iloc[1 : length + 1].mean())
-
-    def rsi_value(gain: float, loss: float) -> float:
-        """Convert averaged gains/losses into RSI, including flat-market edges."""
-
-        if loss == 0.0:
-            return 50.0 if gain == 0.0 else 100.0
-        return 100.0 - (100.0 / (1.0 + gain / loss))
-
-    result.iloc[length] = rsi_value(average_gain, average_loss)
-    for position in range(length + 1, len(values)):
-        average_gain = (
-            average_gain * (length - 1) + float(gains.iloc[position])
-        ) / length
-        average_loss = (
-            average_loss * (length - 1) + float(losses.iloc[position])
-        ) / length
-        result.iloc[position] = rsi_value(average_gain, average_loss)
-    return result
-
-
-def _stochastic_rsi(closes: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Return RSI14 and TradingView-style Stochastic RSI K/D (14, 3, 3).
-
-    Stochastic RSI normalizes RSI within its own 14-value range, then smooths
-    that raw oscillator with a three-period K average and a three-period D
-    average.  The host later checks crosses and 20/80 zones from these facts.
-    """
-
-    rsi = _rsi_wilder(closes, 14)
-    lowest = rsi.rolling(14, min_periods=14).min()
-    highest = rsi.rolling(14, min_periods=14).max()
-    denominator = highest - lowest
-    raw = ((rsi - lowest) / denominator.replace(0.0, np.nan)) * 100.0
-    k = raw.rolling(3, min_periods=3).mean()
-    d = k.rolling(3, min_periods=3).mean()
-    return rsi, k, d
-
 
 def _opening_facts(session_bars: pd.DataFrame, count: int) -> dict[str, Any]:
     """Return the first-N-minute corridor, or explicitly mark it incomplete.
@@ -232,35 +176,49 @@ def _opening_facts(session_bars: pd.DataFrame, count: int) -> dict[str, Any]:
     }
 
 
-def _level_view(name: str, price: float, current_close: float) -> dict[str, Any]:
-    """Expose a named level with signed and absolute distance from the close."""
+def _swing_points(bars: pd.DataFrame, field: str, *, window: int, higher_is_swing: bool) -> list[dict[str, Any]]:
+    """Confirm fractal swings only after ``window`` bars exist on both sides.
 
-    return {
-        "name": name,
-        "price": price,
-        "distance_from_close": price - current_close,
-        "abs_distance": abs(price - current_close),
-    }
+    Requiring later bars prevents a current extreme from being labeled a swing
+    before it is confirmed.  That delay is intentional because sideways stops
+    use the latest returned swing as authoritative geometry.
+    """
+
+    values = bars[field].to_numpy(dtype=float)
+    points: list[dict[str, Any]] = []
+    for index in range(window, len(values) - window):
+        neighbours = np.concatenate((values[index - window : index], values[index + 1 : index + window + 1]))
+        is_swing = values[index] > neighbours.max() if higher_is_swing else values[index] < neighbours.min()
+        if is_swing:
+            points.append({"timestamp": str(bars.iloc[index]["timestamp"]), "price": float(values[index])})
+    return points[-5:]
+
+
+def _vwap_method(session_bars: pd.DataFrame) -> str:
+    """Name the VWAP flavour so the model can tell a proxy from true VWAP."""
+
+    volume = pd.to_numeric(session_bars["volume"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    return "volume_weighted" if float(volume.sum()) > 0.0 else "equal_weight_typical_price"
 
 
 def _session_levels(
-    minutes: pd.DataFrame,
+    previous: pd.DataFrame,
     session_bars: pd.DataFrame,
     *,
+    session_date: str,
     prior_accepted_regime: str | None,
+    atr: float | None,
+    atr_sessions_used: int,
+    prior_ranges: list[float],
 ) -> dict[str, Any]:
-    """Calculate prior-day CPR, support/resistance, and opening-range facts.
+    """Calculate prior-day CPR levels, the opening gap, and the recent ATR.
 
     ``prior_accepted_regime`` is only continuity context for the next model
-    turn.  It does not lock the new regime and is never used here to manufacture
-    an entry.  The model may change its judgment when fresh evidence warrants.
+    turn. It never locks a regime or manufactures an entry. The ATR is the
+    same mean of recent prior-session ranges the candidate gate uses, so the
+    model and the host describe expansion with one number.
     """
 
-    sessions = sorted(minutes["timestamp"].dt.date.unique())
-    if len(sessions) < 2:
-        raise ValueError("CPR context needs one complete prior session and one current session.")
-    current_session = sessions[-1]
-    previous = minutes.loc[minutes["timestamp"].dt.date == sessions[-2]]
     current_close = float(session_bars.iloc[-1]["close"])
     prior_high, prior_low, prior_close = (
         float(previous["high"].max()),
@@ -282,189 +240,73 @@ def _session_levels(
         "s1": (2.0 * pivot) - prior_high,
         "s2": pivot - (prior_high - prior_low),
     }
-    # The next milestone must be beyond the two-point buffer.  A level already
-    # being touched is not advertised as future reward for the 1R geometry gate.
-    ordered = sorted(
-        (_level_view(name, price, current_close) for name, price in levels.items()), key=lambda item: item["price"]
-    )
-    above = [item for item in ordered if item["price"] > current_close + _LEVEL_BUFFER_POINTS]
-    below = [item for item in ordered if item["price"] < current_close - _LEVEL_BUFFER_POINTS]
+    session_open = float(session_bars.iloc[0]["open"])
+    gap_points = session_open - prior_close
     return {
-        "session_date": str(current_session),
+        "session_date": session_date,
         "prior_accepted_regime": prior_accepted_regime,
         "current_close": current_close,
         "previous_day": {"high": prior_high, "low": prior_low, "close": prior_close},
         "levels": levels,
+        "distances_from_current_close": {name: price - current_close for name, price in levels.items()},
+        "gap": {
+            "session_open": session_open,
+            "points": gap_points,
+            "direction": "UP" if gap_points > 0 else "DOWN" if gap_points < 0 else "FLAT",
+        },
+        "atr": {
+            "value": _as_float(atr),
+            "sessions_used": atr_sessions_used,
+            "prior_session_ranges": [float(value) for value in prior_ranges[-5:]],
+        },
         "opening": {
             "opening_corridor": _opening_facts(session_bars, 5),
             "first_15_minutes": _opening_facts(session_bars, 15),
             "first_30_minutes": _opening_facts(session_bars, 30),
         },
-        "distances_from_current_close": {name: price - current_close for name, price in levels.items()},
-        "next_levels": {
-            "buffer_points": _LEVEL_BUFFER_POINTS,
-            "upside": above[0] if above else None,
-            "downside": below[-1] if below else None,
-            "ordered": ordered,
-        },
     }
 
 
-def _momentum_vwap(
-    session_bars: pd.DataFrame,
-    indicator_bars: pd.DataFrame,
-) -> dict[str, Any]:
-    """Combine continuous momentum indicators with session-reset VWAP facts.
+def _momentum_vwap(session_bars: pd.DataFrame, *, atr: float | None) -> dict[str, Any]:
+    """Describe session VWAP, the newest candle, and the recent candles.
 
-    ``indicator_bars`` contains every completed five-minute bar retained in the
-    frozen snapshot. RSI, Stochastic RSI, and EMA therefore arrive at the new
-    session already warmed, matching a continuous intraday chart. The overnight
-    move from the prior close to the current open remains part of that history.
-
-    ``session_bars`` contains only today's completed bars. VWAP, its recent
-    relationships, the current candle, and recent-candle evidence must reset at
-    the session boundary, so prior-day prices can never distort those facts.
-
-    Volume is preferred when the feed supplies it.  This repository's index
-    feed may carry no usable volume, so the deterministic fallback is the
-    expanding mean of typical price.  Its method name is included in the
-    snapshot so the agent can distinguish a proxy from true volume VWAP.
+    Everything here resets at the session boundary, so prior-day prices can
+    never distort VWAP or candle facts. NIFTY index candles carry no volume,
+    so VWAP is normally the equal-weight typical-price proxy; ``method`` says
+    which one was used.
     """
 
-    bars = session_bars.copy()
-    indicators = indicator_bars.copy()
-    typical = (bars["high"] + bars["low"] + bars["close"]) / 3.0
-    volume = bars["volume"].fillna(0.0).clip(lower=0.0)
-    if float(volume.sum()) > 0.0:
-        vwap = (typical * volume).cumsum() / volume.cumsum()
-        vwap_method = "volume_weighted"
-    else:
-        # Do not invent index volume.  Equal-weight typical price is explicit,
-        # reproducible, and exposes its limitation through ``vwap_method``.
-        vwap = typical.expanding().mean()
-        vwap_method = "equal_weight_typical_price"
-    rsi, k, d = _stochastic_rsi(indicators["close"])
-    ema5 = indicators["close"].ewm(span=5, adjust=False).mean()
-    ema20 = indicators["close"].ewm(span=20, adjust=False).mean()
+    bars = session_bars.reset_index(drop=True)
+    vwap = session_vwap(bars)
     current = bars.iloc[-1]
-    current_k, previous_k, current_d, previous_d = (
-        _as_float(k.iloc[-1]),
-        _as_float(k.iloc[-2]),
-        _as_float(d.iloc[-1]),
-        _as_float(d.iloc[-2]),
-    )
-    cross_up = (
-        current_k is not None
-        and previous_k is not None
-        and current_d is not None
-        and previous_d is not None
-        and current_k > current_d
-        and previous_k <= previous_d
-    )
-    cross_down = (
-        current_k is not None
-        and previous_k is not None
-        and current_d is not None
-        and previous_d is not None
-        and current_k < current_d
-        and previous_k >= previous_d
-    )
-    relation = np.where(bars["close"] > vwap, "ABOVE", np.where(bars["close"] < vwap, "BELOW", "AT"))
-    last_relations = relation[-3:].tolist()
-    ema_order = (
-        "EMA5_ABOVE_EMA20"
-        if ema5.iloc[-1] > ema20.iloc[-1]
-        else "EMA5_BELOW_EMA20"
-        if ema5.iloc[-1] < ema20.iloc[-1]
-        else "EQUAL"
-    )
-    body = abs(float(current["close"] - current["open"]))
-    candle_range = float(current["high"] - current["low"])
+    close = float(current["close"])
     current_vwap = float(vwap.iloc[-1])
-
-    def side_fraction(lower: float, upper: float, boundary: float, *, above: bool) -> float:
-        """Return the fraction of a price segment strictly on one VWAP side.
-
-        The host uses the completed entry candle rather than a session-wide
-        close count.  A zero-length doji body deliberately yields zero on both
-        sides, preventing it from satisfying a directional 40% body gate.
-        """
-
-        width = upper - lower
-        if width <= 0.0:
-            return 0.0
-        portion = upper - max(lower, boundary) if above else min(upper, boundary) - lower
-        return float(max(0.0, min(width, portion)) / width)
-
-    body_lower, body_upper = sorted((float(current["open"]), float(current["close"])))
-    range_lower, range_upper = float(current["low"]), float(current["high"])
+    relation = np.where(bars["close"] > vwap, "ABOVE", np.where(bars["close"] < vwap, "BELOW", "AT"))
+    candle_range = float(current["high"] - current["low"])
     return {
-        "rsi14": _as_float(rsi.iloc[-1]),
-        "stochastic_rsi": {
-            "rsi_length": 14,
-            "stochastic_length": 14,
-            "k_sma_length": 3,
-            "d_sma_length": 3,
-            "oversold": 20.0,
-            "overbought": 80.0,
-            "current_k": current_k,
-            "previous_k": previous_k,
-            "current_d": current_d,
-            "previous_d": previous_d,
-            "cross_up": bool(cross_up),
-            "cross_down": bool(cross_down),
-            "cross_up_in_oversold": bool(
-                cross_up
-                and current_k is not None
-                and previous_k is not None
-                and max(current_k, previous_k) <= 20.0
-            ),
-            "cross_down_in_overbought": bool(
-                cross_down
-                and current_k is not None
-                and previous_k is not None
-                and min(current_k, previous_k) >= 80.0
-            ),
-        },
         "vwap": {
-            "method": vwap_method,
+            "method": _vwap_method(bars),
             "value": _as_float(current_vwap),
-            "distance_from_close": _as_float(float(current_vwap - current["close"])),
-            "fraction_above": float((bars["close"] > vwap).mean()),
-            "fraction_below": float((bars["close"] < vwap).mean()),
-            "entry_candle": {
-                "body_fraction_above": side_fraction(body_lower, body_upper, current_vwap, above=True),
-                "body_fraction_below": side_fraction(body_lower, body_upper, current_vwap, above=False),
-                "range_fraction_above": side_fraction(range_lower, range_upper, current_vwap, above=True),
-                "range_fraction_below": side_fraction(range_lower, range_upper, current_vwap, above=False),
-            },
-            "sequence_evidence": {
-                "relations": last_relations,
-                "all_recent_above": all(value == "ABOVE" for value in last_relations),
-                "all_recent_below": all(value == "BELOW" for value in last_relations),
-                "reclaimed": len(last_relations) >= 2 and last_relations[-2:] == ["BELOW", "ABOVE"],
-                "lost": len(last_relations) >= 2 and last_relations[-2:] == ["ABOVE", "BELOW"],
-            },
-        },
-        "ema": {
-            "ema5": _as_float(ema5.iloc[-1]),
-            "ema20": _as_float(ema20.iloc[-1]),
-            "ema5_slope": _as_float(ema5.iloc[-1] - ema5.iloc[-2]) if len(ema5) > 1 else None,
-            "ema20_slope": _as_float(ema20.iloc[-1] - ema20.iloc[-2]) if len(ema20) > 1 else None,
-            "order": ema_order,
+            "close_minus_vwap": _as_float(close - current_vwap),
+            "distance_atr": _as_float(abs(close - current_vwap) / atr) if atr else None,
+            "fraction_of_bars_above": float((bars["close"] > vwap).mean()),
+            "fraction_of_bars_below": float((bars["close"] < vwap).mean()),
+            "recent_relations": relation[-_RECENT_CANDLES:].tolist(),
         },
         "candle": {
+            "timestamp": str(current["timestamp"]),
             "colour": "BULLISH"
             if current["close"] > current["open"]
             else "BEARISH"
             if current["close"] < current["open"]
             else "DOJI",
-            "range": candle_range,
-            "body": body,
             "open": _as_float(current["open"]),
             "high": _as_float(current["high"]),
             "low": _as_float(current["low"]),
-            "close": _as_float(current["close"]),
+            "close": _as_float(close),
+            "range": candle_range,
+            "body": abs(float(current["close"] - current["open"])),
+            "range_atr": _as_float(candle_range / atr) if atr else None,
         },
         "recent_candles": [
             {
@@ -476,53 +318,36 @@ def _momentum_vwap(
                 "high": float(cast(Any, row.high)),
                 "low": float(cast(Any, row.low)),
                 "close": float(cast(Any, row.close)),
+                "vwap": float(cast(Any, vwap_value)),
             }
-            for row in bars.tail(5).itertuples(index=False)
+            for row, vwap_value in zip(
+                bars.tail(_RECENT_CANDLES).itertuples(index=False),
+                vwap.tail(_RECENT_CANDLES),
+                strict=True,
+            )
         ],
     }
 
 
-def _swing_points(bars: pd.DataFrame, field: str, *, window: int, higher_is_swing: bool) -> list[dict[str, Any]]:
-    """Confirm fractal swings only after ``window`` bars exist on both sides.
+def _market_structure(
+    session_bars: pd.DataFrame,
+    *,
+    swing_window: int,
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Return confirmed swings, extreme recency, and the host's candidate.
 
-    Requiring later bars prevents a current extreme from being labeled a swing
-    before it is confirmed.  That delay is intentional because sideways stops
-    use the latest returned swing as authoritative geometry.
-    """
-
-    values = bars[field].to_numpy(dtype=float)
-    points: list[dict[str, Any]] = []
-    for index in range(window, len(values) - window):
-        neighbours = np.concatenate((values[index - window : index], values[index + 1 : index + window + 1]))
-        is_swing = values[index] > neighbours.max() if higher_is_swing else values[index] < neighbours.min()
-        if is_swing:
-            points.append({"timestamp": str(bars.iloc[index]["timestamp"]), "price": float(values[index])})
-    return points[-5:]
-
-
-def _market_structure(session_bars: pd.DataFrame, levels: Mapping[str, Any], *, swing_window: int) -> dict[str, Any]:
-    """Return objective swing comparisons plus the one allowed long R1 add.
-
-    HH/HL/LH/LL are facts derived from confirmed points; this function does not
-    convert them into a regime.  The scale-in candidate is deliberately only
-    the documented red-then-green long pattern at R1.  No unapproved short/S1
-    mirror is inferred.
+    HH/HL/LH/LL are facts derived from confirmed points; this function does
+    not convert them into a regime. ``trend_day_candidate`` is the frozen
+    verdict of the deterministic gate -- the only evidence the host policy
+    accepts for an entry.
     """
 
     highs = _swing_points(session_bars, "high", window=swing_window, higher_is_swing=True)
     lows = _swing_points(session_bars, "low", window=swing_window, higher_is_swing=False)
     high_comparison = "INSUFFICIENT" if len(highs) < 2 else "HH" if highs[-1]["price"] > highs[-2]["price"] else "LH"
     low_comparison = "INSUFFICIENT" if len(lows) < 2 else "HL" if lows[-1]["price"] > lows[-2]["price"] else "LL"
-    r1 = float(levels["levels"]["r1"])
-    previous, current = session_bars.iloc[-2], session_bars.iloc[-1]
-    bearish_touch = (
-        previous["close"] < previous["open"]
-        and previous["low"] <= r1 + _LEVEL_BUFFER_POINTS
-        and previous["high"] >= r1 - _LEVEL_BUFFER_POINTS
-    )
-    bullish_reclaim = (
-        current["close"] > current["open"] and current["close"] >= r1 and current["low"] >= r1 - _LEVEL_BUFFER_POINTS
-    )
+    last_index = len(session_bars) - 1
     return {
         "swing_window": swing_window,
         "swings": {"highs": highs, "lows": lows},
@@ -534,14 +359,11 @@ def _market_structure(session_bars: pd.DataFrame, levels: Mapping[str, Any], *, 
             "higher_low": low_comparison == "HL",
             "lower_low": low_comparison == "LL",
         },
-        "r1_scale_in_candidate": {
-            "eligible": bool(bearish_touch and bullish_reclaim),
-            "direction": "LONG",
-            "r1": r1,
-            "buffer_points": _LEVEL_BUFFER_POINTS,
-            "bearish_touch": bool(bearish_touch),
-            "bullish_reclaim": bool(bullish_reclaim),
+        "extremes": {
+            "bars_since_session_high": int(last_index - int(np.argmax(session_bars["high"].to_numpy()))),
+            "bars_since_session_low": int(last_index - int(np.argmin(session_bars["low"].to_numpy()))),
         },
+        "trend_day_candidate": candidate,
     }
 
 
@@ -584,15 +406,36 @@ def build_cpr_context(
     session_bars = bars.loc[bars["timestamp"].dt.date == current_day].reset_index(drop=True)
     if len(session_bars) < 2:
         raise ValueError("CPR context needs two complete current-session bars for pattern evidence.")
-    levels = _session_levels(
-        minutes,
+    prior_sessions = [
+        group for day, group in minutes.groupby(minutes["timestamp"].dt.date, sort=True) if day < current_day
+    ]
+    if not prior_sessions:
+        raise ValueError("CPR context needs one complete prior session and one current session.")
+    # Oldest first, as the candidate gate expects. The live store keeps about
+    # five sessions, which is exactly what the ATR5 definition needs.
+    prior_ranges = [float(group["high"].max() - group["low"].min()) for group in prior_sessions]
+    atr, atr_sessions_used = session_atr(prior_ranges)
+    previous = prior_sessions[-1]
+    candidate = evaluate_trend_day_candidate(
         session_bars,
-        prior_accepted_regime=prior_accepted_regime,
-    )
+        prior_high=float(previous["high"].max()),
+        prior_low=float(previous["low"].min()),
+        prior_close=float(previous.iloc[-1]["close"]),
+        atr=atr,
+        atr_sessions_used=atr_sessions_used,
+    ).to_dict()
     return {
-        "session_levels": levels,
-        "momentum_vwap": _momentum_vwap(session_bars, bars),
-        "market_structure": _market_structure(session_bars, levels, swing_window=swing_window),
+        "session_levels": _session_levels(
+            previous,
+            session_bars,
+            session_date=str(current_day),
+            prior_accepted_regime=prior_accepted_regime,
+            atr=atr,
+            atr_sessions_used=atr_sessions_used,
+            prior_ranges=prior_ranges,
+        ),
+        "momentum_vwap": _momentum_vwap(session_bars, atr=atr),
+        "market_structure": _market_structure(session_bars, swing_window=swing_window, candidate=candidate),
         "position_state": validate_position_state(position_state),
     }
 

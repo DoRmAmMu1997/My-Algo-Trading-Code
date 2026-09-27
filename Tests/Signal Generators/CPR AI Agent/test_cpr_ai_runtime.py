@@ -47,49 +47,33 @@ from cpr_ai_tools import EXPECTED_TOOL_NAMES
 def _context(*, is_flat: bool = True, direction: str | None = None) -> dict[str, dict[str, object]]:
     """Return a hand-authored frozen bar with every required host fact.
 
-    The values make a long continuation valid: close 100, stop 95, the next
-    buffered R1 milestone at 108, and a final R2 target at 118. Tests mutate
-    only the boundary they name so rejection codes remain diagnostic.
+    The host candidate is an eligible bullish trend day: close 100 and a VWAP
+    stop at 95, so an accepted long has five points of risk. Tests mutate only
+    the fact they name so rejection codes remain diagnostic.
     """
 
     return {
         "session_levels": {
             "current_close": 100.0,
             "levels": {"r1": 110.0, "r2": 120.0, "s1": 90.0, "s2": 80.0},
-            "next_levels": {
-                "buffer_points": 2.0,
-                "upside": {"name": "r1", "price": 110.0},
-                "downside": {"name": "s1", "price": 90.0},
-            },
         },
-        "momentum_vwap": {
-            "rsi14": 55.0,
-            "stochastic_rsi": {
-                "cross_up_in_oversold": True,
-                "cross_down_in_overbought": True,
-            },
-            "vwap": {
-                "sequence_evidence": {
-                    "all_recent_above": True,
-                    "all_recent_below": False,
-                    "reclaimed": True,
-                    "lost": False,
-                },
-                "entry_candle": {"body_fraction_above": 0.6, "body_fraction_below": 0.0},
-            },
-            "ema": {"order": "EMA5_ABOVE_EMA20", "ema5_slope": 1.0, "ema20_slope": 0.5},
-            "candle": {"low": 95.0, "high": 105.0, "close": 100.0},
-        },
+        "momentum_vwap": {"vwap": {"value": 95.0}, "candle": {"low": 95.0, "high": 105.0, "close": 100.0}},
         "market_structure": {
             "swings": {"lows": [{"price": 94.0}], "highs": [{"price": 106.0}]},
-            "r1_scale_in_candidate": {"eligible": True, "direction": "LONG"},
+            "trend_day_candidate": {
+                "eligible": True,
+                "reason": "eligible",
+                "direction": "LONG",
+                "entry": 100.0,
+                "stop": 95.0,
+                "confluence_score": 2,
+            },
         },
         "position_state": {
             "is_flat": is_flat,
             "direction": direction,
-            "premise": "TRENDING_VWAP_CONTINUATION",
-            "scale_in_eligible": True,
-            "scale_in_count": 0,
+            "premise": "TREND_DAY_CONTINUATION",
+            "entries_today": 0 if is_flat else 1,
         },
     }
 
@@ -866,50 +850,51 @@ def test_real_runner_uses_the_configured_subprocess_timeout(configured_timeout, 
 
 
 def test_host_policy_derives_long_geometry_and_rejects_bad_trending_evidence():
-    """A model direction is insufficient without every frozen 40%/RSI/EMA gate."""
+    """A model direction is insufficient without the host's eligible candidate."""
 
-    proposal = _proposal("ENTER_LONG", "TRENDING", "TRENDING_VWAP_CONTINUATION")
+    proposal = _proposal("ENTER_LONG", "TRENDING", "TREND_DAY_CONTINUATION")
     accepted = CPRHostPolicy().validate(_context(), proposal)
     rejected_context = _context()
-    rejected_context["momentum_vwap"]["vwap"]["entry_candle"]["body_fraction_above"] = 0.39
+    rejected_context["market_structure"]["trend_day_candidate"].update(
+        {"eligible": False, "reason": "range_not_expanded"}
+    )
     rejected = CPRHostPolicy().validate(rejected_context, proposal)
 
     assert accepted.accepted is True
     assert accepted.entry_price == 100.0
     assert accepted.stop_price == 95.0
-    assert accepted.milestone_price == 108.0
-    assert accepted.final_target_price == 118.0
+    assert accepted.risk_points == 5.0
     assert rejected.accepted is False
-    assert rejected.validation_code == "vwap_body_fraction_rejected"
+    assert rejected.validation_code == "no_trend_day_candidate"
 
 
 @pytest.mark.parametrize(
     ("action", "regime", "setup", "is_flat", "direction", "accepted", "code"),
     [
-        ("ENTER_LONG", "SIDEWAYS", "SIDEWAYS_SRSI", True, None, True, "accepted_entry"),
-        ("ENTER_SHORT", "SIDEWAYS", "SIDEWAYS_SRSI", True, None, True, "accepted_entry"),
+        ("ENTER_LONG", "TRENDING", "TREND_DAY_CONTINUATION", True, None, True, "accepted_entry"),
+        ("ENTER_SHORT", "TRENDING", "TREND_DAY_CONTINUATION", True, None, True, "accepted_entry"),
         ("EXIT", "UNDECIDED", "PREMISE_EXIT", False, "LONG", True, "accepted_exit"),
-        ("SCALE_IN", "TRENDING", "R1_SCALE_IN", False, "LONG", True, "accepted_scale_in"),
-        ("SCALE_IN", "TRENDING", "R1_SCALE_IN", True, None, False, "flat_action_rejected"),
+        ("ENTER_LONG", "TRENDING", "TREND_DAY_CONTINUATION", False, "LONG", False, "open_action_rejected"),
+        ("EXIT", "TRENDING", "PREMISE_EXIT", True, None, False, "flat_action_rejected"),
     ],
 )
-def test_host_policy_enforces_flat_open_matrix_and_exit_scale_in_contract(
+def test_host_policy_enforces_flat_open_matrix_and_exit_contract(
     action, regime, setup, is_flat, direction, accepted, code
 ):
     """Only the documented flat/open action families may cross the host boundary."""
 
     context = _context(is_flat=is_flat, direction=direction)
     if action == "ENTER_SHORT":
-        context["momentum_vwap"]["stochastic_rsi"] = {"cross_up_in_oversold": False, "cross_down_in_overbought": True}
-        context["market_structure"]["swings"]["highs"] = [{"price": 106.0}]
+        context["session_levels"]["current_close"] = 90.0
+        context["market_structure"]["trend_day_candidate"].update({"direction": "SHORT", "entry": 90.0, "stop": 96.0})
     outcome = CPRHostPolicy().validate(context, _proposal(action, regime, setup))
 
     assert outcome.accepted is accepted
     assert outcome.validation_code == code
     if action == "EXIT" and accepted:
         assert outcome.entry_price is None and outcome.stop_price is None
-    if action == "SCALE_IN" and accepted:
-        assert outcome.scale_in_permitted is True
+    if action == "ENTER_SHORT":
+        assert (outcome.entry_price, outcome.stop_price, outcome.risk_points) == (90.0, 96.0, 6.0)
 
 
 def test_agent_rejects_schema_model_prompt_staleness_timeout_and_second_same_bar():
@@ -997,7 +982,7 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
     path = tmp_path / "decisions.jsonl"
     outcome = CPRHostPolicy().validate(_context(), _proposal("HOLD", "SIDEWAYS", "NONE"))
     frozen = _context()
-    frozen["session_levels"]["next_levels"]["ordered"] = [{"name": "r1", "price": 110.0}]
+    frozen["market_structure"]["trend_day_candidate"]["reason"] = "confluence_too_low"
     frozen["position_state"] = {
         "is_flat": True,
         "access_token": "secret",
@@ -1021,9 +1006,10 @@ def test_decision_log_and_order_free_smokes_keep_only_sanitized_host_evidence(tm
     assert "secret" not in raw
     assert row["validation"]["code"] == "accepted_hold"
     assert row["inference_attempts"] == 1
-    assert row["frozen_context"]["session_levels"]["next_levels"]["ordered"] == [
-        {"name": "r1", "price": 110.0}
-    ]
+    # The frozen candidate is kept whole so a vetoed or rejected bar can be
+    # scored counterfactually later.
+    assert row["frozen_context"]["market_structure"]["trend_day_candidate"]["reason"] == "confluence_too_low"
+    assert set(row["authoritative_geometry"]) == {"action", "entry_price", "stop_price", "risk_points"}
     assert row["authoritative_geometry"]["action"] == "HOLD"
     assert row["token_usage"] == {"total_tokens": 17}
     assert row["execution"] == {"mode": "ORDER_FREE", "submitted": False}
@@ -1310,41 +1296,38 @@ def test_decision_log_keeps_normal_and_failed_repair_attempt_evidence_parseable(
     ]
 
 
-def test_geometry_uses_next_directional_level_not_hard_coded_r1_s1():
-    """Already beyond R1/S1, the next frozen milestone must be used instead."""
+@pytest.mark.parametrize(
+    ("change", "code"),
+    [
+        (lambda c: c["market_structure"]["trend_day_candidate"].update({"direction": "SHORT"}),
+         "candidate_direction_mismatch"),
+        (lambda c: c["session_levels"].update({"current_close": 101.0}), "candidate_close_mismatch"),
+        (lambda c: c["market_structure"]["trend_day_candidate"].update({"stop": 100.0}), "invalid_stop_geometry"),
+        (lambda c: c["market_structure"]["trend_day_candidate"].update({"stop": None}), "missing_candidate_geometry"),
+        (lambda c: c["market_structure"]["trend_day_candidate"].update({"entry": True}), "missing_candidate_geometry"),
+        (lambda c: c["position_state"].update({"entries_today": 1}), "session_entry_used"),
+        (lambda c: c["position_state"].update({"entries_today": False}), "session_entry_used"),
+        (lambda c: c["position_state"].pop("entries_today"), "session_entry_used"),
+    ],
+)
+def test_entry_geometry_comes_only_from_the_frozen_candidate(change, code):
+    """Every price is the host's; a mismatched or used-up candidate cannot enter."""
 
-    long_context = _context()
-    long_context["session_levels"]["levels"].update({"r1": 90.0, "r2": 120.0})
-    long_context["session_levels"]["next_levels"]["upside"] = {"name": "r2", "price": 120.0}
-    short_context = _context()
-    short_context["session_levels"]["current_close"] = 85.0
-    short_context["session_levels"]["levels"].update({"s1": 90.0, "s2": 70.0})
-    short_context["session_levels"]["next_levels"]["downside"] = {"name": "s2", "price": 70.0}
-    short_context["momentum_vwap"].update(
-        {
-            "rsi14": 60.0,
-            "ema": {"order": "EMA5_BELOW_EMA20", "ema5_slope": -1.0, "ema20_slope": -1.0},
-            "candle": {"high": 90.0},
-        }
-    )
-    short_context["momentum_vwap"]["vwap"] = {
-        "sequence_evidence": {"all_recent_below": True},
-        "entry_candle": {"body_fraction_below": 0.5},
-    }
+    context = _context()
+    change(context)
+    outcome = CPRHostPolicy().validate(context, _proposal("ENTER_LONG", "TRENDING", "TREND_DAY_CONTINUATION"))
 
-    long = CPRHostPolicy().validate(long_context, _proposal("ENTER_LONG", "TRENDING", "TRENDING_VWAP_CONTINUATION"))
-    short = CPRHostPolicy().validate(short_context, _proposal("ENTER_SHORT", "TRENDING", "TRENDING_VWAP_CONTINUATION"))
-
-    assert long.milestone_price == 118.0
-    assert short.milestone_price == 72.0
+    assert outcome.accepted is False
+    assert outcome.validation_code == code
+    assert outcome.entry_price is None and outcome.stop_price is None
 
 
 def test_valid_boundary_persists_regime_even_when_host_rejects_entry_and_boundary_failure_does_not():
     """Regime is advisory state, independent from deterministic execution permission."""
 
     rejected_context = _context()
-    rejected_context["momentum_vwap"]["vwap"]["entry_candle"]["body_fraction_above"] = 0.0
-    decision = _proposal("ENTER_LONG", "TRENDING", "TRENDING_VWAP_CONTINUATION")
+    rejected_context["market_structure"]["trend_day_candidate"]["eligible"] = False
+    decision = _proposal("ENTER_LONG", "TRENDING", "TREND_DAY_CONTINUATION")
     persisted = CPRAgent(runner=_runner(decision)).decide(rejected_context, bar_signature="valid-boundary")
     malformed = CPRAgent(runner=lambda **_kwargs: CPRAgentRunResult("{", _calls())).decide(
         _context(), bar_signature="bad"
@@ -1353,7 +1336,7 @@ def test_valid_boundary_persists_regime_even_when_host_rejects_entry_and_boundar
     broken_context["position_state"] = {"is_flat": "unknown"}
     context_failure = CPRAgent(runner=_runner(decision)).decide(broken_context, bar_signature="bad-context")
 
-    assert persisted.validation_code == "vwap_body_fraction_rejected"
+    assert persisted.validation_code == "no_trend_day_candidate"
     assert persisted.accepted_regime == "TRENDING"
     assert malformed.accepted_regime is None
     assert context_failure.validation_code == "invalid_position_state"

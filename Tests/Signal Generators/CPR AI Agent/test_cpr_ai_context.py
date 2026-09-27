@@ -2,24 +2,21 @@
 
 The fixtures use deliberately hand-derived one-minute prices and explicit IST
 clocks. They never call an older CPR Strategy helper, which proves this package
-owns completed-bar, CPR-level, indicator, structure, and snapshot calculations.
-Literal Wilder/StochRSI values protect against substituting a similar-looking
-pandas formula, while duplicate/missing/forming-minute cases protect live
-completed-bar cadence.
+owns completed-bar, CPR-level, ATR, VWAP, structure, and snapshot calculations.
+The trend-day fixture checks that the frozen candidate is exactly what the
+shared gate (and so the backtest) computes, while duplicate/missing/forming
+minute cases protect live completed-bar cadence.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from math import sin
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 from cpr_ai_agent import CPRHostPolicy
 from cpr_ai_context import (
-    _rsi_wilder,
-    _stochastic_rsi,
     build_completed_five_minute_bars,
     build_cpr_context,
 )
@@ -28,6 +25,7 @@ from cpr_ai_prompt import CPR_AI_PROMPT_VERSION, build_system_prompt
 from cpr_ai_schema import CPRAgentDecision, validate_position_state
 from cpr_ai_signals import freeze_cpr_context
 from cpr_ai_tools import EXPECTED_TOOL_NAMES, FrozenCPRContextRegistry
+from cpr_ai_trend_day import evaluate_trend_day_candidate
 from pydantic import ValidationError
 
 
@@ -201,11 +199,11 @@ def test_context_uses_hand_derived_previous_day_levels_and_opening_facts():
     assert levels["levels"]["s1"] == pytest.approx(93.3333333333)
     assert levels["opening"]["first_15_minutes"]["complete"] is True
     assert levels["opening"]["first_30_minutes"]["complete"] is True
-    assert levels["next_levels"]["buffer_points"] == 2.0
-    # The current close is far above all calculated levels, so the buffered
-    # view intentionally has no upside candidate and R2 is nearest below.
-    assert levels["next_levels"]["upside"] is None
-    assert levels["next_levels"]["downside"]["name"] == "r2"
+    # Session open 99.5 is below the prior close 105: a 5.5-point gap down.
+    assert levels["gap"] == {"session_open": 99.5, "points": -5.5, "direction": "DOWN"}
+    # One prior session is fewer than the three the ATR needs: no ATR, no candidate.
+    assert levels["atr"] == {"value": None, "sessions_used": 1, "prior_session_ranges": [20.0]}
+    assert context["market_structure"]["trend_day_candidate"]["eligible"] is False
 
 
 def test_context_carries_only_the_prior_host_accepted_regime_into_session_levels():
@@ -221,129 +219,6 @@ def test_context_carries_only_the_prior_host_accepted_regime_into_session_levels
         build_cpr_context(_two_session_frame(), prior_accepted_regime="BREAKOUT")
 
 
-def test_momentum_contains_tradingview_srsi_and_equal_weight_vwap_fallback():
-    """Missing index volume uses typical-price averaging while SRSI exposes crosses."""
-
-    rows = _minute_rows(datetime(2026, 8, 2, 9, 15), [100 + (index % 7) for index in range(180)], volume=None)
-    # Supply a full earlier day so levels are available; all current volumes are absent.
-    rows = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30) + rows
-    context = build_cpr_context(pd.DataFrame(rows))
-    momentum = context["momentum_vwap"]
-
-    assert momentum["vwap"]["method"] == "equal_weight_typical_price"
-    assert momentum["stochastic_rsi"]["rsi_length"] == 14
-    assert momentum["stochastic_rsi"]["stochastic_length"] == 14
-    assert momentum["stochastic_rsi"]["k_sma_length"] == 3
-    assert momentum["stochastic_rsi"]["d_sma_length"] == 3
-    assert momentum["stochastic_rsi"]["oversold"] == 20.0
-    assert momentum["stochastic_rsi"]["overbought"] == 80.0
-    assert {"current_k", "previous_k", "current_d", "previous_d", "cross_up", "cross_down"} <= set(
-        momentum["stochastic_rsi"]
-    )
-
-
-def test_srsi_literal_crosses_report_their_direction_and_matching_zone_flags():
-    """Known 14/14/3/3 outputs must preserve cross and zone semantics."""
-
-    def srsi_for_completed_bars(count: int) -> dict[str, object]:
-        """Split one continuous literal close series across two sessions.
-
-        The last eight bars deliberately land in the current session. Indicator
-        continuity must preserve the literal full-series result across that
-        boundary instead of restarting the 14/14/3/3 warm-up at 09:15.
-        """
-
-        five_minute_closes = [100.0 + 10.0 * sin(index * 0.65) for index in range(count)]
-        return build_cpr_context(_two_session_five_minute_frame(five_minute_closes))["momentum_vwap"][
-            "stochastic_rsi"
-        ]
-
-    # These values are literal results from the standard Wilder RSI(14),
-    # Stoch(14), K SMA(3), D SMA(3) equations for the listed sine closes.
-    oversold_cross = srsi_for_completed_bars(39)
-    assert oversold_cross["current_k"] == pytest.approx(13.2985980859)
-    assert oversold_cross["current_d"] == pytest.approx(11.5561175228)
-    assert oversold_cross["cross_up"] is True
-    assert oversold_cross["cross_down"] is False
-    assert oversold_cross["cross_up_in_oversold"] is True
-    assert oversold_cross["cross_down_in_overbought"] is False
-
-    overbought_cross = srsi_for_completed_bars(73)
-    assert overbought_cross["current_k"] == pytest.approx(83.4730716424)
-    assert overbought_cross["current_d"] == pytest.approx(87.7732961026)
-    assert overbought_cross["cross_up"] is False
-    assert overbought_cross["cross_down"] is True
-    assert overbought_cross["cross_up_in_oversold"] is False
-    assert overbought_cross["cross_down_in_overbought"] is True
-
-
-def test_wilder_rsi_uses_first_fourteen_change_sma_then_recursive_rma():
-    """The first seed and next update are literal Wilder values, not pandas EWM output."""
-
-    closes = pd.Series(
-        [100, 101, 102, 101, 103, 102, 104, 103, 105, 104, 106, 105, 107, 106, 108, 107],
-        dtype=float,
-    )
-
-    rsi = _rsi_wilder(closes)
-
-    assert rsi.iloc[:14].isna().all()
-    assert rsi.iloc[14] == pytest.approx(70.0)
-    assert rsi.iloc[15] == pytest.approx(66.4233576642)
-
-
-def test_wilder_rsi_flat_and_monotonic_boundaries_are_neutral_and_overbought():
-    """Zero loss and zero movement receive explicit, stable RSI boundary values."""
-
-    flat = _rsi_wilder(pd.Series([100.0] * 20))
-    rising = _rsi_wilder(pd.Series([float(value) for value in range(100, 120)]))
-
-    assert flat.iloc[:14].isna().all()
-    assert flat.iloc[14:].tolist() == [50.0] * 6
-    assert rising.iloc[:14].isna().all()
-    assert rising.iloc[14:].tolist() == [100.0] * 6
-    _, flat_k, flat_d = _stochastic_rsi(pd.Series([100.0] * 40))
-    assert flat_k.isna().all()
-    assert flat_d.isna().all()
-
-
-def test_momentum_exposes_rsi_ema_candle_and_deterministic_vwap_sequence_evidence():
-    """Indicator consumers receive values and evidence, not an inferred regime."""
-
-    context = build_cpr_context(_two_session_frame())
-    momentum = context["momentum_vwap"]
-
-    assert momentum["rsi14"] is not None
-    assert momentum["ema"]["ema5"] is not None
-    assert momentum["ema"]["ema20"] is not None
-    assert momentum["ema"]["order"] in {"EMA5_ABOVE_EMA20", "EMA5_BELOW_EMA20", "EQUAL"}
-    assert momentum["candle"]["colour"] == "BULLISH"
-    assert momentum["candle"]["range"] > momentum["candle"]["body"] > 0
-    assert len(momentum["recent_candles"]) == 5
-    assert len(momentum["vwap"]["sequence_evidence"]["relations"]) == 3
-
-
-def test_early_session_momentum_indicators_continue_across_prior_session_closes():
-    """The 09:50 bar receives continuous RSI, SRSI, and EMA history."""
-
-    closes = [100.0 + 10.0 * sin(index * 0.65) for index in range(40)]
-    context = build_cpr_context(_two_session_five_minute_frame(closes))
-    momentum = context["momentum_vwap"]
-    expected_rsi, expected_k, expected_d = _stochastic_rsi(pd.Series(closes, dtype=float))
-    expected_ema5 = pd.Series(closes, dtype=float).ewm(span=5, adjust=False).mean()
-    expected_ema20 = pd.Series(closes, dtype=float).ewm(span=20, adjust=False).mean()
-
-    assert momentum["rsi14"] == pytest.approx(expected_rsi.iloc[-1])
-    assert momentum["stochastic_rsi"]["current_k"] == pytest.approx(expected_k.iloc[-1])
-    assert momentum["stochastic_rsi"]["current_d"] == pytest.approx(expected_d.iloc[-1])
-    assert momentum["ema"]["ema5"] == pytest.approx(expected_ema5.iloc[-1])
-    assert momentum["ema"]["ema20"] == pytest.approx(expected_ema20.iloc[-1])
-    assert momentum["ema"]["ema5_slope"] == pytest.approx(expected_ema5.iloc[-1] - expected_ema5.iloc[-2])
-    assert momentum["ema"]["ema20_slope"] == pytest.approx(
-        expected_ema20.iloc[-1] - expected_ema20.iloc[-2]
-    )
-
-
 def test_early_session_vwap_excludes_prior_session_indicator_history():
     """Previous-day warm-up prices cannot leak into current-session VWAP."""
 
@@ -355,7 +230,9 @@ def test_early_session_vwap_excludes_prior_session_indicator_history():
     # The synthetic OHLC envelope makes each completed bar's typical price
     # equal its intended close, so this is an independent session-only result.
     assert vwap["value"] == pytest.approx(sum(current_closes) / len(current_closes))
-    assert vwap["sequence_evidence"]["relations"] == ["ABOVE", "ABOVE", "ABOVE"]
+    assert vwap["method"] == "equal_weight_typical_price"
+    assert vwap["recent_relations"] == ["ABOVE"] * 6
+    assert vwap["fraction_of_bars_above"] == pytest.approx(7 / 8)
 
 
 def test_prior_indicator_history_does_not_leak_into_session_structure_facts():
@@ -379,68 +256,9 @@ def test_prior_indicator_history_does_not_leak_into_session_structure_facts():
     }
     assert all(str(candle["timestamp"]).startswith("2026-08-02") for candle in recent)
     assert structure["swings"] == {"highs": [], "lows": []}
-    assert structure["r1_scale_in_candidate"]["eligible"] is False
-
-
-def test_0950_trend_continuation_uses_prior_session_rsi_warmup():
-    """A valid early continuation is not rejected merely because the day is young."""
-
-    closes = [float(value) for value in range(90, 133)]
-    context = build_cpr_context(
-        _two_session_five_minute_frame(closes),
-        position_state={"is_flat": True},
-    )
-    proposal = CPRAgentDecision(
-        action="ENTER_LONG",
-        regime="TRENDING",
-        setup="TRENDING_VWAP_CONTINUATION",
-        confidence=7,
-        reasoning="Synthetic 09:50 regression fixture.",
-        model_used="gpt-5.6-terra",
-        prompt_version=CPR_AI_PROMPT_VERSION,
-    )
-
-    outcome = CPRHostPolicy().validate(context, proposal)
-
-    assert context["session_levels"]["current_close"] == 132.0
-    assert context["momentum_vwap"]["rsi14"] == 100.0
-    assert outcome.accepted is True
-    assert outcome.validation_code == "accepted_entry"
-    assert outcome.entry_price == 132.0
-    assert outcome.stop_price == 131.0
-    assert outcome.risk_points == 1.0
-
-
-def test_genuinely_short_total_history_keeps_indicators_unavailable():
-    """Fail closed when neither the current nor prior session can warm indicators."""
-
-    context = build_cpr_context(
-        _two_session_five_minute_frame([100.0, 101.0, 102.0, 103.0], current_session_bars=2)
-    )
-    momentum = context["momentum_vwap"]
-
-    assert momentum["rsi14"] is None
-    assert momentum["stochastic_rsi"]["current_k"] is None
-    assert momentum["stochastic_rsi"]["current_d"] is None
-
-
-def test_momentum_exposes_current_candle_body_fractions_on_each_vwap_side():
-    """The host needs a completed candle's own VWAP evidence, not a session average.
-
-    The fixture makes the final five-minute candle open at 110 and close at
-    114 while its final VWAP is below 110.  Its full four-point body therefore
-    belongs above VWAP, which is a hand-derived 1.0 fraction.
-    """
-
-    previous = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30, volume=10.0)
-    current = _minute_rows(datetime(2026, 8, 2, 9, 15), [100.0] * 175 + [114.0] * 5, volume=10.0)
-    for row in current[-5:]:
-        row.update({"open": 110.0, "low": 109.0, "high": 115.0, "close": 114.0})
-
-    entry_candle = build_cpr_context(pd.DataFrame(previous + current))["momentum_vwap"]["vwap"]["entry_candle"]
-
-    assert entry_candle["body_fraction_above"] == pytest.approx(1.0)
-    assert entry_candle["body_fraction_below"] == pytest.approx(0.0)
+    assert structure["extremes"] == {"bars_since_session_high": 0, "bars_since_session_low": 7}
+    # 09:50 is outside the 11:00-13:30 entry window.
+    assert structure["trend_day_candidate"]["reason"] == "outside_window"
 
 
 def test_market_structure_reports_confirmed_swings_and_objective_hh_hl_comparisons():
@@ -465,37 +283,19 @@ def test_market_structure_reports_confirmed_swings_and_objective_hh_hl_compariso
     assert "regime" not in structure
 
 
-def test_r1_candidate_is_long_only_after_bearish_touch_then_bullish_reclaim():
-    """There is no symmetric S1-short setup in the deterministic context."""
-
-    rows = _minute_rows(datetime(2026, 8, 1, 9, 15), [100.0] * 30)
-    rows[0]["low"], rows[1]["high"], rows[-1]["close"] = 90.0, 110.0, 105.0
-    current = _minute_rows(datetime(2026, 8, 2, 9, 15), [105.0] * 40)
-    # R1 is 113.333...; shape the last two completed five-minute candles.
-    for offset in range(5):
-        current[30 + offset].update({"open": 114.0, "high": 114.5, "low": 112.8, "close": 113.0})
-        current[35 + offset].update({"open": 113.1, "high": 114.2, "low": 113.0, "close": 114.0})
-
-    candidate = build_cpr_context(pd.DataFrame(rows + current))["market_structure"]["r1_scale_in_candidate"]
-
-    assert candidate["eligible"] is True
-    assert candidate["direction"] == "LONG"
-    assert "s1" not in candidate
-
-
 def test_decision_schema_only_allows_the_new_relationships_and_no_execution_fields():
     """A model cannot turn a context judgment into execution instructions."""
 
     valid = CPRAgentDecision(
-        action="SCALE_IN",
+        action="ENTER_LONG",
         regime="TRENDING",
-        setup="R1_SCALE_IN",
+        setup="TREND_DAY_CONTINUATION",
         confidence=7,
-        reasoning="The completed bar held R1.",
+        reasoning="The session is a clean staircase above VWAP.",
         model_used="gpt-5.6-terra",
         prompt_version=CPR_AI_PROMPT_VERSION,
     )
-    assert valid.action == "SCALE_IN"
+    assert valid.action == "ENTER_LONG"
 
     with pytest.raises(ValidationError):
         CPRAgentDecision(
@@ -583,21 +383,21 @@ def test_position_state_allows_only_typed_host_judgment_facts():
             "original_entry_price": 100.0,
             "original_risk_points": 5.0,
             "original_protective_stop": 95.0,
-            "current_protective_stop": 97.0,
-            "trailing_stage": "R1_LOCKED",
-            "milestone_price": 108.0,
-            "final_target_price": 118.0,
-            "premise": "TRENDING_VWAP_CONTINUATION",
-            "setup": "R1_SCALE_IN",
-            "scale_in_eligible": True,
-            "scale_in_count": 0,
+            "current_protective_stop": 95.0,
+            "premise": "TREND_DAY_CONTINUATION",
+            "setup": "TREND_DAY_CONTINUATION",
+            "entries_today": 1,
         }
     )
 
     assert validated["original_risk_points"] == 5.0
-    assert validated["scale_in_eligible"] is True
+    assert validated["entries_today"] == 1
     with pytest.raises(ValidationError):
         validate_position_state({"is_flat": True, "quantity": 1})
+    # The retired trailing and add-on facts are no longer part of the contract.
+    for retired in ({"trailing_stage": "BREAKEVEN"}, {"scale_in_count": 0}, {"premise": "SIDEWAYS_SRSI"}):
+        with pytest.raises(ValidationError):
+            validate_position_state({"is_flat": False, **retired})
 
 
 def test_mcp_server_exposes_exactly_four_no_argument_frozen_context_tools(tmp_path):
@@ -629,15 +429,101 @@ def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam(
 
     assert all(name in prompt for name in EXPECTED_TOOL_NAMES)
     assert "SIDEWAYS" in prompt and "TRENDING" in prompt and "UNDECIDED" in prompt
-    assert "breakout" in prompt.lower() and "breakdown" in prompt.lower()
-    assert "SRSI" in prompt and "VWAP" in prompt and "PREMISE_EXIT" in prompt
-    # This is model-facing safety knowledge, so both directional boundaries
-    # must be visible in the fully assembled prompt that Codex actually sees.
-    assert "bullish trend-continuation" in prompt.lower() and "above R2" in prompt
-    assert "bearish trend-continuation" in prompt.lower() and "below S2" in prompt
+    assert "TREND_DAY_CONTINUATION" in prompt and "PREMISE_EXIT" in prompt
+    assert "trend_day_candidate" in prompt and "VWAP" in prompt
+    # The model must know it may only accept or veto, never reverse, a candidate,
+    # and that the live expression is a SOLD option held for time decay.
+    assert "never against the candidate's" in prompt and "veto" in prompt
+    assert "SELLS the ATM put" in prompt and "SELLS\nthe ATM call" in prompt
+    # The busted beliefs are model-facing knowledge too.
+    assert "OI" in prompt and "BankNIFTY" in prompt and "trailing" in prompt
+    assert "SCALE_IN" not in prompt and "SRSI" not in prompt
     assert "HOLD" in prompt and "NONE" in prompt
     assert "host-owned" in prompt.lower()
     assert "confidence" in prompt and "0 through 10" in prompt
     assert "model_used" in prompt and "configured-test-model" in prompt
     assert "FUTURE OPERATOR-APPROVED KNOWLEDGE" in prompt
     assert CPR_AI_PROMPT_VERSION in prompt
+
+
+def _trend_day_frame() -> pd.DataFrame:
+    """Six prior sessions plus a steadily rising current session up to 11:04.
+
+    Prior-session ranges (oldest first) are 50, 40, 30, 20, 10, 60, so ATR is
+    the mean of the newest five: 32. The last prior day (H 130, L 70, C 100)
+    puts R1 at 130. Today rises 0.4 points a minute from 100, so the 11:00 bar
+    closes near 143.6 -- above R1, far above VWAP, and at the session high.
+    """
+
+    rows: list[dict[str, object]] = []
+    for day, session_range in zip(range(3, 9), (50.0, 40.0, 30.0, 20.0, 10.0, 60.0), strict=True):
+        prior = _minute_rows(datetime(2026, 8, day, 9, 15), [100.0] * 30)
+        prior[0]["low"] = 100.0 - session_range / 2
+        prior[1]["high"] = 100.0 + session_range / 2
+        rows += prior
+    rows += _minute_rows(datetime(2026, 8, 10, 9, 15), [100.0 + 0.4 * index for index in range(110)])
+    return pd.DataFrame(rows)
+
+
+def test_context_candidate_is_exactly_the_shared_gate_verdict():
+    """The frozen candidate must equal what the backtest's gate computes on the same bars."""
+
+    frame = _trend_day_frame()
+    as_of = datetime(2026, 8, 10, 11, 5, tzinfo=ZoneInfo("Asia/Kolkata"))
+    context = build_cpr_context(frame, as_of=as_of)
+    bars = build_completed_five_minute_bars(frame, as_of=as_of)
+    session_bars = bars.loc[bars["timestamp"].dt.date == datetime(2026, 8, 10).date()].reset_index(drop=True)
+    expected = evaluate_trend_day_candidate(
+        session_bars, prior_high=130.0, prior_low=70.0, prior_close=100.0, atr=32.0, atr_sessions_used=5
+    ).to_dict()
+
+    candidate = context["market_structure"]["trend_day_candidate"]
+    assert candidate == expected
+    assert candidate["eligible"] is True and candidate["direction"] == "LONG"
+    assert candidate["entry"] == context["session_levels"]["current_close"]
+    assert candidate["stop"] == pytest.approx(context["momentum_vwap"]["vwap"]["value"])
+    assert (candidate["beyond_r1_s1"], candidate["gap_in_direction"], candidate["extended_from_vwap"]) == (
+        True,
+        False,
+        True,
+    )
+    assert context["session_levels"]["atr"] == {
+        "value": 32.0,
+        "sessions_used": 5,
+        "prior_session_ranges": [40.0, 30.0, 20.0, 10.0, 60.0],
+    }
+    assert context["momentum_vwap"]["vwap"]["distance_atr"] == pytest.approx(candidate["distance_from_vwap_atr"])
+    assert context["momentum_vwap"]["candle"]["range_atr"] == pytest.approx(
+        context["momentum_vwap"]["candle"]["range"] / 32.0
+    )
+    assert len(context["momentum_vwap"]["recent_candles"]) == 6
+    # The frozen MCP snapshot is the same JSON the host validates against.
+    assert freeze_cpr_context(frame, as_of=as_of).snapshot_payload() == context
+
+
+def test_host_accepts_the_live_context_candidate_end_to_end():
+    """Context plus policy: a real frozen candidate yields host-owned geometry."""
+
+    context = build_cpr_context(
+        _trend_day_frame(),
+        position_state={"is_flat": True, "entries_today": 0},
+        as_of=datetime(2026, 8, 10, 11, 5, tzinfo=ZoneInfo("Asia/Kolkata")),
+    )
+    proposal = CPRAgentDecision(
+        action="ENTER_LONG",
+        regime="TRENDING",
+        setup="TREND_DAY_CONTINUATION",
+        confidence=8,
+        reasoning="Staircase above VWAP beyond R1.",
+        model_used="gpt-5.6-terra",
+        prompt_version=CPR_AI_PROMPT_VERSION,
+    )
+
+    outcome = CPRHostPolicy().validate(context, proposal)
+    candidate = context["market_structure"]["trend_day_candidate"]
+
+    assert outcome.accepted and outcome.validation_code == "accepted_entry"
+    assert outcome.entry_price == candidate["entry"]
+    assert outcome.stop_price == candidate["stop"]
+    assert outcome.risk_points == pytest.approx(candidate["entry"] - candidate["stop"])
+

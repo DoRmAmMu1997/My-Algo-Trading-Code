@@ -56,23 +56,23 @@ def build_mcp_server(snapshot_path: str):
     # Load once before registering tools.  Tool calls below can only copy this
     # object; they cannot observe live feed updates during the Codex turn.
     payload = load_snapshot_payload(snapshot_path)
-    server = MCPServer("cpr-srsi-vwap-context", log_level="ERROR")
+    server = MCPServer("cpr-trend-day-context", log_level="ERROR")
 
-    @server.tool(name="session_levels", description="Return frozen CPR and opening-session facts.")
+    @server.tool(name="session_levels", description="Return frozen CPR, opening gap, and recent-range ATR facts.")
     def session_levels() -> dict[str, Any]:
-        """Return CPR, pivot, opening-range, distance, and prior-regime facts."""
+        """Return CPR, gap, ATR, opening-range, distance, and prior-regime facts."""
 
         return json.loads(json.dumps(payload["session_levels"]))
 
-    @server.tool(name="momentum_vwap", description="Return frozen SRSI, RSI, EMA, VWAP and candle facts.")
+    @server.tool(name="momentum_vwap", description="Return frozen session VWAP and candle facts.")
     def momentum_vwap() -> dict[str, Any]:
-        """Return indicator and candle evidence calculated by the Python host."""
+        """Return VWAP and candle evidence calculated by the Python host."""
 
         return json.loads(json.dumps(payload["momentum_vwap"]))
 
-    @server.tool(name="market_structure", description="Return frozen confirmed swings and R1 scale-in evidence.")
+    @server.tool(name="market_structure", description="Return frozen swings and the host trend-day candidate.")
     def market_structure() -> dict[str, Any]:
-        """Return confirmed swing comparisons and the long-only R1 candidate."""
+        """Return confirmed swing comparisons and the trend-day candidate verdict."""
 
         return json.loads(json.dumps(payload["market_structure"]))
 
