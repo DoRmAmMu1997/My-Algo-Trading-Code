@@ -107,10 +107,7 @@ class CPRAgentOutcome:
     validation_reason: str = "No decision was evaluated."
     entry_price: float | None = None
     stop_price: float | None = None
-    milestone_price: float | None = None
-    final_target_price: float | None = None
     risk_points: float | None = None
-    scale_in_permitted: bool = False
     latency_ms: int = 0
     token_usage: dict[str, int] = field(default_factory=dict)
     tool_evidence: tuple[CPRToolCallRecord, ...] = ()
@@ -141,22 +138,21 @@ def _hold(code: str, reason: str, proposal: Any | None = None, *, regime: str | 
 class CPRHostPolicy:
     """Derive permission and geometry from one immutable completed-bar snapshot.
 
-    The model selects among documented setup names, but this policy owns every
-    Boolean hard gate and every price.  It therefore remains authoritative even
-    if the model fabricates supporting prose.
+    The Trend-Day Rider's entry authority is the frozen
+    ``market_structure.trend_day_candidate`` verdict computed by
+    ``cpr_ai_trend_day`` -- the same code the backtest replays. Codex may only
+    accept that candidate (in its direction) or veto it; the policy owns every
+    Boolean gate and every price, so fabricated supporting prose changes
+    nothing.
     """
-
-    max_risk_points = 30.0
-    milestone_buffer = 2.0
 
     def validate(self, context: Mapping[str, Any], proposal: Any) -> CPRAgentOutcome:
         """Accept only a proposal whose deterministic evidence proves its safety.
 
-        The model's action is merely a request.  The flat/open action matrix is
+        The model's action is merely a request. The flat/open action matrix is
         checked first: a flat worker may enter, while an open worker may only
-        exit or request the single documented add.  Missing, malformed, or
-        contradictory data returns HOLD so a transient issue cannot increase
-        exposure by accident.
+        hold or exit. Missing, malformed, or contradictory data returns HOLD so
+        a transient issue cannot increase exposure by accident.
         """
 
         try:
@@ -175,8 +171,8 @@ class CPRHostPolicy:
                 )
             if is_flat and proposal.action not in {"ENTER_LONG", "ENTER_SHORT"}:
                 return _hold("flat_action_rejected", "A flat position may only hold or enter.", proposal)
-            if not is_flat and proposal.action not in {"EXIT", "SCALE_IN"}:
-                return _hold("open_action_rejected", "An open position may only hold, exit, or scale in.", proposal)
+            if not is_flat and proposal.action != "EXIT":
+                return _hold("open_action_rejected", "An open position may only hold or exit.", proposal)
             if proposal.action == "EXIT":
                 if proposal.setup != "PREMISE_EXIT":
                     return _hold("exit_setup_rejected", "EXIT requires PREMISE_EXIT.", proposal)
@@ -188,9 +184,7 @@ class CPRHostPolicy:
                     validation_code="accepted_exit",
                     validation_reason="Open-position premise exit is host permitted.",
                 )
-            if proposal.action == "SCALE_IN":
-                return self._scale_in(context, proposal, position)
-            return self._entry(context, proposal)
+            return self._entry(context, proposal, position)
         except (KeyError, TypeError, ValueError) as error:
             return _hold("invalid_frozen_context", f"Frozen context is incomplete: {error}", proposal)
 
@@ -203,205 +197,66 @@ class CPRHostPolicy:
             raise TypeError(f"{name} must be a mapping")
         return value
 
-    def _entry(self, context: Mapping[str, Any], proposal: Any) -> CPRAgentOutcome:
-        """Route a flat entry request to its deterministic setup validator.
+    def _entry(self, context: Mapping[str, Any], proposal: Any, position: Mapping[str, Any]) -> CPRAgentOutcome:
+        """Accept a flat entry only when it restates the host's own candidate.
 
-        Unknown setup names are rejected rather than treated as discretionary
-        variants.  This is the seam where future approved setups can be added.
+        The candidate must be eligible, point the same way as the proposal,
+        and describe the same completed close the snapshot froze. Entry is that
+        close and the stop is the candidate's VWAP, so a long's stop is below
+        entry and a short's above. At most one entry is allowed per session.
         """
 
-        direction = "LONG" if proposal.action == "ENTER_LONG" else "SHORT"
-        if proposal.setup == "SIDEWAYS_SRSI":
-            return self._sideways_entry(context, proposal, direction)
-        if proposal.setup in {"TRENDING_VWAP_CONTINUATION", "TRENDING_VWAP_REVERSAL"}:
-            return self._trending_entry(context, proposal, direction)
-        return _hold("entry_setup_rejected", "Entries need a documented SRSI or VWAP setup.", proposal)
-
-    def _sideways_entry(self, context: Mapping[str, Any], proposal: Any, direction: str) -> CPRAgentOutcome:
-        """Validate a sideways SRSI entry and select its confirmed-swing stop.
-
-        A long needs a bullish cross wholly in the oversold zone; a short needs
-        the bearish overbought mirror.  The stop comes from the latest already
-        confirmed swing, never from a model-supplied price or forming extreme.
-        """
-
-        if proposal.regime != "SIDEWAYS":
-            return _hold("sideways_regime_rejected", "SRSI entries require the SIDEWAYS regime.", proposal)
-        momentum = self._mapping(context, "momentum_vwap")
-        srsi = self._mapping(momentum, "stochastic_rsi")
-        expected = "cross_up_in_oversold" if direction == "LONG" else "cross_down_in_overbought"
-        if srsi.get(expected) is not True:
-            return _hold("srsi_cross_rejected", "Frozen SRSI cross and zone do not support this entry.", proposal)
-        structure = self._mapping(context, "market_structure")
-        swings = self._mapping(structure, "swings")
-        swing_name = "lows" if direction == "LONG" else "highs"
-        points = swings.get(swing_name)
-        if not isinstance(points, list) or not points or not isinstance(points[-1], Mapping):
-            return _hold("missing_swing_stop", "Sideways entries need a confirmed latest swing.", proposal)
-        return self._geometry(context, proposal, direction, float(points[-1]["price"]))
-
-    def _trending_entry(self, context: Mapping[str, Any], proposal: Any, direction: str) -> CPRAgentOutcome:
-        """Apply every documented VWAP, candle-body, RSI, and EMA trend gate.
-
-        Continuation and reversal use different frozen VWAP sequences, but
-        both require at least 40 percent of the entry body on the trade side,
-        directional RSI, ordered/sloping EMAs, and the completed candle extreme
-        as stop.  A continuation also cannot chase a long above R2 or a short
-        below S2.  Model reasoning cannot waive any of these conditions.
-        """
-
+        if proposal.setup != "TREND_DAY_CONTINUATION":
+            return _hold("entry_setup_rejected", "Entries need the TREND_DAY_CONTINUATION setup.", proposal)
         if proposal.regime != "TRENDING":
-            return _hold("trending_regime_rejected", "VWAP entries require the TRENDING regime.", proposal)
-        long = direction == "LONG"
-        if proposal.setup == "TRENDING_VWAP_CONTINUATION":
-            levels = self._mapping(context, "session_levels")
-            level_map = self._mapping(levels, "levels")
-            entry = levels.get("current_close")
-            boundary_name = "r2" if long else "s2"
-            boundary = level_map.get(boundary_name)
-
-            # The comparison is deliberately strict: the new knowledge says
-            # "above R2" and "below S2." Existing reward/target geometry still
-            # decides whether an entry exactly at or near a level is practical.
-            outside_boundary = (
-                isinstance(entry, (int, float))
-                and isinstance(boundary, (int, float))
-                and ((long and entry > boundary) or (not long and entry < boundary))
-            )
-            if outside_boundary:
-                return _hold(
-                    "continuation_outside_r2_s2",
-                    "Trend continuation cannot enter long above R2 or short below S2.",
-                    proposal,
-                )
-        momentum = self._mapping(context, "momentum_vwap")
-        vwap = self._mapping(momentum, "vwap")
-        sequence = self._mapping(vwap, "sequence_evidence")
-        body = self._mapping(vwap, "entry_candle")
-        sequence_key = (
-            "all_recent_above"
-            if proposal.setup == "TRENDING_VWAP_CONTINUATION" and long
-            else "all_recent_below"
-            if proposal.setup == "TRENDING_VWAP_CONTINUATION"
-            else "reclaimed"
-            if long
-            else "lost"
-        )
-        if sequence.get(sequence_key) is not True:
-            return _hold("vwap_sequence_rejected", "The documented directional VWAP sequence is absent.", proposal)
-        fraction = body.get("body_fraction_above" if long else "body_fraction_below")
-        if not isinstance(fraction, (int, float)) or float(fraction) < 0.4:
+            return _hold("trending_regime_rejected", "Trend-day entries require the TRENDING regime.", proposal)
+        entries_today = position.get("entries_today")
+        if type(entries_today) is not int or entries_today != 0:
+            # ``type(...) is int`` also refuses a bool, which is an int subclass.
+            return _hold("session_entry_used", "The Trend-Day Rider allows one entry per session.", proposal)
+        candidate = self._mapping(self._mapping(context, "market_structure"), "trend_day_candidate")
+        if candidate.get("eligible") is not True:
+            return _hold("no_trend_day_candidate", "The host found no trend-day candidate on this bar.", proposal)
+        direction = "LONG" if proposal.action == "ENTER_LONG" else "SHORT"
+        if candidate.get("direction") != direction:
             return _hold(
-                "vwap_body_fraction_rejected",
-                "At least 40% of the entry body must be on the VWAP side.",
+                "candidate_direction_mismatch",
+                "The proposal points against the host's trend-day candidate.",
                 proposal,
             )
-        rsi = momentum.get("rsi14")
-        if not isinstance(rsi, (int, float)) or (long and rsi <= 45) or (not long and rsi >= 65):
-            return _hold("rsi_rejected", "RSI does not meet the directional hard gate.", proposal)
-        ema = self._mapping(momentum, "ema")
-        correct_order = "EMA5_ABOVE_EMA20" if long else "EMA5_BELOW_EMA20"
-        if (
-            ema.get("order") != correct_order
-            or not isinstance(ema.get("ema5_slope"), (int, float))
-            or not isinstance(ema.get("ema20_slope"), (int, float))
-            or (long and (ema["ema5_slope"] <= 0 or ema["ema20_slope"] <= 0))
-            or (not long and (ema["ema5_slope"] >= 0 or ema["ema20_slope"] >= 0))
-        ):
-            return _hold("ema_rejected", "EMA order and both directional slopes are required.", proposal)
-        candle = self._mapping(momentum, "candle")
-        stop = candle.get("low" if long else "high")
-        if not isinstance(stop, (int, float)):
-            return _hold("missing_candle_stop", "Trending entries need the completed candle extreme.", proposal)
-        return self._geometry(context, proposal, direction, float(stop))
-
-    def _geometry(self, context: Mapping[str, Any], proposal: Any, direction: str, stop: float) -> CPRAgentOutcome:
-        """Calculate all executable entry geometry from frozen price facts.
-
-        Entry is the completed-bar close.  Risk must be positive and at most 30
-        NIFTY points.  The next CPR level, adjusted by the two-point buffer,
-        must offer at least 1R; the similarly buffered R2/S2 is the definite
-        final target.  Codex never supplies or alters any of these values.
-        """
-
-        levels = self._mapping(context, "session_levels")
-        entry = levels.get("current_close")
-        level_map = self._mapping(levels, "levels")
-        if not isinstance(entry, (int, float)):
-            return _hold("missing_entry", "The completed five-minute close is unavailable.", proposal)
-        entry = float(entry)
+        entry = self._finite_number(candidate.get("entry"))
+        stop = self._finite_number(candidate.get("stop"))
+        current_close = self._finite_number(self._mapping(context, "session_levels").get("current_close"))
+        if entry is None or stop is None or current_close is None:
+            return _hold("missing_candidate_geometry", "The candidate entry, stop, or close is unavailable.", proposal)
+        if entry != current_close:
+            return _hold(
+                "candidate_close_mismatch",
+                "The candidate does not describe the frozen completed close.",
+                proposal,
+            )
         risk = entry - stop if direction == "LONG" else stop - entry
         if risk <= 0:
             return _hold("invalid_stop_geometry", "Protective stop is on the wrong side of entry.", proposal)
-        if risk > self.max_risk_points:
-            return _hold("risk_wider_than_30", "Risk exceeds the 30 NIFTY-point hard limit.", proposal)
-        next_levels = self._mapping(levels, "next_levels")
-        next_level = next_levels.get("upside" if direction == "LONG" else "downside")
-        raw_milestone = next_level.get("price") if isinstance(next_level, Mapping) else None
-        final_raw = level_map.get("r2" if direction == "LONG" else "s2")
-        if not isinstance(raw_milestone, (int, float)) or not isinstance(final_raw, (int, float)):
-            return _hold("missing_cpr_levels", "Required CPR milestone or final target is missing.", proposal)
-        milestone = (
-            float(raw_milestone) - self.milestone_buffer
-            if direction == "LONG"
-            else float(raw_milestone) + self.milestone_buffer
-        )
-        final_target = (
-            float(final_raw) - self.milestone_buffer
-            if direction == "LONG"
-            else float(final_raw) + self.milestone_buffer
-        )
-        reward = milestone - entry if direction == "LONG" else entry - milestone
-        if reward < risk:
-            return _hold("sub_one_r_milestone", "The next buffered CPR milestone offers under one R.", proposal)
-        if (direction == "LONG" and final_target <= entry) or (direction == "SHORT" and final_target >= entry):
-            return _hold("invalid_target_geometry", "The final CPR target is on the wrong side of entry.", proposal)
         return CPRAgentOutcome(
             action=proposal.action,
             proposal=proposal,
             accepted=True,
             accepted_regime=proposal.regime,
             validation_code="accepted_entry",
-            validation_reason="All deterministic entry and risk gates passed.",
+            validation_reason="The proposal matches the host's eligible trend-day candidate.",
             entry_price=entry,
             stop_price=stop,
-            milestone_price=milestone,
-            final_target_price=final_target,
             risk_points=risk,
         )
 
-    def _scale_in(self, context: Mapping[str, Any], proposal: Any, position: Mapping[str, Any]) -> CPRAgentOutcome:
-        """Permit only the documented one-time R1 add to a trending long.
+    @staticmethod
+    def _finite_number(value: Any) -> float | None:
+        """Return a finite float, refusing bools, strings, NaN, and infinity."""
 
-        This outcome is permission, not execution.  The master rechecks market
-        health and lifecycle state, reuses the locked contract, applies spread
-        and liquidity gates, and owns quantity/fill/reconciliation accounting.
-        """
-
-        candidate = self._mapping(self._mapping(context, "market_structure"), "r1_scale_in_candidate")
-        if (
-            proposal.regime != "TRENDING"
-            or position.get("direction") != "LONG"
-            or position.get("premise") not in {"TRENDING_VWAP_CONTINUATION", "TRENDING_VWAP_REVERSAL"}
-            or position.get("scale_in_eligible") is not True
-            or position.get("scale_in_count") not in {None, 0}
-            or candidate.get("eligible") is not True
-            or candidate.get("direction") != "LONG"
-        ):
-            return _hold(
-                "scale_in_rejected",
-                "Scale-in requires one open trending long R1 candidate and no prior use.",
-                proposal,
-            )
-        return CPRAgentOutcome(
-            action="SCALE_IN",
-            proposal=proposal,
-            accepted=True,
-            accepted_regime=proposal.regime,
-            validation_code="accepted_scale_in",
-            validation_reason="Host permits only the documented one-time R1 scale-in.",
-            scale_in_permitted=True,
-        )
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return None
+        return float(value)
 
 
 class CPRAgent:
@@ -887,7 +742,7 @@ class CPRAgent:
         outcome = self.policy.validate(context, proposal)
         # The SDK boundary has proved that this was a contemporaneous, pinned
         # regime classification.  Preserve it even when hard execution gates
-        # reject the proposed entry or scale-in.
+        # reject the proposed entry.
         if outcome.accepted_regime is None and outcome.validation_code not in {
             "invalid_position_state",
             "invalid_frozen_context",

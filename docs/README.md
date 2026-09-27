@@ -65,6 +65,7 @@ component folder's own `Readme.md`.
 | [0016](adr/0016-read-only-loopback-monitoring-dashboard.md) | A read-only loopback dashboard, served by the runner itself |
 | [0017](adr/0017-chart-only-cpr-on-a-truncated-prior-session.md) | The dashboard's CPR reads a truncated prior session; the strategies' does not |
 | [0018](adr/0018-cpr-algo4-as-separate-worker.md) | CPR Algo 4 is its own worker, not a fourth algo inside the CPR worker |
+| [0019](adr/0019-cpr-ai-trend-day-rider.md) | CPR AI trades the Trend-Day Rider: a backtested gate that Codex may only veto |
 
 ## Keeping these documents honest
 

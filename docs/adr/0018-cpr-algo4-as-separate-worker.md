@@ -83,7 +83,9 @@ contained by comments and by CLAUDE.md, which say a fix to one copy must be mirr
   `CPR_ALGO4_LIVE_TRADING=true`. An unknown `CPR_ALGO4_EXIT_MODE` or an impossible entry cutoff runs
   paper on the defaults and is refused for live.
 - CPR Algo 4 and CPR AI make a clean A/B pair: the same playbook, one judged by rules and one by a
-  model, on independent ledgers.
+  model, on independent ledgers. *(Update 2026-09-27: CPR AI now trades the Trend-Day Rider
+  instead — see ADR-0019 — so this pairing no longer holds, and CPR AI no longer has an add leg:
+  Algo 4's copy of those mechanics is now the only one.)*
 - Because of the doc's own "do not enter if the next level is under 1:1" rule, TARGET mode
   effectively books at 1R. The next-level rule works as an entry filter. See
   [`../lld/cpr-algo4.md`](../lld/cpr-algo4.md).

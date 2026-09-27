@@ -17,16 +17,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-CPRAction = Literal["HOLD", "ENTER_LONG", "ENTER_SHORT", "EXIT", "SCALE_IN"]
+CPRAction = Literal["HOLD", "ENTER_LONG", "ENTER_SHORT", "EXIT"]
+# SIDEWAYS means "not a trend day"; only TRENDING can enter.
 CPRRegime = Literal["SIDEWAYS", "TRENDING", "UNDECIDED"]
-CPRSetup = Literal[
-    "NONE",
-    "SIDEWAYS_SRSI",
-    "TRENDING_VWAP_CONTINUATION",
-    "TRENDING_VWAP_REVERSAL",
-    "PREMISE_EXIT",
-    "R1_SCALE_IN",
-]
+CPRSetup = Literal["NONE", "TREND_DAY_CONTINUATION", "PREMISE_EXIT"]
 
 
 class CPRAgentDecision(BaseModel):
@@ -77,30 +71,14 @@ class CPRAgentDecision(BaseModel):
         # from looking as though a trade setup was accepted but not executed.
         if self.action == "HOLD" and self.setup != "NONE":
             raise ValueError("HOLD must use the NONE setup.")
-        # Entry actions may name only the three entry setups documented in the
-        # strategy.  Premise exits and scale-ins have separate host checks.
-        if self.action in {"ENTER_LONG", "ENTER_SHORT"} and self.setup not in {
-            "SIDEWAYS_SRSI",
-            "TRENDING_VWAP_CONTINUATION",
-            "TRENDING_VWAP_REVERSAL",
-        }:
-            raise ValueError("Entries require a SRSI or VWAP setup.")
+        # The Trend-Day Rider has exactly one entry setup. Accepting the
+        # host's candidate is the only way to ask for exposure.
+        if self.action in {"ENTER_LONG", "ENTER_SHORT"} and self.setup != "TREND_DAY_CONTINUATION":
+            raise ValueError("Entries require the TREND_DAY_CONTINUATION setup.")
         if self.action == "EXIT" and self.setup != "PREMISE_EXIT":
             raise ValueError("EXIT must use the PREMISE_EXIT setup.")
-        if self.action == "SCALE_IN" and self.setup != "R1_SCALE_IN":
-            raise ValueError("SCALE_IN must use the R1_SCALE_IN setup.")
-        if self.setup == "SIDEWAYS_SRSI" and self.regime != "SIDEWAYS":
-            raise ValueError("SIDEWAYS_SRSI requires the SIDEWAYS regime.")
-        if (
-            self.setup
-            in {
-                "TRENDING_VWAP_CONTINUATION",
-                "TRENDING_VWAP_REVERSAL",
-                "R1_SCALE_IN",
-            }
-            and self.regime != "TRENDING"
-        ):
-            raise ValueError("VWAP and R1 setups require the TRENDING regime.")
+        if self.setup == "TREND_DAY_CONTINUATION" and self.regime != "TRENDING":
+            raise ValueError("TREND_DAY_CONTINUATION requires the TRENDING regime.")
         if self.regime == "UNDECIDED" and self.action not in {"HOLD", "EXIT"}:
             raise ValueError("UNDECIDED may only HOLD or exit an existing premise.")
         return self
@@ -128,13 +106,11 @@ class CPRPositionState(BaseModel):
     original_risk_points: float | None = None
     original_protective_stop: float | None = None
     current_protective_stop: float | None = None
-    trailing_stage: Literal["NONE", "BREAKEVEN", "R1_LOCKED", "TRAILING"] | None = None
-    milestone_price: float | None = None
-    final_target_price: float | None = None
     premise: CPRSetup | None = None
     setup: CPRSetup | None = None
-    scale_in_eligible: bool | None = None
-    scale_in_count: int | None = None
+    # Entries already taken this session. The strategy allows one, so the
+    # host policy rejects any entry once this is non-zero.
+    entries_today: int | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any] | None) -> CPRPositionState:
