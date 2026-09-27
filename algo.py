@@ -102,6 +102,7 @@ BACKTEST_SCRIPTS = {
     "heikin": "My Backtest Files (For Reference)/heikin_ashi_futures_5y_backtest.py",
     "cpr": "My Backtest Files (For Reference)/cpr_strategy_backtest.py",
     "cpr-algo4": "My Backtest Files (For Reference)/cpr_algo4_backtest.py",
+    "cpr-ai-trend-day": "My Backtest Files (For Reference)/cpr_ai_trend_day_backtest.py",
     "profit-shooter": "My Backtest Files (For Reference)/profit_shooter_backtest.py",
     "goldmine": "My Backtest Files (For Reference)/Subhamoy Strategies/goldmine_strategy_backtest.py",
     "money-machine": "My Backtest Files (For Reference)/Subhamoy Strategies/money_machine_strategy_backtest.py",
