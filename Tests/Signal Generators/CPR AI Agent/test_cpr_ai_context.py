@@ -438,6 +438,15 @@ def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam(
     # The busted beliefs are model-facing knowledge too.
     assert "OI" in prompt and "BankNIFTY" in prompt and "trailing" in prompt
     assert "SCALE_IN" not in prompt and "SRSI" not in prompt
+    # v2 (after the first paper day): a stall is not a reason to exit a SOLD
+    # option. The exit bar is a concrete break, the stall-exit evidence is
+    # stated, and doubt resolves to HOLD.
+    assert "is not a failure" in prompt
+    assert "Do not relabel the session SIDEWAYS" in prompt
+    assert "at least half of the session's trend move" in prompt
+    assert "coin flip" in prompt
+    assert "If you are unsure, HOLD." in prompt
+    assert CPR_AI_PROMPT_VERSION == "cpr-trend-day-rider-v2"
     assert "HOLD" in prompt and "NONE" in prompt
     assert "host-owned" in prompt.lower()
     assert "confidence" in prompt and "0 through 10" in prompt

@@ -431,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cost", type=float, default=2.0, help="Premium points per round trip")
     parser.add_argument("--entry-delay", type=int, default=2, help="Minutes after the bar's last minute")
     parser.add_argument("--exit-delay", type=int, default=1, help="Minutes between a stop touch and the fill")
-    parser.add_argument("--lot-size", type=int, default=75)
+    parser.add_argument("--lot-size", type=int, default=65, help="NIFTY lot size (65 since 2026)")
     parser.add_argument("--max-loss-rupees", type=float, default=0.0, help="Kill-switch level per lot; 0 = off")
     parser.add_argument("--start", default="", help="First session to trade, YYYY-MM-DD")
     parser.add_argument("--end", default="", help="Last session to trade, YYYY-MM-DD")
