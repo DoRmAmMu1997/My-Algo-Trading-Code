@@ -2938,6 +2938,73 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "the premise has not failed -- but the trade has" in rule
 
 
+def test_v5m_after_a_winning_leg_the_next_same_side_trade_is_the_weak_one():
+    """v5m (28 Sep): MOVE-EXHAUSTION, measured -- and v5h/v5k put in their place.
+
+    IH took one momentum and left; the book took the same first trade, then
+    two more into the box that followed, and both were stopped. Seven ways an
+    edit breaks it:
+
+    1. Losing IH's one-momentum words. They are the evidence the rule rests on,
+       and paraphrased they read as generic caution.
+    2. Losing the day's arithmetic -- the first trade alone beat the day.
+    3. Losing the asymmetry, which is the finding: after a WIN the next
+       same-side trade lost; after a LOSS it made money.
+    4. Losing that placement and waiting did NOT rescue it. Without those
+       numbers the obvious repair ("re-enter on the bounce" / "wait longer")
+       gets re-derived, and the book says both lose.
+    5. Losing the correction of v5h and v5k. They are the rules the agent
+       actually cited, so this one has to say where they stop.
+    6. Losing "not a gate" and its split. The halves disagree; quoted without
+       that, it reads as a ban the book does not support.
+    7. Losing the after-a-STOP clause, which keeps this from contradicting
+       v5i's refusal.
+    Plus the pointers from v5h and v5k, so their readers meet the measurement.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "ONE MOMENTUM IS THE TRADE, AND THE BOOK AGREES")
+
+    # 1. IH, in his words.
+    assert "however much momentum is on one candle, it cannot be trusted" in rule
+    assert "we survived once, but if we keep sitting again and again, we will not survive" in rule
+    assert "captured one momentum and left." in rule and "One trade." in rule
+
+    # 2. The day.
+    assert "THIS BOOK TOOK THE SAME FIRST TRADE, THEN TWO MORE" in rule
+    assert "+6,111.25" in rule and "(-1,702.50)" in rule and "(-4,056.00)" in rule
+    assert "The day was +2,482.50" in rule
+
+    # 3. The asymmetry.
+    assert "all 78 same-direction re-entries" in rule
+    assert "after a WINNING exit the next same-side trade lost 9,302.75 over 35" in rule
+    assert "after a LOSING exit it made 33,714.25 over 43" in rule
+
+    # 4. Placement and waiting do not rescue it.
+    assert "chasing past the prior exit -199.88 a trade (21)" in rule
+    assert "a new extreme and then a bounce -476.39 (11)" in rule
+    assert "neither did waiting" in rule and "20-40 -709.71" in rule
+
+    # 5. Where v5h and v5k stop.
+    assert "SO THE PLACEMENT RULES ARE NOT THE ANSWER HERE" in rule
+    assert "was cleared by a 15-point poke today" in rule
+    assert "v5k's bounce is the worse of the two placements" in rule
+    assert "not WHERE to re-enter but WHETHER the thesis has a second leg" in rule
+
+    # 6. Not a gate, with the split that makes it one.
+    assert "NOT A GATE" in rule
+    assert "-10,529.75 over the first 17, +1,227.00 over the last 18" in rule
+    assert "It is a default argued from IH and the book, not a ban" in rule
+
+    # 7. Silent on re-entry after a stop.
+    assert "it says nothing against re-entering after a STOP" in rule
+
+    # The pointers, so v5h's and v5k's readers meet the measurement.
+    v5k = _flat_rule(prompt, "A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+    assert "For a SECOND entry after a winning leg, placement is the wrong question: see v5m" in v5k
+    v5h = _flat_rule(prompt, "IN A RANGE THE CROWD READ CANNOT PAY")
+    assert "v5m, under MOVE-EXHAUSTION, measures how little of it that does after a win" in v5h
+
+
 def test_v5l_an_index_that_moved_before_entry_is_spent_not_late():
     """v5l (25 Sep): v4r's "flat = not arrived yet" needs a WHEN.
 

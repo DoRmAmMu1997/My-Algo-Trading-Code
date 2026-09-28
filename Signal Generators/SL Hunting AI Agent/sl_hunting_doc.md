@@ -8261,3 +8261,100 @@ the runner shares the Dhan session during the day.
 
 Also recorded: the first two decisions of the day were agent errors (a timeout
 at 09:16, then "previous agent call still running" at 09:17).
+
+
+## v5m - one momentum is the trade, and the book agrees (28 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (KCZM3Q96m1w,
+uploaded 2026-09-28 10:23 IST), traded on the previous evening's 'Prediction
+For 28 SEP 2026' (E55DWhSiEW4) -- plus this book's own four trades. His clock
+times are read off the taskbar clock in the video frame; his positions screen
+did not appear near his exit, so his result is left in his own words ("the
+profit went above 1 lakh"). His words are my translation of the Hindi
+auto-transcript. Written while the NIFTY CSV still ended on 25 Sep, so today's
+path comes from the decisions log (one print a bar).
+
+### The note worked, for both books
+
+The open classified FLAT (-0.33% NIFTY, -0.42% BankNIFTY), and the note's
+FLAT -> SELL, WITH THE MARKET branch -- a follow, not a hunt -- is what both
+books traded. NIFTY's first candle fell about 108 points from 23,075.60.
+
+IH waited that candle out: "however much momentum is on one candle, it cannot
+be trusted... the premium adjusts, so even if we capture this candle there is
+no benefit." He sold all three indices at 09:18 once it steadied, and was out
+by 09:28: "we survived once, but if we keep sitting again and again, we will
+not survive... captured one momentum and left." One trade.
+
+| # | open | entry | stop | lots | exit | basket |
+|---|---|---|---|---|---|---|
+| 1 | 09:21:33 | 22,951.70 | 22,977.50 | 1 | 09:36:31 at 22,872.35, target zone | **+6,111.25** |
+| 2 | 09:45:54 | 22,857.40 | 22,874.00 | 2 | 09:47:48 stop | **-1,702.50** |
+| 3 | 09:55:59 | 22,872.30 | 22,885.00 | 3 | 09:58:50 stop | **-4,056.00** |
+| 4 | 10:18:54 | 22,839.10 | 22,868.30 | 1 | 10:50:01 at 22,822.60, near 22,800 | **+2,129.75** |
+
+Day **+2,482.50**; trade 1 alone was +6,111.25. Trade 1 was IH's trade, entered
+three minutes after him and held eight minutes longer. After it booked, NIFTY
+sat in a box of roughly thirty points (about 22,852-22,881) until it broke at
+10:18. Trade 2 sold a fresh low inside that box nine minutes after the booking
+-- v5h's new extreme, cleared by 14.95 points, and exactly the "wrong way
+round" v5k warns about. Trade 3 sold a bounce back to 22,872.30 -- v5k's right
+way round. Both were stopped inside three minutes. Trade 4 sold the box's
+breakdown.
+
+### What was measured
+
+All 78 same-direction re-entries in the journal (2 Jul-28 Sep), classified
+against the prior trade's exit using the 1-minute bars between the two
+(decisions-log prints for 28 Sep):
+
+| re-entry after | placement | n | win | per trade | total |
+|---|---|---|---|---|---|
+| a WINNING exit | chased past the prior exit | 21 | 43% | -199.88 | -4,197.50 |
+| | new extreme, then a bounce | 11 | 36% | -476.39 | -5,240.25 |
+| | no new extreme (range) | 3 | 33% | +45.00 | +135.00 |
+| | **all** | **35** | **40%** | **-265.79** | **-9,302.75** |
+| a LOSING exit | chased past the prior exit | 21 | 43% | +234.19 | +4,918.00 |
+| | new extreme, then a bounce | 21 | 48% | +1,236.20 | +25,960.25 |
+| | no new extreme (range) | 1 | 100% | +2,836.00 | +2,836.00 |
+| | **all** | **43** | **47%** | **+784.05** | **+33,714.25** |
+
+After a win, waiting does not help either: 0-10 minutes after the exit
+-110.76 a trade (18), 10-20 -19.11 (9), 20-40 -709.71 (7).
+
+So the two placement rules the agent cited today do not separate these
+trades. v5h's new extreme stands in for MOVE-EXHAUSTION's "new named crowd"
+on a follow, and it was cleared by a 15-point poke. v5k's bounce is the worse
+placement after a win on this measure. It was carried on one day's pair of
+trades (24 Sep), and today's pair split both ways -- trade 2 chased and lost,
+trade 4 chased the box break and won.
+
+### Refused
+
+**No same-side re-entry after a winning exit.** The blocked set loses
+-9,302.75 over 35, but it does not survive splitting the book in half:
+-10,529.75 over the first 17, +1,227.00 over the last 18. Two sessions carry
+most of it (23 Jul -6,921.25, 29 Jul -5,300.75). Not a gate.
+
+**Re-enter only on the bounce.** Worse than the chase after a win (above). Not
+a gate either.
+
+### v5m
+
+A sub-bullet of MOVE-EXHAUSTION in RISK, the rule it measures. After a winning
+leg the question is not WHERE to re-enter but WHETHER the thesis has a second
+leg, and the default answer is no -- IH's "one momentum", argued from the book's
+asymmetry and explicitly not a ban. It says nothing against re-entering after
+a STOP (+33,714.25 on that side, the same direction as v5i's refusal). v5k's
+practical form and v5h's standing-premise clause each gain a one-line pointer
+to it; neither loses a word it asserted before.
+
+Test: `test_v5m_after_a_winning_leg_the_next_same_side_trade_is_the_weak_one`,
+seven clauses plus both pointers. Negative-tested with ten mutations (one per
+clause, each pointer, and an orphaned heading) -- all caught -- and a control
+rewording that passes.
+
+Limits: re-entries are paired with the immediately preceding trade only; 28
+Sep's classification uses single prints rather than bar highs and lows; and
+35 after-win trades is a small sample whose halves disagree, which is why this
+is a default and not a gate.

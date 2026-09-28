@@ -703,7 +703,8 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   PRACTICAL FORM: when the open lands beyond the note's whole ladder, say so,
   keep at most the note's SIDE, and drop its crowd from your reasoning. Ask the
   two questions. If the answer is follow, enter on a bounce and book at the
-  support -- never the other way round.
+  support -- never the other way round. For a SECOND entry after a winning
+  leg, placement is the wrong question: see v5m, under MOVE-EXHAUSTION.
   WHAT THIS DOES NOT LICENSE, both priced on this book (155 closed trades):
   * NOT A GATE ON ENTRIES NEAR THE SESSION EXTREME. The best threshold -- refuse
     an entry in the bottom 30% of the range so far, measured in its own
@@ -908,7 +909,8 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   four entries cited it almost verbatim and dressed each one in a different
   pattern name. v3q's re-entry gate asks for a nameable NEW trapped crowd, which
   is vacuous on a follow whose whole premise is that nobody is seated -- so on a
-  follow it is the new extreme that must do that work instead.
+  follow it is the new extreme that must do that work instead -- and v5m,
+  under MOVE-EXHAUSTION, measures how little of it that does after a win.
 - WHEN NOBODY IS SEATED, YOUR OWN ENTRY IS WHAT SEATS THEM (v5i). Every rule
   above keeps you OUTSIDE the crowd: v5f says a one-way day seats nobody, v5c
   says a retracement recruits the crowd you hunt NEXT, v4e says do not forecast
@@ -2296,6 +2298,36 @@ RISK DISCIPLINE
   because "momentum has stalled", you may not re-enter into that same stall minutes
   later. A fresh trade needs a NEW named crowd trapped by NEW price action, not a
   leftover pattern from the move you already harvested.
+  * ONE MOMENTUM IS THE TRADE, AND THE BOOK AGREES (v5m). IH on 28 Sep waited
+    out an opening in which one red candle did the whole move -- "however much
+    momentum is on one candle, it cannot be trusted... the premium adjusts, so
+    even if we capture this candle there is no benefit" -- sold at 09:18 once
+    it steadied, and was out by 09:28: "we survived once, but if we keep
+    sitting again and again, we will not survive... captured one momentum and
+    left." One trade.
+    THIS BOOK TOOK THE SAME FIRST TRADE, THEN TWO MORE. Sold 09:21 at
+    22,951.70, booked 09:36 at 22,872.35: +6,111.25. Nine minutes later it sold
+    a fresh low at 22,857.40 (-1,702.50), then a bounce back to 22,872.30
+    (-4,056.00); both were stopped inside three minutes, in a box of roughly
+    thirty points that held until it broke at 10:18. The day was +2,482.50.
+    MEASURED ACROSS THE BOOK (all 78 same-direction re-entries, hunts and
+    follows alike, 2 Jul-28 Sep): after a WINNING exit the next same-side trade
+    lost 9,302.75 over 35 (40% winners); after a LOSING exit it made 33,714.25
+    over 43 (47%). Where the re-entry sat did not rescue the first case --
+    chasing past the prior exit -199.88 a trade (21), a new extreme and then a
+    bounce -476.39 (11) -- and neither did waiting: 0-10 minutes after the
+    exit -110.76, 10-20 -19.11, 20-40 -709.71.
+    SO THE PLACEMENT RULES ARE NOT THE ANSWER HERE. v5h's new extreme, which
+    stands in for "a NEW named crowd" on a follow, was cleared by a 15-point
+    poke today; v5k's bounce is the worse of the two placements on this
+    measure. After a winning leg the question is not WHERE to re-enter but
+    WHETHER the thesis has a second leg, and the default answer is no.
+    NOT A GATE, and why: the after-win loss does not survive splitting the
+    book in half (-10,529.75 over the first 17, +1,227.00 over the last 18),
+    and two sessions carry most of it (23 Jul -6,921.25, 29 Jul -5,300.75).
+    It is a default argued from IH and the book, not a ban. And it says
+    nothing against re-entering after a STOP: that side made 33,714.25, the
+    same direction as v5i's refusal.
   * TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS (v4o). When NIFTY and BankNIFTY expire
     on the SAME day, both basket legs sit on expiring contracts and the tape
     alternates: "today two indices have expiry — it gives one selling momentum,
