@@ -175,7 +175,28 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # before it, because CI never spawns the bundled CLI: confirm on the next
     # PAPER session that decisions still return ("SLHuntingAgent decision cost
     # ~$..." in the log). If they stop, revert this pin first.
-    assert "claude-agent-sdk==0.2.154" in ai
+    # 0.2.154 -> 0.2.159 (2026-09-28, PR #189). Four releases (.155, .156, .158,
+    # .159 -- the changelog lists no .157), bundled CLI 2.1.274 -> 2.1.281.
+    # Introspected against an isolated install rather than assumed: all nine
+    # names the agent and the coach import are present (the eight above plus
+    # ThinkingConfigDisabled, for fast mode); every ClaudeAgentOptions field we
+    # pass survives; the FILE form of system_prompt is still a declared
+    # `SystemPromptFile` that the transport maps to --system-prompt-file;
+    # `dontAsk` is still a permission_mode; and the declared windows are
+    # unchanged (mcp>=1.23.0,<3.0.0, anyio>=4.0.0, jsonschema>=4.20.0).
+    # Two notes worth reading. 0.2.158 adds `verbatim_prompts` (default False),
+    # which stops `@path` file expansion and slash commands in USER messages.
+    # Additive, and not adopted in a dependency bump: the trading agent's user
+    # message is our own serialized market data, and the one user message that
+    # carries model-written text is the coach's bounded journal projection
+    # (printable, <=120 chars a field) -- a candidate follow-up, not a reason
+    # to hold this pin. 0.2.159 mentions "the CLI's new default model"; that
+    # cannot reach either agent, because both pass `model` explicitly.
+    # Same standing check as every bump before it, because CI never spawns the
+    # bundled CLI: confirm on the next PAPER session that decisions still
+    # return ("SLHuntingAgent decision cost ~$..." in the log). If they stop,
+    # revert this pin first.
+    assert "claude-agent-sdk==0.2.159" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -219,7 +240,21 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # turn: CPR_AI_ENABLED is true and the worker trades paper daily, so a
     # behavioural break surfaces as CPR AI errors in the next session -- that
     # session, not this build, is the actual test.
-    assert "openai-codex==0.154.0" in ai
+    # 0.154.0 -> 0.156.1 (2026-09-28, PR #189). Introspected against an
+    # isolated install the same way: ApprovalMode, Codex and Sandbox survive,
+    # Codex is still a context manager, Sandbox.read_only and
+    # ApprovalMode.deny_all are present, and thread_start takes every one of
+    # model/config/cwd/developer_instructions/ephemeral/sandbox/approval_mode as
+    # a named parameter (no **kwargs). It still returns the SYNC `Thread`, whose
+    # run takes approval_mode/output_schema/effort by name and is not a
+    # coroutine, and TurnResult still carries final_response, items and usage.
+    # The requirements kept their shape -- pydantic>=2.12, packaging>=26.2, and
+    # the CLI binary openai-codex-cli-bin, which moves in lockstep to 0.156.1
+    # and is what actually runs a turn. The standing check changes in one way:
+    # since PR #187 the Trend-Day Rider consults Codex only on a candidate bar
+    # (11:00-13:30), so a behavioural break shows up as CPR AI errors the next
+    # time a candidate fires, which can take more than one session.
+    assert "openai-codex==0.156.1" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -328,7 +363,14 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # UNCHANGED on 2.5.2 on both 3.12 and 3.13. Nothing in the indicator pipeline
     # moved. Majors remain ignored (TA-Lib's compiled extension, no numpy ceiling
     # declared anywhere).
-    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.5", "TA-Lib==0.6.8", "numpy==2.5.3"):
+    # pandas 3.0.5 -> 3.0.6 (2026-09-28, PR #189). A patch: regression and bug
+    # fixes only (read_csv, bool-mask setitem, interpolate, RangeIndex
+    # copy-on-write), plus Python 3.15 support. The whole suite, MAT-106's
+    # 8-decimal indicator snapshot included, ran on 3.0.6 in this PR's own CI
+    # and failed only on these pin assertions. pandas-stubs stays at
+    # 3.0.5.260914: it describes the 3.0 line, and matching the line is what
+    # that pin exists for.
+    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.3"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
