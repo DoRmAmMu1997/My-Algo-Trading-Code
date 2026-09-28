@@ -93,7 +93,9 @@ and the stop is the candidate's VWAP, both host-derived. An open position may on
   intermediate REST hole blocks inference instead of letting invented OHLC through.
 - **Flat:** Codex is called only when the bar is an eligible candidate, and never after today's
   entry. On most bars of most days there is no model call at all.
-- **Open:** Codex is called once per completed bar for HOLD or a premise exit.
+- **Open:** Codex is called once per completed bar for HOLD or a premise exit. The prompt
+  (v2) treats a stall or sideways drift as the sold option working, not as a failure: an exit
+  needs a completed bar retracing at least half of the session's trend move.
 - At 15:00 new entries stop; exits continue. At 15:15 the host squares off and stops the worker.
 
 ## Live safety
@@ -109,10 +111,10 @@ strict host trigger, not a guaranteed fill: gaps, illiquidity, broker latency, o
 buy-to-close can exceed the planned loss. The worst backtest trade lost 268 premium points on an
 expiry-day crash.
 
-**Max-loss.** `CPR_AI_MAX_LOSS` (default ₹5,500) is checked on the sold leg's mark-to-market. At a
-75-unit lot that is about 73 premium points. In the backtest it closed sold legs that dipped and
-later recovered, cutting PF from 1.69 to 1.52; ₹10,000 kept PF at 1.63. The default is unchanged;
-choosing it is an operator decision.
+**Max-loss.** `CPR_AI_MAX_LOSS` (default ₹5,500) is checked on the sold leg's mark-to-market. At the
+65-unit NIFTY lot that is about 85 premium points. In the backtest it closed sold legs that dipped
+and later recovered, cutting PF from 1.69 to 1.56; ₹10,000 (about 154 points) fired once in five
+years and gave PF 1.73. The default is unchanged; choosing it is an operator decision.
 
 Every exposure-increasing action requires a successful pre-action audit and a fresh post-inference
 recheck of lifecycle, market-data health, entry cutoff, square-off, and that the fresh spot has not

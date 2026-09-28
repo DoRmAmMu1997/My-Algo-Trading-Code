@@ -35,7 +35,7 @@ playbook CPR AI used to trade — see [`cpr-algo4.md`](cpr-algo4.md).
 | `cpr_ai_tools.py` | `FrozenCPRContextRegistry`, `EXPECTED_TOOL_NAMES` |
 | `cpr_ai_mcp_server.py` | Isolated MCP server exposing the four tools |
 | `cpr_ai_schema.py` | `CPRAgentDecision`, `validate_position_state` (strict pydantic) |
-| `cpr_ai_prompt.py` | Versioned system prompt (`CPR_AI_PROMPT_VERSION = "cpr-trend-day-rider-v1"`) |
+| `cpr_ai_prompt.py` | Versioned system prompt (`CPR_AI_PROMPT_VERSION = "cpr-trend-day-rider-v2"`) |
 | `cpr_ai_codex_runner.py` | Thread config, `safe_subprocess_environment` |
 | `cpr_ai_codex_subprocess.py` | The child process boundary |
 | `cpr_ai_decision_log.py` | JSONL decision log |
@@ -138,7 +138,8 @@ Otherwise the result is a typed HOLD, for example `candidate_direction_mismatch`
      stop/lifecycle/feed/time runs, plus `stop_already_breached` if the fresh spot has crossed the
      VWAP stop during the turn. Then `enter_position(..., option_opening_side="SELL",
      option_contract_direction=<opposite>, use_current_expiry=True)`.
-   - **Open** → one Codex turn for HOLD or `PREMISE_EXIT`, then the normal safety pass again.
+   - **Open** → one Codex turn for HOLD or `PREMISE_EXIT`, then the normal safety pass again. Since
+     prompt v2 a stall or sideways drift is explicitly not a reason to exit (ADR-0019, 2026-09-28).
 3. A submitted entry, or possible live exposure (`LIVE_INDETERMINATE`), uses up the session's entry.
    A clean refusal (spread gate, contract lookup) leaves it available for a later bar.
 4. Exits use the base single-leg `exit_position`: a sold leg closes with a BUY, and a live close that
@@ -193,9 +194,9 @@ thresholds (window, ATR multiple, location, confluence) are code-owned in `Trend
 | `CPR_AI_SQUARE_OFF_HOUR` / `_MINUTE` | 15:15 |
 | `CPR_AI_DECISION_LOGGING_ENABLED` / `_LOG_PATH` | true / `Backtest Outputs/cpr_ai_decisions.jsonl` |
 
-`CPR_AI_MAX_LOSS`: at a 75-unit lot, ₹5,500 is about 73 premium points, and in the backtest it cut
-PF from 1.69 to 1.52 by closing sold legs that later recovered. ₹10,000 kept PF at 1.63. The default
-is unchanged; see ADR-0019.
+`CPR_AI_MAX_LOSS`: at the 65-unit NIFTY lot, ₹5,500 is about 85 premium points, and in the
+backtest it cut PF from 1.69 to 1.56 by closing sold legs that later recovered. ₹10,000 (about 154
+points) fired once in five years and gave PF 1.73. The default is unchanged; see ADR-0019.
 
 Install the exact optional set from `requirements-ai.txt`, which carries BOTH AI agents. They run
 inside the same process, so Python can only ever install one version of what they share —

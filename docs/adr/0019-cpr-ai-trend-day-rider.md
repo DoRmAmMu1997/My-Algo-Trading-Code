@@ -71,7 +71,8 @@ Codex is consulted only on an eligible candidate while flat, and on every bar wh
 open. When flat it may accept the candidate (in its own direction, setup `TREND_DAY_CONTINUATION`)
 or veto it with `HOLD`. When open it may hold or make a premise exit. The host policy accepts an
 entry only if it restates the frozen candidate on the frozen close with the candidate's stop, and
-only while `entries_today` is 0. The prompt (`cpr-trend-day-rider-v1`) carries the evidence above,
+only while `entries_today` is 0. The prompt (`cpr-trend-day-rider-v1`, now v2 — see the update
+below) carries the evidence above,
 including the refuted beliefs, and tells the model to default to accepting and to veto only for a
 concrete red flag.
 
@@ -112,12 +113,42 @@ not large, and it is concentrated in a minority of strong trend days.
 - `CPR_AI_*` names, the Sheet rows (`CPR AI Agent Strategy` and its `[LIVE]`/`[MIXED]` variants) and
   the double gate are unchanged. No new `.env` knobs.
 - Codex runs far less often: flat sessions without a candidate make no model call at all.
-- **Max-loss.** The default `CPR_AI_MAX_LOSS` of ₹5,500 (about 73 premium points on a 75-unit lot)
-  cuts PF from 1.69 to 1.52 in the backtest, because it closes sold legs that dip and then recover.
-  At ₹10,000 it fires twice in five years (PF 1.63, drawdown 273). The default was left unchanged;
-  raising a risk limit is the operator's decision.
+- **Max-loss.** The default `CPR_AI_MAX_LOSS` of ₹5,500 (about 85 premium points on the 65-unit
+  NIFTY lot) cuts PF from 1.69 to 1.56 in the backtest, because it closes sold legs that dip and
+  then recover. At ₹10,000 (about 154 points) it fires once in five years and PF is 1.73. The
+  default was left unchanged; raising a risk limit is the operator's decision. *(Corrected
+  2026-09-28: the first version of this ADR assumed a 75-unit lot.)*
 - Run `python algo.py backtest --strategy cpr-ai-trend-day` to reproduce the numbers (about two
   minutes with the options folder; spot points without it). `--max-loss-rupees` simulates the kill
   switch.
 - Paper first (`CPR_AI_LIVE_TRADING=false`), with at least two clean paper sessions before any live use.
 - See [`../lld/cpr-codex-ai-agent.md`](../lld/cpr-codex-ai-agent.md) and ADR-0018.
+
+## Update 2026-09-28: the first paper day, and prompt v2
+
+The first paper session took one bearish candidate (the 11:00 bar: gap down 76 points, range 1.5 ×
+ATR5, below S1). Codex accepted it and the host sold the Sep-29 22800 CE at 132.80. After an
+hour and a half in which price drifted sideways toward the VWAP stop without touching it, Codex
+made a premise exit at 141.45 with regime `SIDEWAYS` (−₹562). Price then fell; another worker
+bought the same contract back at 90.25 at 14:34. Holding to the stop or 15:15, as the backtest
+does, would have been worth roughly +40 premium points. The exit also did not meet the prompt's
+own example of a failed trend day (it had retraced 13% of the move, not half).
+
+A five-year test of rule-based "stall" exits on top of the VWAP stop confirmed the lesson. Exiting
+after 60–90 minutes without a new session extreme, or when price drifted near the stop, fired on
+73–137 of 264 trades, helped and hurt about equally, and cut the total by 150–450 points.
+
+**Decision (operator):** keep Codex's premise exits, but tighten the guidance. Prompt
+`cpr-trend-day-rider-v2` states that a stall, a sideways drift or a pullback toward the stop is not
+a failure for a sold option, that the session must not be relabelled `SIDEWAYS` just because price
+paused, that an exit needs a completed bar retracing at least half of the session's trend move, and
+that doubt resolves to `HOLD`. It also quotes the stall-exit evidence. Removing premise exits, or a
+host gate on them, were considered and not chosen.
+
+The day also exposed an infrastructure risk that is not specific to CPR AI. The trading laptop was
+put to sleep twice during the session (Windows logged "Sleep Reason: Application API", 9 and 17
+minutes), and Windows automatic maintenance (a defrag/re-trim of C: and a licensing-service
+migration) froze the machine six more times in the afternoon. That is about 74 minutes with no stop
+monitoring for any worker. Nothing in the runner can act while the machine is asleep, so this is an
+operator-side fix: no sleep on AC power during market hours, and automatic maintenance scheduled
+outside them.
