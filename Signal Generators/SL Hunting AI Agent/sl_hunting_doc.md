@@ -8358,3 +8358,96 @@ Limits: re-entries are paired with the immediately preceding trade only; 28
 Sep's classification uses single prints rather than bar highs and lows; and
 35 after-win trades is a small sample whose halves disagree, which is why this
 is a default and not a gate.
+
+
+## v5n - the second seller is the random seller (29 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (6zppfK_n4yg,
+uploaded 2026-09-29 10:37 IST), traded on the previous evening's 'Prediction
+For 29 SEP 2026' (5p9RdcrWy0k) -- plus this book's two trades. His clock times
+are read off the taskbar clock in the video frame; his result is left in his
+own words ("a better profit than yesterday"). His words are my translation of
+the Hindi auto-transcript. Today's NIFTY path comes from the decisions log
+(the 1-minute CSV still ended on 28 Sep). Both NIFTY's weekly and BankNIFTY's
+monthly contracts expired today.
+
+### The first live day for v5m
+
+The runner started at 09:14:46, after #190 (v5m and this morning's note)
+merged at 09:08, and logged "injected 2066 pre-open note chars for 2026-09-29".
+The open classified FLAT (-0.21% NIFTY, -0.345% BankNIFTY), and the note's
+flat -> SELL, WITH THE MARKET branch was right for both books again.
+
+IH waited out the first minutes -- "nothing can be done in fast-fast momentum...
+both indices have expiry" -- and sold from 09:20, naming only SENSEX and NIFTY
+legs (of BankNIFTY he said he feared it might go back near its closing price).
+He booked at 09:30 with the move still running: "if a retracement comes here it
+will not be small, because random sellers can come in, and when the market
+removes them, sometimes the retracement is just as big."
+
+| # | time | entry | exit | basket |
+|---|---|---|---|---|
+| 1 | 09:22:57 -> 09:32:29 | 22,668.90 | 22,613.30, at the 22,600 round number | **+6,246.75** |
+| 2 | 10:02:57 -> 10:35:44 | 22,593.85 | 22,595.40, premise exit on BankNIFTY's reversal | **-1,504.50** |
+
+Day **+4,742.25**. Trade 1 was IH's trade, two to three minutes behind him at each end.
+After it booked, NIFTY made about 22,570 by 09:40, bounced to about 22,615, and
+sat in that box. Trade 2 was sold into the box and cut half an hour later with NIFTY
+flat; the expiry-day BankNIFTY mirror took the basket negative.
+
+### The agent's own read, three minutes apart
+
+| time | action | recorded reasoning |
+|---|---|---|
+| 10:00:51 | HOLD | "that first leg already played out (22732 open to 22569.65 low by 09:38, ~163pts). Price is now consolidating in a tight ~50pt range" |
+| 10:02:57 | ENTER_SHORT | "NIFTY has declined continuously from 22732 open to 22593 with no major retracement ... a confirmed bearish inside-bar breakdown" |
+
+Same box, same leg, three minutes apart: the relabelling this repo has seen
+before (v3q, 27 Jul), now against a rule that was in the prompt. None of the
+day's 80 recorded decisions cited v5m or MOVE-EXHAUSTION.
+
+### Re-measured
+
+v5m's measurement, re-run with trade 2 included:
+
+| | n | win | per trade | total |
+|---|---|---|---|---|
+| after a winning exit | 36 | 39% | -300.20 | -10,807.25 |
+| after a losing exit | 43 | 47% | +784.05 | +33,714.25 |
+| after-win, first half | 18 | 44% | -517.36 | -9,312.50 |
+| after-win, second half | 18 | 33% | -83.04 | -1,494.75 |
+| after-win, latest third | 12 | 42% | +11.62 | +139.50 |
+
+Both halves are now negative; the latest third is not; dropping the two worst
+sessions (23 Jul, 29 Jul) turns the total to +1,414.75; and the gap to the
+after-loss side is p = 0.056 (one-sided permutation) before correcting for the
+splits already tried. **Still refused as a gate.**
+
+### v5n
+
+A sub-bullet of MOVE-EXHAUSTION, directly after v5m, giving it the mechanism
+it lacked: on a follow day the sellers who arrive late are "random sellers"
+who cut on the first adverse candle, and removing them is what the next
+retracement is for -- so whoever joins the same move a second time is that
+crowd. It records the 10:00/10:02 contradiction, the re-measurement with its
+limits, and IH's own counterweight ("opportunity comes, in an hour or two, but
+at the right place"), said of his own late entry, which licenses a first trade
+after a missed move and a new setup after waiting -- not the same move joined
+twice.
+
+Test: `test_v5n_the_second_seller_is_the_random_seller`, seven clauses.
+Negative-tested with nine mutations -- all caught -- and a control rewording
+that passes. The first run of the mutations found a gap (IH's phrase "random
+sellers can come in" was not pinned, so a paraphrase passed); the test was
+tightened and the full set re-run.
+
+### Offered, not built: put the last exit in front of the entry
+
+Prose did not bind on its first day, and the numbers do not support a gate.
+The middle option is the SLH-019 pattern -- a checkable fact at the tool
+boundary rather than a rule in the prompt: when the agent calls the order tool
+to ENTER in the same direction as a trade it exited at a profit earlier in the
+session, the tool response (or position_state) states that exit plainly --
+direction, time, price and booked P&L -- without refusing the order. It
+cannot be relabelled away, and it blocks nothing the book cannot justify
+blocking. Left for the operator to approve.

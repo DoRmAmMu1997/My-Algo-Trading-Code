@@ -2938,6 +2938,68 @@ def test_v5g_an_eviction_leaves_you_in_the_same_sideways_stretch():
     assert "the premise has not failed -- but the trade has" in rule
 
 
+def test_v5n_the_second_seller_is_the_random_seller():
+    """v5n (29 Sep): the mechanism v5m lacked, and v5m's first live miss.
+
+    v5m measured the loss; IH explained it. Seven ways an edit breaks it:
+
+    1. Losing that it is v5m's MECHANISM, not a second measurement. Apart,
+       the two read as unrelated cautions.
+    2. Losing IH's "random seller", first person. That is the crowd a second
+       entry joins, and paraphrased it becomes generic caution.
+    3. Losing the agent's own 10:00 read. It had already called the leg
+       played out three minutes before re-entering the same box -- the
+       relabelling pattern, recorded in its own words.
+    4. Losing that nothing in the day cited v5m. That is the evidence the
+       prose did not bind, and the reason a code nudge is on the table.
+    5. Losing the re-measurement AND its limits. Both halves are negative
+       now, but the latest third is not and two sessions carry it; without
+       the limits it reads as a ban.
+    6. Losing "what IH does not say" -- his line about missed trades is the
+       counterweight, and dropping it flips the rule into "never re-enter".
+    7. Losing the practical form: name the crowd you would join.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE SECOND SELLER IS THE RANDOM SELLER")
+
+    # 1. v5m's mechanism.
+    assert "v5m measured that the next same-side trade after a winning leg loses" in rule
+    assert "IH on 29 Sep gave the reason" in rule
+
+    # 2. IH's random seller.
+    assert "he cuts, because he sold randomly, just because the market is falling" in rule
+    assert "because random sellers can come in, and when the market removes them" in rule
+    assert "when the market removes them, sometimes the retracement is just as big" in rule
+    assert "Whoever joins the same move a second time" in rule
+    assert "is that random seller" in rule
+
+    # 3. The agent's own read, three minutes before.
+    assert "its own 10:00 read was \"that first leg already played out" in rule
+    assert "three minutes later it sold again at 22,593.85" in rule
+    assert "-1,504.50" in rule and "+6,246.75" in rule
+
+    # 4. The prose did not bind.
+    assert "With v5m already in its prompt" in rule
+    assert "None of the day's 80 recorded decisions cited v5m or MOVE-EXHAUSTION" in rule
+
+    # 5. Re-measured, with the limits that keep it a default.
+    assert "36 after-win re-entries): -10,807.25" in rule
+    assert "Both halves are now negative (-9,312.50 / -1,494.75)" in rule
+    assert "the latest third is not (+139.50)" in rule
+    assert "drop them and it is +1,414.75" in rule
+    assert "p = 0.056" in rule
+    assert "Still a default, not a gate" in rule
+
+    # 6. The counterweight.
+    assert "WHAT IH DOES NOT SAY" in rule
+    assert "opportunity comes, in an hour or two, but at the right place" in rule
+    assert "not the same move joined a second time" in rule
+
+    # 7. The practical form.
+    assert "name the crowd you would be joining" in rule
+    assert "you are that crowd" in rule
+
+
 def test_v5m_after_a_winning_leg_the_next_same_side_trade_is_the_weak_one():
     """v5m (28 Sep): MOVE-EXHAUSTION, measured -- and v5h/v5k put in their place.
 
