@@ -201,26 +201,24 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_28_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 27 Sep transcript.
+def test_shipped_note_matches_september_29_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 28 Sep transcript.
 
-    Both branches flipped again over the weekend -- Friday's note bought a flat
-    open and sold a gap up; tonight's does the reverse. Five things an edit
+    The branches did NOT flip tonight -- the reason did. Five things an edit
     would flatten:
 
-    1. That BOTH branches flipped. A carry-over of Friday's note is internally
-       consistent and wrong in every branch at once.
-    2. That the flat-to-gap-down SELL is a FOLLOW. Friday's afternoon breakout
-       drove the sellers out, so there is no seated crowd to hunt -- he says
-       "go with the market". Read as a hunt, it invites a buyer-hunt premise
-       nobody stated.
-    3. That the gap-up BUY needs positive momentum FROM THE OPEN, not a gap.
-    4. That a gap up which then falls has NO plan. The absence is asserted,
-       because an absent case is what gets filled in.
-    5. The levels, which are the same drawn lines as the 25 Sep note, re-read
-       from the 1080p frames rather than trusted to the transcript: NIFTY's
-       "2302900" is again 23,001.75 / 22,900.85, and SENSEX's "7330" is the
-       line tagged 73,327.34 -- spoken "73 330" on 24 Sep -- kept at 73330.
+    1. That the branches are Monday's but the reason is new: Monday's sellers
+       were driven out by a breakout, tonight's booked their profit. A reader
+       who sees "same as yesterday" stops reading at the side.
+    2. That the SELL is a follow -- nobody is seated above to hunt.
+    3. That the gap-up BUY is his, conditioned on the market "trying something
+       different" after going sideways.
+    4. That both contracts expire today -- NOT from his video, and the note
+       says so, because a line he did not say must not read as his.
+    5. The levels. NIFTY's four were read from the 1080p frame (23,001.75 /
+       22,900.85 -- the two SUPPORT lines of the 25 and 28 Sep notes, now
+       resistance -- and 22,649.70 / 22,563.05). BankNIFTY's and SENSEX's are
+       recorded as spoken, which the transcript rendered cleanly.
     """
     import os
 
@@ -228,55 +226,49 @@ def test_shipped_note_matches_september_28_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-28"
-    assert "E55DWhSiEW4" in note.source
-    assert "Little momentum on 25 Sep" in note.context
-    assert "the afternoon breakout drove the SELLERS out" in note.context
-    assert "trying to go down again" in note.context
+    assert note.for_date == "2026-09-29"
+    assert "5p9RdcrWy0k" in note.source
+    assert "Continuous selling on 28 Sep on all three indices" in note.context
+    assert "the sellers from above have booked and left" in note.context
 
-    # 1. Both branches flipped, with Friday spelled out.
-    flip = next(line for line in note.plan if line.startswith("THE BRANCHES FLIPPED AGAIN"))
-    assert "on Friday flat to gap-down meant BUY and a gap up meant SELL" in flip
-    assert "Tonight flat to gap-down means SELL and a gap up with momentum means BUY" in flip
-    assert "inverts both" in flip
+    # 1. Same branches, new reason.
+    same = next(line for line in note.plan if line.startswith("SAME BRANCHES AS 28 SEP, NEW REASON"))
+    assert "flat to gap-down still means SELL and a gap up BUY" in same
+    assert "tonight's have booked their profit" in same
 
-    # 2. The sell is a follow: the sellers are already gone.
+    # 2. A follow.
     sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN ->"))
     assert "SELL, WITH THE MARKET" in sell
-    assert "no seated seller to hunt upward" in sell
+    assert "the upper sellers cannot be targeted" in sell
     assert "A follow, not a hunt" in sell
 
-    # 3. The buy needs momentum from the open.
-    buy = next(line for line in note.plan if line.startswith("GAP UP WITH POSITIVE MOMENTUM FROM THE OPEN ->"))
-    assert "BUY" in buy
-    assert "trap sellers who try to sell the gap" in buy
+    # 3. His gap-up branch.
+    buy = next(line for line in note.plan if line.startswith("GAP UP -> BUY"))
+    assert "trying something different" in buy
 
-    # 4. The uncovered case is named, not filled in.
-    none = next(line for line in note.plan if line.startswith("A GAP UP THAT STARTS FALLING"))
-    assert "HAS NO PLAN" in none
-    assert "GAP_UP verdict alone does not select the buy branch" in none
-    assert "the momentum after the open decides" in none
+    # 4. Expiry, marked as not his.
+    expiry = next(line for line in note.plan if line.startswith("BOTH EXPIRE TODAY"))
+    assert "(not in his video)" in expiry
+    assert "NIFTY's weekly and BankNIFTY's monthly contracts expire on 29 Sep" in expiry
 
-    # 5. The same drawn lines as the 25 Sep note, re-read from the frames.
+    # 5. Levels, nearest first.
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # 23,201.20 / 23,271.75, spoken "23270 23200" tonight.
-            "resistance": [23200.0, 23270.0],
-            # "2302900" again: 23,001.75 and 22,900.85.
-            "support": [23000.0, 22900.0],
+            # 22,900.85 / 23,001.75: support in the 25 and 28 Sep notes, now resistance.
+            "resistance": [22900.0, 23000.0],
+            # 22,649.70 / 22,563.05, spoken "22650 22560".
+            "support": [22650.0, 22560.0],
         },
         {
             "index": "BANKNIFTY",
-            # 55,802.00 / 56,006.05 and 55,209.90 / 55,005.50.
-            "resistance": [55800.0, 56000.0],
-            "support": [55200.0, 55000.0],
+            # Spoken "54800 54650"; recorded nearest first.
+            "resistance": [54650.0, 54800.0],
+            "support": [54200.0, 54000.0],
         },
         {
             "index": "SENSEX",
-            # 74,000.67 / 74,252.20.
-            "resistance": [74000.0, 74250.0],
-            # "7330": the line tagged 73,327.34, kept as 73330.
-            "support": [73330.0, 73000.0],
+            "resistance": [73130.0, 73450.0],
+            "support": [72500.0, 72000.0],
         },
     ]

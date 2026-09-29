@@ -1,45 +1,45 @@
 {
-  "for_date": "2026-09-28",
-  "source": "Intraday Hunter, 'Prediction For 28 SEP 2026' (E55DWhSiEW4, uploaded 2026-09-27)",
-  "context": "Little momentum on 25 Sep -- BankNIFTY roamed around 55500 -- so buyers and sellers both came, but the afternoon breakout drove the SELLERS out, and it is trying to go down again.",
+  "for_date": "2026-09-29",
+  "source": "Intraday Hunter, 'Prediction For 29 SEP 2026' (5p9RdcrWy0k, uploaded 2026-09-28)",
+  "context": "Continuous selling on 28 Sep on all three indices after a very big momentum, so the sellers from above have booked and left, and the late ones hold little quantity.",
   "plan": [
-    "THE BRANCHES FLIPPED AGAIN FROM 25 SEP: on Friday flat to gap-down meant BUY and a gap up meant SELL. Tonight flat to gap-down means SELL and a gap up with momentum means BUY. Carrying Friday's branches forward inverts both.",
-    "FLAT TO GAP DOWN -> SELL, WITH THE MARKET: the breakout already drove the sellers out, so there is no seated seller to hunt upward; identify selling-side setups as it tries to go down again. A follow, not a hunt.",
-    "GAP UP WITH POSITIVE MOMENTUM FROM THE OPEN -> BUY: the market may trap sellers who try to sell the gap, then rise slowly and go much higher; identify buying-side setups.",
-    "A GAP UP THAT STARTS FALLING HAS NO PLAN: he says no plan can be made then. A computed GAP_UP verdict alone does not select the buy branch; the momentum after the open decides."
+    "SAME BRANCHES AS 28 SEP, NEW REASON: flat to gap-down still means SELL and a gap up BUY. Monday's sellers were driven out by a breakout; tonight's have booked their profit. Either way nobody is seated above to hunt.",
+    "FLAT TO GAP DOWN -> SELL, WITH THE MARKET: the upper sellers cannot be targeted -- they booked after a very big momentum, and the late ones hold little quantity; identify selling-side setups. A follow, not a hunt.",
+    "GAP UP -> BUY: after a big momentum the market has gone a little sideways; a direct gap up may be it trying something different, and can set a trap -- so identify buying-side setups there.",
+    "BOTH EXPIRE TODAY (not in his video): NIFTY's weekly and BankNIFTY's monthly contracts expire on 29 Sep -- the two-expiry day that TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS (v4o) warns alternates traps."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23200,
-        23270
+        22900,
+        23000
       ],
       "support": [
-        23000,
-        22900
+        22650,
+        22560
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55800,
-        56000
+        54650,
+        54800
       ],
       "support": [
-        55200,
-        55000
+        54200,
+        54000
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        74000,
-        74250
+        73130,
+        73450
       ],
       "support": [
-        73330,
-        73000
+        72500,
+        72000
       ]
     }
   ]
