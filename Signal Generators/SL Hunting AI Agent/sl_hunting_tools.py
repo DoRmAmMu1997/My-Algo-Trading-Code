@@ -119,7 +119,9 @@ POSITION_STATE_DESCRIPTION = (
     "Your current open position (direction, entry, stop, target, unrealised P&L) "
     "or 'flat'. The P&L figures are a point-in-time MARK stamped `as_of`; one turn "
     "of yours takes about half a minute, so any order you send fills later than "
-    "that mark and at a different price."
+    "that mark and at a different price. While you are flat it also carries "
+    "`last_closed_trade_today`: the last trade you closed this session, when, "
+    "and what it booked."
 )
 
 
@@ -165,7 +167,9 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "only what did), exited_at, and mark_you_read (the position_state mark you "
         "read this turn and how many seconds before the exit you read it). Where the "
         "two differ, the realised figure is the fact: state that one in your final "
-        "reasoning, not the one you read."
+        "reasoning, not the one you read. An accepted ENTRY in the same direction as "
+        "a trade you closed at a PROFIT earlier today also carries "
+        "same_side_after_winning_exit: that close, stated plainly. It refuses nothing."
         + (
             " note_check is REQUIRED on entries today because a pre-open analyst note "
             "applies to this session. Start it with AGREES, CONTRADICTS or "

@@ -8441,13 +8441,58 @@ that passes. The first run of the mutations found a gap (IH's phrase "random
 sellers can come in" was not pinned, so a paraphrase passed); the test was
 tightened and the full set re-run.
 
-### Offered, not built: put the last exit in front of the entry
+### Code follow-up -- built as SLH-020
 
-Prose did not bind on its first day, and the numbers do not support a gate.
-The middle option is the SLH-019 pattern -- a checkable fact at the tool
-boundary rather than a rule in the prompt: when the agent calls the order tool
-to ENTER in the same direction as a trade it exited at a profit earlier in the
-session, the tool response (or position_state) states that exit plainly --
-direction, time, price and booked P&L -- without refusing the order. It
-cannot be relabelled away, and it blocks nothing the book cannot justify
-blocking. Left for the operator to approve.
+Prose did not bind on its first day, and the numbers do not support a gate, so
+the operator approved the middle option: a checkable fact at the tool boundary
+(the SLH-019 pattern). It ships in this PR as SLH-020, next section.
+
+
+## SLH-020 - the last close is stated to a same-side re-entry
+
+Operator decision, 2026-09-29, as an addendum to the v5n PR. v5n says a
+same-side re-entry after a winning leg joins the crowd the next retracement
+removes; this puts the earlier close in front of the model at the two moments
+it matters, and refuses nothing.
+
+### What changed
+
+- **The worker** (`SLHuntingAIWorker`) records the trade that just finished at
+  `_arm_post_exit_cooldown_if_flat` -- the basket-flat transition every close
+  path shares: the agent's EXIT, the mechanical stop/target, max-loss, the
+  15:15 square-off and a lone-mirror sweep. `booked_pnl` is the change in
+  `realized_pnl` since the entry (both legs, the SLH-019 basis); the direction is
+  taken at entry; `nifty_when_flat` is read from the shared store ONLY -- never a
+  broker call on an exit path -- and omitted when the store holds none. It is
+  recorded before the cooldown's own early return, so disabling the cooldown
+  does not disable this. `last_closed_trade_today()` returns it only for the
+  current IST session.
+- **The executor** (`MasterWorkerExecutor`) surfaces it, duck-typed like the
+  SLH-005 cooldown: while flat, `position_state` carries
+  `last_closed_trade_today`; an ACCEPTED entry on the same side as a close that
+  booked a profit carries `same_side_after_winning_exit` (that close, plus a
+  one-line note) and logs an `SLH-020:` INFO line for later measurement.
+- **The tool descriptions** name both fields and say they refuse nothing; v5n
+  names them too.
+
+### What it deliberately does not do
+
+It refuses nothing -- a refused entry is refused exactly as before (SLH-005,
+SLH-016), and the flag is added only after the order is accepted. A worker
+without the hook, or a hook that fails, reports nothing and changes nothing.
+The standalone paper runner has no worker and so no record. Whether the fact
+changes the agent's behaviour is the next measurement: the INFO line makes
+every flagged entry countable.
+
+### Tests
+
+Six in the agent suite, on fakes: the flat snapshot names the close; a
+same-side entry after a win is accepted, reaches the worker, and carries the
+flag; no flag for the opposite side, a losing or break-even close, a
+non-numeric figure, or nothing closed today; a broken hook changes nothing; a
+cooldown-refused entry is refused exactly as before; and the tool
+descriptions. Three in the master suite, on the REAL worker: a MECHANICAL
+AI_TARGET close is recorded with the basket's booked figure and flags the
+same-side re-entry (cooldown off, proving the record does not depend on it);
+a losing close is recorded but never flags; and a record from another session
+is never reported.

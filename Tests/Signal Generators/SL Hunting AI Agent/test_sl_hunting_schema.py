@@ -2999,6 +2999,13 @@ def test_v5n_the_second_seller_is_the_random_seller():
     assert "name the crowd you would be joining" in rule
     assert "you are that crowd" in rule
 
+    # SLH-020: the rule names the fields the code now supplies, and that they refuse nothing.
+    assert "SLH-020 NOW PUTS THAT CLOSE IN FRONT OF YOU" in rule
+    assert "position_state carries last_closed_trade_today" in rule
+    assert "same_side_after_winning_exit" in rule
+    assert "Neither refuses anything" in rule
+    assert "name in your reason what is new since that close" in rule
+
 
 def test_v5m_after_a_winning_leg_the_next_same_side_trade_is_the_weak_one():
     """v5m (28 Sep): MOVE-EXHAUSTION, measured -- and v5h/v5k put in their place.

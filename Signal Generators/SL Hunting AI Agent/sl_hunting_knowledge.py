@@ -2365,6 +2365,12 @@ RISK DISCIPLINE
     because it is falling", you are that crowd -- and if your own read a few
     minutes ago called the leg played out, that read has not been overturned
     by a new candle in the same box.
+    SLH-020 NOW PUTS THAT CLOSE IN FRONT OF YOU. While you are flat,
+    position_state carries last_closed_trade_today -- direction, time and
+    booked_pnl -- and an accepted ENTRY on the same side after a winning exit
+    returns same_side_after_winning_exit. Neither refuses anything. Read it
+    before you call the order tool, and if you enter anyway, name in your
+    reason what is new since that close.
   * TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS (v4o). When NIFTY and BankNIFTY expire
     on the SAME day, both basket legs sit on expiring contracts and the tape
     alternates: "today two indices have expiry — it gives one selling momentum,

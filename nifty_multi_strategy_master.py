@@ -15564,6 +15564,13 @@ if SL_HUNTING_AVAILABLE:
             # state machine; the final confirmed leg close consumes it once.
             self._cooldown_trade_open = False
             self._post_exit_cooldown_deadline_monotonic: float | None = None
+            # SLH-020: the last COMPLETE trade this session (whole basket flat),
+            # stated to the model while it is flat and on a same-side re-entry
+            # after a win. Informational only -- nothing reads it to refuse an
+            # order. Filled at the one transition every close path goes through.
+            self._trade_direction = ""
+            self._trade_realized_before = 0.0
+            self._last_closed_trade: dict[str, Any] | None = None
             # Latest BankNIFTY close seen this session (refreshed each decision
             # bar from the same fetch that feeds cross-confirmation); used to
             # pick the mirror's ATM strike.
@@ -15666,6 +15673,10 @@ if SL_HUNTING_AVAILABLE:
             )
             if ok:
                 self._cooldown_trade_open = True
+                # SLH-020: what this trade books is measured from here, on the
+                # same realized_pnl basis SLH-019's realised_pnl uses.
+                self._trade_direction = str(direction).strip().upper()
+                self._trade_realized_before = float(self.realized_pnl)
             mirror_safe = _should_open_bnf_mirror(
                 self.live_trading,
                 bool(ok and self.pos.live_legs_open),
@@ -16264,6 +16275,9 @@ if SL_HUNTING_AVAILABLE:
             if self.pos.active or self._mirror_pos.active:
                 return
             self._cooldown_trade_open = False
+            # Recorded before the cooldown's own early return, so a disabled
+            # cooldown does not also switch SLH-020 off.
+            self._record_closed_trade()
             if SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES <= 0:
                 self._post_exit_cooldown_deadline_monotonic = None
                 return
@@ -16271,6 +16285,47 @@ if SL_HUNTING_AVAILABLE:
                 time.monotonic()
                 + SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES * 60.0
             )
+
+        def _record_closed_trade(self) -> None:
+            """SLH-020: remember the trade that just went flat, for the model to see.
+
+            ``booked_pnl`` is the change in ``realized_pnl`` since the entry --
+            both basket legs book there, the basis SLH-019's realised_pnl uses.
+            ``nifty_when_flat`` comes from the shared store only (never a broker
+            call on an exit path) and is omitted when the store holds none.
+            Best-effort: the close has already happened, and a failure here
+            must never disturb it.
+            """
+            try:
+                now = _ist_now()
+                record: dict[str, Any] = {
+                    "session_date": now.date().isoformat(),
+                    "direction": self._trade_direction,
+                    "closed_at": now.strftime("%H:%M:%S"),
+                    "booked_pnl": round(float(self.realized_pnl) - self._trade_realized_before, 2),
+                }
+                spot = float(self.store.get_ltp_by_secid(
+                    NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID, fallback=0.0,
+                ))
+                if spot > 0:
+                    record["nifty_when_flat"] = round(spot, 2)
+                self._last_closed_trade = record
+            except Exception as exc:  # noqa: BLE001 - informational; never disturbs a close
+                self.log.warning("SL Hunting: could not record the closed trade (SLH-020): %s", exc)
+
+        def last_closed_trade_today(self) -> dict[str, Any] | None:
+            """The last complete trade closed THIS session, or None (SLH-020).
+
+            Read by the agent's executor to put that close in front of the model:
+            in position_state while flat, and on an accepted same-side ENTRY
+            after a winning exit. Never used to refuse anything -- v5m and v5n
+            measured a same-side re-entry after a win as the weak trade, but not
+            robustly enough to block it.
+            """
+            record = self._last_closed_trade
+            if not record or record.get("session_date") != _ist_now().date().isoformat():
+                return None
+            return {key: value for key, value in record.items() if key != "session_date"}
 
         def post_exit_cooldown_remaining_seconds(self) -> float:
             """Seconds still to run on the post-exit re-entry cooldown (SLH-005).

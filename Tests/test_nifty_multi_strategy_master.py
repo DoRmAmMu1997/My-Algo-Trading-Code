@@ -5790,6 +5790,55 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertAlmostEqual(second["realised_pnl"], round(20.0 * bnf_qty, 2))
         self.assertEqual(second["open_legs_after"], [])
 
+    def test_slh020_a_mechanical_winning_close_is_stated_to_a_same_side_reentry(self):
+        """SLH-020 on the REAL worker: the close is recorded at the basket-flat
+        transition every path shares -- here a mechanical AI_TARGET, not the
+        agent's EXIT -- and a same-side re-entry after that WIN is told about it,
+        never refused. The cooldown is off so the re-entry can be made at once,
+        which also proves the record does not depend on the cooldown.
+        """
+        worker, store = self._make_worker()
+        worker.realized_pnl = 250.0  # an earlier trade today must not leak into this booking
+        ex = self._executor(worker)
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        with patch.object(master_file, "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 0):
+            self.assertTrue(ex.enter("LONG", 24290.0, 24400.0, "first leg", 24300.0)["accepted"])
+            nifty_qty, bnf_qty = worker.pos.quantity, worker._mirror_pos.quantity
+            store.update_ltp_map({(seg, 1001): 110.0, (seg, 3003): 520.0})
+            worker.exit_position("AI_TARGET")
+            booked = round(10.0 * nifty_qty + 20.0 * bnf_qty, 2)
+            last = worker.last_closed_trade_today()
+            self.assertEqual(last["direction"], "LONG")
+            self.assertAlmostEqual(last["booked_pnl"], booked)
+            self.assertEqual(last["nifty_when_flat"], 24300.0)
+            self.assertEqual(ex.snapshot(), {"in_position": False, "last_closed_trade_today": last})
+            store.update_ltp_map({(seg, 1001): 100.0, (seg, 3003): 500.0})
+            res = ex.enter("LONG", 24290.0, 24400.0, "same move, second time", 24300.0)
+        self.assertTrue(res["accepted"])
+        self.assertTrue(worker.pos.active)
+        self.assertAlmostEqual(res["same_side_after_winning_exit"]["booked_pnl"], booked)
+
+    def test_slh020_a_losing_close_is_recorded_but_never_flagged(self):
+        worker, store = self._make_worker()
+        ex = self._executor(worker)
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        with patch.object(master_file, "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 0):
+            self.assertTrue(ex.enter("LONG", 24290.0, 24400.0, "first leg", 24300.0)["accepted"])
+            store.update_ltp_map({(seg, 1001): 95.0, (seg, 3003): 490.0})
+            self.assertTrue(ex.exit("premise dead", 24295.0, leg="BOTH")["accepted"])
+            self.assertLess(worker.last_closed_trade_today()["booked_pnl"], 0)
+            store.update_ltp_map({(seg, 1001): 100.0, (seg, 3003): 500.0})
+            res = ex.enter("LONG", 24290.0, 24400.0, "again", 24300.0)
+        self.assertTrue(res["accepted"])
+        self.assertNotIn("same_side_after_winning_exit", res)
+
+    def test_slh020_a_record_from_another_session_is_never_reported(self):
+        worker, _ = self._make_worker()
+        worker._last_closed_trade = {"session_date": "2000-01-01", "direction": "LONG",
+                                     "closed_at": "10:00:00", "booked_pnl": 999.0}
+        self.assertIsNone(worker.last_closed_trade_today())
+        self.assertEqual(self._executor(worker).snapshot(), {"in_position": False})
+
     def test_mirror_failure_never_blocks_the_nifty_leg(self):
         worker, _ = self._make_worker()
         worker._bnf_resolver.get_atm_option.side_effect = ValueError("no BNF chain")
