@@ -8496,3 +8496,100 @@ AI_TARGET close is recorded with the basket's booked figure and flags the
 same-side re-entry (cooldown off, proving the record does not depend on it);
 a losing close is recorded but never flags; and a record from another session
 is never reported.
+
+## 26 Sep weekly - one candidate, refused by the CSV (v5n diligence addendum)
+
+Source: `dVCXZ1PXVYI`, "Weekly Market Analysis: Key Trends & Opportunities"
+(13:32), uploaded 2026-09-26 13:27 IST. It is a weekend lecture, so there is no
+journal to compare against. The transcript (106 segments, 0:02-13:28) was read
+in full, and his words are my translation of the Hindi auto-transcript. The
+weekend's other upload, `lLE8gqRk_Qk` ("Live Crypto Trading", 27 Sep), is
+members-only and off-topic, and was not read.
+
+**Extraction note.** On this video the "Show transcript" button opened the OLD
+searchable-transcript panel, whose `get_transcript` call answered 400
+"Precondition check failed". The modern panel still works when it is opened
+directly: `document.querySelector('ytd-app').resolveCommand(...)` with a
+`showEngagementPanelEndpoint` whose identifier tag is
+`PAmodern_transcript_view`. Its `globalConfiguration.params` is copied from
+another video's modern button, with the 11-character video id swapped in. The id
+appears in plain text once the base64 is decoded.
+
+### What the lecture teaches
+
+He walks through three charts, each with its seated crowd and a branch per open.
+
+| chart | seated crowd | flat / gap-down | gap-up |
+|---|---|---|---|
+| 24 Sep: a very big gap-down, then continued selling | sellers | BUY, to hunt them | a different plan: they "sold suddenly on seeing the big gap-down", so "as soon as a gap-up opens" they get scared and "exit in one or two candles -- then we get no benefit" |
+| two or three days of positive momentum, then up again | buyers | SELL, to hunt them | BUY with the market: until the closing price is crossed nobody holding calls cuts, so any red candle can be a trap |
+| a negative trend of many days, two or three days of retracement, then continued selling | sellers | BUY | BUY: "flat, gap-up, even a small gap-down, no problem", because "the trend is very negative, so they will not have left on small retracements either" |
+
+Almost all of it is already in the corpus:
+
+- **The buyer chart** is RECRUITMENT HISTORY, NOT CHART SHAPE almost word for
+  word. The second with-trend day seats the buyers, so flat or gap-down means
+  SELL. On a gap-up they are in profit, so go with the market.
+- **"All three opens, one plan"** is A SMALL GAP DOES NOT RESCUE A SEATED CROWD
+  (same section): "Flat, slightly-gap-down and slightly-gap-up can all be the
+  SAME trade."
+- **The 25 Sep trade he reviews** is already in v5l. He bought the flat open and
+  was cut at his limit (-3,04,979.30 at 09:43). He says the direction was still
+  right, and the CSV agrees: NIFTY opened at 23,035.00, printed 23,048.80 at
+  09:43 and closed at 23,128.10 (high 23,162.70).
+- **The rest** is method the corpus already carries: analysis does half the
+  work, learn *why* and not only *what*, target retail and not the operator,
+  and skip a trade that has gone against the plan.
+
+### The candidate, and why it was not encoded
+
+The one idea not already written down is the split between the first and third
+charts. Both have seated sellers, yet their gap-up branches differ:
+
+- **One sudden fall.** That crowd is v5n's random seller, carried overnight. It
+  flees an adverse gap in the first candles, so the gap-up branch is not a hunt.
+- **A multi-day fall that already sat through retracements.** That crowd stays
+  huntable in every open.
+
+The test that would separate them: has this crowd already held through a
+retracement?
+
+That is a testable claim. After one sudden fall, a gap-up should be spent in its
+first two candles; after a multi-day fall that retraced, it should keep going. I
+measured it on five years of the NIFTY spot 1-minute CSV:
+
+- **Reference close:** the 15:15 print.
+- **Gap-up:** an open at least 0.3% above it.
+- **"Sudden":** the prior session opened at least 0.6% below its own reference
+  close and closed below its open, and the three sessions before it were not a
+  fall.
+- **"Trend":** the prior session closed red, at least 1.5% below the close five
+  sessions earlier, with at least one up close among the three sessions before
+  it.
+- **What was measured:** the move left after the second candle (09:16).
+
+| prior session | gap-ups | median further rise to 10:30 | mean net, 09:16 to 10:30 | net up |
+|---|---|---|---|---|
+| one sudden fall | 10 | 65.65 pts | +6.59 | 60% |
+| multi-day fall that retraced | 21 | 37.00 pts | -13.96 | 38% |
+
+That is the opposite of the claim, on both halves. It held across five threshold
+variants: a sudden gap of 0.5% or 0.8%, a gap-up of 0.2% or 0.5%, and a trend of
+2.5%. In every variant the sudden case's mean net stayed positive and the trend
+case's stayed negative.
+
+This does not prove the reverse:
+
+- the samples are small;
+- the definitions are proxies;
+- the data is spot, not premium.
+
+But a rule that the only available data contradicts does not go into a live
+prompt, so **no knowledge change and no test change**. It is recorded here so a
+later session does not re-derive it from the same video.
+
+**For the note channel.** The 25 Sep pre-open note carried exactly this branch:
+"A GOOD GAP UP -> SELL, WITH THE MARKET: a good gap up lets the sellers run
+early". That day opened flat, so the branch was never exercised. The measurement
+is a reason to read a branch like that as his forecast and nothing firmer, which
+is what the note block already tells the agent ("It can be WRONG").
