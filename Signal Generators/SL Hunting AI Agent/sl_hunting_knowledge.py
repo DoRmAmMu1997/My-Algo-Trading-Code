@@ -2328,6 +2328,49 @@ RISK DISCIPLINE
     It is a default argued from IH and the book, not a ban. And it says
     nothing against re-entering after a STOP: that side made 33,714.25, the
     same direction as v5i's refusal.
+  * THE SECOND SELLER IS THE RANDOM SELLER (v5n). v5m measured that the next
+    same-side trade after a winning leg loses; IH on 29 Sep gave the reason,
+    unprompted. On a follow day, "won't others sell? They definitely will --
+    but they wait for a retracement, or book a little profit and leave... as
+    soon as one candle goes against him he cuts, because he sold randomly,
+    just because the market is falling." And on why he booked with the move
+    still running: "if a retracement comes here it will not be small, because
+    random sellers can come in, and when the market removes them, sometimes
+    the retracement is just as big." Whoever joins the same move a second
+    time, after its first leg has paid, is that random seller -- and removing
+    them is the market's next job.
+    SAME DAY, SAME PAIR. IH sold from 09:20 and booked at 09:30. This book sold
+    at 09:22 (22,668.90) and booked at 09:32 (22,613.30): +6,246.75. With v5m
+    already in its prompt, its own 10:00 read was "that first leg already
+    played out... consolidating in a tight ~50pt range" -- and three minutes
+    later it sold again at 22,593.85 on "declined continuously... no major
+    retracement", inside the box the first leg left behind. It sat through
+    half an hour of that box and was cut with NIFTY flat: -1,504.50. None of
+    the day's 80 recorded decisions cited v5m or MOVE-EXHAUSTION. Day
+    +4,742.25.
+    RE-MEASURED WITH THAT TRADE (36 after-win re-entries): -10,807.25 with 39%
+    winners, against +33,714.25 over 43 after a loss. Both halves are now
+    negative (-9,312.50 / -1,494.75), but the latest third is not (+139.50),
+    the deficit rests on two sessions (drop them and it is +1,414.75), and the
+    gap to the after-loss side is p = 0.056 before correcting for the splits
+    already tried. Still a default, not a gate.
+    WHAT IH DOES NOT SAY. "Never think that one momentum has come so no more
+    will come, or that a missed trade means there is no next trade --
+    opportunity comes, in an hour or two, but at the right place." He said it
+    of his own late entry, after missing the first momentum. It licenses a
+    first trade after a missed move, and a new setup at a new place after
+    waiting -- not the same move joined a second time.
+    PRACTICAL FORM: before a same-side entry after a winning exit today, name
+    the crowd you would be joining. If the honest answer is "traders selling
+    because it is falling", you are that crowd -- and if your own read a few
+    minutes ago called the leg played out, that read has not been overturned
+    by a new candle in the same box.
+    SLH-020 NOW PUTS THAT CLOSE IN FRONT OF YOU. While you are flat,
+    position_state carries last_closed_trade_today -- direction, time and
+    booked_pnl -- and an accepted ENTRY on the same side after a winning exit
+    returns same_side_after_winning_exit. Neither refuses anything. Read it
+    before you call the order tool, and if you enter anyway, name in your
+    reason what is new since that close.
   * TWO EXPIRIES AT ONCE MULTIPLY THE TRAPS (v4o). When NIFTY and BankNIFTY expire
     on the SAME day, both basket legs sit on expiring contracts and the tape
     alternates: "today two indices have expiry — it gives one selling momentum,

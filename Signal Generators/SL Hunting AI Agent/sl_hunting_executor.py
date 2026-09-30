@@ -28,6 +28,7 @@ already in a position, and cannot EXIT while flat.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import sys
 from dataclasses import dataclass
@@ -315,6 +316,17 @@ class StandaloneExecutor:
 # Master-worker executor (live-capable; delegates to the worker)
 # ---------------------------------------------------------------------------
 
+LOGGER = logging.getLogger(__name__)
+
+# SLH-020: stated on an accepted same-side ENTRY after a winning exit today.
+SAME_SIDE_AFTER_WIN_NOTE = (
+    "You already closed a winning trade in this direction today (booked_pnl "
+    "above). v5m/v5n: after a winning leg, the next same-side trade is the "
+    "weak one -- it joins the late entrants the next retracement removes. "
+    "Nothing was refused; the position is open."
+)
+
+
 class MasterWorkerExecutor:
     """Delegates to an `AtmSingleLegStrategyWorker` instance in the master runner.
 
@@ -449,10 +461,25 @@ class MasterWorkerExecutor:
             "action": f"ENTER_{direction}", "reason": _single_line_reason(reason),
             "stop": round(float(stop), 2), "target": round(float(target), 2),
         }
-        return {
+        result: dict[str, Any] = {
             "accepted": True, "action": f"ENTER_{direction}", "entry": round(float(price), 2),
             "stop": round(float(stop), 2), "target": round(float(target), 2),
         }
+        # SLH-020: a same-side re-entry after a winning exit today is the trade
+        # v5m/v5n measured as weak, and on 2026-09-29 the agent made it with that
+        # rule in its prompt, citing it nowhere. The numbers do not support a
+        # gate, so this REFUSES NOTHING: it states the earlier close in the
+        # result the model reads, which it cannot relabel away.
+        last = self._last_closed_trade()
+        if last is not None and last.get("direction") == direction:
+            booked = last.get("booked_pnl")
+            if isinstance(booked, (int, float)) and not isinstance(booked, bool) and booked > 0:
+                result["same_side_after_winning_exit"] = {**last, "note": SAME_SIDE_AFTER_WIN_NOTE}
+                LOGGER.info(
+                    "SLH-020: %s entered after a winning %s closed at %s (booked %s).",
+                    direction, direction, last.get("closed_at"), booked,
+                )
+        return result
 
     def exit(self, reason: str, price: float, leg: str = "BOTH") -> dict[str, Any]:
         """Delegate the close to the worker (which handles P&L/alerts).
@@ -511,6 +538,22 @@ class MasterWorkerExecutor:
             return self._booked({"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}, before)
         return {"accepted": False, "reason": "no open position to exit"}
 
+    def _last_closed_trade(self) -> dict[str, Any] | None:
+        """SLH-020: today's last complete trade from the worker, or None.
+
+        Duck-typed like the SLH-005 cooldown: a worker without the hook, or one
+        whose hook fails, simply reports nothing -- this is informational and
+        must never be the reason an order goes wrong.
+        """
+        getter = getattr(self._w, "last_closed_trade_today", None)
+        if not callable(getter):
+            return None
+        try:
+            record = getter()
+        except Exception:  # noqa: BLE001 - informational only
+            return None
+        return dict(record) if isinstance(record, dict) and record else None
+
     def _realised(self) -> float | None:
         """The worker's realised P&L so far, or None when it keeps no numeric one."""
         value = getattr(self._w, "realized_pnl", None)
@@ -556,7 +599,12 @@ class MasterWorkerExecutor:
             with contextlib.suppress(Exception):
                 mirror = mirror_getter()
         if not nifty_active and not mirror:
-            return {"in_position": False}
+            flat: dict[str, Any] = {"in_position": False}
+            # SLH-020: while flat, the last trade closed today and what it booked.
+            last = self._last_closed_trade()
+            if last is not None:
+                flat["last_closed_trade_today"] = last
+            return flat
 
         snap: dict[str, Any] = {"in_position": True}
         if nifty_active:

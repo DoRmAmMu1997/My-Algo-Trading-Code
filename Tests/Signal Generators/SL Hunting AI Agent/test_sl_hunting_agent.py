@@ -1736,3 +1736,93 @@ def test_slh019_the_tools_tell_the_model_what_the_new_fields_mean():
         assert name in text
     assert "realised_pnl covers only what did" in text
     assert "the realised figure is the fact" in text
+
+
+# --------------------------------------------------------------------------
+# SLH-020: today's last close is put in front of a same-side re-entry
+# --------------------------------------------------------------------------
+# On 2026-09-29 the agent booked a winning short, called the leg "played out"
+# at 10:00, and sold the same box at 10:02 -- with v5m in its prompt and cited
+# nowhere. The numbers do not support a gate, so these pin a STATEMENT: the
+# earlier close in position_state while flat, and on the accepted ENTER. None
+# of it may ever refuse an order.
+
+
+class _ClosedTradeWorker(_FakeWorker):
+    """Exposes the SLH-020 hook the real master worker provides."""
+
+    def __init__(self, last):
+        super().__init__()
+        self.last = last
+
+    def last_closed_trade_today(self):
+        return self.last
+
+
+_WINNING_SHORT = {"direction": "SHORT", "closed_at": "09:32:29", "booked_pnl": 6246.75,
+                  "nifty_when_flat": 22613.3}
+
+
+def test_slh020_flat_position_state_names_todays_last_close():
+    ex = MasterWorkerExecutor(_ClosedTradeWorker(dict(_WINNING_SHORT)))
+    assert ex.snapshot() == {"in_position": False, "last_closed_trade_today": _WINNING_SHORT}
+
+
+def test_slh020_same_side_entry_after_a_win_is_stated_and_never_refused():
+    w = _ClosedTradeWorker(dict(_WINNING_SHORT))
+    res = MasterWorkerExecutor(w).enter("SHORT", stop=22619.5, target=22500.0,
+                                        reason="inside-bar breakdown", price=22593.85)
+    assert res["accepted"] is True
+    assert w.entries == [("SHORT", 22593.85, 22619.5, 22500.0)]   # the order went in
+    flag = res["same_side_after_winning_exit"]
+    assert flag["booked_pnl"] == 6246.75 and flag["closed_at"] == "09:32:29"
+    assert flag["nifty_when_flat"] == 22613.3
+    assert "Nothing was refused" in flag["note"]
+
+
+def test_slh020_no_flag_unless_it_is_the_same_side_after_a_win():
+    cases = {
+        "opposite side": {**_WINNING_SHORT, "direction": "LONG"},
+        "a losing close": {**_WINNING_SHORT, "booked_pnl": -1504.5},
+        "a flat close is not a win": {**_WINNING_SHORT, "booked_pnl": 0.0},
+        "a non-numeric figure": {**_WINNING_SHORT, "booked_pnl": "6246.75"},
+        "nothing closed today": None,
+    }
+    for label, last in cases.items():
+        res = MasterWorkerExecutor(_ClosedTradeWorker(last)).enter("SHORT", 22619.5, 22500.0, "x", 22593.85)
+        assert res["accepted"] is True, label
+        assert "same_side_after_winning_exit" not in res, label
+
+
+def test_slh020_a_broken_hook_changes_nothing():
+    class _Boom(_FakeWorker):
+        def last_closed_trade_today(self):
+            raise RuntimeError("boom")
+
+    ex = MasterWorkerExecutor(_Boom())
+    assert ex.snapshot() == {"in_position": False}
+    res = ex.enter("SHORT", 22619.5, 22500.0, "x", 22593.85)
+    assert res["accepted"] is True and "same_side_after_winning_exit" not in res
+
+
+def test_slh020_a_refused_entry_is_refused_exactly_as_before():
+    """The flag annotates an ACCEPTED entry only; SLH-005 still refuses unchanged."""
+
+    class _CoolingAfterAWin(_CooldownWorker):
+        def last_closed_trade_today(self):
+            return dict(_WINNING_SHORT)
+
+    res = MasterWorkerExecutor(_CoolingAfterAWin(120.0)).enter("SHORT", 22619.5, 22500.0, "x", 22593.85)
+    assert res["accepted"] is False and "cooldown" in res["reason"].lower()
+    assert "same_side_after_winning_exit" not in res
+
+
+def test_slh020_the_tools_tell_the_model_what_the_fields_mean():
+    from sl_hunting_tools import POSITION_STATE_DESCRIPTION, order_tool_description
+
+    assert "`last_closed_trade_today`" in POSITION_STATE_DESCRIPTION
+    assert "what it booked" in POSITION_STATE_DESCRIPTION
+    text = order_tool_description("paper")
+    assert "same_side_after_winning_exit" in text
+    assert "closed at a PROFIT earlier today" in text
+    assert "It refuses nothing" in text

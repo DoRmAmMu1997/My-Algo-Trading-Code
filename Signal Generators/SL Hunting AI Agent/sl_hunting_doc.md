@@ -8358,3 +8358,238 @@ Limits: re-entries are paired with the immediately preceding trade only; 28
 Sep's classification uses single prints rather than bar highs and lows; and
 35 after-win trades is a small sample whose halves disagree, which is why this
 is a default and not a gate.
+
+
+## v5n - the second seller is the random seller (29 Sep)
+
+Source: IH's live session 'Live Bank Nifty Option Trading' (6zppfK_n4yg,
+uploaded 2026-09-29 10:37 IST), traded on the previous evening's 'Prediction
+For 29 SEP 2026' (5p9RdcrWy0k) -- plus this book's two trades. His clock times
+are read off the taskbar clock in the video frame; his result is left in his
+own words ("a better profit than yesterday"). His words are my translation of
+the Hindi auto-transcript. Today's NIFTY path comes from the decisions log
+(the 1-minute CSV still ended on 28 Sep). Both NIFTY's weekly and BankNIFTY's
+monthly contracts expired today.
+
+### The first live day for v5m
+
+The runner started at 09:14:46, after #190 (v5m and this morning's note)
+merged at 09:08, and logged "injected 2066 pre-open note chars for 2026-09-29".
+The open classified FLAT (-0.21% NIFTY, -0.345% BankNIFTY), and the note's
+flat -> SELL, WITH THE MARKET branch was right for both books again.
+
+IH waited out the first minutes -- "nothing can be done in fast-fast momentum...
+both indices have expiry" -- and sold from 09:20, naming only SENSEX and NIFTY
+legs (of BankNIFTY he said he feared it might go back near its closing price).
+He booked at 09:30 with the move still running: "if a retracement comes here it
+will not be small, because random sellers can come in, and when the market
+removes them, sometimes the retracement is just as big."
+
+| # | time | entry | exit | basket |
+|---|---|---|---|---|
+| 1 | 09:22:57 -> 09:32:29 | 22,668.90 | 22,613.30, at the 22,600 round number | **+6,246.75** |
+| 2 | 10:02:57 -> 10:35:44 | 22,593.85 | 22,595.40, premise exit on BankNIFTY's reversal | **-1,504.50** |
+
+Day **+4,742.25**. Trade 1 was IH's trade, two to three minutes behind him at each end.
+After it booked, NIFTY made about 22,570 by 09:40, bounced to about 22,615, and
+sat in that box. Trade 2 was sold into the box and cut half an hour later with NIFTY
+flat; the expiry-day BankNIFTY mirror took the basket negative.
+
+### The agent's own read, three minutes apart
+
+| time | action | recorded reasoning |
+|---|---|---|
+| 10:00:51 | HOLD | "that first leg already played out (22732 open to 22569.65 low by 09:38, ~163pts). Price is now consolidating in a tight ~50pt range" |
+| 10:02:57 | ENTER_SHORT | "NIFTY has declined continuously from 22732 open to 22593 with no major retracement ... a confirmed bearish inside-bar breakdown" |
+
+Same box, same leg, three minutes apart: the relabelling this repo has seen
+before (v3q, 27 Jul), now against a rule that was in the prompt. None of the
+day's 80 recorded decisions cited v5m or MOVE-EXHAUSTION.
+
+### Re-measured
+
+v5m's measurement, re-run with trade 2 included:
+
+| | n | win | per trade | total |
+|---|---|---|---|---|
+| after a winning exit | 36 | 39% | -300.20 | -10,807.25 |
+| after a losing exit | 43 | 47% | +784.05 | +33,714.25 |
+| after-win, first half | 18 | 44% | -517.36 | -9,312.50 |
+| after-win, second half | 18 | 33% | -83.04 | -1,494.75 |
+| after-win, latest third | 12 | 42% | +11.62 | +139.50 |
+
+Both halves are now negative; the latest third is not; dropping the two worst
+sessions (23 Jul, 29 Jul) turns the total to +1,414.75; and the gap to the
+after-loss side is p = 0.056 (one-sided permutation) before correcting for the
+splits already tried. **Still refused as a gate.**
+
+### v5n
+
+A sub-bullet of MOVE-EXHAUSTION, directly after v5m, giving it the mechanism
+it lacked: on a follow day the sellers who arrive late are "random sellers"
+who cut on the first adverse candle, and removing them is what the next
+retracement is for -- so whoever joins the same move a second time is that
+crowd. It records the 10:00/10:02 contradiction, the re-measurement with its
+limits, and IH's own counterweight ("opportunity comes, in an hour or two, but
+at the right place"), said of his own late entry, which licenses a first trade
+after a missed move and a new setup after waiting -- not the same move joined
+twice.
+
+Test: `test_v5n_the_second_seller_is_the_random_seller`, seven clauses.
+Negative-tested with nine mutations -- all caught -- and a control rewording
+that passes. The first run of the mutations found a gap (IH's phrase "random
+sellers can come in" was not pinned, so a paraphrase passed); the test was
+tightened and the full set re-run.
+
+### Code follow-up -- built as SLH-020
+
+Prose did not bind on its first day, and the numbers do not support a gate, so
+the operator approved the middle option: a checkable fact at the tool boundary
+(the SLH-019 pattern). It ships in this PR as SLH-020, next section.
+
+
+## SLH-020 - the last close is stated to a same-side re-entry
+
+Operator decision, 2026-09-29, as an addendum to the v5n PR. v5n says a
+same-side re-entry after a winning leg joins the crowd the next retracement
+removes; this puts the earlier close in front of the model at the two moments
+it matters, and refuses nothing.
+
+### What changed
+
+- **The worker** (`SLHuntingAIWorker`) records the trade that just finished at
+  `_arm_post_exit_cooldown_if_flat` -- the basket-flat transition every close
+  path shares: the agent's EXIT, the mechanical stop/target, max-loss, the
+  15:15 square-off and a lone-mirror sweep. `booked_pnl` is the change in
+  `realized_pnl` since the entry (both legs, the SLH-019 basis); the direction is
+  taken at entry; `nifty_when_flat` is read from the shared store ONLY -- never a
+  broker call on an exit path -- and omitted when the store holds none. It is
+  recorded before the cooldown's own early return, so disabling the cooldown
+  does not disable this. `last_closed_trade_today()` returns it only for the
+  current IST session.
+- **The executor** (`MasterWorkerExecutor`) surfaces it, duck-typed like the
+  SLH-005 cooldown: while flat, `position_state` carries
+  `last_closed_trade_today`; an ACCEPTED entry on the same side as a close that
+  booked a profit carries `same_side_after_winning_exit` (that close, plus a
+  one-line note) and logs an `SLH-020:` INFO line for later measurement.
+- **The tool descriptions** name both fields and say they refuse nothing; v5n
+  names them too.
+
+### What it deliberately does not do
+
+It refuses nothing -- a refused entry is refused exactly as before (SLH-005,
+SLH-016), and the flag is added only after the order is accepted. A worker
+without the hook, or a hook that fails, reports nothing and changes nothing.
+The standalone paper runner has no worker and so no record. Whether the fact
+changes the agent's behaviour is the next measurement: the INFO line makes
+every flagged entry countable.
+
+### Tests
+
+Six in the agent suite, on fakes: the flat snapshot names the close; a
+same-side entry after a win is accepted, reaches the worker, and carries the
+flag; no flag for the opposite side, a losing or break-even close, a
+non-numeric figure, or nothing closed today; a broken hook changes nothing; a
+cooldown-refused entry is refused exactly as before; and the tool
+descriptions. Three in the master suite, on the REAL worker: a MECHANICAL
+AI_TARGET close is recorded with the basket's booked figure and flags the
+same-side re-entry (cooldown off, proving the record does not depend on it);
+a losing close is recorded but never flags; and a record from another session
+is never reported.
+
+## 26 Sep weekly - one candidate, refused by the CSV (v5n diligence addendum)
+
+Source: `dVCXZ1PXVYI`, "Weekly Market Analysis: Key Trends & Opportunities"
+(13:32), uploaded 2026-09-26 13:27 IST. It is a weekend lecture, so there is no
+journal to compare against. The transcript (106 segments, 0:02-13:28) was read
+in full, and his words are my translation of the Hindi auto-transcript. The
+weekend's other upload, `lLE8gqRk_Qk` ("Live Crypto Trading", 27 Sep), is
+members-only and off-topic, and was not read.
+
+**Extraction note.** On this video the "Show transcript" button opened the OLD
+searchable-transcript panel, whose `get_transcript` call answered 400
+"Precondition check failed". The modern panel still works when it is opened
+directly: `document.querySelector('ytd-app').resolveCommand(...)` with a
+`showEngagementPanelEndpoint` whose identifier tag is
+`PAmodern_transcript_view`. Its `globalConfiguration.params` is copied from
+another video's modern button, with the 11-character video id swapped in. The id
+appears in plain text once the base64 is decoded.
+
+### What the lecture teaches
+
+He walks through three charts, each with its seated crowd and a branch per open.
+
+| chart | seated crowd | flat / gap-down | gap-up |
+|---|---|---|---|
+| 24 Sep: a very big gap-down, then continued selling | sellers | BUY, to hunt them | a different plan: they "sold suddenly on seeing the big gap-down", so "as soon as a gap-up opens" they get scared and "exit in one or two candles -- then we get no benefit" |
+| two or three days of positive momentum, then up again | buyers | SELL, to hunt them | BUY with the market: until the closing price is crossed nobody holding calls cuts, so any red candle can be a trap |
+| a negative trend of many days, two or three days of retracement, then continued selling | sellers | BUY | BUY: "flat, gap-up, even a small gap-down, no problem", because "the trend is very negative, so they will not have left on small retracements either" |
+
+Almost all of it is already in the corpus:
+
+- **The buyer chart** is RECRUITMENT HISTORY, NOT CHART SHAPE almost word for
+  word. The second with-trend day seats the buyers, so flat or gap-down means
+  SELL. On a gap-up they are in profit, so go with the market.
+- **"All three opens, one plan"** is A SMALL GAP DOES NOT RESCUE A SEATED CROWD
+  (same section): "Flat, slightly-gap-down and slightly-gap-up can all be the
+  SAME trade."
+- **The 25 Sep trade he reviews** is already in v5l. He bought the flat open and
+  was cut at his limit (-3,04,979.30 at 09:43). He says the direction was still
+  right, and the CSV agrees: NIFTY opened at 23,035.00, printed 23,048.80 at
+  09:43 and closed at 23,128.10 (high 23,162.70).
+- **The rest** is method the corpus already carries: analysis does half the
+  work, learn *why* and not only *what*, target retail and not the operator,
+  and skip a trade that has gone against the plan.
+
+### The candidate, and why it was not encoded
+
+The one idea not already written down is the split between the first and third
+charts. Both have seated sellers, yet their gap-up branches differ:
+
+- **One sudden fall.** That crowd is v5n's random seller, carried overnight. It
+  flees an adverse gap in the first candles, so the gap-up branch is not a hunt.
+- **A multi-day fall that already sat through retracements.** That crowd stays
+  huntable in every open.
+
+The test that would separate them: has this crowd already held through a
+retracement?
+
+That is a testable claim. After one sudden fall, a gap-up should be spent in its
+first two candles; after a multi-day fall that retraced, it should keep going. I
+measured it on five years of the NIFTY spot 1-minute CSV:
+
+- **Reference close:** the 15:15 print.
+- **Gap-up:** an open at least 0.3% above it.
+- **"Sudden":** the prior session opened at least 0.6% below its own reference
+  close and closed below its open, and the three sessions before it were not a
+  fall.
+- **"Trend":** the prior session closed red, at least 1.5% below the close five
+  sessions earlier, with at least one up close among the three sessions before
+  it.
+- **What was measured:** the move left after the second candle (09:16).
+
+| prior session | gap-ups | median further rise to 10:30 | mean net, 09:16 to 10:30 | net up |
+|---|---|---|---|---|
+| one sudden fall | 10 | 65.65 pts | +6.59 | 60% |
+| multi-day fall that retraced | 21 | 37.00 pts | -13.96 | 38% |
+
+That is the opposite of the claim, on both halves. It held across five threshold
+variants: a sudden gap of 0.5% or 0.8%, a gap-up of 0.2% or 0.5%, and a trend of
+2.5%. In every variant the sudden case's mean net stayed positive and the trend
+case's stayed negative.
+
+This does not prove the reverse:
+
+- the samples are small;
+- the definitions are proxies;
+- the data is spot, not premium.
+
+But a rule that the only available data contradicts does not go into a live
+prompt, so **no knowledge change and no test change**. It is recorded here so a
+later session does not re-derive it from the same video.
+
+**For the note channel.** The 25 Sep pre-open note carried exactly this branch:
+"A GOOD GAP UP -> SELL, WITH THE MARKET: a good gap up lets the sellers run
+early". That day opened flat, so the branch was never exercised. The measurement
+is a reason to read a branch like that as his forecast and nothing firmer, which
+is what the note block already tells the agent ("It can be WRONG").
