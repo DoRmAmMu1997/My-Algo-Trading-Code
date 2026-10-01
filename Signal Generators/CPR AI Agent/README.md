@@ -96,8 +96,9 @@ and the stop is the candidate's VWAP, both host-derived. An open position may on
   (v3) are only those the five-year data does not refute: a big candidate bar, a choppy morning
   or a push into R2/S2 is not a reason to veto (ADR-0019, update 2026-10-01).
 - **Open:** Codex is called once per completed bar for HOLD or a premise exit. The prompt
-  (since v2) treats a stall or sideways drift as the sold option working, not as a failure: an exit
-  needs a completed bar retracing at least half of the session's trend move.
+  (since v2) treats a stall or sideways drift as the sold option working, not as a failure. Since
+  v4 an exit needs a completed bar retracing at least 70% of the session's trend move (the frozen
+  `location` at 0.70 or more for a short, 0.30 or less for a long).
 - At 15:00 new entries stop; exits continue. At 15:15 the host squares off and stops the worker.
 
 ## Live safety

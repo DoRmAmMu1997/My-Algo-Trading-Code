@@ -443,10 +443,17 @@ def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam(
     # stated, and doubt resolves to HOLD.
     assert "is not a failure" in prompt
     assert "Do not relabel the session SIDEWAYS" in prompt
-    assert "at least half of the session's trend move" in prompt
     assert "coin flip" in prompt
     assert "If you are unsure, HOLD." in prompt
-    assert CPR_AI_PROMPT_VERSION == "cpr-trend-day-rider-v3"
+    # v4 (after 1 Oct): the exit bar must retrace at least 70% of the session's
+    # trend move, read off the frozen location, because the v2 half-retrace
+    # rule cut the five-year total by 342 points.
+    assert "at least 70% of the session's trend move" in prompt
+    assert "half of the session's trend move" not in prompt
+    assert "trend_day_candidate.location of 0.70 or more" in prompt
+    assert "0.30 or less" in prompt
+    assert "cut the total by 342" in prompt
+    assert CPR_AI_PROMPT_VERSION == "cpr-trend-day-rider-v4"
     assert "HOLD" in prompt and "NONE" in prompt
     assert "host-owned" in prompt.lower()
     assert "confidence" in prompt and "0 through 10" in prompt
