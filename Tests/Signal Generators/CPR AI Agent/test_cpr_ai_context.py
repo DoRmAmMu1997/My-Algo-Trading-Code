@@ -446,13 +446,38 @@ def test_prompt_requires_tools_judgment_risk_boundary_and_future_knowledge_seam(
     assert "at least half of the session's trend move" in prompt
     assert "coin flip" in prompt
     assert "If you are unsure, HOLD." in prompt
-    assert CPR_AI_PROMPT_VERSION == "cpr-trend-day-rider-v2"
+    assert CPR_AI_PROMPT_VERSION == "cpr-trend-day-rider-v3"
     assert "HOLD" in prompt and "NONE" in prompt
     assert "host-owned" in prompt.lower()
     assert "confidence" in prompt and "0 through 10" in prompt
     assert "model_used" in prompt and "configured-test-model" in prompt
     assert "FUTURE OPERATOR-APPROVED KNOWLEDGE" in prompt
     assert CPR_AI_PROMPT_VERSION in prompt
+
+
+def test_prompt_veto_examples_are_only_the_ones_the_backtest_does_not_refute():
+    """v3: a veto example must not point Codex at trades the data says are good.
+
+    Scored on the 264 five-year candidates: whipsaw mornings (four or more VWAP
+    crossings) did as well as the rest (PF 1.71 vs 1.67), and the six candidates
+    driving steeply into R2/S2 or a prior-day extreme were the best trades (five
+    won, about +103 points each). So those two may no longer be veto examples,
+    and the prompt says outright that they -- and a big candidate bar -- are not
+    red flags. The two surviving examples were rare and roughly break-even.
+    """
+
+    prompt = build_system_prompt(model_used="configured-test-model")
+
+    # The two refuted examples are gone from the veto list...
+    assert "the session was a whipsaw" not in prompt
+    assert "price is pressing into R2/S2" not in prompt
+    # ...and the two harmless ones remain.
+    assert "one climactic bar produced most of the session range" in prompt
+    assert "merely scrapes its two confluence factors" in prompt
+    # The model is told why, so it does not re-derive the refuted cues itself.
+    assert "Do not veto for a big candidate bar" in prompt
+    assert "PF 1.71 vs 1.67" in prompt
+    assert "profit factor near 3" in prompt
 
 
 def _trend_day_frame() -> pd.DataFrame:

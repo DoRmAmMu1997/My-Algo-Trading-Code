@@ -152,3 +152,31 @@ migration) froze the machine six more times in the afternoon. That is about 74 m
 monitoring for any worker. Nothing in the runner can act while the machine is asleep, so this is an
 operator-side fix: no sleep on AC power during market hours, and automatic maintenance scheduled
 outside them.
+
+## Update 2026-10-01: prompt v3, veto examples checked against the data
+
+The next two paper sessions had no candidate, which is correct behaviour. By 13:30 the session
+range had reached only 0.90 × ATR5 on 29 Sep (a V-shaped expiry day) and 0.75 × ATR5 on 30 Sep, so
+the host never consulted Codex. On 1 Oct the first candidate under v2 came on the 12:45 bar. That
+was a single 60-point bar that lifted the range from 0.81 to 1.08 × ATR5, and Codex accepted it.
+
+Bars like that one raised a question: v2 listed four example red flags, but the backtest takes
+every candidate, so none of them had been tested. Each was scored on the 264 five-year candidates
+(SELL-opposite premium points after costs; the baseline is PF 1.69):
+
+| v2 veto example (as measured) | Trades | Result |
+|---|---|---|
+| Whipsaw: four or more closes switching side of the running VWAP before the candidate | 96 | PF 1.71 vs 1.67 for the rest; vetoing would give up 908 of 2,542 points |
+| A push into R2/S2 or a prior-day extreme (close within 0.1 × ATR5) after three same-direction bars covering more than 0.5 × ATR5 | 6 | Five won; average +103 points; the best group |
+| One bar at least half the session range, and the candidate bar's wick against the trend at least 40% of its range | 7 | PF 0.81 (−34 points) |
+| Bullish, confluence exactly 2, expiry day | 11 | PF 1.01 (+4 points) |
+
+The size of the candidate bar points the same way. Candidates whose own bar spanned at least a
+quarter of ATR5 had PF 2.98 (36 trades). Candidates whose bar alone lifted the range past 1.0 × ATR5
+had PF 1.86, against 1.44 for those that were already expanded.
+
+**Decision (operator):** prompt `cpr-trend-day-rider-v3` drops the whipsaw and the R2/S2 examples
+and keeps the two rare, roughly break-even ones. The climactic-bar example now says that the wick is
+the warning, not the size of the bar. The prompt also tells Codex not to veto for a big candidate
+bar, a choppy morning or a push into R2/S2 or a prior-day extreme, and quotes the evidence above.
+The host gate, the stop and Codex's veto-only role are unchanged.

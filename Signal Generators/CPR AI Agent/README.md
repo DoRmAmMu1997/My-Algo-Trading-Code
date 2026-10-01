@@ -92,9 +92,11 @@ and the stop is the candidate's VWAP, both host-derived. An open position may on
   mode the host also waits until all five **official** REST source minutes are present, so an
   intermediate REST hole blocks inference instead of letting invented OHLC through.
 - **Flat:** Codex is called only when the bar is an eligible candidate, and never after today's
-  entry. On most bars of most days there is no model call at all.
+  entry. On most bars of most days there is no model call at all. The prompt's veto examples
+  (v3) are only those the five-year data does not refute: a big candidate bar, a choppy morning
+  or a push into R2/S2 is not a reason to veto (ADR-0019, update 2026-10-01).
 - **Open:** Codex is called once per completed bar for HOLD or a premise exit. The prompt
-  (v2) treats a stall or sideways drift as the sold option working, not as a failure: an exit
+  (since v2) treats a stall or sideways drift as the sold option working, not as a failure: an exit
   needs a completed bar retracing at least half of the session's trend move.
 - At 15:00 new entries stop; exits continue. At 15:15 the host squares off and stops the worker.
 

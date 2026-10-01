@@ -35,7 +35,7 @@ playbook CPR AI used to trade — see [`cpr-algo4.md`](cpr-algo4.md).
 | `cpr_ai_tools.py` | `FrozenCPRContextRegistry`, `EXPECTED_TOOL_NAMES` |
 | `cpr_ai_mcp_server.py` | Isolated MCP server exposing the four tools |
 | `cpr_ai_schema.py` | `CPRAgentDecision`, `validate_position_state` (strict pydantic) |
-| `cpr_ai_prompt.py` | Versioned system prompt (`CPR_AI_PROMPT_VERSION = "cpr-trend-day-rider-v2"`) |
+| `cpr_ai_prompt.py` | Versioned system prompt (`CPR_AI_PROMPT_VERSION = "cpr-trend-day-rider-v3"`) |
 | `cpr_ai_codex_runner.py` | Thread config, `safe_subprocess_environment` |
 | `cpr_ai_codex_subprocess.py` | The child process boundary |
 | `cpr_ai_decision_log.py` | JSONL decision log |
