@@ -16325,7 +16325,7 @@ if SL_HUNTING_AVAILABLE:
             """
             executor = getattr(self, "_executor", None)
             entry_order = getattr(executor, "last_entry_order", None)
-            if entry_order is None:
+            if executor is None or entry_order is None:
                 return
             try:
                 self._closed_inside_pass = {
