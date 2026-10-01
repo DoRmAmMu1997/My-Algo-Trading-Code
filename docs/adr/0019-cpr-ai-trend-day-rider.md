@@ -180,3 +180,33 @@ and keeps the two rare, roughly break-even ones. The climactic-bar example now s
 the warning, not the size of the bar. The prompt also tells Codex not to veto for a big candidate
 bar, a choppy morning or a push into R2/S2 or a prior-day extreme, and quotes the evidence above.
 The host gate, the stop and Codex's veto-only role are unchanged.
+
+## Update 2026-10-01 (after the close): prompt v4, a 70% retrace for premise exits
+
+The 1 Oct trade (sold the Oct-06 22400 CE at 139.45 on the 12:45 bar, NIFTY 22,378) ran 161 points in
+its favour to 22,217 at 14:05. NIFTY then rallied to 22,445 by 15:14. On the 15:05 bar the close had
+retraced 50.8% of the session range, which just cleared v2's "at least half of the session's trend
+move" line. Codex exited at 15:10 at 152.35 (−₹838.50, confidence 10). Holding to the 15:15 square-off
+would have been somewhat worse; by a delta estimate, about −₹1,300.
+
+v2's half-retrace rule had never been tested, so it was scored on the 264 five-year trades. It
+exits at the first post-entry bar whose close is at least halfway back across the session range, and
+the exit fills six minutes after the bar starts (one minute after it completes), as on 1 Oct. A rule
+only counts if it fires before the trade's own stop or square-off.
+
+| Exit cut-off (share of the session move retraced) | Trades it fired on | Helped / hurt | Change in the five-year total |
+|---|---|---|---|
+| 50% (v2) | 13 | 6 / 7 | −342 points (2,542 → 2,200) |
+| 50%, but not after 14:30 | 6 | 3 / 3 | −239 |
+| 60% | 3 | 2 / 1 | +76 |
+| 70% | 2 | 1 / 1 | +29 |
+
+Together with the stall exits tested on 28 Sep, every rule-based premise exit so far has lost against
+holding to the stop or 15:15. The 60% and 70% rows are too small to show an edge either way.
+
+**Decision (operator):** keep premise exits but raise the cut-off to 70%. Prompt
+`cpr-trend-day-rider-v4` requires a completed bar retracing at least 70% of the session's trend move,
+read off the frozen `market_structure.trend_day_candidate.location` (0.70 or more for a short, 0.30 or
+less for a long). It says that a half retrace is not enough, and quotes the evidence above. Removing
+premise exits altogether (the backtest's own assumption) was offered and not chosen. At 70% a premise
+exit should be rare, about once in two years of trades.
