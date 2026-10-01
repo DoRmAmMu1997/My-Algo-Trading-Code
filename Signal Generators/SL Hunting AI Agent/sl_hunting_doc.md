@@ -8593,3 +8593,153 @@ later session does not re-derive it from the same video.
 early". That day opened flat, so the branch was never exercised. The measurement
 is a reason to read a branch like that as his forecast and nothing firmer, which
 is what the note block already tells the agent ("It can be WRONG").
+
+## 30 Sep - same trade, four seconds, and a hole in SLH-012 (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`dUHtpd2MhWo`,
+  uploaded 2026-09-30 10:27 IST), traded on the 30 Sep note (`NrPmCbzrzSY`). His
+  clock times are read off the taskbar clock in the video frame. His figures come
+  from his positions screen at 7:09 in the video, about 09:45. His words are my
+  translation of the Hindi auto-transcript.
+- **This book:**
+  - all 72 decisions in the decisions log;
+  - the runner log, which holds the one trade the journal does not.
+
+**No knowledge change.** Three candidate rules were measured and refused, and the
+real finding is a bookkeeping defect, offered below as SLH-021.
+
+### Same read, same instrument, opposite outcome
+
+| | IH | the agent |
+|---|---|---|
+| open | flat, so the note's flat branch: BUY | FLAT (-0.226%), so the same branch, cited in every early decision |
+| entry | 09:18, all three indices | 09:22:49, NIFTY 22700 CE at 184.75, BankNIFTY 54500 CE mirror at 1,152.80 |
+| exit | 09:45, booked | 09:22:53, AI_STOP at 22,700.10 |
+| result | **+2,51,147.85** | **-301.75** |
+
+His positions at the exit:
+
+| leg | qty | avg | LTP | P&L |
+|---|---|---|---|---|
+| BankNIFTY | 1,170 | 1,162.18 | 1,260.40 | +1,14,917.40 |
+| BankNIFTY | 1,170 | 1,109.25 | 1,194.30 | +99,508.50 |
+| SENSEX | 900 | 421.36 | 453.20 | +28,656.25 |
+| NIFTY | 1,430 | 184.16 | 189.80 | +8,065.70 |
+
+His NIFTY average (184.16) is within a rupee of the agent's 22700 CE fill. It was
+the same trade, four minutes apart, and **85% of his result came from the two
+BankNIFTY legs**.
+
+### What happened to the agent's trade
+
+**1. The order fired on a stale price.**
+
+- The runner was restarted at 09:19 and again at 09:21, switching the model each
+  time: `claude-sonnet-5-5` until 09:18, then `claude-sonnet-5.5` (the 09:20
+  agent error), then `claude-sonnet-5`.
+- The first decision after the second restart ran for **87.2 seconds** against a
+  90-second deadline.
+- It named an entry of 22,727.70 and a stop of 22,701.00, a risk of 26.70 points.
+  When the order fired, spot was **22,705.20**, so only 16% of that risk was left,
+  and the stop fired four seconds later.
+
+**Even at its own price the stop would not have survived.**
+
+- NIFTY printed **22,685.10** at 09:34, according to the decisions log.
+- The stop sat 1 point above the 22,700 round number, inside the morning's
+  range. It was above both the opening low (22,659.80) and the note's 22,650
+  support, which are the levels the flat-BUY premise rested on (v5e).
+- IH sat through that dip: "a small rejection comes and cuts the profit a lot...
+  but no big retracement is happening, that's the good thing."
+
+**2. Then it held for an hour.**
+
+- 67 decisions followed, all HOLD. 46 of them cited the stopped long or a
+  "played-out" premise, several by name as POST-LOSS SPEED LIMIT and the
+  POST-EXIT RE-ENTRY GATE.
+- Meanwhile NIFTY ran from 22,685.10 (09:34) to 22,766.00 (10:21).
+
+**3. The trade never reached the journal.** See the defect below.
+
+### Three candidates, measured, none encoded
+
+**(a) Loosen re-entry after a loss.**
+
+The agent applied the POST-EXIT RE-ENTRY GATE after a loss. v5m measured
+after-loss re-entries as profitable: 43 trades, +33,714.25. Split by how long the
+losing trade had lasted:
+
+| prior losing trade lasted | same-side re-entries | sum | winners |
+|---|---|---|---|
+| more than 2 minutes | 26 | +47,162.50 | 65% |
+| 2 minutes or less | 17 | **-13,448.25** | **18%** |
+
+The second row is robust:
+
+- 12 of its 14 sessions are negative;
+- both halves are negative (-7,117.75 / -6,330.50);
+- it is still -5,411.25 without the worst two sessions.
+
+30 Sep's four-second stop belongs to that row. So the holds were right by the
+book's own history, and the day was the exception. **Refused.**
+
+**(b) Refuse an order whose live spot has already used up most of the declared
+risk.**
+
+This would extend SLH-016, which refuses only a stop that is already breached.
+The measure is the share of the declared risk still left when the order fired,
+across 150 matched entries (7 Jul-29 Sep):
+
+| risk left at the order | trades | sum | winners |
+|---|---|---|---|
+| 100% or more (spot at or past the model's entry) | 79 | +55,920.00 | 54% |
+| 75-100% | 43 | +15,698.50 | 40% |
+| 50-75% | 23 | -8,259.00 | 35% |
+| under 50% | 5 | -651.50 | 20% |
+
+The gradient is real, but the cut-off is not robust. Only a 75% cut keeps the
+blocked set negative in both halves (-7,455.00 / -1,455.50) and without its worst
+two sessions (-2,501.25). At 70% and at 80%, the second half and the
+worst-two-removed figure both turn positive (70%: +800.50 / +2,007.75; 80%:
++674.25 / +2,464.50). A gate that only works at one exact number is a fitted
+number. **Refused**, recorded so it can be re-run as the book grows.
+
+**(c) Refuse an order placed late in a long decision call.**
+
+Call timing exists for 58 entries (median 38.5 seconds into the call). Outcomes
+show no pattern by delay. **Refused.**
+
+### IH's other points, all already in the corpus
+
+- **"The market normally takes direction where fewer traders are working"** is
+  why he bought the flat open and not a gap up. That is v3l (once your side IS
+  the crowd the edge is gone), and it is the 30 Sep note's gap-up branch.
+- **"We bore one rejection; a second one may create a problem"** is the RISK rule
+  that a premise tolerates roughly TWO rejections.
+- **"An option buyer books as soon as momentum comes"**, with an average target
+  on a high premium, is v3i.
+
+### The defect: a trade that opens and closes inside its own decision call is never journaled
+
+SLH-012 journals a trade placed by a decision call that later went stale, but
+only when the position is **still open** when the call's result is collected
+(`opened_a_position` checks `self.pos.active`). A trade that is entered and
+stopped while its call is still running fails that check:
+
+- the result is discarded as stale;
+- `after_exit` has no open row to close;
+- the trade is missing from both the journal and the decisions log.
+
+The runner log shows it four times, each an entry, then an AI_STOP within about
+four seconds, then "Discarding late SL Hunting result for stale generation N":
+
+- 10 Aug, 09:50:59;
+- 4 Sep, 09:15:48;
+- 15 Sep, 09:15:55;
+- 30 Sep, 09:22:49.
+
+The last three all came **after** SLH-012 shipped. The reflection coach and these
+comparisons read the journal, so they have never seen these trades. That bias is
+not neutral: every missing trade is a fast stop.
