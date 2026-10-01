@@ -435,7 +435,10 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     # made CI run the ~60 SL Hunting worker tests it had always skipped, and CI's
     # figure rose 72.1% -> 73.8% on the same code, identically on 3.12 and 3.13.
     # Margin ~0.8pp.
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 73.0
+    # 73.0 -> 74.0 (2026-10-01, PR #195), at the operator's direction. CI measured
+    # 74.6% on main (2c3f4c7) and 74.7% on PR #195, identically on 3.12 and 3.13.
+    # Margin ~0.6pp.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 74.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():

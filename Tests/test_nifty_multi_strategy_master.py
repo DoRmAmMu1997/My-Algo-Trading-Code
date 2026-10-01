@@ -5839,6 +5839,114 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertIsNone(worker.last_closed_trade_today())
         self.assertEqual(self._executor(worker).snapshot(), {"in_position": False})
 
+    # ----- SLH-021: a trade that opens and closes inside its own pass ----------
+    def _harvest_pass(self, worker, *, generation):
+        """Hand the worker a finished pass, as the inference thread would."""
+        decision = SimpleNamespace(
+            action="ENTER_LONG", confidence=7, setup="pass_setup",
+            stop=24290.0, target=24400.0, reasoning="the pass's own reason",
+        )
+        worker._agent_inference_thread = SimpleNamespace(is_alive=lambda: False)
+        worker._agent_inference_result = (generation, decision, False, pd.DataFrame(), None)
+        with patch.object(master_file.SL_HUNTING_JOURNAL_MODULE, "make_entry_record",
+                          side_effect=lambda **kw: kw):
+            worker._consume_agent_decision()
+
+    def _journalled_worker(self):
+        worker, store = self._make_worker()
+        worker._journal = MagicMock()
+        worker._journal.open_trade.return_value = "row-1"
+        worker._decisions_path = None
+        return worker, store
+
+    def test_slh021_a_trade_stopped_inside_its_own_pass_is_journalled(self):
+        """The 30 Sep 2026 sequence on the REAL worker: the pass enters, the
+        per-poll stop invalidates it and closes the basket four seconds later,
+        and the late result is harvested as stale. The trade must reach the
+        journal with the pass's own reasoning and THIS trade's basket P&L."""
+        worker, store = self._journalled_worker()
+        worker.realized_pnl = 250.0  # earlier P&L today must not leak into this row
+        ex = worker._executor  # the worker's OWN executor, as the order tool uses
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        self.assertTrue(ex.enter("LONG", 24290.0, 24400.0, "opened during the pass", 24300.0)["accepted"])
+        nifty_qty, bnf_qty = worker.pos.quantity, worker._mirror_pos.quantity
+        pass_generation = worker._agent_generation
+        store.update_ltp_map({(seg, 1001): 95.0, (seg, 3003): 490.0})
+        worker._invalidate_agent_inference("AI_STOP")
+        worker.exit_position("AI_STOP")
+
+        worker._journal.open_trade.assert_not_called()  # no row yet: the pass is in flight
+        self.assertIsNotNone(worker._closed_inside_pass)
+        self.assertIsNone(ex.last_entry_order)           # consumed by the park
+
+        self._harvest_pass(worker, generation=pass_generation)
+
+        worker._journal.open_trade.assert_called_once()
+        entry = worker._journal.open_trade.call_args[0][0]
+        self.assertEqual(entry["direction"], "LONG")
+        self.assertEqual((entry["stop"], entry["target"], entry["entry_underlying"]),
+                         (24290.0, 24400.0, 24300.0))
+        self.assertEqual(entry["setup"], "pass_setup")
+        self.assertEqual(entry["reasoning"], "the pass's own reason")
+        self.assertEqual(entry["lots"], nifty_qty // self.NIFTY_CONTRACT["lot_size"])
+        worker._journal.close_trade.assert_called_once()
+        row_id, payload = worker._journal.close_trade.call_args[0]
+        self.assertEqual(row_id, "row-1")
+        self.assertEqual(payload["exit_reason"], "AI_STOP")
+        self.assertAlmostEqual(payload["option_pnl"], round(-5.0 * nifty_qty - 10.0 * bnf_qty, 2))
+        self.assertIsNone(worker._open_trade_id)
+        self.assertIsNone(worker._closed_inside_pass)
+
+    def test_slh021_a_nifty_only_cut_inside_the_pass_waits_for_the_mirror(self):
+        """The parked row defers behind a surviving mirror, exactly like the
+        ordinary path, so option_pnl still covers both legs."""
+        worker, store = self._journalled_worker()
+        ex = worker._executor  # the worker's OWN executor, as the order tool uses
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        self.assertTrue(ex.enter("LONG", 24290.0, 24400.0, "opened during the pass", 24300.0)["accepted"])
+        nifty_qty, bnf_qty = worker.pos.quantity, worker._mirror_pos.quantity
+        store.update_ltp_map({(seg, 1001): 95.0})
+        self.assertTrue(ex.exit("nifty premise dead", 24295.0, leg="NIFTY")["accepted"])
+
+        self._harvest_pass(worker, generation=worker._agent_generation)  # agent EXIT: not stale
+
+        worker._journal.open_trade.assert_called_once()
+        worker._journal.close_trade.assert_not_called()   # deferred behind the mirror
+        self.assertIsNotNone(worker._pending_journal_exit)
+        store.update_ltp_map({(seg, 3003): 520.0})
+        worker.exit_bnf_mirror_only("bnf premise dead")
+        worker._journal.close_trade.assert_called_once()
+        _row, payload = worker._journal.close_trade.call_args[0]
+        self.assertAlmostEqual(payload["option_pnl"], round(-5.0 * nifty_qty + 20.0 * bnf_qty, 2))
+
+    def test_slh021_an_ordinary_journalled_trade_is_never_parked(self):
+        worker, store = self._journalled_worker()
+        ex = worker._executor  # the worker's OWN executor, as the order tool uses
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        self.assertTrue(ex.enter("LONG", 24290.0, 24400.0, "harvested while open", 24300.0)["accepted"])
+        worker._open_trade_id = "t1"          # the harvest already wrote the row
+        worker._entry_realized_pnl = 0.0
+        ex.last_entry_order = None            # ...and consumed the payload
+        store.update_ltp_map({(seg, 1001): 95.0, (seg, 3003): 490.0})
+        worker.exit_position("AI_STOP")
+
+        worker._journal.close_trade.assert_called_once()
+        self.assertIsNone(worker._closed_inside_pass)
+
+    def test_slh021_a_close_with_no_pending_entry_order_parks_nothing(self):
+        """No unconsumed order means no pass placed this trade (e.g. its journal
+        open already failed): nothing is parked for a later pass to claim."""
+        worker, store = self._journalled_worker()
+        ex = worker._executor  # the worker's OWN executor, as the order tool uses
+        seg = master_file.OPTION_EXCHANGE_SEGMENT
+        self.assertTrue(ex.enter("LONG", 24290.0, 24400.0, "x", 24300.0)["accepted"])
+        ex.last_entry_order = None
+        store.update_ltp_map({(seg, 1001): 95.0, (seg, 3003): 490.0})
+        worker.exit_position("AI_STOP")
+
+        self.assertIsNone(worker._closed_inside_pass)
+        worker._journal.close_trade.assert_not_called()
+
     def test_mirror_failure_never_blocks_the_nifty_leg(self):
         worker, _ = self._make_worker()
         worker._bnf_resolver.get_atm_option.side_effect = ValueError("no BNF chain")
@@ -12681,11 +12789,14 @@ class SLHuntingStaleGenerationJournalTests(unittest.TestCase):
             _journal=object(),
             _open_trade_id=None,
             _decisions_path=None,          # decision-journal append is skipped
+            _closed_inside_pass=None,      # SLH-021: nothing parked by default
             pos=SimpleNamespace(active=position_open),
             log=MagicMock(),
         )
         stub.opened_rows = []
         stub._journal_open_row = lambda *a: stub.opened_rows.append(a)
+        stub.closed_inside_rows = []
+        stub._journal_closed_inside_pass = lambda *a: stub.closed_inside_rows.append(a)
         return stub
 
     def _consume(self, stub):
@@ -12732,6 +12843,72 @@ class SLHuntingStaleGenerationJournalTests(unittest.TestCase):
 
         self.assertEqual(stub.opened_rows, [])
         self.assertEqual(stub.log.warning.call_count, 0)
+
+    # ----- SLH-021: the pass's trade already CLOSED before the harvest --------
+    def test_slh021_a_stale_pass_whose_trade_already_closed_is_journalled(self):
+        """4 Sep, 15 Sep and 30 Sep 2026: stopped three to four seconds after the
+        fill, so the position is FLAT at the harvest. SLH-012 keyed on an OPEN
+        position and discarded the pass; the parked close must be written."""
+        stub = self._stub(generation=2, current_generation=3, position_open=False)
+        parked = {"static": {"exit_reason": "AI_STOP"}}
+        stub._closed_inside_pass = parked
+        self._consume(stub)
+
+        self.assertEqual(len(stub.closed_inside_rows), 1)
+        self.assertIs(stub.closed_inside_rows[0][3], parked)
+        self.assertEqual(stub.opened_rows, [])          # flat: nothing else to open
+        self.assertIsNone(stub._closed_inside_pass)     # consumed, never reused
+        warned = " ".join(str(c) for c in stub.log.warning.call_args_list)
+        self.assertIn("CLOSED", warned)
+        self.assertIn("NOT acted on", warned)
+        info = " ".join(str(c) for c in stub.log.info.call_args_list)
+        self.assertNotIn("Discarding", info)
+
+    def test_slh021_the_decision_of_that_pass_reaches_the_decisions_log(self):
+        stub = self._stub(generation=2, current_generation=3, position_open=False)
+        stub._closed_inside_pass = {"static": {}}
+        stub._decisions_path = "decisions.jsonl"
+        journal_mod = master_file.SL_HUNTING_JOURNAL_MODULE
+        if journal_mod is None:
+            self.skipTest(SL_HUNTING_SKIP_REASON)
+        with patch.object(journal_mod, "append_decision") as append, \
+                patch.object(journal_mod, "make_decision_record", return_value={"row": 1}):
+            self._consume(stub)
+        append.assert_called_once_with("decisions.jsonl", {"row": 1})
+
+    def test_slh021_a_fresh_pass_whose_trade_already_closed_is_journalled(self):
+        """The agent's own EXIT inside the pass does not bump the generation."""
+        stub = self._stub(generation=4, current_generation=4, position_open=False)
+        stub._closed_inside_pass = {"static": {}}
+        self._consume(stub)
+
+        self.assertEqual(len(stub.closed_inside_rows), 1)
+        self.assertEqual(stub.log.warning.call_count, 0)
+
+    def test_slh021_a_deferred_parked_row_is_never_overwritten_by_a_second_open(self):
+        """A parked NIFTY-only cut still waiting on its mirror owns the row id; a
+        second position the same pass opened must not clobber it."""
+        stub = self._stub(generation=4, current_generation=4, position_open=True)
+        stub._closed_inside_pass = {"static": {}}
+
+        def _defer(*_a):
+            stub._open_trade_id = "deferred-behind-mirror"
+
+        stub._journal_closed_inside_pass = _defer
+        self._consume(stub)
+
+        self.assertEqual(stub.opened_rows, [])
+        self.assertEqual(stub._open_trade_id, "deferred-behind-mirror")
+
+    def test_slh021_a_parked_close_is_dropped_with_an_empty_payload(self):
+        """Never left behind for the NEXT pass to claim as its own."""
+        stub = self._stub(generation=2, current_generation=3, position_open=False)
+        stub._agent_inference_result = None
+        stub._closed_inside_pass = {"static": {}}
+        self._consume(stub)
+
+        self.assertIsNone(stub._closed_inside_pass)
+        self.assertEqual(stub.closed_inside_rows, [])
 
 if __name__ == "__main__":
     # Use the custom runner so both `python file.py` and any other direct

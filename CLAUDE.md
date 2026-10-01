@@ -275,11 +275,11 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,
-  Bandit, and pre-commit. Coverage floors are 73% overall, 90% for new
+  Bandit, and pre-commit. Coverage floors are 74% overall, 90% for new
   execution/reconciliation/data-safety modules, and 80% per broker adapter.
   Judge the overall floor from CI, never from a local run: a machine with the
   optional extras CI does not install (the broker SDKs, scikit-learn) runs 9
-  tests CI's verify job skips and reads ~0.5 points high (CI measures 73.8%).
+  tests CI's verify job skips and reads ~0.5 points high (CI measures 74.6%).
   The floor only ever moves UP, and only after a CI run shows headroom -- never
   lower it to make a red build pass.
 - **Dependencies:** `pip install -r requirements.txt` installs the runtime AND

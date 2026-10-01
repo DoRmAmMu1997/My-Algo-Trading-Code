@@ -15534,6 +15534,11 @@ if SL_HUNTING_AVAILABLE:
             # NIFTY-leg exit context until the mirror finally closes (BNF exit / square-off
             # / max-loss), at which point the row is finalized with basket P&L.
             self._pending_journal_exit = None
+            # SLH-021: a trade the in-flight pass opened AND that already closed
+            # (a stop hit seconds after the fill). after_exit has no row to close
+            # yet, so it parks what the row needs here, and the harvest in
+            # _consume_agent_decision writes it from the pass's own decision.
+            self._closed_inside_pass: dict[str, Any] | None = None
             # Separate per-bar decision log (HOLD included); None disables it.
             self._decisions_path = (
                 SL_HUNTING_DECISIONS_PATH if SL_HUNTING_DECISIONS_ENABLED else None
@@ -15576,46 +15581,76 @@ if SL_HUNTING_AVAILABLE:
             # pick the mirror's ATM strike.
             self._last_bnf_close = 0.0
 
-        def _journal_open_row(self, decision, nifty_df, bnf_df) -> None:
-            """Open a journal row for a trade the agent just entered (best-effort)."""
+        def _journal_open_row(
+            self, decision, nifty_df, bnf_df, *, parked: dict[str, Any] | None = None
+        ) -> None:
+            """Open a journal row for a trade the agent just entered (best-effort).
+
+            ``parked`` (SLH-021) is a trade that already CLOSED inside its own
+            pass: its levels, entry order and P&L basis come from what after_exit
+            parked, because the live position is flat by now.
+            """
+            pos = self.pos if parked is None else parked["position"]
             try:
-                lot_size = max(int(getattr(self.pos, "option_lot_size", 0)), 1)
+                lot_size = max(int(getattr(pos, "option_lot_size", 0)), 1)
                 # If the SDK call timed out (or its final JSON failed to parse) AFTER the
                 # order tool already fired this ENTER, `decision` is the fail-soft
                 # placeholder ("agent_error"/"Agent call timed out; holding."). Recover the
                 # model's real rationale from the order tool payload the executor captured.
-                order_payload = getattr(self._executor, "last_entry_order", None)
+                order_payload = (
+                    getattr(self._executor, "last_entry_order", None)
+                    if parked is None else parked["entry_order"]
+                )
                 setup, confidence, reasoning = SL_HUNTING_JOURNAL_MODULE.resolve_entry_narrative(
                     decision, order_payload)
                 entry = SL_HUNTING_JOURNAL_MODULE.make_entry_record(
-                    direction=getattr(self.pos, "direction", ""),
+                    direction=getattr(pos, "direction", ""),
                     setup=setup, confidence=confidence,
                     reasoning=reasoning,
-                    stop=float(getattr(self.pos, "stop_underlying", 0.0)),
-                    target=float(getattr(self.pos, "target_underlying", 0.0)),
-                    entry_underlying=float(getattr(self.pos, "entry_underlying", 0.0)),
-                    lots=int(getattr(self.pos, "quantity", 0)) // lot_size,
+                    stop=float(getattr(pos, "stop_underlying", 0.0)),
+                    target=float(getattr(pos, "target_underlying", 0.0)),
+                    entry_underlying=float(getattr(pos, "entry_underlying", 0.0)),
+                    lots=int(getattr(pos, "quantity", 0)) // lot_size,
                     nifty_df=nifty_df, bnf_df=bnf_df,
                     entry_price_quality=str(
-                        getattr(self.pos, "entry_price_quality", PRICE_QUALITY_UNKNOWN)
+                        getattr(pos, "entry_price_quality", PRICE_QUALITY_UNKNOWN)
                     ),
                 )
-                entry_qualities = [self.pos.entry_price_quality]
-                if self._mirror_pos.active:
-                    entry_qualities.append(self._mirror_pos.entry_price_quality)
+                entry_qualities = [pos.entry_price_quality]
+                if parked is None:
+                    if self._mirror_pos.active:
+                        entry_qualities.append(self._mirror_pos.entry_price_quality)
+                elif parked["mirror_entry_quality"] is not None:
+                    entry_qualities.append(parked["mirror_entry_quality"])
                 self._journal_pnl_evidence_eligible = all(
                     quality in COACH_ELIGIBLE_PRICE_QUALITIES
                     for quality in entry_qualities
                 )
                 self._open_trade_id = self._journal.open_trade(entry)
-                self._entry_realized_pnl = self.realized_pnl
+                self._entry_realized_pnl = (
+                    self.realized_pnl if parked is None else parked["realized_before"]
+                )
             except Exception as exc:  # noqa: BLE001 - journaling must never disturb trading
                 self.log.warning("SL Hunting journal open failed: %s", exc)
             finally:
                 # Consume the captured ENTER payload either way so it can never leak into
-                # a later bar's journal row.
-                if getattr(self, "_executor", None) is not None:
+                # a later bar's journal row. A parked trade's payload was consumed when
+                # it was parked.
+                if parked is None and getattr(self, "_executor", None) is not None:
                     self._executor.last_entry_order = None
+
+        def _journal_closed_inside_pass(self, decision, nifty_df, bnf_df, parked) -> None:
+            """SLH-021: open AND close the row for a trade that closed inside its pass."""
+            self._journal_open_row(decision, nifty_df, bnf_df, parked=parked)
+            if self._open_trade_id is None:
+                return  # the open failed, and has already been logged
+            if parked["mirror_survived"] and self._mirror_pos.active:
+                # The NIFTY leg was cut alone and its mirror is still running:
+                # close the row when the mirror closes, as the ordinary
+                # deferred path does, so option_pnl covers both legs.
+                self._pending_journal_exit = parked["static"]
+                return
+            self._finalize_journal(parked["static"])
 
         def _entry_expiry(self):
             """SLH-008: trade the CURRENT-WEEK NIFTY contract, not the next-next one.
@@ -16241,13 +16276,23 @@ if SL_HUNTING_AVAILABLE:
             agent cut the NIFTY leg ALONE (exit_leg=NIFTY) and the mirror survives, the
             mirror stays open AND the journal close is DEFERRED so option_pnl still
             captures both legs -- finalized when the mirror closes."""
+            # SLH-021: read before the basket close below, which resets the mirror.
+            mirror_entry_quality = (
+                self._mirror_pos.entry_price_quality if self._mirror_pos.active else None
+            )
             super().after_exit(closed_position, reason)
             if not self._suppress_mirror_close:
                 try:
                     self._close_bnf_mirror(reason)
                 except Exception as exc:  # noqa: BLE001 - mirror close must never block the journal
                     self.log.warning("BNF mirror close failed: %s", exc)
-            if self._journal is None or self._open_trade_id is None:
+            if self._journal is None:
+                return
+            if self._open_trade_id is None:
+                # SLH-021: no row is open because the pass that placed this entry
+                # has not been harvested yet. Park what its row needs, or the
+                # trade never reaches the journal at all.
+                self._park_close_inside_pass(closed_position, reason, mirror_entry_quality)
                 return
             try:
                 static = self._journal_exit_static(closed_position, reason)
@@ -16262,6 +16307,41 @@ if SL_HUNTING_AVAILABLE:
                 self._pending_journal_exit = static
                 return
             self._finalize_journal(static)
+
+        def _park_close_inside_pass(self, closed_position, reason: str, mirror_entry_quality) -> None:
+            """SLH-021: keep a trade that opened and closed inside one decision pass.
+
+            A trade's journal row is opened when its pass is HARVESTED. A trade the
+            pass entered and the mechanical stop closed before that reached
+            after_exit with no row to close, and the harvest then saw a flat
+            position and wrote nothing either -- so it was missing from the journal
+            AND the decisions log. Measured on 10 Aug, 4 Sep, 15 Sep and 30 Sep
+            2026, each an AI_STOP three to four seconds after the fill. SLH-012
+            covered only the stale pass whose position was still OPEN.
+
+            The executor's unconsumed entry order is the proof that the in-flight
+            pass placed this trade; without one there is nothing to park.
+            Best-effort: a failure here must never disturb the close.
+            """
+            executor = getattr(self, "_executor", None)
+            entry_order = getattr(executor, "last_entry_order", None)
+            if executor is None or entry_order is None:
+                return
+            try:
+                self._closed_inside_pass = {
+                    # The base exit hands over the old position object and starts a
+                    # fresh one, so this reference is never mutated again.
+                    "position": closed_position,
+                    "entry_order": entry_order,
+                    "static": self._journal_exit_static(closed_position, reason),
+                    "realized_before": float(self._trade_realized_before),
+                    "mirror_entry_quality": mirror_entry_quality,
+                    "mirror_survived": bool(self._mirror_pos.active),
+                }
+            except Exception as exc:  # noqa: BLE001 - journaling must never disturb trading
+                self.log.warning("SL Hunting journal could not park a close (SLH-021): %s", exc)
+            finally:
+                executor.last_entry_order = None
 
         def _arm_post_exit_cooldown_if_flat(self) -> None:
             """Start one full cooldown when this trade's final leg is flat.
@@ -16417,6 +16497,9 @@ if SL_HUNTING_AVAILABLE:
                 payload = self._agent_inference_result
                 self._agent_inference_thread = None
                 self._agent_inference_result = None
+            # SLH-021: a trade THIS pass opened that has already closed. Taken
+            # before anything can return, so it can never attach to a later pass.
+            parked, self._closed_inside_pass = self._closed_inside_pass, None
             if payload is None:
                 return
             generation, decision, was_active, strategy_frame, bnf_candles = payload
@@ -16425,6 +16508,11 @@ if SL_HUNTING_AVAILABLE:
                 and self._open_trade_id is None
                 and not was_active
                 and self.pos.active
+            )
+            closed_inside_pass = (
+                parked is not None
+                and self._journal is not None
+                and self._open_trade_id is None
             )
             if generation != self._agent_generation:
                 # SLH-012: the guard is about ACTING, not about record-keeping.
@@ -16447,16 +16535,18 @@ if SL_HUNTING_AVAILABLE:
                 # `_tool_authoritative` has already forced it to match what
                 # executed. Nothing here acts: no order is placed, and a stale
                 # pass that opened nothing is still simply dropped.
-                if not opened_a_position:
+                if not opened_a_position and not closed_inside_pass:
                     self.log.info(
                         "Discarding late SL Hunting result for stale generation %s.", generation
                     )
                     return
                 self.log.warning(
-                    "Late SL Hunting result for stale generation %s left a position OPEN; "
+                    "Late SL Hunting result for stale generation %s %s; "
                     "recording its journal row and decision so the trade is not invisible to "
                     "the coach. The decision is stale as guidance and was NOT acted on.",
                     generation,
+                    "left a position OPEN" if opened_a_position
+                    else "opened a trade that has already CLOSED (SLH-021)",
                 )
             if decision.action != "HOLD":
                 self.log.info(
@@ -16474,7 +16564,11 @@ if SL_HUNTING_AVAILABLE:
                     )
                 except Exception as exc:
                     self.log.warning("SL Hunting decision-log failed: %s", exc)
-            if opened_a_position:
+            if closed_inside_pass:
+                self._journal_closed_inside_pass(decision, strategy_frame, bnf_candles, parked)
+            # Re-checked: a parked row deferred behind a surviving mirror still owns
+            # the open row id, and a second row must never overwrite it.
+            if opened_a_position and self._open_trade_id is None:
                 self._journal_open_row(decision, strategy_frame, bnf_candles)
 
         def _start_agent_inference(

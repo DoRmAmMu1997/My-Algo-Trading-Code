@@ -8743,3 +8743,164 @@ four seconds, then "Discarding late SL Hunting result for stale generation N":
 The last three all came **after** SLH-012 shipped. The reflection coach and these
 comparisons read the journal, so they have never seen these trades. That bias is
 not neutral: every missing trade is a fast stop.
+
+## 1 Oct - the index that would not fall (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`ykWQl_f_ERg`,
+  uploaded 2026-10-01 11:17 IST), traded on the 1 Oct note (`ZrSyia9MGHc`).
+  His clock times are read off the taskbar clock in the video frame. His
+  positions screen did not appear, so his result is left in his own words. His
+  words are my translation of the Hindi auto-transcript.
+- **This book:** its three journal rows and 74 decisions.
+
+**No knowledge change.**
+
+### Both books sold, and both were stopped by BankNIFTY
+
+The note's one plan for every open was SELL. The open classified FLAT (NIFTY
+-0.34%, BankNIFTY -0.09%).
+
+| | IH | the agent |
+|---|---|---|
+| entry | 09:18, puts on all three: BankNIFTY 54,600 PE x1,170, SENSEX x900, NIFTY x1,430 | SHORT 22,510.70 at 09:26 |
+| what happened | profit, then a retracement to "almost zero", then a growing loss | booked at 09:27 for **+3.75**: "BankNIFTY (leading index) printed a confirmed bullish morning-star plus bullish engulfing off its 09:24 swing low (54686.1)" |
+| exit | 10:01, "the loss limit is gone, so we cut the trade" | |
+| later | none | SHORT 09:35, **-231.00**; SHORT 10:11, **-141.75** |
+| day | a loss, amount not shown | **-369.00** |
+
+His watchlist at 10:01 shows the split he blamed:
+
+- BankNIFTY 54,974.40, **+0.62%**, just under the note's 55,000 resistance;
+- NIFTY -0.12%;
+- SENSEX +0.05%.
+
+His diagnosis: "sometimes two indices stay a little negative, and in the ONE
+index that stays behind, if sellers gather and a round number is nearby, the
+market sometimes heads for a breakout, and then our problem becomes big." As
+for who those sellers were: "because it took resistance again and again, some
+people started selling... since SENSEX and NIFTY made negative momentum, sellers
+gradually gathered in BankNIFTY too."
+
+**The book read the same divergence earlier than he did, and left in a minute.**
+Its second and third trades then sold into it:
+
+- trade 2 cited "BankNifty mirrors it with a double top at 54800 psych
+  resistance" as confirmation;
+- trade 3 cited BankNIFTY's bearish candles near 54,900.
+
+Those are the repeated round-number rejections IH says recruited the sellers
+the breakout then hunted.
+
+### Why nothing was encoded
+
+**The mechanism is already written.** R:R-BAIT AT ROUND-NUMBER REJECTIONS says
+"resistance at a round number during momentum is often the operator INVITING
+trades... one shove can clear it once the counter-side is loaded". THIRD-INDEX
+LAG and v4i (THE LAGGING INDEX DECIDES THE BASKET'S EXIT) cover the refusing
+third index, and v4i quotes IH on almost this situation.
+
+**The only new part cannot be priced.** That part is the cross-index form: a
+rejection in the index that REFUSES your direction is bait in that index, not
+confirmation for yours.
+
+- The BankNIFTY history on disk stops in 2023, and the decisions log holds no
+  BankNIFTY prices.
+- The nearest measurable proxy is entries taken against the cross-index bias:
+  55 trades, **+17,876.75**, 51% winners.
+- Its halves split -4,675.75 / +22,552.50, so it is not robust in either
+  direction.
+
+That is no basis for a rule that would stop such entries, so the scope stays
+recorded here and is not encoded.
+
+**SLH-020 flagged trade 2** ("SHORT entered after a winning SHORT... booked
+3.75"). A +3.75 scratch counts as a win under v5m's measure, which is pnl > 0.
+The note it carries is informational and refused nothing. Left as is.
+
+## SLH-021 - a trade that opens and closes inside its own decision pass
+
+**The defect, measured on 30 Sep.** A trade's journal row is opened when its
+inference pass is HARVESTED. When the pass entered and the mechanical stop
+closed the trade before that:
+
+- `after_exit` had no row to close;
+- the per-poll stop had already invalidated the pass;
+- the harvest saw a stale pass and a FLAT position. SLH-012's
+  `opened_a_position` checks `self.pos.active`, so it discarded the pass.
+
+The trade was then missing from both the journal and the decisions log. The
+runner log shows it on four days, each an AI_STOP three to four seconds after
+the fill:
+
+- 10 Aug, 09:50:59;
+- 4 Sep, 09:15:48;
+- 15 Sep, 09:15:55;
+- 30 Sep, 09:22:49.
+
+The last three came after SLH-012 shipped.
+
+**The fix is bookkeeping only.** Nothing places, refuses or sizes an order
+differently.
+
+- **The worker** (`SLHuntingAIWorker.after_exit`): when no journal row is open
+  and the executor still holds an unconsumed `last_entry_order`, it parks what
+  the row needs. Only the in-flight pass can have placed that order. The parked
+  facts are:
+  - the closed position (its levels, quantity and entry price quality);
+  - the entry order;
+  - the exit context;
+  - SLH-020's `_trade_realized_before` as the P&L basis;
+  - the mirror's entry price quality, read before the basket close resets it;
+  - whether the mirror survived.
+
+  Parking consumes the order, so it cannot leak into a later row.
+- **The harvest** (`_consume_agent_decision`): it takes the parked close before
+  anything can return, so it can never attach to a later pass. It then:
+  - treats a parked close like SLH-012's open position: a stale pass is
+    recorded, with a WARNING that names it, rather than discarded;
+  - appends the pass's decision to the decisions log;
+  - opens the row from the parked facts and the pass's own decision and
+    frames;
+  - closes the row with this trade's basket P&L. A NIFTY-only cut whose mirror
+    is still running defers the close to the mirror, exactly like the ordinary
+    deferred path.
+
+  A row deferred like that still owns the row id, and a second open in the same
+  pass must not overwrite it.
+
+**Known limit.** A pass harvested while a position is open is handled by SLH-012,
+unchanged. A trade parked by a pass and never harvested, because the worker
+stopped first (square-off or max-loss), is still lost. The agent stops entering
+at 10:30, so that needs a max-loss stop inside the same 90-second pass.
+
+**Tests.**
+
+- **Five on the SLH-012 stub:**
+  - a stale pass whose trade already closed is journalled, with a warning;
+  - its decision reaches the decisions log;
+  - a fresh pass whose trade closed is journalled;
+  - a parked close is dropped with an empty payload rather than left for the
+    next pass;
+  - a deferred parked row is never overwritten.
+- **Four on the REAL worker:**
+  - the 30 Sep sequence: enter, invalidate, AI_STOP, then a stale harvest
+    journals the pass's own setup and reasoning and this trade's basket P&L,
+    with 250 of earlier P&L seeded so the day's total cannot pass for it;
+  - a NIFTY-only cut inside the pass waits for the mirror;
+  - an ordinary journalled trade is never parked;
+  - a close with no pending entry order parks nothing.
+- **Ten code mutations, all caught:**
+  - the park removed;
+  - parking without the order check;
+  - the stale discard restored;
+  - the P&L basis taken at harvest;
+  - the mirror deferral removed;
+  - the parked close kept past an empty payload;
+  - the order not consumed;
+  - the row built from the flat live position;
+  - the warning wording;
+  - the overwrite guard.
+
+  The control passes.
