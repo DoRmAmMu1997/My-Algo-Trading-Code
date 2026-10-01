@@ -1,29 +1,30 @@
 {
-  "for_date": "2026-09-30",
-  "source": "Intraday Hunter, 'Prediction For 30 SEP 2026' (NrPmCbzrzSY, uploaded 2026-09-29)",
-  "context": "Selling on 29 Sep on all three indices, then as much recovery; the buyers who joined were removed by a retracement, and NIFTY closed on a retracement at 22,680.90, just above its 22,650 support.",
+  "for_date": "2026-10-01",
+  "source": "Intraday Hunter, 'Prediction For 01 OCT 2026' (ZrSyia9MGHc, uploaded 2026-09-30)",
+  "context": "Positive momentum on 30 Sep on all three indices, then as much selling; BankNIFTY broke out of its round number and came back down. NIFTY closed at 22,614.30.",
   "plan": [
-    "BRANCHES FLIPPED FROM 29 SEP: flat to a small gap-down now means BUY, and a gap up SELL. The day's selling was matched by an equal recovery, and the buyers that recovery drew in were already removed by a retracement.",
-    "FLAT TO SMALL GAP DOWN -> BUY: the buyers who came in on the recovery have been retraced out, and the market is trying to go up again -- identify buying-side setups.",
-    "GAP UP -> SELL: he would normally keep the same plan, but no sellers' stops sit above to fuel a rise, and nobody is seated long to hunt. Others may buy a gap up, reading it as positive -- so identify selling-side setups there."
+    "ONE PLAN FOR EVERY OPEN: a gap up, flat or gap-down open all mean SELL. When a rejection comes after a positive momentum, few people get to join the selling, so there are no sellers to target -- identify selling-side setups.",
+    "FLIPPED FROM 30 SEP: last night a flat to small gap-down open meant BUY and only a gap up meant SELL. Tonight every open sells; carrying last night's flat branch forward inverts it.",
+    "NIFTY 22,500 IS THE PSYCHOLOGICAL NUMBER: he calls it important, with 22,400 the support below it.",
+    "SENSEX EXPIRES TODAY: he flags its weekly expiry on 1 Oct. (Not in his video: NIFTY's and BankNIFTY's contracts do not expire today.)"
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22900,
-        23000
+        22790,
+        22900
       ],
       "support": [
-        22650,
-        22560
+        22500,
+        22400
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        54650,
-        55000
+        55000,
+        55200
       ],
       "support": [
         54000,

@@ -201,24 +201,27 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_september_30_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 29 Sep transcript.
+def test_shipped_note_matches_october_1_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 30 Sep transcript.
 
-    Tonight the branches FLIPPED. Four things an edit would flatten:
+    Tonight there is ONE plan for every open. Four things an edit would
+    flatten:
 
-    1. That they flipped: 29 Sep's note sold a flat open and bought a gap up;
-       30 Sep's buys a flat-to-small-gap-down open and sells a gap up. A
-       reader who remembers yesterday's side trades it backwards.
-    2. Why flat buys: the buyers the recovery drew in were already retraced
-       out, and the market is trying to go up again.
-    3. Why a gap up sells: no sellers' stops sit above to fuel a rise, and the
-       people a gap up recruits are the buyers who read it as positive.
-    4. The levels. The ASR garbled two support pairs, resolved from the 1080p
-       frame: BankNIFTY's "5453 790" is 54,007.90 / 53,787.80, and SENSEX's
-       "7271500" is 72,000.23 / 71,510.61 -- each spoken as "<thousand>,
-       <next level>". NIFTY's four are the same lines as the 29 Sep note
-       (23,001.75 / 22,900.85 / 22,649.70 / 22,563.05), which the transcript
-       rendered cleanly.
+    1. That every open sells -- a gap up, flat AND a gap-down. A note that
+       keeps a separate buy branch for one open has invented it.
+    2. Why: a rejection after a positive momentum lets few people join the
+       selling, so there are no sellers to target.
+    3. That it flipped from 30 Sep, whose flat open BOUGHT. A reader who
+       remembers yesterday's flat branch trades today's flat open backwards.
+    4. The levels, read from the 1080p frame. NIFTY: 22,789.95 / 22,900.85
+       above and 22,501.00 / 22,401.55 below -- the 22,650 / 22,560 support
+       pair is gone. BankNIFTY's resistance moved up to 55,005.50 /
+       55,209.90 (spoken "55 200 55000", recorded nearest first); its
+       supports 54,007.90 / 53,787.80 and all four SENSEX lines are
+       unchanged from 30 Sep (SENSEX supports spoken "7271500" again).
+
+    The SENSEX expiry is his; the NIFTY/BankNIFTY half of that line is not,
+    and the note says so.
     """
     import os
 
@@ -226,45 +229,46 @@ def test_shipped_note_matches_september_30_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-09-30"
-    assert "NrPmCbzrzSY" in note.source
-    assert "Selling on 29 Sep on all three indices, then as much recovery" in note.context
-    assert "the buyers who joined were removed by a retracement" in note.context
+    assert note.for_date == "2026-10-01"
+    assert "ZrSyia9MGHc" in note.source
+    assert "Positive momentum on 30 Sep on all three indices, then as much selling" in note.context
 
-    # 1. Flipped.
-    flipped = next(line for line in note.plan if line.startswith("BRANCHES FLIPPED FROM 29 SEP"))
-    assert "flat to a small gap-down now means BUY, and a gap up SELL" in flipped
+    # 1 + 2. One plan, and why.
+    one = next(line for line in note.plan if line.startswith("ONE PLAN FOR EVERY OPEN"))
+    assert "a gap up, flat or gap-down open all mean SELL" in one
+    assert "few people get to join the selling, so there are no sellers to target" in one
+    assert not any("-> BUY" in line or "mean BUY" in line for line in note.plan)
 
-    # 2. Why flat buys.
-    buy = next(line for line in note.plan if line.startswith("FLAT TO SMALL GAP DOWN -> BUY"))
-    assert "have been retraced out" in buy
-    assert "the market is trying to go up again" in buy
+    # 3. Flipped.
+    flipped = next(line for line in note.plan if line.startswith("FLIPPED FROM 30 SEP"))
+    assert "a flat to small gap-down open meant BUY" in flipped
+    assert "Tonight every open sells" in flipped
 
-    # 3. Why a gap up sells.
-    sell = next(line for line in note.plan if line.startswith("GAP UP -> SELL"))
-    assert "no sellers' stops sit above to fuel a rise" in sell
-    assert "Others may buy a gap up, reading it as positive" in sell
+    # Expiry: his for SENSEX, marked where it is not his.
+    expiry = next(line for line in note.plan if line.startswith("SENSEX EXPIRES TODAY"))
+    assert "(Not in his video:" in expiry
 
     # 4. Levels, nearest first.
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # 22,900.85 / 23,001.75 and 22,649.70 / 22,563.05 -- unchanged from 29 Sep.
-            "resistance": [22900.0, 23000.0],
-            "support": [22650.0, 22560.0],
+            # 22,789.95 / 22,900.85.
+            "resistance": [22790.0, 22900.0],
+            # 22,501.00 (his "important psychology number") / 22,401.55.
+            "support": [22500.0, 22400.0],
         },
         {
             "index": "BANKNIFTY",
-            # 54,646.40 / 55,005.50.
-            "resistance": [54650.0, 55000.0],
-            # 54,007.90 / 53,787.80, spoken "5453 790".
+            # 55,005.50 / 55,209.90, spoken "55 200 55000".
+            "resistance": [55000.0, 55200.0],
+            # 54,007.90 / 53,787.80, spoken "5453790" -- unchanged.
             "support": [54000.0, 53790.0],
         },
         {
             "index": "SENSEX",
-            # 73,128.99 / 73,453.25.
+            # 73,128.99 / 73,453.25 -- unchanged.
             "resistance": [73130.0, 73450.0],
-            # 72,000.23 / 71,510.61, spoken "7271500".
+            # 72,000.23 / 71,510.61, spoken "7271500" -- unchanged.
             "support": [72000.0, 71500.0],
         },
     ]
