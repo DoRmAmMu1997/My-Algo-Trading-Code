@@ -8904,3 +8904,58 @@ at 10:30, so that needs a max-loss stop inside the same 90-second pass.
   - the overwrite guard.
 
   The control passes.
+
+## 4 Oct weekly lecture and 5 Oct pre-open note (v5p)
+
+**Sources and extraction.** Direct YouTube Hindi auto-transcripts were retrieved
+with `youtube-transcript-api`, read in full, and checked against the current
+knowledge. YouTube publication timestamps, converted to IST, identify both as
+4 Oct uploads:
+
+- `DNb7XmCK7C8`, "The Real Benefits of Chart Trading | Trade Smarter", 15:04,
+  published 4 Oct 2026 at 11:27 IST.
+- `Hbf7R3KqEwE`, "Prediction For 05 OCT 2026", 1:35, published 4 Oct 2026 at
+  21:00 IST. Its named trading session is Monday 5 Oct, not Sunday 4 Oct.
+
+**Net-new entry refinement.** At 0:06-2:40 the lecture contrasts two premium-led
+entries: chasing a rising option because it appears to confirm the trade, and
+buying a falling option because it appears cheaper. Both substitute an option
+price comparison for the chart's entry permission. The late example at
+14:05-15:01 connects that choice to panicking out when the premium subsequently
+falls. `PSYCHOLOGY` now carries THE CHART AUTHORISES THE ENTRY; PREMIUM DOES NOT:
+remove the premium comparison and the reasoning must still justify this entry
+now. A valid controlled entry is not delayed solely for a remembered option
+price, and an invalid chart cannot be rescued by a cheaper premium. Option cost,
+freshness, liquidity, sizing and hard-risk checks remain required.
+
+**Overlap deliberately retained.** Waiting for a large first candle to settle
+(2:44-4:18) is already covered by the existing momentum and entry rules.
+BankNIFTY's contrary opening read on 29 Sep (5:42-7:44) confirms the cross-index
+and closing-point checks. The stopped trade followed by a later favourable move
+(10:12-13:19) repeats ENTRY QUALITY AND DIRECTION ARE SEPARATE JUDGEMENTS, YOUR
+EDGE IN THE READ IS HIGHER THAN YOUR EDGE IN THE TRADE, and the discipline rule
+against revising an exit from one hindsight outcome. v5j already judges exits
+on the underlying chart rather than the premium; v5p extends the distinction to
+entry timing. The lecture's preference for independent execution after prior
+discussion adds no new agent mechanism and is not encoded as a team veto.
+
+**Premarket note.** Selling followed by a retracement likely removed nearby
+sellers, while buyers are also thin. Flat, gap-up and small gap-down opens seek
+confirmed BUY setups. A large gap-down instead follows selling. No numeric
+small/large cutoff is supplied by the source. This is a dated advisory, not a
+new durable gap rule.
+
+The 1080p premarket frames at 0:34, 1:03 and 1:27 resolve the garbled captions.
+The note uses his spoken rounded levels, nearest first:
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,590 / 22,800 | 22,200 / 22,000 |
+| BANKNIFTY | 54,880 / 55,200 | 54,000 / 53,500 |
+| SENSEX | 72,400 / 73,130 | 71,300 / 70,600 |
+
+BankNIFTY's support labels are 54,007.90 / 53,504.60; SENSEX's lower support is
+70,605.33. NIFTY's first resistance is spoken 22,590 against the chart label
+22,584.20; the spoken value is retained rather than inventing precision. Video,
+metadata and frame artifacts are kept under
+`%TEMP%\intradayhunter-2026-transcripts`, outside git.
