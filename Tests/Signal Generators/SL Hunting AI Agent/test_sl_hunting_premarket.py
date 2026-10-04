@@ -201,27 +201,12 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_1_intraday_hunter_plan():
-    """The committed advisory must match the hand-checked 30 Sep transcript.
+def test_shipped_note_matches_october_5_intraday_hunter_plan():
+    """Render Sunday's forecast for Monday with its gap-size distinction.
 
-    Tonight there is ONE plan for every open. Four things an edit would
-    flatten:
-
-    1. That every open sells -- a gap up, flat AND a gap-down. A note that
-       keeps a separate buy branch for one open has invented it.
-    2. Why: a rejection after a positive momentum lets few people join the
-       selling, so there are no sellers to target.
-    3. That it flipped from 30 Sep, whose flat open BOUGHT. A reader who
-       remembers yesterday's flat branch trades today's flat open backwards.
-    4. The levels, read from the 1080p frame. NIFTY: 22,789.95 / 22,900.85
-       above and 22,501.00 / 22,401.55 below -- the 22,650 / 22,560 support
-       pair is gone. BankNIFTY's resistance moved up to 55,005.50 /
-       55,209.90 (spoken "55 200 55000", recorded nearest first); its
-       supports 54,007.90 / 53,787.80 and all four SENSEX lines are
-       unchanged from 30 Sep (SENSEX supports spoken "7271500" again).
-
-    The SENSEX expiry is his; the NIFTY/BankNIFTY half of that line is not,
-    and the note says so.
+    A stale all-SELL plan or merging the two gap-down cases reverses this
+    forecast. Levels are independently checked against 1080p frames at 0:34,
+    1:03 and 1:27; the Sunday upload must never date the note to Sunday itself.
     """
     import os
 
@@ -229,46 +214,33 @@ def test_shipped_note_matches_october_1_intraday_hunter_plan():
     note = load_premarket_note(os.path.join(here, "premarket_note.json"))
 
     assert note is not None
-    assert note.for_date == "2026-10-01"
-    assert "ZrSyia9MGHc" in note.source
-    assert "Positive momentum on 30 Sep on all three indices, then as much selling" in note.context
+    block = format_premarket_note(note, date(2026, 10, 5))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-05" in block
+    assert "Hbf7R3KqEwE" in block
+    assert "THIRD-PARTY, ADVISORY ONLY" in block
+    assert "FLAT, GAP UP or SMALL GAP DOWN -> BUY" in block
+    assert "LARGE GAP DOWN -> SELL" in block
+    assert "removed nearby sellers" in block
+    assert "little buyer inventory" in block
+    assert "no numeric cutoff" in block
+    assert format_premarket_note(note, date(2026, 10, 4)) == ""
+    assert format_premarket_note(note, date(2026, 10, 6)) == ""
 
-    # 1 + 2. One plan, and why.
-    one = next(line for line in note.plan if line.startswith("ONE PLAN FOR EVERY OPEN"))
-    assert "a gap up, flat or gap-down open all mean SELL" in one
-    assert "few people get to join the selling, so there are no sellers to target" in one
-    assert not any("-> BUY" in line or "mean BUY" in line for line in note.plan)
-
-    # 3. Flipped.
-    flipped = next(line for line in note.plan if line.startswith("FLIPPED FROM 30 SEP"))
-    assert "a flat to small gap-down open meant BUY" in flipped
-    assert "Tonight every open sells" in flipped
-
-    # Expiry: his for SENSEX, marked where it is not his.
-    expiry = next(line for line in note.plan if line.startswith("SENSEX EXPIRES TODAY"))
-    assert "(Not in his video:" in expiry
-
-    # 4. Levels, nearest first.
     assert [level.model_dump() for level in note.levels] == [
         {
             "index": "NIFTY",
-            # 22,789.95 / 22,900.85.
-            "resistance": [22790.0, 22900.0],
-            # 22,501.00 (his "important psychology number") / 22,401.55.
-            "support": [22500.0, 22400.0],
+            "resistance": [22590.0, 22800.0],
+            "support": [22200.0, 22000.0],
         },
         {
             "index": "BANKNIFTY",
-            # 55,005.50 / 55,209.90, spoken "55 200 55000".
-            "resistance": [55000.0, 55200.0],
-            # 54,007.90 / 53,787.80, spoken "5453790" -- unchanged.
-            "support": [54000.0, 53790.0],
+            "resistance": [54880.0, 55200.0],
+            "support": [54000.0, 53500.0],
         },
         {
             "index": "SENSEX",
-            # 73,128.99 / 73,453.25 -- unchanged.
-            "resistance": [73130.0, 73450.0],
-            # 72,000.23 / 71,510.61, spoken "7271500" -- unchanged.
-            "support": [72000.0, 71500.0],
+            # Caption "7600" is resolved by the chart's 70,605.33 label.
+            "resistance": [72400.0, 73130.0],
+            "support": [71300.0, 70600.0],
         },
     ]

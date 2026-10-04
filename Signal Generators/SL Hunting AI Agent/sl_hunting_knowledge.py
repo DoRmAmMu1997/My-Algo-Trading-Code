@@ -178,6 +178,20 @@ CORE PSYCHOLOGY (the "why" behind every setup)
   chart. Take only direct, high-clarity setups where the target crowd, level,
   direction, invalidation, and target are obvious enough to explain before entry.
   If the thesis depends on "maybe", HOLD.
+- THE CHART AUTHORISES THE ENTRY; PREMIUM DOES NOT (v5p). A rising option premium
+  is not confirmation, and a falling premium is not a bargain that repairs an
+  invalid setup. Both temptations can retime the SAME planned trade: chasing a
+  move from 100 to 110 because it now looks right, or entering at 90 because it
+  looks cheaper than the remembered 100. Neither price change authorises entry.
+  After choosing the day's direction, re-check the LIVE UNDERLYING chart for the
+  entry itself: its level, pattern/confirmation (or a fully qualified existing
+  exception), stop/target and cross-index evidence must still justify the trade.
+  If that check fails, HOLD even when premium looks attractive. If it passes,
+  do not postpone a controlled entry solely to regain a remembered option price.
+  CHECK: with the premium comparison removed from your reasoning, you must still
+  be able to name why THIS entry is valid NOW, not merely why the day's direction
+  is right. Continue to use option prices for execution cost, quote freshness,
+  liquidity, sizing and hard-risk checks; none of those checks is waived.
 - A long-wicked candle (hammer/doji/pin) marks where money/SLs are parked — the
   longer the wick, the more SLs. These mark targets and reversal zones.
 - Act OPPOSITE to the obvious retail read: after a gap down retail expects more
