@@ -37,7 +37,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # 1.2.2 -> 1.2.3 (2026-08-24, PR #135). Patch release on the .env loader;
     # the runner reads every setting through it at startup, so a break would
     # be immediate and total rather than subtle.
-    assert "python-dotenv==1.2.3" in core
+    # 1.2.3 -> 1.2.4 (2026-10-05, PR #198). Parser fix: `KEY= # comment` now reads
+    # as an empty string, not the comment text. Neither .env nor env.example has
+    # such a line (checked by key name), and load_dotenv(dotenv_path=, override=)
+    # is unchanged, so the startup read is unaffected.
+    assert "python-dotenv==1.2.4" in core
     # The full quality job imports the vendored Shoonya client while measuring
     # broker-adapter coverage, so its import-time WebSocket dependency belongs
     # in the core test/runtime environment as well as the isolated broker set.
@@ -196,7 +200,17 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # bundled CLI: confirm on the next PAPER session that decisions still
     # return ("SLHuntingAgent decision cost ~$..." in the log). If they stop,
     # revert this pin first.
-    assert "claude-agent-sdk==0.2.159" in ai
+    # 0.2.159 -> 0.2.163 (2026-10-05, PR #198), bundled CLI 2.1.281 -> 2.1.286.
+    # Introspected against an isolated install: all nine names, every
+    # ClaudeAgentOptions field we pass, SystemPromptFile -> --system-prompt-file
+    # and `dontAsk` survive; requirement windows unchanged. The one behaviour
+    # change on our path is 0.2.160: with SDK MCP servers (ours), stdin now stays
+    # open until the CLI reports `idle` (ceiling CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS,
+    # default 10 min). The agent reads the stream to its end, so that wait sits
+    # inside the 90s deadline. Standing check: on the next PAPER session decisions
+    # still return AND "SLHuntingAgent decision latency" has not crept up. If
+    # either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.163" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -254,7 +268,12 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # since PR #187 the Trend-Day Rider consults Codex only on a candidate bar
     # (11:00-13:30), so a behavioural break shows up as CPR AI errors the next
     # time a candidate fires, which can take more than one session.
-    assert "openai-codex==0.156.1" in ai
+    # 0.156.1 -> 0.160.0 (2026-10-05, PR #198). Same isolated introspection, all
+    # surfaces intact (names, context manager, thread_start params with no
+    # **kwargs, sync Thread.run, TurnResult fields); openai-codex-cli-bin moves in
+    # lockstep to 0.160.0. Standing check unchanged: CPR AI errors on the next
+    # candidate bar.
+    assert "openai-codex==0.160.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -379,7 +398,9 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # test step runs BEFORE mypy, so the run that failed on mcp never reached
     # mypy at all and proved nothing about it. The green run on this commit is
     # what actually type-checks 2.3.1, on both 3.12 and 3.13.
-    for tool_pin in ("pytest==9.1.1", "mypy==2.3.1", "bandit==1.9.4", "pip-audit==2.10.1"):
+    # mypy 2.3.1 -> 2.4.0 (2026-10-05, PR #198): both CI invocations (82 files, then
+    # the master alone) pass on an isolated 2.4.0 install.
+    for tool_pin in ("pytest==9.1.1", "mypy==2.4.0", "bandit==1.9.4", "pip-audit==2.10.1"):
         assert tool_pin in core
     assert all("==" in line for line in core)
 
