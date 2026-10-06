@@ -1,33 +1,33 @@
 {
-  "for_date": "2026-10-05",
-  "source": "Intraday Hunter, 'Prediction For 05 OCT 2026' (Hbf7R3KqEwE, uploaded 2026-10-04)",
-  "context": "All three indices sold off and then retraced. The bounce likely removed nearby sellers, but few buyers are seated either. The next opening type and the size of a gap down determine the conditional direction.",
+  "for_date": "2026-10-06",
+  "source": "Intraday Hunter, 'Prediction For 06 OCT 2026' (WVfyM2gkWXs, uploaded 2026-10-05)",
+  "context": "Selling on 5 Oct on all three indices, then as much retracement: the nearby sellers were chased off, so buyers are now the seated side.",
   "plan": [
-    "FLAT, GAP UP or SMALL GAP DOWN -> BUY: identify confirmed buying-side setups across all three indices. The prior retracement removed nearby sellers, while there is little buyer inventory to target.",
-    "LARGE GAP DOWN -> SELL: follow the market and identify confirmed selling-side setups. A large gap down changes the plan; do not carry the small-gap buy branch into it.",
-    "OPENING READ: distinguish a small gap down from a large one using the live chart and existing gap rules. IH gives no numeric cutoff in this video. The forecast still requires a valid live setup and confirmation."
+    "FLAT TO GAP DOWN -> SELL: the retracement chased off the nearby sellers, so buyers are seated -- identify selling-side setups to target those buyers.",
+    "GAP UP -> BUY, WITH THE MARKET: on an opening above the higher point, the seated buyers will not cut until price crosses back through the closing price, so they cannot be targeted yet -- identify buying-side setups.",
+    "NIFTY EXPIRES TODAY: he flags its weekly expiry on 6 Oct."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22590,
+        22580,
         22800
       ],
       "support": [
-        22200,
-        22000
+        22380,
+        22200
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        54880,
+        54890,
         55200
       ],
       "support": [
         54000,
-        53500
+        53700
       ]
     },
     {
@@ -38,7 +38,7 @@
       ],
       "support": [
         71300,
-        70600
+        71000
       ]
     }
   ]
