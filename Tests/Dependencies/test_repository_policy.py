@@ -210,7 +210,23 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # inside the 90s deadline. Standing check: on the next PAPER session decisions
     # still return AND "SLHuntingAgent decision latency" has not crept up. If
     # either fails, revert this pin first.
-    assert "claude-agent-sdk==0.2.163" in ai
+    # REVERTED 0.2.163 -> 0.2.159 (2026-10-06), after the first live session on it.
+    # 0.2.160-0.2.163 publish NO win_amd64 wheel (0.2.160's notes: "skip wheels
+    # over PyPI's per-file limit"), so on the runner pip fell back to the generic
+    # py3-none-any wheel, whose _bundled/ holds no CLI. The SDK then silently ran
+    # the `claude` on PATH -- CLI 2.1.138, against 2.1.281 the day before -- under
+    # 0.2.160's new rule that a run with SDK MCP servers stays open until the CLI
+    # reports `idle` (ceiling 600 s). Result on 6 Oct: 8 decisions completed
+    # (72-74 on a normal day), 12 calls abandoned at the 90 s deadline and left
+    # running (one for 12.7 min, one spawning an Agent subagent), 34 bars skipped
+    # behind them. Every order attempt was refused (sdk_timeout / note_check), so
+    # nothing reached the broker. The PR #198 check read _cli_version.py (2.1.286)
+    # and never confirmed the binary was in the wheel -- CI runs on Linux, where
+    # it is, so CI cannot catch this either.
+    # BEFORE ANY FUTURE BUMP: `pip download claude-agent-sdk==X --no-deps
+    # --only-binary=:all: --platform win_amd64` must find a wheel, and that wheel
+    # must contain claude_agent_sdk/_bundled/claude.exe. No Windows wheel, no bump.
+    assert "claude-agent-sdk==0.2.159" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
