@@ -11,7 +11,9 @@
 # -- SL Hunting (Claude Agent SDK) --------------------------------------------
 # The first three are the SDK's direct runtime dependencies; pinning them
 # prevents a fresh install from silently changing the agent transport.
-claude-agent-sdk==0.2.163
+# Held at 0.2.159: 0.2.160-0.2.163 publish NO Windows wheel, and the generic
+# wheel carries no bundled Claude CLI (see the repository-policy ledger).
+claude-agent-sdk==0.2.159
 anyio==4.15.1
 sniffio==1.3.1
 
