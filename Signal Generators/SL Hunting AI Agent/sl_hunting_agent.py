@@ -460,7 +460,8 @@ class SLHuntingAgent:
 
         Imports `claude_agent_sdk` lazily so this module imports without the SDK.
         Registers the in-process MCP server for THIS bar and restricts the agent to
-        our tools only (`allowed_tools` + `permission_mode="dontAsk"`).
+        our tools only: `tools=[]` removes every built-in tool, and `allowed_tools` +
+        `permission_mode="dontAsk"` approve only ours (SLH-022).
         """
         try:
             import claude_agent_sdk as claude_sdk  # type: ignore[import-not-found, unused-ignore]
@@ -490,8 +491,17 @@ class SLHuntingAgent:
             "max_turns": max_turns,
             "mcp_servers": mcp_servers,
             "allowed_tools": allowed_tools,
-            # "dontAsk" denies any tool not in allowed_tools, so the agent can never
-            # reach the built-in filesystem/bash tools in a headless run.
+            # SLH-022: NO built-in tools at all. "dontAsk" alone is not a sandbox --
+            # it denies only tools that would ASK for permission, and the CLI runs
+            # the ones that never ask: the live agent ran shell commands (`echo`) on
+            # 1 and 5 Oct 2026 and spawned an Agent subagent on 6 Oct. Tested on the
+            # bundled CLI 2.1.281: without this the CLI exposes 25 built-ins
+            # (PowerShell, Read, Write, Agent, WebFetch, ...); with it, only our MCP
+            # tools, which then load directly instead of through ToolSearch. The
+            # prompt carries third-party text (the pre-open note), so this is a
+            # prompt-injection boundary, not tidiness. Same belt-and-braces as the
+            # coach's `_build_read_only_options`.
+            "tools": [],
             "permission_mode": "dontAsk",
             "setting_sources": [],
         }

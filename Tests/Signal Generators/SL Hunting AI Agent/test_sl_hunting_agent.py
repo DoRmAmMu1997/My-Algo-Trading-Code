@@ -1011,6 +1011,45 @@ def test_default_run_hands_the_sdk_a_system_prompt_file(monkeypatch):
         assert fh.read() == big
 
 
+def test_default_run_switches_off_every_built_in_tool(monkeypatch):
+    """SLH-022: the live agent must reach ONLY its own MCP tools.
+
+    `permission_mode="dontAsk"` denies just the tools that would ask, so the
+    CLI still ran the ones that never do: the agent executed `echo` shell
+    commands on 1 and 5 Oct 2026 and spawned an Agent subagent on 6 Oct.
+    `tools=[]` is what removes the built-ins; every allowed tool must be one of
+    ours.
+    """
+    import pytest
+
+    sdk = pytest.importorskip("claude_agent_sdk")
+    captured = {}
+
+    def _fake_query(*, prompt, options):
+        captured["options"] = options
+
+        async def _gen():
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+        return _gen()
+
+    monkeypatch.setattr(sdk, "query", _fake_query)
+    ctx = SLHuntingToolContext.build(_candles(), StandaloneExecutor())
+    agent = SLHuntingAgent(model="test-model")
+    SLHuntingAgent._run_sync(
+        agent._default_run(
+            "prompt", system_prompt="short", model="test-model", max_turns=3, tool_context=ctx
+        )
+    )
+    options = captured["options"]
+    assert options.tools == []
+    assert options.permission_mode == "dontAsk"
+    assert options.setting_sources == []
+    assert options.allowed_tools
+    assert all(name.startswith("mcp__slhunting__") for name in options.allowed_tools)
+
+
 def test_cli_spawn_winerror_206_maps_to_actionable_message():
     """A WinError-206 CLINotFoundError must NOT tell the operator to reinstall."""
     import pytest

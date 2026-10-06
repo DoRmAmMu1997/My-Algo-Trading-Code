@@ -9031,3 +9031,49 @@ and the BankNIFTY and SENSEX history needed to test one does not exist on disk.
 a 42.4-point stop, and the budget is a deliberate operator setting. The 09:43
 entry, 23 points higher with a 20.75-point stop, still caught the leg. Nothing
 to change.
+
+## SLH-022 - the agent gets no built-in tools (and the SDK goes back to 0.2.159)
+
+**The hang (6 Oct).**
+
+- `claude-agent-sdk` 0.2.160-0.2.163 publish no Windows wheel. On the runner, pip
+  installed the generic wheel of 0.2.163, whose `_bundled/` holds no Claude CLI.
+- With no bundled CLI, the SDK silently ran the `claude` on PATH: CLI 2.1.138,
+  where 5 Oct had run 2.1.281.
+- 0.2.160 also holds a run that has SDK MCP servers open until the CLI reports
+  `idle`, for up to 600 s.
+
+Result: 8 decisions completed against 72-74 on a normal day, 12 calls abandoned at
+the 90 s deadline and left running (one for 12.7 minutes), and 34 bars skipped
+behind them. Every order attempt was refused, so nothing reached the broker. PR
+#200 reverts the pin to 0.2.159, whose Windows wheel contains
+`_bundled/claude.exe`. The repository-policy ledger now holds the Windows-wheel
+check every future bump must pass.
+
+**The tools (found while tracing the hang).**
+
+`permission_mode="dontAsk"` denies only the tools that would ASK for permission.
+The CLI still ran the ones that never ask:
+
+- `echo` shell commands on 1 and 5 Oct;
+- an `Agent` subagent on 6 Oct.
+
+Without `tools`, the bundled CLI 2.1.281 exposes 25 built-ins (PowerShell, Read,
+Write, Edit, Agent, WebFetch, WebSearch and more). A toy-server A/B test on that CLI
+showed the model run PowerShell and spawn a subagent. With `tools=[]` only the MCP
+tools exist, and they load directly instead of through `ToolSearch`: 11 s against
+22 s.
+
+A real paper decision through the patched agent then called its own seven tools
+and nothing else. The prompt carries third-party text (the pre-open note), so this
+is a prompt-injection boundary. The coach already had the same line.
+
+**Test.** `test_default_run_switches_off_every_built_in_tool` pins `tools == []`,
+`dontAsk`, empty `setting_sources`, and an allow-list of `mcp__slhunting__*` only.
+Five mutations were all caught, and the control passes:
+
+- the `tools` line removed;
+- `tools=None`;
+- a built-in tool allowed;
+- `bypassPermissions`;
+- user settings loaded.
