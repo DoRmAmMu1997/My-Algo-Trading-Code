@@ -201,46 +201,36 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_5_intraday_hunter_plan():
-    """Render Sunday's forecast for Monday with its gap-size distinction.
+def test_shipped_note_matches_october_6_intraday_hunter_plan():
+    """The committed advisory must match the hand-checked 5 Oct transcript.
 
-    A stale all-SELL plan or merging the two gap-down cases reverses this
-    forecast. Levels are independently checked against 1080p frames at 0:34,
-    1:03 and 1:27; the Sunday upload must never date the note to Sunday itself.
+    Three things an edit would flatten:
+
+    1. The SIDES: flat to gap down SELLS (to target buyers seated after the
+       retracement chased the sellers off), a gap up BUYS with the market.
+    2. Why a gap up cannot be a hunt: the buyers will not cut until price
+       crosses back through the closing price.
+    3. The levels. NIFTY's resistances were spoken farthest first ("22800
+       22580") and are recorded nearest first. BankNIFTY's supports, spoken
+       "5453700", read 54,007.90 / 53,702.10 off the 1080p frame.
     """
     import os
 
-    here = AGENT_DIR
-    note = load_premarket_note(os.path.join(here, "premarket_note.json"))
+    note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 5))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-05" in block
-    assert "Hbf7R3KqEwE" in block
-    assert "THIRD-PARTY, ADVISORY ONLY" in block
-    assert "FLAT, GAP UP or SMALL GAP DOWN -> BUY" in block
-    assert "LARGE GAP DOWN -> SELL" in block
-    assert "removed nearby sellers" in block
-    assert "little buyer inventory" in block
-    assert "no numeric cutoff" in block
-    assert format_premarket_note(note, date(2026, 10, 4)) == ""
-    assert format_premarket_note(note, date(2026, 10, 6)) == ""
+    assert note.for_date == "2026-10-06"
+    assert "WVfyM2gkWXs" in note.source
+    assert "the nearby sellers were chased off, so buyers are now the seated side" in note.context
+
+    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> SELL"))
+    assert "identify selling-side setups to target those buyers" in sell
+    buy = next(line for line in note.plan if line.startswith("GAP UP -> BUY, WITH THE MARKET"))
+    assert "will not cut until price crosses back through the closing price" in buy
+    assert any(line.startswith("NIFTY EXPIRES TODAY") for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
-        {
-            "index": "NIFTY",
-            "resistance": [22590.0, 22800.0],
-            "support": [22200.0, 22000.0],
-        },
-        {
-            "index": "BANKNIFTY",
-            "resistance": [54880.0, 55200.0],
-            "support": [54000.0, 53500.0],
-        },
-        {
-            "index": "SENSEX",
-            # Caption "7600" is resolved by the chart's 70,605.33 label.
-            "resistance": [72400.0, 73130.0],
-            "support": [71300.0, 70600.0],
-        },
+        {"index": "NIFTY", "resistance": [22580.0, 22800.0], "support": [22380.0, 22200.0]},
+        {"index": "BANKNIFTY", "resistance": [54890.0, 55200.0], "support": [54000.0, 53700.0]},
+        {"index": "SENSEX", "resistance": [72400.0, 73130.0], "support": [71300.0, 71000.0]},
     ]
