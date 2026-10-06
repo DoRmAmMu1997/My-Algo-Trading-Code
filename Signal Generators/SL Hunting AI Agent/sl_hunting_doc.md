@@ -8959,3 +8959,75 @@ BankNIFTY's support labels are 54,007.90 / 53,504.60; SENSEX's lower support is
 22,584.20; the spoken value is retained rather than inventing precision. Video,
 metadata and frame artifacts are kept under
 `%TEMP%\intradayhunter-2026-transcripts`, outside git.
+
+## 5 Oct - same side, same exit minute (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`aPu1pRZztf8`,
+  uploaded 2026-10-05 10:55 IST), traded on the 5 Oct note (`Hbf7R3KqEwE`,
+  "FLAT, GAP UP or SMALL GAP DOWN -> BUY"). His clock times are read off the
+  taskbar clock in the video frame, and his figures off his positions screen at
+  10:22 in the video. His words are my translation of the Hindi auto-transcript.
+- **This book:**
+  - its one journal row;
+  - all 65 decisions;
+  - the runner log.
+
+v5p was in force (#197, merged 4 Oct 22:30).
+
+**No knowledge change.**
+
+### The comparison
+
+| | IH | the agent |
+|---|---|---|
+| open | gap up: BankNIFTY already running, SENSEX and NIFTY holding at resistance | the note's buy branch |
+| first attempt | waited out the direct push | 09:20 LONG 22,557.40, stop 22,515.00, **refused by sizing**: one lot would risk 2,756.00 against the 2,500 budget |
+| entry | **09:23**, on the first rejection: BankNIFTY 55,000 CE and 55,100 CE x1,170 each, SENSEX x900, NIFTY x1,430 | **09:43** LONG 22,580.75, a 61% pullback hammer, stop 22,560.00 |
+| exit | **09:50**, "a normal target", because BankNIFTY lagged | **09:49:19** at 22,611.15, at the prior-day high (22,610.60) and the 22,600 round number |
+| result | **+1,62,201.85** | **+1,851.50** |
+
+NIFTY topped at 22,617.40 at 09:51 and fell to 22,486.65 by 10:26, so both
+books left within a minute of the top.
+
+His positions at the exit:
+
+| leg | qty | avg | LTP | P&L |
+|---|---|---|---|---|
+| BankNIFTY 55,000 CE | 1,170 | 1,023.53 | 1,034.50 | +12,834.90 |
+| BankNIFTY 55,100 CE | 1,170 | 972.47 | 975.35 | +3,370.35 |
+| SENSEX | 900 | 565.68 | 680.20 | +1,03,068.00 |
+| NIFTY | 1,430 | 112.98 | 143.00 | +42,928.60 |
+
+The two BankNIFTY legs made 16,205.25, **10%** of the total, and that is the
+whole reason he booked: "the target only gets big when BankNIFTY's momentum
+comes with it... if BankNIFTY turns negative, it won't even let us see the
+SENSEX and NIFTY profit."
+
+### Why nothing was encoded
+
+**His entry read is already written down.** His reasoning: after a fast fall
+and a break of two or three days, "neither the sellers' nor the buyers' stops
+are available here", but any rejection invites sellers, so "whatever traps form
+will form for the sellers". That combines three existing rules:
+
+- WEEKEND / HOLIDAY CARRY-RISK (no inventory carried over a break);
+- the as-the-opening rule of BOTH-WAYS FLUSH DAY;
+- v4t's "a follow is joined on the retracement". He waited out the direct push
+  and bought the first rejection.
+
+**His exit is v4i almost word for word:** "the lagging index decides the
+basket's exit, not the leading one".
+
+**"The momentum came where the sellers came" was not encoded.** His account:
+BankNIFTY went positive first, so sellers left it alone and sold the two
+indices that looked weak, and those two then ran. On 1 Oct he gave the mirror
+image: sellers gathered in the index that refused to fall, and it broke out.
+Read together, the two days give no direction a rule could use before the fact,
+and the BankNIFTY and SENSEX history needed to test one does not exist on disk.
+
+**The 09:20 refusal was the risk budget working as configured.** It turned down
+a 42.4-point stop, and the budget is a deliberate operator setting. The 09:43
+entry, 23 points higher with a 20.75-point stop, still caught the leg. Nothing
+to change.
