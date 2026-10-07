@@ -9077,3 +9077,128 @@ Five mutations were all caught, and the control passes:
 - a built-in tool allowed;
 - `bypassPermissions`;
 - user settings loaded.
+
+## 6 Oct - one word, two branches, and a blind half-hour (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`KJ1WTg6gXNM`,
+  uploaded 2026-10-06 10:29 IST), traded on the 6 Oct note (`WVfyM2gkWXs`,
+  "FLAT TO GAP DOWN -> SELL", "GAP UP -> BUY, WITH THE MARKET"). His clock times
+  are read off the taskbar clock in the video frame, and his figures off his
+  positions screen. His words are my translation of the Hindi auto-transcript.
+- **This book:**
+  - all 53 decisions (no journal row: the agent did not trade);
+  - the runner log.
+- **The 5-year NIFTY CSV**, for the measurement below.
+
+v5p was in force. This was also the day of the SDK hang that SLH-022 (above)
+records.
+
+**No knowledge change.**
+
+### The comparison
+
+| | IH | the agent |
+|---|---|---|
+| open | **"a slight gap up"**: the buy branch | **FLAT** (+0.21%, under the 0.5% line): the note's SELL branch |
+| 09:15-09:43 | **in at 09:26**: BankNIFTY 54,900 CE and 55,000 CE x1,170 each, SENSEX 72,500 CE x900, NIFTY 22,550 CE x1,430 | **blind**: every call abandoned at the 90 s deadline or skipped behind one, and the runner restarted at 09:38 |
+| 09:43-10:30 | | 8 reasoned holds; 7 cite the SELL branch, and all decline it because the closing-price breakdown never came |
+| exit | **09:50**, "an OK target", before others start buying | no position |
+| result | **+2,35,441.50** | **0.00** |
+
+NIFTY opened at 22,603.25. That is +0.21% on the official close (22,555.75) and
++0.30% on the 3:15 level (22,535.30). The low was 22,561.60 at 09:16, so the
+close was never lost. NIFTY was about 22,595 at IH's entry and 22,637.25 at his
+exit. It made 22,667.35 at 09:57, gave back to 22,616.20 at 10:10, and then
+climbed to 22,717.40 by 15:14.
+
+His positions at the exit:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 54,900 CE | 1,170 | 937.30 | +75,172.50 |
+| BankNIFTY 55,000 CE | 1,170 | 886.47 | +66,433.10 |
+| SENSEX 72,500 CE | 900 | 424.53 | +60,903.00 |
+| NIFTY 22,550 CE | 1,430 | 92.32 | +32,932.90 |
+
+The two BankNIFTY legs made 1,41,605.60, **60%** of the total. On 5 Oct they
+made 10%, and he booked early for that reason; today "BankNIFTY has started
+rising, and when BankNIFTY rises we get a good target".
+
+### What the agent did, and did not, get wrong
+
+**IH's whole trade sat in the blind window.** The agent produced its first
+reasoned decision at 09:43, seventeen minutes after his entry, so nothing in
+this book says whether it would have bought at 09:26. The cause is SLH-022's,
+and it is fixed.
+
+**Its holds after 09:43 were the rule working.** CLOSING-PRICE BREAKDOWN IS THE
+TRIGGER says buyers give their stops only once price trades below the previous
+close, and that "if the breakdown never arrives the trade never existed". The
+agent said exactly that at 09:57: the SELL premise "needs a closing-price
+breakdown below 22555.75, which never came ... so the sell thesis is
+unconfirmed, not triggered." It did not sell into a market that rose all day.
+On the long side, its 09:43 read was that the move "has already run ~68pts in
+25min" and was consolidating, and at 09:57 that the bullish cluster "already
+fired and already paid". That is the no-chase rule.
+
+**The open was classified by the book's own rule, and IH's word disagreed.**
+v4t's calibration came from IH: he called a 0.24% gap-down "almost FLAT" on
+31 Aug, and v5f records him calling a +0.36% open FLAT on 16 Sep. Today he
+called +0.21% "a slight gap up" and took the buy branch. His reason was the
+close, not the size: "until it crosses the closing price, a sell trade cannot
+be built overall... had it traded below the closing price, or opened around
+it, a sell could have been made." His word followed what price did around the
+close in the first minutes, and no single size line fits all three of his
+calls.
+
+### The candidate, measured and refused
+
+The candidate: on a small gap (inside the 0.5% FLAT band), let the first
+minutes against the prior close pick the branch. Close held means go WITH the
+gap; close lost means go AGAINST it. This is IH's 6 Oct reading made general.
+
+Measured on every small-gap session in the 5-year NIFTY CSV. The reference is
+the 3:15 close (v4u); "held" means the first 15 minutes never traded through it;
+the score is points in the gap's direction from 09:30 to 10:30, the agent's
+entry window:
+
+| small gap | close in first 15 min | sessions | mean | winners |
+|---|---|---|---|---|
+| up | held | 309 | -3.3 | 49% |
+| up | lost | 270 | -3.0 | 47% |
+| down | held | 178 | +2.4 | 52% |
+| down | lost | 170 | +2.2 | 49% |
+
+Holding the close carries no information about the next hour. The result is the
+same with the official close as the reference, with 5- or 30-minute windows,
+with a 0.3% band, and to 11:00. Only the full day, to 15:15, separates them at
+all: held beats lost by 7-13 points on both sides, but held gap-ups still average
+-7.1 going WITH the gap, every win rate stays between 47% and 53%, and 15:15 is
+far outside the agent's entry window. By year, the held gap-ups run from -22.3 (2022) to +12.7 (2026),
+and the lost ones from -25.1 (2021) to +12.3 (2026): what moves them is the
+year's drift, not the hold.
+
+IH's exact setup does no better. The prior session sold off and retraced into the
+close (its low after 11:00, its close in the upper half of its range), then a
+small gap up held the close: 35 sessions, mean -5.6, 42% winners.
+
+So neither word is an edge on its own here. The FLAT reading lost nothing
+because the closing-price trigger kept the agent out of the sell, and the gap-up
+reading has no measured advantage that would justify buying the open. The
+classification stays the SLH-017 arithmetic, and the trigger stays the close.
+
+### IH's other points, all already in the corpus
+
+- "Because of the retracement, the sellers ran away": v5f, a retracement is what
+  lets a crowd survive into the next session, and here it removed one.
+- "When rejection comes the sellers come, then it rises again ... rejection,
+  rise, rejection, rise": the 5 Oct addendum's reading, "whatever traps form will
+  form for the sellers".
+- His exit: "the momentum is a little slow because sellers' stops are not
+  directly available ... after the round-number breakout, others will also start
+  buying", so he booked before them. That is v4i's THE CROWD'S FEAR IS YOUR WINDOW,
+  AND IT CLOSES WHEN THEY JOIN, and the slow-candles rule that "small candles ...
+  INVITE buyers, and if it invites buyers it will definitely give a retracement".
+  The retracement came: 22,667.35 at 09:57 to 22,616.20 at 10:10.
