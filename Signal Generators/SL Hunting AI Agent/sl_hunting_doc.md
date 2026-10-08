@@ -9301,3 +9301,132 @@ BankNIFTY 55,562.05 / 56,006.05 and 54,654.65 / 54,203.95; SENSEX 73,004.09 /
 73,453.25 and 72,395.70 / 72,005.24. The dated-note regression checks the
 rendered branches, qualifications, ASR source label, exact rounded levels and
 date gating. Ledgers and extraction artifacts remain outside git.
+
+## 8 Oct - the same entry minute, and three ideas the data refused (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`dG6ekT8_EtQ`,
+  uploaded 2026-10-08 11:06 IST), traded on the 8 Oct note (`FPaMrMLkxIw`,
+  "FLAT or SMALL GAP UP -> SELL", "GAP DOWN -> SELL"). His clock times are read
+  off the taskbar clock in the video frame, and his figures off his positions
+  screen. His words are my translation of the Hindi auto-transcript.
+- **This book:**
+  - its three journal rows;
+  - all 73 decisions;
+  - the runner log.
+- **The 5-year NIFTY CSV**, for the three measurements below.
+
+v5q was in force (#203).
+
+**No knowledge change.**
+
+### The comparison
+
+| | IH | the agent |
+|---|---|---|
+| open | FLAT (NIFTY -0.02%): "overall selling, and we have to sell here" | FLAT: the note's SELL branch |
+| entry | **09:19-09:20**: BankNIFTY 54,800 PE and 54,700 PE x1,170 each, SENSEX 72,500 PE x900 (its expiry), NIFTY 22,550 PE x1,430 | **09:21** SHORT 22,530.80 on a bearish inside bar after the first candle's flush, stop 22,553.00 |
+| exit | **09:47-09:48**: "the profit is only in SENSEX and NIFTY; BankNIFTY is behind" | **09:28** at 22,484.80, near its 22,470 target: **+2,405.50** |
+| re-entries | none | 09:45 SHORT 22,469.60, cut at 09:52 at 22,479.60 on BankNIFTY's reversal: **-3,153.00** (2 lots); 10:18 SHORT 22,476.65, booked at 10:21 at 22,440.70: **+2,265.00** |
+| result | **+1,78,881.25** | **+1,517.50** |
+
+NIFTY opened at 22,599.05, -0.02% on the official close (22,603.05) and -0.07% on
+the 3:15 level (22,615.45). The first candle flushed to 22,521.10. It closed
+22,528.50 at 09:19 and 22,544.10 at 09:20, so the two books sold the same
+minute at the same price. It was 22,449.65 at IH's exit, bounced to 22,498.10 at
+10:14, and then fell all day: 22,179.90 at 15:09, 22,215.80 at 15:14.
+
+His positions at the exit:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 54,800 PE | 1,170 | 666.35 | +2,164.50 |
+| BankNIFTY 54,700 PE | 1,170 | 625.50 | -234.00 |
+| SENSEX 72,500 PE | 900 | 263.42 | +1,14,102.00 |
+| NIFTY 22,550 PE | 1,430 | 148.35 | +62,848.75 |
+
+The two BankNIFTY legs made 1,930.50, about **1%** of the total, which is the
+reason he booked.
+
+**The difference is the first exit.** The agent booked 46 points at 09:28 because
+"the flush is nearly spent". IH sat through the bounce to 22,525.55 at 09:30 --
+"sometimes it feels cold, sometimes hot" -- and booked about 80 points later. His
+rule for sitting through it: "when will selling change to buying? When the market
+covers its higher point, that is, where it started from." That is candidate 2.
+
+### Three candidates, measured, none encoded
+
+**1. The copied chart, scoped by who was hurt.** IH's entry argument was that
+"today too the market is making almost the same chart" as 7 Oct's opening fall,
+and the sellers of that candle were stopped out by its recovery, "so today they
+will not sell". The move would run with nobody crowding it. That reads the copy
+as a CONTINUATION, where v4f (THE CHART DOES NOT REPEAT TWO DAYS RUNNING) reads
+it as a trap. The v4f record carries its own scope: "if the buyers made profit
+yesterday, today they should not get that profit", so a copy betrays the side
+yesterday PAID. 8 Oct's copiers had been PUNISHED: 7 Oct opened at 22,690.45,
+fell 0.30% in five minutes, and was back at 22,717.65 by 12:04. The candidate:
+after a punished copy, follow.
+
+Definitions: a sharp open moves at least 0.25% in its first five minutes; a copy
+follows a session whose own open moved the same way by as much; that session
+PUNISHED its followers if it later traded back through its open. Points in the
+move's direction from 09:20:
+
+| session | n | to 10:30 | winners | to 15:14 | winners |
+|---|---|---|---|---|---|
+| copy, prior punished | 17 | -15.7 | 52% | -69.2 | 29% |
+| copy, prior paid | 23 | -1.9 | 43% | +3.6 | 56% |
+| no copy | 208 | +6.8 | 54% | -1.8 | 52% |
+
+The punished copy reverses more often than it runs, and 8 Oct (+76.7 by 10:30)
+is the exception rather than the pattern. Thresholds of 0.2-0.4% and windows of
+3 or 10 minutes flip the two copy groups' signs, on samples of 4 to 38 sessions.
+What survives is weaker than either reading: at the base setting and most
+variants, copies of either kind followed worse than ordinary sharp opens, which
+is v4f's direction -- though not at the 0.3-0.4% thresholds. v4f stands
+unedited.
+
+**2. Hold a follow until it reclaims where it started.** The 177 closed journal
+trades the CSV covers (2 Jul to 8 Oct) were replayed and held until price
+reclaimed the session extreme as at entry -- the move's origin -- or a horizon:
+
+| exit | net points | winners |
+|---|---|---|
+| the agent's own | +483.7 | 48% |
+| origin, or 10:30 | -362.4 | 49% |
+| origin, or 11:00 | -536.4 | 44% |
+| origin, or 15:14 | +515.3 | 37% |
+
+The origin is a median 45.8 points away. The one horizon that keeps up does so
+with more than twice the usual stop distance and 37% winners, and September
+(-211.1) and October (-262.0) carry the 10:30 loss. 8 Oct's first trade (+76.7
+against +46.0) is the flattering case.
+
+**3. Do not sell the session low on a follow.** The agent's 09:45 short sold a
+fresh low at 22,469.60, two minutes before IH booked out near 22,450 -- where
+v5k says a follow's sellers LEAVE, as on 24 Sep. On the same 177 trades, entries
+within 10 points of the session extreme in the trade's direction made +21.1
+points (40 trades, 42% winners) against +462.6 (137, 50%) for the rest. But the
+halves disagree: -44.6 (36%) in Jul-Aug, +65.7 (50%) from late Aug. The 5-, 15-
+and 20-point cuts do not order cleanly either. A gate would also have refused the
+09:21 trade -- 9.7 points off the low, +2,405.50, the one that matched IH's
+entry. Not a gate; v5k's prose stands.
+
+### IH's other points, all already in the corpus
+
+- "Where we sell, can others also sell there?", and yesterday's stopped sellers
+  staying out: v4b, REGIME MEMORY DECIDES WHO SHOWS UP AT A LEVEL.
+- "The sellers' stops are not available, so we are not targeting them; we follow
+  the continuous selling": v5k, WHO PAYS FOR A FOLLOW WHEN NOBODY HAS STOPS
+  NEARBY.
+- His exit: "when two indices make a big move, the third stays behind, and
+  sometimes turns": v4i, THE LAGGING INDEX DECIDES THE BASKET'S EXIT. The agent's
+  09:52 cut on BankNIFTY's reversal used the same hierarchy.
+- The passage on fear, repeated losses and cutting quantity after them: v3y and
+  the RISK section.
+
+### SLH-022 in production
+
+73 decisions, none abandoned or skipped. Latency: median 33.3 s, 90th percentile
+41.3 s, worst 73.0 s, against 45 failed calls on 6 Oct.
