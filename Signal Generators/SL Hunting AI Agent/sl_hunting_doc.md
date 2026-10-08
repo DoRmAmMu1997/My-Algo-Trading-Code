@@ -9202,3 +9202,102 @@ classification stays the SLH-017 arithmetic, and the trigger stays the close.
   AND IT CLOSES WHEN THEY JOIN, and the slow-candles rule that "small candles ...
   INVITE buyers, and if it invites buyers it will definitely give a retracement".
   The retracement came: 22,667.35 at 09:57 to 22,616.20 at 10:10.
+
+## 7 Oct live match and 8 Oct pre-open note (v5q)
+
+**Evidence.** The live video `0jt8c4MX-hA` was published 7 Oct 2026 at 11:09 IST
+(10:59 duration). Its direct YouTube Hindi auto-transcript has 295 segments and
+was read in full. Frames at 1:33 and 9:18 show the entry sequence around 09:25
+and all four legs flat at 10:15. Publication times are parsed from YouTube's
+offset-bearing metadata and converted to IST.
+
+The premarket video `FPaMrMLkxIw`, "Prediction For 08 OCT 2026", was published
+7 Oct at 21:25 IST (about 1:49). It exposes no caption tracks in the watch page,
+`youtube-transcript-api`, or `yt-dlp`. Its original audio was therefore decoded
+locally with faster-whisper's cached `small` model. The initial Hindi decoding
+distorted phrases; the full Hindi-to-English translation pass supplied the
+usable forecast. This is a LOCAL AUDIO ASR fallback, not a direct YouTube
+transcript or a NoteGPT extraction. The shipped note labels that distinction.
+All levels were checked independently against 1080p chart frames.
+
+### IH's trade and the agent's book
+
+IH took one CALL basket after the abrupt opening fall. He explicitly separated
+it from the previous evening's BUY plan: the market had erased hours of the
+prior advance in one minute, so he was trading a NEW chart and a bounded
+recovery idea, not simply following that old branch. He acknowledged continuing
+selling and a breakdown could make this range idea wrong (6:58-7:42), then
+booked a normal target when BankNIFTY recovered while NIFTY and SENSEX stayed
+largely sideways (9:03-10:49).
+
+His completed positions screen at 9:18 of the video reads:
+
+| Leg | Entry quantity | Realized P&L |
+|---|---|---|
+| BankNIFTY 54,700 CE | 1,170 | +122,850.00 |
+| BankNIFTY 54,800 CE | 1,170 | +123,996.60 |
+| SENSEX 72,600 CE | 900 | -16,380.00 |
+| NIFTY 22,600 CE | 1,430 | -9,895.35 |
+| Basket | | **+220,571.25** |
+
+The agent's 7 Oct JSONL records contain 71 decisions: 61 HOLD, three LONG
+entries, two SHORT entries, and five exits. Its five completed journal rows are:
+
+| Entry / exit | Side | Entry / exit NIFTY | Journal option P&L |
+|---|---|---|---|
+| 09:33:26 / 09:35:29 | LONG | 22,630.70 / 22,612.00 | -507.00 |
+| 09:43:55 / 09:47:28 | LONG | 22,618.75 / 22,612.30 | -500.50 |
+| 09:58:11 / 10:01:25 | SHORT | 22,612.40 / 22,607.50 | -214.50 |
+| 10:07:56 / 10:13:23 | SHORT | 22,617.60 / 22,622.40 | -552.50 |
+| 10:19:32 / 10:21:24 | LONG | 22,647.40 / 22,681.75 | +1,589.25 |
+| Total | | | **-185.25** |
+
+The rupee figures describe different quantities and baskets; they are not a
+capital-normalized ranking. The useful mismatch is in the rationale. All three
+agent LONG entries cite the old flat-open BUY branch. IH says the old chart no
+longer carries his entry and states a new recovery/range hypothesis instead.
+The two agent SHORT exits cite the existing hierarchy when BankNIFTY recovers.
+The final LONG books into the round-number/pivot stall under
+the existing profit-rate rule.
+
+### Net-new refinement and overlaps
+
+`RETAIL_POSITIONING` adds AN OPENING THAT SPENDS HOURS IN MINUTES RETIRES THE
+PRE-OPEN PREMISE. It supplies a concrete early trigger for CURRENT-SESSION TRAP
+RESET: when the opening rapidly erases a multi-hour leg, state the NEW crowd,
+regime, entry and invalidation. The side may match the note, but that does not
+preserve the note's premise. This scopes PREVIOUS-CHART LINKAGE and YESTERDAY'S
+MOMENTUM CHARACTER rather than adding a directional exception or numeric gate.
+
+Not encoded: fast volatility automatically predicts a range, or buying low in
+an assumed range is sufficient. IH's own mid-trade doubt and BankNIFTY's later
+directional recovery show why those are hypotheses needing price confirmation.
+The existing pattern, qualified continuation exceptions, stop, loss limit and
+cross-index exit rules still govern.
+
+The remaining ideas overlap the corpus: paid/absent inventory is TARGET-BOOKED
+and v4f's one-minute move; modest expectations without nearby stops are NORMAL
+TARGET and v5g/v5h; BankNIFTY as the only profit driver is the existing
+single-index booking context; discipline at the loss limit is v4h/v4n. Comparing
+one's risk to another trader's large capital adds no sizing permission.
+
+### October 8 advisory
+
+The audio forecast keeps SELL setups for flat or small gap-up opens and the same
+SELL plan after a gap-down. SENSEX's discussion qualifies it with the absence of
+a LARGE gap-up; the note carries that warning without inventing a threshold or
+an automatic reverse trade. BankNIFTY can retrace after a gap-down. The source
+also flags SENSEX expiry for the intended session.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,720 / 22,800 | 22,540 / 22,420 |
+| BANKNIFTY | 55,560 / 56,000 | 54,650 / 54,200 |
+| SENSEX | 73,000 / 73,450 | 72,400 / 72,000 |
+
+Frames at 0:32 (SENSEX), 1:04 (BankNIFTY), and 1:40 (NIFTY) resolve the rounded
+levels: NIFTY labels 22,718.30 / 22,800.60 and 22,544.25 / 22,419.10;
+BankNIFTY 55,562.05 / 56,006.05 and 54,654.65 / 54,203.95; SENSEX 73,004.09 /
+73,453.25 and 72,395.70 / 72,005.24. The dated-note regression checks the
+rendered branches, qualifications, ASR source label, exact rounded levels and
+date gating. Ledgers and extraction artifacts remain outside git.

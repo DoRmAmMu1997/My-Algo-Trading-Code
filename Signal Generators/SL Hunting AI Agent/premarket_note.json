@@ -1,44 +1,45 @@
 {
-  "for_date": "2026-10-07",
-  "source": "Intraday Hunter, 'Prediction For 07 OCT 2026' (wnqjnhbuDfI, uploaded 2026-10-06)",
-  "context": "Strong positive momentum on 6 Oct in NIFTY (through its expiry) and SENSEX; BankNIFTY broke out only a little and was rejected, with negative momentum from 13:00 to 15:00.",
+  "for_date": "2026-10-08",
+  "source": "Intraday Hunter, 'Prediction For 08 OCT 2026' (FPaMrMLkxIw, 2026-10-07; local audio ASR)",
+  "context": "All three indices tried to recover but failed to sustain it; weakness and selling remain. Some sellers may have joined, but their quantity is small rather than a large seated crowd. The opening must still fit that read.",
   "plan": [
-    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the buyers who came in NIFTY and SENSEX took their targets and left, so there is no seated side to hunt -- identify buying-side setups.",
-    "GAP DOWN -> SAME BUY PLAN: a gap down should not come after such a positive chart and it raises the risk, but it can build a trap for the sellers -- keep looking for buying-side setups.",
-    "BANKNIFTY: few buyers came on its small breakout, and two hours of negative momentum after the rejection will have shaken them out, so they are not a target either."
+    "FLAT or SMALL GAP UP -> SELL: follow the market and identify confirmed selling-side setups across all three indices; the weak recovery has not seated a large seller crowd to squeeze.",
+    "GAP DOWN -> SELL: retain the selling-side plan. On BANKNIFTY a retracement can occur after the gap down, so the opening alone is not confirmation and the live setup must still qualify.",
+    "LARGE GAP UP WARNING: IH qualifies the SENSEX plan with the absence of a large gap up. Reassess that opening on the live chart instead of extending the small-gap branch. No numeric cutoff is supplied.",
+    "SENSEX EXPIRY: the video flags 8 Oct as its expiry session. Treat expiry as context for an already valid setup, not as an entry premise."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22800,
-        22880
+        22720,
+        22800
       ],
       "support": [
-        22650,
-        22580
+        22540,
+        22420
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55360,
-        55560
+        55560,
+        56000
       ],
       "support": [
-        54880,
-        54650
+        54650,
+        54200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73450,
-        73700
+        73000,
+        73450
       ],
       "support": [
-        72700,
-        72400
+        72400,
+        72000
       ]
     }
   ]
