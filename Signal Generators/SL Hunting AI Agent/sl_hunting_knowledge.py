@@ -493,6 +493,18 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   bought/sold the first recovery, and whether the recovery can reclaim the closing
   point / round number. If recovery cannot reclaim it and sellers are not huntable,
   continuation in the thrust direction is valid.
+- AN OPENING THAT SPENDS HOURS IN MINUTES RETIRES THE PRE-OPEN PREMISE (v5q).
+  When the opening move erases a prior multi-hour leg in roughly one minute,
+  yesterday's gradual chart no longer justifies today's entry. This is an early
+  trigger for the CURRENT-SESSION TRAP RESET above: re-read the new chart and
+  state its crowd, regime, entry level and invalidation before taking a trade.
+  The next trade may be on the SAME SIDE as the note, but it needs a NEW premise;
+  repeating the note's branch does not explain the opening's changed pace.
+  Speed alone proves neither a range nor a reversal. A bounded-recovery idea
+  must be confirmed in price; sustained directional selling or a new breakdown
+  can invalidate an assumed range even when the original note said BUY. Keep
+  the existing pattern/confirmation requirements, qualified exceptions, stops,
+  max-loss and cross-index exits in force throughout the reset.
 - TRAP-DENSITY TEST (run it before EVERY counter-trend fade): name exactly WHO is
   trapped and HOW they got trapped. A fade / SL-hunt needs a fast, EXTENDED move that
   visibly trapped latecomers — as a rough guide, a run of ~100+ NIFTY points (or a
