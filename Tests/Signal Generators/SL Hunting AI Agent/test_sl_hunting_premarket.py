@@ -201,42 +201,34 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_9_intraday_hunter_plan():
-    """Render the 8 Oct forecast only for its intended 9 Oct session.
+def test_shipped_note_matches_october_12_intraday_hunter_plan():
+    """Render Sunday's forecast only on Monday, retaining its conditions.
 
-    Three things an edit would flatten:
-
-    1. The SIDES are the reverse of the last note's: after 8 Oct's continuous
-       selling, flat to gap down BUYS (to target the seated sellers), and a
-       gap up SELLS with the market, because the sellers will not wait.
-    2. No expiry flag. SENSEX expired on 8 Oct; a line carried over from the
-       previous note would tell the agent 9 Oct is an expiry day.
-    3. The levels. BankNIFTY's and SENSEX's resistances were spoken farthest
-       first ("55400 55000", "72 220 71900") and are recorded nearest first.
-       SENSEX's supports, spoken "7100750", read 71,008.05 / 70,750.08 off
-       the 1080p frame, and NIFTY's first support, spoken "2284", reads
-       22,084.75.
+    This catches carrying over the old gap-up SELL branch, losing the immediate
+    weakness caveat, or treating every gap down as a buyer hunt. Direct Hindi
+    captions and frames at 0:55, 1:40 and 2:08 supply the expected levels;
+    SENSEX's garbled first support reads 72,281.45 on the chart (rounded 72,280).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 9))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-09" in block
-    assert "ZVOpBDyGpNQ" in block
-    assert "sellers are now the seated side in all three" in note.context
-    assert format_premarket_note(note, date(2026, 10, 8)) == ""
-    assert format_premarket_note(note, date(2026, 10, 12)) == ""
-
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> BUY"))
-    assert "identify buying-side setups to target them" in buy
-    sell = next(line for line in note.plan if line.startswith("GAP UP -> SELL, WITH THE MARKET"))
-    assert "the seated sellers will not wait, so their stops will not be available" in sell
-    assert not any("EXPIR" in line.upper() for line in note.plan)
+    block = format_premarket_note(note, date(2026, 10, 12))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-12" in block
+    assert "O2MFYGzPGrQ" in block
+    assert "THIRD-PARTY, ADVISORY ONLY" in block
+    assert "may have seated buyers" in block
+    assert "quantity carefully" in block and "intervening holiday" in block
+    assert "FLAT TO GAP UP -> BUY WITH THE MARKET" in block
+    assert "BANKNIFTY must not turn sharply negative immediately after opening" in block
+    assert "MEANINGFUL GAP DOWN -> SELL" in block
+    assert "On SENSEX the gap should at least break support" in block
+    assert format_premarket_note(note, date(2026, 10, 11)) == ""
+    assert format_premarket_note(note, date(2026, 10, 13)) == ""
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [22340.0, 22420.0], "support": [22085.0, 22000.0]},
-        {"index": "BANKNIFTY", "resistance": [55000.0, 55400.0], "support": [54000.0, 53700.0]},
-        {"index": "SENSEX", "resistance": [71900.0, 72220.0], "support": [71000.0, 70750.0]},
+        {"index": "NIFTY", "resistance": [22700.0, 22800.0], "support": [22450.0, 22340.0]},
+        {"index": "BANKNIFTY", "resistance": [55500.0, 55800.0], "support": [55000.0, 54700.0]},
+        {"index": "SENSEX", "resistance": [73000.0, 73450.0], "support": [72280.0, 71800.0]},
     ]
