@@ -1,43 +1,43 @@
 {
-  "for_date": "2026-10-09",
-  "source": "Intraday Hunter, 'Prediction For 09 OCT 2026' (ZVOpBDyGpNQ, uploaded 2026-10-08)",
-  "context": "Continuous selling on 8 Oct in BankNIFTY, SENSEX and NIFTY (NIFTY from a 22,599 open to 22,216 at 15:14), so sellers are now the seated side in all three.",
+  "for_date": "2026-10-12",
+  "source": "Intraday Hunter, 'Prediction For 12 OCT 2026' (O2MFYGzPGrQ, uploaded 2026-10-11)",
+  "context": "Continuous positive momentum across all three indices may have seated buyers. They chose quantity carefully because of the intervening holiday; their presence alone does not make them immediately huntable.",
   "plan": [
-    "FLAT TO GAP DOWN -> BUY: the continuous selling seated sellers in all three indices -- identify buying-side setups to target them.",
-    "GAP UP -> SELL, WITH THE MARKET: on a direct gap up the seated sellers will not wait, so their stops will not be available -- identify selling-side setups."
+    "FLAT TO GAP UP -> BUY WITH THE MARKET: buyers remain unpressured, so seek confirmed buying-side setups. BANKNIFTY must not turn sharply negative immediately after opening.",
+    "MEANINGFUL GAP DOWN -> SELL: seek confirmed selling-side setups against the buyers. On SENSEX the gap should at least break support to expose their risk; do not treat every tiny gap down as sufficient."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22340,
-        22420
+        22700,
+        22800
       ],
       "support": [
-        22085,
-        22000
+        22450,
+        22340
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55000,
-        55400
+        55500,
+        55800
       ],
       "support": [
-        54000,
-        53700
+        55000,
+        54700
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        71900,
-        72220
+        73000,
+        73450
       ],
       "support": [
-        71000,
-        70750
+        72280,
+        71800
       ]
     }
   ]
