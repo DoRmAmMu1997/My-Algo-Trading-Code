@@ -463,9 +463,11 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # exit_all_positions, multi-leg margin, P&L-exit rules). The one removal,
     # place_forever's `symbol` parameter, is not called anywhere here. The
     # Dependencies and Data Extractors suites (1,028 tests) pass against an
-    # isolated 2.3.0, failing only on these pin assertions. Side effect: the
-    # master's utcfromtimestamp warning filter (and its pyproject entries) now
-    # matches nothing; harmless, and left for its own change.
+    # isolated 2.3.0, failing only on these pin assertions. Because 2.3.0 no
+    # longer calls utcfromtimestamp(), the master's warning filter for it, its
+    # two pyproject filterwarnings entries and the five tests that pinned them
+    # were removed in the same PR. The [tool.pytest.ini_options] table stays,
+    # empty: it is what anchors pytest's rootdir at the repo root.
     for runtime_pin in ("dhanhq==2.3.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.3"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
