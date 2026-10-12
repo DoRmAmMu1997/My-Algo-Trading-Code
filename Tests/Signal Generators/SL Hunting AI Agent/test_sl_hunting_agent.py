@@ -1088,6 +1088,83 @@ def test_cli_spawn_winerror_206_maps_to_actionable_message():
     assert "reinstall" not in message.lower()
 
 
+def _result_error_class(sdk):
+    """The SDK's ResultError (0.2.165+), or a stand-in with its shape on older SDKs."""
+    cls = getattr(sdk, "ResultError", None)
+    if cls is not None:
+        return cls
+
+    class _ResultError(sdk.ProcessError):
+        def __init__(self, message, data=None, exit_code=None):
+            data = data or {}
+            self.api_error_status = data.get("api_error_status")
+            self.result = data.get("result")
+            super().__init__(message, exit_code=exit_code)
+
+    return _ResultError
+
+
+def _run_default_raising(sdk, exc):
+    """Drive _default_run against a fake query() that raises `exc` immediately."""
+    import unittest.mock as mock
+
+    def _fake_query(*, prompt, options):
+        async def _gen():
+            raise exc
+            yield  # pragma: no cover - makes this an async generator
+
+        return _gen()
+
+    ctx = SLHuntingToolContext.build(_candles(), StandaloneExecutor())
+    agent = SLHuntingAgent(model="test-model")
+    with mock.patch.object(sdk, "query", _fake_query):
+        SLHuntingAgent._run_sync(
+            agent._default_run(
+                "prompt", system_prompt="short", model="test-model",
+                max_turns=3, tool_context=ctx,
+            )
+        )
+
+
+def test_result_error_is_classified_like_the_error_result_it_carries():
+    """SDK 0.2.165 ends a failed run in ResultError, a ProcessError subclass.
+
+    The ProcessError branch caught it before the typed classifier, so an expired
+    login became a generic "process error" carrying the CLI's result text into
+    the log, and the subscription's "session limit" wording was not recognised
+    as a usage limit at all (both seen 2026-10-12).
+    """
+    import pytest
+
+    sdk = pytest.importorskip("claude_agent_sdk")
+    from sl_hunting_agent import SLHuntingAgentError, SLHuntingAuthError, SLHuntingUsageLimitError
+
+    result_error = _result_error_class(sdk)
+    limit = "You've hit your session limit · resets 8:20pm (Asia/Kolkata)"
+    with pytest.raises(SLHuntingUsageLimitError):
+        _run_default_raising(sdk, result_error(
+            f"Claude Code returned an error result: {limit}",
+            data={"is_error": True, "result": limit}, exit_code=1,
+        ))
+    with pytest.raises(SLHuntingAuthError):
+        _run_default_raising(sdk, result_error(
+            "Claude Code returned an error result: API Error: 401",
+            data={"is_error": True, "api_error_status": 401, "result": "API Error: 401"},
+            exit_code=1,
+        ))
+    with pytest.raises(SLHuntingAgentError) as ei:
+        _run_default_raising(sdk, result_error(
+            "Claude Code returned an error result: PRIVATE-RESULT-TEXT",
+            data={"is_error": True, "result": "PRIVATE-RESULT-TEXT"}, exit_code=1,
+        ))
+    assert not isinstance(ei.value, (SLHuntingAuthError, SLHuntingUsageLimitError))
+    assert "PRIVATE-RESULT-TEXT" not in str(ei.value)
+    # A plain ProcessError (a CLI crash with no result) keeps its old message.
+    with pytest.raises(SLHuntingAgentError) as ei2:
+        _run_default_raising(sdk, sdk.ProcessError("Command failed", exit_code=2))
+    assert "process error" in str(ei2.value)
+
+
 # --------------------------------------------------------------------------
 # SLH-001: the SDK call must be TIME-BOUNDED. decide() runs on the strategy
 # worker's own thread -- while it blocks, the per-poll stop/target check,

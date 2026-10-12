@@ -38,6 +38,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Literal, SupportsFloat, cast
 
 import pandas as pd
@@ -154,6 +155,24 @@ def _raise_for_error_result(result_message: Any) -> None:
     raise SLHuntingAgentError(f"Claude Agent SDK returned an error result ({detail}).")
 
 
+def _error_result_from_exception(exc: BaseException) -> Any:
+    """The error result an SDK ``ResultError`` carries, in ResultMessage shape, or None.
+
+    From claude-agent-sdk 0.2.165 a failed run ends in ``ResultError`` -- a
+    ``ProcessError`` subclass holding the CLI's error result -- where 0.2.159
+    raised a bare Exception. Only ``api_error_status`` and ``result`` are read:
+    the two fields ``_raise_for_error_result`` classifies by. A plain
+    ``ProcessError`` (a CLI crash, no result) has neither, so it returns None.
+    """
+    if not hasattr(exc, "api_error_status"):
+        return None
+    return SimpleNamespace(
+        is_error=True,
+        api_error_status=getattr(exc, "api_error_status", None),
+        result=getattr(exc, "result", None),
+    )
+
+
 # A runner drives one full agentic loop and returns the final message text.
 # Production uses `SLHuntingAgent._default_run`; tests inject a fake.
 RunnerFn = Callable[..., Awaitable[AgentRunResult]]
@@ -268,7 +287,12 @@ def _mentions_usage_limit(*texts: str | None) -> bool:
     treat "out of plan credit" differently from a genuine crash.
     """
     blob = " ".join(t for t in texts if t).lower()
-    return any(k in blob for k in ("usage limit", "rate limit", "429", "quota"))
+    # "session limit" is the subscription's own wording ("You've hit your session
+    # limit · resets 8:20pm"), seen 2026-10-12. Without it a plan limit was logged
+    # as a generic agent failure instead of a usage limit.
+    return any(
+        k in blob for k in ("usage limit", "session limit", "rate limit", "429", "quota")
+    )
 
 
 def _disabled_thinking_config(sdk_module: Any) -> dict[str, Any] | None:
@@ -546,6 +570,13 @@ class SLHuntingAgent:
                 "`pip install --force-reinstall claude-agent-sdk`."
             ) from exc
         except ProcessError as exc:
+            # SDK 0.2.165+: a failed RESULT ends in ResultError, a ProcessError
+            # subclass, so it lands HERE rather than in the generic branch below.
+            # Classify it exactly as the error ResultMessage it follows -- typed
+            # errors with CANNED messages (SLH-004) -- before falling back to an
+            # opaque process error, whose message would carry the CLI's result
+            # text into the log and turn an expired login into a generic failure.
+            _raise_for_error_result(result_message or _error_result_from_exception(exc))
             if _mentions_usage_limit(str(exc), getattr(exc, "stderr", None)):
                 raise SLHuntingUsageLimitError() from exc
             raise SLHuntingAgentError(f"Claude Agent SDK process error: {exc}") from exc

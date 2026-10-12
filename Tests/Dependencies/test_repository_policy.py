@@ -81,7 +81,17 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # Same operator decision as before: MARKET_DATA_SOURCE=WEBSOCKET is active
     # but every strategy is PAPER, so a bad feed costs a session, not money.
     # If the feed does not tick at 09:15, revert this pin first.
-    assert "websockets==17.1" in core
+    # 17.1 -> 17.2 (2026-10-12, PR #205). Additive plus bug fixes again: a new
+    # wait_closed() in the THREADING implementation, percent-encoded credentials
+    # in URIs, and non-ASCII headers in the LEGACY implementation -- none of
+    # which marketfeed uses (its token rides in the query string, not the
+    # userinfo). The one asyncio change is that `connect` used as a CONTEXT
+    # MANAGER now closes with code 1011 when the block raises; marketfeed calls
+    # `await websockets.connect(...)` directly, so it does not apply. Its three
+    # names (connect, ConnectionClosed, protocol.State.CLOSED) were confirmed on
+    # an isolated 17.2 install. If the feed does not tick at 09:15, revert this
+    # pin first.
+    assert "websockets==17.2" in core
     # 2.3.3.260113 -> 3.0.5.260730 (2026-09-01, PR #150). A correction more than
     # an upgrade. `pandas` is pinned at 3.0.5 and is NOT in the Dependabot ignore
     # list, so it moved to the 3.x line while a semver-major ignore pinned the
@@ -226,11 +236,34 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # BEFORE ANY FUTURE BUMP: `pip download claude-agent-sdk==X --no-deps
     # --only-binary=:all: --platform win_amd64` must find a wheel, and that wheel
     # must contain claude_agent_sdk/_bundled/claude.exe. No Windows wheel, no bump.
-    assert "claude-agent-sdk==0.2.159" in ai
+    # 0.2.159 -> 0.2.165 (2026-10-12, PR #205), bundled CLI 2.1.281 -> 2.1.294.
+    # The Windows wheel is back: 0.2.164 raised the release job's per-file guard
+    # to 250 MiB "to match the updated project limit", and 0.2.164 and 0.2.165
+    # both publish py3-none-win_amd64 with _bundled/claude.exe -- read from the
+    # wheel's own zip directory, then run from an isolated install
+    # (`claude.exe --version` = 2.1.294). The 0.2.160 idle wait is still there,
+    # reworked: with SDK MCP servers a run ends at the CLI's `idle`, and only an
+    # in-flight local_agent / local_workflow task holds it past that, which
+    # SLH-022's tools=[] rules out. Measured on the real CLI with subscription
+    # auth: query() returned 0.58 s (claude-sonnet-5) and 0.62 s
+    # (claude-sonnet-5-5) after the result, and a paper decision on each model
+    # called only mcp__slhunting__* tools. One code change rides along: 0.2.165
+    # ends a failed run in ResultError, a ProcessError subclass, which the
+    # agent's ProcessError branch caught BEFORE its typed classifier -- an
+    # expired login became a generic error with the CLI's result text in the
+    # log. The agent now classifies it first
+    # (test_result_error_is_classified_like_the_error_result_it_carries).
+    # Standing check: on the next session decisions return and "SLHuntingAgent
+    # decision latency" has not crept up. If either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.165" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
-    assert "pydantic==2.13.5" in ai
+    # 2.13.5 -> 2.14.0 (2026-10-12, PR #205). A minor. The SL Hunting and CPR AI
+    # suites (417 tests) pass against an isolated install of the whole bumped AI
+    # set -- pydantic 2.14.0, mcp 2.3.0, claude-agent-sdk 0.2.165 -- and
+    # openai-codex 0.162.0 still declares pydantic>=2.12.
+    assert "pydantic==2.14.0" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -289,7 +322,14 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # **kwargs, sync Thread.run, TurnResult fields); openai-codex-cli-bin moves in
     # lockstep to 0.160.0. Standing check unchanged: CPR AI errors on the next
     # candidate bar.
-    assert "openai-codex==0.160.0" in ai
+    # 0.160.0 -> 0.162.0 (2026-10-12, PR #205). Same isolated introspection, all
+    # surfaces intact (names, context manager, enum members, thread_start params
+    # by name with no **kwargs, SYNC Thread.run taking approval_mode /
+    # output_schema / effort by name, TurnResult fields). Our prompt goes in
+    # positionally, as `input`, the name 0.160.0 already used. openai-codex is
+    # pure Python; the CLI it pins in lockstep, openai-codex-cli-bin 0.162.0,
+    # publishes a win_amd64 wheel. Standing check unchanged.
+    assert "openai-codex==0.162.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -321,7 +361,13 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # plus the low-level `mcp.server.Server`, mcp.shared.memory,
     # mcp.shared.message and mcp.types that claude-agent-sdk imports. All
     # resolve, and the 106 CPR AI tests pass rather than skip.
-    assert "mcp==2.2.0" in ai
+    # 2.2.0 -> 2.3.0 (2026-10-12, PR #205). Every import path either agent uses
+    # resolves on 2.3.0 (mcp.server.mcpserver.MCPServer, the low-level
+    # mcp.server.Server, mcp.shared.memory, mcp.shared.message, mcp.types), and
+    # the SL Hunting + CPR AI suites pass rather than skip against it. It also
+    # carried the real-CLI decisions recorded under claude-agent-sdk above,
+    # since the SDK's in-process MCP server runs on it.
+    assert "mcp==2.3.0" in ai
     assert "pyotp==2.9.0" in brokers
     assert "websocket-client==1.8.0" in brokers
     assert any(
@@ -405,7 +451,24 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # and failed only on these pin assertions. pandas-stubs stays at
     # 3.0.5.260914: it describes the 3.0 line, and matching the line is what
     # that pin exists for.
-    for runtime_pin in ("dhanhq==2.2.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.3"):
+    # dhanhq 2.2.0 -> 2.3.0 (2026-10-12, PR #205). The market-data AND Dhan
+    # execution SDK, so its source was diffed rather than its notes read. The
+    # modules on our path are either untouched -- _historical_data (minute
+    # bars), _option_chain, dhan_http (the timeout our login overrides),
+    # dhan_context -- or changed without changing what we send: place_order
+    # now builds `amoTime` but pops it unless after_market_order, so our
+    # payload, correlationId included, is identical; marketfeed and fulldepth
+    # swap utcfromtimestamp() for its timezone-aware equivalent with the same
+    # output. The rest is additive (global stocks, conditional orders,
+    # exit_all_positions, multi-leg margin, P&L-exit rules). The one removal,
+    # place_forever's `symbol` parameter, is not called anywhere here. The
+    # Dependencies and Data Extractors suites (1,028 tests) pass against an
+    # isolated 2.3.0, failing only on these pin assertions. Because 2.3.0 no
+    # longer calls utcfromtimestamp(), the master's warning filter for it, its
+    # two pyproject filterwarnings entries and the five tests that pinned them
+    # were removed in the same PR. The [tool.pytest.ini_options] table stays,
+    # empty: it is what anchors pytest's rootdir at the repo root.
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.3"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
