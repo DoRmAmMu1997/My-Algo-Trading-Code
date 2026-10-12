@@ -9430,3 +9430,157 @@ entry. Not a gate; v5k's prose stands.
 
 73 decisions, none abandoned or skipped. Latency: median 33.3 s, 90th percentile
 41.3 s, worst 73.0 s, against 45 failed calls on 6 Oct.
+
+## 9 and 12 Oct - IH's two losing days, and the ideas the data refused (diligence addendum)
+
+**Sources.**
+
+- **IH's live sessions:**
+  - 9 Oct: `-_o8lf08-Fg`, uploaded 2026-10-09 10:15 IST, traded on the 9 Oct note
+    (`ZVOpBDyGpNQ`: "FLAT TO GAP DOWN -> BUY", "GAP UP -> SELL, WITH THE MARKET");
+  - 12 Oct: `GAbEDa49EIk`, uploaded 2026-10-12 10:56 IST, traded on the 12 Oct note
+    (`O2MFYGzPGrQ`: "FLAT TO GAP UP -> BUY WITH THE MARKET ... BANKNIFTY must not
+    turn sharply negative immediately after opening").
+
+  His clock times are read off the taskbar clock in the video frame, and his
+  figures off his positions screen. His words are my translation of the Hindi
+  auto-transcript.
+- **This book:** one journal row each day, all 144 decisions, and the runner log.
+- **The 5-year NIFTY CSV**, which ends on 8 Oct. Prices for 9 and 12 Oct come
+  from the decision log's per-minute last price.
+
+v5q was in force.
+
+**No knowledge change.**
+
+### 9 Oct: the one word split the books, and the arithmetic won
+
+| | IH | the agent |
+|---|---|---|
+| open | "some gap up" in the pre-open: the note's GAP UP -> SELL branch | **FLAT** (NIFTY +0.37%, BankNIFTY +0.42%, both under 0.5%): the note's FLAT TO GAP DOWN -> BUY branch |
+| entry | **09:19**: BankNIFTY 54,800 PE and 54,700 PE x1,170 each, SENSEX 72,000 PE x900, NIFTY 22,350 PE x1,430 | **09:29** LONG 22,357.35 on a confirmed morning star off 22,294.75, stop 22,330.00 |
+| exit | **09:30**, cut: "if it is going up, then we are sitting in a wrong trade" | **09:31** at 22,378.05, as the rally stalled under 22,400 |
+| result | **-2,54,397.50** | **+1,422.50** |
+
+NIFTY was 22,326 at 09:15 and 22,301 at 09:26. It rallied to 22,379 at 09:30,
+22,442 at 09:47 and 22,503 by 10:29.
+
+His positions at the cut:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 54,800 PE | 1,170 | 683.11 | -1,00,924.20 |
+| BankNIFTY 54,700 PE | 1,170 | 636.50 | -87,106.50 |
+| SENSEX 72,000 PE | 900 | 552.72 | -42,543.00 |
+| NIFTY 22,350 PE | 1,430 | 125.96 | -23,823.80 |
+
+The two BankNIFTY legs lost 1,88,030.70, **74%** of the total. At 09:19 the same
+screen showed +41,719.00.
+
+**The word.** This is the fifth session where IH's word for the open and the
+computed number disagreed:
+
+| session | open | IH's word | book's reading | right side |
+|---|---|---|---|---|
+| 31 Aug | -0.24% | almost flat | gap-down | IH |
+| 1 Sep | BankNIFTY vs its official close | flat | gap-down | IH |
+| 16 Sep | +0.36% | flat | gap-up | IH |
+| 6 Oct | +0.21% | a slight gap up | FLAT | no comparison (the agent was blind) |
+| 9 Oct | +0.37% | a gap up | FLAT | **the book** |
+
+The first three are why SLH-017 computes the verdict and v4t tells the agent to
+read it rather than argue past it. 9 Oct is the first recorded session since
+then on which the two disagreed and both books traded, and the computed verdict
+won.
+SLH-017 already binds the agent to that verdict, so there is nothing to change.
+
+**His entry admission is a counter-example, not a rule.** "The entry is not very
+good; a bit higher would have been better... but if we don't trade here we may
+miss it, so we cover it within the loss limit." The corpus says the opposite (v4f,
+A MOVE THAT DENIED YOU ENTRY WAS NOT YOUR MOVE), and his own day agrees with the
+corpus.
+
+**The agent booked early again.** It took 20.7 points into the 22,400 stall, and
+NIFTY added about 125 more by 10:29. That is 8 Oct's shape, and the 8 Oct
+hold-to-origin replay already priced holding: -362.4 points to 10:30 across 177
+trades. Not re-litigated.
+
+### 12 Oct: the note's veto kept the agent out of IH's loss
+
+| | IH | the agent |
+|---|---|---|
+| open | a slight gap up: "the plan is to buy" | FLAT, the note's BUY branch, **held**: BankNIFTY turned sharply negative after the open, which is the branch's own veto |
+| entry | **09:33-09:34**: BankNIFTY 55,000 CE and 55,100 CE x1,170 each, SENSEX 72,400 CE x900, NIFTY 22,500 CE x1,430, at a round-number support where "most people will not buy" | **10:01** SHORT, decision price 22,506.40, stop 22,528.00 |
+| exit | about **09:55**, at his loss limit, before the round number broke | stopped at 10:01:21 at 22,528.20, inside its own decision pass (SLH-021 journaled it) |
+| result | about **-3,19,454.90** (marked at 09:54; the closed screen is not shown) | **-217.50** |
+
+NIFTY was 22,601 at 09:15 and spiked to 22,646 at 09:17. It fell to 22,521 at
+09:24, bounced to 22,584 at 09:31, slid to 22,481 at 09:56, bounced to 22,533 at
+10:02, and was 22,479 by 10:29.
+
+His positions at 09:54:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 55,000 CE | 1,170 | 873.25 | -63,472.00 |
+| BankNIFTY 55,100 CE | 1,170 | 811.87 | -63,963.90 |
+| SENSEX 72,400 CE | 900 | 554.07 | -1,28,312.50 |
+| NIFTY 22,500 CE | 1,430 | 129.95 | -63,706.50 |
+
+**The agent followed his note more closely than he did.** His own forecast had
+said BankNIFTY must not turn sharply negative straight after the open. It did:
+the agent measured it about 270 points down from its open. He bought anyway, on
+the reasoning that a fall straight into support recruits no buyers, so there are
+no buyer stops for a breakdown to take. The agent held.
+
+**Its one trade had the right side and the wrong stop.** The decision for the
+10:00 bar took 82.8 s. The order went in at 10:01:09 with NIFTY at 22,521.75: 15
+points past the decision price, and 6.25 from the stop. The stop went 12 seconds
+later, and NIFTY made 22,479 by 10:29. The live orders were real Kotak fills.
+
+### Two candidates, measured and refused
+
+**1. Fridays bring follow-through momentum.** IH on 9 Oct: "on a Friday the
+momentum sometimes comes out well... follow-up momentum". In the 5-year CSV,
+"follow" is points from 09:30 in the direction of the first fifteen minutes, and
+a trend day closes at least 70% of the day's range away from its open:
+
+| weekday | n | follow to 10:30 | winners | follow to 15:14 | winners | trend days |
+|---|---|---|---|---|---|---|
+| Mon | 247 | -0.45 | 52% | +1.61 | 51% | 24% |
+| Tue | 247 | -2.07 | 54% | +7.13 | 49% | 28% |
+| Wed | 245 | -0.39 | 52% | -1.25 | 51% | 26% |
+| Thu | 246 | +0.73 | 53% | -5.37 | 58% | 26% |
+| Fri | 241 | **-5.51** | **46%** | -0.55 | 50% | 27% |
+
+In the agent's window, Friday is the WORST day to follow the opening direction.
+Its full-day follow flips sign by year (+29.7, +1.6, -10.5, -20.6, +26.2, -8.2
+from 2021 to 2026), and its trend-day share matches the other days.
+
+**2. Risk left at the order, re-run.** 30 Sep measured the live distance to the
+stop at the order as a fraction of the decision's declared |entry - stop|, found
+only a 0.75 cut-off robust, and asked for a re-run as the book grew. 167
+SL Hunting entries, matched between the runner log and the journal:
+
+| sample | below 0.75 | at or above |
+|---|---|---|
+| to 30 Sep | 31 trades, -5,479.75, 39% winners | 122, +71,618.50, 49% |
+| 1 Oct on | 3 trades, **+2,191.75**, 67% winners | 11, +1,828.00, 36% |
+
+Out of sample the sign reverses. 8 Oct's best trade (+2,405.50) was at 0.68, and
+today's stop-out was at 0.29. The 0.75 line was fitted to the first sample;
+refused for good.
+
+### IH's other points, all already in the corpus
+
+- Buying where others will not, at a round number after continuous selling: v4b
+  REGIME MEMORY and the round-number psychology. His own day refuted it, and his
+  note's BankNIFTY veto was the better read.
+- Cutting at the loss limit before the level breaks: v4h and v4n. Not
+  second-guessing an entry once it is losing: v3y and the RISK section.
+
+### Latency
+
+- 9 Oct: 72 decisions, none abandoned; median 31.1 s, worst 67.0 s.
+- 12 Oct: one call abandoned (09:28); median 35.9 s, worst 82.8 s. The worst was
+  the 10:01 decision that placed the order.

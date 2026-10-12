@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     # mypy_path includes Dependencies/, where this module is known by its bare
     # name. Runtime entry points execute from the repository root instead.
     from market_data_health import (
+        IST,
         MARKET_SESSION_END,
         MARKET_SESSION_START,
         MarketDataValidationError,
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     )
 else:
     from Dependencies.market_data_health import (
+        IST,
         MARKET_SESSION_END,
         MARKET_SESSION_START,
         MarketDataValidationError,
@@ -829,6 +831,27 @@ def append_chunk(
     return len(frame), csv_path.stat().st_size, newest
 
 
+def completed_through(chunk_end: date) -> date:
+    """The date a finished chunk may be recorded as fetched through.
+
+    `last_to_date` means "every session up to and including this day is on
+    disk", and the next run skips any chunk ending on or before it. A chunk that
+    ends TODAY (or later) cannot honestly claim that: before 09:15 IST today has
+    no bars yet, and during market hours it has only part of a session. On
+    2026-10-06 a 09:01 run recorded that day anyway, and the 16:00 run skipped
+    every chunk and reported success without the session.
+
+    So the resume point is capped at yesterday (IST). The chunk holding today is
+    simply asked for again next time, which is safe: `append_chunk` drops every
+    row at or before the stored `last_timestamp`. A chunk entirely in the past
+    keeps its own end, so a run of holidays with no bars still moves the resume
+    point forward.
+    """
+
+    yesterday = datetime.now(IST).date() - timedelta(days=1)
+    return min(chunk_end, yesterday)
+
+
 def csv_first_row(csv_path: Path) -> str | None:
     """The first DATA line of the CSV, or None if there is not one yet.
 
@@ -907,7 +930,7 @@ def rebuild_atomically(
                 "bytes": output_path.stat().st_size,
                 "first_row": csv_first_row(output_path),
                 "last_timestamp": str(frame["timestamp"].iloc[-1]),
-                "last_to_date": end_dt.isoformat(),
+                "last_to_date": completed_through(end_dt).isoformat(),
             },
         },
     )
@@ -1059,7 +1082,7 @@ def run_index_fetcher(defaults: IndexFetchDefaults) -> None:
             "bytes": size,
             "first_row": first_row,
             "last_timestamp": last_timestamp,
-            "last_to_date": chunk_end.isoformat(),
+            "last_to_date": completed_through(chunk_end).isoformat(),
         }
         save_manifest(manifest_path, manifest)
 

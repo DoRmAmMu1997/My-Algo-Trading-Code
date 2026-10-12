@@ -1,43 +1,44 @@
 {
-  "for_date": "2026-10-12",
-  "source": "Intraday Hunter, 'Prediction For 12 OCT 2026' (O2MFYGzPGrQ, uploaded 2026-10-11)",
-  "context": "Continuous positive momentum across all three indices may have seated buyers. They chose quantity carefully because of the intervening holiday; their presence alone does not make them immediately huntable.",
+  "for_date": "2026-10-13",
+  "source": "Intraday Hunter, 'Prediction For 13 OCT 2026' (ZEeSYxoitic, uploaded 2026-10-12)",
+  "context": "Continuous selling on 12 Oct in NIFTY, BankNIFTY and SENSEX, so sellers are now the seated side in all three.",
   "plan": [
-    "FLAT TO GAP UP -> BUY WITH THE MARKET: buyers remain unpressured, so seek confirmed buying-side setups. BANKNIFTY must not turn sharply negative immediately after opening.",
-    "MEANINGFUL GAP DOWN -> SELL: seek confirmed selling-side setups against the buyers. On SENSEX the gap should at least break support to expose their risk; do not treat every tiny gap down as sufficient."
+    "FLAT TO GAP UP -> BUY: the continuous selling seated sellers in all three indices -- identify buying-side setups to target them.",
+    "GAP DOWN -> SELL, WITH THE MARKET: on a gap down the seated sellers sit in profit and in confidence, so they cannot be targeted -- identify selling-side setups.",
+    "NIFTY EXPIRES TODAY: he flags its weekly expiry on 13 Oct."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22700,
-        22800
+        22390,
+        22500
       ],
       "support": [
-        22450,
-        22340
+        22160,
+        22000
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55500,
-        55800
+        55000,
+        55300
       ],
       "support": [
-        55000,
-        54700
+        54390,
+        54200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73000,
-        73450
+        72000,
+        72280
       ],
       "support": [
-        72280,
-        71800
+        71200,
+        70900
       ]
     }
   ]
