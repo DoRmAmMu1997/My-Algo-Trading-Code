@@ -201,42 +201,42 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_13_intraday_hunter_plan():
-    """Render the 12 Oct forecast only for its intended 13 Oct session.
+def test_shipped_note_matches_october_14_intraday_hunter_plan():
+    """Render the 13 Oct forecast only for its intended 14 Oct session.
 
     Three things an edit would flatten:
 
-    1. The SIDES are the reverse of the 12 Oct note's: after 12 Oct's
-       continuous selling, flat to gap up BUYS (to target the seated sellers),
-       and a gap down SELLS with the market, because those sellers sit in
-       profit and in confidence and cannot be targeted.
-    2. The expiry flag. NIFTY's weekly expiry falls on 13 Oct (a Tuesday).
-    3. The levels. NIFTY's and SENSEX's resistances were spoken farthest first
-       ("22500 22390", "72 280 72000") and are recorded nearest first. Three
-       garbled levels read off the 1080p frames: NIFTY's first support ("2260")
-       22,161.90, BankNIFTY's second resistance ("555300") 55,305.75, and
-       SENSEX's second support ("7900") 70,901.49.
+    1. The SIDES: flat to a small gap down BUYS, and a gap up SELLS, because
+       the buyers from 13 Oct's rally booked their targets and left, and the
+       sellers' stops are not directly available above.
+    2. No expiry flag. NIFTY expired on 13 Oct; a line carried over from the
+       previous note would tell the agent 14 Oct is an expiry day.
+    3. The levels. SENSEX's and NIFTY's resistances were spoken farthest first
+       ("73800 73500", "2280 22800") and are recorded nearest first. NIFTY's
+       garbled levels read off the 1080p frame: 22,800.60 / 22,882.60 and a
+       first support of 22,550.95 ("2250"); its second support is recorded as
+       spoken, 22420 (the label reads 22,425.15).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 13))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-13" in block
-    assert "ZEeSYxoitic" in block
-    assert "sellers are now the seated side in all three" in note.context
-    assert format_premarket_note(note, date(2026, 10, 12)) == ""
-    assert format_premarket_note(note, date(2026, 10, 14)) == ""
+    block = format_premarket_note(note, date(2026, 10, 14))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-14" in block
+    assert "s0413ny8wek" in block
+    assert "booked their targets and left" in note.context
+    assert format_premarket_note(note, date(2026, 10, 13)) == ""
+    assert format_premarket_note(note, date(2026, 10, 15)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
-    assert "identify buying-side setups to target them" in buy
-    sell = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL, WITH THE MARKET"))
-    assert "sit in profit and in confidence, so they cannot be targeted" in sell
-    assert any(line.startswith("NIFTY EXPIRES TODAY") for line in note.plan)
+    buy = next(line for line in note.plan if line.startswith("FLAT TO SMALL GAP DOWN -> BUY"))
+    assert "no need to target them" in buy
+    sell = next(line for line in note.plan if line.startswith("GAP UP -> SELL"))
+    assert "stops are not directly available above" in sell
+    assert not any("EXPIR" in line.upper() for line in note.plan)
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [22390.0, 22500.0], "support": [22160.0, 22000.0]},
-        {"index": "BANKNIFTY", "resistance": [55000.0, 55300.0], "support": [54390.0, 54200.0]},
-        {"index": "SENSEX", "resistance": [72000.0, 72280.0], "support": [71200.0, 70900.0]},
+        {"index": "NIFTY", "resistance": [22800.0, 22880.0], "support": [22550.0, 22420.0]},
+        {"index": "BANKNIFTY", "resistance": [55900.0, 56200.0], "support": [55200.0, 54900.0]},
+        {"index": "SENSEX", "resistance": [73500.0, 73800.0], "support": [72700.0, 72200.0]},
     ]
