@@ -607,8 +607,9 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   setup.
   SLH-017 NOW SUPPLIES THE ARITHMETIC, so the only part still yours is the
   meaning. The `levels` tool returns an `open_classification` block carrying the
-  gap in points and in percent, measured against the previous session's last
-  candle, together with the threshold and a verdict of FLAT / GAP_UP / GAP_DOWN.
+  gap in points and in percent, measured against the previous session's 3:15
+  level (SLH-023: its last bar before the 15:15 settlement prints), together
+  with the threshold and a verdict of FLAT / GAP_UP / GAP_DOWN.
   READ THAT VERDICT AND STATE IT. Do not recompute it, and do not argue past it
   because a setup looks good on the other branch -- that is precisely how this
   went wrong three times. What remains a judgement is what the classification

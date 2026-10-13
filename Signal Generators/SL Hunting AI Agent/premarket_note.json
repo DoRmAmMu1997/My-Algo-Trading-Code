@@ -1,44 +1,43 @@
 {
-  "for_date": "2026-10-13",
-  "source": "Intraday Hunter, 'Prediction For 13 OCT 2026' (ZEeSYxoitic, uploaded 2026-10-12)",
-  "context": "Continuous selling on 12 Oct in NIFTY, BankNIFTY and SENSEX, so sellers are now the seated side in all three.",
+  "for_date": "2026-10-14",
+  "source": "Intraday Hunter, 'Prediction For 14 OCT 2026' (s0413ny8wek, uploaded 2026-10-13)",
+  "context": "A sharp positive move on 13 Oct out of a negative market in BankNIFTY, SENSEX and NIFTY; buyers came in on it but booked their targets and left.",
   "plan": [
-    "FLAT TO GAP UP -> BUY: the continuous selling seated sellers in all three indices -- identify buying-side setups to target them.",
-    "GAP DOWN -> SELL, WITH THE MARKET: on a gap down the seated sellers sit in profit and in confidence, so they cannot be targeted -- identify selling-side setups.",
-    "NIFTY EXPIRES TODAY: he flags its weekly expiry on 13 Oct."
+    "FLAT TO SMALL GAP DOWN -> BUY: the buyers from 13 Oct's rally booked their targets and left, so there is no need to target them -- identify buying-side setups.",
+    "GAP UP -> SELL: the sellers' stops are not directly available above, so identify selling-side setups."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22390,
-        22500
+        22800,
+        22880
       ],
       "support": [
-        22160,
-        22000
+        22550,
+        22420
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55000,
-        55300
+        55900,
+        56200
       ],
       "support": [
-        54390,
-        54200
+        55200,
+        54900
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        72000,
-        72280
+        73500,
+        73800
       ],
       "support": [
-        71200,
-        70900
+        72700,
+        72200
       ]
     }
   ]

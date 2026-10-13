@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import time as dt_time
 from typing import Any, cast
 
 import numpy as np
@@ -46,6 +47,14 @@ _EXTENSIONS = (1.272, 1.618, 2.618)
 # to earn itself. Anything below reads FLAT, because v4t also says that
 # hesitation between the two words resolves to flat.
 GAP_CLASSIFICATION_THRESHOLD_PCT = 0.5
+
+# SLH-023: from 15:15 the index prints SETTLEMENT values, not trading. The 1-min
+# bars go flat (open == high == low == close) and the 15:29 bar carries the
+# closing-auction jump -- on 12 Oct 2026 they sat at 22,316.85 from 15:15 to
+# 15:28 and 15:29 jumped to 22,363.35. Nobody traded around those prints, so the
+# open is measured from the bar before them (the "3:15 level", v4u) and the
+# pattern scan never sees an earlier session's copies of them.
+SETTLEMENT_PRINTS_FROM = dt_time(15, 15)
 
 
 @dataclass(frozen=True)
@@ -138,6 +147,22 @@ class SLHuntingIndicatorConfig:
 # ---------------------------------------------------------------------------
 # Frame preparation
 # ---------------------------------------------------------------------------
+
+def _drop_prior_settlement_prints(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove EARLIER sessions' 15:15-onward settlement bars (SLH-023).
+
+    The latest session is kept whole: its own bars are what the agent is trading.
+    Earlier sessions lose their flat 15:15-15:28 prints and the 15:29 auction bar,
+    which otherwise sit inside the pattern lookback at every open and read as
+    dojis, inside bars and engulfings that no crowd ever traded. `df` must be
+    `prepare_candles` output (sorted, with a `timestamp` column).
+    """
+    if df.empty:
+        return df
+    dates = df["timestamp"].dt.date
+    keep = (dates == dates.iloc[-1]) | (df["timestamp"].dt.time < SETTLEMENT_PRINTS_FROM)
+    return df[keep].reset_index(drop=True)
+
 
 def prepare_candles(candles: pd.DataFrame) -> pd.DataFrame:
     """Return a clean, time-sorted OHLC frame with a ``timestamp`` column.
@@ -249,6 +274,7 @@ def pivot_and_levels(
 
     prev_day: dict[str, Any] | None = None
     pivot: float | None = None
+    level_315: float | None = None
     if len(dates) >= 2:
         prev = dates[-2]
         prev_df = df[df["_date"] == prev]
@@ -260,6 +286,13 @@ def pivot_and_levels(
         )
         prev_day = {"open": round(po, 2), "high": round(ph, 2), "low": round(pl, 2), "close": round(pc, 2)}
         pivot = round((ph + pl + pc) / 3.0, 2)
+        # SLH-023: the open is compared with the 3:15 level -- the close of the
+        # prior session's last bar BEFORE the settlement prints -- not with its
+        # last bar, which is the 15:29 closing-auction print. Measured over five
+        # years, the two references disagree on the verdict in 5.6% of sessions.
+        # A session with no bar before 15:15 falls back to its last bar.
+        pre_settlement = prev_df[prev_df["timestamp"].dt.time < SETTLEMENT_PRINTS_FROM]
+        level_315 = float((pre_settlement if not pre_settlement.empty else prev_df)["close"].iloc[-1])
 
     first = today_df.iloc[0]
     today_levels = {
@@ -292,35 +325,35 @@ def pivot_and_levels(
     # correctly, called it a gap-up anyway, and took four losing longs. The
     # arithmetic and the threshold are mechanical, so they belong in code; what
     # the classification MEANS is still the model's to reason about.
-    if prev_day is None:
+    if prev_day is None or level_315 is None:
         open_classification: dict[str, Any] = {
             "available": False,
             "verdict": None,
             "reason": "no previous session in the candle window to measure against",
         }
     else:
-        prev_close = float(prev_day["close"])
         today_open = float(cast(float, today_levels["open"]))
-        gap_points = round(today_open - prev_close, 2)
-        gap_pct = round(100.0 * gap_points / max(abs(prev_close), 1e-9), 3)
+        gap_points = round(today_open - level_315, 2)
+        gap_pct = round(100.0 * gap_points / max(abs(level_315), 1e-9), 3)
         if abs(gap_pct) >= GAP_CLASSIFICATION_THRESHOLD_PCT:
             verdict = "GAP_UP" if gap_points > 0 else "GAP_DOWN"
         else:
             verdict = "FLAT"
         open_classification = {
             "available": True,
-            "previous_close": round(prev_close, 2),
+            "reference_level": round(level_315, 2),
             "today_open": round(today_open, 2),
             "gap_points": gap_points,
             "gap_pct": gap_pct,
             "threshold_pct": GAP_CLASSIFICATION_THRESHOLD_PCT,
             "verdict": verdict,
-            # v4u: the prior session's LAST CANDLE, deliberately not the
-            # official 15:30 close -- the closing auction carries settlement
-            # prints no crowd traded around, and positioning is the only thing
-            # this classification is trying to read.
+            # v4u / SLH-023: the 3:15 level, deliberately not the 15:29 auction
+            # bar or the official 15:30 close -- those carry settlement prints no
+            # crowd traded around, and positioning is the only thing this
+            # classification is trying to read.
             "reference": (
-                "previous session's last candle close, not the official 15:30 close"
+                "previous session's 3:15 level (the close of its last bar before 15:15), "
+                "not the 15:29 closing-auction print or the official 15:30 close"
             ),
             "note": (
                 "This verdict selects the branch of a conditional pre-open plan. "
@@ -506,7 +539,8 @@ def candle_patterns(
     already printed beyond it (the method's mandatory rule).
     """
     cfg = cfg or SLHuntingIndicatorConfig()
-    df = prepare_candles(candles)
+    # SLH-023: an earlier session's settlement prints are not candles anyone traded.
+    df = _drop_prior_settlement_prints(prepare_candles(candles))
     n = len(df)
     if n < 3:
         return {"available": False, "reason": "not enough candles"}
