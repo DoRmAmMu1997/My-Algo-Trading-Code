@@ -9584,3 +9584,133 @@ refused for good.
 - 9 Oct: 72 decisions, none abandoned; median 31.1 s, worst 67.0 s.
 - 12 Oct: one call abandoned (09:28); median 35.9 s, worst 82.8 s. The worst was
   the 10:01 decision that placed the order.
+
+## 13 Oct - the flush IH bought, and the first Sonnet 5.5 session (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`T3TbtMVb9rk`,
+  uploaded 2026-10-13 10:28 IST), traded on the 13 Oct note (`ZEeSYxoitic`:
+  "FLAT TO GAP UP -> BUY", "GAP DOWN -> SELL, WITH THE MARKET"). His clock times
+  are read off the taskbar clock in the video frame, and his figures off his
+  positions screen. His words are my translation of the Hindi auto-transcript.
+- **This book:**
+  - all 75 decisions (no journal row: the agent did not trade);
+  - the runner log;
+  - the CLI's own transcripts of all 75 calls.
+- **The 5-year NIFTY CSV**, which ends on 12 Oct. Prices for 13 Oct come from the
+  decision log's per-minute last price.
+
+This was the first session on claude-agent-sdk 0.2.165 (bundled CLI 2.1.294,
+PR #205) and on `claude-sonnet-5-5`. **It was a PAPER session for every
+strategy.** At start-up the broker exposure audit found 6 non-flat
+NIFTY/BankNIFTY positions on the Kotak account and blocked live trading ("0 of 30
+strategies will place REAL orders"). The gate worked as designed.
+
+**No knowledge change.**
+
+### The comparison
+
+| | IH | the agent |
+|---|---|---|
+| open | flat: the note's BUY branch | **FLAT** (+0.8 points on the previous last candle; +0.21% on the 3:15 level): the same branch |
+| entry | **09:16-09:17**: BankNIFTY 54,900 CE and 55,000 CE x1,170 each, SENSEX 72,000 CE x900, NIFTY 22,300 CE x1,430 (its expiry) | none: 74 HOLDs and one unparsed reply |
+| exit | **09:34**: Friday's and Monday's losses "completely covered", and BankNIFTY "may give a rejection" | |
+| result | **+4,90,221.60** | **0.00** |
+
+12 Oct fell 1.2%, open to 3:15. On 13 Oct NIFTY's first candle flushed to 22,288,
+29 points below the 3:15 level, and the second reversed. NIFTY was 22,457 at
+09:18, 22,481 when IH booked, 22,574 at 09:59, and 22,529 at 10:29.
+
+His positions at the exit:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 54,900 CE | 1,170 | 822.17 | +1,15,514.60 |
+| BankNIFTY 55,000 CE | 1,170 | 785.50 | +84,123.00 |
+| SENSEX 72,000 CE | 900 | 474.62 | +1,81,332.00 |
+| NIFTY 22,300 CE | 1,430 | 140.15 | +1,09,252.00 |
+
+The two BankNIFTY legs made 41% of the total.
+
+**Why the agent stayed out.** The first candle is not traded. At 09:18: "NIFTY has
+already run about 170 points in three one-minute candles... Entering now would
+chase a spike at the extreme." At 09:20: "the sellers' stops look largely taken."
+After that it waited for a pattern at a level, and the rally never pulled back to
+one. IH bought the flush and its reversal as the hunt itself, before any pattern
+printed.
+
+### The candidate, measured and refused
+
+The candidate: on a flat open after a down day, buy the first candle's flush below
+the prior close once the second candle reverses, with the flush low as the stop.
+This is IH's 13 Oct entry made general.
+
+Measured on the 5-year NIFTY CSV. Flat means the open is within 0.5% of the 3:15
+level; a down day falls at least 0.5% from its open to 3:15. Entry is the 09:17
+open, the stop is the first candle's extreme, and the exit is 10:30 or the stop:
+
+| setup | sessions | net points | winners | mean R |
+|---|---|---|---|---|
+| buy the flush + reversal after a down day | 38 | -626.1 | 26% | -0.32 |
+| buy the flush, any second candle | 76 | -675.4 | 20% | +0.01 |
+| buy any flat open after a down day (control) | 138 | -346.8 | 25% | +0.02 |
+| mirror: sell the spike + reversal after an up day | 73 | +258.1 | 38% | +0.15 |
+
+The buy side is negative in every variant: down days of 0.3% and 1.0%, exits at
+09:45 and 11:00, and a 0.3% flat band. By year it was negative in 2022, 2024
+and 2026, and +12.4 in 2025. The mirror is positive overall but -366.6 in 2026,
+with 10% winners. The agent's refusal to chase the opening spike matches the base
+rate; IH's day was the exception.
+
+### IH's other points, all already in the corpus
+
+- His exit, a profit floor ("the target stays around 3.5 [lakh]; if it goes below
+  that we exit, above it we stay"): BOOK WHEN THE PROFIT STOPS GROWING.
+- "In such a negative market a trader can endure one momentum, but not a second
+  one for long": v5k, WHO PAYS FOR A FOLLOW, and v4i's crowd's fear.
+- Patience with winners, quick exits from losers: v3y and the RISK section.
+
+### Sonnet 5.5's first session, for the record
+
+| | value |
+|---|---|
+| decisions | 75, all `claude-sonnet-5-5`, all through the bundled CLI 2.1.294 (`sdk-py`) |
+| latency | median 12.2 s, 90th percentile 16.8 s, worst 25.0 s (Sonnet 5: about 33 s median) |
+| failures | none abandoned, none skipped, no slow-call warnings |
+| cost | median $0.065 a decision, $5.86 for the session |
+
+Tools stayed inside `mcp__slhunting__*`. Usage was much thinner than on Sonnet 5:
+
+- `position_state` and `pivot_and_levels` in all 75 decisions;
+- `candle_patterns` in 68, `cross_index` in 28;
+- `market_structure` in 3, `bank_nifty` in 2, `fibo_levels` in 1.
+
+Three tooling follow-ups, none of them a knowledge change:
+
+1. **The order tool was called in 11 decisions that did not mean to trade.** Ten
+   calls had no arguments and were rejected by the schema ("'action' is a
+   required property"). One sent `action: "HOLD"` and was rejected ("unknown
+   action 'HOLD'"). No order was placed. Sonnet 5 did not do this.
+2. **One reply (10:13) was prose instead of the JSON object.** The bar was held
+   as agent_error, as designed.
+3. **`candle_patterns` reports patterns on the previous session's flat prints.**
+   The 15:15-15:28 bars are zero-range settlement prints (22,316.85 on 12 Oct)
+   and 15:29 is the auction jump (to 22,363.35). Seven decisions today had to
+   say so and discard them, all around the open, where IH trades. It was handled
+   correctly every time, but it is noise the tool should not produce.
+4. **SLH-017's gap reference is the closing-auction print it means to avoid.** The
+   open is measured against "the previous session's last candle close, not the
+   official 15:30 close", because "the closing auction carries settlement prints
+   no crowd traded around" (v4u). But the last candle IS that print: the 15:29
+   bar in 1,144 of 1,227 sessions, which jumped from 22,316.85 to 22,363.35 on 12
+   Oct. Today's "+0.8 points" was measured from 22,363.35; on the 22,316.90 3:15
+   level the open was +0.21%, FLAT either way. Over 5 years the two references
+   give a different verdict on 69 sessions (5.6%), 10 of them in 2026. The worst
+   was 5 Aug 2026: +0.84% on the 3:15 level, a gap up, but +0.22% on the last
+   candle, FLAT, because the auction print had jumped 0.62%. None of the 69
+   falls after SLH-017 shipped, so it has not yet decided a trade. The fix, a
+   proposed SLH-023, is to measure from the 3:15 level that v4u and the code's
+   own comment describe. It changes live logic, so it is offered separately
+   rather than built here. Items 3 and 4 share a cause: the prior session's
+   15:15-15:29 bars are settlement prints, not trading.
