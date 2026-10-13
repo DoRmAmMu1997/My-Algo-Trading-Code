@@ -137,7 +137,7 @@ def test_the_open_classification_measures_the_gap_against_the_prior_session_clos
 
     oc = result["open_classification"]
     assert oc["available"] is True
-    assert oc["previous_close"] == 23118.60
+    assert oc["reference_level"] == 23118.60
     assert oc["today_open"] == 23200.60
     assert oc["gap_points"] == 82.0
     assert oc["gap_pct"] == round(100.0 * 82.0 / 23118.60, 3)
@@ -177,9 +177,10 @@ def test_the_classification_names_its_reference_and_its_threshold():
     oc = pivot_and_levels(_two_sessions(23118.60, 23200.60))["open_classification"]
 
     assert oc["threshold_pct"] == 0.5
-    # v4u: the reference is the prior session's LAST CANDLE, not the official
-    # 15:30 close, because settlement prints are not positioning.
-    assert "last candle" in oc["reference"]
+    # v4u / SLH-023: the reference is the prior session's 3:15 level, not the
+    # 15:29 auction print or the official 15:30 close, because settlement
+    # prints are not positioning.
+    assert "3:15" in oc["reference"]
     assert "15:30" in oc["reference"]
 
 
@@ -219,3 +220,115 @@ def test_a_single_session_cannot_classify_its_own_open():
 
     assert oc["available"] is False
     assert oc["verdict"] is None
+
+
+# ---------------------------------------------------------------------------
+# SLH-023: the 15:15-onward settlement prints are not trading
+# ---------------------------------------------------------------------------
+
+def _bars(day, rows):
+    """1-min bars on `day` from (HH:MM, o, h, l, c) tuples."""
+    return pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime([f"{day} {r[0]}" for r in rows]),
+            "open": [r[1] for r in rows],
+            "high": [r[2] for r in rows],
+            "low": [r[3] for r in rows],
+            "close": [r[4] for r in rows],
+            "volume": [100] * len(rows),
+        }
+    )
+
+
+def _settled_session(day, close_315, auction_close):
+    """A session that trades into 15:14, prints flat to 15:28 and jumps at 15:29,
+    as the real NIFTY feed does (12 Oct 2026: flat at 22,316.85, then 22,363.35)."""
+    rows = [
+        ("15:13", close_315 - 4, close_315 + 1, close_315 - 6, close_315 - 2),
+        ("15:14", close_315 - 2, close_315 + 3, close_315 - 3, close_315),
+    ]
+    rows += [(f"15:{m:02d}", close_315, close_315, close_315, close_315) for m in range(15, 29)]
+    rows.append(("15:29", close_315, auction_close, close_315, auction_close))
+    return _bars(day, rows)
+
+
+def test_the_gap_is_measured_from_the_3_15_level_not_the_closing_auction():
+    """SLH-023, the 13 Oct case. The reference used to be the prior session's
+    LAST bar -- the 15:29 auction print -- which turned a +0.21% open into
+    "+0.8 points". The 3:15 level is what v4u and the code's own comment meant."""
+    prev = _settled_session("2026-10-12", 22316.90, 22363.35)
+    today = _bars("2026-10-13", [("09:15", 22364.15, 22370.0, 22288.0, 22355.45)])
+
+    oc = pivot_and_levels(pd.concat([prev, today], ignore_index=True))["open_classification"]
+
+    assert oc["reference_level"] == 22316.90
+    assert oc["gap_points"] == 47.25
+    assert "3:15" in oc["reference"] and "auction" in oc["reference"]
+
+
+def test_an_auction_jump_can_no_longer_hide_a_gap():
+    """The worst five-year case, 5 Aug 2026: +0.84% on the 3:15 level read FLAT
+    because the prior auction print had jumped 0.62%. Measured over five years,
+    the two references disagreed on the verdict in 69 of 1,227 sessions."""
+    prev = _settled_session("2026-08-04", 20000.0, 20124.0)
+    today = _bars("2026-08-05", [("09:15", 20168.0, 20180.0, 20150.0, 20170.0)])
+
+    oc = pivot_and_levels(pd.concat([prev, today], ignore_index=True))["open_classification"]
+
+    assert oc["gap_pct"] == 0.84
+    assert oc["verdict"] == "GAP_UP"
+
+
+def test_a_session_with_no_bar_before_15_15_falls_back_to_its_last_bar():
+    prev = _bars(
+        "2026-10-12",
+        [("15:20", 100.0, 100.0, 100.0, 100.0), ("15:29", 100.0, 101.0, 100.0, 101.0)],
+    )
+    today = _bars("2026-10-13", [("09:15", 101.2, 102.0, 101.0, 101.5)])
+
+    oc = pivot_and_levels(pd.concat([prev, today], ignore_index=True))["open_classification"]
+
+    assert oc["available"] is True
+    assert oc["reference_level"] == 101.0
+
+
+def test_candle_patterns_ignore_an_earlier_sessions_settlement_prints():
+    """SLH-023, the other half. Seven decisions on 13 Oct had to discard
+    'confirmed' patterns that were the prior session's flat settlement prints."""
+    prev = _settled_session("2026-10-12", 22316.90, 22363.35)
+    today = _bars(
+        "2026-10-13",
+        [
+            ("09:15", 22364.15, 22370.0, 22288.0, 22355.45),
+            ("09:16", 22355.0, 22390.0, 22350.0, 22385.0),
+        ],
+    )
+
+    result = candle_patterns(pd.concat([prev, today], ignore_index=True))
+
+    assert result["available"] is True
+    assert result["patterns"]
+    # Today's two bars are bars_ago 1 and 0. Every pattern must sit on one of
+    # them: before SLH-023 the lookback reached back into the flat 15:15-15:29
+    # prints and reported inside bars and dojis there.
+    assert all(p["bars_ago"] <= 1 for p in result["patterns"]), result["patterns"]
+
+
+def test_the_latest_session_keeps_its_own_late_bars():
+    """Only EARLIER sessions lose their settlement prints; today's bars are what
+    the agent trades, so a 15:15 bar of the latest session is still scanned."""
+    today = _bars(
+        "2026-10-13",
+        [
+            ("15:12", 100.0, 103.0, 99.0, 102.0),
+            ("15:13", 102.0, 104.0, 98.0, 99.0),
+            ("15:14", 99.0, 102.0, 98.5, 101.0),
+            ("15:15", 101.0, 101.0, 101.0, 101.0),
+        ],
+    )
+
+    result = candle_patterns(today)
+
+    # The flat 15:15 bar is still the latest candle, and the scan read it.
+    assert result["latest_candle"]["high"] == result["latest_candle"]["low"] == 101.0
+    assert any(p["type"] == "inside_bar" and p["bars_ago"] == 0 for p in result["patterns"])

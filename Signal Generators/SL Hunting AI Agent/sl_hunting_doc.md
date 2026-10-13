@@ -9698,7 +9698,8 @@ Three tooling follow-ups, none of them a knowledge change:
    The 15:15-15:28 bars are zero-range settlement prints (22,316.85 on 12 Oct)
    and 15:29 is the auction jump (to 22,363.35). Seven decisions today had to
    say so and discard them, all around the open, where IH trades. It was handled
-   correctly every time, but it is noise the tool should not produce.
+   correctly every time, but it is noise the tool should not produce. Fixed by
+   SLH-023 (below).
 4. **SLH-017's gap reference is the closing-auction print it means to avoid.** The
    open is measured against "the previous session's last candle close, not the
    official 15:30 close", because "the closing auction carries settlement prints
@@ -9711,6 +9712,66 @@ Three tooling follow-ups, none of them a knowledge change:
    candle, FLAT, because the auction print had jumped 0.62%. None of the 69
    falls after SLH-017 shipped, so it has not yet decided a trade. The fix, a
    proposed SLH-023, is to measure from the 3:15 level that v4u and the code's
-   own comment describe. It changes live logic, so it is offered separately
-   rather than built here. Items 3 and 4 share a cause: the prior session's
-   15:15-15:29 bars are settlement prints, not trading.
+   own comment describe. Items 3 and 4 share a cause: the prior session's
+   15:15-15:29 bars are settlement prints, not trading. Built as SLH-023 (below).
+
+## SLH-023 - the open and the patterns stop reading settlement prints
+
+**The defect (found 13 Oct, above).** From 15:15 the index prints settlement
+values: flat 1-minute bars to 15:28, then the closing-auction jump at 15:29. Two
+tools read them as if they were trading.
+
+- `pivot_and_levels` measured SLH-017's open classification from the prior
+  session's LAST bar, which is the 15:29 auction print. Its own comment, and v4u,
+  say the reference must avoid exactly that. Over five years the 3:15 level and
+  the last bar give different verdicts in 69 of 1,227 sessions (5.6%). The worst
+  was 5 Aug 2026, where a +0.84% open read FLAT.
+- `candle_patterns` scans a lookback that, near every open, reaches into the
+  prior session's flat prints, and it reported dojis and inside bars there. On 13
+  Oct seven decisions had to discard them.
+
+**What changed.**
+
+- `SETTLEMENT_PRINTS_FROM = 15:15`. The open is now measured from the 3:15 level:
+  the close of the prior session's last bar before 15:15, falling back to its last
+  bar if it has none.
+- The classification block's key is now `reference_level`, so the tool output no
+  longer shows two different numbers called `previous_close`. Its `reference`
+  text names the 3:15 level.
+- `candle_patterns` drops EARLIER sessions' 15:15-onward bars before scanning. The
+  latest session is kept whole: its bars are the ones being traded.
+- The knowledge's SLH-017 sentence now says the gap is measured from the 3:15
+  level.
+
+**What it deliberately leaves alone.** Pivots and the top-level `previous_close`
+still use the session's last bar, the conventional daily close. Fibonacci, market
+structure and swings are untouched.
+
+One quirk was noticed while testing and left alone: a pattern's `time` field is
+overwritten by its confirmation time, which is `None` while unconfirmed. It is
+older than this change and outside it.
+
+**Checked on real sessions from the five-year file:**
+
+| session | 3:15 level | last bar (old reference) | gap | verdict |
+|---|---|---|---|---|
+| 5 Aug 2026 | 24,462.95 | 24,614.90 | +0.843% | GAP_UP (was FLAT) |
+| 9 Oct | 22,215.80 | 22,231.80 | +0.446% | FLAT |
+| 12 Oct | 22,535.65 | 22,520.45 | +0.255% | FLAT |
+
+**Tests.** Five new tests in `test_sl_hunting_indicators.py`:
+
+- 13 Oct's case: the reference is 22,316.90, not 22,363.35;
+- 5 Aug's case: the verdict is GAP_UP;
+- the fallback for a session with no bar before 15:15;
+- no pattern on an earlier session's prints;
+- the latest session keeps its own 15:15 bar.
+
+Two SLH-017 assertions follow the key rename. Mutation-checked: the control
+passes, and each of these fails:
+
+- reverting the reference to the last bar;
+- removing the fallback;
+- scanning the prints again;
+- dropping every session's late bars;
+- keeping the 15:15 print.
