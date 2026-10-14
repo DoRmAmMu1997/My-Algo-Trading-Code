@@ -9775,3 +9775,311 @@ passes, and each of these fails:
 - scanning the prints again;
 - dropping every session's late bars;
 - keeping the 15:15 print.
+
+## 14 Oct - the same open, a refused spike and a follow IH rode (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`GTDs-o7xXq0`,
+  uploaded 2026-10-14 10:39 IST), traded on the 14 Oct note (`s0413ny8wek`:
+  "FLAT TO SMALL GAP DOWN -> BUY", "GAP UP -> SELL"). His clock times are read
+  off the taskbar clock in the video frame, and his figures off his positions
+  screen. His words are my translation of the Hindi auto-transcript.
+- **This book:**
+  - its one journal row;
+  - all 74 decisions;
+  - the runner log;
+  - the CLI's transcripts of the order-tool calls.
+- **The 5-year NIFTY CSV**, now through 14 Oct.
+
+The session was **LIVE** for SL Hunting, the one live strategy of 30, on
+`claude-sonnet-5` (13 Oct ran `claude-sonnet-5-5`). It was the first session on
+SLH-023, and the agent's reasoning names the new reference: "Flat open on both
+NIFTY (+0.07%) and BankNIFTY (-0.07%) vs the 3:15 reference". The 13 Oct 3:15
+level was 22,699.55 and the open 22,715.75. On the old last-candle reference
+(22,721.95) the open would have read -0.03%, FLAT either way.
+
+**No knowledge change.**
+
+### The comparison
+
+| | IH | the agent |
+|---|---|---|
+| open | flat: the note's BUY branch | **FLAT** (+0.07% on the 3:15 level): the same branch |
+| 09:17 | | tried LONG at the 09:16 spike top, entry 22,750.50 with the stop at 22,705.00: **refused by sizing** (one lot risks 2,957.50 against the 2,500 budget) |
+| entry | **09:20**, after the flush: BankNIFTY 55,300 CE and 55,400 CE x1,170 each, SENSEX 73,000 CE x900, NIFTY 22,700 CE x1,430 | **09:56** LONG 22,718.55, on a 4th touch of a rising trendline at 22,700; stop 22,695.00, target 22,757.95 |
+| exit | **09:33**: the target was hit "because BankNIFTY suddenly gave momentum" | **09:57** at 22,716.60, the next decision |
+| result | **+2,84,018.25** | **-644.00** |
+
+NIFTY opened at 22,715.75 and spiked to 22,750 at 09:16. By 09:20 it had
+flushed to 22,663.80, and it chopped between 22,664 and 22,728 until 09:40. It
+made the day's high, 22,757.95, at 09:48, was at 22,707 by 09:55, fell to
+22,558.95 at 13:15, and was 22,625.50 at 15:14.
+
+His positions at the exit:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 55,300 CE | 1,170 | 741.85 | +1,36,948.50 |
+| BankNIFTY 55,400 CE | 1,170 | 674.15 | +1,43,910.00 |
+| SENSEX 73,000 CE | 900 | 300.68 | -701.50 |
+| NIFTY 22,700 CE | 1,430 | 146.90 | +3,861.25 |
+
+The two BankNIFTY legs made **99%** of it. For a while SENSEX and NIFTY were
+losing while BankNIFTY carried the basket, and he held only while "the lower
+point" did not break.
+
+**His read was a follow, not a hunt.** Yesterday's buyers "booked their targets
+and left", so "the buyers' SLs are not available", and "when will the operator
+turn the market? When he gets the buyers' SLs." With none to take, "whatever is
+running will keep running". That is v5k, WHO PAYS FOR A FOLLOW WHEN NOBODY HAS
+STOPS NEARBY.
+
+**The refusal saved a loss.** The 09:17 long would have been stopped: NIFTY
+reached 22,663.80 by 09:20, through 22,705. The budget turned away a 45.5-point
+stop placed at the spike top, and IH bought the flush low four minutes later.
+The budget is a deliberate operator setting and did its job.
+
+**The agent misreported that refusal, because the tool told it the wrong
+thing.** The worker logged "ENTRY SKIPPED BY SIZING ... One lot exceeds the
+configured risk budget". But `MasterWorkerExecutor.enter` returns the generic
+"worker rejected the entry (e.g. could not resolve option / outside trading
+window)" for any refusal (`sl_hunting_executor.py`). So the model wrote that the
+order "was rejected by the execution worker (not a logic/risk rejection)".
+Fixed by SLH-024 (below).
+
+**Two decisions 45 seconds apart contradicted each other.** The 09:56 entry
+aimed at 22,757.95, the 09:48 high. The 09:57 decision exited because that same
+high "was tagged at 09:48 and then printed a confirmed bearish engulfing... the
+move that justified the long has already fired and reversed". That was a fact
+the entry already had. The exit was still right: holding would have hit the
+stop, 22,695, by 10:15, for -23.55 points.
+
+### Two candidates, measured and refused
+
+**1. Follow a flat open after a strong up day** (IH's entry made general). The
+5-year CSV, buying the 09:20 open:
+
+| setup | sessions | to 10:30 | winners | to 15:14, mean |
+|---|---|---|---|---|
+| up day >= 1.0%, flat open | 40 | -678.6 | 40% | -29.0 |
+| ... and the first 5 minutes dipped below the open | 39 | -676.2 | 41% | -30.9 |
+| up day >= 1.5% | 11 | -527.9 | 18% | -29.9 |
+| every flat open (baseline) | 930 | mean -5.2 | 49% | |
+
+It is worse than an ordinary flat open in every variant. By year it was
+negative in 2021, 2022, 2024 and 2025, and positive in 2023 (one session) and
+2026 (five).
+
+**2. A minimum hold before the agent's own exit** (today's 45-second flip). The
+42 journal trades the agent itself closed within 120 seconds of entry, replayed
+to their stop, their target or 10:30:
+
+| exit | net points | winners |
+|---|---|---|
+| the agent's quick exit | +2.8 | 38% |
+| hold instead | -96.5 | 29% |
+
+The quick exits were the better decision; a hold rule would cost.
+
+### IH's other points, all already in the corpus
+
+- The operator turns the market only for stops, and with none nearby the move
+  continues: v5k.
+- One index carries the basket while the others lag: v4i, THE LAGGING INDEX
+  DECIDES THE BASKET'S EXIT.
+- "This lower point must not break": NAME THE ONE WAY THIS TRADE FAILS.
+
+### Operational
+
+74 decisions, none abandoned; median latency 33.5 s, worst 59.8 s. Two entries
+were first returned for a `note_check` that did not start with AGREES /
+CONTRADICTS / NOT_APPLICABLE, and were resent correctly. At 10:07 the model sent
+the order tool `action: "HOLD"` (rejected), the habit first seen on Sonnet 5.5
+on 13 Oct.
+
+## Re-scored with the agent's own trade shape (the 6-14 Oct candidates)
+
+**Why.** Five candidates refused above were scored by holding from the signal
+to a fixed clock time (10:30, or 15:14). The agent does not trade that way. Its
+181 closed journal trades have:
+
+- a median hold of 4.2 minutes (90th percentile 12.8);
+- a median stop of 15.8 points;
+- a median target of 44.7 points, about 2.8R;
+- entries between 09:21 and 10:18.
+
+A fixed hold to 10:30 measures the market's drift, not the trade the agent would
+take.
+
+**How.** Each candidate's signal was re-entered at the same bar with a 16-point
+stop and a 45-point target, exiting by 15 minutes, and scored in R (the stop
+distance is 1R). It was checked against a 12.5/35 and a 21.6/60 stop/target
+pair and against 8- and 30-minute limits, and set beside the same exits on the
+comparable days without the condition. The five journal-based refusals (hold to
+origin, no entry at the extreme, the risk-left gate, the minimum hold, and 30
+Sep's quick-loss re-entry) were already scored on the agent's real exits and
+stand.
+
+| candidate | signal (n, mean R, win) | without the condition | verdict |
+|---|---|---|---|
+| 6 Oct: a small gap that held the 3:15 close, trade WITH it | 489, +0.004R, 38% | 930, -0.042R | about zero; refused |
+| 8 Oct: copy a punished prior session's opening move | 17, +0.121R, 29% | 249, +0.201R | the condition makes it worse; refused, v4f stands |
+| 9 Oct: follow Friday's first 15 minutes | 242, +0.020R, 37% | 1,230, +0.036R | no Friday effect; refused |
+| 13 Oct: buy the flush + reversal after a down day | 39, +0.147R, 31% (+ in 2 of 5 years) | 183, +0.043R | **inconclusive** (standard error about 0.26R); was "refused" |
+| 13 Oct mirror: sell the spike + reversal after an up day | 74, +0.203R, 39% | | **inconclusive** (about 0.19R) |
+| 14 Oct: buy a flat open after a >=1% up day | 40, **-0.435R**, 20% (+ in 1 of 6 years) | 930, -0.159R | refused under every exit model |
+
+**The yardstick mattered for one candidate.** The 13 Oct flush + reversal looked
+clearly negative held to 10:30 (-0.32R) but is mildly positive on trade-shaped
+exits. Its variants run from -0.03R to +0.25R, and the sample is too small to
+call. That makes it unproven, not refuted.
+
+**Against the existing knowledge:**
+
+- **6 Oct:** collides with SLH-017/v4t ("below the threshold the open is FLAT
+  whatever the sign").
+- **8 Oct:** contradicts v4f, and the data sides with v4f.
+- **9 Oct:** collides with nothing, and measures nothing.
+- **13 Oct:** needs no new rule. A flush below the prior close followed by a
+  reversal candle IS a pattern + confirmation at a level, which the method
+  already allows. The agent declined it on 13 Oct as a chase of the run that
+  followed.
+- **14 Oct:** agrees in spirit with v5k but loses money in every exit model.
+
+**One lead, not a rule.** The comparison set under the 8 Oct candidate -- follow
+ANY first-5-minute move of 0.25% or more, entering at 09:20 -- scored +0.20R on
+249 sessions and was positive in 5 of 6 years. It leans against v4f's "do NOT
+chase it late and do NOT assume it continues". It came out of a comparison
+rather than a prior hypothesis, so it needs its own test before anything is
+encoded.
+
+## SLH-024 - a refused entry tells the model why
+
+**The defect (14 Oct, above).** When the worker declined an entry,
+`MasterWorkerExecutor.enter` returned "worker rejected the entry (e.g. could not
+resolve option / outside trading window)" whatever the cause. At 09:17 the cause
+was the risk budget: one lot at a 45.5-point stop risked 2,957.50 against
+2,500. The model was left to guess, and wrote that the order "was rejected by
+the execution worker (not a logic/risk rejection)" -- wrong, and the reasoning
+the coach later reads.
+
+**What changed.** `AtmSingleLegStrategyWorker.enter_position` records why it
+declined in `last_entry_refusal`. It is reset at the top of every call and set
+at each refusal:
+
+- market data unhealthy;
+- spot unavailable;
+- the option unresolvable, or its identifiers or lot size invalid;
+- no option price, or no fresh price for a live entry;
+- sizing, naming the one-lot risk and the budget;
+- the spread or liquidity gate;
+- an unfilled broker order, or an uncertain broker outcome.
+
+`MasterWorkerExecutor.enter` relays it as "worker refused the entry: <reason>".
+A worker without the attribute -- the standalone runner, or any other caller --
+keeps the generic text. The reasons are neutral statements of what happened:
+the sizing reason says "nothing was placed" and does not suggest a tighter stop.
+
+**What it deliberately leaves alone.** No refusal changes, and nothing that
+decides whether to enter. The field is written by every ATM worker but read
+only by the SL Hunting order tool.
+
+**Tests.** Five mutants were run; the control passes and each of these fails:
+
+- not relaying the reason;
+- relaying a blank reason;
+- dropping the sizing reason;
+- dropping the per-call reset;
+- leaving the budget out of the text.
+
+The tests themselves are:
+
+- the executor relays a worker's reason, and keeps the generic text when there
+  is none;
+- a real SL Hunting worker refused by sizing records the reason with the budget
+  and leaves no position;
+- a successful entry clears a stale reason.
+
+## v5r - three rules adopted on the operator's call (the benefit of the doubt)
+
+**The decision (operator, 14 Oct 2026).** Adopt the 8, 13 and 14 Oct rules into
+the knowledge. Leave out the 6 and 9 Oct ones. The reason, in the operator's
+terms: give the benefit of the doubt, so the agent evolves with a changing market
+structure and keeps up with IH. If the agent's performance deteriorates, revert
+them.
+
+This is a deliberate exception to the house practice of encoding only what a
+measurement supports. It is recorded here, with what was known at the time, so a
+later reviewer can judge the rules by their results rather than rediscover the
+decision.
+
+### The three rules, and how each fits the existing knowledge
+
+- **THE CHART DOES NOT REPEAT ITS FAILURES EITHER (8 Oct).** Placed directly
+  under v4f, THE CHART DOES NOT REPEAT TWO DAYS RUNNING, as its scope rather than
+  its contradiction. The operator's reading: the rule follows a move that FAILED
+  yesterday, and since charts do not repeat, the failure need not repeat either.
+  v4f's own record already carries that scope -- IH's "if the buyers made profit
+  yesterday, today they should not get that profit" is about the side yesterday
+  PAID. So a copy after a PAID day is v4f's trap, and a copy after a PUNISHED day
+  is a candidate to follow.
+- **A COUNTER-TREND MOVE'S CROWD BOOKS AND LEAVES -- FOLLOW IT (14 Oct).** v5f's
+  counter-trend case, in IH's words: buyers who catch a rally inside a falling
+  market book and leave, there are no stops, and the move continues. It agrees
+  with v5f rather than scoping it.
+- **A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT, NOT A SPIKE TO
+  CHASE (13 Oct).** Written narrowly, to the flush-and-reclaim EVENT. The broad
+  version, "after continuous selling the sellers are seated", would contradict
+  v5f's measured 16 Sep case: there IH followed the selling after a down day, and
+  the book lost buying it. The narrow version needs the market to show the hunt
+  -- a first candle through the 3:15 level that the second candle reverses -- and
+  16 Sep had no such flush. The first candle stays untraded, a run past the stop
+  distance is still A MOVE THAT DENIED YOU ENTRY, and the mirror after an up day
+  is excluded.
+
+### What was known at adoption
+
+On the agent's own trade shape (16-point stop, 45-point target, out by 15
+minutes; see the re-score above):
+
+| rule | signal | without the condition | as measured |
+|---|---|---|---|
+| 8 Oct | 17 sessions, +0.121R | +0.201R | positive, below its baseline; small sample |
+| 13 Oct | 39 sessions, +0.147R | +0.043R | inconclusive |
+| 14 Oct | 40 sessions, -0.435R | -0.159R | negative in every exit variant |
+
+The 14 Oct rule is the one most at risk: it was negative under every exit model
+tried. It is adopted anyway, on the operator's judgement that IH's read is
+evolving with the market and that the five-year file may lag it.
+
+### Left out
+
+- The 6 and 9 Oct rules (the operator's call).
+- The 13 Oct mirror and the 0.25% opening-move lead. They are measurements made
+  here, not rules IH stated.
+- This week's journal-based gates: hold to the origin, no entry at the extreme,
+  the risk-left-at-order gate and the minimum hold. Those were measured on the
+  agent's real exits and remain refused.
+
+### Review and revert
+
+Every rule carries the `(v5r)` tag, and the agent cites the tags it acts on, so
+the trades taken under these rules can be pulled from the decisions log and the
+journal by searching for "v5r". Review them once they make a fair sample. Revert
+any rule whose trades lose, or all three if the book deteriorates -- the
+operator's call either way. Reverting a rule means deleting its bullet from
+`sl_hunting_knowledge.py` and its schema test.
+
+**Tests.** There is one schema test per rule
+(`test_v5r_the_chart_does_not_repeat_its_failures_either`,
+`test_v5r_a_counter_trend_moves_crowd_books_and_leaves`,
+`test_v5r_a_flush_through_the_close_that_is_bought_back_is_the_hunt`). They pin
+each rule's scope, IH's evidence, and the guards that keep it from contradicting
+v4f or v5f. The control passes and seven mutants fail:
+
+- each of the three rules removed;
+- the PUNISHED branch lost;
+- the counter-trend qualifier lost;
+- the 13 Oct narrowing lost;
+- the mirror exclusion lost.

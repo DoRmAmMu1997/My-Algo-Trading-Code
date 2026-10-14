@@ -1,16 +1,17 @@
 {
-  "for_date": "2026-10-14",
-  "source": "Intraday Hunter, 'Prediction For 14 OCT 2026' (s0413ny8wek, uploaded 2026-10-13)",
-  "context": "A sharp positive move on 13 Oct out of a negative market in BankNIFTY, SENSEX and NIFTY; buyers came in on it but booked their targets and left.",
+  "for_date": "2026-10-15",
+  "source": "Intraday Hunter, 'Prediction For 15 OCT 2026' (7zds7dV05SM, uploaded 2026-10-14)",
+  "context": "14 Oct held early, then ended in a rejection in all three indices; the rejection was not big, so sellers did not get activated.",
   "plan": [
-    "FLAT TO SMALL GAP DOWN -> BUY: the buyers from 13 Oct's rally booked their targets and left, so there is no need to target them -- identify buying-side setups.",
-    "GAP UP -> SELL: the sellers' stops are not directly available above, so identify selling-side setups."
+    "FLAT TO GAP DOWN -> SELL: the late rejection did not activate sellers -- identify selling-side setups.",
+    "GAP UP -> BUY, WITH THE MARKET: if the rejection was only a trap for buyers and the open is a good one, go with the market -- identify buying-side setups.",
+    "SMALL GAP UP: the same buy plan if price crosses its higher point."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22800,
+        22760,
         22880
       ],
       "support": [
@@ -21,18 +22,18 @@
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55900,
-        56200
+        55650,
+        55900
       ],
       "support": [
-        55200,
+        55210,
         54900
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73500,
+        73200,
         73800
       ],
       "support": [

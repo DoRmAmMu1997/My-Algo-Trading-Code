@@ -7246,6 +7246,10 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
     # no class attribute is created and the base's assignment still wins.
     pos: PaperPosition
 
+    #: SLH-024: the reason the most recent `enter_position` declined, or None.
+    #: Read by the SL Hunting order tool so the model hears the real refusal.
+    last_entry_refusal: str | None = None
+
 
     #: Reject an entry whose option is quoted wider than this percentage of mid.
     #: 0 disables the check, which is the default for every worker that predates
@@ -7559,6 +7563,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         5. Persist all entry fields (including any strategy-specific flags
            like target/trailing for Profit Shooter) in `self.pos`.
         """
+        # SLH-024: why THIS call declined, for a caller that has to explain the
+        # refusal -- the SL Hunting order tool relays it to the model, which on
+        # 2026-10-14 was told only "worker rejected the entry" and reported a
+        # risk-budget refusal as a non-risk one. Every refusal below sets it; a
+        # successful entry leaves it None.
+        self.last_entry_refusal = None
         # Validate before resolving, subscribing, or routing. Guessing a side at
         # this boundary could turn an intended close into new naked exposure.
         opening_side = str(option_opening_side).upper().strip()
@@ -7568,15 +7578,20 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 direction,
                 option_opening_side,
             )
+            self.last_entry_refusal = "internal error: invalid option opening side"
             return False
         # Contract direction chooses CE versus PE only. The original direction
         # continues to own every spot-based risk comparison and audit field.
         contract_direction = str(option_contract_direction or direction).upper().strip()
         if not self._market_data_entries_allowed():
+            self.last_entry_refusal = (
+                "market data is unhealthy; live entries wait for three healthy refreshes"
+            )
             return False
         spot = self._get_underlying_spot(fallback=_safe_float(entry_underlying, 0.0))
         if spot <= 0:
             self.log.warning("Skipping %s entry because NIFTY spot LTP was unavailable.", direction)
+            self.last_entry_refusal = "NIFTY spot price unavailable"
             return False
 
         try:
@@ -7592,6 +7607,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
             )
         except Exception as exc:
             self.log.warning("Skipping %s entry because ATM option resolution failed: %s", direction, exc)
+            self.last_entry_refusal = "the ATM option could not be resolved"
             return False
 
         option_sec_id = int(contract["security_id"])
@@ -7605,6 +7621,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
 
         if not trading_symbol or option_sec_id <= 0:
             self.log.warning("Skipping %s entry because ATM option identifiers were missing.", direction)
+            self.last_entry_refusal = "the ATM option's identifiers were missing"
             return False
         if lot_size <= 0:
             self.log.warning(
@@ -7613,6 +7630,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 lot_size,
                 trading_symbol,
             )
+            self.last_entry_refusal = "the ATM option's lot size was invalid"
             return False
 
         # Subscribe BEFORE pricing, so the leg is in the feed from the moment we
@@ -7652,6 +7670,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 trading_symbol,
                 option_sec_id,
             )
+            self.last_entry_refusal = "no option price was available"
             return _abort_entry()
         if not mark_is_fresh:
             if self.live_trading:
@@ -7664,6 +7683,7 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                     trading_symbol,
                     MARKET_DATA_MAX_LTP_AGE_SECONDS,
                 )
+                self.last_entry_refusal = "no fresh option price; a live entry cannot be priced"
                 return _abort_entry()
             # Paper: keep the data point rather than losing the observation, but
             # make the record say the mark was stale.
@@ -7693,6 +7713,11 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 sizing.one_lot_risk,
                 sizing.reason,
             )
+            self.last_entry_refusal = (
+                f"sizing: {sizing.reason} One lot at this stop risks "
+                f"{sizing.one_lot_risk:.2f} against a budget of {sizing.budget:.2f}; "
+                "nothing was placed."
+            )
             return _abort_entry()
         # Last gate before the order. Deliberately AFTER sizing: sizing is local
         # and free, the chain call is rate-limited, so a trade sizing would have
@@ -7700,8 +7725,10 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
         if not self._spread_gate_allows_entry(
             direction, trading_symbol, option_strike, option_right, expiry_date
         ):
+            self.last_entry_refusal = "the bid/ask spread gate refused the entry"
             return _abort_entry()
         if not self._liquidity_gate_allows_entry(direction, trading_symbol, expiry_date):
+            self.last_entry_refusal = "the liquidity gate refused the entry"
             return _abort_entry()
 
         lots_for_entry = sizing.lots
@@ -7731,7 +7758,12 @@ class AtmSingleLegStrategyWorker(BasePaperStrategyWorker):
                 # completes and adopts the same ledger state. KEEP the feed leg
                 # subscribed: unresolved exposure still has to be marked.
                 self._track_orphan_live_leg(entry_leg)
+                self.last_entry_refusal = (
+                    "the broker outcome is uncertain; possible exposure, so new "
+                    "entries are frozen until it is reconciled"
+                )
                 return False
+            self.last_entry_refusal = "the broker did not fill the entry"
             return _abort_entry()
         self._untrack_orphan_live_leg(entry_leg)
         quantity = int(entry_leg["quantity"])

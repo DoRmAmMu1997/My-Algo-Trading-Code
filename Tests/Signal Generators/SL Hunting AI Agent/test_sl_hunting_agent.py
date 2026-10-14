@@ -1942,3 +1942,52 @@ def test_slh020_the_tools_tell_the_model_what_the_fields_mean():
     assert "same_side_after_winning_exit" in text
     assert "closed at a PROFIT earlier today" in text
     assert "It refuses nothing" in text
+
+
+# --------------------------------------------------------------------------
+# SLH-024: a refused entry tells the model WHY
+# --------------------------------------------------------------------------
+
+class _RefusingWorker(_FakeWorker):
+    """A worker whose enter_position declines and records its reason."""
+
+    def __init__(self, refusal):
+        super().__init__()
+        self.last_entry_refusal = None
+        self._refusal = refusal
+
+    def enter_position(self, direction, entry_underlying, stop_underlying=0.0, target_underlying=0.0):
+        self.last_entry_refusal = self._refusal
+        return False
+
+
+def test_slh024_the_order_tool_relays_the_workers_refusal_reason():
+    """On 2026-10-14 a risk-budget refusal reached the model as the generic
+    "worker rejected the entry (e.g. could not resolve option ...)", and the
+    model reported it as "not a logic/risk rejection"."""
+    sizing = (
+        "sizing: One lot exceeds the configured risk budget. One lot at this stop "
+        "risks 2957.50 against a budget of 2500.00; nothing was placed."
+    )
+    ex = MasterWorkerExecutor(_RefusingWorker(sizing))
+
+    result = ex.enter("LONG", stop=22705, target=22800, reason="x", price=22750.5)
+
+    assert result["accepted"] is False
+    assert "One lot exceeds the configured risk budget" in result["reason"]
+    assert "2957.50" in result["reason"]
+    assert "could not resolve option" not in result["reason"]
+    assert ex.last_entry_order is None
+
+
+def test_slh024_a_worker_without_a_reason_keeps_the_generic_message():
+    """The standalone runner and older workers have no last_entry_refusal."""
+
+    class _PlainRefusal(_FakeWorker):
+        def enter_position(self, *args, **kwargs):
+            return False
+
+    for worker in (_PlainRefusal(), _RefusingWorker(None), _RefusingWorker("   ")):
+        result = MasterWorkerExecutor(worker).enter("LONG", stop=24950, target=25100, reason="x", price=25000)
+        assert result["accepted"] is False
+        assert result["reason"].startswith("worker rejected the entry")

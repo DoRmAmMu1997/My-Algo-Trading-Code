@@ -3414,3 +3414,105 @@ def test_v5h_a_range_makes_the_crowd_read_unpayable():
     assert "A STANDING PREMISE IS NOT A SECOND REASON" in rule
     assert "it selects a SIDE, it does not refresh" in rule
     assert "asks for a nameable NEW trapped crowd, which is vacuous on a follow" in rule
+
+
+# ---------------------------------------------------------------------------
+# v5r (14 Oct 2026): three rules adopted on the operator's call, with the
+# benefit of the doubt, to keep up with IH and a changing market. Each is
+# revertible if the book deteriorates; the doc records the measurements.
+# ---------------------------------------------------------------------------
+
+def test_v5r_the_chart_does_not_repeat_its_failures_either():
+    """v5r (8 Oct): v4f scoped by what yesterday's move did to its followers.
+
+    Three ways an edit breaks it:
+
+    1. Losing the tie to v4f. Without it the rule reads as a contradiction of
+       "a second-day copy is a trap" rather than its scope.
+    2. Losing PAID versus PUNISHED, and how PUNISHED is defined. That is the
+       only part that can be checked before the open.
+    3. Losing "entered by pattern + confirmation". The rule names a side; it
+       must not become an entry trigger on its own.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE CHART DOES NOT REPEAT ITS FAILURES EITHER")
+
+    # It sits directly under the v4f rule it scopes.
+    v4f = prompt.index("- THE CHART DOES NOT REPEAT TWO DAYS RUNNING (v4f)")
+    assert prompt.index("- THE CHART DOES NOT REPEAT ITS FAILURES EITHER (v5r)") > v4f
+
+    # 1. The scope of v4f, in IH's own words from that record.
+    assert "The scope of the rule above" in rule
+    assert "if the buyers made profit yesterday, today they should not get that profit" in rule
+
+    # 2. Paid versus punished.
+    assert "its followers were PUNISHED, because price later traded back through yesterday's open" in rule
+    assert "Paid: the rule above, expect the reversal" in rule
+    assert "Punished: the copy is a candidate to FOLLOW" in rule
+    assert "today too the market is making almost the same chart" in rule
+
+    # 3. Still an ordinary entry.
+    assert "entered by pattern + confirmation like any other trade" in rule
+
+
+def test_v5r_a_counter_trend_moves_crowd_books_and_leaves():
+    """v5r (14 Oct): which one-way day v5f means -- the counter-trend one.
+
+    Three ways an edit breaks it:
+
+    1. Losing the tie to v5f. Apart they read as two opinions on whether a
+       one-way day seats a crowd.
+    2. Losing AGAINST the bigger trend, and IH's reason for it. Without the
+       qualifier, the rule claims every one-way day is followed.
+    3. Losing "a normal target rather than a hunt's" and the pattern +
+       confirmation entry.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A COUNTER-TREND MOVE'S CROWD BOOKS AND LEAVES")
+
+    # 1. v5f's mechanism.
+    assert "v5f's mechanism" in rule
+    # 2. Counter-trend only, and why.
+    assert "the one that ran AGAINST the bigger trend" in rule
+    assert "in a negative market, when someone catches a good positive momentum, he books and leaves" in rule
+    assert "When he gets the buyers' SLs" in rule
+    assert "whatever is running will keep running" in rule
+    # 3. How it is traded.
+    assert "on a FLAT open after a counter-trend run, FOLLOW the run's direction" in rule
+    assert "entered by pattern + confirmation like any follow" in rule
+    assert "expect a normal target rather than a hunt's" in rule
+    assert "+2,84,018.25" in rule
+
+
+def test_v5r_a_flush_through_the_close_that_is_bought_back_is_the_hunt():
+    """v5r (13 Oct): the flush-and-reclaim EVENT, deliberately narrow.
+
+    Four ways an edit breaks it:
+
+    1. Losing the event's three conditions (down day, FLAT open, first-candle
+       flush below the 3:15 level that the second candle reverses).
+    2. Losing "the run that follows is the TARGET, not a chase" -- the exact
+       misreading that kept the book out on 13 Oct.
+    3. Losing the narrowing: it must not become "yesterday's sellers are
+       seated", which v5f's measured 16 Sep case contradicts.
+    4. Losing the guards: the first candle stays untraded, a run past the stop
+       distance is A MOVE THAT DENIED YOU ENTRY, and the mirror is excluded.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT")
+
+    # 1. The event.
+    assert "After a down day, a FLAT open whose FIRST candle flushes below the previous session's 3:15 level" in rule
+    assert "whose SECOND candle reverses back above it" in rule
+    assert "That reversal, confirmed, at the closing level, is the entry" in rule
+    # 2. Target, not chase.
+    assert "the run that follows is the TARGET, not a chase" in rule
+    assert "a spike at the extreme" in rule
+    # 3. Narrow on purpose.
+    assert "It needs the flush-and-reclaim EVENT, not a belief that yesterday's sellers are seated" in rule
+    assert "v5f still governs that belief" in rule
+    # 4. Guards.
+    assert "Keep the first candle untraded" in rule
+    assert "it is A MOVE THAT DENIED YOU ENTRY" in rule
+    assert "The mirror (a spike above the close sold back after an up day) is NOT part of this rule" in rule
+

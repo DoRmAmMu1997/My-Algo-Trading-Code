@@ -5363,6 +5363,31 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         # Far from expiry -> ATM, never the expiry-week ITM branch.
         worker._bnf_resolver.get_itm_option.assert_not_called()
 
+    def test_slh024_a_sizing_refusal_records_its_reason(self):
+        """SLH-024. The SL Hunting order tool relays `last_entry_refusal` to the
+        model; on 2026-10-14 it had only a generic message to give."""
+        worker, _ = self._make_worker()
+        budget = master_file.SL_HUNTING_RISK_BUDGET
+        wide = budget / 75.0 + 5.0  # one lot at this stop breaks the budget
+
+        self.assertFalse(worker.enter_position("LONG", 24300.0, 24300.0 - wide, 24400.0))
+
+        self.assertFalse(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)
+        refusal = worker.last_entry_refusal
+        self.assertIsInstance(refusal, str)
+        self.assertTrue(refusal.startswith("sizing:"), refusal)
+        self.assertIn(f"{budget:.2f}", refusal)
+        self.assertIn("nothing was placed", refusal)
+
+    def test_slh024_a_successful_entry_clears_the_last_refusal(self):
+        worker, _ = self._make_worker()
+        worker.last_entry_refusal = "stale reason from an earlier call"
+
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        self.assertIsNone(worker.last_entry_refusal)
+
     def test_live_basket_pnl_uses_nifty_and_bnf_broker_fills(self):
         worker, _store = self._make_worker()
         worker.live_trading = True
