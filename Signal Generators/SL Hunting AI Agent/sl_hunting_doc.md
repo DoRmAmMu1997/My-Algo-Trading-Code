@@ -9775,3 +9775,126 @@ passes, and each of these fails:
 - scanning the prints again;
 - dropping every session's late bars;
 - keeping the 15:15 print.
+
+## 14 Oct - the same open, a refused spike and a follow IH rode (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** "Live Bank Nifty Option Trading" (`GTDs-o7xXq0`,
+  uploaded 2026-10-14 10:39 IST), traded on the 14 Oct note (`s0413ny8wek`:
+  "FLAT TO SMALL GAP DOWN -> BUY", "GAP UP -> SELL"). His clock times are read
+  off the taskbar clock in the video frame, and his figures off his positions
+  screen. His words are my translation of the Hindi auto-transcript.
+- **This book:**
+  - its one journal row;
+  - all 74 decisions;
+  - the runner log;
+  - the CLI's transcripts of the order-tool calls.
+- **The 5-year NIFTY CSV**, now through 14 Oct.
+
+The session was **LIVE** for SL Hunting, the one live strategy of 30, on
+`claude-sonnet-5` (13 Oct ran `claude-sonnet-5-5`). It was the first session on
+SLH-023, and the agent's reasoning names the new reference: "Flat open on both
+NIFTY (+0.07%) and BankNIFTY (-0.07%) vs the 3:15 reference". The 13 Oct 3:15
+level was 22,699.55 and the open 22,715.75. On the old last-candle reference
+(22,721.95) the open would have read -0.03%, FLAT either way.
+
+**No knowledge change.**
+
+### The comparison
+
+| | IH | the agent |
+|---|---|---|
+| open | flat: the note's BUY branch | **FLAT** (+0.07% on the 3:15 level): the same branch |
+| 09:17 | | tried LONG at the 09:16 spike top, entry 22,750.50 with the stop at 22,705.00: **refused by sizing** (one lot risks 2,957.50 against the 2,500 budget) |
+| entry | **09:20**, after the flush: BankNIFTY 55,300 CE and 55,400 CE x1,170 each, SENSEX 73,000 CE x900, NIFTY 22,700 CE x1,430 | **09:56** LONG 22,718.55, on a 4th touch of a rising trendline at 22,700; stop 22,695.00, target 22,757.95 |
+| exit | **09:33**: the target was hit "because BankNIFTY suddenly gave momentum" | **09:57** at 22,716.60, the next decision |
+| result | **+2,84,018.25** | **-644.00** |
+
+NIFTY opened at 22,715.75 and spiked to 22,750 at 09:16. By 09:20 it had
+flushed to 22,663.80, and it chopped between 22,664 and 22,728 until 09:40. It
+made the day's high, 22,757.95, at 09:48, was at 22,707 by 09:55, fell to
+22,558.95 at 13:15, and was 22,625.50 at 15:14.
+
+His positions at the exit:
+
+| leg | qty | avg | P&L |
+|---|---|---|---|
+| BankNIFTY 55,300 CE | 1,170 | 741.85 | +1,36,948.50 |
+| BankNIFTY 55,400 CE | 1,170 | 674.15 | +1,43,910.00 |
+| SENSEX 73,000 CE | 900 | 300.68 | -701.50 |
+| NIFTY 22,700 CE | 1,430 | 146.90 | +3,861.25 |
+
+The two BankNIFTY legs made **99%** of it. For a while SENSEX and NIFTY were
+losing while BankNIFTY carried the basket, and he held only while "the lower
+point" did not break.
+
+**His read was a follow, not a hunt.** Yesterday's buyers "booked their targets
+and left", so "the buyers' SLs are not available", and "when will the operator
+turn the market? When he gets the buyers' SLs." With none to take, "whatever is
+running will keep running". That is v5k, WHO PAYS FOR A FOLLOW WHEN NOBODY HAS
+STOPS NEARBY.
+
+**The refusal saved a loss.** The 09:17 long would have been stopped: NIFTY
+reached 22,663.80 by 09:20, through 22,705. The budget turned away a 45.5-point
+stop placed at the spike top, and IH bought the flush low four minutes later.
+The budget is a deliberate operator setting and did its job.
+
+**The agent misreported that refusal, because the tool told it the wrong
+thing.** The worker logged "ENTRY SKIPPED BY SIZING ... One lot exceeds the
+configured risk budget". But `MasterWorkerExecutor.enter` returns the generic
+"worker rejected the entry (e.g. could not resolve option / outside trading
+window)" for any refusal (`sl_hunting_executor.py`). So the model wrote that the
+order "was rejected by the execution worker (not a logic/risk rejection)".
+**Follow-up, not built here:** pass the worker's refusal reason back through the
+order tool.
+
+**Two decisions 45 seconds apart contradicted each other.** The 09:56 entry
+aimed at 22,757.95, the 09:48 high. The 09:57 decision exited because that same
+high "was tagged at 09:48 and then printed a confirmed bearish engulfing... the
+move that justified the long has already fired and reversed". That was a fact
+the entry already had. The exit was still right: holding would have hit the
+stop, 22,695, by 10:15, for -23.55 points.
+
+### Two candidates, measured and refused
+
+**1. Follow a flat open after a strong up day** (IH's entry made general). The
+5-year CSV, buying the 09:20 open:
+
+| setup | sessions | to 10:30 | winners | to 15:14, mean |
+|---|---|---|---|---|
+| up day >= 1.0%, flat open | 40 | -678.6 | 40% | -29.0 |
+| ... and the first 5 minutes dipped below the open | 39 | -676.2 | 41% | -30.9 |
+| up day >= 1.5% | 11 | -527.9 | 18% | -29.9 |
+| every flat open (baseline) | 930 | mean -5.2 | 49% | |
+
+It is worse than an ordinary flat open in every variant. By year it was
+negative in 2021, 2022, 2024 and 2025, and positive in 2023 (one session) and
+2026 (five).
+
+**2. A minimum hold before the agent's own exit** (today's 45-second flip). The
+42 journal trades the agent itself closed within 120 seconds of entry, replayed
+to their stop, their target or 10:30:
+
+| exit | net points | winners |
+|---|---|---|
+| the agent's quick exit | +2.8 | 38% |
+| hold instead | -96.5 | 29% |
+
+The quick exits were the better decision; a hold rule would cost.
+
+### IH's other points, all already in the corpus
+
+- The operator turns the market only for stops, and with none nearby the move
+  continues: v5k.
+- One index carries the basket while the others lag: v4i, THE LAGGING INDEX
+  DECIDES THE BASKET'S EXIT.
+- "This lower point must not break": NAME THE ONE WAY THIS TRADE FAILS.
+
+### Operational
+
+74 decisions, none abandoned; median latency 33.5 s, worst 59.8 s. Two entries
+were first returned for a `note_check` that did not start with AGREES /
+CONTRADICTS / NOT_APPLICABLE, and were resent correctly. At 10:07 the model sent
+the order tool `action: "HOLD"` (rejected), the habit first seen on Sonnet 5.5
+on 13 Oct.
