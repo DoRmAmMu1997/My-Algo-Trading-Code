@@ -10000,3 +10000,86 @@ The tests themselves are:
 - a real SL Hunting worker refused by sizing records the reason with the budget
   and leaves no position;
 - a successful entry clears a stale reason.
+
+## v5r - three rules adopted on the operator's call (the benefit of the doubt)
+
+**The decision (operator, 14 Oct 2026).** Adopt the 8, 13 and 14 Oct rules into
+the knowledge. Leave out the 6 and 9 Oct ones. The reason, in the operator's
+terms: give the benefit of the doubt, so the agent evolves with a changing market
+structure and keeps up with IH. If the agent's performance deteriorates, revert
+them.
+
+This is a deliberate exception to the house practice of encoding only what a
+measurement supports. It is recorded here, with what was known at the time, so a
+later reviewer can judge the rules by their results rather than rediscover the
+decision.
+
+### The three rules, and how each fits the existing knowledge
+
+- **THE CHART DOES NOT REPEAT ITS FAILURES EITHER (8 Oct).** Placed directly
+  under v4f, THE CHART DOES NOT REPEAT TWO DAYS RUNNING, as its scope rather than
+  its contradiction. The operator's reading: the rule follows a move that FAILED
+  yesterday, and since charts do not repeat, the failure need not repeat either.
+  v4f's own record already carries that scope -- IH's "if the buyers made profit
+  yesterday, today they should not get that profit" is about the side yesterday
+  PAID. So a copy after a PAID day is v4f's trap, and a copy after a PUNISHED day
+  is a candidate to follow.
+- **A COUNTER-TREND MOVE'S CROWD BOOKS AND LEAVES -- FOLLOW IT (14 Oct).** v5f's
+  counter-trend case, in IH's words: buyers who catch a rally inside a falling
+  market book and leave, there are no stops, and the move continues. It agrees
+  with v5f rather than scoping it.
+- **A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT, NOT A SPIKE TO
+  CHASE (13 Oct).** Written narrowly, to the flush-and-reclaim EVENT. The broad
+  version, "after continuous selling the sellers are seated", would contradict
+  v5f's measured 16 Sep case: there IH followed the selling after a down day, and
+  the book lost buying it. The narrow version needs the market to show the hunt
+  -- a first candle through the 3:15 level that the second candle reverses -- and
+  16 Sep had no such flush. The first candle stays untraded, a run past the stop
+  distance is still A MOVE THAT DENIED YOU ENTRY, and the mirror after an up day
+  is excluded.
+
+### What was known at adoption
+
+On the agent's own trade shape (16-point stop, 45-point target, out by 15
+minutes; see the re-score above):
+
+| rule | signal | without the condition | as measured |
+|---|---|---|---|
+| 8 Oct | 17 sessions, +0.121R | +0.201R | positive, below its baseline; small sample |
+| 13 Oct | 39 sessions, +0.147R | +0.043R | inconclusive |
+| 14 Oct | 40 sessions, -0.435R | -0.159R | negative in every exit variant |
+
+The 14 Oct rule is the one most at risk: it was negative under every exit model
+tried. It is adopted anyway, on the operator's judgement that IH's read is
+evolving with the market and that the five-year file may lag it.
+
+### Left out
+
+- The 6 and 9 Oct rules (the operator's call).
+- The 13 Oct mirror and the 0.25% opening-move lead. They are measurements made
+  here, not rules IH stated.
+- This week's journal-based gates: hold to the origin, no entry at the extreme,
+  the risk-left-at-order gate and the minimum hold. Those were measured on the
+  agent's real exits and remain refused.
+
+### Review and revert
+
+Every rule carries the `(v5r)` tag, and the agent cites the tags it acts on, so
+the trades taken under these rules can be pulled from the decisions log and the
+journal by searching for "v5r". Review them once they make a fair sample. Revert
+any rule whose trades lose, or all three if the book deteriorates -- the
+operator's call either way. Reverting a rule means deleting its bullet from
+`sl_hunting_knowledge.py` and its schema test.
+
+**Tests.** There is one schema test per rule
+(`test_v5r_the_chart_does_not_repeat_its_failures_either`,
+`test_v5r_a_counter_trend_moves_crowd_books_and_leaves`,
+`test_v5r_a_flush_through_the_close_that_is_bought_back_is_the_hunt`). They pin
+each rule's scope, IH's evidence, and the guards that keep it from contradicting
+v4f or v5f. The control passes and seven mutants fail:
+
+- each of the three rules removed;
+- the PUNISHED branch lost;
+- the counter-trend qualifier lost;
+- the 13 Oct narrowing lost;
+- the mirror exclusion lost.

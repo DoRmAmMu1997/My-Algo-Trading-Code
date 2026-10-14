@@ -744,6 +744,37 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
     NIFTY ladder since the first note on 28 Jul, and they netted +11,626. The
     rule governs the REASON you give and the PRICE you take, not whether you
     trade.
+- A COUNTER-TREND MOVE'S CROWD BOOKS AND LEAVES -- FOLLOW IT (v5r). v5f's
+  mechanism, with IH's answer to WHICH one-way day leaves nobody seated: the one
+  that ran AGAINST the bigger trend. "Why would they have booked? Because the
+  market is in a negative trend... in a positive trend, if you have a buy in
+  profit, you hold it expecting a bigger move; but in a negative market, when
+  someone catches a good positive momentum, he books and leaves." With that crowd
+  gone there are no stops to hunt, and "when will the operator turn the market?
+  When he gets the buyers' SLs. If there are no SLs, he lets the market
+  continue" -- "whatever is running will keep running". So on a FLAT open after
+  a counter-trend run, FOLLOW the run's direction, entered by pattern +
+  confirmation like any follow, and expect a normal target rather than a hunt's.
+  IH on 14 Oct, the day after a 1.5% rally inside a falling market: he bought the
+  flat open at 09:20, held only while "the lower point" did not break, and booked
+  +2,84,018.25 at 09:33 when BankNIFTY ran.
+- A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT, NOT A SPIKE TO CHASE
+  (v5r). After a down day, a FLAT open whose FIRST candle flushes below the
+  previous session's 3:15 level and whose SECOND candle reverses back above it has
+  shown you the hunt in progress: the stops under the close were taken, and the
+  market refused to stay down. That reversal, confirmed, at the closing level, is
+  the entry -- the pattern + confirmation the method already requires, at a level
+  it already names -- and the run that follows is the TARGET, not a chase.
+  IH bought exactly this on 13 Oct, after 12 Oct had fallen 1.2%: NIFTY flushed
+  to 22,288, 29 points under the 22,316.90 level, reversed, and he booked
+  +4,90,221.60 at 09:34 while NIFTY ran to 22,574. The book read the same FLAT
+  open correctly, then called the run "a spike at the extreme" and never entered.
+  The rule is narrow on purpose. It needs the flush-and-reclaim EVENT, not a
+  belief that yesterday's sellers are seated -- v5f still governs that belief.
+  Keep the first candle untraded; enter on the reversal's confirmation, and if
+  price has already run past your stop distance by the time you see it, it is
+  A MOVE THAT DENIED YOU ENTRY. The mirror (a spike above the close sold back
+  after an up day) is NOT part of this rule.
 - THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (v4t). After a session opens and
   moves directly one way, the small pull-back that follows is usually there to keep
   the crowd OUT of the move, not to end it. IH, on exactly that: "when it opens flat
@@ -1063,6 +1094,21 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   continuation along it. Note the asymmetry with SECOND-DAY RECRUITMENT (v4a):
   that rule is about a crowd built over two days and then hunted; this one is
   about the PATH being identical, which is what makes the second day a trap.
+- THE CHART DOES NOT REPEAT ITS FAILURES EITHER (v5r). The scope of the rule
+  above. A copy betrays the side that yesterday's move PAID -- IH's own words in
+  that record were "if the buyers made profit yesterday, today they should not get
+  that profit". When yesterday's opening move FAILED instead -- its followers
+  were PUNISHED, because price later traded back through yesterday's open -- the
+  thing that would repeat is the failure, and the chart does not repeat that
+  either: today's copy is the move that can run. IH on 8 Oct, selling the same
+  opening fall that had been bought back to above its open the day before:
+  "today too the market is making almost the same chart", and the sellers of
+  yesterday's candle had their SLs hit by the recovery, "so today they will not
+  sell". The fall ran with nobody crowding it, about 420 points by the close.
+  PRACTICAL FORM: before calling a copy a trap, ask whether yesterday's version
+  PAID or was PUNISHED. Paid: the rule above, expect the reversal. Punished: the
+  copy is a candidate to FOLLOW, entered by pattern + confirmation like any
+  other trade.
 - A MOVE THAT DENIED YOU ENTRY WAS NOT YOUR MOVE (v4f). The clean intraday form of
   v4d's gap logic. IH wanted to sell and never got the chance: "if it had gone a
   bit slow, or given us a slight up move first, we would have had a chance to
