@@ -9846,8 +9846,7 @@ configured risk budget". But `MasterWorkerExecutor.enter` returns the generic
 "worker rejected the entry (e.g. could not resolve option / outside trading
 window)" for any refusal (`sl_hunting_executor.py`). So the model wrote that the
 order "was rejected by the execution worker (not a logic/risk rejection)".
-**Follow-up, not built here:** pass the worker's refusal reason back through the
-order tool.
+Fixed by SLH-024 (below).
 
 **Two decisions 45 seconds apart contradicted each other.** The 09:56 entry
 aimed at 22,757.95, the 09:48 high. The 09:57 decision exited because that same
@@ -9898,3 +9897,106 @@ were first returned for a `note_check` that did not start with AGREES /
 CONTRADICTS / NOT_APPLICABLE, and were resent correctly. At 10:07 the model sent
 the order tool `action: "HOLD"` (rejected), the habit first seen on Sonnet 5.5
 on 13 Oct.
+
+## Re-scored with the agent's own trade shape (the 6-14 Oct candidates)
+
+**Why.** Five candidates refused above were scored by holding from the signal
+to a fixed clock time (10:30, or 15:14). The agent does not trade that way. Its
+181 closed journal trades have:
+
+- a median hold of 4.2 minutes (90th percentile 12.8);
+- a median stop of 15.8 points;
+- a median target of 44.7 points, about 2.8R;
+- entries between 09:21 and 10:18.
+
+A fixed hold to 10:30 measures the market's drift, not the trade the agent would
+take.
+
+**How.** Each candidate's signal was re-entered at the same bar with a 16-point
+stop and a 45-point target, exiting by 15 minutes, and scored in R (the stop
+distance is 1R). It was checked against a 12.5/35 and a 21.6/60 stop/target
+pair and against 8- and 30-minute limits, and set beside the same exits on the
+comparable days without the condition. The five journal-based refusals (hold to
+origin, no entry at the extreme, the risk-left gate, the minimum hold, and 30
+Sep's quick-loss re-entry) were already scored on the agent's real exits and
+stand.
+
+| candidate | signal (n, mean R, win) | without the condition | verdict |
+|---|---|---|---|
+| 6 Oct: a small gap that held the 3:15 close, trade WITH it | 489, +0.004R, 38% | 930, -0.042R | about zero; refused |
+| 8 Oct: copy a punished prior session's opening move | 17, +0.121R, 29% | 249, +0.201R | the condition makes it worse; refused, v4f stands |
+| 9 Oct: follow Friday's first 15 minutes | 242, +0.020R, 37% | 1,230, +0.036R | no Friday effect; refused |
+| 13 Oct: buy the flush + reversal after a down day | 39, +0.147R, 31% (+ in 2 of 5 years) | 183, +0.043R | **inconclusive** (standard error about 0.26R); was "refused" |
+| 13 Oct mirror: sell the spike + reversal after an up day | 74, +0.203R, 39% | | **inconclusive** (about 0.19R) |
+| 14 Oct: buy a flat open after a >=1% up day | 40, **-0.435R**, 20% (+ in 1 of 6 years) | 930, -0.159R | refused under every exit model |
+
+**The yardstick mattered for one candidate.** The 13 Oct flush + reversal looked
+clearly negative held to 10:30 (-0.32R) but is mildly positive on trade-shaped
+exits. Its variants run from -0.03R to +0.25R, and the sample is too small to
+call. That makes it unproven, not refuted.
+
+**Against the existing knowledge:**
+
+- **6 Oct:** collides with SLH-017/v4t ("below the threshold the open is FLAT
+  whatever the sign").
+- **8 Oct:** contradicts v4f, and the data sides with v4f.
+- **9 Oct:** collides with nothing, and measures nothing.
+- **13 Oct:** needs no new rule. A flush below the prior close followed by a
+  reversal candle IS a pattern + confirmation at a level, which the method
+  already allows. The agent declined it on 13 Oct as a chase of the run that
+  followed.
+- **14 Oct:** agrees in spirit with v5k but loses money in every exit model.
+
+**One lead, not a rule.** The comparison set under the 8 Oct candidate -- follow
+ANY first-5-minute move of 0.25% or more, entering at 09:20 -- scored +0.20R on
+249 sessions and was positive in 5 of 6 years. It leans against v4f's "do NOT
+chase it late and do NOT assume it continues". It came out of a comparison
+rather than a prior hypothesis, so it needs its own test before anything is
+encoded.
+
+## SLH-024 - a refused entry tells the model why
+
+**The defect (14 Oct, above).** When the worker declined an entry,
+`MasterWorkerExecutor.enter` returned "worker rejected the entry (e.g. could not
+resolve option / outside trading window)" whatever the cause. At 09:17 the cause
+was the risk budget: one lot at a 45.5-point stop risked 2,957.50 against
+2,500. The model was left to guess, and wrote that the order "was rejected by
+the execution worker (not a logic/risk rejection)" -- wrong, and the reasoning
+the coach later reads.
+
+**What changed.** `AtmSingleLegStrategyWorker.enter_position` records why it
+declined in `last_entry_refusal`. It is reset at the top of every call and set
+at each refusal:
+
+- market data unhealthy;
+- spot unavailable;
+- the option unresolvable, or its identifiers or lot size invalid;
+- no option price, or no fresh price for a live entry;
+- sizing, naming the one-lot risk and the budget;
+- the spread or liquidity gate;
+- an unfilled broker order, or an uncertain broker outcome.
+
+`MasterWorkerExecutor.enter` relays it as "worker refused the entry: <reason>".
+A worker without the attribute -- the standalone runner, or any other caller --
+keeps the generic text. The reasons are neutral statements of what happened:
+the sizing reason says "nothing was placed" and does not suggest a tighter stop.
+
+**What it deliberately leaves alone.** No refusal changes, and nothing that
+decides whether to enter. The field is written by every ATM worker but read
+only by the SL Hunting order tool.
+
+**Tests.** Five mutants were run; the control passes and each of these fails:
+
+- not relaying the reason;
+- relaying a blank reason;
+- dropping the sizing reason;
+- dropping the per-call reset;
+- leaving the budget out of the text.
+
+The tests themselves are:
+
+- the executor relays a worker's reason, and keeps the generic text when there
+  is none;
+- a real SL Hunting worker refused by sizing records the reason with the budget
+  and leaves no position;
+- a successful entry clears a stale reason.

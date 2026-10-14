@@ -449,6 +449,13 @@ class MasterWorkerExecutor:
             target_underlying=float(target),
         ))
         if not ok:
+            # SLH-024: relay the worker's OWN reason. On 2026-10-14 a risk-budget
+            # refusal reached the model as this generic text, and it reported the
+            # refusal as "not a logic/risk rejection". A worker that predates the
+            # attribute (or the standalone runner) keeps the generic message.
+            refusal = getattr(self._w, "last_entry_refusal", None)
+            if isinstance(refusal, str) and refusal.strip():
+                return {"accepted": False, "reason": f"worker refused the entry: {refusal.strip()}"}
             return {
                 "accepted": False,
                 "reason": "worker rejected the entry (e.g. could not resolve option / outside trading window)",
