@@ -10083,3 +10083,133 @@ v4f or v5f. The control passes and seven mutants fail:
 - the counter-trend qualifier lost;
 - the 13 Oct narrowing lost;
 - the mirror exclusion lost.
+
+## v5s - 15 Oct live match and 16 Oct pre-open note
+
+### Sources and extraction
+
+- [15 Oct live session](https://www.youtube.com/watch?v=Z4asg2VSGME), uploaded
+  2026-10-15 10:38:47 IST, duration 7:27. Direct YouTube Hindi auto-transcript:
+  56 displayed segments, recovered through the public Show transcript panel.
+- [Prediction For 16 OCT 2026](https://www.youtube.com/watch?v=pt_Lcn76ttw),
+  uploaded 2026-10-15 21:10:05 IST, duration 1:39. Direct YouTube Hindi
+  auto-transcript: 13 displayed segments, recovered through the same panel.
+- Local evidence: all 69 rows dated 2026-10-15 in
+  `Backtest Outputs/sl_hunting_decisions.jsonl`, all three completed journal
+  rows for that date, and the runner log in `Dependencies/log_files/`.
+
+The direct timed-text request returned an empty body; the public transcript UI
+did return both complete transcripts. No third-party fallback was needed.
+Hindi explanations below are paraphrases. Taskbar times, quantities and displayed
+P&L were checked against the video frames, not inferred from upload times.
+Full transcript snapshots and chart/position captures remain outside git under
+`%TEMP%\intradayhunter-2026-transcripts\.playwright-cli` and its parent folder.
+
+### The October 16 note
+
+IH reads October 15's continuous positive momentum followed by rejection as a
+move whose call buyers probably booked and left. His plan is BUY-side setups
+for flat through gap-up, retaining the same plan for a small gap-down. He does
+not give a meaningful-gap-down branch; none is invented here. The incoming
+chart still decides the actual setup.
+
+| Index | Resistance | Support, nearest first |
+|---|---|---|
+| NIFTY | 23,100 / 23,200 | 22,850 / 22,700 |
+| BankNIFTY | 56,200 / 56,500 | 55,500 / 55,200 |
+| Sensex | 74,640 / 75,100 | 73,610 / 73,200 |
+
+These are the spoken rounded levels. Frames at 0:30, 1:00 and 1:30 confirm
+the intended chart levels; notably, BankNIFTY's caption says `55200 5500`,
+but its upper support is drawn at 55,500.35. Do not turn that caption into
+55,000, or copy the chart's incidental decimal precision into the note.
+The shipped note is dated 2026-10-16 and remains advisory and date-gated.
+
+### Trade comparison
+
+IH initially waited with a sell-side plan, then explicitly abandoned it when
+the higher points broke and NIFTY/Sensex held positive momentum. BankNIFTY was
+expected to remain inside its prior-session range and retest its upper part,
+not necessarily give a matching breakout. At 1:36-2:06 he contrasts a CALL's
+reachable target with a sell that might show some profit but not its target.
+At 2:39-3:30 and 5:02-5:36 he permits the small counter-moves already included
+in that bounded read; this is not a promise that no loss is possible.
+
+The CALL basket was assembled by the displayed 09:32 clock. By 09:53 all four
+legs were flat, with displayed total P&L **+Rs.284,849.85**:
+
+| IH leg | Quantity | Entry average | Displayed booked P&L |
+|---|---|---|---|
+| BankNIFTY October 55,400 CE | 1,170 | 735.60 | +54,054.75 |
+| BankNIFTY October 55,500 CE | 1,170 | 673.50 | +59,319.00 |
+| Sensex October 15 73,300 CE | 900 | 194.80 | +110,385.75 |
+| NIFTY October 19 22,750 CE | 1,430 | 130.48 | +61,090.35 |
+
+This is one directional basket, not four independent signals. It is displayed
+video evidence, not an audited return after charges; his quantities, contracts
+and three-index exposure differ from this agent's, so absolute profits are not
+a like-for-like performance comparison.
+
+The agent ran LIVE on `claude-sonnet-5`. Decisions: **66 HOLD, two ENTER_SHORT,
+one EXIT**; two of the HOLDs are `agent_error` timeouts, at 09:19:31 and
+09:47:53. The journal and actual fill logs reveal a LONG during the latter
+timeout, so the decisions-only tally must not be mistaken for the trade tally.
+
+| Agent basket | Underlying entry / stop / target | Exit | Booked basket P&L |
+|---|---|---|---|
+| LONG, NIFTY filled 09:47:36, BNF 09:47:41 | 22,766.95 / 22,747 / 22,800 | AI_TARGET, both flat by 09:47:46 | -130.50 |
+| SHORT, NIFTY filled 10:05:00, BNF 10:05:01 | 22,851.10 / 22,875 / 22,800 | AI_STOP, both flat by 10:06:22 | -539.00 |
+| SHORT, NIFTY filled 10:27:17, BNF 10:27:19 | 22,903.95 / 22,918.50 / 22,860 | Premise invalidation, both flat by 10:29:34 | +245.00 |
+
+Total **-Rs.424.50**, reconciling to the sum of broker-fill P&L on all six legs.
+The first basket matched IH's direction but arrived about fifteen minutes after
+his basket was assembled and was closed almost immediately. The two shorts
+opposed his follow thesis. The second short made money only because its BNF leg
+(+531) outweighed NIFTY (-286); that result does not establish the short premise.
+
+### Net-new and overlap
+
+**Adopted on operator approval: RANGE-CONTAINED BNF / TARGET-REACHABILITY.**
+The narrow addition is the explicit entry-time bounded-major-index case:
+two indices have broken and held higher points, the major index is still inside
+a named range, and an upper-range retest supplies a reachable CALL objective.
+A little opposing movement inside that pre-stated range is not the same as a
+structural refusal. A fleeting profit on the opposite side supplies neither
+direction nor a reachable target. The v4r sign wording is scoped accordingly;
+a confirmed opposing reversal or loss of the tolerated boundary still invalidates.
+
+This extends MASKED BNF LAG and v4r without creating another no-confirmation
+entry exception. Normal pattern plus confirmation, stops, max-loss, cooldown
+and the fresh-structure gate remain in force. RUNAWAY TREND still requires all
+three indices to agree. Missing Sensex evidence is never invented. This is a
+single-session, transcript-backed refinement, not a backtested edge or a claim
+that adding prose will reproduce IH's trades; its later results need review.
+
+Already present, so not duplicated: TARGET-BOOKED, the current-session reset
+and v5q retirement of the pre-open premise, the ordinary higher-point break,
+MASKED BNF LAG, PROFIT-HOLD, expiry-aware booking, premium non-confirmation,
+and v4x's distinction between the price reasoned on and the price at entry.
+
+### Operational findings, not changed in this knowledge version
+
+1. **Late entry and compressed reward.** The long's entry log reports current
+   spot 22,792.10 against the decision's underlying entry 22,766.95, leaving
+   roughly 7.9 spot points to the 22,800 target. It hit AI_TARGET shortly after
+   the fill and still lost premium on both legs (-58.50 / -72). That is evidence
+   for a separate current-price/reward-at-submission review, not a reason to
+   widen the target or disable exits. The journal's 09:47:54 opened/closed times
+   are recovery-write times; the runner's fill times above show the lifecycle.
+2. **Exit-cause context is incomplete.** Subsequent decisions repeatedly call
+   that long "stopped out", although the journal and runner say AI_TARGET.
+   `last_closed_trade_today` supplies direction, time, P&L and the flat spot,
+   but not exit reason. A negative option result cannot establish a spot stop;
+   carrying the actual exit cause is a separate runtime follow-up.
+3. **Evidence and existing-rule application.** The tools supply NIFTY/BNF,
+   not live Sensex; IH used all three. The 10:27 short also calls the up-bias
+   "stale" after the first move and outside the opening hour, despite the
+   existing stale-verdict scope. A new candle name must not excuse that existing
+   guard. Missing data and prompt compliance are not solved by another slogan.
+
+No broker, order, API, schema, sizing, environment, timeout or deterministic
+execution changes are part of v5s. The marker tests verify delivered prompt
+scope and preservation of guards, not LLM compliance or trading performance.

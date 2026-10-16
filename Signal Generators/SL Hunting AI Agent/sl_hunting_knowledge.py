@@ -2869,6 +2869,22 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   thesis. Treat BNF lag as invalidation only when it actually breaks the premise
   (major level, closing point, round number, or full rejection/reclaim against the
   trade). Until then, use the lag as caution, not an automatic reversal signal.
+- RANGE-CONTAINED BNF / TARGET-REACHABILITY (v5s). MASKED BNF LAG also has a
+  bounded case: NIFTY and Sensex have broken and held their higher points while
+  BankNIFTY stays inside a pre-identified prior-session range. A small dip inside
+  that range is not by itself an opposing directional move. For this LONG follow,
+  name the range and its tolerated lower boundary BEFORE entry; expect an
+  upper-range retest, not an invented BankNIFTY breakout matching the other two.
+  Compare the actual room on each side: a short might show a little profit inside
+  the range while having no supported path to its downside target. That brief
+  paper profit is not evidence that the target is reachable; neither a bearish
+  pattern nor an attractive ratio supplies the missing directional premise.
+  A confirmed opposing reversal or loss of that boundary invalidates the bounded
+  read: MASKED BNF LAG is not permission to hold through either. This remains an
+  ordinary pattern + confirmation entry and does NOT relax RUNAWAY TREND's
+  ALL THREE indices agree requirement. Do not invent Sensex confirmation when its
+  live data is unavailable; without the needed evidence this branch is unavailable.
+  The stop, max-loss, cooldown and fresh-structure gates remain authoritative.
 - Give priority to the index whose EXPIRY falls that day (e.g. Sensex or NIFTY on
   its expiry): expiry concentrates the action and accelerates option time-decay.
   On a gap-up morning the expiring index is read as extra FUEL for directional
@@ -2934,6 +2950,9 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
     below). One that has gone NEGATIVE, or printed its own
     confirmed reversal, is the disqualifying case — and that is THE
     STALL-OR-REVERSAL TEST in the basket rules, not this one.
+    Here "NEGATIVE" means a premise-breaking move, not every red candle inside a
+    pre-stated tolerated range; RANGE-CONTAINED BNF / TARGET-REACHABILITY (v5s)
+    above supplies that narrow scope, without excusing a confirmed reversal.
     Measured on this book (2026-08-28): a long basket up +968.75 was closed 100
     seconds after entry on the stated grounds that the "BankNIFTY mirror is not
     confirming... flat (-22.5), a textbook laggard-never-joined signal". Flat is

@@ -3516,3 +3516,40 @@ def test_v5r_a_flush_through_the_close_that_is_bought_back_is_the_hunt():
     assert "it is A MOVE THAT DENIED YOU ENTRY" in rule
     assert "The mirror (a spike above the close sold back after an up day) is NOT part of this rule" in rule
 
+
+def test_v5s_range_contained_bnf_follow_requires_bounds_and_reachable_target():
+    """Deliver the bounded-laggard refinement without making every dip harmless.
+
+    The prompt is the product here, not a deterministic entry gate. These checks
+    pin its scope: an identified range, actual leading-index evidence, and a
+    reachable target. They do not claim the model will obey it or earn a profit.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "RANGE-CONTAINED BNF / TARGET-REACHABILITY")
+
+    assert "(v5s)" in rule
+    assert "NIFTY and Sensex have broken and held their higher points" in rule
+    assert "pre-identified prior-session range" in rule
+    assert "name the range and its tolerated lower boundary BEFORE entry" in rule
+    assert "upper-range retest, not an invented BankNIFTY breakout" in rule
+    assert "brief paper profit is not evidence that the target is reachable" in rule
+    assert "A confirmed opposing reversal or loss of that boundary invalidates" in rule
+
+
+def test_v5s_preserves_confirmation_missing_data_and_runaway_guards():
+    """The refinement must not become a new no-confirmation entry exception."""
+    from sl_hunting_knowledge import RUNAWAY_TREND
+
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "RANGE-CONTAINED BNF / TARGET-REACHABILITY")
+
+    assert "ordinary pattern + confirmation entry" in rule
+    assert "does NOT relax RUNAWAY TREND's ALL THREE indices agree" in rule
+    assert "Do not invent Sensex confirmation when its live data is unavailable" in rule
+    assert "stop, max-loss, cooldown and fresh-structure gates remain authoritative" in rule
+    assert "ALL THREE indices agree" in RUNAWAY_TREND
+    assert "MASKED BNF LAG" in prompt
+    assert "THE STALL-OR-REVERSAL TEST" in prompt
+    laggards = _flat_rule(prompt, "LAGGARDS NEVER JOINED")
+    assert '"NEGATIVE" means a premise-breaking move' in laggards
+

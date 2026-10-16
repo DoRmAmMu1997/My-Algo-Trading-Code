@@ -1,44 +1,43 @@
 {
-  "for_date": "2026-10-15",
-  "source": "Intraday Hunter, 'Prediction For 15 OCT 2026' (7zds7dV05SM, uploaded 2026-10-14)",
-  "context": "14 Oct held early, then ended in a rejection in all three indices; the rejection was not big, so sellers did not get activated.",
+  "for_date": "2026-10-16",
+  "source": "Intraday Hunter, 'Nifty & Bank nifty | SENSEX Analysis | Prediction For 16 OCT 2026' (pt_Lcn76ttw, uploaded 2026-10-15)",
+  "context": "15 Oct delivered continuous positive momentum across the indices. Call buyers likely booked their targets when rejections started, so do not assume those buyers remain seated and huntable; follow the developing chart.",
   "plan": [
-    "FLAT TO GAP DOWN -> SELL: the late rejection did not activate sellers -- identify selling-side setups.",
-    "GAP UP -> BUY, WITH THE MARKET: if the rejection was only a trap for buyers and the open is a good one, go with the market -- identify buying-side setups.",
-    "SMALL GAP UP: the same buy plan if price crosses its higher point."
+    "FLAT TO GAP UP -> BUY: identify buying-side setups and follow the market; do not directly oppose the prior positive momentum by assuming buyers are still seated.",
+    "SMALL GAP DOWN -> SAME BUY PLAN: a small gap down keeps the buying-side plan; confirm the setup against the incoming chart."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22760,
-        22880
+        23100,
+        23200
       ],
       "support": [
-        22550,
-        22420
+        22850,
+        22700
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55650,
-        55900
+        56200,
+        56500
       ],
       "support": [
-        55210,
-        54900
+        55500,
+        55200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73200,
-        73800
+        74640,
+        75100
       ],
       "support": [
-        72700,
-        72200
+        73610,
+        73200
       ]
     }
   ]
