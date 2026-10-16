@@ -10213,3 +10213,130 @@ and v4x's distinction between the price reasoned on and the price at entry.
 No broker, order, API, schema, sizing, environment, timeout or deterministic
 execution changes are part of v5s. The marker tests verify delivered prompt
 scope and preservation of guards, not LLM compliance or trading performance.
+
+## v5t - October 16 live match: the two-level recovery the agent did not trade
+
+### Evidence and scope
+
+[October 16 live session](https://www.youtube.com/watch?v=UiiR2JsVGck), uploaded
+2026-10-16 10:55:51 IST, duration 9:07. All 73 displayed Hindi auto-transcript
+segments were recovered from YouTube's public transcript panel. Video frames
+were checked at the entry, level explanations and completed positions; the
+taskbar clocks, not the upload time, locate the trade. Raw transcript and
+captures remain under `%TEMP%\intradayhunter-2026-transcripts\UiiR2JsVGck*`,
+outside git. The explanation here paraphrases the Hindi.
+
+The agent comparison uses all 75 October 16 decisions, the journal's lack of
+October 16 rows, and that day's runner log. The observation window covers the
+agent's 09:15-10:29 decision window and its subsequent 11:00 lifecycle cutoff,
+not an invented full-day market replay. The existing October 16 premarket note
+was successfully injected at startup and is unchanged in this version.
+
+### IH's trade
+
+IH waited through the sharp initial rejection rather than buying the opening
+candle. At 1:16-1:47 and 3:15-3:55 he explains a conditional map: prior buyers
+probably booked, early closing-point dip-buyers were flushed, and the next lower
+support should hold IF the bullish read is right. The closing point and round
+number may occur in either price order. Crucially, he says at 2:16-2:20 and
+5:12-5:27 that further decline would mean the direction was wrong and he would
+take his stop. This is not evidence that a second level cannot break.
+
+The CALL basket was assembled around 09:40-09:41 and was entirely flat by the
+displayed 10:03 clock. The completed positions screen shows:
+
+| Leg | Quantity | Displayed entry average | Displayed booked P&L |
+|---|---|---|---|
+| BankNIFTY October 55,500 CE | 1,170 | 711.13 | +93,038.40 |
+| BankNIFTY October 55,600 CE | 1,170 | 663.28 | +75,312.90 |
+| Sensex October 22 74,100 CE | 900 | 527.38 | +181,098.00 |
+| NIFTY October 19 22,900 CE | 1,430 | 126.03 | +101,415.60 |
+
+Total displayed booked P&L: **+Rs.450,864.90**. This is one directional basket,
+not four entry signals, and is video evidence rather than an audited return
+after all charges. Its size, three-index exposure and contracts differ from
+this agent's; the rupee totals cannot be compared as equal-risk returns.
+
+At 6:13-6:53 and 8:16-8:33 IH distinguishes the sharp recovery after the initial
+fall from yesterday's persistent uptrend: ride the working candles, then book
+into strong shared momentum rather than assume an unlimited runner. BNF's late
+positive candle helped the final booking. These holding ideas overlap the
+existing normal-target, PROFIT-HOLD, premium-asymmetry and v4y booking rules;
+they are recorded as confirmation, not duplicated as new rules.
+
+### The agent: no trade, not an unrecorded timeout fill
+
+**75 HOLD decisions, zero entries, zero exits, zero completed journal rows,
+zero booked agent P&L.** All decisions used `claude-sonnet-5-5`; none was an
+`agent_error`. The runner records 75 completed calls, median 13.3 seconds,
+maximum 34.2 seconds against a 90-second deadline. Unlike October 15, no timeout
+concealed an entry. No SL Hunting entry or sizing record occurs that day.
+
+| Time | IH | Agent's recorded read |
+|---|---|---|
+| Opening | BUY plan, but wait through the rejection | Opening drive rejected: NIFTY GAP_UP about +0.55%, BNF nearly flat, then the gap faded |
+| 09:37-09:40 | First support flushed; lower support remains the recovery boundary | No fresh bullish confirmation; BNF below pivot / cross-index WAIT; at 09:40 NIFTY 22,938.80 is explicitly near the 22,938.85 3:15 reference, yet described as having no clear level |
+| 09:40-09:41 | Assemble the four CALL legs | HOLD, treating the recovery as mid-range and the morning-star read as unconfirmed |
+| 09:44 | Hold the basket through its planned initial adverse move | A morning star is now called confirmed, but the entry is rejected as too near 22,997 / 23,000 for worthwhile reward |
+| By 10:03 | All four legs flat, +450,864.90 displayed | Still HOLD: recovery has run, prior-day high is close, confirmations considered stale |
+| 10:18-10:29 | No second basket shown | Continued HOLD; missing three-index evidence and no fresh located trigger cited |
+
+IH's entry was inside the agent's permitted window, so the entry cutoff does
+not explain the mismatch. Conversely, his profitable outcome does not prove
+that an entry satisfied the agent's stricter confirmation, cross-index and
+rupee-risk rules at that instant. No counterfactual agent profit is assigned.
+
+### Adopted clarifications and overlap
+
+**TWO-LEVEL FLUSH MAP.** ONE BREAKDOWN, NOT TWO already exists (v3n). The new
+part is the explicit conditional and entry-time map: identify the first broken
+support L1 and the next lower protected support L2, explain whose inventory is
+absent, and state what loss of L2 would disprove. An opening-drive failure does
+not prohibit a separately confirmed recovery. L2 is not a guaranteed floor,
+two aliases of one price do not form two levels, and an unaffordable real stop
+means HOLD, never a cosmetic tighter stop. This is an ordinary confirmed setup,
+not a new entry exception or a reason to average down.
+
+**IH CLOSING-POINT IDENTITY.** SLH-023 already exposes the 3:15 reference as
+`open_classification.reference_level`; `previous_close` remains the separate
+full-session close and the pivot still uses its unchanged full-session OHLC.
+The old LEVELS glossary nevertheless aliased the previous close to the closing
+point. The prompt now names the correct existing field for this IH playbook
+and treats it as a candidate level after the open, not only a gap denominator.
+BNF's equivalent lives inside its `pivot_and_levels` payload. No payload or
+indicator calculation changes, and an unavailable reference is not fabricated.
+
+The concrete mismatch is visible at 09:40: the agent names NIFTY's 22,938.85
+intraday reference, then reasons between pivot 22,897.05 and full-session close
+22,997.35 as though there were no candidate level there. The two closes differ
+by 58.50 points. This exposes a level-identity inconsistency, not proof that the
+missing pattern or opposing cross-index evidence could be ignored.
+
+Already covered and not duplicated: TARGET-BOOKED, the current-session reset,
+v5s's bounded BNF read, ordinary pattern plus confirmation, v4x's fill-location
+discipline, normal-target booking and v4y's no-retracement booking caution.
+
+### Recommendations not implemented as runtime changes
+
+- Replay the actual completed-bar tool payloads around 09:37-09:44 to distinguish
+  a truly absent confirmation from missed recognition of an earlier pattern at
+  the reference. Several decisions mention a tiny current-bar stub. Those words
+  alone do not prove a feed or detector bug; no detector fix is made here.
+- Add genuine live Sensex evidence in a separately reviewed runtime change if
+  three-index matching is desired. The current tools expose NIFTY and BNF only;
+  absence is never treated as confirmation and RUNAWAY TREND remains unchanged.
+- Review tool-use hygiene separately: decisions admit empty order calls at
+  09:22, 09:25 and 09:44, plus an EXIT while flat at 10:17. They report refusals,
+  and no corresponding fills appear. These are not entry attempts lost to sizing.
+- At 10:02 / 10:19 the agent uses the earlier opening retracement against a
+  runaway read; the existing rule is scoped to the leg. Review that application
+  in replay, but do not relabel every recovery as a fresh runaway to force entry.
+- Check any candidate's actual invalidation against the agent's configured risk
+  budget. IH tolerated a displayed initial loss near Rs.56,000; this version does
+  not enlarge the agent's budget, imitate his quantities, or claim his stop fits.
+
+These transcript-backed clarifications are not a backtested edge or a guarantee
+of matching IH. Prompt-contract tests check delivery and guard preservation;
+one real-tool characterization test checks the two close fields remain distinct.
+No runtime, broker, order, API, schema, sizing, environment or premarket-note
+changes are included. Validation places no real broker orders.

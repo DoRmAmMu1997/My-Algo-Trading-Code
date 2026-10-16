@@ -3553,3 +3553,67 @@ def test_v5s_preserves_confirmation_missing_data_and_runaway_guards():
     laggards = _flat_rule(prompt, "LAGGARDS NEVER JOINED")
     assert '"NEGATIVE" means a premise-breaking move' in laggards
 
+
+def test_v5t_two_level_flush_is_conditional_and_keeps_entry_risk_guards():
+    """The map is a conditional recovery read, not an automatic first-break BUY.
+
+    Removing its inventory condition, second-level invalidation or confirmation
+    requirement would turn a bounded thesis into a prediction that support holds.
+    This checks the delivered prompt contract, not model compliance or returns.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "ONE BREAKDOWN, NOT TWO")
+
+    assert "TWO-LEVEL FLUSH MAP (v5t)" in rule
+    assert "conditional on the inventory beyond the next level" in rule
+    assert "L1 is the first broken support; L2 is the next lower protected support" in rule
+    assert "two aliases of one price are ONE level" in rule
+    assert "loss of L2 invalidates the recovery premise" in rule
+    assert "a fresh ordinary pattern + confirmation" in rule
+    assert "not permission to anticipate a turn" in rule
+    assert "If the real stop does not fit the risk budget, HOLD" in rule
+    assert "does not revive OPENING DRIVE or relax RUNAWAY TREND" in rule
+
+
+def test_v5t_ih_closing_point_is_not_aliased_to_the_full_session_close():
+    """The actual IH level must remain actionable, not just a gap denominator."""
+    from sl_hunting_knowledge import LEVELS_AND_PIVOT, RUNAWAY_TREND
+
+    prompt = build_system_prompt()
+    assert "IH CLOSING-POINT IDENTITY (v5t)" in prompt
+    rule = _flat_rule(prompt, "IH CLOSING-POINT IDENTITY").replace("`", "")
+
+    assert "open_classification.reference_level" in rule
+    assert "bank_nifty.pivot_and_levels.open_classification.reference_level" in rule
+    assert "previous_close is the separately valid full-session level" in rule
+    assert "Do not recompute the pivot" in rule
+    assert "Missing reference means unavailable" in rule
+    assert 'previous close ("closing point")' not in LEVELS_AND_PIVOT
+    assert "ALL THREE indices agree" in RUNAWAY_TREND
+    assert "RANGE-CONTAINED BNF / TARGET-REACHABILITY (v5s)" in prompt
+
+
+def test_v5t_closing_point_fields_really_remain_distinct_in_the_tool_payload():
+    """Characterize the existing tool contract the new glossary points to.
+
+    The synthetic prior session has different 15:14 and auction closes. Aliasing
+    either field to the other would undo the distinction the prompt depends on.
+    No live feed or model call is involved.
+    """
+    import pandas as pd
+    from sl_hunting_indicators import pivot_and_levels
+
+    frame = pd.DataFrame([
+        {"timestamp": pd.Timestamp("2026-10-15 15:14"), "open": 22940.0,
+         "high": 22945.0, "low": 22930.0, "close": 22938.85},
+        {"timestamp": pd.Timestamp("2026-10-15 15:29"), "open": 22997.35,
+         "high": 22997.35, "low": 22997.35, "close": 22997.35},
+        {"timestamp": pd.Timestamp("2026-10-16 09:15"), "open": 23065.0,
+         "high": 23076.55, "low": 23000.0, "close": 23056.8},
+    ])
+
+    payload = pivot_and_levels(frame)
+    assert payload["open_classification"]["reference_level"] == 22938.85
+    assert payload["previous_close"] == 22997.35
+    assert payload["pivot"] == 22974.90
+
