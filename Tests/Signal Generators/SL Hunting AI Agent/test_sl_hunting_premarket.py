@@ -201,44 +201,38 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_15_intraday_hunter_plan():
-    """Render the 14 Oct forecast only for its intended 15 Oct session.
+def test_shipped_note_matches_october_16_intraday_hunter_plan():
+    """Ship the 15 Oct forecast only for 16 Oct, including its small-gap scope.
 
-    Three things an edit would flatten:
-
-    1. The SIDES flip from the 14 Oct note's: flat to gap down now SELLS (the
-       late rejection did not activate sellers), and a gap up BUYS with the
-       market if the rejection was only a trap for buyers.
-    2. The small-gap-up condition: the same buy plan only if price crosses
-       its higher point.
-    3. The levels. All three indices' resistances were spoken farthest first
-       ("55900 55 650", "73800 73200", "2280 22760") and are recorded nearest
-       first. NIFTY's garbled resistance reads 22,882.60 off the 1080p frame
-       (the other 22,760.00), and its supports, spoken "2250 22420", read
-       22,550.95 / 22,425.15.
+    A stale date silently drops the note; reversing the flat branch or extending
+    the small-gap-down case to every gap would change the analyst's actual plan.
+    Literal levels were checked against the transcript and the chart frames:
+    BankNIFTY's caption drops a digit from 55,500. Supports are nearest first.
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 15))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-15" in block
-    assert "7zds7dV05SM" in block
-    assert "sellers did not get activated" in note.context
-    assert format_premarket_note(note, date(2026, 10, 14)) == ""
-    assert format_premarket_note(note, date(2026, 10, 16)) == ""
+    block = format_premarket_note(note, date(2026, 10, 16))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-16" in block
+    assert "pt_Lcn76ttw" in block
+    assert "uploaded 2026-10-15" in note.source
+    assert "buyers likely booked" in note.context
+    assert format_premarket_note(note, date(2026, 10, 15)) == ""
+    assert format_premarket_note(note, date(2026, 10, 19)) == ""
 
-    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> SELL"))
-    assert "did not activate sellers" in sell
-    buy = next(line for line in note.plan if line.startswith("GAP UP -> BUY, WITH THE MARKET"))
-    assert "only a trap for buyers" in buy
-    small = next(line for line in note.plan if line.startswith("SMALL GAP UP"))
-    assert "crosses its higher point" in small
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
+    assert "buying-side setups" in buy
+    small = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> SAME BUY PLAN"))
+    assert "small gap down" in small
+    assert not any("SELL" in line.upper() for line in note.plan)
     assert not any("EXPIR" in line.upper() for line in note.plan)
+    assert "ADVISORY ONLY" in block
+    assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [22760.0, 22880.0], "support": [22550.0, 22420.0]},
-        {"index": "BANKNIFTY", "resistance": [55650.0, 55900.0], "support": [55210.0, 54900.0]},
-        {"index": "SENSEX", "resistance": [73200.0, 73800.0], "support": [72700.0, 72200.0]},
+        {"index": "NIFTY", "resistance": [23100.0, 23200.0], "support": [22850.0, 22700.0]},
+        {"index": "BANKNIFTY", "resistance": [56200.0, 56500.0], "support": [55500.0, 55200.0]},
+        {"index": "SENSEX", "resistance": [74640.0, 75100.0], "support": [73610.0, 73200.0]},
     ]
