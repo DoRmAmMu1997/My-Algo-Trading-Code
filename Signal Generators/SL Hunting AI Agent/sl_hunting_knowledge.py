@@ -326,10 +326,12 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
     trade, not the hunt up).
   The level does the work here: an unbroken closing point means the crowd never got
   the confirmation it needed to hold, so its SLs never came into being.
-- ONE BREAKDOWN, NOT TWO (a structural read on where the crowd ended up): once price
-  has broken ONE significant level, it does NOT normally break the NEXT level straight
-  after — the second break is the low-probability path. Two inferences follow, and the
-  weaker one is still usable:
+- ONE BREAKDOWN, NOT TWO (a structural read on where the crowd ended up): this is
+  conditional on the inventory beyond the next level, not a law that support holds.
+  When the first break has evicted the nearby buyers and there is no fresh buyer
+  inventory to fund another flush, the second break is the lower-probability thesis.
+  If buyers remain seated, a second breakdown CAN happen. Two inferences follow,
+  under that inventory condition, and the weaker one is still usable:
   * The breakdown itself RECRUITS the other side: as price broke down and kept
     grinding lower with retracements, sellers joined progressively, so they are likely
     SEATED with live SLs → treat them as the huntable crowd (gap-up or gap-down →
@@ -338,6 +340,18 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
     they were stopped out or scared off. So after a level breakdown, buyers are never
     the target. When in doubt about who is seated, this asymmetry alone rules out the
     buyer-hunt.
+  * TWO-LEVEL FLUSH MAP (v5t): L1 is the first broken support; L2 is the next lower
+    protected support. Name BOTH before the trade. The 3:15 closing reference and a
+    round number can be in either price order; two aliases of one price are ONE level.
+    After prior buyers booked and the first flush evicted early dip-buyers, losing
+    L1 need not kill a SEPARATE bullish recovery from L2. A failed opening drive is
+    not a permanent ban on that recovery, but it needs a fresh ordinary pattern +
+    confirmation: this is not permission to anticipate a turn. L2 is a hypothesis,
+    not a guaranteed floor; loss of L2 invalidates the recovery premise. Do not keep
+    buying lower or move the boundary to preserve the story. If the real stop does
+    not fit the risk budget, HOLD rather than squeezing it inside the named level.
+    This does not revive OPENING DRIVE or relax RUNAWAY TREND, cross-index evidence,
+    stops, max-loss or cooldown. Do not infer a normal entry just from two levels.
   Read it with TRAP-DENSITY (which sizes the move) rather than against it: this says
   WHO ended up positioned and where the next break is unlikely, not how far price ran.
 - TARGET-BOOKED crowd test: before hunting yesterday's crowd, ask whether the prior
@@ -1342,7 +1356,7 @@ LEVELS — pivot, previous-day OHLC, psych levels, the opening
 -----------------------------------------------------------
 Use the `pivot_and_levels` tool. It gives you the day's pivot, the previous day's
 OHLC, today's open/high/low and the first-candle high/low, nearby psychological
-(round-number) levels, and the previous close ("closing point").
+(round-number) levels, the full-session previous close and the intraday 3:15 reference.
 
 - Pivot = (prevHigh + prevLow + prevClose) / 3. Above pivot is a BUYERS' market
   (bias long); below pivot is a SELLERS' market (bias short). The pivot is the
@@ -1353,11 +1367,22 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
 - A clean BREAK of a level (not a wick) means continuation: break support → down;
   reclaim/hold resistance → up. A WICK or an immediately-returning candle at a
   level = a TRAP = reversal.
-- The "closing point" (yesterday's close) attracts price (both sides' SLs sit
-  there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
+- The IH intraday "closing point" (the prior 3:15 reference) attracts price
+  (both sides' SLs sit there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
   the closing point (or a short lets price reclaim it), the premise has failed —
   exit. A psych level attracts price within ~50 NIFTY points; round numbers act
   as magnets and breakout levels (more strongly on the larger indices).
+- IH CLOSING-POINT IDENTITY (v5t): use `open_classification.reference_level` from
+  `pivot_and_levels` for the IH intraday closing point. BankNIFTY's equivalent is
+  `bank_nifty.pivot_and_levels.open_classification.reference_level`. This is an
+  actionable candidate S/R, reclaim and invalidation level after the open too,
+  not merely the denominator for gap classification. `previous_close` is the
+  separately valid full-session level and can include the later auction/settlement
+  print; do not silently substitute it for the 3:15 reference or count both names
+  as two levels when their prices coincide. Do not recompute the pivot: its
+  published OHLC calculation is unchanged. Missing reference means unavailable
+  for this closing-point setup; HOLD that setup rather than inventing a number.
+  Being at the right reference still needs the normal entry confirmation and risk.
 - TIMEFRAME FIT: use the timeframe that matches the question. Use higher /
   multi-day context to judge broader strength, weakness, and whether prior
   inventory still exists; use the 1-minute / opening structure for execution.
