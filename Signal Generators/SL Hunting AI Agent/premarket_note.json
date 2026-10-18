@@ -1,21 +1,21 @@
 {
-  "for_date": "2026-10-16",
-  "source": "Intraday Hunter, 'Nifty & Bank nifty | SENSEX Analysis | Prediction For 16 OCT 2026' (pt_Lcn76ttw, uploaded 2026-10-15)",
-  "context": "15 Oct delivered continuous positive momentum across the indices. Call buyers likely booked their targets when rejections started, so do not assume those buyers remain seated and huntable; follow the developing chart.",
+  "for_date": "2026-10-19",
+  "source": "Intraday Hunter, 'Prediction For 19 OCT 2026' (CsF0fsgdGvw, uploaded 2026-10-18)",
+  "context": "October 16's positive move stalled sideways, so buyers likely booked rather than carried positions. BankNIFTY did not cross its round number, leaving few buyers seated. IH notes NIFTY expiry on October 19.",
   "plan": [
-    "FLAT TO GAP UP -> BUY: identify buying-side setups and follow the market; do not directly oppose the prior positive momentum by assuming buyers are still seated.",
-    "SMALL GAP DOWN -> SAME BUY PLAN: a small gap down keeps the buying-side plan; confirm the setup against the incoming chart."
+    "FLAT TO SMALL GAP DOWN -> BUY: identify buying-side setups; prior buyers likely booked rather than carried positions.",
+    "DIRECT GAP UP -> SELL: identify selling-side setups; sellers were not seated in size, and a direct gap up can draw others into buying."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23100,
-        23200
+        23200,
+        23310
       ],
       "support": [
-        22850,
-        22700
+        22950,
+        22860
       ]
     },
     {
@@ -32,12 +32,12 @@
     {
       "index": "SENSEX",
       "resistance": [
-        74640,
-        75100
+        75000,
+        75510
       ],
       "support": [
-        73610,
-        73200
+        74200,
+        73800
       ]
     }
   ]
