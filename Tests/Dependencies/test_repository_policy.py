@@ -255,7 +255,21 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # (test_result_error_is_classified_like_the_error_result_it_carries).
     # Standing check: on the next session decisions return and "SLHuntingAgent
     # decision latency" has not crept up. If either fails, revert this pin first.
-    assert "claude-agent-sdk==0.2.165" in ai
+    # 0.2.165 -> 0.2.168 (2026-10-19, PR #214), bundled CLI 2.1.294 -> 2.1.301.
+    # The win_amd64 wheel is still published and still carries
+    # _bundled/claude.exe (read from the wheel's zip directory; its
+    # _cli_version.py says 2.1.301). Diffed against the installed 0.2.165, the
+    # Python package changed only in types.py and __init__.py: 0.2.166's typed
+    # hook outputs and SystemInitData are additive, and the one removal,
+    # SandboxIgnoreViolations, is a sandbox type neither agent uses. The
+    # transport, query() and the error classes are byte-identical, so the
+    # ResultError classification above still holds. 0.2.167 and 0.2.168 only
+    # move the bundled CLI, and that is where any risk sits: this bump was
+    # taken during market hours, so the real CLI was not run. The standing
+    # check is the test: on the next session decisions return and
+    # "SLHuntingAgent decision latency" has not crept up. If either fails,
+    # revert this pin first.
+    assert "claude-agent-sdk==0.2.168" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -263,7 +277,12 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # suites (417 tests) pass against an isolated install of the whole bumped AI
     # set -- pydantic 2.14.0, mcp 2.3.0, claude-agent-sdk 0.2.165 -- and
     # openai-codex 0.162.0 still declares pydantic>=2.12.
-    assert "pydantic==2.14.0" in ai
+    # 2.14.0 -> 2.14.1 (2026-10-19, PR #214). Patch: fewer allocations in model
+    # validation, plus validator fixes (Decimal max_digits, timedelta range,
+    # TypedDict closed/extra_items, named tuples in Sequence) for field types
+    # neither agent's strict models declare. The whole suite ran on it in this
+    # PR's own CI and failed only on these pin assertions.
+    assert "pydantic==2.14.1" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -329,7 +348,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # positionally, as `input`, the name 0.160.0 already used. openai-codex is
     # pure Python; the CLI it pins in lockstep, openai-codex-cli-bin 0.162.0,
     # publishes a win_amd64 wheel. Standing check unchanged.
-    assert "openai-codex==0.162.0" in ai
+    # 0.162.0 -> 0.162.1 (2026-10-19, PR #214). The Python package is
+    # byte-identical; only its METADATA moves the lockstep CLI pin,
+    # openai-codex-cli-bin, to 0.162.1, which publishes a win_amd64 wheel.
+    # Standing check unchanged.
+    assert "openai-codex==0.162.1" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -468,7 +491,11 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # two pyproject filterwarnings entries and the five tests that pinned them
     # were removed in the same PR. The [tool.pytest.ini_options] table stays,
     # empty: it is what anchors pytest's rootdir at the repo root.
-    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.3"):
+    # numpy 2.5.3 -> 2.5.4 (2026-10-19, PR #214). Patch: linalg svd/lstsq/cond
+    # on non-finite input, StringDType hashing, typing fixes and an MSVC
+    # workaround. MAT-106's 8-decimal indicator snapshot passed UNCHANGED on it
+    # in this PR's own CI, on both 3.12 and 3.13.
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.4"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
