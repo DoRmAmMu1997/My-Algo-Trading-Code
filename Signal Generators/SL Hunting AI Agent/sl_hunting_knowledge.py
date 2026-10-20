@@ -796,20 +796,25 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   event: price trades through the major round number by a real margin (NIFTY 20+
   points, BankNIFTY 50+), and within about ten minutes a candle CLOSES back
   above it; a shallower dip that closes back inside the same bar is not the
-  flush yet. That close, with the ordinary pattern + confirmation, is the long
-  entry at a named level: the stops under the round number were the hunt, and
-  the sellers who joined the break are now trapped under it. IH bought exactly
-  this on 19 Oct: after a FLAT open he waited out the opening rejection, NIFTY
-  flushed through 23,000 to 22,970 and closed back at 23,009 at 09:31, he bought
-  CALLs at 09:32 and booked at 09:39 near 23,140 -- "the round number broke, and
-  right as it broke the market recovered". Measured on five years of NIFTY bars
-  with this book's trade shape (16-point stop, 45-point target, out after 15
-  minutes): +0.51R over 36 flat-open sessions (+0.46R over all 51 opens) against
-  -0.03R for the same exits at the same clock time; BankNIFTY's 1,000s agree
-  (+0.21R against -0.02R). The samples are small and single years flip sign, so
-  this names a level for the ordinary method; it never anticipates the turn. NOT
-  part of this rule: the 100-point version (its edge faded after 2023) and the
-  mirror, a spike above a round number sold back (no edge).
+  flush yet. WHY 20, NOT 10: on 19 Oct a 12-point dip under 23,000 at 09:27
+  closed back above it inside the same bar -- buying that at 09:28 was stopped
+  as the real flush carried on to 22,970, while the 20-point break is IH's 09:32
+  entry. A deeper break also measured better at NIFTY's 100s (a 20-point break
+  over a 10-point one) and in BankNIFTY (50 over 25), so the margin is the rule,
+  not this one day. That close, with the ordinary pattern + confirmation, is the
+  long entry at a named level: the stops under the round number were the hunt,
+  and the sellers who joined the break are now trapped under it. IH bought
+  exactly this on 19 Oct: after a FLAT open he waited out the opening rejection,
+  NIFTY flushed through 23,000 to 22,970 and closed back at 23,009 at 09:31, he
+  bought CALLs at 09:32 and booked at 09:39 near 23,140 -- "the round number
+  broke, and right as it broke the market recovered". Measured on five years of
+  NIFTY bars with this book's trade shape (16-point stop, 45-point target, out
+  after 15 minutes): +0.51R over 36 flat-open sessions (+0.46R over all 51
+  opens) against -0.03R for the same exits at the same clock time; BankNIFTY's
+  1,000s agree (+0.21R against -0.02R). The samples are small and single years
+  flip sign, so this names a level for the ordinary method; it never anticipates
+  the turn. NOT part of this rule: the 100-point version (its edge faded after
+  2023) and the mirror, a spike above a round number sold back (no edge).
   AFTER AN EARLIER EXIT, a major round number broken and reclaimed is a NEW
   STRUCTURAL EVENT for the POST-EXIT RE-ENTRY GATE: a real level broken and
   reclaimed, a fresh swing low, a nameable trapped crowd. An earlier premature

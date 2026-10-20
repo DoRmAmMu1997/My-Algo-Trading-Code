@@ -3629,7 +3629,8 @@ def test_v5u_a_major_round_number_flushed_and_bought_back_is_the_same_hunt():
        BankNIFTY's 1,000s; the 100-point psych grid the tools expose faded after
        2023, so "any round number" would encode the version that failed.
     2. Losing the event: a real break, then a CLOSE back above within about ten
-       minutes, entered with the ordinary pattern + confirmation.
+       minutes, entered with the ordinary pattern + confirmation -- and the
+       WHY 20, NOT 10 reasoning that keeps a same-bar 12-point dip out.
     3. Losing the exclusions (the 100-point version and the mirror short).
     4. Losing the honest sizing of the evidence -- small samples, sign flips.
     """
@@ -3646,6 +3647,14 @@ def test_v5u_a_major_round_number_flushed_and_bought_back_is_the_same_hunt():
     assert "within about ten minutes a candle CLOSES back above it" in rule
     assert "with the ordinary pattern + confirmation, is the long entry at a named level" in rule
     assert "NIFTY flushed through 23,000 to 22,970 and closed back at 23,009 at 09:31" in rule
+    # Why 20, not 10 (operator request, 20 Oct): the 19 Oct case and the ordering
+    # that keeps the margin from resting on one day.
+    assert "WHY 20, NOT 10: on 19 Oct a 12-point dip under 23,000 at 09:27" in rule
+    assert "closed back above it inside the same bar -- buying that at 09:28" in rule
+    assert "buying that at 09:28 was stopped as the real flush carried on to 22,970" in rule
+    assert "while the 20-point break is IH's 09:32 entry" in rule
+    assert "A deeper break also measured better at NIFTY's 100s (a 20-point break over a 10-point one)" in rule
+    assert "and in BankNIFTY (50 over 25), so the margin is the rule, not this one day" in rule
     # 3. Exclusions.
     assert "the 100-point version (its edge faded after 2023)" in rule
     assert "the mirror, a spike above a round number sold back (no edge)" in rule

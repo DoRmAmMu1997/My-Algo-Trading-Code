@@ -10502,6 +10502,12 @@ directly after v5r, the rule it extends.
 * **Event.** A real break (NIFTY 20+ points, BankNIFTY 50+), then a close back
   above within about ten minutes. A shallower dip that closes back inside the
   same bar is not the flush yet.
+* **Why 20, not 10 (in the prompt too, at the operator's request on 20 Oct).**
+  The rule itself carries the 19 Oct contrast: a 12-point same-bar dip at 09:27
+  bought at 09:28 was stopped, while the 20-point break is IH's 09:32 entry. It
+  also carries the ordering that keeps the margin from resting on one day: a
+  20-point break beat a 10-point one at NIFTY's 100s, and 50 beat 25 in
+  BankNIFTY. Revert it with the rest of v5u if it does not help.
 * **Entry.** That close, with the ordinary pattern + confirmation, is the long
   entry at a named level.
 * **Evidence.** It quotes the numbers above with their limits, and excludes the
@@ -10580,6 +10586,8 @@ turned into SELL.
   * "for the POST-EXIT RE-ENTRY GATE" turned into "skips";
   * the gate's "a real level actually broken or reclaimed" weakened;
   * the mirror exclusion removed.
+  * "WHY 20, NOT 10" renamed, the 09:28 outcome flipped, or BankNIFTY's 50-over-25
+    ordering dropped.
 * **An existing test re-anchored.**
   `test_reentry_gate_does_not_contradict_the_exit_rules` found the gate with a
   bare `prompt.index("POST-EXIT RE-ENTRY GATE")`, which now lands on v5u's
