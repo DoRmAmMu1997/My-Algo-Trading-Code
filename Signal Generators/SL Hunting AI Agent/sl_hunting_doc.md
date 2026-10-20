@@ -10340,3 +10340,261 @@ of matching IH. Prompt-contract tests check delivery and guard preservation;
 one real-tool characterization test checks the two close fields remain distinct.
 No runtime, broker, order, API, schema, sizing, environment or premarket-note
 changes are included. Validation places no real broker orders.
+
+## v5u - October 19 live match: the major round number flushed and bought back
+
+### Evidence and scope
+
+[October 19 live session](https://www.youtube.com/watch?v=bMk6zfclvGI), uploaded
+2026-10-19 10:25:41 IST, duration 8:11. All 65 Hindi auto-transcript segments
+(0:02-8:04) were recovered from YouTube's modern transcript panel. The taskbar
+clock was read from 1080p frames: 0:07 shows 09:20, 0:54 shows 09:21, the video
+cuts to 09:32 by 1:02, 6:17 (the booking) shows 09:39 and the end shows 09:41.
+Raw transcripts, the October 21 forecast's transcript and the measurement scripts
+remain under `%TEMP%\intradayhunter-2026-transcripts\` (`bMk6zfclvGI-transcript.txt`,
+`GbVF4_erGqo-transcript.txt`, `v5u-validation\`), outside git. The explanations
+here paraphrase the Hindi.
+
+The agent comparison uses all 73 October 19 decisions (09:15:44-10:29:54, every
+one on `claude-sonnet-5`), the journal's one October 19 row, and that day's
+runner log. The October 19 pre-open note (FLAT TO SMALL GAP DOWN -> BUY) was
+injected at startup (1,536 chars). The entry and exit carried BROKER_FILL prices.
+NIFTY expired on October 19 because October 20 was a market holiday.
+
+### IH's trade
+
+At 09:20 IH sees a nearly flat open with some rejection and some buying, and
+refuses to hurry: a buy trade is there, but the market sits between two levels,
+the round number below and 56,000 above in BankNIFTY. On a flat open he expected
+a small breakdown first, because the market "changes the psychology" before it
+lets anyone buy. The rejection that came was sharper than expected. NIFTY fell
+from 23,175 to 22,970 through 23,000 by 09:29, and BankNIFTY fell from 55,884 to
+55,331 through 55,500 and 55,400 by 09:30. He traded none of it.
+
+He explains why. The earlier buyers had not carried positions through the
+sideways action, so there were no buyer stops below to hunt, and the fall was
+"just a trap". Selling would pay only where the buyers' stops were available,
+for instance after a direct gap-up when everyone focuses on buying. Once the
+recovery began he bought CALLs at 09:32: "the round number broke, in NIFTY too,
+and right as it broke the market recovered". Sensex took its support exactly.
+He rode the sharp move while others could not buy into it, and booked at 09:39
+when it started to rotate rather than let a large profit shrink. NIFTY was then
+near 23,140.
+
+The completed positions screen (6:22) shows:
+
+| Leg | Displayed booked P&L |
+|---|---|
+| BankNIFTY October 55,300 CE | +54,581.25 |
+| BankNIFTY October 55,400 CE | +56,745.00 |
+| Sensex October 22 74,300 CE | +1,25,298.00 |
+| NIFTY October 19 23,000 CE | +69,784.00 |
+
+Total displayed booked P&L: **+Rs.3,06,408.25**. As with earlier comparisons,
+this is one directional basket in IH's quantities and contracts, video evidence
+rather than an audited return, and not comparable rupee-for-rupee with the
+agent.
+
+### The agent: an early long out at 09:20, then no second look
+
+| Time | IH | Agent |
+|---|---|---|
+| 09:15-09:17 | Flat open; waits, expecting a small breakdown first | The first candle flushes to 23,074.6, under the 3:15 level 23,121.6; the second candle closes back above it |
+| 09:18:46 | Waiting | ENTER_LONG 2 lots at 23,143.40, setup `flush_and_reclaim_flat_open`, stop 23,126.0, target 23,176.9 |
+| 09:20:20 | Waiting | EXIT `index_hierarchy_exit`: BankNIFTY broke its pivot with a confirmed shooting star and bearish engulfing. NIFTY +10.7 points; the basket's option P&L was -2,253.80, from the BankNIFTY mirror |
+| 09:25-09:31 | The sharp rejection through 23,000 / 55,500; no trade | HOLD: no confirmed reversal at a level. Correct |
+| 09:31-09:32 | NIFTY closes back at 23,009; IH buys CALLs | 09:32 HOLD (conf 2): "that exact premise was already tried ... POST-LOSS SPEED LIMIT bars a reflex retry" |
+| 09:33-09:35 | Holding | HOLD: the hammer is confirmed, but "into the pivot / 50% fib zone, where a bounce stalls", then "already happened" |
+| 09:36-09:39 | Books at 09:39, +3,06,408.25 displayed | HOLD: resistance cluster overhead, "that recovery leg is already captured" |
+
+Two different errors, not one:
+
+1. **The 09:18 long applied v5r outside its scope.** v5r is written for a FLAT
+   open "after a down day". October 16 was an UP day (3:15 to 3:15, +0.80%). IH,
+   on the same open, explicitly declined to hurry. A simple first-candle version
+   of v5r also measures poorly whichever day preceded it (below), so this is
+   recorded for the operator's v5r review rather than changed here.
+2. **The real flush was read through the speed limit.** By 09:31, 23,000 had
+   been broken and reclaimed AFTER the 09:20 exit, with a fresh swing low at
+   22,970 and the breakdown sellers trapped under the level. That meets the
+   POST-EXIT RE-ENTRY GATE's own description of a new structural event. POST-LOSS
+   SPEED LIMIT forbids using the next candle as a recovery attempt. It does not
+   forbid a fresh setup twelve minutes later at a different level. After 09:33 the
+   agent's "already happened" reading is the ordinary A MOVE THAT DENIED YOU
+   ENTRY discipline, applied once the first, correct entry moment had passed.
+
+The 09:44 decision timed out (1 of 73). That day's latency median was 32.8 s on
+Sonnet 5, so the timeout did not hide an entry.
+
+### Measured before encoding
+
+All on the five-year NIFTY 1-minute CSV (2021-10-08 to 2026-10-19, 1,233
+sessions, 935 FLAT at |gap| < 0.5% against the 3:15 level), measured the way the
+agent trades. The signal is a 1-minute low through the round number below the
+open by the stated margin, broken by 10:15, and a CLOSE back above it within ten
+bars. Entry is the next bar's open, no later than 10:29, with a 16-point stop, a
+45-point target and a 15-minute exit; a bar touching both counts as the stop.
+Results are in R. The baseline is the same exits at the same clock minute on every
+other FLAT session.
+
+| Variant | Signal | Same exits, same minute | Lift |
+|---|---|---|---|
+| Every 100, break >= 1 pt (the first definition) | -0.066R, n=359 | -0.058R | -0.008 |
+| Every 100, break >= 10 | +0.078R, n=249 | -0.054R | +0.132 |
+| Every 100, break >= 20 | +0.137R, n=154 | -0.045R | +0.181 |
+| The 500s, break >= 10 | +0.290R, n=56 | -0.047R | +0.337 |
+| **The 500s, break >= 20 (adopted)** | **+0.513R, n=36** | -0.033R | **+0.546** |
+| The 500s, break >= 30 | +0.473R, n=17 | -0.022R | +0.495 |
+
+* **Why 20 points, not 10.** On October 19 the 10-point version enters at 09:28,
+  on a 12-point dip under 23,000 that closed back above it inside the same bar,
+  and is stopped as the real flush carries on to 22,970. The 20-point version
+  enters at 09:32, IH's minute, and books the target. The day alone would make
+  the choice a fit to the case, so it rests on the ordering instead: a deeper
+  break scores better at the 100s (10 -> 20) and in BankNIFTY (25 -> 50), and
+  20 and 30 agree at the 500s.
+* **Time-stable only at the major levels.** Split by period (all opens), the
+  100-point versions ran +0.27R in 2021-23 but -0.04R and +0.01R in 2024-26. The 500s held
+  in both halves: +0.57R / +0.13R at break >= 10, and +0.71R / +0.29R at break
+  >= 20. Single years still flip sign at the adopted cell: 2021 -1.00R (n=1)
+  and 2024 -0.38R (n=10).
+* **Exit shapes.** Every exit variant (12.5/35, 21.6/60, 8 and 30 minutes) kept
+  a positive lift at the 500s (+0.12 to +0.58).
+* **The flat open is not what matters.** All opens at the 500s with break >= 20
+  give +0.46R (n=51), and the non-flat subset is +0.32R (n=15). The rule
+  therefore names no open type; IH's day was flat.
+* **BankNIFTY agrees only at its own major levels.** Exits were scaled to 38/108,
+  with breaks of 25 / 50 points. The 500s show no lift (-0.045, -0.008). The
+  1,000s give +0.104R (n=64, lift +0.120) at 25 points and +0.206R (n=41, lift
+  +0.225) at 50, the rule's BankNIFTY margin; both are positive in every year
+  from 2023.
+* **The mirror short has no consistent edge.** A spike above the round number
+  sold back gives lifts of -0.052, -0.070 and -0.074, with one positive cell on
+  n=20. It is excluded, as v5r excluded its mirror.
+* **REFUTED, IH's "tomorrow is a holiday, so this kind of momentum comes":** 70
+  pre-holiday sessions against 1,167 others. The median 09:15-10:29 range was
+  0.503% against 0.528%, the net move 0.260% against 0.236%, and the full-day
+  range 0.906% against 0.867%, with mixed years. Pre-holiday sessions are not
+  sharper in the agent's window. The existing EVENT / HOLIDAY PARTICIPATION
+  rule is unchanged.
+* **Recorded for the v5r review (not acted on):** v5r's first-candle event,
+  measured simply (a FLAT open, the 09:15 low under the 3:15 level, the 09:16
+  close back above it, long at the 09:17 open), is -0.217R after a down day
+  (n=50) and -0.238R after an up day (n=60). The other exit shapes are also
+  negative. The down-day scope is not what separates it. v5r is the operator's
+  benefit-of-the-doubt adoption (PR #210), so it stays as written. This is
+  evidence for that review, not a change.
+
+The evidence is weaker than "robust": the samples at the major levels are small
+and single years flip sign. It is consistently positive across exit shapes, both
+halves and both indices' major levels, and it is IH's exact trade: the adopted
+variant enters at 09:32 on October 19 and books the target. On that basis it is
+adopted narrowly, as a named level for the ordinary method, and it can be
+reverted like any version.
+
+### Adopted: v5u
+
+**A MAJOR ROUND NUMBER FLUSHED AND BOUGHT BACK IS THE SAME HUNT (v5u)** sits
+directly after v5r, the rule it extends.
+
+* **Levels.** It names MAJOR levels only: NIFTY's 500s and BankNIFTY's 1,000s,
+  explicitly not the tools' 100-point psych grid.
+* **Event.** A real break (NIFTY 20+ points, BankNIFTY 50+), then a close back
+  above within about ten minutes. A shallower dip that closes back inside the
+  same bar is not the flush yet.
+* **Why 20, not 10 (in the prompt too, at the operator's request on 20 Oct).**
+  The rule itself carries the 19 Oct contrast: a 12-point same-bar dip at 09:27
+  bought at 09:28 was stopped, while the 20-point break is IH's 09:32 entry. It
+  also carries the ordering that keeps the margin from resting on one day: a
+  20-point break beat a 10-point one at NIFTY's 100s, and 50 beat 25 in
+  BankNIFTY. Revert it with the rest of v5u if it does not help.
+* **Entry.** That close, with the ordinary pattern + confirmation, is the long
+  entry at a named level.
+* **Evidence.** It quotes the numbers above with their limits, and excludes the
+  100-point version and the mirror.
+* **Re-entry.** After an earlier exit, it names the event a NEW STRUCTURAL EVENT
+  for the POST-EXIT RE-ENTRY GATE, so an earlier premature attempt does not make
+  it a reflex retry. This uses the gate's own language rather than loosening it.
+  The 30 Sep measurement that re-entry after a quick loss is robustly bad is why
+  every other guard stays: the code-enforced cooldown, the gate's other
+  conditions, RUNAWAY TREND, cross-index evidence, the risk budget and max-loss.
+  HOLD if the real stop under the flush low does not fit the budget.
+
+Confirmations of existing rules, not duplicated:
+* IH's "no stops, no selling edge" reasoning is ONE BREAKDOWN, NOT TWO, plus the
+  seated-crowd rules.
+* "Ride the sharp move while others cannot buy, book when it rotates, never let a
+  big profit shrink" is PROFIT-HOLD and v4y's booking.
+* The v5t two-level map and v5r's event.
+
+### Not changed, for review
+
+* The agent described its own 09:20 `index_hierarchy_exit` as being "stopped
+  out". The NIFTY leg was +10.7 points; the loss came from the BankNIFTY mirror.
+  That is accurate as basket P&L but inaccurate as a description of the exit.
+  It is the narration family the pending v4n note tracks, and no change is made.
+* Sensex remains unavailable to the tools, so IH's "Sensex took its support
+  exactly" cannot be checked by the agent (as noted in v5t).
+
+### October 21 pre-open note
+
+[Prediction For 21 OCT 2026](https://www.youtube.com/watch?v=GbVF4_erGqo),
+uploaded 2026-10-20 21:04:50 IST, 99 s, 11 transcript segments.
+
+**Read.** October 19 sold continuously in NIFTY and Sensex while BankNIFTY moved
+little. Sellers are likely seated in size and buyers stepped away, though some
+sellers may not have carried positions.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY |
+| SMALL GAP DOWN | The same BUY plan |
+| BIG GAP DOWN | Ignored, no side pre-set |
+
+IH's caption garbled NIFTY's resistances as "2380 230". The frame at 1:24 shows
+drawn lines at 23,083.20 and 23,200.50, recorded as 23,080 / 23,200. Every other
+level matches its drawn label: BankNIFTY 55,913.75 / 56,202.60 / 55,211.10 /
+54,906.40 and Sensex 74,252.98 / 74,790.96 / 73,210.61.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,080 / 23,200 | 22,780 / 22,700 |
+| BankNIFTY | 55,900 / 56,200 | 55,200 / 54,900 |
+| Sensex | 74,250 / 74,790 | 73,200 / 72,700 |
+
+`test_shipped_note_matches_october_21_intraday_hunter_plan` pins the date gate,
+the source, the three plan branches (with no SELL branch) and all twelve levels.
+Each of these mutations fails it: a NIFTY level moved by 3 points, the big-gap-down
+branch turned into SELL, the date set to October 20, and the small-gap-down branch
+turned into SELL.
+
+### Validation
+
+* **v5u schema tests.**
+  * `test_v5u_a_major_round_number_flushed_and_bought_back_is_the_same_hunt`
+    pins the major-level definition, the event, the exclusions and the stated
+    evidence.
+  * `test_v5u_reclaim_after_an_exit_is_a_new_event_but_every_guard_stays` pins
+    the re-entry wording and the unchanged guards, that the gate and speed-limit
+    texts it cites still exist, v5r's scope, and the placement v5r < v5u < v4t.
+* **Mutation checks.** Each of these mutants fails its test, and an unmutated
+  control passes:
+  * NIFTY's 500s turned into 100s;
+  * the HOLD clause turned into "size down";
+  * "for the POST-EXIT RE-ENTRY GATE" turned into "skips";
+  * the gate's "a real level actually broken or reclaimed" weakened;
+  * the mirror exclusion removed.
+  * "WHY 20, NOT 10" renamed, the 09:28 outcome flipped, or BankNIFTY's 50-over-25
+    ordering dropped.
+* **An existing test re-anchored.**
+  `test_reentry_gate_does_not_contradict_the_exit_rules` found the gate with a
+  bare `prompt.index("POST-EXIT RE-ENTRY GATE")`, which now lands on v5u's
+  cross-reference, the trap `_flat_rule` documents. It anchors on the rule's own
+  bullet instead; its assertions are unchanged. Mutating the gate's "Exits are
+  never delayed by it" still fails it.
+
+These are prompt-contract checks, not proof of model compliance or returns. No
+runtime, broker, order, API, schema, sizing, environment or timeout change is
+included, and validation places no real broker orders.

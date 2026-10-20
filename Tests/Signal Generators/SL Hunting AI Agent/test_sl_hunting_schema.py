@@ -1258,7 +1258,9 @@ def test_reentry_gate_does_not_contradict_the_exit_rules():
     state its entries-only scope in the same breath as the mechanical exit paths.
     """
     prompt = build_system_prompt()
-    gate = prompt[prompt.index("POST-EXIT RE-ENTRY GATE"):]
+    # Anchor on the rule's own bullet: later rules (v5u) cite the gate by name,
+    # and a bare match would land on that cross-reference instead.
+    gate = prompt[prompt.index("\n- POST-EXIT RE-ENTRY GATE") + 1:]
     gate = gate[: gate.index("\n- ")] if "\n- " in gate else gate
     assert "Exits are never delayed by it" in gate
     assert "square-off" in gate
@@ -3617,3 +3619,80 @@ def test_v5t_closing_point_fields_really_remain_distinct_in_the_tool_payload():
     assert payload["previous_close"] == 22997.35
     assert payload["pivot"] == 22974.90
 
+
+def test_v5u_a_major_round_number_flushed_and_bought_back_is_the_same_hunt():
+    """v5u (19 Oct): v5r's flush-and-reclaim at a MAJOR round number, later in the window.
+
+    Four ways an edit breaks it:
+
+    1. Losing the MAJOR definition. The measured edge lives at NIFTY's 500s and
+       BankNIFTY's 1,000s; the 100-point psych grid the tools expose faded after
+       2023, so "any round number" would encode the version that failed.
+    2. Losing the event: a real break, then a CLOSE back above within about ten
+       minutes, entered with the ordinary pattern + confirmation -- and the
+       WHY 20, NOT 10 reasoning that keeps a same-bar 12-point dip out.
+    3. Losing the exclusions (the 100-point version and the mirror short).
+    4. Losing the honest sizing of the evidence -- small samples, sign flips.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A MAJOR ROUND NUMBER FLUSHED AND BOUGHT BACK IS THE SAME HUNT")
+
+    # 1. Major levels only.
+    assert "(v5u)" in rule
+    assert "MAJOR means NIFTY's 500s (22,500 / 23,000 / 23,500) and BankNIFTY's 1,000s" in rule
+    assert "not every 100-point psych line" in rule
+    # 2. The event and the entry.
+    assert "price trades through the major round number by a real margin (NIFTY 20+ points, BankNIFTY 50+)" in rule
+    assert "a shallower dip that closes back inside the same bar is not the flush yet" in rule
+    assert "within about ten minutes a candle CLOSES back above it" in rule
+    assert "with the ordinary pattern + confirmation, is the long entry at a named level" in rule
+    assert "NIFTY flushed through 23,000 to 22,970 and closed back at 23,009 at 09:31" in rule
+    # Why 20, not 10 (operator request, 20 Oct): the 19 Oct case and the ordering
+    # that keeps the margin from resting on one day.
+    assert "WHY 20, NOT 10: on 19 Oct a 12-point dip under 23,000 at 09:27" in rule
+    assert "closed back above it inside the same bar -- buying that at 09:28" in rule
+    assert "buying that at 09:28 was stopped as the real flush carried on to 22,970" in rule
+    assert "while the 20-point break is IH's 09:32 entry" in rule
+    assert "A deeper break also measured better at NIFTY's 100s (a 20-point break over a 10-point one)" in rule
+    assert "and in BankNIFTY (50 over 25), so the margin is the rule, not this one day" in rule
+    # 3. Exclusions.
+    assert "the 100-point version (its edge faded after 2023)" in rule
+    assert "the mirror, a spike above a round number sold back (no edge)" in rule
+    # 4. Evidence stated with its limits.
+    assert "+0.51R over 36 flat-open sessions" in rule
+    assert "against -0.03R for the same exits at the same clock time" in rule
+    assert "The samples are small and single years flip sign" in rule
+    assert "it never anticipates the turn" in rule
+
+
+def test_v5u_reclaim_after_an_exit_is_a_new_event_but_every_guard_stays():
+    """The 19 Oct mismatch was the speed limit read as a ban; the fix must not loosen it.
+
+    The agent held IH's 09:32 entry because POST-LOSS SPEED LIMIT "bars a reflex
+    retry" of its 09:18 long. v5u names the flush-and-reclaim a NEW STRUCTURAL
+    EVENT -- language the gate already uses -- while the cooldown, the gate's
+    other conditions and the risk rules stay untouched (30 Sep measured re-entry
+    after a quick loss as robustly bad, so nothing here may relax them).
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A MAJOR ROUND NUMBER FLUSHED AND BOUGHT BACK IS THE SAME HUNT")
+
+    assert "a NEW STRUCTURAL EVENT for the POST-EXIT RE-ENTRY GATE" in rule
+    assert "An earlier premature attempt does not make it the reflex retry POST-LOSS SPEED LIMIT forbids" in rule
+    assert "The code-enforced cooldown, the gate's other conditions, RUNAWAY TREND, cross-index evidence" in rule
+    assert "the risk budget and max-loss are unchanged" in rule
+    assert "if the real stop under the flush low does not fit the budget, HOLD" in rule
+    # The rules it cites are still there, unedited in substance.
+    gate = _flat_rule(prompt, "POST-EXIT RE-ENTRY GATE")
+    assert "a real level actually broken or reclaimed, or a fresh swing high/low formed since" in gate
+    assert "A DIFFERENT PATTERN NAME ON THE SAME STRUCTURE IS NOT A NEW PREMISE" in gate
+    speed = _flat_rule(prompt, "POST-LOSS SPEED LIMIT")
+    assert "never use the next candle as a recovery attempt" in speed
+    # It sits directly after v5r, which it extends, and keeps v5r's own scope intact.
+    v5r = prompt.index("- A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT")
+    v5u = prompt.index("- A MAJOR ROUND NUMBER FLUSHED AND BOUGHT BACK IS THE SAME HUNT")
+    v4t = prompt.index("- THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN")
+    assert v5r < v5u < v4t
+    assert "After a down day, a FLAT open whose FIRST candle flushes" in _flat_rule(
+        prompt, "A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT"
+    )
