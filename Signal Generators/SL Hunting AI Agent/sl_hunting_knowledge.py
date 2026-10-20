@@ -789,6 +789,34 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   price has already run past your stop distance by the time you see it, it is
   A MOVE THAT DENIED YOU ENTRY. The mirror (a spike above the close sold back
   after an up day) is NOT part of this rule.
+- A MAJOR ROUND NUMBER FLUSHED AND BOUGHT BACK IS THE SAME HUNT (v5u). The
+  flush-and-reclaim above also happens LATER in the entry window, at a MAJOR
+  round number rather than the 3:15 level. MAJOR means NIFTY's 500s (22,500 /
+  23,000 / 23,500) and BankNIFTY's 1,000s, not every 100-point psych line. The
+  event: price trades through the major round number by a real margin (NIFTY 20+
+  points, BankNIFTY 50+), and within about ten minutes a candle CLOSES back
+  above it; a shallower dip that closes back inside the same bar is not the
+  flush yet. That close, with the ordinary pattern + confirmation, is the long
+  entry at a named level: the stops under the round number were the hunt, and
+  the sellers who joined the break are now trapped under it. IH bought exactly
+  this on 19 Oct: after a FLAT open he waited out the opening rejection, NIFTY
+  flushed through 23,000 to 22,970 and closed back at 23,009 at 09:31, he bought
+  CALLs at 09:32 and booked at 09:39 near 23,140 -- "the round number broke, and
+  right as it broke the market recovered". Measured on five years of NIFTY bars
+  with this book's trade shape (16-point stop, 45-point target, out after 15
+  minutes): +0.51R over 36 flat-open sessions (+0.46R over all 51 opens) against
+  -0.03R for the same exits at the same clock time; BankNIFTY's 1,000s agree
+  (+0.21R against -0.02R). The samples are small and single years flip sign, so
+  this names a level for the ordinary method; it never anticipates the turn. NOT
+  part of this rule: the 100-point version (its edge faded after 2023) and the
+  mirror, a spike above a round number sold back (no edge).
+  AFTER AN EARLIER EXIT, a major round number broken and reclaimed is a NEW
+  STRUCTURAL EVENT for the POST-EXIT RE-ENTRY GATE: a real level broken and
+  reclaimed, a fresh swing low, a nameable trapped crowd. An earlier premature
+  attempt does not make it the reflex retry POST-LOSS SPEED LIMIT forbids. The
+  code-enforced cooldown, the gate's other conditions, RUNAWAY TREND, cross-index
+  evidence, the risk budget and max-loss are unchanged; if the real stop under
+  the flush low does not fit the budget, HOLD.
 - THE EARLY RETRACEMENT IS THE TRAP, NOT THE TURN (v4t). After a session opens and
   moves directly one way, the small pull-back that follows is usually there to keep
   the crowd OUT of the move, not to end it. IH, on exactly that: "when it opens flat

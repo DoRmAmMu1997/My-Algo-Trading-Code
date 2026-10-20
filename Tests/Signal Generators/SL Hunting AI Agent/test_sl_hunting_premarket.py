@@ -201,42 +201,43 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_19_intraday_hunter_plan():
-    """Render the Sunday forecast on Monday, without flattening its side flip.
+def test_shipped_note_matches_october_21_intraday_hunter_plan():
+    """Render the October 20 evening forecast on Wednesday, the next trading day.
 
-    CsF0fsgdGvw was uploaded 18 Oct at 21:14 IST. Its direct Hindi transcript
-    buys flat/small gap-down but SELLS a direct gap-up. NIFTY expiry is context,
-    not an entry instruction. Frames at 0:39, 1:11 and 1:46 check the levels:
-    garbled resistance captions are resolved from the drawn 23,310.80 and
-    75,510.50 lines, rounded to 23,310 / 75,510 rather than invented digits.
-    BankNIFTY's caption says 5500 for the drawn 55,500.35 support.
+    GbVF4_erGqo was uploaded 20 Oct at 21:04 IST; October 20 itself was a market
+    holiday (IH, 19 Oct live session: "tomorrow is a holiday"). Its direct Hindi
+    transcript buys a flat-to-gap-up open AND a small gap-down against sellers
+    seated by October 19's continuous selling, and ignores a big gap-down. Frames
+    at 0:36, 1:03 and 1:24 check the levels: NIFTY's garbled "2380 230" caption
+    is the drawn 23,083.20 / 23,200.50 resistance pair, rounded to 23,080 / 23,200
+    as IH reads it; the other eleven levels match their drawn labels.
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 19))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-19" in block
-    assert "CsF0fsgdGvw" in block
-    assert "uploaded 2026-10-18" in note.source
-    assert "buyers likely booked" in note.context
-    assert "NIFTY expiry on October 19" in note.context
-    assert format_premarket_note(note, date(2026, 10, 18)) == ""
+    block = format_premarket_note(note, date(2026, 10, 21))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-21" in block
+    assert "GbVF4_erGqo" in block
+    assert "uploaded 2026-10-20" in note.source
+    assert "sellers are likely seated" in note.context
+    assert "October 20 was a market holiday" in note.context
     assert format_premarket_note(note, date(2026, 10, 20)) == ""
+    assert format_premarket_note(note, date(2026, 10, 22)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO SMALL GAP DOWN -> BUY"))
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
     assert "buying-side setups" in buy
-    assert "buyers likely booked" in buy
-    sell = next(line for line in note.plan if line.startswith("DIRECT GAP UP -> SELL"))
-    assert "selling-side setups" in sell
-    assert "sellers were not seated" in sell
-    assert not any("EXPIR" in line.upper() for line in note.plan)
+    small = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> SAME BUY PLAN"))
+    assert "seated sellers" in small
+    big = next(line for line in note.plan if line.startswith("BIG GAP DOWN -> NO PRE-SET SIDE"))
+    assert "-> SELL" not in big
+    assert not any(line.split("->")[1].strip().startswith("SELL") for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [23200.0, 23310.0], "support": [22950.0, 22860.0]},
-        {"index": "BANKNIFTY", "resistance": [56200.0, 56500.0], "support": [55500.0, 55200.0]},
-        {"index": "SENSEX", "resistance": [75000.0, 75510.0], "support": [74200.0, 73800.0]},
+        {"index": "NIFTY", "resistance": [23080.0, 23200.0], "support": [22780.0, 22700.0]},
+        {"index": "BANKNIFTY", "resistance": [55900.0, 56200.0], "support": [55200.0, 54900.0]},
+        {"index": "SENSEX", "resistance": [74250.0, 74790.0], "support": [73200.0, 72700.0]},
     ]

@@ -1,43 +1,44 @@
 {
-  "for_date": "2026-10-19",
-  "source": "Intraday Hunter, 'Prediction For 19 OCT 2026' (CsF0fsgdGvw, uploaded 2026-10-18)",
-  "context": "October 16's positive move stalled sideways, so buyers likely booked rather than carried positions. BankNIFTY did not cross its round number, leaving few buyers seated. IH notes NIFTY expiry on October 19.",
+  "for_date": "2026-10-21",
+  "source": "Intraday Hunter, 'Prediction For 21 OCT 2026' (GbVF4_erGqo, uploaded 2026-10-20)",
+  "context": "October 19 sold continuously in NIFTY and Sensex while BankNIFTY moved little, so sellers are likely seated in size and buyers stepped away; some sellers may not have carried positions. October 20 was a market holiday.",
   "plan": [
-    "FLAT TO SMALL GAP DOWN -> BUY: identify buying-side setups; prior buyers likely booked rather than carried positions.",
-    "DIRECT GAP UP -> SELL: identify selling-side setups; sellers were not seated in size, and a direct gap up can draw others into buying."
+    "FLAT TO GAP UP -> BUY: identify buying-side setups to target the sellers seated by October 19's continuous selling.",
+    "SMALL GAP DOWN -> SAME BUY PLAN: a small gap down keeps the buying-side plan against those seated sellers.",
+    "BIG GAP DOWN -> NO PRE-SET SIDE: IH ignores a large gap down; follow the developing chart."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23200,
-        23310
+        23080,
+        23200
       ],
       "support": [
-        22950,
-        22860
+        22780,
+        22700
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        56200,
-        56500
+        55900,
+        56200
       ],
       "support": [
-        55500,
-        55200
+        55200,
+        54900
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        75000,
-        75510
+        74250,
+        74790
       ],
       "support": [
-        74200,
-        73800
+        73200,
+        72700
       ]
     }
   ]
