@@ -62,6 +62,16 @@ VALID_DIRECTIONS = ("LONG", "SHORT")
 # loss never exceeds this budget, exactly like the repo's Profit Shooter sizer.
 DEFAULT_RISK_BUDGET = 2500.0
 
+# SLH-025: appended to every SIZING refusal the model reads. On 2026-10-21 a
+# sizing refusal at the first-candle-low stop was answered by tightening the
+# stop twice in sixteen seconds until one lot fit -- the cosmetic stop v5t and
+# v5u forbid in prose. The order tool also enforces it (see SLHuntingToolContext).
+SIZING_REFUSAL_GUIDANCE = (
+    "Do not tighten the stop to make it fit: a stop squeezed inside the real "
+    "invalidation is cosmetic. HOLD unless the REAL invalidation fits the risk "
+    "budget (SLH-025)."
+)
+
 # THE single bound on a model-written order reason. `sl_hunting_tools` imports this
 # rather than declaring its own, because two independent caps on the same string
 # drift apart and then silently disagree about what was recorded.
@@ -280,7 +290,11 @@ class StandaloneExecutor:
             max_lots=self.max_lots,
         )
         if not sizing.accepted:
-            return {"accepted": False, "reason": sizing.reason}
+            return {
+                "accepted": False,
+                "reason": f"{sizing.reason} {SIZING_REFUSAL_GUIDANCE}",
+                "refusal_kind": "sizing",
+            }
         lots = sizing.lots
         self.pos = _PaperPosition(
             active=True,
@@ -520,7 +534,15 @@ class MasterWorkerExecutor:
             # attribute (or the standalone runner) keeps the generic message.
             refusal = getattr(self._w, "last_entry_refusal", None)
             if isinstance(refusal, str) and refusal.strip():
-                return {"accepted": False, "reason": f"worker refused the entry: {refusal.strip()}"}
+                refused: dict[str, Any] = {
+                    "accepted": False, "reason": f"worker refused the entry: {refusal.strip()}",
+                }
+                # SLH-025: tag a SIZING refusal so the order tool can hold the
+                # line on the stop without parsing text, and say why to the model.
+                if refusal.strip().startswith("sizing:"):
+                    refused["reason"] = f"{refused['reason']} {SIZING_REFUSAL_GUIDANCE}"
+                    refused["refusal_kind"] = "sizing"
+                return refused
             return {
                 "accepted": False,
                 "reason": "worker rejected the entry (e.g. could not resolve option / outside trading window)",

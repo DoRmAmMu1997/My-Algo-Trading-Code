@@ -10734,19 +10734,15 @@ rule. The original bullets and IH's reasoning stay.
   relaxes nothing: pattern + confirmation, the stop and the risk budget all
   stand.
 
-### Proposed, not built: SLH-025, the squeezed stop
+### SLH-025, the squeezed stop: built (see SLH-025 below)
 
-**The gap.** The prose rule (HOLD when the real stop does not fit) did not bind
-at the one moment it applies, right after SLH-024 reports a sizing refusal.
-
-**Two mechanical options, smallest first:**
-1. **Change the message.** SLH-024's sizing reason ends "nothing was placed".
-   Add "do not tighten the stop to fit; HOLD unless the real invalidation fits".
-   This is a one-line change in the master.
-2. **Add a guard.** Inside one decision pass, the order tool refuses an ENTER
-   whose stop is tighter than a stop already refused for sizing in that pass.
-
-Either is a live-path change and waits for the operator.
+The prose rule (HOLD when the real stop does not fit) did not bind at the one
+moment it applies, right after SLH-024 reports a sizing refusal. Two mechanical
+options were proposed: change the message, or add a guard. The operator asked
+for SLH-025 on 21 Oct, and both were built in this PR: the guidance rides on
+every sizing refusal, and the order tool refuses a tighter same-side stop for
+the rest of the pass. The message change sits in the executor rather than the
+master, so nothing else on the master's entry path changes.
 
 ### Leads, not encoded
 
@@ -10958,3 +10954,58 @@ Seven mutants each fail a test:
 * the tool's reason check dropped;
 * the agent's HOLD branch dropped;
 * the worker's raise-only check dropped.
+
+## SLH-025 - a stop refused for sizing may not be squeezed to fit (operator, 21 Oct)
+
+**The gap.** On 21 Oct the order tool refused a LONG at the first-candle-low stop
+22,981 for sizing, then at 23,008. The agent tightened to 23,011 to get one lot,
+three attempts in sixteen seconds inside one decision pass. v5t and v5u already
+said "if the real stop does not fit the budget, HOLD"; the prose did not bind at
+the one moment it applies. There were three such trades since July (10 Aug,
+16 Sep, 21 Oct): two lost, one won.
+
+**Both proposed halves are built; the master is untouched.**
+
+* **The nudge (executor).** Every sizing refusal the model reads now ends with
+  `SIZING_REFUSAL_GUIDANCE`: "Do not tighten the stop to make it fit: a stop
+  squeezed inside the real invalidation is cosmetic. HOLD unless the REAL
+  invalidation fits the risk budget (SLH-025)." The refusal is also tagged
+  `refusal_kind: "sizing"`. The paper executor tags its own sizing refusal. The
+  master executor tags a worker refusal that starts with SLH-024's `sizing:`
+  prefix, and no other refusal.
+* **The guard (order tool).** Once the executor has returned a TAGGED sizing
+  refusal for an ENTER this pass, any further ENTER in the same direction whose
+  stop is TIGHTER is refused before the executor is touched. The refusal names
+  the stop that was already refused and tells the model to HOLD.
+
+**Scope, deliberately one pass, as proposed.** The context is rebuilt every bar.
+Untouched:
+
+* the opposite direction;
+* a refusal for any other reason, such as bad levels, cooldown or a quote;
+* a wider or equal stop, which sizing refuses on its own;
+* the next bar.
+
+A squeeze moved to the next bar is therefore not caught. A new setup on a later
+bar may legitimately use a nearer level, and a fixed carry-over window would be
+an arbitrary number. Watch for it in review: a sizing refusal followed by an
+accepted same-side entry with a tighter stop one or two bars later.
+
+**Validation.** `test_sl_hunting_stop_squeeze.py` has 8 tests:
+
+* the paper and master sizing refusals are tagged and carry the guidance;
+* a non-sizing master refusal is neither tagged nor guided;
+* the 21 Oct squeeze is refused in-pass, the position stays flat, and the pass
+  stays open;
+* the opposite direction, a non-sizing executor refusal, a pre-executor levels
+  refusal and the next pass are all left alone.
+
+Seven mutants each fail a test:
+
+* the guard comparison disabled;
+* the refusal never recorded;
+* direction scoping dropped;
+* any refusal arming the guard;
+* the paper tag dropped;
+* the master tagging every refusal;
+* the master guidance dropped.
