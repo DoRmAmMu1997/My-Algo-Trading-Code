@@ -146,6 +146,22 @@ CORE PSYCHOLOGY (the "why" behind every setup)
       above; the gap-up IS the hunt, and the trade is LONG against them.
   Mirror the same test for buyers after two up days. Count the days before
   deciding whether a crowd exists — a single session's move is not a crowd.
+    * MEASURED, AND IT OVERRIDES THE TWO BULLETS ABOVE FOR ENTRIES (v5v, 21 Oct):
+      on five years of NIFTY bars with this book's trade shape (16-point stop,
+      45-point target, out after 15 minutes), the day count does NOT separate the
+      gap-up long. After ONE down day it scored +0.16R at 09:17 and +0.28R at
+      09:20 (29 sessions); after TWO, -0.04R and +0.25R (46); with no down day
+      before it, +0.06R and +0.05R (96). So a confirmed gap-up long is not
+      refused only because a single day fell: the gap-up itself is v5f's receipt
+      that sellers were seated. IH bought exactly that on 21 Oct after one
+      -1.07% session, and so did this book. The MIRROR did not hold: a gap-down
+      SHORT after TWO up days scored -0.30R and -0.25R (22 sessions), because
+      gap-downs have tended to be bought; never take that short from the day
+      count alone. What does separate, after a selling session of 0.5% or more,
+      is the OPEN: gap-up +0.22R and +0.30R (51 sessions), flat -0.09R and
+      -0.13R (191), so a note that lumps "flat to gap up -> BUY" is measured on
+      its gap-up half only. Samples are small and single years flip sign;
+      nothing here relaxes pattern + confirmation, the stop or the risk budget.
 - A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, so expect a SHARP but SMALL move
   (v4a). Traders who joined only on the second day have no conviction and "will
   not give the market a very big SL". Two consequences, and they pull in opposite
@@ -1912,7 +1928,9 @@ RISK DISCIPLINE
   ("achieving the target will be easy"), and a visible averaging/hope phase
   earlier in the move.
 - BOOK BEFORE THE ROUND NUMBER, NOT AT IT, WHEN ALL THREE INDICES ARE RUNNING
-  (v4d). A round number ahead of a winning position is not a target, it is where
+  (v4d). [Narrowed by v5w: NOT while the run has not pulled back -- then let the
+  mechanical target book it.] A round number ahead of a winning position is not
+  a target, it is where
   everyone else's target IS — which makes it the natural place for the move to be
   turned. IH, sitting on a large profit with the round number still ahead: "it has
   the courage to go to the 500. But we should get out a little BEFORE, because
@@ -2404,10 +2422,42 @@ RISK DISCIPLINE
   the premise is intact and the move is still delivering.
 - When already in a position, EXIT on: target reached, stop hit, an OPPOSING
   pattern + confirmation forming against you, or the move going slow/stalling at a
-  level in your favour. Otherwise HOLD and let it run.
+  level in your favour (narrowed by v5w below: a stall exits only after ten
+  candles, on a break of their low/high, and a BankNIFTY candle only once it plays
+  out). Otherwise HOLD and let it run.
+- A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN (v5w). While the hard stop
+  and target are untouched, a stall in your favour -- NIFTY slowing, small
+  candles, a pause under a round number -- is NOT a reason to exit. Mark the
+  candle where the stall began and wait at least TEN completed 1-minute candles.
+  After that, exit only when price breaks the LOW of those ten candles (for a
+  long; the HIGH of those ten for a short). If price instead resumes past the
+  stall's high (low for a short), the stall is over: hold, and a new ten-candle
+  window starts only at the next stall. IH's own test is the same one: a
+  direction change is only "when the market breaks its lower point".
+  A BANKNIFTY CANDLE IS A WARNING UNTIL IT PLAYS OUT. A BankNIFTY reversal
+  pattern against the position -- even one the tools mark confirmed -- is not the
+  exit by itself. It has played out only when BankNIFTY trades THROUGH that
+  pattern's extreme (below its low against a long, above its high against a
+  short). Until then, hold, and let NIFTY's ten-candle rule decide.
+  IN A RUN THAT HAS NOT PULLED BACK, DO NOT BOOK BEFORE THE TARGET. When the move
+  has run without a retracement, few late buyers could join it, so it is not done.
+  IH on 21 Oct: "no retracement came, the market keeps going up, so we will make
+  the target BIGGER here." Do not book on the approach to a round number: let the
+  mechanical target book it, RAISE it with MODIFY_TARGET while the run keeps going,
+  or let the ten-candle rule end it. The same day this
+  book closed its long at 23,077.75 at 09:23 on a BankNIFTY shooting star with
+  NIFTY pausing under 23,100; its own target at 23,100 traded at 09:34.
+  WHAT THIS OVERRIDES, for discretionary exits only: the stall clause of the exit
+  list above, BOOK BEFORE THE ROUND NUMBER (v4d), v4w's slow-candle book signal,
+  the leader-stalling tell in LAGGARDS NEVER JOINED, and the cut-on-the-candle
+  reading of INDEX HIERARCHY ON THE WAY OUT (v3y), v4j and v4u. WHAT IT NEVER
+  TOUCHES: the hard stop, the mechanical target, max-loss, the 15:15 square-off,
+  and a decisive break of the level your premise named (a loss of L2, a breakdown
+  of the lower point) -- those still exit at once.
 - PROFIT-HOLD: when a trade is in profit and the original premise is still intact,
   do not cut it just to search for a "second-best" or "third-best" trade. Hold the
-  valid winner until target, stall/theta, or premise-invalidation; the retail
+  valid winner until target, stall/theta (a stall per v5w's ten candles), or
+  premise-invalidation; the retail
   mistake is cutting winners quickly while giving losers extra time.
 - One position at a time. Never add to or reverse a position in a single decision —
   EXIT first; a fresh entry is a later decision.
@@ -2916,7 +2966,9 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   going against you (v3y). NIFTY and Sensex drifting against the trade is
   TOLERABLE; that is handleable noise and does not by itself end the trade.
   BankNIFTY turning against the trade is DISQUALIFYING: cut there, do not wait for
-  the stop and do not wait for the other two to agree. Live example (4 Aug 2026):
+  the stop and do not wait for the other two to agree. [Narrowed by v5w: a BankNIFTY
+  reversal CANDLE disqualifies only once it plays out -- BankNIFTY trading
+  through that candle's extreme.] Live example (4 Aug 2026):
   IH held a three-index PUT basket while the fall he wanted had not started, and
   cut it for a loss the moment BankNIFTY began rising — "if BankNIFTY has started
   going up there is no benefit in waiting", while explicitly saying he could have

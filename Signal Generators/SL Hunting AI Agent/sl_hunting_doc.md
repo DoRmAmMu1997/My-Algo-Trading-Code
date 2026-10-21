@@ -10599,6 +10599,298 @@ These are prompt-contract checks, not proof of model compliance or returns. No
 runtime, broker, order, API, schema, sizing, environment or timeout change is
 included, and validation places no real broker orders.
 
+## v5v - October 21 live match: the gap-up hunt both took, and the day count it overrode
+
+### Evidence and scope
+
+[October 21 live session](https://www.youtube.com/watch?v=qNXxJKrmJHg), uploaded
+2026-10-21 10:20:47 IST, duration 8:02. All 63 Hindi auto-transcript segments
+(0:02-7:58) were recovered from YouTube's modern transcript panel. The taskbar
+clock was read from 1080p frames: 0:15 and 0:52 show 09:19, 6:20 (the booking)
+shows 09:33, and the end shows 09:41. The raw transcript and the measurement
+scripts remain under `%TEMP%\intradayhunter-2026-transcripts\`
+(`qNXxJKrmJHg-transcript.txt`, `21oct-validation\`), outside git.
+
+The agent comparison uses all 73 October 21 decisions (09:17:34-10:29:46, all on
+`claude-sonnet-5`), the journal's one October 21 row and that day's runner log.
+The October 21 pre-open note (FLAT TO GAP UP -> BUY) was injected at startup
+(1,612 chars). Latency over 72 completed calls: median 33.2 s, p90 46.1 s,
+maximum 53.5 s. One call timed out: the 09:17 call that placed the entry. The
+1-minute CSV had not yet been refreshed for October 21, so the day's NIFTY prices
+come from the decisions log's per-bar `last_price`.
+
+### IH's trade
+
+All three indices gapped up. IH bought CALLs at once ("make the trade first,
+then discuss why") at 09:19, and sat through an initial drawdown of roughly
+18,000-24,000. His reasoning: on October 19 NIFTY and Sensex sold continuously,
+so the buyers left and the sellers stayed seated. BankNIFTY barely moved and may
+hold fewer of them, so it might lag. A gap-up is the best case for hunting them,
+because a put holder on a gap-up has to run and has no other way out, while on a
+flat or gap-down open "sometimes they escape". He held through a small resistance
+because the sellers' stops were still above it. A direction change would need the
+market to break its own lower point.
+
+With fast momentum and no retracement he raised his target: few people can buy
+into a run that does not pull back, and buyers arrive only after a retracement.
+He booked at 09:33. The sellers' stops (Sensex around 74,500) had been taken by
+the breakout, and any retracement from there would not hand back the profit.
+The positions screen at 6:23 shows:
+
+| Leg | Quantity | Average | LTP | P&L |
+|---|---|---|---|---|
+| BankNIFTY October 55,600 CE | 1,170 | 520.95 | 606.90 | +1,00,562.00 |
+| BankNIFTY October 55,700 CE | 1,170 | 454.77 | 541.25 | +1,01,182.35 |
+| Sensex October 22 74,400 CE | 900 | 383.77 | 501.25 | +1,05,732.00 |
+| NIFTY October 23,000 CE | 1,430 | 206.07 | 239.25 | +47,447.40 |
+
+Total displayed: **+Rs.3,54,923.75**, one directional basket in IH's sizes, not
+comparable rupee-for-rupee with the agent.
+
+### The agent: the same trade, a squeezed stop and an earlier exit
+
+| Time | IH | Agent |
+|---|---|---|
+| 09:15-09:17 | Gap-up in all three; decides to buy | NIFTY GAP_UP +0.62% against the 3:15 reference 22,873.75 |
+| 09:17:09-09:17:25 | | Sizing refuses the long with stop 22,981 (the first-candle low), then 23,008; accepts 1 lot with stop 23,011 |
+| 09:17:34 | | LONG 1 lot at 23,046.55, target 23,100: "stop tightened ... to fit risk budget after first-candle-low stop was too wide". The call then times out (`agent_order_no_final_decision`) |
+| 09:19 | Buys CALLs in all three indices | Holds the long |
+| 09:23:21 | Holding, raising the target | EXIT `book_before_round_number` at 23,077.75 (+31.2 points, +256.25 basket, 0.88R): 17 points under 23,100, with a confirmed BankNIFTY shooting star |
+| 09:24-09:40 | Books at 09:33 near 23,098; +3,54,923.75 | HOLD: "already booked this leg". NIFTY's later high is about 23,120 by 09:38 |
+
+The agent's direction and timing matched IH's, and its pre-open note was applied
+as written. Two departures:
+
+1. **The stop was squeezed to fit the budget.** v5t and v5u both say that when
+   the real stop does not fit, the answer is HOLD, never a cosmetic tighter stop.
+   The agent read SLH-024's sizing refusal and tightened twice in eight seconds.
+   It worked today because the 09:20 pullback held at 23,036.8. That makes 3 such
+   trades since 20 July (10 Aug, 16 Sep, 21 Oct): 1 winner, 2 losers, -10.9
+   points in all. The 161 first-try entries total +525.6 points. Three trades are
+   too few to measure, and the rule already exists. A mechanical guard is
+   proposed below; it is not built here.
+2. **It booked before the round number; IH held.** v4d (BOOK BEFORE THE ROUND
+   NUMBER) and the agent's own record agree with the agent. After its 18
+   round-number exits, NIFTY was a median 4.5 points against the trade ten
+   minutes later (mean -8.0). IH's reason to hold, a run with no retracement, was
+   tested on the 85 profitable exits. Where the trade had pulled back less than
+   10 points (11 exits), price was still a median 4.5 points against the trade
+   ten minutes after the exit. That is **refuted on this book**, and v4d stands.
+
+### Measured: the day count against the open
+
+Five years of NIFTY 1-minute bars (to 2026-10-19), long at a fixed minute with
+the agent's trade shape (16-point stop, 45-point target, 15 minutes; a bar
+touching both counts as the stop), scored in R. "Down" means the 3:15-to-3:15
+change.
+
+**IH's claim, confirmed: after selling, the gap-up is the hunt.** After a session
+down 0.5% or more, a long at 09:17 / 09:20 by open type:
+
+| Open | Long at 09:17 | Long at 09:20 | Sessions |
+|---|---|---|---|
+| Gap-up (>= +0.5%) | +0.216R | +0.303R | 51 |
+| Flat | -0.092R | -0.131R | 191 |
+| Gap-down (<= -0.5%) | +0.159R | -0.331R | 41 |
+
+A gap-up that does not follow a selling session scores -0.08R to +0.13R, so the
+seated sellers are what the gap-up is measuring. Years are mostly positive: 4 of
+6 at each minute (09:17 has one year at 0.00; 2021 and 2026 are negative at 09:20). This is v5f's "the next open is the
+receipt" and ONE BREAKDOWN's "flat -> go with the selling", now with numbers.
+Note what it says about notes that read "flat to gap up -> BUY": only the gap-up
+half is measured.
+
+**The conflict it exposed: SECOND-DAY RECRUITMENT (v4a).** That rule says "ONE
+down day + a gap-up = no seller inventory; the gap-up is not a hunt", and only
+TWO down days seat the sellers. October 21 was exactly one down day (October 16
+was up 0.8%), and IH, v5f and the note all bought it. Split by day count (gap-up
+>= +0.5%):
+
+| Before the gap-up | Long at 09:17 | Long at 09:20 | Sessions |
+|---|---|---|---|
+| ONE down day | +0.163R | +0.279R | 29 |
+| TWO down days | -0.039R | +0.253R | 46 |
+| No down day | +0.055R | +0.048R | 96 |
+
+With "down" set at 0.5% or more, the split is ONE +0.148R / +0.265R (20
+sessions) and TWO +0.259R / +0.328R (31). The day count does not separate the
+gap-up long either way. Its mirror, a gap-down SHORT after TWO up days, loses:
+-0.299R / -0.250R (22 sessions), and -0.390R / -0.229R (15) at the 0.5% threshold.
+Gap-downs have tended to be bought; the lead below says the same.
+
+### Adopted: v5v, inside SECOND-DAY RECRUITMENT
+
+v5v is a sub-bullet in v4a, so the agent reads the correction where it reads the
+rule. The original bullets and IH's reasoning stay.
+
+* **The override.** It says it OVERRIDES the two entry bullets: a confirmed
+  gap-up long is not refused only because a single day fell, since the gap-up is
+  v5f's receipt.
+* **The evidence.** It quotes the split with its no-down-day baseline.
+* **The mirror.** It warns against taking the mirror short from the day count.
+* **The open type.** It records that the open type is what separates after a
+  selling session.
+* **Limits.** It states the limits (small samples, years that flip sign) and
+  relaxes nothing: pattern + confirmation, the stop and the risk budget all
+  stand.
+
+### SLH-025, the squeezed stop: built (see SLH-025 below)
+
+The prose rule (HOLD when the real stop does not fit) did not bind at the one
+moment it applies, right after SLH-024 reports a sizing refusal. Two mechanical
+options were proposed: change the message, or add a guard. The operator asked
+for SLH-025 on 21 Oct, and both were built in this PR: the guidance rides on
+every sizing refusal, and the order tool refuses a tighter same-side stop for
+the rest of the pass. The message change sits in the executor rather than the
+master, so nothing else on the master's entry path changes.
+
+### Leads, not encoded
+
+* A LONG at 09:17 on a gap-down after a quiet session (prior 3:15-to-3:15 move
+  under 0.5% either way) scored +0.729R (56 sessions), and +0.652R at 09:20. It
+  is the strongest cell in these tables and untested beyond them: no year split
+  and no exit variants yet. It agrees with the mirror result above.
+
+### Not changed
+
+The October 21 note, v4d's round-number booking, PROFIT-HOLD, v5u, and all
+runtime, broker, order, sizing, environment and timeout code.
+
+### Validation
+
+* **The new test.** `test_v5v_day_count_is_measured_and_overrides_the_entry_bullets`
+  pins:
+  * the override;
+  * the split and its baseline;
+  * the mirror warning and the open-type numbers;
+  * the limits;
+  * that v4a's original text and v5f remain.
+* **Mutation checks.** Each of these mutants fails it, and an unmutated control
+  passes:
+  * the override wording dropped;
+  * the no-down-day baseline removed;
+  * the mirror warning flipped to "take that short";
+  * the limits sentence removed.
+* **Unchanged.** The existing v4a test (`SECOND-DAY RECRUITMENT`, "confidence
+  arrives", "a single session's move is not a crowd") is unchanged and passes.
+
+These are prompt-contract checks, not proof of model compliance or returns, and
+validation places no real broker orders.
+
+## v5w - the discretionary exit reworked on the operator's call (benefit of the doubt)
+
+### The decision
+
+After the October 21 comparison the operator asked for three changes to how the
+agent leaves a trade:
+
+* **A stall is not an exit.** When NIFTY stalls, wait at least ten 1-minute
+  candles, then exit only when the low of those ten candles breaks (vice versa
+  for a short).
+* **A BankNIFTY candle must play out.** Wait for its confirmation to play out
+  rather than cutting at the candle itself.
+* **Raise the target in a run that has not pulled back.** This is IH's 21 Oct
+  practice, measured as refuted above.
+
+The agent had closed its 21 Oct long at 09:23 on a BankNIFTY shooting star with
+NIFTY pausing under 23,100. Its own target at 23,100 traded at 09:34.
+
+All three were replayed on this book before encoding. The operator saw the numbers
+below, chose to adopt the rules as stated, and will revert them if live results are
+negative. As with v5r, this is the operator's call to make. The replay is recorded
+so the review starts from it.
+
+### The replay (against)
+
+Method: every discretionary EXIT from July to 19 Oct with a matching journal row:
+159 exits. From the bar after the exit decision, the agent's hard stop and target
+stay live and 15:14 squares off. Results are in NIFTY points, against what the
+agent actually did. Scripts: `%TEMP%\intradayhunter-2026-transcripts\21oct-validation\`
+(`stall_replay.py`, `stall_variants.py`).
+
+| Exit family | n | Actual | 10 candles, then their low | 5 candles | Low of the 10 before the exit | Trailing 10-candle low |
+|---|---|---|---|---|---|---|
+| Stall / booking | 75 | +1,013.1 | +696.4 (**-317**, worse on 50) | -314 | -466 | -177 |
+| BankNIFTY hierarchy | 31 | -152.1 | -129.9 (+22, worse on 21) | -41 | -31 | -11 |
+| Premise invalidation | 41 | -271.8 | -274.7 (-3) | +61 | -21 | -9 |
+| Other | 12 | +150.8 | +124.1 (-27) | -45 | -19 | -12 |
+
+The BankNIFTY rule was also replayed directly: hold until BankNIFTY trades through
+the extreme of its last three bars before the exit. On the 31 hierarchy exits that
+scored -14 points (better 13, worse 18).
+
+"Hold the run that has not pulled back" is the October 21 measurement above: 11
+profitable exits from runs that pulled back less than 10 points. Price was a median
+4.5 points against the trade ten minutes after the exit.
+
+Read plainly, the agent's stall exits have been where it makes its money. Waiting
+ten candles gave back about 4 points per exit on this sample, and the trailing low
+gave back the least. One day (October 21) went the other way.
+
+### Adopted: v5w, right after the basic exit list
+
+* **A stall is not an exit until ten candles have spoken.**
+  * Mark the stall's first candle and wait at least ten completed candles.
+  * Then exit only on a break of their low (their high for a short).
+  * A resumption past the stall's high ends the stall.
+* **A BankNIFTY candle is a warning until it plays out.** Even a confirmed
+  reversal pattern is not the exit until BankNIFTY trades through its extreme.
+* **In a run that has not pulled back, do not book before the target.** The
+  mechanical target books it, or the ten-candle rule ends it.
+* **What it overrides,** named in the rule, for discretionary exits only:
+  * the stall clause of the basic exit list;
+  * BOOK BEFORE THE ROUND NUMBER (v4d);
+  * v4w's slow-candle book signal;
+  * the leader-stalling tell in LAGGARDS NEVER JOINED;
+  * the cut-on-the-candle reading of INDEX HIERARCHY ON THE WAY OUT (v3y), v4j
+    and v4u.
+
+  The basic exit list, PROFIT-HOLD, v4d and v3y each carry a short "[Narrowed by
+  v5w ...]" pointer, so no rule silently contradicts its neighbour.
+* **What it never touches:**
+  * the hard stop;
+  * the mechanical target;
+  * max-loss;
+  * the 15:15 square-off;
+  * a decisive break of the level the premise named, such as a loss of L2 or a
+    breakdown of the lower point. Those still exit at once.
+
+Exits are never blocked in code. The house rule that exits are never delayed
+mechanically holds, so v5w is guidance to the model, and every mechanical exit
+path is unchanged.
+
+### Raising the target: SLH-026
+
+Until SLH-026 the order tool's actions were ENTER_LONG, ENTER_SHORT and EXIT, so
+the agent could not move a mechanical target once the trade was on. The operator
+asked for a target-raise action. It changes the live order path, so it was built
+and tested in its own PR (#217, merged first; see SLH-026 below). v5w's prompt now
+names it: in a run that has not pulled back, the agent may RAISE the target with
+MODIFY_TARGET, or let the target book it.
+
+### Validation
+
+* **The new test.**
+  `test_v5w_stall_and_banknifty_candle_wait_and_no_pullback_hold` pins:
+  * the three rules, including the short-side form;
+  * the named overrides and the four pointers;
+  * the placement between the exit list and PROFIT-HOLD;
+  * the never-touch list.
+* **Mutation checks.** Each of these mutants fails it, and an unmutated control
+  passes:
+  * ten candles turned into five;
+  * the short side dropped;
+  * the BankNIFTY play-out weakened to "prints a candle";
+  * the hard stop dropped from the never-touch list;
+  * the premise-break exit dropped;
+  * the v4d pointer removed;
+  * the v3y pointer removed.
+* **The rest of the suite.** All 130 schema tests pass, including every earlier
+  exit-rule test.
+
+These are prompt-contract checks; they do not show that the model will comply or
+that the rule makes money.
+
 ## SLH-026 - MODIFY_TARGET: the agent can raise an open target (operator, 21 Oct)
 
 **Why.** v5w (PR #216) tells the agent not to book a run that has not pulled back
@@ -10662,3 +10954,103 @@ Seven mutants each fail a test:
 * the tool's reason check dropped;
 * the agent's HOLD branch dropped;
 * the worker's raise-only check dropped.
+
+## SLH-025 - a stop refused for sizing may not be squeezed to fit (operator, 21 Oct)
+
+**The gap.** On 21 Oct the order tool refused a LONG at the first-candle-low stop
+22,981 for sizing, then at 23,008. The agent tightened to 23,011 to get one lot,
+three attempts in sixteen seconds inside one decision pass. v5t and v5u already
+said "if the real stop does not fit the budget, HOLD"; the prose did not bind at
+the one moment it applies. There were three such trades since July (10 Aug,
+16 Sep, 21 Oct): two lost, one won.
+
+**Both proposed halves are built; the master is untouched.**
+
+* **The nudge (executor).** Every sizing refusal the model reads now ends with
+  `SIZING_REFUSAL_GUIDANCE`: "Do not tighten the stop to make it fit: a stop
+  squeezed inside the real invalidation is cosmetic. HOLD unless the REAL
+  invalidation fits the risk budget (SLH-025)." The refusal is also tagged
+  `refusal_kind: "sizing"`. The paper executor tags its own sizing refusal. The
+  master executor tags a worker refusal that starts with SLH-024's `sizing:`
+  prefix, and no other refusal.
+* **The guard (order tool).** Once the executor has returned a TAGGED sizing
+  refusal for an ENTER this pass, any further ENTER in the same direction whose
+  stop is TIGHTER is refused before the executor is touched. The refusal names
+  the stop that was already refused and tells the model to HOLD.
+
+**Scope, deliberately one pass, as proposed.** The context is rebuilt every bar.
+Untouched:
+
+* the opposite direction;
+* a refusal for any other reason, such as bad levels, cooldown or a quote;
+* a wider or equal stop, which sizing refuses on its own;
+* the next bar.
+
+A squeeze moved to the next bar is therefore not caught. A new setup on a later
+bar may legitimately use a nearer level, and a fixed carry-over window would be
+an arbitrary number. Watch for it in review: a sizing refusal followed by an
+accepted same-side entry with a tighter stop one or two bars later.
+
+**Validation.** `test_sl_hunting_stop_squeeze.py` has 8 tests:
+
+* the paper and master sizing refusals are tagged and carry the guidance;
+* a non-sizing master refusal is neither tagged nor guided;
+* the 21 Oct squeeze is refused in-pass, the position stays flat, and the pass
+  stays open;
+* the opposite direction, a non-sizing executor refusal, a pre-executor levels
+  refusal and the next pass are all left alone.
+
+Seven mutants each fail a test:
+
+* the guard comparison disabled;
+* the refusal never recorded;
+* direction scoping dropped;
+* any refusal arming the guard;
+* the paper tag dropped;
+* the master tagging every refusal;
+* the master guidance dropped.
+
+## October 22 pre-open note
+
+[Prediction For 22 OCT 2026](https://www.youtube.com/watch?v=Hj3d2kKke_I), uploaded
+2026-10-21 21:10:09 IST, 124 s, 16 transcript segments. The raw transcript is
+`Hj3d2kKke_I-transcript.txt` in the same archive.
+
+**Read.** October 21 sold continuously in all three indices, BankNIFTY without a
+retracement, so sellers are likely seated. Sensex has its weekly expiry on
+October 22; that is context only.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, to target those sellers |
+| GAP DOWN | SELL, with the market: sellers seated into a gap down hold with confidence and cannot be targeted |
+
+Per v5v, only the gap-up half of a "flat to gap up -> BUY" note has measured
+support after a selling day. The flat half measured -0.09R / -0.13R (191
+sessions), and the note stays advisory.
+
+**Levels.** Two captions were garbled and are resolved from the 1080p frames:
+
+* **NIFTY resistance**, spoken "2300 2280", is the drawn 23,002.20 / 22,883 pair,
+  recorded as 23,000 / 22,880.
+* **Sensex's second support**, spoken "72", is the drawn 72,214.26, recorded as
+  72,210 (the drawn line rounded down to 10, as for earlier garbled levels).
+
+The other nine levels match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,880 / 23,000 | 22,550 / 22,420 |
+| BankNIFTY | 55,100 / 55,400 | 54,390 / 54,200 |
+| Sensex | 73,970 / 74,800 | 72,700 / 72,210 |
+
+`test_shipped_note_matches_october_22_intraday_hunter_plan` pins the date gate,
+the source, both plan branches and all twelve levels. Each of these mutations
+fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-down branch turned into BUY;
+* the date set to October 21;
+* the Sensex support moved to 72,200.

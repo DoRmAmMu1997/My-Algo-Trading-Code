@@ -344,6 +344,10 @@ class SLHuntingToolContext:
     # EXIT can report it beside what the exit actually booked.
     _last_mark: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _execution_lock: Any = field(default_factory=threading.RLock, repr=False)
+    # SLH-025: per direction, the stop the executor refused for SIZING this pass
+    # (distance from price, stop). The context is rebuilt every bar, so this is
+    # deliberately one pass long.
+    _sizing_refused: dict[str, tuple[float, float]] = field(default_factory=dict, init=False, repr=False)
 
     @classmethod
     def build(
@@ -539,6 +543,7 @@ class SLHuntingToolContext:
         """
         action = (action or "").strip().upper()
         executor_call: Callable[[], dict[str, Any]]
+        sizing_probe: tuple[str, float, float] | None = None
         if action in ("ENTER_LONG", "ENTER_SHORT"):
             direction = "LONG" if action == "ENTER_LONG" else "SHORT"
             stop = float(stop or 0.0)
@@ -569,6 +574,27 @@ class SLHuntingToolContext:
             note_problem = self._premarket_note_problem(note_check)
             if note_problem:
                 return {"accepted": False, "reason": note_problem}
+            # SLH-025: a SIZING refusal earlier in this pass is not an invitation
+            # to tighten the stop until one lot fits. On 2026-10-21 the agent went
+            # 22,981 -> 23,008 -> 23,011 in sixteen seconds to get a lot; v5t and
+            # v5u said HOLD in prose and it did not bind. Only a TIGHTER stop in the
+            # SAME direction is refused -- the other direction, a refusal for any
+            # other reason and the next bar's fresh context are untouched.
+            distance = abs(self.last_price - stop)
+            refused = self._sizing_refused.get(direction)
+            if refused is not None and distance < refused[0]:
+                return {
+                    "accepted": False,
+                    "reason": (
+                        f"SLH-025: a {direction} with stop {refused[1]:.2f} was already refused "
+                        f"for sizing in this decision, and this stop ({stop:.2f}, "
+                        f"{distance:.2f} points from price) is tighter. A stop squeezed to fit "
+                        "the budget is not a new invalidation -- it is the cosmetic stop the "
+                        "rules forbid. HOLD unless the REAL invalidation fits the risk budget; "
+                        "a genuinely new setup belongs to a later bar."
+                    ),
+                }
+            sizing_probe = (direction, distance, stop)
             entry_reason = bounded_reason(reason)
             recorded_reason = entry_reason
             def executor_call() -> dict[str, Any]:
@@ -704,6 +730,11 @@ class SLHuntingToolContext:
                 # Rejected validation/execution may be corrected once within the
                 # same pass; only an accepted side effect consumes the context.
                 self.state = ToolContextState.ACTIVE
+                if sizing_probe is not None and result.get("refusal_kind") == "sizing":
+                    side, refused_distance, refused_stop = sizing_probe
+                    earlier = self._sizing_refused.get(side)
+                    if earlier is None or refused_distance < earlier[0]:
+                        self._sizing_refused[side] = (refused_distance, refused_stop)
             return result
 
 

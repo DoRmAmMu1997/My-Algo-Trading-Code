@@ -1,44 +1,43 @@
 {
-  "for_date": "2026-10-21",
-  "source": "Intraday Hunter, 'Prediction For 21 OCT 2026' (GbVF4_erGqo, uploaded 2026-10-20)",
-  "context": "October 19 sold continuously in NIFTY and Sensex while BankNIFTY moved little, so sellers are likely seated in size and buyers stepped away; some sellers may not have carried positions. October 20 was a market holiday.",
+  "for_date": "2026-10-22",
+  "source": "Intraday Hunter, 'Prediction For 22 OCT 2026' (Hj3d2kKke_I, uploaded 2026-10-21)",
+  "context": "October 21 sold continuously in all three indices, BankNIFTY without a retracement, so sellers are likely seated. Sensex has its weekly expiry on October 22.",
   "plan": [
-    "FLAT TO GAP UP -> BUY: identify buying-side setups to target the sellers seated by October 19's continuous selling.",
-    "SMALL GAP DOWN -> SAME BUY PLAN: a small gap down keeps the buying-side plan against those seated sellers.",
-    "BIG GAP DOWN -> NO PRE-SET SIDE: IH ignores a large gap down; follow the developing chart."
+    "FLAT TO GAP UP -> BUY: identify buying-side setups to target the sellers seated by October 21's continuous selling.",
+    "GAP DOWN -> SELL, WITH THE MARKET: on a gap down the seated sellers hold with confidence and cannot be targeted; identify selling-side setups."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23080,
-        23200
+        22880,
+        23000
       ],
       "support": [
-        22780,
-        22700
+        22550,
+        22420
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55900,
-        56200
+        55100,
+        55400
       ],
       "support": [
-        55200,
-        54900
+        54390,
+        54200
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        74250,
-        74790
+        73970,
+        74800
       ],
       "support": [
-        73200,
-        72700
+        72700,
+        72210
       ]
     }
   ]
