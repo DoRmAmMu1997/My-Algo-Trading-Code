@@ -27,7 +27,10 @@ and runs one agentic pass:
    record of what it did).
 
 `ENTER_LONG` buys an ATM **CALL**; `ENTER_SHORT` buys an ATM **PUT**. Stops and
-targets are levels on the NIFTY **underlying** (spot). The agent does **not** choose
+targets are levels on the NIFTY **underlying** (spot). With a position open,
+`MODIFY_TARGET` can only **raise** its target -- further in the trade's favour, never
+closer or removed (SLH-026). The target is a mechanical level checked against spot,
+so raising it sends nothing to the broker. The agent does **not** choose
 the lot count. Position size floors the affordable whole lots from the agent's
 stop distance, never exceeds `SL_HUNTING_RISK_BUDGET`, skips the setup when even
 one NIFTY lot is unaffordable, and caps at `SL_HUNTING_MAX_LOTS` (default 5).

@@ -16160,6 +16160,39 @@ if SL_HUNTING_AVAILABLE:
                 "unrealized_pnl": round(self._mirror_leg_pnl(), 2),
             }
 
+        def raise_target_underlying(self, new_target: float, reason: str) -> bool:
+            """MODIFY_TARGET (operator, 2026-10-21): move the NIFTY leg's mechanical
+            target further in the trade's favour. Returns True when it moved.
+
+            The target is enforced by the per-poll `stop_or_target_hit` check in
+            `process_strategy_frame` -- no broker order rests there -- so raising it
+            is a state change, made under the action lock the mechanical exits also
+            hold. The executor validates the new level against price before calling
+            this; the hook keeps the raise-only invariant on its own so nothing
+            outside it can pull a target in. The BankNIFTY mirror carries no target
+            (hard risk closes it with this leg), and the 30-second session-state
+            snapshot reads the new level straight from `self.pos`.
+            """
+            with self._agent_action_lock:
+                if not self.pos.active:
+                    return False
+                old = float(self.pos.target_underlying or 0.0)
+                new = float(new_target)
+                if not math.isfinite(new) or new <= 0:
+                    return False
+                raises = new > old if self.pos.direction == "LONG" else (
+                    self.pos.direction == "SHORT" and new < old
+                )
+                if not raises:
+                    return False
+                self.pos.target_underlying = new
+                stop = float(self.pos.stop_underlying or 0.0)
+            self.log.info(
+                "SL Hunting: target raised %.2f -> %.2f (stop %.2f unchanged) :: %s",
+                old, new, stop, reason,
+            )
+            return True
+
         def exit_nifty_leg_only(self, reason: str) -> None:
             """Close ONLY the NIFTY leg (premise-invalidation on NIFTY), leaving the
             BankNIFTY mirror running. Sets the suppress flag so after_exit does not

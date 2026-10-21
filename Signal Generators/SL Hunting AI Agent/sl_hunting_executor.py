@@ -131,6 +131,53 @@ def stop_or_target_hit(direction: str, stop: float, target: float, price: float)
     return None
 
 
+# The furthest a target may sit from the current price, as a fraction of it. The
+# order tool holds an entry's target to this (SLH-002), and a raised target is held
+# to the same bound so MODIFY_TARGET cannot park a target where it never fires.
+MAX_TARGET_DISTANCE_FRACTION = 0.10
+
+
+def target_raise_error(direction: str, current_target: float, new_target: float, price: float) -> str | None:
+    """Explain why this MODIFY_TARGET is refused, or return None when it may go ahead.
+
+    Raise-only (operator, 2026-10-21): the action exists so a run that has not
+    pulled back can be given more room (v5w), never so a target can be pulled in
+    or removed -- booking early is what EXIT is for. A LONG's target may only go
+    UP and a SHORT's only DOWN, and it must stay on the far side of the current
+    price: a target the market has already passed would close the position on
+    the next poll, which is an exit wearing a different name.
+    """
+    direction = (direction or "").strip().upper()
+    if direction not in VALID_DIRECTIONS:
+        return f"no open LONG or SHORT to raise a target on (direction {direction!r})"
+    price = float(price)
+    new_target = float(new_target)
+    current_target = float(current_target or 0.0)
+    if not (math.isfinite(price) and price > 0):
+        return "no current underlying price available to validate the new target"
+    if not (math.isfinite(new_target) and new_target > 0):
+        return "the new target must be a positive, finite NIFTY underlying price"
+    if direction == "LONG":
+        if new_target <= current_target:
+            return (
+                f"a LONG's target can only be RAISED: the current target is "
+                f"{current_target:.2f}, so the new one must be higher. To book earlier, EXIT instead."
+            )
+        if new_target <= price:
+            return f"a LONG's target must stay above the current price {price:.2f}"
+    else:
+        if new_target >= current_target:
+            return (
+                f"a SHORT's target can only be LOWERED (moved further out): the current target is "
+                f"{current_target:.2f}, so the new one must be lower. To book earlier, EXIT instead."
+            )
+        if new_target >= price:
+            return f"a SHORT's target must stay below the current price {price:.2f}"
+    if abs(new_target - price) > MAX_TARGET_DISTANCE_FRACTION * price:
+        return f"the new target is more than {MAX_TARGET_DISTANCE_FRACTION:.0%} away from the current price"
+    return None
+
+
 def execution_tool_name(live_active: bool, broker: str | None) -> str:
     """Return the single order-tool name the configuration selects.
 
@@ -286,6 +333,24 @@ class StandaloneExecutor:
         # SLH-019: the same reporting contract as the master executor. Here the
         # booked figure IS the proxy, and there is no mirror leg to leave behind.
         return {"accepted": True, "action": "EXIT", **trade, "realised_pnl": pnl, "open_legs_after": []}
+
+    def modify_target(self, target: float, reason: str, price: float) -> dict[str, Any]:
+        """Raise the open paper position's target (MODIFY_TARGET).
+
+        Raise-only, validated by `target_raise_error`; nothing else about the
+        position changes. A refusal leaves the old target exactly as it was.
+        """
+        if not self.pos.active:
+            return {"accepted": False, "reason": "no open position whose target could be raised"}
+        problem = target_raise_error(self.pos.direction, self.pos.target, float(target), float(price))
+        if problem:
+            return {"accepted": False, "reason": problem}
+        old = self.pos.target
+        self.pos.target = round(float(target), 2)
+        return {
+            "accepted": True, "action": "MODIFY_TARGET",
+            "old_target": old, "target": self.pos.target, "reason": _single_line_reason(reason),
+        }
 
     def snapshot(self) -> dict[str, Any]:
         """Return the current position as a dict for the `position_state` tool (or flat)."""
@@ -544,6 +609,38 @@ class MasterWorkerExecutor:
             self._w.exit_bnf_mirror_only(reason_s)
             return self._booked({"accepted": True, "action": "EXIT", "leg": "BOTH", "reason": reason_s}, before)
         return {"accepted": False, "reason": "no open position to exit"}
+
+    def modify_target(self, target: float, reason: str, price: float) -> dict[str, Any]:
+        """Raise the open NIFTY leg's mechanical target through the worker (MODIFY_TARGET).
+
+        The target is a level the worker checks against spot on every poll -- no
+        broker order rests there -- so this is a state change, not an order. It is
+        validated here (`target_raise_error`) BEFORE the worker is touched, and a
+        worker without the `raise_target_underlying` hook refuses rather than having
+        its position edited from outside: the hook is where the change is logged.
+        The BankNIFTY mirror carries no target of its own -- hard risk closes it with
+        the NIFTY leg -- so raising the NIFTY target covers the whole basket.
+        """
+        pos = getattr(self._w, "pos", None)
+        if pos is None or not getattr(pos, "active", False):
+            return {"accepted": False, "reason": "no open NIFTY position whose target could be raised"}
+        old = float(getattr(pos, "target_underlying", 0.0) or 0.0)
+        problem = target_raise_error(str(getattr(pos, "direction", "")), old, float(target), float(price))
+        if problem:
+            return {"accepted": False, "reason": problem}
+        hook = getattr(self._w, "raise_target_underlying", None)
+        if not callable(hook):
+            return {
+                "accepted": False,
+                "reason": "this runner cannot raise a target (the worker has no raise_target_underlying)",
+            }
+        reason_s = _single_line_reason(reason)
+        if not bool(hook(float(target), reason_s)):
+            return {"accepted": False, "reason": "the worker refused the target raise; the target is unchanged"}
+        return {
+            "accepted": True, "action": "MODIFY_TARGET", "old_target": round(old, 2),
+            "target": round(float(getattr(pos, "target_underlying", target)), 2), "reason": reason_s,
+        }
 
     def _last_closed_trade(self) -> dict[str, Any] | None:
         """SLH-020: today's last complete trade from the worker, or None.
