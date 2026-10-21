@@ -10598,3 +10598,67 @@ turned into SELL.
 These are prompt-contract checks, not proof of model compliance or returns. No
 runtime, broker, order, API, schema, sizing, environment or timeout change is
 included, and validation places no real broker orders.
+
+## SLH-026 - MODIFY_TARGET: the agent can raise an open target (operator, 21 Oct)
+
+**Why.** v5w (PR #216) tells the agent not to book a run that has not pulled back
+before its target. The operator also asked that it be able to move that target
+further out, as IH does ("the market keeps going up, so we will make the target
+BIGGER"). Until now the order tool's actions were ENTER_LONG, ENTER_SHORT and
+EXIT, so a target was fixed from entry.
+
+**What it changes, and why it is small.** The SL Hunting target is a mechanical
+level. The worker checks it against NIFTY spot on every poll (`stop_or_target_hit`
+in `process_strategy_frame`), and no broker order rests there. Raising it is
+therefore a state change to `pos.target_underlying`, not an order:
+
+* **The order tool.** `MODIFY_TARGET` takes the new level in `target` (stop is
+  ignored) and a reason. The reason must be real, because refusing a raise
+  strands nothing, the same reasoning as for entries. It is the pass's one
+  accepted side effect, like ENTER and EXIT. A refused raise goes back for
+  correction and the old target stays exactly as it was.
+* **The rule, `target_raise_error` in the executor.** It is raise-only: a LONG's
+  target may only go up and a SHORT's only down, never closer and never removed.
+  Booking earlier is what EXIT is for. The new target must sit beyond the current
+  price, because a target already passed would exit on the next poll. It must
+  also be within the same 10% bound the order tool applies to an entry's target;
+  that constant now lives in the executor and the tool imports it.
+* **The executors.** The paper `StandaloneExecutor` edits its own position. The
+  live-capable `MasterWorkerExecutor` validates first and only then calls the
+  worker hook `raise_target_underlying`. A worker without the hook refuses, so
+  the position is never edited from outside.
+* **The worker hook.** It takes the same action lock the mechanical exits hold
+  and keeps the raise-only invariant on its own. It logs `SL Hunting: target
+  raised OLD -> NEW (stop S unchanged) :: reason`, which is what the v5w review
+  should search for. The BankNIFTY mirror carries no target of its own, since
+  hard risk closes it with the NIFTY leg, so the NIFTY target covers the basket.
+  The 30-second session-state snapshot reads the new level from `self.pos`.
+* **The recorded decision.** An accepted raise is recorded as HOLD, because the
+  position stays open. The model's own HOLD is kept when it gave one; otherwise
+  the raise is recorded with the reason it sent the order tool. It is never an
+  `agent_error`.
+
+**What it does not touch:** the stop, the size, the mirror leg, any broker call,
+exits, max-loss and the square-off.
+
+**Validation.** `test_sl_hunting_modify_target.py` has 19 tests covering:
+
+* the helper, in both directions, the bound, and nonsense input;
+* both executors, including validate-before-hook and fail-closed without the hook;
+* the order tool: one side effect per pass, sent back for correction, a real
+  reason required, an executor without the action, and the description;
+* the recorded HOLD, with and without a parseable final answer.
+
+Two master-suite tests check that a raised target stops the OLD level from closing
+the trade (stop and mirror unchanged), and that the hook refuses a closer target
+and a flat worker.
+
+Seven mutants each fail a test:
+
+* the same target allowed;
+* a wrong-side target allowed;
+* the 10% bound dropped;
+* the master executor skipping validation;
+* the tool's reason check dropped;
+* the agent's HOLD branch dropped;
+* the worker's raise-only check dropped.

@@ -5388,6 +5388,34 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
         self.assertIsNone(worker.last_entry_refusal)
 
+    def test_modify_target_raise_moves_the_mechanical_target(self):
+        """Operator, 2026-10-21: MODIFY_TARGET raises the level the per-poll check
+        enforces. Once raised, the OLD target must no longer close the trade, and
+        nothing else about the basket -- the stop, the mirror -- may change."""
+        worker, _ = self._make_worker()
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+
+        self.assertTrue(worker.raise_target_underlying(24450.0, "run has not pulled back"))
+
+        self.assertEqual(worker.pos.target_underlying, 24450.0)
+        self.assertEqual(worker.pos.stop_underlying, 24290.0)
+        self.assertTrue(worker._mirror_pos.active)
+        hit = master_file.SL_HUNTING_EXECUTOR_MODULE.stop_or_target_hit(
+            worker.pos.direction, worker.pos.stop_underlying, worker.pos.target_underlying, 24420.0
+        )
+        self.assertIsNone(hit)  # the old 24400 target would have closed it at 24420
+
+    def test_modify_target_refuses_a_closer_target_and_a_flat_worker(self):
+        """Raise-only at the worker too: the executor validates first, and the hook
+        keeps the same invariant so nothing outside it can pull a target in."""
+        worker, _ = self._make_worker()
+        self.assertFalse(worker.raise_target_underlying(24450.0, "nothing open"))
+
+        self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        self.assertFalse(worker.raise_target_underlying(24380.0, "closer target"))
+
+        self.assertEqual(worker.pos.target_underlying, 24400.0)
+
     def test_live_basket_pnl_uses_nifty_and_bnf_broker_fills(self):
         worker, _store = self._make_worker()
         worker.live_trading = True

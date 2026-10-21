@@ -45,6 +45,7 @@ from typing import Any
 import pandas as pd
 from sl_hunting_executor import (
     MAX_ORDER_REASON_CHARS,
+    MAX_TARGET_DISTANCE_FRACTION,
     TradeExecutor,
     execution_tool_name,
 )
@@ -65,7 +66,8 @@ SERVER_NAME = "slhunting"
 # few dozen points (<<1% of NIFTY), so these only catch hallucinated garbage
 # (wrong-instrument levels, sign flips, absurd numbers), never a real setup.
 MAX_STOP_DISTANCE_FRACTION = 0.03
-MAX_TARGET_DISTANCE_FRACTION = 0.10
+# MAX_TARGET_DISTANCE_FRACTION (0.10) is imported from the executor, which applies
+# the same bound to a raised target (MODIFY_TARGET).
 
 
 def _entry_levels_error(direction: str, stop: float, target: float, price: float) -> str | None:
@@ -143,7 +145,14 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "the position for good. THE ONLY THING THAT CAN SEND AN EXIT BACK IS OMITTING "
         "THE REASON, and only ONCE: say why, or send the EXIT again and it is honoured "
         "whatever it carries. action is ENTER_LONG "
-        "(buy CALL), ENTER_SHORT (buy PUT) or EXIT. stop and target are NIFTY "
+        "(buy CALL), ENTER_SHORT (buy PUT), EXIT or MODIFY_TARGET. MODIFY_TARGET "
+        "only RAISES an open position's target -- moves it further in the trade's "
+        "favour (LONG: higher, SHORT: lower) -- and never lowers or removes it: send "
+        "the new level as target (stop is ignored) with a reason. It is how a run "
+        "that has not pulled back gets more room (v5w); to book earlier, EXIT "
+        "instead. It changes nothing else -- the stop, the size and both legs stay "
+        "as they are -- and like any order it is the one action of this pass. "
+        "stop and target are NIFTY "
         "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
         "BRACKET the current price on the correct side (LONG: stop below, target "
         "above; SHORT: reversed), with the stop within ~3% and the target within "
@@ -623,8 +632,35 @@ class SLHuntingToolContext:
                     }
             def executor_call() -> dict[str, Any]:
                 return self.executor.exit(exit_reason, self.last_price, leg=leg)
+        elif action == "MODIFY_TARGET":
+            # Operator, 2026-10-21: RAISE an open position's mechanical target so a
+            # run that has not pulled back gets more room (v5w). Raise-only -- the
+            # executor refuses a closer, removed or already-passed target. Unlike an
+            # EXIT, refusing this is safe (nothing is stranded when a raise does not
+            # happen), so like an entry it must carry a real reason and may be sent
+            # back for one.
+            new_target = float(target or 0.0)
+            reason_problem = _reason_meaning_problem(reason)
+            if reason_problem:
+                return {
+                    "accepted": False,
+                    "reason": (
+                        f"unusable reason: {reason_problem}. Say why the target is being "
+                        "raised -- this string is the permanent record of the change."
+                    ),
+                }
+            modifier = getattr(self.executor, "modify_target", None)
+            if not callable(modifier):
+                return {"accepted": False, "reason": "this runner cannot raise a target"}
+            raise_reason = bounded_reason(reason)
+            recorded_reason = raise_reason
+            def executor_call() -> dict[str, Any]:
+                return dict(modifier(new_target, raise_reason, self.last_price))
         else:
-            return {"accepted": False, "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT or EXIT"}
+            return {
+                "accepted": False,
+                "reason": f"unknown action {action!r}; expected ENTER_LONG, ENTER_SHORT, EXIT or MODIFY_TARGET",
+            }
 
         # The final gate.  The freshness checks (state, generation, deadline)
         # run INSIDE the same lock that serializes the executor call, because
