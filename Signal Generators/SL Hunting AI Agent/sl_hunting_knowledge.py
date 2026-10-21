@@ -146,6 +146,22 @@ CORE PSYCHOLOGY (the "why" behind every setup)
       above; the gap-up IS the hunt, and the trade is LONG against them.
   Mirror the same test for buyers after two up days. Count the days before
   deciding whether a crowd exists — a single session's move is not a crowd.
+    * MEASURED, AND IT OVERRIDES THE TWO BULLETS ABOVE FOR ENTRIES (v5v, 21 Oct):
+      on five years of NIFTY bars with this book's trade shape (16-point stop,
+      45-point target, out after 15 minutes), the day count does NOT separate the
+      gap-up long. After ONE down day it scored +0.16R at 09:17 and +0.28R at
+      09:20 (29 sessions); after TWO, -0.04R and +0.25R (46); with no down day
+      before it, +0.06R and +0.05R (96). So a confirmed gap-up long is not
+      refused only because a single day fell: the gap-up itself is v5f's receipt
+      that sellers were seated. IH bought exactly that on 21 Oct after one
+      -1.07% session, and so did this book. The MIRROR did not hold: a gap-down
+      SHORT after TWO up days scored -0.30R and -0.25R (22 sessions), because
+      gap-downs have tended to be bought; never take that short from the day
+      count alone. What does separate, after a selling session of 0.5% or more,
+      is the OPEN: gap-up +0.22R and +0.30R (51 sessions), flat -0.09R and
+      -0.13R (191), so a note that lumps "flat to gap up -> BUY" is measured on
+      its gap-up half only. Samples are small and single years flip sign;
+      nothing here relaxes pattern + confirmation, the stop or the risk budget.
 - A FRESHLY RECRUITED CROWD HAS TIGHT STOPS, so expect a SHARP but SMALL move
   (v4a). Traders who joined only on the second day have no conviction and "will
   not give the market a very big SL". Two consequences, and they pull in opposite

@@ -3696,3 +3696,45 @@ def test_v5u_reclaim_after_an_exit_is_a_new_event_but_every_guard_stays():
     assert "After a down day, a FLAT open whose FIRST candle flushes" in _flat_rule(
         prompt, "A FLUSH THROUGH THE CLOSE THAT IS BOUGHT BACK IS THE HUNT"
     )
+
+def test_v5v_day_count_is_measured_and_overrides_the_entry_bullets():
+    """v5v (21 Oct): SECOND-DAY RECRUITMENT's day count, measured.
+
+    The v4a bullets said ONE down day + a gap-up "is not a hunt". IH and this
+    book both bought exactly that on 21 Oct and both made money, while v5f and
+    the pre-open note pointed the same way -- three rules disagreeing on one
+    open. Five years of bars settle it: the day count does not separate the
+    gap-up long, its mirror short loses, and the open type is what separates.
+
+    Four ways an edit breaks it:
+
+    1. Losing the override, so the old "not a hunt" bullet still reads as binding.
+    2. Losing the numbers that justify it, including the no-down-day baseline.
+    3. Losing the mirror warning (a gap-down short from the day count lost money).
+    4. Losing the guards, turning a measured correction into an entry exception.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "SECOND-DAY RECRUITMENT")
+
+    # The original rule and its IH reasoning stay; the measurement sits inside it.
+    assert "ONE down day + a gap-up = no seller inventory; the gap-up is not a hunt." in rule
+    assert "a single session's move is not a crowd" in rule
+    # 1. The override.
+    assert "MEASURED, AND IT OVERRIDES THE TWO BULLETS ABOVE FOR ENTRIES (v5v, 21 Oct)" in rule
+    assert "the day count does NOT separate the gap-up long" in rule
+    assert "a confirmed gap-up long is not refused only because a single day fell" in rule
+    assert "the gap-up itself is v5f's receipt that sellers were seated" in rule
+    # 2. The evidence, with its baseline.
+    assert "After ONE down day it scored +0.16R at 09:17 and +0.28R at 09:20 (29 sessions)" in rule
+    assert "after TWO, -0.04R and +0.25R (46)" in rule
+    assert "with no down day before it, +0.06R and +0.05R (96)" in rule
+    # 3. The mirror.
+    assert "The MIRROR did not hold: a gap-down SHORT after TWO up days scored -0.30R and -0.25R" in rule
+    assert "never take that short from the day count alone" in rule
+    assert "gap-up +0.22R and +0.30R (51 sessions), flat -0.09R and -0.13R (191)" in rule
+    assert 'a note that lumps "flat to gap up -> BUY" is measured on its gap-up half only' in rule
+    # 4. Limits and guards.
+    assert "Samples are small and single years flip sign" in rule
+    assert "nothing here relaxes pattern + confirmation, the stop or the risk budget" in rule
+    # v5f, the rule it defers to, is still there.
+    assert "A ONE-WAY DAY LEAVES NOBODY SEATED, AND THE NEXT OPEN IS THE RECEIPT (v5f)" in prompt
