@@ -3738,3 +3738,56 @@ def test_v5v_day_count_is_measured_and_overrides_the_entry_bullets():
     assert "nothing here relaxes pattern + confirmation, the stop or the risk budget" in rule
     # v5f, the rule it defers to, is still there.
     assert "A ONE-WAY DAY LEAVES NOBODY SEATED, AND THE NEXT OPEN IS THE RECEIPT (v5f)" in prompt
+
+def test_v5w_stall_and_banknifty_candle_wait_and_no_pullback_hold():
+    """v5w (operator's call, 21 Oct): rework of the discretionary exit.
+
+    A stall exits only after TEN candles, on a break of their low (high for a
+    short); a BankNIFTY candle cuts only once it plays out; a run that has not
+    pulled back is held to its target. Adopted against a replay of this book's
+    own exits (the doc records it), so this test pins the rule exactly as the
+    operator stated it, including the symmetric short form, and the guards that
+    must survive any later edit:
+
+    1. The three rules themselves.
+    2. What they override, named, with a pointer left inside each overridden
+       rule -- a rule that silently contradicts its neighbours is read as noise.
+    3. What they never touch: the hard stop, mechanical target, max-loss,
+       square-off and a decisive break of the premise's named level.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN (v5w)")
+
+    # 1. The stall rule, both directions.
+    assert "wait at least TEN completed 1-minute candles" in rule
+    assert "exit only when price breaks the LOW of those ten candles" in rule
+    assert "(for a long; the HIGH of those ten for a short)" in rule
+    assert "the stall is over: hold, and a new ten-candle window starts only at the next stall" in rule
+    # The BankNIFTY candle.
+    assert "A BANKNIFTY CANDLE IS A WARNING UNTIL IT PLAYS OUT" in rule
+    assert "even one the tools mark confirmed -- is not the exit by itself" in rule
+    assert "only when BankNIFTY trades THROUGH that pattern's extreme" in rule
+    # The run without a pullback.
+    assert "IN A RUN THAT HAS NOT PULLED BACK, DO NOT BOOK BEFORE THE TARGET" in rule
+    assert "let the mechanical target book it, or the ten-candle rule end it" in rule
+    # 2. Overrides, named, with pointers in place.
+    assert "WHAT THIS OVERRIDES, for discretionary exits only" in rule
+    for name in ("BOOK BEFORE THE ROUND NUMBER (v4d)", "v4w's slow-candle book signal",
+                 "LAGGARDS NEVER JOINED", "INDEX HIERARCHY ON THE WAY OUT (v3y), v4j and v4u"):
+        assert name in rule
+    assert "(narrowed by v5w below: a stall exits only after ten candles" in _flat_rule(
+        prompt, "When already in a position, EXIT on")
+    assert "(a stall per v5w's ten candles)" in _flat_rule(prompt, "PROFIT-HOLD")
+    assert "[Narrowed by v5w: NOT while the run has not pulled back" in _flat_rule(
+        prompt, "BOOK BEFORE THE ROUND NUMBER, NOT AT IT")
+    assert "[Narrowed by v5w: a BankNIFTY reversal CANDLE disqualifies only once it plays out" in _flat_rule(
+        prompt, "INDEX HIERARCHY ON THE WAY OUT")
+    # It sits between the exit list it narrows and PROFIT-HOLD.
+    exits = prompt.index("- When already in a position, EXIT on")
+    v5w = prompt.index("- A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN")
+    hold = prompt.index("- PROFIT-HOLD")
+    assert exits < v5w < hold
+    # 3. What it never touches.
+    assert "WHAT IT NEVER TOUCHES: the hard stop, the mechanical target, max-loss, the 15:15 square-off" in rule
+    assert "a decisive break of the level your premise named" in rule
+    assert "those still exit at once" in rule

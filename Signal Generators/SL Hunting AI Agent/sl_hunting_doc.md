@@ -10780,3 +10780,115 @@ runtime, broker, order, sizing, environment and timeout code.
 
 These are prompt-contract checks, not proof of model compliance or returns, and
 validation places no real broker orders.
+
+## v5w - the discretionary exit reworked on the operator's call (benefit of the doubt)
+
+### The decision
+
+After the October 21 comparison the operator asked for three changes to how the
+agent leaves a trade:
+
+* **A stall is not an exit.** When NIFTY stalls, wait at least ten 1-minute
+  candles, then exit only when the low of those ten candles breaks (vice versa
+  for a short).
+* **A BankNIFTY candle must play out.** Wait for its confirmation to play out
+  rather than cutting at the candle itself.
+* **Raise the target in a run that has not pulled back.** This is IH's 21 Oct
+  practice, measured as refuted above.
+
+The agent had closed its 21 Oct long at 09:23 on a BankNIFTY shooting star with
+NIFTY pausing under 23,100. Its own target at 23,100 traded at 09:34.
+
+All three were replayed on this book before encoding. The operator saw the numbers
+below, chose to adopt the rules as stated, and will revert them if live results are
+negative. As with v5r, this is the operator's call to make. The replay is recorded
+so the review starts from it.
+
+### The replay (against)
+
+Method: every discretionary EXIT from July to 19 Oct with a matching journal row:
+159 exits. From the bar after the exit decision, the agent's hard stop and target
+stay live and 15:14 squares off. Results are in NIFTY points, against what the
+agent actually did. Scripts: `%TEMP%\intradayhunter-2026-transcripts\21oct-validation\`
+(`stall_replay.py`, `stall_variants.py`).
+
+| Exit family | n | Actual | 10 candles, then their low | 5 candles | Low of the 10 before the exit | Trailing 10-candle low |
+|---|---|---|---|---|---|---|
+| Stall / booking | 75 | +1,013.1 | +696.4 (**-317**, worse on 50) | -314 | -466 | -177 |
+| BankNIFTY hierarchy | 31 | -152.1 | -129.9 (+22, worse on 21) | -41 | -31 | -11 |
+| Premise invalidation | 41 | -271.8 | -274.7 (-3) | +61 | -21 | -9 |
+| Other | 12 | +150.8 | +124.1 (-27) | -45 | -19 | -12 |
+
+The BankNIFTY rule was also replayed directly: hold until BankNIFTY trades through
+the extreme of its last three bars before the exit. On the 31 hierarchy exits that
+scored -14 points (better 13, worse 18).
+
+"Hold the run that has not pulled back" is the October 21 measurement above: 11
+profitable exits from runs that pulled back less than 10 points. Price was a median
+4.5 points against the trade ten minutes after the exit.
+
+Read plainly, the agent's stall exits have been where it makes its money. Waiting
+ten candles gave back about 4 points per exit on this sample, and the trailing low
+gave back the least. One day (October 21) went the other way.
+
+### Adopted: v5w, right after the basic exit list
+
+* **A stall is not an exit until ten candles have spoken.**
+  * Mark the stall's first candle and wait at least ten completed candles.
+  * Then exit only on a break of their low (their high for a short).
+  * A resumption past the stall's high ends the stall.
+* **A BankNIFTY candle is a warning until it plays out.** Even a confirmed
+  reversal pattern is not the exit until BankNIFTY trades through its extreme.
+* **In a run that has not pulled back, do not book before the target.** The
+  mechanical target books it, or the ten-candle rule ends it.
+* **What it overrides,** named in the rule, for discretionary exits only:
+  * the stall clause of the basic exit list;
+  * BOOK BEFORE THE ROUND NUMBER (v4d);
+  * v4w's slow-candle book signal;
+  * the leader-stalling tell in LAGGARDS NEVER JOINED;
+  * the cut-on-the-candle reading of INDEX HIERARCHY ON THE WAY OUT (v3y), v4j
+    and v4u.
+
+  The basic exit list, PROFIT-HOLD, v4d and v3y each carry a short "[Narrowed by
+  v5w ...]" pointer, so no rule silently contradicts its neighbour.
+* **What it never touches:**
+  * the hard stop;
+  * the mechanical target;
+  * max-loss;
+  * the 15:15 square-off;
+  * a decisive break of the level the premise named, such as a loss of L2 or a
+    breakdown of the lower point. Those still exit at once.
+
+Exits are never blocked in code. The house rule that exits are never delayed
+mechanically holds, so v5w is guidance to the model, and every mechanical exit
+path is unchanged.
+
+### Raising the target: a separate PR
+
+The order tool's actions are ENTER_LONG, ENTER_SHORT, EXIT and HOLD, so the agent
+cannot move a mechanical target once the trade is on. The operator asked for a
+target-raise action. It changes the live order path, so it is built and tested in
+its own PR. Until it lands, v5w's form is "do not book before the target".
+
+### Validation
+
+* **The new test.**
+  `test_v5w_stall_and_banknifty_candle_wait_and_no_pullback_hold` pins:
+  * the three rules, including the short-side form;
+  * the named overrides and the four pointers;
+  * the placement between the exit list and PROFIT-HOLD;
+  * the never-touch list.
+* **Mutation checks.** Each of these mutants fails it, and an unmutated control
+  passes:
+  * ten candles turned into five;
+  * the short side dropped;
+  * the BankNIFTY play-out weakened to "prints a candle";
+  * the hard stop dropped from the never-touch list;
+  * the premise-break exit dropped;
+  * the v4d pointer removed;
+  * the v3y pointer removed.
+* **The rest of the suite.** All 130 schema tests pass, including every earlier
+  exit-rule test.
+
+These are prompt-contract checks; they do not show that the model will comply or
+that the rule makes money.
