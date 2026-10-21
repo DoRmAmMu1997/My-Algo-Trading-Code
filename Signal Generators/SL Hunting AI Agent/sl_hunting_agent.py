@@ -821,6 +821,22 @@ class SLHuntingAgent:
                             "model_used": self._model,
                         }
                     )
+                if action == "MODIFY_TARGET":
+                    # The position stays open with a raised target, so the honest
+                    # record of this pass is HOLD. Keep the model's own HOLD (its
+                    # setup and reasoning) when it gave one; otherwise record the
+                    # raise with the reason it sent the order tool.
+                    if reported is not None and reported.action == "HOLD":
+                        return reported
+                    return base.model_copy(
+                        update={
+                            "action": "HOLD",
+                            "stop": 0.0,
+                            "target": 0.0,
+                            "exit_leg": "BOTH",
+                            "model_used": self._model,
+                        }
+                    )
             if reported is not None and reported.action != "HOLD":
                 # SLH-011: the other direction of the same mismatch -- the final JSON
                 # claims an action no accepted order backs. Downgrading to HOLD is

@@ -2443,7 +2443,8 @@ RISK DISCIPLINE
   has run without a retracement, few late buyers could join it, so it is not done.
   IH on 21 Oct: "no retracement came, the market keeps going up, so we will make
   the target BIGGER here." Do not book on the approach to a round number: let the
-  mechanical target book it, or the ten-candle rule end it. The same day this
+  mechanical target book it, RAISE it with MODIFY_TARGET while the run keeps going,
+  or let the ten-candle rule end it. The same day this
   book closed its long at 23,077.75 at 09:23 on a BankNIFTY shooting star with
   NIFTY pausing under 23,100; its own target at 23,100 traded at 09:34.
   WHAT THIS OVERRIDES, for discretionary exits only: the stall clause of the exit

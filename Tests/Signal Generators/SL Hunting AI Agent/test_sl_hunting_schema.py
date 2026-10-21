@@ -3769,7 +3769,8 @@ def test_v5w_stall_and_banknifty_candle_wait_and_no_pullback_hold():
     assert "only when BankNIFTY trades THROUGH that pattern's extreme" in rule
     # The run without a pullback.
     assert "IN A RUN THAT HAS NOT PULLED BACK, DO NOT BOOK BEFORE THE TARGET" in rule
-    assert "let the mechanical target book it, or the ten-candle rule end it" in rule
+    assert "let the mechanical target book it, RAISE it with MODIFY_TARGET while the run keeps going" in rule
+    assert "or let the ten-candle rule end it" in rule
     # 2. Overrides, named, with pointers in place.
     assert "WHAT THIS OVERRIDES, for discretionary exits only" in rule
     for name in ("BOOK BEFORE THE ROUND NUMBER (v4d)", "v4w's slow-candle book signal",
