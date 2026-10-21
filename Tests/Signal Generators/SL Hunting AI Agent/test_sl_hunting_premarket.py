@@ -201,43 +201,43 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_21_intraday_hunter_plan():
-    """Render the October 20 evening forecast on Wednesday, the next trading day.
+def test_shipped_note_matches_october_22_intraday_hunter_plan():
+    """Render the October 21 evening forecast on Thursday, without losing its side flip.
 
-    GbVF4_erGqo was uploaded 20 Oct at 21:04 IST; October 20 itself was a market
-    holiday (IH, 19 Oct live session: "tomorrow is a holiday"). Its direct Hindi
-    transcript buys a flat-to-gap-up open AND a small gap-down against sellers
-    seated by October 19's continuous selling, and ignores a big gap-down. Frames
-    at 0:36, 1:03 and 1:24 check the levels: NIFTY's garbled "2380 230" caption
-    is the drawn 23,083.20 / 23,200.50 resistance pair, rounded to 23,080 / 23,200
-    as IH reads it; the other eleven levels match their drawn labels.
+    Hj3d2kKke_I was uploaded 21 Oct at 21:10 IST. Its direct Hindi transcript
+    buys a flat-to-gap-up open against sellers seated by October 21's selling,
+    but on a GAP DOWN goes WITH the market and sells, because sellers seated on a
+    gap down hold with confidence. Sensex expiry is context, not an instruction.
+    Frames at 0:46, 1:16 and 1:52 check the levels: NIFTY's garbled "2300 2280"
+    is the drawn 23,002.20 / 22,883 pair (23,000 / 22,880), and Sensex's garbled
+    second support "72" is the drawn 72,214.26 line, recorded as 72,210. The
+    other nine match their spoken values and drawn labels.
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 21))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-21" in block
-    assert "GbVF4_erGqo" in block
-    assert "uploaded 2026-10-20" in note.source
+    block = format_premarket_note(note, date(2026, 10, 22))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-22" in block
+    assert "Hj3d2kKke_I" in block
+    assert "uploaded 2026-10-21" in note.source
     assert "sellers are likely seated" in note.context
-    assert "October 20 was a market holiday" in note.context
-    assert format_premarket_note(note, date(2026, 10, 20)) == ""
-    assert format_premarket_note(note, date(2026, 10, 22)) == ""
+    assert "Sensex has its weekly expiry on October 22" in note.context
+    assert format_premarket_note(note, date(2026, 10, 21)) == ""
+    assert format_premarket_note(note, date(2026, 10, 23)) == ""
 
     buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
     assert "buying-side setups" in buy
-    small = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> SAME BUY PLAN"))
-    assert "seated sellers" in small
-    big = next(line for line in note.plan if line.startswith("BIG GAP DOWN -> NO PRE-SET SIDE"))
-    assert "-> SELL" not in big
-    assert not any(line.split("->")[1].strip().startswith("SELL") for line in note.plan)
+    sell = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL, WITH THE MARKET"))
+    assert "hold with confidence and cannot be targeted" in sell
+    assert "selling-side setups" in sell
+    assert not any("EXPIR" in line.upper() for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [23080.0, 23200.0], "support": [22780.0, 22700.0]},
-        {"index": "BANKNIFTY", "resistance": [55900.0, 56200.0], "support": [55200.0, 54900.0]},
-        {"index": "SENSEX", "resistance": [74250.0, 74790.0], "support": [73200.0, 72700.0]},
+        {"index": "NIFTY", "resistance": [22880.0, 23000.0], "support": [22550.0, 22420.0]},
+        {"index": "BANKNIFTY", "resistance": [55100.0, 55400.0], "support": [54390.0, 54200.0]},
+        {"index": "SENSEX", "resistance": [73970.0, 74800.0], "support": [72700.0, 72210.0]},
     ]

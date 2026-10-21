@@ -11009,3 +11009,48 @@ Seven mutants each fail a test:
 * the paper tag dropped;
 * the master tagging every refusal;
 * the master guidance dropped.
+
+## October 22 pre-open note
+
+[Prediction For 22 OCT 2026](https://www.youtube.com/watch?v=Hj3d2kKke_I), uploaded
+2026-10-21 21:10:09 IST, 124 s, 16 transcript segments. The raw transcript is
+`Hj3d2kKke_I-transcript.txt` in the same archive.
+
+**Read.** October 21 sold continuously in all three indices, BankNIFTY without a
+retracement, so sellers are likely seated. Sensex has its weekly expiry on
+October 22; that is context only.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, to target those sellers |
+| GAP DOWN | SELL, with the market: sellers seated into a gap down hold with confidence and cannot be targeted |
+
+Per v5v, only the gap-up half of a "flat to gap up -> BUY" note has measured
+support after a selling day. The flat half measured -0.09R / -0.13R (191
+sessions), and the note stays advisory.
+
+**Levels.** Two captions were garbled and are resolved from the 1080p frames:
+
+* **NIFTY resistance**, spoken "2300 2280", is the drawn 23,002.20 / 22,883 pair,
+  recorded as 23,000 / 22,880.
+* **Sensex's second support**, spoken "72", is the drawn 72,214.26, recorded as
+  72,210 (the drawn line rounded down to 10, as for earlier garbled levels).
+
+The other nine levels match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,880 / 23,000 | 22,550 / 22,420 |
+| BankNIFTY | 55,100 / 55,400 | 54,390 / 54,200 |
+| Sensex | 73,970 / 74,800 | 72,700 / 72,210 |
+
+`test_shipped_note_matches_october_22_intraday_hunter_plan` pins the date gate,
+the source, both plan branches and all twelve levels. Each of these mutations
+fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-down branch turned into BUY;
+* the date set to October 21;
+* the Sensex support moved to 72,200.
