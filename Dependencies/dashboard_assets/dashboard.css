@@ -272,6 +272,46 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 
 .menu-note { margin: 8px 0 0; font-size: 10px; line-height: 1.4; color: var(--muted); }
 
+/* The S/R panel carries more per row -- a colour, one or two prices, a label
+ * and a remove button -- so it gets more width than the indicator menu. */
+.menu-panel.wide { width: 330px; }
+.menu-active input.swatch {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+}
+.menu-active input.price {
+  width: 72px;
+  flex: none;
+  padding: 2px 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+}
+.menu-active input.label {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 2px 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+
+/* While a draw tool is armed the chart is a placement target, so the cursor
+ * says so -- the only feedback there is before the first click lands. */
+#chart.arming, #chart.arming canvas { cursor: crosshair; }
+
 .provenance { margin: 6px 2px 0; font-size: 11px; color: var(--muted); }
 
 /* Wide tables scroll inside their own pane; the page body never scrolls

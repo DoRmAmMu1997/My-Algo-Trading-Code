@@ -915,3 +915,204 @@ def test_a_history_page_belongs_to_the_instrument_that_asked(history_server):
     # were not separated, this would answer with NIFTY's.
     assert get(history_server.url + "api/history?inst=NIFTY&tf=D&page=0")[0] == 200
     assert get(history_server.url + "api/history?inst=BANKNIFTY&tf=D&page=0")[0] == 404
+
+
+# ---------------------------------------------------------------------------
+# Support and resistance drawings
+# ---------------------------------------------------------------------------
+def _run_drawings(cases: dict) -> dict:
+    """Execute the page's own `drawingList` validator under node.
+
+    It is the gate between localStorage -- which can hold anything a previous
+    version wrote, or half of what a crashed one did -- and the draw path,
+    which has no guard of its own. A bad entry reaching the chart throws inside
+    the IIFE and blanks the whole page, so this is worth executing rather than
+    reading.
+    """
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the JS cannot be executed here")
+
+    harness = (
+        f"const cases = {json.dumps(cases)};\n"
+        "const out = {};\n"
+        "for (const [name, stored] of Object.entries(cases)) {\n"
+        "  const drawings = stored;\n"
+        "  const prefs = { inst: 'NIFTY' };\n"
+        + _page_function_source("drawingList")
+        + "\n  out[name] = drawingList();\n"
+        "}\n"
+        "console.log(JSON.stringify(out));\n"
+    )
+    finished = subprocess.run(  # nosec B603
+        [node, "-e", harness], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert finished.returncode == 0, finished.stderr
+    return json.loads(finished.stdout)
+
+
+def test_a_corrupt_drawings_store_yields_nothing_rather_than_throwing():
+    """Every shape a previous version, or a torn write, could have left."""
+
+    good_line = {"uid": "a", "kind": "line", "prices": [22600.5], "color": "#ef5f5f"}
+    good_zone = {"uid": "b", "kind": "zone", "prices": [22700.0, 22650.0]}
+
+    results = _run_drawings(
+        {
+            "sound": {"NIFTY": [good_line, good_zone]},
+            "notAnArray": {"NIFTY": {"uid": "a"}},
+            "missing": {"BANKNIFTY": [good_line]},
+            "junkEntries": {
+                "NIFTY": [
+                    None,
+                    "a string",
+                    {"uid": "c"},
+                    {"uid": "d", "kind": "circle", "prices": [1]},
+                    {"uid": "e", "kind": "line", "prices": []},
+                    {"uid": "f", "kind": "line", "prices": ["NaN"]},
+                    {"uid": "g", "kind": "zone", "prices": [22700.0]},
+                    good_line,
+                ]
+            },
+        }
+    )
+
+    assert [item["uid"] for item in results["sound"]] == ["a", "b"]
+    assert results["notAnArray"] == []
+    assert results["missing"] == [], "another instrument's levels are not this one's"
+    assert [item["uid"] for item in results["junkEntries"]] == ["a"], (
+        "one good entry survives a list full of rubbish; nothing else does"
+    )
+
+
+def test_a_zone_is_anchored_to_loaded_bar_times_not_invented_ones():
+    """The time-scale trap, in a new place.
+
+    Every series shares ONE time scale, built from the union of their times. A
+    zone anchored to a constructed timestamp -- "now", or the session open --
+    stretches that scale across empty chart, exactly as handing over five years
+    of CPR bands would. `zoneSpan` reads the first and last MERGED bar, so a
+    zone can only ever span candles that are already loaded.
+    """
+
+    source = _page_function_source("zoneSpan")
+
+    assert "lastMergedBars[0].time" in source
+    assert "lastMergedBars[lastMergedBars.length - 1].time" in source
+    assert "Date.now" not in source, "a zone must not invent a time"
+    assert "new Date" not in source, "a zone must not invent a time"
+
+
+def test_the_drawings_live_under_their_own_storage_key():
+    """Not inside `PREFS_KEY`, deliberately.
+
+    A hand-placed level is worth more than a view preference: the prefs key is
+    versioned so a rename falls back to defaults, and levels must not be
+    collateral damage of that.
+    """
+
+    source = (ASSETS_DIR / "dashboard.js").read_text(encoding="utf-8")
+
+    assert 'DRAWINGS_KEY = "algoDashboard.drawings.v1"' in source
+    assert "localStorage.setItem(DRAWINGS_KEY" in source
+    # The two stores stay separate: nothing writes drawings through savePrefs.
+    assert "prefs.drawings" not in source
+
+
+def test_nothing_about_a_drawing_ever_reaches_the_server():
+    """The read-only contract is why these live in the browser at all.
+
+    GET is the only method implemented, so there is no endpoint to save to --
+    and this fails if a future edit grows one.
+    """
+
+    source = (ASSETS_DIR / "dashboard.js").read_text(encoding="utf-8")
+
+    assert 'method: "POST"' not in source
+    assert "method: 'POST'" not in source
+    for verb in ("POST", "PUT", "PATCH", "DELETE"):
+        assert f'"{verb}"' not in source, f"the page must never issue a {verb}"
+
+
+def _run_hit_test(drawings_on_chart: list[dict], prices_to_pixels: dict, probe_y: float):
+    """Execute the page's own `drawingAtCoordinate` under node.
+
+    The hit test is the only real logic in the drag: which level, if any, the
+    pointer grabbed, and -- for a zone -- which of its two EDGES. Getting the
+    edge wrong moves the wrong boundary, which looks like the zone resizing
+    from the far side and is the sort of thing a source assertion cannot see.
+
+    `candleSeries` and `drawingHandles` are stubbed, because the function only
+    ever asks the series to turn a price into a pixel.
+    """
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the JS cannot be executed here")
+
+    harness = (
+        f"const pixels = {json.dumps(prices_to_pixels)};\n"
+        "const candleSeries = {\n"
+        "  priceToCoordinate: (price) => {\n"
+        "    const key = String(price);\n"
+        "    return Object.prototype.hasOwnProperty.call(pixels, key) ? pixels[key] : null;\n"
+        "  },\n"
+        "};\n"
+        f"const items = {json.dumps(drawings_on_chart)};\n"
+        "const drawingHandles = items.map((item) => ({ item }));\n"
+        "const DRAG_GRAB_PIXELS = 5;\n"
+        + _page_function_source("drawingAtCoordinate")
+        + f"\nconst found = drawingAtCoordinate({probe_y});\n"
+        "console.log(JSON.stringify(found\n"
+        "  ? { uid: found.entry.item.uid, index: found.index, distance: found.distance }\n"
+        "  : null));\n"
+    )
+    finished = subprocess.run(  # nosec B603
+        [node, "-e", harness], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert finished.returncode == 0, finished.stderr
+    return json.loads(finished.stdout)
+
+
+def test_dragging_grabs_the_nearest_level_and_the_right_edge_of_a_zone():
+    """Which level the pointer took hold of, and which of a zone's two edges."""
+
+    line = {"uid": "line", "kind": "line", "prices": [22600.0]}
+    zone = {"uid": "zone", "kind": "zone", "prices": [22900.0, 22800.0]}
+    # A pixel for each price the hit test will ask about.
+    pixels = {"22600": 300.0, "22900": 150.0, "22800": 200.0}
+
+    # Right on the line.
+    assert _run_hit_test([line, zone], pixels, 300.0) == {
+        "uid": "line", "index": 0, "distance": 0.0
+    }
+    # Within the grab radius of the zone's TOP edge, which is prices[0].
+    assert _run_hit_test([line, zone], pixels, 153.0)["index"] == 0
+    # ...and of its BOTTOM edge, which is prices[1]. Getting this wrong resizes
+    # the zone from the far side.
+    bottom = _run_hit_test([line, zone], pixels, 198.0)
+    assert bottom["uid"] == "zone"
+    assert bottom["index"] == 1
+
+    # Outside the radius of everything: the drag must not start, or the chart
+    # would stop panning for a click that grabbed nothing.
+    assert _run_hit_test([line, zone], pixels, 250.0) is None
+
+    # Two levels within reach: the NEARER one wins, not the first one found.
+    crowded = {"22600": 300.0, "22900": 302.0, "22800": 500.0}
+    assert _run_hit_test([line, zone], crowded, 301.4)["uid"] == "zone"
+    assert _run_hit_test([line, zone], crowded, 300.4)["uid"] == "line"
+
+
+def test_a_level_priced_off_the_visible_scale_is_not_grabbable():
+    """`priceToCoordinate` returns null for a price outside the pane.
+
+    Treating that as 0 would make a level scrolled off the top grab every click
+    near the top of the chart.
+    """
+
+    line = {"uid": "offscreen", "kind": "line", "prices": [99999.0]}
+
+    assert _run_hit_test([line], {}, 0.0) is None
+    assert _run_hit_test([line], {}, 300.0) is None

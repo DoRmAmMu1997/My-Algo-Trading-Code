@@ -66,7 +66,7 @@ component folder's own `Readme.md`.
 | [0017](adr/0017-chart-only-cpr-on-a-truncated-prior-session.md) | The dashboard's CPR reads a truncated prior session; the strategies' does not |
 | [0018](adr/0018-cpr-algo4-as-separate-worker.md) | CPR Algo 4 is its own worker, not a fourth algo inside the CPR worker |
 | [0019](adr/0019-cpr-ai-trend-day-rider.md) | CPR AI trades the Trend-Day Rider: a backtested gate that Codex may only veto |
-| [0020](adr/0020-a-second-index-on-the-monitoring-chart.md) | The chart gains a NIFTY/BankNIFTY switch and a chart-only indicator menu: an instrument dimension in the store, the feed-health gate pinned to the primary, and browser-side indicator maths kept honest by a node drift test |
+| [0020](adr/0020-a-second-index-on-the-monitoring-chart.md) | The chart gains a NIFTY/BankNIFTY switch, a chart-only indicator menu and hand-drawn S/R: an instrument dimension in the store, the feed-health gate pinned to the primary, browser-side indicator maths kept honest by a node drift test, and drawings in localStorage because the server is GET-only |
 
 ## Keeping these documents honest
 
