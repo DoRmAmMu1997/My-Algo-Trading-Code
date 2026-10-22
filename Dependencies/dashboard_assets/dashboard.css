@@ -172,10 +172,146 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
   cursor: pointer;
 }
 .tf-switch .tf.active { background: var(--accent); color: #0e1116; font-weight: 600; }
-.tf-switch .tf:not(.active):hover { color: var(--text); }
+.tf-switch .tf:not(.active):not(:disabled):hover { color: var(--text); }
+/* An instrument the runner is not publishing is dimmed rather than hidden: the
+ * control row keeps its width, and the button's title says which `.env` key
+ * turns it on. Same idiom as a VWAP label disabled on the Daily timeframe. */
+.tf-switch .tf:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* The CPR provenance line: the actual numbers the levels came from, so the
  * 15:15 close is visible rather than merely promised. */
+/* The indicator menu. The first popover on this page, so it brings its own
+ * idiom: a button that toggles a panel positioned under it. `position:
+ * relative` on the wrapper and `absolute` on the panel keep it out of the
+ * control row's flex flow, so opening it cannot reflow the chart beneath. */
+.menu { position: relative; display: inline-flex; }
+.menu-button {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.menu-button:hover, .menu-button[aria-expanded="true"] { color: var(--text); }
+.menu-button #ind-count:not(:empty)::before { content: " "; }
+
+.menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  width: 280px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.menu-add { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.menu-add select {
+  flex: 1 1 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+.menu-params { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 4px; }
+.menu-params label { display: inline-flex; align-items: center; gap: 3px; }
+.menu-params input {
+  width: 52px;
+  padding: 2px 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+}
+.menu-go {
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #0e1116;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.menu-active { margin: 8px 0 0; padding: 0; list-style: none; }
+.menu-active:empty { display: none; }
+.menu-active li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-top: 1px solid var(--line);
+}
+.menu-active .swatch {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 2px;
+}
+.menu-active .name { flex: 1 1 auto; color: var(--text); }
+/* A drop button, not a destructive-looking one: these are view preferences and
+ * re-adding is one click away. */
+.menu-active .drop {
+  padding: 0 5px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.menu-active .drop:hover { color: var(--neg); }
+
+.menu-note { margin: 8px 0 0; font-size: 10px; line-height: 1.4; color: var(--muted); }
+
+/* The S/R panel carries more per row -- a colour, one or two prices, a label
+ * and a remove button -- so it gets more width than the indicator menu. */
+.menu-panel.wide { width: 330px; }
+.menu-active input.swatch {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: none;
+  cursor: pointer;
+}
+.menu-active input.price {
+  width: 72px;
+  flex: none;
+  padding: 2px 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+}
+.menu-active input.label {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 2px 3px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+
+/* While a draw tool is armed the chart is a placement target, so the cursor
+ * says so -- the only feedback there is before the first click lands. */
+#chart.arming, #chart.arming canvas { cursor: crosshair; }
+
 .provenance { margin: 6px 2px 0; font-size: 11px; color: var(--muted); }
 
 /* Wide tables scroll inside their own pane; the page body never scrolls

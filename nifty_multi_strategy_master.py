@@ -660,6 +660,19 @@ SESSION_STATE_HEARTBEAT_SECONDS = _env_float("SESSION_STATE_HEARTBEAT_SECONDS", 
 # parses, so the fallback is the same one used before this module existed.
 SESSION_STATE_ASYNC_WRITES = _env_bool("SESSION_STATE_ASYNC_WRITES", False)
 
+# Names the shared store keys its OHLC pool by, alongside the timeframe. NIFTY is
+# the PRIMARY instrument: it is the only one the strategies trade off, the only one
+# the feed-health gate measures, and the only one the tick path builds bars for.
+# BankNIFTY is published for the monitoring chart alone -- see
+# `SecondaryIndexPublisher`. These are plain NAMES, not ids: the store does not
+# care which security they map to, and the `*_INDEX_SECURITY_ID` constants that
+# do map them sit further down with the rest of the instrument identities.
+#
+# Declared here because the dashboard's own configuration, immediately below, is
+# their first consumer.
+PRIMARY_INSTRUMENT = "NIFTY"
+SECONDARY_INSTRUMENT = "BANKNIFTY"
+
 # Read-only local monitoring dashboard. A browser page served by the runner
 # itself, answering "where do I stand right now" -- the one question the log
 # file, the Telegram feed and the end-of-day Google Sheet all fail to answer
@@ -682,6 +695,19 @@ DASHBOARD_PORT = _env_int("DASHBOARD_PORT", 8787)
 DASHBOARD_REFRESH_SECONDS = min(max(_env_float("DASHBOARD_REFRESH_SECONDS", 1.0), 0.25), 30.0)
 # Candles the chart shows. 375 is one full session.
 DASHBOARD_CHART_BARS = min(max(_env_int("DASHBOARD_CHART_BARS", 375), 60), 2200)
+# Offer BankNIFTY as a second instrument on the chart. OFF by default, because
+# turning it on costs one extra broker REST call per refresh AND a second
+# back-history load (~29s, ~63 MB) -- neither is worth paying for unasked.
+#
+# The BankNIFTY frame is published for the CHART only. It never reaches the
+# feed-health gate, the tick path, or any strategy: nothing trades off it.
+DASHBOARD_BANKNIFTY_ENABLED = _env_bool("DASHBOARD_BANKNIFTY_ENABLED", False)
+# Its own cadence, deliberately much slower than FETCH_POLL_SECONDS (2s). At the
+# poll rate this would add ~1,800 calls a session for a chart that can only draw
+# one bar a minute; at 60s it adds ~375 and the chart loses nothing.
+DASHBOARD_BANKNIFTY_REFRESH_SECONDS = min(
+    max(_env_float("DASHBOARD_BANKNIFTY_REFRESH_SECONDS", 60.0), 15.0), 300.0
+)
 
 #: Where the chart's back-history comes from: the CSV `algo.py fetch-data`
 #: writes. A module constant with deliberately NO `.env` knob, for the same
@@ -690,6 +716,16 @@ DASHBOARD_CHART_BARS = min(max(_env_int("DASHBOARD_CHART_BARS", 375), 60), 2200)
 #: file is not an error: the chart simply shows the live session, exactly as it
 #: did before history existed.
 DASHBOARD_HISTORY_CSV = ROOT_DIR / "Backtest Outputs" / "nifty_renko_futures_5y_1min_data.csv"
+#: The same, per instrument the chart can show. BankNIFTY's file is written by
+#: `algo.py fetch-data --index banknifty` and has the identical column shape, so
+#: `dashboard_history` reads it unchanged. Its entry is only ever loaded when
+#: `DASHBOARD_BANKNIFTY_ENABLED` is on.
+DASHBOARD_HISTORY_CSVS = {
+    PRIMARY_INSTRUMENT: DASHBOARD_HISTORY_CSV,
+    SECONDARY_INSTRUMENT: ROOT_DIR
+    / "Backtest Outputs"
+    / "banknifty_renko_futures_5y_1min_data.csv",
+}
 # Trade events the dashboard mirrors in memory for its closed-trade table. A
 # normal day is around 170.
 DASHBOARD_MAX_TRADE_EVENTS = min(max(_env_int("DASHBOARD_MAX_TRADE_EVENTS", 2000), 100), 20000)
@@ -2339,14 +2375,22 @@ class SharedMarketDataStore:
     every mutation, so a reader can never see a half-written snapshot.
 
     Three independent pools live inside:
-    1. `_snapshots`          - source-timeframe OHLC (we only use "1" here).
+    1. `_snapshots`          - source-timeframe OHLC, keyed
+                               (instrument, timeframe). Only the source
+                               timeframe "1" is ever published; higher
+                               timeframes stay derived per worker.
     2. `_ltp_snapshots`      - latest LTPs keyed by (segment, security_id).
     3. `_option_subscriptions` - option legs the fetcher should poll.
+
+    `instrument` defaults to `PRIMARY_INSTRUMENT` on every accessor, so the
+    ~29 workers' `store.get("1")` reads the NIFTY frame exactly as they always
+    have. The dimension exists for the monitoring chart's second index, which
+    nothing trades off; the feed-health gate below stays pinned to the primary.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._snapshots: dict[str, MarketSnapshot] = {}
+        self._snapshots: dict[tuple[str, str], MarketSnapshot] = {}
         self._ltp_snapshots: dict[tuple[str, int], LTPSnapshot] = {}
         self._option_subscriptions: dict[tuple[str, int], OptionSubscription] = {}
         # A physical quote is shared by every worker holding the same contract.
@@ -2373,11 +2417,12 @@ class SharedMarketDataStore:
         timeframe: str,
         frame: pd.DataFrame,
         *,
+        instrument: str = PRIMARY_INSTRUMENT,
         official_completed_minutes: Iterable[pd.Timestamp | datetime] | None = None,
         official_candle_ts: pd.Timestamp | datetime | None = None,
     ) -> MarketSnapshot:
         """
-        Atomically replace the stored snapshot for `timeframe`.
+        Atomically replace the stored snapshot for `(instrument, timeframe)`.
 
         The new snapshot is built BEFORE the lock is taken; only the swap
         happens under lock so the critical section stays small.
@@ -2420,10 +2465,12 @@ class SharedMarketDataStore:
             official_candle_ts=derived_official_candle_ts,
         )
         with self._lock:
-            self._snapshots[str(timeframe)] = snapshot
+            self._snapshots[(str(instrument), str(timeframe))] = snapshot
         return snapshot
 
-    def get(self, timeframe: str) -> MarketSnapshot | None:
+    def get(
+        self, timeframe: str, *, instrument: str = PRIMARY_INSTRUMENT
+    ) -> MarketSnapshot | None:
         """
         Return a fresh `MarketSnapshot` whose `frame` is a pandas copy.
 
@@ -2431,7 +2478,7 @@ class SharedMarketDataStore:
         shared store.
         """
         with self._lock:
-            snapshot = self._snapshots.get(str(timeframe))
+            snapshot = self._snapshots.get((str(instrument), str(timeframe)))
         if snapshot is None:
             return None
 
@@ -2446,7 +2493,7 @@ class SharedMarketDataStore:
         )
 
     def peek_snapshot_meta(
-        self, timeframe: str
+        self, timeframe: str, *, instrument: str = PRIMARY_INSTRUMENT
     ) -> tuple[tuple | None, pd.Timestamp | None, datetime] | None:
         """Metadata for one stored snapshot WITHOUT copying its frame.
 
@@ -2456,10 +2503,10 @@ class SharedMarketDataStore:
         mutates nothing, and is safe from any thread.
 
         Returns `(candle_signature, source_candle_ts, fetched_at)`, or None
-        when that timeframe has never been published.
+        when that instrument/timeframe pair has never been published.
         """
         with self._lock:
-            snapshot = self._snapshots.get(str(timeframe))
+            snapshot = self._snapshots.get((str(instrument), str(timeframe)))
             if snapshot is None:
                 return None
             return (
@@ -2641,7 +2688,11 @@ class SharedMarketDataStore:
 
         now = datetime.now(ZoneInfo("Asia/Kolkata"))
         with self._lock:
-            source = self._snapshots.get("1")
+            # PINNED to the primary instrument, and it must stay pinned. This
+            # feed-health result drives the 30-second liquidation clock, so a
+            # secondary index published for the monitoring chart -- stale,
+            # empty, or failing outright -- must be incapable of reaching it.
+            source = self._snapshots.get((PRIMARY_INSTRUMENT, "1"))
             frame = source.frame.copy() if source is not None else pd.DataFrame()
             ltp_times = {
                 key: snapshot.fetched_at
@@ -3909,6 +3960,104 @@ def _should_open_bnf_mirror(
 
 
 # =============================================================================
+# SECONDARY INDEX PUBLISHER (monitoring chart only)
+# =============================================================================
+class SecondaryIndexPublisher:
+    """Publishes BankNIFTY 1-minute bars into the store for the CHART alone.
+
+    Both market-data producers own one of these and call `publish_if_due()`
+    once per cycle. It exists as its own object, rather than a method on each
+    fetcher, so the two producers cannot drift apart on the one thing that
+    matters here: how thoroughly this is isolated from the NIFTY feed.
+
+    Four properties, each of which a test asserts:
+
+    1. **It never touches feed health.** `store.record_market_data_refresh` is
+       pinned to `PRIMARY_INSTRUMENT`, and this class does not call it. The
+       30-second liquidation clock cannot be moved by a BankNIFTY REST failure,
+       a stale BankNIFTY frame, or a BankNIFTY bar that never arrives.
+    2. **It never raises into the caller.** Every failure is logged and
+       swallowed, so a cycle that cannot price BankNIFTY still publishes NIFTY.
+    3. **It has its own cadence.** `FETCH_POLL_SECONDS` is 2, and the chart can
+       draw one BankNIFTY bar a minute, so polling it per cycle would buy
+       nothing for ~1,800 extra broker calls a session.
+    4. **It is off unless asked for.** Disabled, `publish_if_due` is one
+       boolean read and no call is made at all.
+
+    It is deliberately NOT wired into the tick path. The websocket producer has
+    one `TickBarAggregator` gated on the NIFTY security id; a second aggregator,
+    rollover clock and true-up loop is a large change to the live bar producer,
+    and a minute-latency REST bar is the right answer for an instrument nothing
+    trades off. So BankNIFTY comes from REST in BOTH feed modes.
+    """
+
+    def __init__(
+        self,
+        store: SharedMarketDataStore,
+        broker: DhanBrokerClient,
+        log: logging.Logger,
+        *,
+        enabled: bool = DASHBOARD_BANKNIFTY_ENABLED,
+        refresh_seconds: float = DASHBOARD_BANKNIFTY_REFRESH_SECONDS,
+    ) -> None:
+        self.store = store
+        self.broker = broker
+        self.log = log
+        self.enabled = bool(enabled)
+        self.refresh_seconds = float(refresh_seconds)
+        # `monotonic` rather than wall clock: this is a plain interval and must
+        # not jump if the system clock is corrected mid-session.
+        self._next_due = 0.0
+        self._last_logged_candle_ts: pd.Timestamp | None = None
+
+    def publish_if_due(self) -> bool:
+        """Fetch and publish BankNIFTY when its interval has elapsed.
+
+        Returns True when a frame was published, so a caller can be tested on
+        the cadence. Never raises.
+        """
+
+        if not self.enabled:
+            return False
+        now = time.monotonic()
+        if now < self._next_due:
+            return False
+        # Re-armed BEFORE the call, so a slow or failing fetch cannot turn into
+        # a retry every cycle.
+        self._next_due = now + self.refresh_seconds
+        try:
+            frame = self.broker.fetch_index_1m_ohlc(
+                security_id=BANKNIFTY_INDEX_SECURITY_ID,
+                exchange_segment=BANKNIFTY_INDEX_EXCHANGE_SEGMENT,
+                instrument_type=BANKNIFTY_INDEX_INSTRUMENT_TYPE,
+            )
+            # The SAME validator the NIFTY feed uses. A monitoring instrument is
+            # not a reason to accept a frame the primary one would reject.
+            snapshot = self.store.update(
+                "1",
+                validate_ohlc_frame(frame),
+                instrument=SECONDARY_INSTRUMENT,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "%s chart feed unavailable this cycle (%s); the chart keeps its "
+                "last bars and the NIFTY feed is unaffected.",
+                SECONDARY_INSTRUMENT,
+                exc,
+            )
+            return False
+        if self._last_logged_candle_ts != snapshot.source_candle_ts:
+            self._last_logged_candle_ts = snapshot.source_candle_ts
+            self.log.info(
+                "Fetched %s for the chart | Rows=%s | LastCandle=%s",
+                SECONDARY_INSTRUMENT,
+                len(snapshot.frame),
+                snapshot.source_candle_ts,
+            )
+        return True
+
+
+# =============================================================================
 # CENTRAL MARKET-DATA FETCHER
 # =============================================================================
 class CentralMarketDataFetcher(threading.Thread):
@@ -3944,6 +4093,9 @@ class CentralMarketDataFetcher(threading.Thread):
         self.log = logging.getLogger(f"{LOGGER_NAME}.fetcher")
         self.last_logged_candle_ts: dict[str, pd.Timestamp | None] = {}
         self.last_logged_index_ltp: float | None = None
+        # BankNIFTY for the monitoring chart only. Its own cadence, its own
+        # try/except, and no path to the feed-health gate -- see the class.
+        self.secondary_index = SecondaryIndexPublisher(store, broker, self.log)
 
     def fetch_ohlc(self, timeframe: str) -> pd.DataFrame:
         """Fetch 1-min NIFTY spot OHLC. Higher TFs are derived per-worker."""
@@ -4048,6 +4200,10 @@ class CentralMarketDataFetcher(threading.Thread):
                     health.unhealthy_seconds,
                     "; ".join(health.reasons),
                 )
+            # AFTER the health gate has already been recorded and logged, so
+            # the chart's second index sits strictly downstream of every
+            # decision the NIFTY feed drives. Self-throttled and never raises.
+            self.secondary_index.publish_if_due()
             self.stop_event.wait(FETCH_POLL_SECONDS)
         self.log.info("Central market data fetcher stopped.")
 
@@ -4111,6 +4267,9 @@ class WebSocketMarketDataFetcher(threading.Thread):
         self.stop_event = stop_event
         self.broker = broker
         self.log = logging.getLogger(f"{LOGGER_NAME}.ws_fetcher")
+        # BankNIFTY for the monitoring chart only. Its own cadence, its own
+        # try/except, and no path to the feed-health gate -- see the class.
+        self.secondary_index = SecondaryIndexPublisher(store, broker, self.log)
 
         # Tick-built bars (pump writes, supervisor reads; internally locked).
         self.aggregator = TickBarAggregator()
@@ -4531,6 +4690,9 @@ class WebSocketMarketDataFetcher(threading.Thread):
                 health.unhealthy_seconds,
                 "; ".join(health.reasons),
             )
+        # The chart's second index, from REST in this mode too: the tick path
+        # builds NIFTY bars only, deliberately. Strictly after the health gate.
+        self.secondary_index.publish_if_due()
 
     def _close_feed(self) -> None:
         """Best-effort websocket shutdown; daemon threads are the backstop."""
@@ -18768,15 +18930,22 @@ def _dashboard_chart_payload(
     store: SharedMarketDataStore,
     cache: _DashboardChartCache,
     deps: _DashboardChartDeps = _DASHBOARD_CHART_DEPS,
+    instrument: str = PRIMARY_INSTRUMENT,
 ) -> dict:
     """The chart half of the `/api/state` document: a version and the forming bars.
 
     The heavy arrays live behind `/api/chart` and are refetched only when
     `series_version` moves. Everything here is deliberately small enough to
     ride along with every poll.
+
+    One `cache` belongs to one `instrument`. Both store reads below are scoped
+    to it, so all four cache tiers -- including Tier C's "signature unchanged,
+    copy nothing" -- hold per instrument exactly as they did for the single one.
+    A secondary instrument the feed has never published simply reports
+    `NO_DATA`, which is what the page already draws before the first candle.
     """
 
-    meta = store.peek_snapshot_meta("1")
+    meta = store.peek_snapshot_meta("1", instrument=instrument)
     if meta is None:
         return {"state": "NO_DATA", "series_version": 0, "last_bar": None, "bars": 0}
     signature, source_candle_ts, _fetched_at = meta
@@ -18785,7 +18954,7 @@ def _dashboard_chart_payload(
         # TIER C. The store is never touched here, and a test pins that.
         return _chart_state_block(cache)
 
-    snapshot = store.get("1")
+    snapshot = store.get("1", instrument=instrument)
     if snapshot is None or snapshot.frame.empty:
         return {"state": "NO_DATA", "series_version": cache.series_version,
                 "last_bar": None, "bars": 0}
@@ -18905,49 +19074,92 @@ def _chart_state_block(cache: _DashboardChartCache) -> dict:
     }
 
 
+def _dashboard_chart_instruments() -> tuple[str, ...]:
+    """Instruments the chart offers, primary first.
+
+    The primary always. The secondary only when it is switched on, so with the
+    knob off the document, the publisher and the page all look exactly as they
+    did before a second instrument existed.
+    """
+
+    if DASHBOARD_BANKNIFTY_ENABLED:
+        return (PRIMARY_INSTRUMENT, SECONDARY_INSTRUMENT)
+    return (PRIMARY_INSTRUMENT,)
+
+
+def _dashboard_history_instruments() -> dict[str, Path]:
+    """Which instruments' back-history to load, and from where.
+
+    The primary always; the secondary only when the chart is actually offering
+    it, because the second file costs another ~29 seconds and ~63 MB of RSS and
+    an operator who will not look at it should not pay for it.
+    """
+
+    wanted = [PRIMARY_INSTRUMENT]
+    if DASHBOARD_BANKNIFTY_ENABLED:
+        wanted.append(SECONDARY_INSTRUMENT)
+    return {name: DASHBOARD_HISTORY_CSVS[name] for name in wanted}
+
+
 def _dashboard_history_pages() -> dict[str, bytes]:
-    """Read the history CSV and render its pages, ready for the transport.
+    """Read each history CSV and render its pages, ready for the transport.
 
     Runs ONCE, on the dashboard's own builder thread, after the first live
     payload is already on screen. Nothing here touches the market-data store, a
-    worker, the broker or the session state -- it opens one file -- so the
+    worker, the broker or the session state -- it opens files -- so the
     dashboard's safety contract is untouched by it.
 
     The resampler is the strategies' OWN `resample_ohlc_from_1m`, the same
     object the live chart uses. Two resamplers would eventually disagree about a
     bucket boundary and the chart would show a seam exactly where history meets
     the live session.
+
+    The PRIMARY instrument is loaded first, so its scroll-back is ready at the
+    measured ~29.5 seconds exactly as it was before a second instrument existed;
+    the secondary's pages land after. One instrument's missing or unreadable CSV
+    costs only that instrument's scroll-back.
     """
 
-    history = dashboard_history.build_history(
-        path=DASHBOARD_HISTORY_CSV,
-        renderer=dashboard_snapshot.render_document_bytes,
-        resample=_DASHBOARD_CHART_DEPS.resample,
-        higher_timeframe_minutes=_DASHBOARD_HIGHER_TIMEFRAME_MINUTES,
-        stochastic_fn=_DASHBOARD_CHART_DEPS.stochastic_fn,
-        stochastic_settings={
-            "k_period": _DASHBOARD_CHART_DEPS.k_period,
-            "d_period": _DASHBOARD_CHART_DEPS.d_period,
-            "smooth_k": _DASHBOARD_CHART_DEPS.smooth_k,
-        },
-    )
-    if not history.available:
-        logger.info(
-            "Monitoring dashboard chart history unavailable (%s); the chart shows "
-            "the live session only. Run `python algo.py fetch-data --index nifty` "
-            "to populate it.",
-            history.unavailable_reason,
+    pages: dict[str, bytes] = {}
+    for instrument, path in _dashboard_history_instruments().items():
+        history = dashboard_history.build_history(
+            path=path,
+            renderer=dashboard_snapshot.render_document_bytes,
+            resample=_DASHBOARD_CHART_DEPS.resample,
+            higher_timeframe_minutes=_DASHBOARD_HIGHER_TIMEFRAME_MINUTES,
+            stochastic_fn=_DASHBOARD_CHART_DEPS.stochastic_fn,
+            stochastic_settings={
+                "k_period": _DASHBOARD_CHART_DEPS.k_period,
+                "d_period": _DASHBOARD_CHART_DEPS.d_period,
+                "smooth_k": _DASHBOARD_CHART_DEPS.smooth_k,
+            },
         )
-        return {}
+        if not history.available:
+            logger.info(
+                "Monitoring dashboard %s chart history unavailable (%s); that "
+                "instrument shows the live session only. Run `python algo.py "
+                "fetch-data --index %s` to populate it.",
+                instrument,
+                history.unavailable_reason,
+                instrument.lower(),
+            )
+            continue
 
-    # What actually loaded, not just how many pages: the date range is the part
-    # an operator can check against what they expected to download.
-    logger.info("Monitoring dashboard chart history ready: %s.", history.describe())
-    return dashboard_history.page_map(history)
+        # What actually loaded, not just how many pages: the date range is the
+        # part an operator can check against what they expected to download.
+        logger.info(
+            "Monitoring dashboard %s chart history ready: %s.",
+            instrument,
+            history.describe(),
+        )
+        pages.update(dashboard_history.page_map(history, instrument=instrument))
+    return pages
 
 
 def _dashboard_chart_series(
-    cache: _DashboardChartCache, deps: _DashboardChartDeps = _DASHBOARD_CHART_DEPS
+    cache: _DashboardChartCache,
+    deps: _DashboardChartDeps = _DASHBOARD_CHART_DEPS,
+    instrument: str = PRIMARY_INSTRUMENT,
 ) -> dict:
     """The full `/api/chart` payload: both timeframes, their indicators, and CPR.
 
@@ -18980,6 +19192,7 @@ def _dashboard_chart_series(
     }
     return dashboard_indicators.chart_document(
         series_version=cache.series_version,
+        instrument=instrument,
         timeframes=timeframes,
         cpr=cache.cpr,
         cpr_days=cache.cpr_days,
@@ -19228,9 +19441,14 @@ def _dashboard_document(
     workers: Sequence[BasePaperStrategyWorker],
     store: SharedMarketDataStore,
     sink: Any,
-    chart_cache: _DashboardChartCache,
+    chart_caches: Mapping[str, _DashboardChartCache],
 ) -> dict:
-    """Build the whole `/api/state` document. Runs on the builder thread only."""
+    """Build the whole `/api/state` document. Runs on the builder thread only.
+
+    `chart_caches` is one cache per instrument the chart offers. Each is
+    refreshed here and contributes its own small state block, so the page can
+    tell which instrument has a new minute without fetching either candle array.
+    """
 
     ledger = dashboard_snapshot.pair_trade_events(sink.events() if sink is not None else [])
     worker_views = [_dashboard_worker_view(worker, store, ledger) for worker in workers]
@@ -19242,7 +19460,12 @@ def _dashboard_document(
             session=_dashboard_session_view(workers),
             worker_views=worker_views,
             ledger=ledger,
-            chart=_dashboard_chart_payload(store, chart_cache),
+            chart={
+                instrument: _dashboard_chart_payload(
+                    store, cache, instrument=instrument
+                )
+                for instrument, cache in chart_caches.items()
+            },
             feed=_dashboard_feed_view(store),
         )
     )
@@ -20287,14 +20510,19 @@ def main() -> None:
                 dashboard_sink.seed(session_state.snapshot().get("trades") or [])
             for worker in workers:
                 worker.dashboard_event_sink = dashboard_sink
-            chart_cache = _DashboardChartCache(max_bars=DASHBOARD_CHART_BARS)
+            chart_caches = {
+                instrument: _DashboardChartCache(max_bars=DASHBOARD_CHART_BARS)
+                for instrument in _dashboard_chart_instruments()
+            }
             dashboard = start_dashboard(
                 port=DASHBOARD_PORT,
                 refresh_seconds=DASHBOARD_REFRESH_SECONDS,
                 builder=lambda: _dashboard_document(
-                    workers, store, dashboard_sink, chart_cache
+                    workers, store, dashboard_sink, chart_caches
                 ),
-                chart_builder=lambda: _dashboard_chart_series(chart_cache),
+                chart_builder=lambda instrument: _dashboard_chart_series(
+                    chart_caches[instrument], instrument=instrument
+                ),
                 history_builder=_dashboard_history_pages,
                 renderer=dashboard_snapshot.render_document_bytes,
                 log=logger,

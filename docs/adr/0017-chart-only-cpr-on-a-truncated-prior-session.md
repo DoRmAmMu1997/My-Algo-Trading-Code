@@ -159,3 +159,11 @@ supplying a different window is the smaller coupling, and the equality test keep
 - **If the operator later wants one definition everywhere**, the path is: change `_add_daily_cpr`,
   delete the truncation from `chart_cpr`, and the equality test starts passing on the *default*
   window rather than a widened one.
+
+> **Amended 2026-10-22** ([`ADR-0020`](0020-a-second-index-on-the-monitoring-chart.md)):
+> the ladder is now per INSTRUMENT. Each instrument builds its own from its own
+> CSV through the same `cpr_segments`, and carries its own `cpr_days` in its own
+> `/api/chart` payload -- so there is still exactly one CPR implementation. The
+> page's `cprSignature` memo gained the instrument: two indices' ladders can
+> agree on band count, extent and even a pivot while describing entirely
+> different prices, and an unchanged signature skips the redraw.

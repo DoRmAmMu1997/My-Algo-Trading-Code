@@ -6,7 +6,8 @@
 A browser page the runner serves itself, answering the one question the log
 file, Telegram and the end-of-day Google Sheet do not: **where do I stand right
 now?** Open positions with live marks, today's closed trades grouped by
-strategy, per-strategy running P&L, and a NIFTY candle chart.
+strategy, per-strategy running P&L, and a candle chart of NIFTY or -- when
+`DASHBOARD_BANKNIFTY_ENABLED` is on -- BankNIFTY.
 
 ## The safety contract
 
@@ -102,6 +103,49 @@ and the SL-Hunting mirror all appear (see
 from `store.get_ltp_by_secid`, which never calls the broker; a mark is "stale"
 when the same read with `max_age_seconds=DASHBOARD_STALE_MARK_SECONDS` returns
 nothing while the unbounded read returns a price.
+
+### The instrument switch
+
+NIFTY always; BankNIFTY when `DASHBOARD_BANKNIFTY_ENABLED` is on. The store's
+OHLC pool is keyed `(instrument, timeframe)` with `instrument` keyword-only and
+defaulting to the primary, so every worker's `store.get("1")` is untouched.
+`SecondaryIndexPublisher` fetches BankNIFTY over REST in BOTH feed modes, on its
+own cadence, strictly after the feed-health gate, in its own try/except. The
+health gate reads `(PRIMARY_INSTRUMENT, "1")` hard-coded and must stay that way.
+See [`ADR-0020`](../adr/0020-a-second-index-on-the-monitoring-chart.md).
+
+Each instrument has its own chart cache, its own `/api/chart` publisher slot and
+ETag, its own CPR ladder, and its own scroll-back -- so switching costs no
+refetch of anything already loaded, for the same reason both timeframes ride in
+one payload. The state document's `chart` block is keyed by instrument, and its
+KEYS are what the page reads to dim the button for an instrument this run is not
+publishing.
+
+### The indicator menu
+
+Eight indicators -- EMA, SMA, Bollinger and Supertrend as overlays; RSI, MACD,
+ATR and ADX each in a pane of their own -- added from a menu with their own
+parameters, several instances of one allowed, persisted per browser in
+`prefs.indicators`.
+
+They are computed in the BROWSER, in `dashboard_assets/dashboard_indicators.js`,
+because the history pages are rendered once at startup into immutable bytes: a
+server-side indicator could only cover the live window and would vanish on
+scroll-back. They are **chart-only**, like CPR, and no strategy reads them. The
+second implementation is bounded by a node-backed drift test that compares every
+`compute` with the strategies' own TA-Lib helpers element by element, warm-up
+included. See [`ADR-0020`](../adr/0020-a-second-index-on-the-monitoring-chart.md).
+
+### Hand-drawn support and resistance
+
+Horizontal lines (`createPriceLine`) and shaded zones (a `BaselineSeries` whose
+base is a price, so the fill IS the band). Click to place, drag to move, edit to
+an exact price in the panel's list, × to remove.
+
+Persisted in `localStorage` under their OWN key, `algoDashboard.drawings.v1` —
+not in `prefs`, whose version may be bumped — keyed per instrument and shared
+across all three timeframes. The server never sees them: GET is the only method
+it implements, which is the whole reason they live in the browser.
 
 ### Chart indicators and the 1m/5m/D toggle
 
@@ -207,8 +251,8 @@ no volume column and synthesising one would be a fabrication.
 |---|---|
 | `GET /` `/dashboard.css` `/dashboard.js` `/vendor/…js` | Frozen whitelist, loaded into memory once at start |
 | `GET /api/state` | The whole document; `ETag` + `If-None-Match` → `304`; `Cache-Control: no-store` |
-| `GET /api/chart` | The full candle array; fetched only when `series_version` moves |
-| `GET /api/history?tf=<1\|5\|D\|cpr>&page=<n>` | One page of back-history, or the CPR ladders. The only endpoint that reads the request, so it validates rather than infers: `tf` from a frozen set, `page` a plain non-negative integer, blanks included (`keep_blank_values`, so `?page=` is refused rather than read as absent). Past the start of history → `404`, which is how the browser learns to stop asking. No `ETag`: every response here is `no-store`, so a `304` would leave the browser with no body to draw |
+| `GET /api/chart?inst=<NIFTY\|BANKNIFTY>` | One instrument's full candle array; fetched only when its `series_version` moves. One of **two** endpoints that read the request, so it validates rather than infers: `inst` from a frozen set, case-sensitive because the store's keys are the names as written; absent means the default instrument, so the bare URL still works; blank is refused |
+| `GET /api/history?inst=<i>&tf=<1\|5\|D\|cpr>&page=<n>` | One page of back-history, or the CPR ladders. Validates rather than infers: `inst` and `tf` each from a frozen set, `page` a plain non-negative integer, blanks included (`keep_blank_values`, so `?page=` is refused rather than read as absent). Page keys are `"<instrument>:<tf>:<page>"`, so every instrument's pages share one dict without colliding. Past the start of history → `404`, which is how the browser learns to stop asking. No `ETag`: every response here is `no-store`, so a `304` would leave the browser with no body to draw |
 | anything else | `404` |
 | any non-GET | `405` + `Allow: GET` |
 
@@ -400,6 +444,80 @@ and `#35c46b` are R1/R2 and S1/S2 *and* the down and up candles.
 the set's extent and its newest pivot, or a new session, a newly loaded page
 and a timeframe switch all look identical to it.
 
+**The instrument belongs in `cprSignature` too.** Two indices' ladders can
+agree on band count, extent and even a pivot while describing completely
+different prices. The memo skips the redraw on an unchanged signature, so
+without it one index's levels stay drawn over the other's candles -- the same
+class of bug as a group pref left out, and just as silent.
+
+**`historyExhausted` is PER INSTRUMENT, and has to be.** A 404 means "nothing
+older" for the instrument that asked. The secondary's pages are built after the
+primary's, so a shared flag would let the primary reaching the start of its
+history switch off the secondary's scroll-back before it had served one page.
+The 404-has-two-meanings trap, one level up.
+
+**A reply must be filed under the instrument that was REQUESTED.** Every fetch
+captures `prefs.inst` before its `await` and writes through that captured view,
+never `view()`. The operator can switch instrument while a request is in the air,
+and a reply filed under whichever instrument happens to be on screen when it
+lands draws one index's data on the other's chart.
+
+**Switching to an instrument with no payload clears every series.** Leaving the
+outgoing candles on screen under the new instrument's name would be the chart
+stating something untrue, which is the one thing this dashboard does not do.
+
+**The feed-health gate must never become instrument-aware.**
+`record_market_data_refresh` reads `(PRIMARY_INSTRUMENT, "1")` hard-coded. It
+drives the 30-second liquidation clock, and a secondary instrument on a
+60-second cadence is routinely staler than the primary -- so letting it in would
+mean an ordinary BankNIFTY REST hiccup could pull a real auto-square-off
+forward. `test_the_health_gate_reads_the_primary_frame_alone` compares two
+independent stores, one with a two-year-old secondary frame and one with none,
+and requires the health snapshots to be identical in full. Two stores rather
+than two refreshes of one: the healthy streak counts refreshes, and would
+differ for a reason that has nothing to do with the instrument.
+
+**A hand-rolled indicator is a different indicator.** TA-Lib seeds an EMA
+with the SMA of its first `period` values, not the first value; it starts
+MACD's FAST ema at `slow - 1` rather than `fast - 1`, seeded on the values
+ending there; and its ADX accumulates sums over `period - 1` before smoothing
+rather than reusing the ATR's Wilder seed. Each of those was measurably wrong
+in the obvious implementation -- 1.6 index points on MACD's first published
+bar, and an ADX gap of `sum/period²` that never decays. The drift test is what
+found them, and when it fails the fix is to match TA-Lib, never to loosen the
+tolerance.
+
+**Indicator series are built from the DRAW path, not from boot.** `ensureChart`
+runs inside the first draw, so at startup there is no chart to hang a series
+on: building there alone left a page reloaded with four saved indicators
+drawing only the two overlays, with the menu's count badge cheerfully reading
+4. `syncIndicatorSeries` keys on a signature of the active set and is called
+from `applyTimeframe`, so boot, an add, a removal and an instrument switch all
+converge on one path.
+
+**Panes are rebuilt, not patched.** The library re-indexes panes when one is
+removed, so removing an indicator from the middle of the stack rebuilds the
+whole set rather than trying to keep hold of indices. Removal walks from the
+highest index DOWN for the same reason.
+
+**A zone must be anchored to LOADED bar times.** `zoneSpan` takes the first
+and last merged bar. Every series shares one time scale built from the union of
+their times, so a zone anchored to a constructed timestamp -- "now", the
+session open -- stretches that scale across empty chart. The same trap as
+handing over five years of CPR bands while a week of candles is loaded.
+
+**The chart's pan must be switched off while a level is dragged.** Otherwise
+the same pointer drags the chart underneath and the level appears to stick
+where it was. `mousedown` binds to the container so a drag can only start over
+the chart; `mousemove` and `mouseup` bind to the WINDOW, so a pointer that
+leaves the chart mid-drag still finishes the drag rather than leaving the level
+glued to the cursor.
+
+**`text()` is not an attribute escaper.** It returns the em-dash markup for an
+empty value -- right in a table cell, and wrong inside `value=""`, where it
+wrote a literal `<span class="dash">` into the label field. `attr()` escapes
+without substituting, and escapes quotes, which `text()` has no reason to.
+
 **Assets are read into memory at startup.** Editing `dashboard.js` on disk does
 nothing to a running server; restart it, or spend a while debugging code that
 is not the code being served.
@@ -414,7 +532,7 @@ and the page carries a footer credit.
 
 ## Configuration
 
-Seven keys, all read in the master and clamped at read time so a typo in a
+Nine keys, all read in the master and clamped at read time so a typo in a
 monitoring knob cannot stop a session starting. See
 [`configuration.md`](configuration.md) and `Dependencies/env.example`. There is
 deliberately no host key.
@@ -424,9 +542,10 @@ deliberately no host key.
 | Suite | Covers |
 |---|---|
 | `Tests/Dependencies/test_dashboard_snapshot.py` | Every pairing confidence, the Delta-0.2 / SL-Hunting-mirror / re-entry shapes, `EXIT_FAILED` not closing, malformed events, the honesty rules, NaN rejection |
-| `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read; plus the page guards -- every wired element id exists, the CPR levels step rather than lean on whitespace, and `cprRuns` executed under node so no level runs across a day with no band |
+| `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read; plus the page guards -- every wired element id exists, the CPR levels step rather than lean on whitespace, and `cprRuns` executed under node so no level runs across a day with no band; plus the `inst` parameter on both endpoints, the per-instrument chart ETag, and one instrument running out of history not exhausting the other |
+| `Tests/Dependencies/test_dashboard_chart_indicators_js.py` | The drift guard: every menu indicator run under node and compared with `misc_strategy_common`'s TA-Lib helpers element by element at several periods, plus parameter clamping and an all-null series shorter than its warm-up. Skips where node is absent |
 | `Tests/Dependencies/test_dashboard_indicators.py` | CPR truncation and every degenerate session shape; **the equality test that pins the CPR algebra against `_add_daily_cpr`**; VWAP and stochastic equality with the strategies' helpers; the forming bucket; and every fixture rendered through `render_document_bytes` |
-| `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, the "never reaches the broker or a mutating gate" assertion, the recompute-cadence guards, and fail-soft when an indicator raises |
+| `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, the "never reaches the broker or a mutating gate" assertion, the recompute-cadence guards, and fail-soft when an indicator raises. `TestSecondaryInstrumentFeed` covers the instrument dimension: the two frames not overwriting each other, a worker still getting NIFTY without asking, **the health gate reading the primary alone**, the publisher's cadence and fail-soft, `validate_ohlc_frame` not relaxed, and the secondary being absent until its knob is on |
 
 `Dependencies/dashboard_snapshot.py` and `Dependencies/dashboard_indicators.py`
 each carry a 90 % coverage budget in `scripts/check_coverage_thresholds.py`

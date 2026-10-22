@@ -501,6 +501,7 @@ def chart_document(
     vwap_is_proxy: bool,
     stochastic_settings: Mapping[str, int],
     cpr_days: Sequence[Mapping[str, object]] | None = None,
+    instrument: str = "NIFTY",
 ) -> dict[str, object]:
     """The whole `/api/chart` payload.
 
@@ -509,10 +510,16 @@ def chart_document(
     but no band in the stored ladder, because that ladder is only as fresh as
     the history CSV. Same shape as a `/api/history?tf=cpr` day band, so the
     page can fill one from the other without a second reader.
+
+    `instrument` is carried so the page can prove which index a payload is
+    describing rather than inferring it from the request it made. The chart
+    keeps one payload per instrument and they arrive independently, so a reply
+    that cannot say what it is cannot be matched to the right series.
     """
 
     return {
         "series_version": int(series_version),
+        "instrument": str(instrument),
         "timeframes": {key: dict(value) for key, value in timeframes.items()},
         "cpr": cpr.as_dict(),
         "cpr_days": [dict(band) for band in (cpr_days or ())],

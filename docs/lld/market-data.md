@@ -25,7 +25,8 @@ others had rejected.
 
 ```python
 SharedMarketDataStore            # lock-guarded; one writer, many readers
-  ├─ 1-minute OHLC frames        # per instrument (NIFTY spot, BankNIFTY, option legs)
+  ├─ 1-minute OHLC frames        # keyed (instrument, timeframe); only ("NIFTY", "1")
+  │                              #   and, for the chart, ("BANKNIFTY", "1")
   ├─ LTP cache                   # per subscribed leg, with a timestamp
   ├─ MarketDataHealth            # freshness state, shared by all readers
   └─ OptionSubscription set      # which legs are currently subscribed
@@ -175,9 +176,20 @@ branch-coverage tier enforced by `scripts/check_coverage_thresholds.py`.
 - **No volume in the feed.** Anything volume-weighted is a documented proxy
   (Regime Adaptive's VWAP is equal-weight — see
   [`regime-adaptive.md`](regime-adaptive.md)) or unimplemented.
-- **NIFTY is assumed primary.** BankNIFTY is fetched per bar for confirmation
-  and mirroring, not as a co-equal underlying. Making a second index
-  first-class means parameterizing this component.
+- **NIFTY is primary, and the health gate is its alone.** The OHLC pool is
+  keyed `(instrument, timeframe)`, but `instrument` is keyword-only and
+  defaults to `PRIMARY_INSTRUMENT`, so every worker's `store.get("1")` is
+  unchanged. BankNIFTY has a continuous 1-minute frame published by
+  `SecondaryIndexPublisher` for the **monitoring chart only** — REST in both
+  feed modes, on its own `DASHBOARD_BANKNIFTY_REFRESH_SECONDS` cadence, after
+  the health gate has been recorded, in its own try/except, and off by default.
+  `record_market_data_refresh` reads `(PRIMARY_INSTRUMENT, "1")` hard-coded and
+  **must stay that way**: it drives the 30-second liquidation clock, and a
+  secondary frame on a 30x slower cadence is routinely stale. The tick path is
+  untouched — one `TickBarAggregator`, still gated on the NIFTY security id. For
+  the agents, BankNIFTY is still fetched per bar on their own path, and no
+  strategy reads the store's secondary frame. See
+  [`ADR-0020`](../adr/0020-a-second-index-on-the-monitoring-chart.md).
 - **One producer per process.** There is no failover from websocket to REST
   mid-session; recovery is restart with the flag flipped.
 

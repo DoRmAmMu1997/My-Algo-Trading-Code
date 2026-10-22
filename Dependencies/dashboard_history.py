@@ -420,23 +420,29 @@ def cpr_segments(frame: pd.DataFrame, days: pd.DataFrame) -> dict[str, object]:
     }
 
 
-def page_map(history: DashboardHistory) -> dict[str, bytes]:
-    """Flatten the history into the `"<tf>:<page>"` keys the transport serves.
+def page_map(
+    history: DashboardHistory, *, instrument: str = "NIFTY"
+) -> dict[str, bytes]:
+    """Flatten the history into the `"<instrument>:<tf>:<page>"` keys served.
 
     One flat dict of finished bytes is all the publisher needs to hold, and a
     missing key IS the "there is nothing older" answer -- so the endpoint needs
     no bounds arithmetic of its own, and cannot disagree with this one.
+
+    The instrument leads the key so several instruments' pages can share one
+    dict without colliding. Each is built by its own `build_history` call over
+    its own CSV; this module neither knows nor cares how many there are.
     """
 
     pages = {
-        f"{series.key}:{index}": payload
+        f"{instrument}:{series.key}:{index}": payload
         for series in history.series.values()
         for index, payload in enumerate(series.pages)
     }
     if history.cpr:
         # The CPR ladders ride the same endpoint because they are the same kind
         # of thing: static chart data, rendered once, handed out as bytes.
-        pages["cpr:0"] = history.cpr
+        pages[f"{instrument}:cpr:0"] = history.cpr
     return pages
 
 

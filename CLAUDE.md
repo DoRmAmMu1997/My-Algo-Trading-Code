@@ -106,7 +106,30 @@ One process, cooperating threads:
   `_worker_session_state_snapshot`; see `docs/adr/0016`.
   The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a
   1m/5m/**D** toggle (the two minute timeframes ride in ONE `/api/chart` payload,
-  so switching between them needs no fetch). It also scrolls back through years
+  so switching between them needs no fetch). It also switches INSTRUMENT between
+  NIFTY and, when `DASHBOARD_BANKNIFTY_ENABLED` is on (default false), BankNIFTY.
+  That is why `SharedMarketDataStore`'s OHLC pool is keyed
+  `(instrument, timeframe)` -- `instrument` is keyword-only and defaults to
+  `PRIMARY_INSTRUMENT`, so every worker's `store.get("1")` is unchanged.
+  `SecondaryIndexPublisher` fetches BankNIFTY over REST in BOTH feed modes on its
+  own slow cadence, strictly after the feed-health gate and in its own
+  try/except; `record_market_data_refresh` reads the PRIMARY frame hard-coded and
+  must stay that way, because it drives the 30-second liquidation clock. Nothing
+  trades off the secondary frame and the tick path never builds bars for it.
+  Each instrument has its own chart cache, publisher slot, CPR ladder and
+  scroll-back. The chart also carries an **indicator menu** (EMA/SMA/Bollinger/
+  Supertrend as overlays, RSI/MACD/ATR/ADX in their own panes, with editable
+  periods, several instances allowed, persisted in `localStorage`). Those are
+  computed in the BROWSER from `dashboard_assets/dashboard_indicators.js`,
+  because the history pages are immutable bytes rendered once at startup -- so a
+  server-side indicator could not survive a scroll-back. They are CHART-ONLY and
+  no strategy reads them; a node-backed drift test pins every one of them against
+  `misc_strategy_common`'s TA-Lib helpers. The operator can also DRAW support
+  and resistance on it -- horizontal lines and shaded zones, click to place,
+  drag to move, editable to an exact price -- kept in `localStorage` under their
+  own key, per instrument and shared across timeframes. They persist in the
+  browser because the server implements GET and nothing but GET; that is a
+  safety property, so there is no endpoint to save them to. See `docs/adr/0020`. It also scrolls back through years
   of history: `Dependencies/dashboard_history.py` reads the CSV
   `algo.py fetch-data` writes and serves it from `/api/history` in pages of 2,000
   bars, loaded once on a thread of its own (~29.5s, ~63 MB for five years) and

@@ -251,9 +251,37 @@ def test_the_page_map_holds_exactly_the_pages_that_exist(tmp_path):
 
     pages = dashboard_history.page_map(history)
 
-    assert {"1:0", "1:1", "1:2"} <= set(pages)
-    assert "1:3" not in pages, "one page past the end must simply not be there"
-    assert "1:-1" not in pages
+    assert {"NIFTY:1:0", "NIFTY:1:1", "NIFTY:1:2"} <= set(pages)
+    assert "NIFTY:1:3" not in pages, "one page past the end must simply not be there"
+    assert "NIFTY:1:-1" not in pages
+
+
+def test_two_instruments_pages_share_one_map_without_colliding(tmp_path):
+    """One publisher dict holds every instrument, so the keys must separate them.
+
+    The instrument leads the key for exactly this reason: a shared `"<tf>:<page>"`
+    keyspace would have the second instrument's pages overwrite the first's, and
+    the chart would scroll NIFTY candles back into BankNIFTY prices.
+    """
+
+    paths = {}
+    for name in ("nifty", "banknifty"):
+        folder = tmp_path / name
+        folder.mkdir()
+        paths[name] = _csv(folder, _minutes("2026-09-15", 250))
+
+    pages = {}
+    for instrument, target in (
+        ("NIFTY", paths["nifty"]),
+        ("BANKNIFTY", paths["banknifty"]),
+    ):
+        history = dashboard_history.build_history(
+            path=target, renderer=_renderer, resample=_resample, page_size=100
+        )
+        pages.update(dashboard_history.page_map(history, instrument=instrument))
+
+    assert {"NIFTY:1:0", "BANKNIFTY:1:0"} <= set(pages)
+    assert not any(key.startswith("1:") for key in pages)
 
 
 # ------------------------------------------------------------- the document
@@ -497,7 +525,7 @@ def test_the_cpr_ladders_survive_the_strict_renderer(tmp_path):
 
     ladders = json.loads(history.cpr)
     assert ladders["day"] and isinstance(ladders["month"], list)
-    assert "cpr:0" in dashboard_history.page_map(history)
+    assert "NIFTY:cpr:0" in dashboard_history.page_map(history)
 
 
 # ------------------------------------------------- indicator columns
