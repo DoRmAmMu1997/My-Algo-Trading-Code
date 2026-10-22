@@ -39,6 +39,11 @@
     <div class="chart-head">
       <h2 id="chart-title">NIFTY · 1 minute</h2>
       <div class="chart-controls">
+        <div class="tf-switch" role="group" aria-label="Chart instrument">
+          <button type="button" id="inst-nifty" class="tf active" aria-pressed="true">NIFTY</button>
+          <button type="button" id="inst-banknifty" class="tf" aria-pressed="false"
+                  title="Chart only. Published for the chart on its own cadence; no strategy trades off it">BANKNIFTY</button>
+        </div>
         <div class="tf-switch" role="group" aria-label="Chart timeframe">
           <button type="button" id="tf-1" class="tf active" aria-pressed="true">1m</button>
           <button type="button" id="tf-5" class="tf" aria-pressed="false">5m</button>

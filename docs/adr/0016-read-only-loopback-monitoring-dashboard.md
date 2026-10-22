@@ -45,6 +45,12 @@ JSON endpoints. No Flask, no FastAPI, no Streamlit, no new dependency.
 traversal is not blocked so much as unrepresentable. No route reaches a broker,
 a worker, or any mutable runner state.
 
+> **Amended 2026-10-22** ([`ADR-0020`](0020-a-second-index-on-the-monitoring-chart.md)):
+> the chart now serves two instruments, so `/api/chart` reads `inst` from the
+> request and is the **second** endpoint to do so. It validates against a frozen
+> set exactly as `/api/history` validates `tf`. Being GET-only is unchanged, and
+> it is why user-drawn chart overlays persist in the browser rather than here.
+
 ### 3. Loopback only, with no host setting
 
 `DASHBOARD_BIND_HOST = "127.0.0.1"` is a module constant. **The absence of an

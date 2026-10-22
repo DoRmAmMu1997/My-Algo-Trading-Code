@@ -647,6 +647,9 @@ class DocumentInputs:
     session: Mapping[str, object]
     worker_views: Sequence[Mapping[str, object]]
     ledger: TradeLedger
+    #: Keyed by INSTRUMENT: one small state block per instrument the chart
+    #: offers, each carrying that instrument's `series_version` and forming
+    #: bars. The heavy candle arrays live behind `/api/chart`.
     chart: Mapping[str, object] = field(default_factory=dict)
     feed: Mapping[str, object] = field(default_factory=dict)
 

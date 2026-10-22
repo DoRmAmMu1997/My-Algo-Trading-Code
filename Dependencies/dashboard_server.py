@@ -57,6 +57,18 @@ DASHBOARD_BIND_HOST = "127.0.0.1"
 #: written down rather than inferred from state that could change.
 HISTORY_SERIES = frozenset({"1", "5", "D", "cpr"})
 
+#: Instruments `/api/chart` and `/api/history` will answer for. Frozen for the
+#: same reason `HISTORY_SERIES` is: these endpoints read the request, so what
+#: they accept is written down here rather than inferred from whichever
+#: instruments the runner happens to have published. An instrument that is
+#: allowed but was never published answers the ordinary "nothing here" -- 503 on
+#: the chart, 404 on a history page -- not a different error.
+CHART_INSTRUMENTS = frozenset({"NIFTY", "BANKNIFTY"})
+
+#: The instrument assumed when a request does not name one. Keeps a bare
+#: `/api/chart` answering exactly what it answered before a second index existed.
+DEFAULT_INSTRUMENT = "NIFTY"
+
 #: Where the page's own files live. Read into memory once at start.
 ASSETS_DIR = Path(__file__).resolve().parent / "dashboard_assets"
 
@@ -163,8 +175,11 @@ class DashboardPublisher:
         # The candle array is published separately and refreshed only when a
         # new minute closes, so the once-a-second poll carries the forming
         # candle alone (~120 bytes) instead of the whole session's history.
-        self._chart_payload: bytes = b""
-        self._chart_etag: str = ""
+        #
+        # One slot per instrument: they are built from independent caches and
+        # move at independent cadences, so a shared slot would have each
+        # instrument's publish discard the other's.
+        self._chart_payloads: dict[str, tuple[bytes, str]] = {}
         # Years of history, already cut into pages and rendered ONCE at startup.
         # Immutable for the life of the process, so request threads only ever
         # read it -- the same "hand out finished bytes" contract as the other
@@ -182,14 +197,19 @@ class DashboardPublisher:
         with self._lock:
             return self._payload, self._etag
 
-    def publish_chart(self, payload: bytes, etag: str) -> None:
+    def publish_chart(
+        self, payload: bytes, etag: str, instrument: str = DEFAULT_INSTRUMENT
+    ) -> None:
         with self._lock:
-            self._chart_payload = payload
-            self._chart_etag = etag
+            self._chart_payloads[str(instrument)] = (payload, etag)
 
-    def current_chart(self) -> tuple[bytes, str]:
+    def current_chart(
+        self, instrument: str = DEFAULT_INSTRUMENT
+    ) -> tuple[bytes, str]:
+        """One instrument's candle payload, or empty bytes when it has none yet."""
+
         with self._lock:
-            return self._chart_payload, self._chart_etag
+            return self._chart_payloads.get(str(instrument), (b"", ""))
 
     def publish_history(self, pages: Mapping[str, bytes]) -> None:
         """Install the rendered history pages. Called once, from the builder."""
@@ -228,7 +248,7 @@ class DashboardBuilderThread(threading.Thread):
         publisher: DashboardPublisher,
         refresh_seconds: float,
         log: logging.Logger,
-        chart_builder: Callable[[], Mapping[str, Any]] | None = None,
+        chart_builder: Callable[[str], Mapping[str, Any]] | None = None,
         history_builder: Callable[[], Mapping[str, bytes]] | None = None,
     ) -> None:
         super().__init__(name="DashboardBuilder", daemon=True)
@@ -247,7 +267,9 @@ class DashboardBuilderThread(threading.Thread):
         self._stop_event = threading.Event()
         self._failure_logged = False
         self._version = 0
-        self._chart_version: object = None
+        # One remembered version per instrument: they move independently, so a
+        # single scalar would have each instrument's new minute cancel the other's.
+        self._chart_versions: dict[str, object] = {}
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -280,22 +302,34 @@ class DashboardBuilderThread(threading.Thread):
             return False
 
     def _publish_chart_if_new(self, document: Mapping[str, Any]) -> None:
-        """Re-render the candle array only when a new minute has closed.
+        """Re-render each instrument's candle array when its minute closes.
 
-        About 375 times a session rather than 22,500. The version in the state
-        document is what tells the browser to refetch, so publishing here and
-        stamping the same version keeps the two endpoints in step.
+        About 375 times a session per instrument rather than 22,500. The version
+        in the state document is what tells the browser to refetch, so
+        publishing here and stamping the same version keeps the two endpoints in
+        step.
+
+        `document["chart"]` is keyed by instrument. Each is checked against its
+        OWN remembered version, so the instrument nobody is watching costs
+        nothing and a quiet secondary feed never re-renders the primary.
         """
 
         if self._chart_builder is None:
             return
-        chart = document.get("chart")
-        version = chart.get("series_version") if isinstance(chart, Mapping) else None
-        if version is None or version == self._chart_version:
+        charts = document.get("chart")
+        if not isinstance(charts, Mapping):
             return
-        series = self._chart_builder()
-        self._publisher.publish_chart(self._renderer(series), etag=f'W/"chart-{version}"')
-        self._chart_version = version
+        for instrument, block in charts.items():
+            version = block.get("series_version") if isinstance(block, Mapping) else None
+            if version is None or version == self._chart_versions.get(instrument):
+                continue
+            series = self._chart_builder(instrument)
+            self._publisher.publish_chart(
+                self._renderer(series),
+                etag=f'W/"chart-{instrument}-{version}"',
+                instrument=instrument,
+            )
+            self._chart_versions[instrument] = version
 
     def _start_history_load(self) -> None:
         """Load the chart's back-history on a thread of its OWN.
@@ -463,7 +497,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/chart":
-            payload, etag = self.server.publisher.current_chart()  # type: ignore[attr-defined]
+            instrument = self._requested_instrument()
+            if instrument is None:
+                self._plain(HTTPStatus.NOT_FOUND, "Unknown instrument.\n")
+                return
+            payload, etag = self.server.publisher.current_chart(  # type: ignore[attr-defined]
+                instrument
+            )
             if not payload:
                 self._send(
                     HTTPStatus.SERVICE_UNAVAILABLE,
@@ -495,13 +535,34 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         body, content_type = asset
         self._send(HTTPStatus.OK, body, content_type, Cache_Control="no-store")
 
+    def _requested_instrument(self) -> str | None:
+        """The `inst` parameter, validated against the frozen whitelist.
+
+        `None` means "not one of ours", which both callers answer with a 404 --
+        the same answer an unknown `tf` gets, for the same reason: these
+        endpoints read the request, so they validate rather than infer.
+
+        An ABSENT parameter is the default instrument, so the URLs that worked
+        before a second index existed still work. An EMPTY one is a client bug
+        and is refused, which is what `keep_blank_values` exists to make
+        visible -- see `_serve_history`.
+        """
+
+        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+        raw = query.get("inst")
+        if raw is None:
+            return DEFAULT_INSTRUMENT
+        instrument = raw[0]
+        return instrument if instrument in CHART_INSTRUMENTS else None
+
     def _serve_history(self) -> None:
         """One page of the chart's back-history.
 
-        This is the only endpoint that reads anything from the request, so it
-        validates rather than infers: the series must be one of a frozen set
-        and the page must be a plain non-negative integer. Everything else is a
-        4xx with a one-line body, never a traceback.
+        One of two endpoints that read anything from the request -- `/api/chart`
+        takes `inst` as well -- so it validates rather than infers: the series
+        and the instrument must each be one of a frozen set, and the page must
+        be a plain non-negative integer. Everything else is a 4xx with a
+        one-line body, never a traceback.
 
         No ETag here, deliberately. Every response on this server is
         `no-store`, so the browser keeps nothing to revalidate AGAINST and a 304
@@ -519,6 +580,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._plain(HTTPStatus.NOT_FOUND, "Unknown series.\n")
             return
 
+        instrument = self._requested_instrument()
+        if instrument is None:
+            self._plain(HTTPStatus.NOT_FOUND, "Unknown instrument.\n")
+            return
+
         raw_page = (query.get("page") or ["0"])[0]
         try:
             page = int(raw_page)
@@ -530,7 +596,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         payload = self.server.publisher.current_history(  # type: ignore[attr-defined]
-            f"{timeframe}:{page}"
+            f"{instrument}:{timeframe}:{page}"
         )
         if not payload:
             # Either history was never loaded or the operator has scrolled past
@@ -642,7 +708,7 @@ def start_dashboard(
     builder: Callable[[], Mapping[str, Any]],
     renderer: Callable[[Mapping[str, Any]], bytes],
     log: logging.Logger,
-    chart_builder: Callable[[], Mapping[str, Any]] | None = None,
+    chart_builder: Callable[[str], Mapping[str, Any]] | None = None,
     history_builder: Callable[[], Mapping[str, bytes]] | None = None,
     assets_dir: Path = ASSETS_DIR,
 ) -> DashboardServer | None:

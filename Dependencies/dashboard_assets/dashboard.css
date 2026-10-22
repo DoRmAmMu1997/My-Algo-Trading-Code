@@ -172,7 +172,11 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
   cursor: pointer;
 }
 .tf-switch .tf.active { background: var(--accent); color: #0e1116; font-weight: 600; }
-.tf-switch .tf:not(.active):hover { color: var(--text); }
+.tf-switch .tf:not(.active):not(:disabled):hover { color: var(--text); }
+/* An instrument the runner is not publishing is dimmed rather than hidden: the
+ * control row keeps its width, and the button's title says which `.env` key
+ * turns it on. Same idiom as a VWAP label disabled on the Daily timeframe. */
+.tf-switch .tf:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* The CPR provenance line: the actual numbers the levels came from, so the
  * 15:15 close is visible rather than merely promised. */

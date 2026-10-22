@@ -64,7 +64,7 @@ def server():
         state["n"] += 1
         return {
             "generated_at": f"10:00:{state['n']:02d}",
-            "chart": {"series_version": 1},
+            "chart": {"NIFTY": {"series_version": 1}},
         }
 
     running = start_dashboard(
@@ -72,7 +72,11 @@ def server():
         refresh_seconds=30.0,  # one build; the tests drive changes explicitly
         builder=builder,
         renderer=_render,
-        chart_builder=lambda: {"series_version": 1, "bars": [{"time": 1, "close": 2}]},
+        chart_builder=lambda instrument: {
+            "series_version": 1,
+            "instrument": instrument,
+            "bars": [{"time": 1, "close": 2}],
+        },
         log=QUIET,
     )
     assert running is not None
@@ -158,12 +162,12 @@ def test_the_chart_series_is_republished_only_when_its_version_moves():
     version = {"n": 1}
     calls = {"n": 0}
 
-    def chart_builder():
+    def chart_builder(instrument):
         calls["n"] += 1
-        return {"series_version": version["n"], "bars": []}
+        return {"series_version": version["n"], "instrument": instrument, "bars": []}
 
     thread = DashboardBuilderThread(
-        builder=lambda: {"chart": {"series_version": version["n"]}},
+        builder=lambda: {"chart": {"NIFTY": {"series_version": version["n"]}}},
         renderer=_render, publisher=publisher, refresh_seconds=30.0, log=QUIET,
         chart_builder=chart_builder,
     )
@@ -648,9 +652,12 @@ def test_a_cpr_level_never_runs_across_a_day_that_has_no_band():
 # History paging
 # ---------------------------------------------------------------------------
 HISTORY_PAGES = {
-    "1:0": b'{"tf":"1","page":0,"pages":2,"bars":[{"time":300}]}',
-    "1:1": b'{"tf":"1","page":1,"pages":2,"bars":[{"time":100}]}',
-    "D:0": b'{"tf":"D","page":0,"pages":1,"bars":[{"time":1}]}',
+    "NIFTY:1:0": b'{"tf":"1","page":0,"pages":2,"bars":[{"time":300}]}',
+    "NIFTY:1:1": b'{"tf":"1","page":1,"pages":2,"bars":[{"time":100}]}',
+    "NIFTY:D:0": b'{"tf":"D","page":0,"pages":1,"bars":[{"time":1}]}',
+    # Only page 0, so a test can prove one instrument running out does not
+    # make the other look exhausted.
+    "BANKNIFTY:1:0": b'{"tf":"1","page":0,"pages":1,"bars":[{"time":300}]}',
 }
 
 
@@ -660,9 +667,16 @@ def _serve(history_builder, *, refresh_seconds=30.0):
     return start_dashboard(
         port=0,
         refresh_seconds=refresh_seconds,
-        builder=lambda: {"generated_at": "10:00:00", "chart": {"series_version": 1}},
+        builder=lambda: {
+            "generated_at": "10:00:00",
+            "chart": {"NIFTY": {"series_version": 1}},
+        },
         renderer=_render,
-        chart_builder=lambda: {"series_version": 1, "bars": []},
+        chart_builder=lambda instrument: {
+            "series_version": 1,
+            "instrument": instrument,
+            "bars": [],
+        },
         history_builder=history_builder,
         log=QUIET,
     )
@@ -816,3 +830,88 @@ def test_the_live_view_keeps_rebuilding_while_history_loads():
     finally:
         release.set()
         running.stop(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# The instrument parameter
+# ---------------------------------------------------------------------------
+def test_an_absent_instrument_is_the_default_one(server):
+    """A bare `/api/chart` answers what it answered before a second index.
+
+    Worth pinning: the page always sends `inst`, so nothing would notice if
+    this regressed, and the URL is the one an operator reaches for by hand.
+    """
+
+    status, _, body = get(server.url + "api/chart")
+
+    assert status == 200
+    assert json.loads(body)["instrument"] == "NIFTY"
+
+
+def test_each_instrument_gets_its_own_chart_payload_and_etag(server):
+    """Two slots, two ETags. One shared slot would have each publish evict
+    the other's, and the browser would refetch the wrong index forever."""
+
+    nifty_status, nifty_headers, nifty_body = get(server.url + "api/chart?inst=NIFTY")
+    bnf_status, bnf_headers, bnf_body = get(server.url + "api/chart?inst=BANKNIFTY")
+
+    assert nifty_status == 200
+    assert json.loads(nifty_body)["instrument"] == "NIFTY"
+    # The fixture's document offers NIFTY alone, so BANKNIFTY has nothing
+    # published -- the ordinary "no candles yet", not a different error.
+    assert bnf_status == 503
+    assert json.loads(bnf_body)["error"] == "no candles yet"
+    assert "NIFTY" in nifty_headers["ETag"]
+    assert bnf_headers.get("ETag") is None
+
+
+@pytest.mark.parametrize(
+    "instrument",
+    # Percent-encoded rather than a raw space: a raw one is refused by the
+    # client before it leaves, which would prove nothing about the server.
+    ["", "SENSEX", "nifty", "../secrets", "NIFTY;DROP", "NIFTY%20BANKNIFTY"],
+)
+def test_an_unknown_instrument_is_refused_on_both_endpoints(server, instrument):
+    """Frozen whitelist, exact match, on the two endpoints that read the request.
+
+    `nifty` lower-case is in here deliberately: the store's keys are the names
+    as written, so a case-insensitive match would look up a key that does not
+    exist and report "no candles yet" for an instrument that is in fact running.
+    """
+
+    for route in ("api/chart", "api/history?tf=1&page=0"):
+        joiner = "&" if "?" in route else "?"
+        status, _, _ = get(f"{server.url}{route}{joiner}inst={instrument}")
+        assert status == 404, (route, instrument)
+
+
+def test_one_instrument_running_out_of_history_does_not_exhaust_the_other(
+    history_server,
+):
+    """The 404-has-two-meanings trap, now per instrument.
+
+    The page stops asking for pages once a 404 lands after a page has loaded.
+    The secondary's history is built AFTER the primary's, so a shared
+    exhausted flag would let the primary reaching its start switch off the
+    secondary's scroll-back before it had served a single page.
+    """
+
+    _await_history(history_server.url + "api/history?inst=NIFTY&tf=1&page=0")
+
+    # NIFTY has two pages, BANKNIFTY one. Each runs out on its own terms.
+    assert get(history_server.url + "api/history?inst=NIFTY&tf=1&page=1")[0] == 200
+    assert get(history_server.url + "api/history?inst=NIFTY&tf=1&page=2")[0] == 404
+    assert get(history_server.url + "api/history?inst=BANKNIFTY&tf=1&page=0")[0] == 200
+    assert get(history_server.url + "api/history?inst=BANKNIFTY&tf=1&page=1")[0] == 404
+
+
+def test_a_history_page_belongs_to_the_instrument_that_asked(history_server):
+    """A shared `"<tf>:<page>"` keyspace would serve one index's bars for the
+    other's request, which is the quietest possible way to be wrong."""
+
+    _await_history(history_server.url + "api/history?inst=NIFTY&tf=1&page=0")
+
+    # BANKNIFTY has no Daily series in the fixture; NIFTY does. If the keys
+    # were not separated, this would answer with NIFTY's.
+    assert get(history_server.url + "api/history?inst=NIFTY&tf=D&page=0")[0] == 200
+    assert get(history_server.url + "api/history?inst=BANKNIFTY&tf=D&page=0")[0] == 404

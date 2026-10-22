@@ -122,10 +122,17 @@ surfaces before the first bar, not at the first order.
 
 ## 7a. Monitoring dashboard settings
 
-Seven `DASHBOARD_*` keys, all read in the master and **clamped at read time**
+Nine `DASHBOARD_*` keys, all read in the master and **clamped at read time**
 rather than validated: a typo in a monitoring knob must never stop a trading
 session from starting. `DASHBOARD_PORT` outside 1024-65535 disables the
 dashboard for that session with a warning.
+
+`DASHBOARD_BANKNIFTY_ENABLED` (default false) is the only one that costs
+anything outside the dashboard: it adds one broker REST call per
+`DASHBOARD_BANKNIFTY_REFRESH_SECONDS` (clamped 15-300, default 60) and a second
+back-history load. That frame is for the chart alone -- it never reaches the
+feed-health gate, the tick path, or any strategy. See
+[`ADR-0020`](../adr/0020-a-second-index-on-the-monitoring-chart.md).
 
 There is deliberately **no host key**. `DASHBOARD_BIND_HOST` is a module
 constant in `Dependencies/dashboard_server.py`, so no `.env` value can make the

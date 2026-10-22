@@ -13245,6 +13245,11 @@ class TestDashboardCollector(unittest.TestCase):
         self.worker.strategy_name = "Renko"
         self.cache = master_file._DashboardChartCache(max_bars=375)
 
+        # The document takes one cache PER INSTRUMENT. These suites are
+        # about the collector rather than the second index, so they carry
+        # the primary alone -- which is also the shipped default.
+        self.caches = {master_file.PRIMARY_INSTRUMENT: self.cache}
+
     def _open_position(self, **overrides):
         defaults = {
             "active": True,
@@ -13294,7 +13299,7 @@ class TestDashboardCollector(unittest.TestCase):
         self.worker.session_state = session_state
         sink = master_file.DashboardEventSink(maxlen=10)
 
-        master_file._dashboard_document([self.worker], self.store, sink, self.cache)
+        master_file._dashboard_document([self.worker], self.store, sink, self.caches)
 
         health.snapshot.assert_not_called()
         self.broker.fetch_ltp_map.assert_not_called()
@@ -13307,7 +13312,7 @@ class TestDashboardCollector(unittest.TestCase):
         sink = master_file.DashboardEventSink(maxlen=10)
 
         document = master_file._dashboard_document(
-            [self.worker], self.store, sink, self.cache
+            [self.worker], self.store, sink, self.caches
         )
 
         position = document["open_positions"][0]
@@ -13324,7 +13329,7 @@ class TestDashboardCollector(unittest.TestCase):
         sink = master_file.DashboardEventSink(maxlen=10)
 
         document = master_file._dashboard_document(
-            [self.worker], self.store, sink, self.cache
+            [self.worker], self.store, sink, self.caches
         )
 
         position = document["open_positions"][0]
@@ -13348,7 +13353,7 @@ class TestDashboardCollector(unittest.TestCase):
         )
 
         document = master_file._dashboard_document(
-            [self.worker], self.store, sink, self.cache
+            [self.worker], self.store, sink, self.caches
         )
         self.assertEqual(document["open_positions"][0]["entry_time"], "09:31:02")
 
@@ -13362,7 +13367,7 @@ class TestDashboardCollector(unittest.TestCase):
                      "direction": "BULLISH", "legs": legs})
 
         document = master_file._dashboard_document(
-            [self.worker], self.store, sink, self.cache
+            [self.worker], self.store, sink, self.caches
         )
         self.assertIn("EXIT FAILED - STILL OPEN", document["open_positions"][0]["flags"])
 
@@ -13379,7 +13384,7 @@ class TestDashboardCollector(unittest.TestCase):
         with patch.object(master_file, "_dashboard_position_view",
                           side_effect=RuntimeError("boom")):
             document = master_file._dashboard_document(
-                [exploding, self.worker], self.store, None, self.cache
+                [exploding, self.worker], self.store, None, self.caches
             )
 
         self.assertEqual(
@@ -13582,6 +13587,11 @@ class TestDashboardChartIndicators(unittest.TestCase):
     def setUp(self):
         self.store = master_file.SharedMarketDataStore()
         self.cache = master_file._DashboardChartCache(max_bars=120)
+
+        # The document takes one cache PER INSTRUMENT. These suites are
+        # about the collector rather than the second index, so they carry
+        # the primary alone -- which is also the shipped default.
+        self.caches = {master_file.PRIMARY_INSTRUMENT: self.cache}
 
     def _frame(self, rows=400, session="2026-09-11", start="09:15"):
         """A single session of 1-minute bars with a non-degenerate shape."""
@@ -13889,7 +13899,7 @@ class TestDashboardChartIndicators(unittest.TestCase):
         worker.session_state = session_state
 
         master_file._dashboard_document(
-            [worker], self.store, master_file.DashboardEventSink(maxlen=10), self.cache
+            [worker], self.store, master_file.DashboardEventSink(maxlen=10), self.caches
         )
 
         health.snapshot.assert_not_called()
@@ -13951,3 +13961,325 @@ class TestDashboardChartIndicators(unittest.TestCase):
             with self.subTest(extra=extra):
                 self.assertEqual(len(times), len(set(times)), "duplicate bar timestamp")
                 self.assertEqual(times, sorted(times), "bars are out of order")
+
+
+class TestSecondaryInstrumentFeed(unittest.TestCase):
+    """BankNIFTY on the chart, and how thoroughly it is kept off the trading path.
+
+    The store gained an instrument dimension for one reason: so the monitoring
+    chart can show a second index. Nothing trades off that index, and the tests
+    that matter most here are the ones proving it can do no harm -- above all
+    that it cannot reach the feed-health gate driving the 30-second liquidation
+    clock.
+    """
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.broker = MagicMock()
+        # A mock rather than a real logger: the publisher only ever calls
+        # .info/.warning on it, and this keeps the suite's output clean.
+        self.log = MagicMock()
+
+    def _frame(self, rows=20, session="2026-09-11", base=24500.0):
+        opening = pd.Timestamp(f"{session} 09:15")
+        closes = [base + index for index in range(rows)]
+        return pd.DataFrame(
+            {
+                "timestamp": [opening + pd.Timedelta(minutes=i) for i in range(rows)],
+                "open": [round(c - 1.5, 2) for c in closes],
+                "high": [round(c + 3.0, 2) for c in closes],
+                "low": [round(c - 3.0, 2) for c in closes],
+                "close": [round(c, 2) for c in closes],
+            }
+        )
+
+    def _publisher(self, **overrides):
+        settings = {"enabled": True, "refresh_seconds": 60.0}
+        settings.update(overrides)
+        return master_file.SecondaryIndexPublisher(
+            self.store, self.broker, self.log, **settings
+        )
+
+    # -- the dimension itself ------------------------------------------------
+    def test_the_two_instruments_frames_do_not_overwrite_each_other(self):
+        """The whole point of the key: one index's bars are not the other's.
+
+        A shared keyspace would have the chart draw BankNIFTY prices under the
+        NIFTY candles the strategies are reading -- and worse, could hand a
+        worker a frame from the wrong index.
+        """
+
+        self.store.update("1", self._frame(base=24500.0))
+        self.store.update(
+            "1", self._frame(base=55000.0), instrument=master_file.SECONDARY_INSTRUMENT
+        )
+
+        primary = self.store.get("1")
+        secondary = self.store.get("1", instrument=master_file.SECONDARY_INSTRUMENT)
+        self.assertAlmostEqual(primary.frame["close"].iloc[0], 24500.0, places=2)
+        self.assertAlmostEqual(secondary.frame["close"].iloc[0], 55000.0, places=2)
+
+    def test_a_worker_reading_the_store_still_gets_nifty_without_asking(self):
+        """~29 workers call `store.get("1")` and none of them was changed.
+
+        The instrument is keyword-only with a default for exactly that reason,
+        so this pins the default rather than the plumbing.
+        """
+
+        self.store.update("1", self._frame(base=24500.0))
+        self.store.update(
+            "1", self._frame(base=55000.0), instrument=master_file.SECONDARY_INSTRUMENT
+        )
+
+        self.assertAlmostEqual(
+            self.store.get("1").frame["close"].iloc[0], 24500.0, places=2
+        )
+        signature, _ts, _at = self.store.peek_snapshot_meta("1")
+        self.assertEqual(signature, self.store.get("1").candle_signature)
+
+    def test_an_unpublished_instrument_reads_as_absent_not_as_empty(self):
+        self.store.update("1", self._frame())
+
+        self.assertIsNone(self.store.get("1", instrument=master_file.SECONDARY_INSTRUMENT))
+        self.assertIsNone(
+            self.store.peek_snapshot_meta(
+                "1", instrument=master_file.SECONDARY_INSTRUMENT
+            )
+        )
+
+    # -- the gate that must never move ---------------------------------------
+    def test_the_health_gate_reads_the_primary_frame_alone(self):
+        """THE load-bearing test of this whole change.
+
+        `record_market_data_refresh` feeds the 30-second liquidation clock. If
+        it could see the secondary instrument then a BankNIFTY frame that is
+        stale -- which it routinely will be, on a cadence 30x slower than the
+        NIFTY feed's -- could mark the feed unhealthy and pull a real
+        auto-square-off forward. So the comparison is against a run where no
+        secondary frame exists at all: the two results must be identical.
+        """
+
+        keys = {
+            (
+                master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+                master_file.NIFTY_INDEX_SECURITY_ID,
+            )
+        }
+
+        def refresh(with_secondary):
+            """One store, one refresh, so the healthy streak is comparable.
+
+            Two independent stores rather than two refreshes of one: the
+            streak counts refreshes, so a second call on the same store
+            would differ for a reason that has nothing to do with the
+            secondary instrument and would mask the thing being measured.
+            """
+
+            store = master_file.SharedMarketDataStore()
+            store.update("1", self._frame(session="2026-09-11"))
+            if with_secondary:
+                # A frame from two years ago, which fails every freshness
+                # rule the gate has, published under its own key.
+                store.update(
+                    "1",
+                    self._frame(session="2024-01-02", base=55000.0),
+                    instrument=master_file.SECONDARY_INSTRUMENT,
+                )
+            store.begin_market_data_monitoring()
+            return store.record_market_data_refresh(
+                ohlc_ok=True, required_ltp_keys=keys
+            )
+
+        # Identical in FULL, not field by field: anything the secondary could
+        # reach would show up here.
+        self.assertEqual(refresh(False), refresh(True))
+
+    # -- the publisher --------------------------------------------------------
+    def test_it_publishes_banknifty_under_its_own_key(self):
+        self.broker.fetch_index_1m_ohlc.return_value = self._frame(base=55000.0)
+
+        self.assertTrue(self._publisher().publish_if_due())
+
+        _args, kwargs = self.broker.fetch_index_1m_ohlc.call_args
+        self.assertEqual(kwargs["security_id"], master_file.BANKNIFTY_INDEX_SECURITY_ID)
+        self.assertIsNotNone(
+            self.store.get("1", instrument=master_file.SECONDARY_INSTRUMENT)
+        )
+        self.assertIsNone(self.store.get("1"), "the primary key must stay untouched")
+
+    def test_it_is_silent_and_makes_no_call_when_disabled(self):
+        """The shipped default. Off, it costs one boolean read."""
+
+        self.assertFalse(self._publisher(enabled=False).publish_if_due())
+        self.broker.fetch_index_1m_ohlc.assert_not_called()
+
+    def test_a_failing_fetch_is_swallowed_rather_than_raised_at_the_producer(self):
+        """A cycle that cannot price BankNIFTY must still publish NIFTY.
+
+        The call site sits in the producer's loop, so an exception escaping here
+        would skip the rest of that cycle -- including, in the websocket
+        producer, the subscription sync.
+        """
+
+        self.broker.fetch_index_1m_ohlc.side_effect = RuntimeError("Dhan said no")
+
+        self.assertFalse(self._publisher().publish_if_due())
+
+    def test_a_frame_the_primary_feed_would_reject_is_rejected_here_too(self):
+        """`validate_ohlc_frame` is not relaxed for a monitoring instrument."""
+
+        self.broker.fetch_index_1m_ohlc.return_value = pd.DataFrame(
+            {"timestamp": [pd.Timestamp("2026-09-11 09:15")], "close": [55000.0]}
+        )
+
+        self.assertFalse(self._publisher().publish_if_due())
+        self.assertIsNone(
+            self.store.get("1", instrument=master_file.SECONDARY_INSTRUMENT)
+        )
+
+    def test_it_honours_its_own_cadence_rather_than_the_poll_interval(self):
+        """FETCH_POLL_SECONDS is 2 and the chart draws one bar a minute.
+
+        At the poll rate this would add roughly 1,800 broker calls a session for
+        nothing, so the interval is the publisher's own.
+        """
+
+        self.broker.fetch_index_1m_ohlc.return_value = self._frame(base=55000.0)
+        publisher = self._publisher(refresh_seconds=60.0)
+
+        self.assertTrue(publisher.publish_if_due())
+        for _ in range(30):
+            self.assertFalse(publisher.publish_if_due())
+
+        self.assertEqual(self.broker.fetch_index_1m_ohlc.call_count, 1)
+
+    def test_a_failed_fetch_waits_for_the_next_interval_rather_than_retrying(self):
+        """The deadline is re-armed BEFORE the call, deliberately.
+
+        Re-arming afterwards would turn a broker that is refusing into a fetch
+        on every single cycle -- the opposite of what the cadence is for, and at
+        the worst possible moment.
+        """
+
+        self.broker.fetch_index_1m_ohlc.side_effect = RuntimeError("Dhan said no")
+        publisher = self._publisher(refresh_seconds=60.0)
+
+        for _ in range(10):
+            publisher.publish_if_due()
+
+        self.assertEqual(self.broker.fetch_index_1m_ohlc.call_count, 1)
+
+    def test_both_producers_own_one(self):
+        """Both feed modes serve the chart, and neither grows a second copy.
+
+        The websocket producer deliberately does NOT build BankNIFTY bars from
+        ticks: it has one aggregator gated on the NIFTY security id, and a
+        minute-latency REST bar is the right answer for an index nothing trades
+        off.
+        """
+
+        for producer in (
+            master_file.CentralMarketDataFetcher,
+            master_file.WebSocketMarketDataFetcher,
+        ):
+            with self.subTest(producer=producer.__name__):
+                fetcher = producer(
+                    store=self.store, stop_event=threading.Event(), broker=self.broker
+                )
+                self.assertIsInstance(
+                    fetcher.secondary_index, master_file.SecondaryIndexPublisher
+                )
+
+    # -- the chart payload ----------------------------------------------------
+    def test_each_instrument_gets_its_own_chart_payload(self):
+        self.store.update("1", self._frame(rows=60, base=24500.0))
+        self.store.update(
+            "1",
+            self._frame(rows=60, base=55000.0),
+            instrument=master_file.SECONDARY_INSTRUMENT,
+        )
+        names = (master_file.PRIMARY_INSTRUMENT, master_file.SECONDARY_INSTRUMENT)
+        caches = {name: master_file._DashboardChartCache(max_bars=120) for name in names}
+
+        for name, cache in caches.items():
+            master_file._dashboard_chart_payload(self.store, cache, instrument=name)
+
+        series = {
+            name: master_file._dashboard_chart_series(caches[name], instrument=name)
+            for name in names
+        }
+
+        for name in names:
+            self.assertEqual(series[name]["instrument"], name)
+        self.assertAlmostEqual(
+            series[master_file.PRIMARY_INSTRUMENT]["timeframes"]["1"]["bars"][0]["close"],
+            24500.0,
+            places=2,
+        )
+        self.assertAlmostEqual(
+            series[master_file.SECONDARY_INSTRUMENT]["timeframes"]["1"]["bars"][0]["close"],
+            55000.0,
+            places=2,
+        )
+
+    def test_an_instrument_with_no_frame_reports_no_data_rather_than_raising(self):
+        """The default config publishes NIFTY alone, and the page must cope."""
+
+        self.store.update("1", self._frame(rows=60))
+        cache = master_file._DashboardChartCache(max_bars=120)
+
+        block = master_file._dashboard_chart_payload(
+            self.store, cache, instrument=master_file.SECONDARY_INSTRUMENT
+        )
+
+        self.assertEqual(block["state"], "NO_DATA")
+
+    def test_the_document_carries_one_chart_block_per_offered_instrument(self):
+        self.store.update("1", self._frame(rows=60))
+        caches = {
+            name: master_file._DashboardChartCache(max_bars=120)
+            for name in (
+                master_file.PRIMARY_INSTRUMENT,
+                master_file.SECONDARY_INSTRUMENT,
+            )
+        }
+
+        document = master_file._dashboard_document([], self.store, None, caches)
+
+        self.assertEqual(
+            set(document["chart"]),
+            {master_file.PRIMARY_INSTRUMENT, master_file.SECONDARY_INSTRUMENT},
+        )
+        self.assertEqual(
+            document["chart"][master_file.SECONDARY_INSTRUMENT]["state"], "NO_DATA"
+        )
+
+    def test_the_offered_set_is_just_the_primary_until_the_knob_is_on(self):
+        with patch.object(master_file, "DASHBOARD_BANKNIFTY_ENABLED", False):
+            self.assertEqual(
+                master_file._dashboard_chart_instruments(),
+                (master_file.PRIMARY_INSTRUMENT,),
+            )
+        with patch.object(master_file, "DASHBOARD_BANKNIFTY_ENABLED", True):
+            self.assertEqual(
+                master_file._dashboard_chart_instruments(),
+                (master_file.PRIMARY_INSTRUMENT, master_file.SECONDARY_INSTRUMENT),
+            )
+
+    def test_history_is_loaded_for_the_secondary_only_when_it_is_offered(self):
+        """The second CSV costs ~29 seconds and ~63 MB; it is not loaded unasked."""
+
+        with patch.object(master_file, "DASHBOARD_BANKNIFTY_ENABLED", False):
+            self.assertEqual(
+                list(master_file._dashboard_history_instruments()),
+                [master_file.PRIMARY_INSTRUMENT],
+            )
+        with patch.object(master_file, "DASHBOARD_BANKNIFTY_ENABLED", True):
+            wanted = master_file._dashboard_history_instruments()
+
+        self.assertEqual(
+            list(wanted),
+            [master_file.PRIMARY_INSTRUMENT, master_file.SECONDARY_INSTRUMENT],
+            "the primary must load FIRST, so its scroll-back is ready as early as before",
+        )
+        self.assertIn("banknifty", str(wanted[master_file.SECONDARY_INSTRUMENT]).lower())

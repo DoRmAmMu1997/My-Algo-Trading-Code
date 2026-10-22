@@ -104,7 +104,18 @@ One process, cooperating threads:
   `_worker_session_state_snapshot`; see `docs/adr/0016`.
   The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a
   1m/5m/**D** toggle (the two minute timeframes ride in ONE `/api/chart` payload,
-  so switching between them needs no fetch). It also scrolls back through years
+  so switching between them needs no fetch). It also switches INSTRUMENT between
+  NIFTY and, when `DASHBOARD_BANKNIFTY_ENABLED` is on (default false), BankNIFTY.
+  That is why `SharedMarketDataStore`'s OHLC pool is keyed
+  `(instrument, timeframe)` -- `instrument` is keyword-only and defaults to
+  `PRIMARY_INSTRUMENT`, so every worker's `store.get("1")` is unchanged.
+  `SecondaryIndexPublisher` fetches BankNIFTY over REST in BOTH feed modes on its
+  own slow cadence, strictly after the feed-health gate and in its own
+  try/except; `record_market_data_refresh` reads the PRIMARY frame hard-coded and
+  must stay that way, because it drives the 30-second liquidation clock. Nothing
+  trades off the secondary frame and the tick path never builds bars for it.
+  Each instrument has its own chart cache, publisher slot, CPR ladder and
+  scroll-back; see `docs/adr/0020`. It also scrolls back through years
   of history: `Dependencies/dashboard_history.py` reads the CSV
   `algo.py fetch-data` writes and serves it from `/api/history` in pages of 2,000
   bars, loaded once on a thread of its own (~29.5s, ~63 MB for five years) and

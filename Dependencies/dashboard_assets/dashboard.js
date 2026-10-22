@@ -56,6 +56,8 @@
     cprProvenance: el("cpr-provenance"),
     vwapLabel: el("vwap-label"),
     vwapFootnote: el("vwap-footnote"),
+    instNifty: el("inst-nifty"),
+    instBankNifty: el("inst-banknifty"),
     tf1: el("tf-1"),
     tf5: el("tf-5"),
     tfD: el("tf-d"),
@@ -77,45 +79,84 @@
   let vwapSeries = null;
   let kSeries = null;
   let dSeries = null;
-  let seriesVersion = -1;
-  /* The last `/api/chart` response, holding BOTH timeframes. Keeping it means
-   * the timeframe toggle redraws from memory instead of issuing a request
-   * that could fail and leave a blank chart. */
-  let chartPayload = null;
-  /* The per-day and per-month CPR ladders, fetched once. Each entry is one
-   * band: a time span and the levels that belong to it. */
-  let cprLadders = null;
-  let cprLaddersInFlight = false;
+  /* The instruments the chart can show, primary first. Mirrors the server's
+   * frozen `CHART_INSTRUMENTS`; the secondary simply reports NO_DATA and
+   * serves no history pages when the runner is not publishing it, which the
+   * page already knows how to draw. */
+  const INSTRUMENTS = ["NIFTY", "BANKNIFTY"];
+
+  /* Everything the chart holds that belongs to ONE instrument. Each gets its
+   * own copy, because a NIFTY payload and a BankNIFTY payload arrive
+   * independently and share nothing: not a price scale, not a CPR ladder, not
+   * a scroll-back position. Switching instrument therefore costs no refetch of
+   * anything already loaded, which is the same reason both timeframes ride in
+   * one payload. */
+  function freshInstrumentView() {
+    return {
+      /* The last `/api/chart` response for this instrument, holding BOTH
+       * timeframes. Keeping it means the timeframe toggle redraws from memory
+       * instead of issuing a request that could fail and leave a blank chart. */
+      chartPayload: null,
+      seriesVersion: -1,
+      /* The per-day and per-month CPR ladders, fetched once per instrument.
+       * Each entry is one band: a time span and the levels that belong to it. */
+      cprLadders: null,
+      cprLaddersInFlight: false,
+      /* Years of candles, fetched a page at a time as the operator scrolls
+       * back and kept for the session. Page 0 is the NEWEST slice, so
+       * scrolling left just asks for the next number.
+       *
+       * Held SEPARATELY from `chartPayload`, which is replaced wholesale every
+       * time a minute closes. Merging them at draw time is what stops that
+       * once-a-minute refresh from throwing away everything scrolled back to. */
+      historyBars: { "1": [], "5": [], "D": [] },
+      /* Indicator columns that came WITH the history pages, kept the same
+       * length as `historyBars` so a slice of one lines up with a slice of the
+       * other. Only the Daily series carries any: its stochastic is computed on
+       * daily candles, which is a different statement from the live payload's
+       * minute one. */
+      historyCols: { "1": {}, "5": {}, "D": {} },
+      historyNextPage: { "1": 0, "5": 0, "D": 0 },
+      /* PER INSTRUMENT, deliberately. A 404 means "nothing older" for the
+       * instrument that was asked, and the secondary's pages land later than
+       * the primary's -- a shared flag would let one instrument finishing its
+       * history switch off the other's scroll-back entirely. */
+      historyExhausted: { "1": false, "5": false, "D": false },
+      /* When history was first asked for and refused. A 404 before any page
+       * has loaded means "still building" -- but only for so long; after that
+       * the answer is simply that there is none. */
+      historyFirstRefusalAt: 0,
+    };
+  }
+
+  const instrumentViews = {};
+  for (const name of INSTRUMENTS) instrumentViews[name] = freshInstrumentView();
+
+  /* The state belonging to the instrument on screen right now. */
+  function view() {
+    return instrumentViews[prefs.inst] || instrumentViews[INSTRUMENTS[0]];
+  }
   /* Series handles, NOT price-line handles. A price line in this library is
    * full chart width by definition -- that is the API, not a style -- so a band
    * that stops at the end of its own day has to be a LineSeries. */
   let cprSeries = [];
   let cprSignature = null;
-  /* Which timeframe the series currently hold. Switching changes both the bar
-   * spacing and the span, so the visible range has to be refit -- but ONLY
-   * then, never on the once-a-minute refresh, or the operator's zoom would be
-   * yanked back every minute. */
+  /* Which timeframe and instrument the series currently hold. Switching either
+   * changes the span -- and an instrument switch changes the price scale
+   * outright -- so the visible range has to be refit. But ONLY then, never on
+   * the once-a-minute refresh, or the operator's zoom would be yanked back
+   * every minute. */
   let renderedTimeframe = null;
+  let renderedInstrument = null;
   /* Set whenever the visible range needs refitting, cleared once a fit has
    * actually landed. See `requestFit`. */
   let pendingFit = false;
 
   /* ------------------------------------------------------------- history */
-  /* Years of candles, fetched a page at a time as the operator scrolls back
-   * and kept for the session. Page 0 is the NEWEST slice, so scrolling left
-   * just asks for the next number.
-   *
-   * These are held SEPARATELY from `chartPayload`, which is replaced wholesale
-   * every time a minute closes. Merging them at draw time is what stops that
-   * once-a-minute refresh from throwing away everything scrolled back to. */
-  const historyBars = { "1": [], "5": [], "D": [] };
-  /* Indicator columns that came WITH the history pages, kept the same length as
-   * `historyBars` so a slice of one lines up with a slice of the other. Only
-   * the Daily series carries any: its stochastic is computed on daily candles,
-   * which is a different statement from the live payload's minute one. */
-  const historyCols = { "1": {}, "5": {}, "D": {} };
-  const historyNextPage = { "1": 0, "5": 0, "D": 0 };
-  const historyExhausted = { "1": false, "5": false, "D": false };
+  /* One request at a time across the whole page -- a resource guard, not
+   * per-instrument state. The instrument each reply belongs to is captured
+   * before its `await`, so a switch mid-flight cannot merge one index's bars
+   * into the other's series. */
   let historyInFlight = false;
   /* How many bars the series currently hold, so a prepend can work out how far
    * the logical indices moved and put the viewport back where it was. */
@@ -129,10 +170,6 @@
   /* The bars the chart currently holds. Kept so a CPR checkbox can redraw the
    * levels alone instead of re-uploading every candle. */
   let lastMergedBars = [];
-  /* When history was first asked for and refused. A 404 before any page has
-   * loaded means "still building" -- but only for so long; after this the
-   * answer is simply that there is none. */
-  let historyFirstRefusalAt = 0;
   const HISTORY_GIVE_UP_MS = 5 * 60 * 1000;
 
   /* ------------------------------------------------------------ formatting */
@@ -349,6 +386,7 @@
    * site data or a corrupt value must not take the page down with it. */
   const PREFS_KEY = "algoDashboard.chart.v1";
   const PREF_DEFAULTS = {
+    inst: "NIFTY",
     tf: "1", cpr: true, cprPD: true, cprRS1: false, cprRS3: false, vwap: true, stoch: true,
   };
 
@@ -527,23 +565,33 @@
   /* The CPR ladders, fetched once and kept. They are static: the server
    * renders them when it loads history and they never change after that. */
   async function ensureCprLadders() {
-    if (cprLadders || cprLaddersInFlight) return;
-    cprLaddersInFlight = true;
+    /* Captured BEFORE the await, and every write below goes to this view --
+     * not `view()`. The operator can switch instrument while the request is in
+     * the air, and a reply filed under whichever instrument happens to be on
+     * screen when it lands would draw one index's pivots over the other's
+     * candles. */
+    const instrument = prefs.inst;
+    const self = instrumentViews[instrument];
+    if (!self || self.cprLadders || self.cprLaddersInFlight) return;
+    self.cprLaddersInFlight = true;
     try {
-      const response = await fetch("/api/history?tf=cpr&page=0", { cache: "no-store" });
+      const response = await fetch(
+        `/api/history?inst=${encodeURIComponent(instrument)}&tf=cpr&page=0`,
+        { cache: "no-store" },
+      );
       if (!response.ok) return;          /* no history: today's band still draws */
-      cprLadders = await response.json();
-      if (chartPayload) applyTimeframe();
+      self.cprLadders = await response.json();
+      if (instrument === prefs.inst && self.chartPayload) applyTimeframe();
     } catch (error) {
       /* Without them the chart shows today's band alone, which is what it did
        * before per-day CPR existed. The next redraw tries again. */
     } finally {
-      cprLaddersInFlight = false;
+      self.cprLaddersInFlight = false;
     }
   }
 
   function historyCut(liveBars) {
-    const history = historyBars[prefs.tf] || [];
+    const history = view().historyBars[prefs.tf] || [];
     if (!liveBars.length) return history.length;
     const firstLive = liveBars[0].time;
     let cut = history.length;
@@ -552,7 +600,7 @@
   }
 
   function mergedBars(liveBars, cut) {
-    const history = historyBars[prefs.tf] || [];
+    const history = view().historyBars[prefs.tf] || [];
     if (!history.length) return liveBars;
     return history.slice(0, cut).concat(liveBars);
   }
@@ -560,8 +608,10 @@
   /* One indicator column over the merged series: the stored part where history
    * carried it, then the live part. */
   function mergedColumn(name, liveValues, cut) {
-    const history = historyBars[prefs.tf] || [];
-    const stored = (historyCols[prefs.tf] || {})[name] || new Array(history.length).fill(null);
+    const history = view().historyBars[prefs.tf] || [];
+    const stored =
+      (view().historyCols[prefs.tf] || {})[name]
+      || new Array(history.length).fill(null);
     return stored.slice(0, cut).concat(liveValues || []);
   }
 
@@ -572,7 +622,8 @@
    * Stamped at 09:15 of the session exactly as the server stamps its own daily
    * bars, so today lands on the same grid instead of a slot of its own. */
   function dailyLiveBars() {
-    const minute = chartPayload && chartPayload.timeframes && chartPayload.timeframes["1"];
+    const payload = view().chartPayload;
+    const minute = payload && payload.timeframes && payload.timeframes["1"];
     const bars = (minute && minute.bars) || [];
     if (!bars.length) return [];
     const lastDay = Math.floor(bars[bars.length - 1].time / 86400);
@@ -589,7 +640,7 @@
        * partial one would REPLACE the complete one rather than lose to it.
        * History's bar wins when there is one; when there is not, a partial bar
        * still beats today missing from the timeframe entirely. */
-      const stored = historyBars["D"] || [];
+      const stored = view().historyBars["D"] || [];
       if (stored.length && stored[stored.length - 1].time === sessionOpen) return [];
     }
 
@@ -630,8 +681,9 @@
    * downloads, while the store's oldest is whatever its window happens to
    * reach back to. */
   function dayLadder() {
-    const stored = (cprLadders && cprLadders.day) || [];
-    const live = (chartPayload && chartPayload.cpr_days) || [];
+    const self = view();
+    const stored = (self.cprLadders && self.cprLadders.day) || [];
+    const live = (self.chartPayload && self.chartPayload.cpr_days) || [];
     if (!live.length) return stored;
     const known = new Set(stored.map((band) => band.date));
     const filled = stored.concat(live.filter((band) => !known.has(band.date)));
@@ -641,7 +693,8 @@
   function cprBandsForView(bars) {
     if (!bars.length) return [];
     const monthly = prefs.tf === "D";
-    const ladder = monthly ? ((cprLadders && cprLadders.month) || []) : dayLadder();
+    const ladders = view().cprLadders;
+    const ladder = monthly ? ((ladders && ladders.month) || []) : dayLadder();
     const leftEdge = bars[0].time;
     const rightEdge = bars[bars.length - 1].time;
 
@@ -671,7 +724,7 @@
      * history CSV can be days old, and today is the one the operator is
      * trading. On the Daily timeframe the monthly ladder already covers the
      * current month, so there is nothing to add. */
-    const live = chartPayload && chartPayload.cpr;
+    const live = view().chartPayload && view().chartPayload.cpr;
     if (!monthly && live && live.available) {
       bands.push({ from: todayStart, to: rightEdge, levels: live });
     }
@@ -681,7 +734,7 @@
   /* The month band the Daily caption describes, plus the month its numbers
    * came FROM -- which is the month before it, and the thing worth naming. */
   function newestMonthBand() {
-    const ladder = (cprLadders && cprLadders.month) || [];
+    const ladder = (view().cprLadders && view().cprLadders.month) || [];
     if (!ladder.length) return { levels: null };
     const band = ladder[ladder.length - 1];
     const previous = ladder.length > 1 ? ladder[ladder.length - 2].month : null;
@@ -804,6 +857,12 @@
      * two without touching the band set at all. */
     const newest = bands.length ? bands[bands.length - 1] : null;
     const signature = JSON.stringify([
+      /* The INSTRUMENT belongs here as much as any group pref. Two indices'
+       * ladders can agree on band count, extent and even a pivot while
+       * describing completely different prices -- and an unchanged signature
+       * skips the redraw, leaving one index's levels drawn over the other's
+       * candles. */
+      prefs.inst,
       prefs.tf === "D" ? "month" : "day",
       bands.length,
       bands.length ? bands[0].from : null,
@@ -937,6 +996,8 @@
   }
 
   function applyTimeframe() {
+    const self = view();
+    const chartPayload = self.chartPayload;
     if (!chartPayload || !candleSeries) return;
     /* The runner publishes minute timeframes only. The Daily series is
      * history plus today folded out of the live minutes, so it has a block of
@@ -969,8 +1030,13 @@
     vwapSeries.applyOptions({ visible: prefs.vwap && !daily });
     nodes.vwapLabel.classList.toggle("disabled", daily);
 
-    if (renderedTimeframe !== prefs.tf) {
+    if (renderedTimeframe !== prefs.tf || renderedInstrument !== prefs.inst) {
       renderedTimeframe = prefs.tf;
+      /* An instrument switch refits too, and must: BankNIFTY trades near
+       * 55,000 while NIFTY is near 24,000, so the incoming candles sit
+       * entirely outside the outgoing price range and the pane would look
+       * empty but for the axis. */
+      renderedInstrument = prefs.inst;
       /* 75 five-minute bars cover a different span from 375 one-minute ones,
        * so without a refit the new candles sit outside the old visible range
        * and the pane looks empty apart from the price lines.
@@ -985,9 +1051,12 @@
 
     const minutes = block.minutes || 1;
     const window = (chartPayload.cpr && chartPayload.cpr.window) || "09:15-15:15";
+    /* The payload names its own instrument rather than the page assuming the
+     * reply matches the request it made. */
+    const name = chartPayload.instrument || prefs.inst;
     nodes.chartTitle.textContent = daily
-      ? "NIFTY · daily · CPR from the prior MONTH (chart only)"
-      : `NIFTY · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
+      ? `${name} · daily · CPR from the prior MONTH (chart only)`
+      : `${name} · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
         + `${window} (chart only)`;
     renderCprLines(bars);
     renderCprProvenance(chartPayload.cpr, daily ? newestMonthBand() : null);
@@ -1006,7 +1075,7 @@
      * been measured NOT firing in some panes. Waiting on it meant a chart that
      * silently never loaded any history at all. The re-entrant call is stopped
      * by `historyInFlight`, and by history existing once a page has landed. */
-    if (!(historyBars[prefs.tf] || []).length && !historyExhausted[prefs.tf]) {
+    if (!(self.historyBars[prefs.tf] || []).length && !self.historyExhausted[prefs.tf]) {
       loadNextHistoryPage();
     }
   }
@@ -1038,12 +1107,18 @@
    * the timeframe is marked exhausted and stops asking. */
   async function loadNextHistoryPage() {
     const timeframe = prefs.tf;
-    if (historyInFlight || historyExhausted[timeframe]) return;
+    /* Both captured before the await, and every write below goes through
+     * `self`. A switch while the page is in the air must not splice one
+     * index's bars into the other's series. */
+    const instrument = prefs.inst;
+    const self = instrumentViews[instrument];
+    if (!self || historyInFlight || self.historyExhausted[timeframe]) return;
     historyInFlight = true;
     try {
-      const page = historyNextPage[timeframe];
+      const page = self.historyNextPage[timeframe];
       const response = await fetch(
-        `/api/history?tf=${encodeURIComponent(timeframe)}&page=${page}`,
+        `/api/history?inst=${encodeURIComponent(instrument)}`
+        + `&tf=${encodeURIComponent(timeframe)}&page=${page}`,
         { cache: "no-store" },
       );
       if (!response.ok) {
@@ -1053,41 +1128,44 @@
          * building -- measured at 29.5 seconds on the five-year file -- and
          * treating it as exhausted would disable scroll-back for the whole
          * session over a few seconds of startup. */
-        if (!historyFirstRefusalAt) historyFirstRefusalAt = Date.now();
-        const loaded = (historyBars[timeframe] || []).length;
-        const waitedOutTheBuild = Date.now() - historyFirstRefusalAt > HISTORY_GIVE_UP_MS;
+        if (!self.historyFirstRefusalAt) self.historyFirstRefusalAt = Date.now();
+        const loaded = (self.historyBars[timeframe] || []).length;
+        const waitedOutTheBuild =
+          Date.now() - self.historyFirstRefusalAt > HISTORY_GIVE_UP_MS;
         /* Bounded by TIME, not by a retry count: `applyTimeframe` can fire
          * several times in the first second -- boot, a checkbox, the first
          * chart render -- and a count would be spent before the server has
          * finished building. Five minutes comfortably covers the 29.5s measured
          * on the five-year file, and then stops asking every minute forever for
          * history that is simply not there. */
-        if (loaded || waitedOutTheBuild) historyExhausted[timeframe] = true;
+        if (loaded || waitedOutTheBuild) self.historyExhausted[timeframe] = true;
         return;
       }
       const doc = await response.json();
       const bars = doc.bars || [];
       if (!bars.length) {
-        historyExhausted[timeframe] = true;
+        self.historyExhausted[timeframe] = true;
         return;
       }
-      historyBars[timeframe] = bars.concat(historyBars[timeframe] || []);
+      self.historyBars[timeframe] = bars.concat(self.historyBars[timeframe] || []);
       for (const name of ["stoch_k", "stoch_d"]) {
         /* A page without the column still contributes its LENGTH, as nulls, so
          * the arrays stay index-aligned with the bars either way. */
         const incoming = doc[name] || new Array(bars.length).fill(null);
-        const columns = historyCols[timeframe];
+        const columns = self.historyCols[timeframe];
         columns[name] = incoming.concat(columns[name] || []);
       }
-      historyNextPage[timeframe] = page + 1;
-      if (doc.pages && historyNextPage[timeframe] >= doc.pages) {
-        historyExhausted[timeframe] = true;
+      self.historyNextPage[timeframe] = page + 1;
+      if (doc.pages && self.historyNextPage[timeframe] >= doc.pages) {
+        self.historyExhausted[timeframe] = true;
       }
-      /* Only redraw if the operator has not switched timeframe while this was
-       * in the air; otherwise the bars belong to a chart nobody is looking at. */
-      const added = prefs.tf === timeframe ? redrawKeepingViewport() : 0;
+      /* Only redraw if the operator has not switched timeframe OR instrument
+       * while this was in the air; otherwise the bars belong to a chart nobody
+       * is looking at. */
+      const onScreen = prefs.tf === timeframe && prefs.inst === instrument;
+      const added = onScreen ? redrawKeepingViewport() : 0;
 
-      if (!added && !historyExhausted[timeframe]) {
+      if (!added && !self.historyExhausted[timeframe]) {
         /* Every bar in that page was already inside the live window, so the
          * merge dropped all of it: the chart gained nothing and the viewport
          * did not move, which means NO range event will arrive to ask for the
@@ -1108,6 +1186,68 @@
     }
   }
 
+  /* Empty every series. Used when switching to an instrument the runner is
+   * not publishing yet: leaving the outgoing candles on screen under the new
+   * instrument's name would be the chart stating something untrue, which is
+   * the one thing this dashboard does not do. */
+  function clearChartSeries() {
+    if (!candleSeries) return;
+    candleSeries.setData([]);
+    vwapSeries.setData([]);
+    kSeries.setData([]);
+    dSeries.setData([]);
+    for (const handle of cprSeries) chart.removeSeries(handle);
+    cprSeries = [];
+    /* So the next real draw rebuilds rather than matching a stale memo. */
+    cprSignature = null;
+    renderedBarCount = 0;
+    lastMergedBars = [];
+    nodes.cprProvenance.hidden = true;
+  }
+
+  /* Which instruments the runner is actually publishing. The state document's
+   * chart block is keyed by instrument, so its KEYS are the answer -- the page
+   * never has to be told separately, and cannot disagree. */
+  function applyInstrumentAvailability(offered) {
+    for (const [button, key] of [
+      [nodes.instNifty, "NIFTY"], [nodes.instBankNifty, "BANKNIFTY"],
+    ]) {
+      const on = offered.includes(key);
+      button.disabled = !on;
+      button.classList.toggle("disabled", !on);
+      if (!on) {
+        button.title = `Not being published. Set DASHBOARD_BANKNIFTY_ENABLED=true `
+          + `in Dependencies/.env and restart to chart ${key}.`;
+      }
+    }
+    /* A stored preference for an instrument this run is not publishing would
+     * otherwise leave the operator on a permanently empty chart. */
+    if (!offered.length || offered.includes(prefs.inst)) return;
+    setInstrument(offered[0]);
+  }
+
+  function setInstrument(value) {
+    if (!INSTRUMENTS.includes(value)) return;
+    prefs.inst = value;
+    savePrefs();
+    for (const [button, key] of [
+      [nodes.instNifty, "NIFTY"], [nodes.instBankNifty, "BANKNIFTY"],
+    ]) {
+      button.classList.toggle("active", value === key);
+      button.setAttribute("aria-pressed", String(value === key));
+    }
+    /* Whatever this instrument already holds is redrawn from memory. When it
+     * holds nothing yet, the chart keeps the outgoing series on screen until
+     * the first payload lands rather than blanking -- and `renderChart` asks
+     * for it on the very next poll, because this view's `seriesVersion` is
+     * still -1 and cannot match anything the server reports. */
+    if (view().chartPayload) applyTimeframe();
+    else {
+      clearChartSeries();
+      nodes.chartEmpty.hidden = false;
+    }
+  }
+
   function setTimeframe(value) {
     prefs.tf = value;
     savePrefs();
@@ -1121,7 +1261,13 @@
   }
 
   async function renderChart(doc) {
-    const info = doc.chart || {};
+    /* `doc.chart` is keyed by instrument. Only the one on screen is drawn, so
+     * an instrument the runner is not publishing costs nothing at all. */
+    const charts = doc.chart || {};
+    applyInstrumentAvailability(Object.keys(charts));
+    const instrument = prefs.inst;
+    const self = view();
+    const info = charts[instrument] || {};
     const hasData = info.state === "OK" && info.last_bar;
     nodes.chartEmpty.hidden = hasData;
     if (!hasData) return;
@@ -1133,20 +1279,25 @@
      * times a session rather than once per poll. In between, the forming
      * candle is updated in place, which is what makes the chart move
      * tick-by-tick under MARKET_DATA_SOURCE=WEBSOCKET for a few hundred bytes. */
-    if (info.series_version !== seriesVersion && !chartFetchInFlight) {
+    if (info.series_version !== self.seriesVersion && !chartFetchInFlight) {
       /* Guarded: this runs from `render`, which the poll loop calls WITHOUT
        * awaiting, so two polls landing close together could otherwise put two
        * requests in the air for the same version. */
       chartFetchInFlight = true;
       try {
-        const response = await fetch("/api/chart", { cache: "no-store" });
+        const response = await fetch(
+          `/api/chart?inst=${encodeURIComponent(instrument)}`,
+          { cache: "no-store" },
+        );
         if (response.ok) {
-          chartPayload = await response.json();
-          seriesVersion = info.series_version;
+          /* Filed under the instrument CAPTURED above, not whichever is on
+           * screen when the reply lands. */
+          self.chartPayload = await response.json();
+          self.seriesVersion = info.series_version;
           /* Keeping the viewport, not refitting: by now the operator may have
            * scrolled back through years of history, and a minute closing must
            * not drag them back to today. */
-          redrawKeepingViewport();
+          if (instrument === prefs.inst) redrawKeepingViewport();
         }
       } catch (error) {
         /* Leave the previous series on screen; the next poll retries. */
@@ -1269,6 +1420,8 @@
 
   /* Controls. Each checkbox flips visibility rather than re-setting data, so
    * toggling never costs a redraw of the series it keeps. */
+  nodes.instNifty.addEventListener("click", () => setInstrument("NIFTY"));
+  nodes.instBankNifty.addEventListener("click", () => setInstrument("BANKNIFTY"));
   nodes.tf1.addEventListener("click", () => setTimeframe("1"));
   nodes.tf5.addEventListener("click", () => setTimeframe("5"));
   nodes.tfD.addEventListener("click", () => setTimeframe("D"));
@@ -1289,9 +1442,11 @@
        * `applyTimeframe` here re-uploaded every candle, VWAP point and
        * stochastic point -- hundreds of thousands of bars once the operator has
        * scrolled back -- for a toggle that touches none of them. */
-      else if (chartPayload) renderCprLines(lastMergedBars);
+      else if (view().chartPayload) renderCprLines(lastMergedBars);
     });
   }
+  /* Instrument FIRST: `setTimeframe` draws, and drawing reads `view()`. */
+  setInstrument(INSTRUMENTS.includes(prefs.inst) ? prefs.inst : INSTRUMENTS[0]);
   setTimeframe(["1", "5", "D"].includes(prefs.tf) ? prefs.tf : "1");
 
   document.addEventListener("visibilitychange", () => {
