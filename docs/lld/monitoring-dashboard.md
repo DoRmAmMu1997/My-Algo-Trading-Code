@@ -121,6 +121,21 @@ one payload. The state document's `chart` block is keyed by instrument, and its
 KEYS are what the page reads to dim the button for an instrument this run is not
 publishing.
 
+### The indicator menu
+
+Eight indicators -- EMA, SMA, Bollinger and Supertrend as overlays; RSI, MACD,
+ATR and ADX each in a pane of their own -- added from a menu with their own
+parameters, several instances of one allowed, persisted per browser in
+`prefs.indicators`.
+
+They are computed in the BROWSER, in `dashboard_assets/dashboard_indicators.js`,
+because the history pages are rendered once at startup into immutable bytes: a
+server-side indicator could only cover the live window and would vanish on
+scroll-back. They are **chart-only**, like CPR, and no strategy reads them. The
+second implementation is bounded by a node-backed drift test that compares every
+`compute` with the strategies' own TA-Lib helpers element by element, warm-up
+included. See [`ADR-0020`](../adr/0020-a-second-index-on-the-monitoring-chart.md).
+
 ### Chart indicators and the 1m/5m/D toggle
 
 Three overlays, and a toggle because several strategies derive 5-minute bars --
@@ -451,6 +466,29 @@ and requires the health snapshots to be identical in full. Two stores rather
 than two refreshes of one: the healthy streak counts refreshes, and would
 differ for a reason that has nothing to do with the instrument.
 
+**A hand-rolled indicator is a different indicator.** TA-Lib seeds an EMA
+with the SMA of its first `period` values, not the first value; it starts
+MACD's FAST ema at `slow - 1` rather than `fast - 1`, seeded on the values
+ending there; and its ADX accumulates sums over `period - 1` before smoothing
+rather than reusing the ATR's Wilder seed. Each of those was measurably wrong
+in the obvious implementation -- 1.6 index points on MACD's first published
+bar, and an ADX gap of `sum/period²` that never decays. The drift test is what
+found them, and when it fails the fix is to match TA-Lib, never to loosen the
+tolerance.
+
+**Indicator series are built from the DRAW path, not from boot.** `ensureChart`
+runs inside the first draw, so at startup there is no chart to hang a series
+on: building there alone left a page reloaded with four saved indicators
+drawing only the two overlays, with the menu's count badge cheerfully reading
+4. `syncIndicatorSeries` keys on a signature of the active set and is called
+from `applyTimeframe`, so boot, an add, a removal and an instrument switch all
+converge on one path.
+
+**Panes are rebuilt, not patched.** The library re-indexes panes when one is
+removed, so removing an indicator from the middle of the stack rebuilds the
+whole set rather than trying to keep hold of indices. Removal walks from the
+highest index DOWN for the same reason.
+
 **Assets are read into memory at startup.** Editing `dashboard.js` on disk does
 nothing to a running server; restart it, or spend a while debugging code that
 is not the code being served.
@@ -476,6 +514,7 @@ deliberately no host key.
 |---|---|
 | `Tests/Dependencies/test_dashboard_snapshot.py` | Every pairing confidence, the Delta-0.2 / SL-Hunting-mirror / re-entry shapes, `EXIT_FAILED` not closing, malformed events, the honesty rules, NaN rejection |
 | `Tests/Dependencies/test_dashboard_server.py` | Real loopback socket: 200/304/403/404/405, security headers, no CORS, empty stderr, root logger untouched, bind-in-use, no config read; plus the page guards -- every wired element id exists, the CPR levels step rather than lean on whitespace, and `cprRuns` executed under node so no level runs across a day with no band; plus the `inst` parameter on both endpoints, the per-instrument chart ETag, and one instrument running out of history not exhausting the other |
+| `Tests/Dependencies/test_dashboard_chart_indicators_js.py` | The drift guard: every menu indicator run under node and compared with `misc_strategy_common`'s TA-Lib helpers element by element at several periods, plus parameter clamping and an all-null series shorter than its warm-up. Skips where node is absent |
 | `Tests/Dependencies/test_dashboard_indicators.py` | CPR truncation and every degenerate session shape; **the equality test that pins the CPR algebra against `_add_daily_cpr`**; VWAP and stochastic equality with the strategies' helpers; the forming bucket; and every fixture rendered through `render_document_bytes` |
 | `Tests/test_nifty_multi_strategy_master.py` | The collector, the chart cache, the sink wiring in `publish_trade_event`, the "never reaches the broker or a mutating gate" assertion, the recompute-cadence guards, and fail-soft when an indicator raises. `TestSecondaryInstrumentFeed` covers the instrument dimension: the two frames not overwriting each other, a worker still getting NIFTY without asking, **the health gate reading the primary alone**, the publisher's cadence and fail-soft, `validate_ohlc_frame` not relaxed, and the secondary being absent until its knob is on |
 

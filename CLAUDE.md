@@ -115,7 +115,14 @@ One process, cooperating threads:
   must stay that way, because it drives the 30-second liquidation clock. Nothing
   trades off the secondary frame and the tick path never builds bars for it.
   Each instrument has its own chart cache, publisher slot, CPR ladder and
-  scroll-back; see `docs/adr/0020`. It also scrolls back through years
+  scroll-back. The chart also carries an **indicator menu** (EMA/SMA/Bollinger/
+  Supertrend as overlays, RSI/MACD/ATR/ADX in their own panes, with editable
+  periods, several instances allowed, persisted in `localStorage`). Those are
+  computed in the BROWSER from `dashboard_assets/dashboard_indicators.js`,
+  because the history pages are immutable bytes rendered once at startup -- so a
+  server-side indicator could not survive a scroll-back. They are CHART-ONLY and
+  no strategy reads them; a node-backed drift test pins every one of them against
+  `misc_strategy_common`'s TA-Lib helpers. See `docs/adr/0020`. It also scrolls back through years
   of history: `Dependencies/dashboard_history.py` reads the CSV
   `algo.py fetch-data` writes and serves it from `/api/history` in pages of 2,000
   bars, loaded once on a thread of its own (~29.5s, ~63 MB for five years) and

@@ -79,6 +79,10 @@ ASSET_ROUTES: Mapping[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
     "/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
+    "/dashboard_indicators.js": (
+        "dashboard_indicators.js",
+        "text/javascript; charset=utf-8",
+    ),
     "/vendor/lightweight-charts.standalone.production.js": (
         "vendor/lightweight-charts.standalone.production.js",
         "text/javascript; charset=utf-8",
