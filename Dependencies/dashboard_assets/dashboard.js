@@ -56,6 +56,21 @@
     cprProvenance: el("cpr-provenance"),
     vwapLabel: el("vwap-label"),
     vwapFootnote: el("vwap-footnote"),
+    drawMenuButton: el("draw-menu-button"),
+    drawMenuPanel: el("draw-menu-panel"),
+    drawOff: el("draw-off"),
+    drawLine: el("draw-line"),
+    drawZone: el("draw-zone"),
+    drawHint: el("draw-hint"),
+    drawActive: el("draw-active"),
+    drawCount: el("draw-count"),
+    indMenuButton: el("ind-menu-button"),
+    indMenuPanel: el("ind-menu-panel"),
+    indPicker: el("ind-picker"),
+    indParams: el("ind-params"),
+    indAdd: el("ind-add"),
+    indActive: el("ind-active"),
+    indCount: el("ind-count"),
     instNifty: el("inst-nifty"),
     instBankNifty: el("inst-banknifty"),
     tf1: el("tf-1"),
@@ -386,6 +401,10 @@
    * site data or a corrupt value must not take the page down with it. */
   const PREFS_KEY = "algoDashboard.chart.v1";
   const PREF_DEFAULTS = {
+    /* The first non-scalar preference, which is why `loadPrefs` repairs it
+     * rather than trusting it: this comes back from localStorage and a
+     * previous version could have written anything into it. */
+    indicators: [],
     inst: "NIFTY",
     tf: "1", cpr: true, cprPD: true, cprRS1: false, cprRS3: false, vwap: true, stoch: true,
   };
@@ -393,7 +412,15 @@
   function loadPrefs() {
     try {
       const stored = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
-      return { ...PREF_DEFAULTS, ...(stored && typeof stored === "object" ? stored : {}) };
+      const merged = {
+        ...PREF_DEFAULTS,
+        ...(stored && typeof stored === "object" ? stored : {}),
+      };
+      /* A non-array here would throw on the first draw and blank the page --
+       * the IIFE has no outer guard. Entries are validated individually later,
+       * by `indicatorSpecs`, because an unknown id can arrive the same way. */
+      if (!Array.isArray(merged.indicators)) merged.indicators = [];
+      return merged;
     } catch (error) {
       return { ...PREF_DEFAULTS };
     }
@@ -513,6 +540,24 @@
       if (!range) return;
       if (range.from <= HISTORY_PREFETCH_BARS) loadNextHistoryPage();
     });
+
+    /* Placing a level. The library hands over the point it was clicked at, and
+     * the SERIES converts it to a price -- so the level lands where the
+     * operator aimed whatever the pane's current scale is, with no arithmetic
+     * here to get wrong. */
+    chart.subscribeClick((param) => {
+      if (drawMode === "off" || !param.point || !candleSeries) return;
+      const price = candleSeries.coordinateToPrice(param.point.y);
+      if (price !== null) placeAt(price);
+    });
+
+    /* Moving one. Bound on the container rather than the document for
+     * mousedown, so a drag can only start over the chart, but on the WINDOW
+     * for move and up -- a pointer that leaves the chart mid-drag must still
+     * finish it rather than leaving the level stuck to the cursor. */
+    nodes.chart.addEventListener("mousedown", beginDrag);
+    window.addEventListener("mousemove", moveDrag);
+    window.addEventListener("mouseup", endDrag);
   }
 
   function requestFit() {
@@ -554,6 +599,578 @@
       }
     }
     return points;
+  }
+
+  /* ------------------------------------------------------------ indicators */
+  /* The operator's own indicator stack, from the menu. Chart-only: the maths
+   * lives in `dashboard_indicators.js` and runs here, over whatever bars the
+   * browser holds, so an indicator follows the operator back through years of
+   * scroll-back. Nothing the strategies read comes from any of it.
+   *
+   * Structure is rebuilt only when the SET changes -- adding, removing, or
+   * editing a parameter. A new minute or a loaded history page only re-sets
+   * data on series that already exist, exactly as the candles do. */
+  let indicatorSeries = [];
+  /* What `indicatorSeries` was built FROM. The structure is rebuilt only
+   * when this changes, so the once-a-minute redraw costs a string compare. */
+  let indicatorSignature = null;
+
+  /* Pane 0 is price, pane 1 is the stochastic. Oscillators from the menu take
+   * 2 upward, in the order they were added. */
+  const FIRST_MENU_PANE = 2;
+
+  function indicatorSpecs() {
+    const stored = Array.isArray(prefs.indicators) ? prefs.indicators : [];
+    /* Every entry re-validated on the way out, not just on the way in: this
+     * comes from localStorage, which can hold anything a previous version
+     * wrote, and a bad id here would throw inside the draw path. */
+    return stored
+      .map((item) => {
+        const entry = item && DashboardIndicators.byId(item.id);
+        if (!entry) return null;
+        return {
+          uid: String(item.uid || item.id),
+          id: entry.id,
+          entry,
+          params: DashboardIndicators.normalizeParams(entry, item.params),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  /* Tear every menu indicator down, panes included. Panes are removed from the
+   * highest index DOWN: the library re-indexes on removal, so going upward
+   * would delete the wrong ones. */
+  function clearIndicatorSeries() {
+    if (!chart) return;
+    for (const item of indicatorSeries) {
+      for (const handle of item.handles) {
+        try {
+          chart.removeSeries(handle);
+        } catch (error) {
+          /* Already gone with its pane; nothing to undo. */
+        }
+      }
+    }
+    indicatorSeries = [];
+    try {
+      const panes = chart.panes();
+      for (let index = panes.length - 1; index >= FIRST_MENU_PANE; index -= 1) {
+        chart.removePane(index);
+      }
+    } catch (error) {
+      /* An older build without pane removal still draws; it just keeps the
+       * empty pane until the next full redraw. */
+    }
+  }
+
+  /* Build the series the active set needs. Pane indices are assigned here and
+   * nowhere else, so removing one from the middle cannot leave a hole. */
+  /* Rebuild only when the set has actually changed -- or when the chart did
+   * not exist last time it was asked, which is the state the page boots in:
+   * `ensureChart` runs inside the first draw, so at startup there is nothing
+   * to hang a series on and the attempt has to be repeated from the draw path.
+   * Driving it from there rather than from boot alone is also what makes an
+   * add, a removal and an instrument switch all converge on one code path. */
+  function syncIndicatorSeries() {
+    if (!chart) return;
+    const signature = JSON.stringify(
+      indicatorSpecs().map((spec) => [spec.uid, spec.id, spec.params]),
+    );
+    if (signature === indicatorSignature) return;
+    rebuildIndicatorSeries();
+    indicatorSignature = signature;
+  }
+
+  function rebuildIndicatorSeries() {
+    if (!chart) return;
+    clearIndicatorSeries();
+    let pane = FIRST_MENU_PANE;
+    for (const spec of indicatorSpecs()) {
+      const own = spec.entry.kind === "pane";
+      const paneIndex = own ? pane : 0;
+      if (own) pane += 1;
+      const lines = spec.entry.compute([], spec.params);
+      const handles = lines.map((line) =>
+        chart.addSeries(
+          LightweightCharts.LineSeries,
+          {
+            color: line.color,
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: true,
+            title: line.title,
+          },
+          paneIndex,
+        ),
+      );
+      /* Reference levels -- RSI's 70/30, MACD's zero, ADX's 25 -- hung off the
+       * first line so they come and go with it. */
+      if (own && spec.entry.guides && handles.length) {
+        for (const level of spec.entry.guides) {
+          handles[0].createPriceLine({
+            price: level,
+            color: "#3a4150",
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+          });
+        }
+      }
+      indicatorSeries.push({ uid: spec.uid, spec, handles, paneIndex: own ? paneIndex : null });
+    }
+    sizeIndicatorPanes();
+  }
+
+  function sizeIndicatorPanes() {
+    try {
+      const panes = chart.panes();
+      for (let index = FIRST_MENU_PANE; index < panes.length; index += 1) {
+        panes[index].setHeight(STOCH_PANE_HEIGHT);
+      }
+    } catch (error) {
+      /* Heights are cosmetic; the library's own default still draws. */
+    }
+  }
+
+  /* Data only. Called from the single draw path with the merged bars, so an
+   * indicator covers history and the live window alike. */
+  function refreshIndicators(bars) {
+    for (const item of indicatorSeries) {
+      let lines;
+      try {
+        lines = item.spec.entry.compute(bars, item.spec.params);
+      } catch (error) {
+        /* One broken indicator costs its own line and nothing else -- the same
+         * rule the server-side indicators follow. */
+        lines = [];
+      }
+      item.handles.forEach((handle, index) => {
+        const line = lines[index];
+        handle.setData(line ? pointsFrom(bars, line.values) : []);
+      });
+    }
+  }
+
+  /* ------------------------------------------------------- the menu itself */
+  function renderIndicatorParams() {
+    const entry = DashboardIndicators.byId(nodes.indPicker.value);
+    if (!entry) {
+      nodes.indParams.innerHTML = "";
+      return;
+    }
+    nodes.indParams.innerHTML = entry.params
+      .map(
+        (spec) => `<label>${text(spec.label)}
+          <input type="number" data-param="${attr(spec.name)}"
+                 value="${spec.value}" min="${spec.min}" max="${spec.max}"
+                 step="${spec.step || 1}"></label>`,
+      )
+      .join("");
+  }
+
+  function renderIndicatorList() {
+    const specs = indicatorSpecs();
+    nodes.indCount.textContent = specs.length ? String(specs.length) : "";
+    nodes.indActive.innerHTML = specs
+      .map((spec) => {
+        const lines = spec.entry.compute([], spec.params);
+        const colour = (lines[0] || {}).color || "var(--muted)";
+        const title = (lines[0] || {}).title || spec.entry.label;
+        return `<li>
+          <span class="swatch" style="background:${attr(colour)}"></span>
+          <span class="name">${text(title)}</span>
+          <button type="button" class="drop" data-uid="${attr(spec.uid)}"
+                  title="Remove">&times;</button>
+        </li>`;
+      })
+      .join("");
+  }
+
+  /* One place that writes the preference and redraws, so the three entry
+   * points -- add, remove, and a corrupt value repaired on load -- cannot
+   * drift apart. */
+  function commitIndicators(specs) {
+    prefs.indicators = specs.map((spec) => ({
+      uid: spec.uid,
+      id: spec.id,
+      params: spec.params,
+    }));
+    savePrefs();
+    renderIndicatorList();
+    syncIndicatorSeries();
+    if (lastMergedBars.length) refreshIndicators(lastMergedBars);
+  }
+
+  function addIndicator() {
+    const entry = DashboardIndicators.byId(nodes.indPicker.value);
+    if (!entry) return;
+    const raw = {};
+    for (const input of nodes.indParams.querySelectorAll("input[data-param]")) {
+      raw[input.dataset.param] = input.value;
+    }
+    const specs = indicatorSpecs();
+    specs.push({
+      /* Unique per instance so two EMAs of different lengths are two rows,
+       * not one overwriting the other. */
+      uid: `${entry.id}-${Date.now()}-${specs.length}`,
+      id: entry.id,
+      entry,
+      params: DashboardIndicators.normalizeParams(entry, raw),
+    });
+    commitIndicators(specs);
+  }
+
+  function removeIndicator(uid) {
+    commitIndicators(indicatorSpecs().filter((spec) => spec.uid !== uid));
+  }
+
+  function setIndicatorMenu(open) {
+    nodes.indMenuPanel.hidden = !open;
+    nodes.indMenuButton.setAttribute("aria-expanded", String(open));
+  }
+
+  /* -------------------------------------------------------------- drawings */
+  /* Hand-placed support and resistance: horizontal lines, and shaded zones
+   * between two prices.
+   *
+   * These live in the BROWSER and nowhere else. The server implements GET and
+   * nothing but GET -- that is a safety property of this dashboard rather than
+   * an omission (ADR-0016), so there is no endpoint to save to and there is not
+   * going to be one. localStorage is the whole persistence story.
+   *
+   * Their own key, NOT `prefs`. A hand-placed level is worth more than a view
+   * preference: bumping `PREFS_KEY` to rename a checkbox must not silently
+   * throw away an afternoon's levels.
+   *
+   * Keyed per INSTRUMENT and shared across 1m/5m/D, because a price level is a
+   * price level -- which is how TradingView treats one, and what an operator
+   * expects when they switch timeframe to look at the same level. */
+  const DRAWINGS_KEY = "algoDashboard.drawings.v1";
+  /* Resistance-ish red first, support-ish green second, then two neutrals, so
+   * the first two a level-drawing operator places already read correctly. */
+  const DRAWING_COLORS = ["#ef5f5f", "#35c46b", "#e8b13a", "#9b7fd4"];
+
+  function loadDrawings() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(DRAWINGS_KEY) || "{}");
+      return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function saveDrawings() {
+    try {
+      localStorage.setItem(DRAWINGS_KEY, JSON.stringify(drawings));
+    } catch (error) {
+      /* A level that cannot be remembered is still drawn for this session. */
+    }
+  }
+
+  const drawings = loadDrawings();
+  /* Live handles for the instrument on screen, parallel to `drawingList()`. */
+  let drawingHandles = [];
+  /* "off" | "line" | "zone", and the first price of a zone while it is being
+   * placed. Never persisted: an armed tool is a momentary state. */
+  let drawMode = "off";
+  let pendingZonePrice = null;
+  /* The drawing being dragged, and what the chart's pan/zoom was before it
+   * started -- dragging a level must not also drag the chart under it. */
+  let dragging = null;
+  let scrollBeforeDrag = null;
+
+  /* Every read re-validates. This comes back from localStorage, where a
+   * previous version -- or a half-finished write -- could have left anything,
+   * and a bad entry here would throw inside the draw path. */
+  function drawingList() {
+    const stored = drawings[prefs.inst];
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(
+      (item) =>
+        item
+        && (item.kind === "line" || item.kind === "zone")
+        && Array.isArray(item.prices)
+        && item.prices.length === (item.kind === "zone" ? 2 : 1)
+        && item.prices.every((price) => Number.isFinite(price)),
+    );
+  }
+
+  function commitDrawings(list) {
+    drawings[prefs.inst] = list;
+    saveDrawings();
+    renderDrawingList();
+    rebuildDrawings();
+  }
+
+  function clearDrawingHandles() {
+    for (const handle of drawingHandles) {
+      try {
+        if (handle.kind === "line") candleSeries.removePriceLine(handle.handle);
+        else chart.removeSeries(handle.handle);
+      } catch (error) {
+        /* Already gone with a series teardown; nothing to undo. */
+      }
+    }
+    drawingHandles = [];
+  }
+
+  /* The two bar times a zone is anchored to.
+   *
+   * REAL loaded bar times, never constructed ones. Every series shares one
+   * time scale built from the UNION of their times, so a zone anchored to an
+   * invented timestamp stretches the scale across empty chart -- the same trap
+   * the CPR bands have to avoid, in the same place. */
+  function zoneSpan() {
+    if (!lastMergedBars.length) return null;
+    return [lastMergedBars[0].time, lastMergedBars[lastMergedBars.length - 1].time];
+  }
+
+  function rebuildDrawings() {
+    if (!chart || !candleSeries) return;
+    clearDrawingHandles();
+    const span = zoneSpan();
+    for (const item of drawingList()) {
+      if (item.kind === "line") {
+        drawingHandles.push({
+          kind: "line",
+          item,
+          handle: candleSeries.createPriceLine({
+            price: item.prices[0],
+            color: item.color || DRAWING_COLORS[0],
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            /* Through the escaper even though the library renders it to
+             * canvas: the same string reaches the HTML list below. */
+            title: item.label ? String(item.label).slice(0, 24) : "",
+          }),
+        });
+        continue;
+      }
+      if (!span) continue;
+      /* A BaselineSeries fills between its value and its base PRICE, which is
+       * exactly a band: hold the value at the top across the span and put the
+       * base at the bottom. One series, a real fill, no custom renderer. */
+      const [top, bottom] = [Math.max(...item.prices), Math.min(...item.prices)];
+      const colour = item.color || DRAWING_COLORS[0];
+      const series = chart.addSeries(
+        LightweightCharts.BaselineSeries,
+        {
+          baseValue: { type: "price", price: bottom },
+          topLineColor: colour,
+          topFillColor1: shade(colour, 0.18),
+          topFillColor2: shade(colour, 0.18),
+          bottomLineColor: colour,
+          bottomFillColor1: "rgba(0,0,0,0)",
+          bottomFillColor2: "rgba(0,0,0,0)",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        0,
+      );
+      series.setData(span.map((time) => ({ time, value: top })));
+      drawingHandles.push({ kind: "zone", item, handle: series });
+    }
+  }
+
+  /* `#rrggbb` at a given alpha. The library takes any CSS colour, so this
+   * keeps one hex per drawing rather than a second stored value. */
+  function shade(hex, alpha) {
+    const value = String(hex).replace("#", "");
+    if (value.length !== 6) return `rgba(136, 136, 136, ${alpha})`;
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  /* ---------------------------------------------------------- placing them */
+  function setDrawMode(mode) {
+    drawMode = mode;
+    pendingZonePrice = null;
+    for (const [button, key] of [
+      [nodes.drawOff, "off"], [nodes.drawLine, "line"], [nodes.drawZone, "zone"],
+    ]) {
+      button.classList.toggle("active", mode === key);
+      button.setAttribute("aria-pressed", String(mode === key));
+    }
+    nodes.chart.classList.toggle("arming", mode !== "off");
+    renderDrawHint();
+  }
+
+  function renderDrawHint() {
+    if (drawMode === "off") {
+      nodes.drawHint.textContent =
+        "Drag a level to move it, or edit its price below. Click × to remove.";
+      return;
+    }
+    if (drawMode === "line") {
+      nodes.drawHint.textContent = "Click the chart to place a level.";
+      return;
+    }
+    nodes.drawHint.textContent = pendingZonePrice === null
+      ? "Click once for the zone's first edge."
+      : `First edge at ${pendingZonePrice.toFixed(2)} — click again for the other.`;
+  }
+
+  function placeAt(price) {
+    if (!Number.isFinite(price)) return;
+    const list = drawingList();
+    const colour = DRAWING_COLORS[list.length % DRAWING_COLORS.length];
+    if (drawMode === "line") {
+      list.push({ uid: `d-${Date.now()}`, kind: "line", prices: [round2(price)], color: colour });
+      commitDrawings(list);
+      return;
+    }
+    if (pendingZonePrice === null) {
+      pendingZonePrice = price;
+      renderDrawHint();
+      return;
+    }
+    list.push({
+      uid: `d-${Date.now()}`,
+      kind: "zone",
+      /* Stored high-first regardless of which edge was clicked first, so the
+       * row below and the fill agree whichever way the operator drew it. */
+      prices: [round2(Math.max(pendingZonePrice, price)), round2(Math.min(pendingZonePrice, price))],
+      color: colour,
+    });
+    pendingZonePrice = null;
+    commitDrawings(list);
+    /* The hint still reads "first edge at ..." until this runs, which makes a
+     * finished zone look like a half-finished one. */
+    renderDrawHint();
+  }
+
+  function round2(value) {
+    return Math.round(value * 100) / 100;
+  }
+
+  /* ---------------------------------------------------------- moving them */
+  /* Price lines are not draggable in this library -- that is a Charting
+   * Library feature, not a Lightweight Charts one -- so the hit test and the
+   * drag are ours. Within this many pixels counts as grabbing a level. */
+  const DRAG_GRAB_PIXELS = 5;
+
+  function drawingAtCoordinate(y) {
+    if (!candleSeries) return null;
+    let best = null;
+    for (const entry of drawingHandles) {
+      entry.item.prices.forEach((price, index) => {
+        const coordinate = candleSeries.priceToCoordinate(price);
+        if (coordinate === null) return;
+        const distance = Math.abs(coordinate - y);
+        if (distance <= DRAG_GRAB_PIXELS && (!best || distance < best.distance)) {
+          best = { entry, index, distance };
+        }
+      });
+    }
+    return best;
+  }
+
+  function beginDrag(event) {
+    if (drawMode !== "off" || !chart || !candleSeries) return;
+    const bounds = nodes.chart.getBoundingClientRect();
+    const found = drawingAtCoordinate(event.clientY - bounds.top);
+    if (!found) return;
+    dragging = found;
+    /* Freeze the chart while a level is being moved, or the pan would follow
+     * the same pointer and the level would appear to stick. */
+    scrollBeforeDrag = { handleScroll: true, handleScale: true };
+    chart.applyOptions({ handleScroll: false, handleScale: false });
+    event.preventDefault();
+  }
+
+  function moveDrag(event) {
+    if (!dragging) return;
+    const bounds = nodes.chart.getBoundingClientRect();
+    const price = candleSeries.coordinateToPrice(event.clientY - bounds.top);
+    if (price === null) return;
+    dragging.entry.item.prices[dragging.index] = round2(price);
+    rebuildDrawings();
+    renderDrawingList();
+  }
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = null;
+    if (scrollBeforeDrag) chart.applyOptions(scrollBeforeDrag);
+    scrollBeforeDrag = null;
+    /* The list already holds the moved object; this writes it through. */
+    commitDrawings(drawingList());
+  }
+
+  /* --------------------------------------------------------- the list rows */
+  function renderDrawingList() {
+    const list = drawingList();
+    nodes.drawCount.textContent = list.length ? String(list.length) : "";
+    nodes.drawActive.innerHTML = list
+      .map((item) => {
+        const prices = item.prices
+          .map(
+            (price, index) =>
+              `<input class="price" type="number" step="0.05" value="${price}"
+                      data-uid="${attr(item.uid)}" data-index="${index}"
+                      aria-label="Price">`,
+          )
+          .join("");
+        return `<li>
+          <input class="swatch" type="color" value="${attr(item.color || DRAWING_COLORS[0])}"
+                 data-uid="${attr(item.uid)}" aria-label="Colour">
+          ${prices}
+          <input class="label" type="text" maxlength="24" placeholder="label"
+                 value="${attr(item.label)}" data-uid="${attr(item.uid)}"
+                 aria-label="Label">
+          <button type="button" class="drop" data-uid="${attr(item.uid)}"
+                  title="Remove">&times;</button>
+        </li>`;
+      })
+      .join("");
+  }
+
+  /* Escape for an ATTRIBUTE. `text()` substitutes an em dash for an empty
+   * value, which is what the tables want and the exact opposite of what an
+   * input's `value=""` wants -- it wrote the dash's own `<span>` markup into
+   * the label field. Quotes are escaped here too, which `text()` has no reason
+   * to do and an attribute very much does. */
+  function attr(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /* One delegated handler per kind of edit, so a row that does not exist yet
+   * still works and no row needs an element id of its own. */
+  function editDrawing(target) {
+    const list = drawingList();
+    const item = list.find((entry) => entry.uid === target.dataset.uid);
+    if (!item) return;
+    if (target.classList.contains("price")) {
+      const price = Number(target.value);
+      if (!Number.isFinite(price)) return;
+      item.prices[Number(target.dataset.index) || 0] = round2(price);
+      if (item.kind === "zone") {
+        item.prices = [Math.max(...item.prices), Math.min(...item.prices)];
+      }
+    } else if (target.classList.contains("swatch")) {
+      item.color = target.value;
+    } else if (target.classList.contains("label")) {
+      item.label = target.value.slice(0, 24);
+    } else {
+      return;
+    }
+    commitDrawings(list);
+  }
+
+  function setDrawMenu(open) {
+    nodes.drawMenuPanel.hidden = !open;
+    nodes.drawMenuButton.setAttribute("aria-expanded", String(open));
+    if (!open) setDrawMode("off");
   }
 
   /* History and the live window, spliced into one strictly ascending array.
@@ -1059,6 +1676,11 @@
       : `${name} · ${minutes} minute${minutes === 1 ? "" : "s"} · CPR from prior session `
         + `${window} (chart only)`;
     renderCprLines(bars);
+    syncIndicatorSeries();
+    refreshIndicators(bars);
+    /* After the bars: a zone anchors to the first and last of them, so it has
+     * to be rebuilt whenever the loaded span changes. */
+    rebuildDrawings();
     renderCprProvenance(chartPayload.cpr, daily ? newestMonthBand() : null);
     ensureCprLadders();
 
@@ -1198,6 +1820,10 @@
     dSeries.setData([]);
     for (const handle of cprSeries) chart.removeSeries(handle);
     cprSeries = [];
+    for (const item of indicatorSeries) {
+      for (const handle of item.handles) handle.setData([]);
+    }
+    clearDrawingHandles();
     /* So the next real draw rebuilds rather than matching a stale memo. */
     cprSignature = null;
     renderedBarCount = 0;
@@ -1420,6 +2046,64 @@
 
   /* Controls. Each checkbox flips visibility rather than re-setting data, so
    * toggling never costs a redraw of the series it keeps. */
+  /* Support and resistance. Placement goes through the library's own click
+   * subscription so the price comes from the series' scale rather than from
+   * arithmetic on the container; dragging is ours, because a price line in
+   * this library is not draggable. */
+  nodes.drawOff.addEventListener("click", () => setDrawMode("off"));
+  nodes.drawLine.addEventListener("click", () => setDrawMode("line"));
+  nodes.drawZone.addEventListener("click", () => setDrawMode("zone"));
+  nodes.drawActive.addEventListener("click", (event) => {
+    const button = event.target.closest("button.drop");
+    if (!button) return;
+    commitDrawings(drawingList().filter((item) => item.uid !== button.dataset.uid));
+  });
+  /* `change` rather than `input`: a number field fires on every keystroke, and
+   * "2" on the way to "22600" would move the level to 2 and rescale the pane. */
+  nodes.drawActive.addEventListener("change", (event) => editDrawing(event.target));
+  nodes.drawMenuButton.addEventListener("click", () => {
+    setDrawMenu(nodes.drawMenuPanel.hidden);
+  });
+
+  /* The indicator menu. Its rows are built from the preference rather than
+   * wired one by one, so the handlers are DELEGATED -- a row that does not
+   * exist yet still works, and nothing here needs an element id of its own. */
+  nodes.indPicker.innerHTML = DashboardIndicators.INDICATORS.map(
+    (entry) => `<option value="${text(entry.id)}">${text(entry.label)}`
+      + `${entry.kind === "pane" ? " (own pane)" : ""}</option>`,
+  ).join("");
+  nodes.indPicker.addEventListener("change", renderIndicatorParams);
+  nodes.indAdd.addEventListener("click", addIndicator);
+  nodes.indActive.addEventListener("click", (event) => {
+    const button = event.target.closest("button.drop");
+    if (button) removeIndicator(button.dataset.uid);
+  });
+  nodes.indMenuButton.addEventListener("click", () => {
+    setIndicatorMenu(nodes.indMenuPanel.hidden);
+  });
+  /* Click-away and Escape, so the panel never strands itself over the chart.
+   * Bound on the document because the panel is absolutely positioned and the
+   * chart beneath it swallows its own pointer events. */
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".menu")) return;
+    setIndicatorMenu(false);
+    /* The S/R panel stays OPEN while a tool is armed: closing it on the click
+     * that places a level would mean reopening the menu for every level. */
+    if (drawMode === "off" && !event.target.closest("#chart")) setDrawMenu(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    setIndicatorMenu(false);
+    /* Escape disarms first and only closes the panel once it is already
+     * disarmed, so there is always a way out of a half-placed zone. */
+    if (drawMode !== "off") setDrawMode("off");
+    else setDrawMenu(false);
+  });
+  renderIndicatorParams();
+  renderIndicatorList();
+  renderDrawingList();
+  setDrawMode("off");
+
   nodes.instNifty.addEventListener("click", () => setInstrument("NIFTY"));
   nodes.instBankNifty.addEventListener("click", () => setInstrument("BANKNIFTY"));
   nodes.tf1.addEventListener("click", () => setTimeframe("1"));

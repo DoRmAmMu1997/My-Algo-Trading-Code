@@ -1,4 +1,4 @@
-# ADR-0020: A second index on the monitoring chart
+# ADR-0020: A second index, indicators, and hand-drawn levels
 
 **Status:** Accepted
 **Date:** 2026-10-22
@@ -102,7 +102,121 @@ History page keys gain the instrument as the **leading** component,
 `"<instrument>:<tf>:<page>"`, so every instrument's pages share one publisher
 dict without colliding.
 
+### 6. Menu indicators are computed in the BROWSER, and drift-tested
+
+The chart's VWAP and stochastic are computed server-side from the strategies'
+own objects, reached by `load_module` under bare names. The menu's eight
+indicators are not: they run in `dashboard_assets/dashboard_indicators.js`,
+over whatever bars the browser holds.
+
+The reason is structural rather than a preference. History pages are rendered
+**once at startup into immutable bytes** -- 233 pages for the one-minute series
+on the operator's five-year file -- and handed out unchanged forever after.
+There is no per-request render, so a server-side indicator can only ever cover
+the live window and vanishes the moment the operator scrolls back. Baking a
+fixed set into every page instead would make the menu non-interactive (a period
+change would need a restart) and grow the ~63 MB of page RSS per column.
+
+Computing in the browser also costs the live-money process nothing at all,
+which for a monitoring surface inside a trading process is the point.
+
+The price is a **second implementation** of algebra `misc_strategy_common.py`
+already has. Two things bound it:
+
+- These values are labelled **chart-only** in the menu, the same honesty
+  convention [`ADR-0017`](0017-chart-only-cpr-on-a-truncated-prior-session.md)
+  established for CPR. No strategy reads them, and the menu deliberately does
+  not offer a second stochastic beside the server-computed one.
+- `Tests/Dependencies/test_dashboard_chart_indicators_js.py` runs every
+  `compute` under node against a fixture and compares it with the strategies'
+  pinned TA-Lib helpers **element by element, warm-up included**, at several
+  periods. It asserts where each series STARTS before it asserts any value,
+  because that is where a seeding bug shows first.
+
+Writing it found three places where the obvious implementation is quietly a
+different indicator, and all three are recorded in the asset:
+
+| What | The obvious version | TA-Lib |
+|---|---|---|
+| EMA seed | first value | SMA of the first `period` values |
+| MACD's fast EMA | starts at `fast - 1` | starts at `slow - 1`, seeded on the `fast` values ending there -- worth 1.6 index points at the first published bar |
+| ADX's DM/TR smoothing | reuse the ATR's Wilder helper | sums over `period - 1`, then smooth -- differs by `sum/period²`, which never decays |
+
+MACD also publishes all three outputs from `slow - 1 + signal - 1`, not the
+line earlier: the first `signal - 1` macd values are consumed seeding the
+signal line and are never emitted.
+
+### 7. The operator's indicators persist in the browser, and so do their panes
+
+`prefs.indicators` is the first non-scalar preference, so `loadPrefs` repairs
+it rather than trusting it -- a non-array would throw inside the IIFE and blank
+the page, which has no outer guard. Each entry is re-validated again on use,
+because an unknown id can arrive the same way.
+
+Series are **structural**: rebuilt only when the set changes, keyed on a
+signature of it, and driven from the single draw path rather than from boot.
+Boot alone was tried and is wrong -- `ensureChart` runs inside the first draw,
+so at startup there is no chart to hang a series on, and a page reloaded with
+four saved indicators drew only the two overlays.
+
+Panes are allocated from 2 upward (0 is price, 1 the stochastic) and removal
+rebuilds the whole set rather than patching indices, because the library
+re-indexes panes when one is removed.
+
+### 8. Hand-drawn support and resistance live in the browser, and nowhere else
+
+Horizontal lines and shaded zones, placed by clicking the chart, moved by
+dragging, edited to an exact price in a list, and persisted.
+
+**Persisted in `localStorage`, because the server implements GET and nothing
+but GET.** That is a safety property ([`ADR-0016`](0016-read-only-loopback-monitoring-dashboard.md)
+§2), not an omission, so there is no endpoint to save to and there is not going
+to be one. A test asserts the page never issues a POST, PUT, PATCH or DELETE.
+
+They get **their own storage key**, not a corner of `prefs`. `PREFS_KEY` is
+versioned so a future rename falls back to defaults; an afternoon's levels must
+not be collateral damage of renaming a checkbox.
+
+Keyed **per instrument and shared across 1m/5m/D**, because a price level is a
+price level — which is how TradingView treats one, and what an operator expects
+when they switch timeframe to look at the same level.
+
+Three implementation choices worth recording:
+
+- **A line is a `createPriceLine`, a zone is a `BaselineSeries.`** A price line
+  in this library is full chart width by definition, which is exactly right for
+  a level and exactly wrong for a CPR band (hence those being `LineSeries`). A
+  zone needs a fill, and a baseline series fills between its value and its base
+  PRICE — so holding the value at the top with the base at the bottom gives a
+  real band from one series, with no custom renderer.
+- **A zone is anchored to loaded bar times.** `zoneSpan` reads the first and
+  last merged bar. Every series shares one time scale built from the union of
+  their times, so a zone anchored to a constructed timestamp stretches that
+  scale across empty chart — the same trap as handing over five years of CPR
+  bands, in a new place.
+- **The drag is ours.** Price lines are not draggable in Lightweight Charts;
+  that is a Charting Library feature. So a mousedown hit-tests every level
+  through `priceToCoordinate`, and the chart's own pan and zoom are switched
+  off for the duration — otherwise the pointer drags both and the level appears
+  to stick. `mousedown` binds to the container so a drag can only start over
+  the chart; `mousemove` and `mouseup` bind to the window, so a pointer that
+  leaves the chart mid-drag still finishes rather than leaving the level glued
+  to the cursor.
+
+Every stored list is re-validated on READ rather than trusted, for the same
+reason `prefs.indicators` is: it comes back from localStorage, where a previous
+version or a torn write could have left anything, and a bad entry reaching the
+draw path throws inside the IIFE and blanks the page.
+
 ## Options considered
+
+### Where the menu's indicator maths runs
+
+| Option | Verdict |
+|---|---|
+| **In the browser, with a node drift test against TA-Lib** | **Chosen.** The only option that works over scroll-back, and it costs the trading process nothing. |
+| Server-side, live window only | Exact parity and one implementation, but indicators would vanish on scroll-back -- the chart's most-used feature. |
+| Server-side, fixed set baked into every history page | `build_series(columns=...)` already supports it. Rejected: the menu stops being interactive, and page RSS grows per column. |
 
 ### Where BankNIFTY's live bars come from
 
@@ -157,6 +271,15 @@ BankNIFTY index entry — so the header's spot chip stays NIFTY. Every strategy.
 - **Switching to an instrument with no payload yet clears every series.**
   Leaving the outgoing candles under the new instrument's name would be the
   chart stating something untrue.
+- **`text()` is not an attribute escaper.** It substitutes an em dash for an
+  empty value, which is what every table on this page wants and the exact
+  opposite of what `value=""` wants — it wrote the dash's own `<span>` markup
+  into the label field. `attr()` escapes without substituting, and quotes too.
+- **An indicator is only as good as the bars on screen.** Scroll back far
+  enough and a 200-period EMA has a warm-up the loaded pages do not cover; it
+  simply starts later, which is honest and matches what TA-Lib would return.
+- **Four oscillator panes make a cramped chart.** Nothing stops the operator
+  adding eight; the panes are resizable and the price pane keeps its share.
 - **`FINNIFTY` is not offered**, though `algo.py fetch-data --index finnifty` and
   `Data Extractors/finnifty_1m_5y_data_fetch_dhan.py` exist. Adding it is now a
   constant, a CSV and a button; it is left out because no CSV has been
