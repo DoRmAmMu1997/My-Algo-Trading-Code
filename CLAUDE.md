@@ -122,7 +122,12 @@ One process, cooperating threads:
   because the history pages are immutable bytes rendered once at startup -- so a
   server-side indicator could not survive a scroll-back. They are CHART-ONLY and
   no strategy reads them; a node-backed drift test pins every one of them against
-  `misc_strategy_common`'s TA-Lib helpers. See `docs/adr/0020`. It also scrolls back through years
+  `misc_strategy_common`'s TA-Lib helpers. The operator can also DRAW support
+  and resistance on it -- horizontal lines and shaded zones, click to place,
+  drag to move, editable to an exact price -- kept in `localStorage` under their
+  own key, per instrument and shared across timeframes. They persist in the
+  browser because the server implements GET and nothing but GET; that is a
+  safety property, so there is no endpoint to save them to. See `docs/adr/0020`. It also scrolls back through years
   of history: `Dependencies/dashboard_history.py` reads the CSV
   `algo.py fetch-data` writes and serves it from `/api/history` in pages of 2,000
   bars, loaded once on a thread of its own (~29.5s, ~63 MB for five years) and

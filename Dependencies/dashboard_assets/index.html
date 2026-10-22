@@ -77,6 +77,25 @@
             </p>
           </div>
         </div>
+
+        <div class="menu">
+          <button type="button" id="draw-menu-button" class="menu-button" aria-expanded="false"
+                  aria-controls="draw-menu-panel">S/R<span id="draw-count"></span></button>
+          <div class="menu-panel wide" id="draw-menu-panel" hidden role="group"
+               aria-label="Support and resistance">
+            <div class="tf-switch" role="group" aria-label="Draw mode">
+              <button type="button" id="draw-off" class="tf active" aria-pressed="true">Off</button>
+              <button type="button" id="draw-line" class="tf" aria-pressed="false">Line</button>
+              <button type="button" id="draw-zone" class="tf" aria-pressed="false">Zone</button>
+            </div>
+            <p class="menu-note" id="draw-hint"></p>
+            <ul class="menu-active" id="draw-active"></ul>
+            <p class="menu-note">
+              Saved in this browser, per instrument, and shared across 1m/5m/D —
+              a price level is a price level. The runner never sees them.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
     <div id="chart"></div>

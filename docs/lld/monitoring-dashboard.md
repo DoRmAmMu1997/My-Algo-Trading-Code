@@ -136,6 +136,17 @@ second implementation is bounded by a node-backed drift test that compares every
 `compute` with the strategies' own TA-Lib helpers element by element, warm-up
 included. See [`ADR-0020`](../adr/0020-a-second-index-on-the-monitoring-chart.md).
 
+### Hand-drawn support and resistance
+
+Horizontal lines (`createPriceLine`) and shaded zones (a `BaselineSeries` whose
+base is a price, so the fill IS the band). Click to place, drag to move, edit to
+an exact price in the panel's list, × to remove.
+
+Persisted in `localStorage` under their OWN key, `algoDashboard.drawings.v1` —
+not in `prefs`, whose version may be bumped — keyed per instrument and shared
+across all three timeframes. The server never sees them: GET is the only method
+it implements, which is the whole reason they live in the browser.
+
 ### Chart indicators and the 1m/5m/D toggle
 
 Three overlays, and a toggle because several strategies derive 5-minute bars --
@@ -488,6 +499,24 @@ converge on one path.
 removed, so removing an indicator from the middle of the stack rebuilds the
 whole set rather than trying to keep hold of indices. Removal walks from the
 highest index DOWN for the same reason.
+
+**A zone must be anchored to LOADED bar times.** `zoneSpan` takes the first
+and last merged bar. Every series shares one time scale built from the union of
+their times, so a zone anchored to a constructed timestamp -- "now", the
+session open -- stretches that scale across empty chart. The same trap as
+handing over five years of CPR bands while a week of candles is loaded.
+
+**The chart's pan must be switched off while a level is dragged.** Otherwise
+the same pointer drags the chart underneath and the level appears to stick
+where it was. `mousedown` binds to the container so a drag can only start over
+the chart; `mousemove` and `mouseup` bind to the WINDOW, so a pointer that
+leaves the chart mid-drag still finishes the drag rather than leaving the level
+glued to the cursor.
+
+**`text()` is not an attribute escaper.** It returns the em-dash markup for an
+empty value -- right in a table cell, and wrong inside `value=""`, where it
+wrote a literal `<span class="dash">` into the label field. `attr()` escapes
+without substituting, and escapes quotes, which `text()` has no reason to.
 
 **Assets are read into memory at startup.** Editing `dashboard.js` on disk does
 nothing to a running server; restart it, or spend a while debugging code that

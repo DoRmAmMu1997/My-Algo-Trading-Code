@@ -1,4 +1,4 @@
-# ADR-0020: A second index, and indicators the operator chooses
+# ADR-0020: A second index, indicators, and hand-drawn levels
 
 **Status:** Accepted
 **Date:** 2026-10-22
@@ -163,6 +163,51 @@ Panes are allocated from 2 upward (0 is price, 1 the stochastic) and removal
 rebuilds the whole set rather than patching indices, because the library
 re-indexes panes when one is removed.
 
+### 8. Hand-drawn support and resistance live in the browser, and nowhere else
+
+Horizontal lines and shaded zones, placed by clicking the chart, moved by
+dragging, edited to an exact price in a list, and persisted.
+
+**Persisted in `localStorage`, because the server implements GET and nothing
+but GET.** That is a safety property ([`ADR-0016`](0016-read-only-loopback-monitoring-dashboard.md)
+§2), not an omission, so there is no endpoint to save to and there is not going
+to be one. A test asserts the page never issues a POST, PUT, PATCH or DELETE.
+
+They get **their own storage key**, not a corner of `prefs`. `PREFS_KEY` is
+versioned so a future rename falls back to defaults; an afternoon's levels must
+not be collateral damage of renaming a checkbox.
+
+Keyed **per instrument and shared across 1m/5m/D**, because a price level is a
+price level — which is how TradingView treats one, and what an operator expects
+when they switch timeframe to look at the same level.
+
+Three implementation choices worth recording:
+
+- **A line is a `createPriceLine`, a zone is a `BaselineSeries.`** A price line
+  in this library is full chart width by definition, which is exactly right for
+  a level and exactly wrong for a CPR band (hence those being `LineSeries`). A
+  zone needs a fill, and a baseline series fills between its value and its base
+  PRICE — so holding the value at the top with the base at the bottom gives a
+  real band from one series, with no custom renderer.
+- **A zone is anchored to loaded bar times.** `zoneSpan` reads the first and
+  last merged bar. Every series shares one time scale built from the union of
+  their times, so a zone anchored to a constructed timestamp stretches that
+  scale across empty chart — the same trap as handing over five years of CPR
+  bands, in a new place.
+- **The drag is ours.** Price lines are not draggable in Lightweight Charts;
+  that is a Charting Library feature. So a mousedown hit-tests every level
+  through `priceToCoordinate`, and the chart's own pan and zoom are switched
+  off for the duration — otherwise the pointer drags both and the level appears
+  to stick. `mousedown` binds to the container so a drag can only start over
+  the chart; `mousemove` and `mouseup` bind to the window, so a pointer that
+  leaves the chart mid-drag still finishes rather than leaving the level glued
+  to the cursor.
+
+Every stored list is re-validated on READ rather than trusted, for the same
+reason `prefs.indicators` is: it comes back from localStorage, where a previous
+version or a torn write could have left anything, and a bad entry reaching the
+draw path throws inside the IIFE and blanks the page.
+
 ## Options considered
 
 ### Where the menu's indicator maths runs
@@ -226,6 +271,10 @@ BankNIFTY index entry — so the header's spot chip stays NIFTY. Every strategy.
 - **Switching to an instrument with no payload yet clears every series.**
   Leaving the outgoing candles under the new instrument's name would be the
   chart stating something untrue.
+- **`text()` is not an attribute escaper.** It substitutes an em dash for an
+  empty value, which is what every table on this page wants and the exact
+  opposite of what `value=""` wants — it wrote the dash's own `<span>` markup
+  into the label field. `attr()` escapes without substituting, and quotes too.
 - **An indicator is only as good as the bars on screen.** Scroll back far
   enough and a 200-period EMA has a warm-up the loaded pages do not cover; it
   simply starts later, which is honest and matches what TA-Lib would return.
