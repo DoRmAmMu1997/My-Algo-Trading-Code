@@ -11054,3 +11054,178 @@ fails it, and the unmutated note passes:
 * the gap-down branch turned into BUY;
 * the date set to October 21;
 * the Sensex support moved to 72,200.
+
+## 22 Oct - IH bought the flat open the agent had argued out of, and the round-number test the data refused (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `zpDHFRj9pmU`, uploaded 2026-10-22 11:21 IST, traded on
+  the 22 Oct note (`Hj3d2kKke_I`: "FLAT TO GAP UP -> BUY", "GAP DOWN -> SELL,
+  WITH THE MARKET"). Clock times come from the taskbar clock in the frame,
+  figures from his positions screen, and his words are my translation of the
+  Hindi auto-transcript (`zpDHFRj9pmU-transcript.txt` in the archive).
+- **This book:** three journal rows, 72 decisions (no agent errors) and the
+  runner log. The model was `claude-sonnet-5`. It was the first session with
+  v5v, v5w, SLH-025 and SLH-026 live, and the note was injected (1,494 chars).
+- **The 5-year NIFTY and BankNIFTY CSVs**, now through 22 Oct.
+
+**No knowledge change.** Every candidate below was measured and refused, and
+v5f stands.
+
+### The session
+
+21 Oct gapped up, made 23,120.90 at 09:40, then sold continuously to 22,649.90 at
+14:47. Its 3:15 level, 22,739.20, was -0.59% on 19 Oct's and sat 19% up its
+range. BankNIFTY was -1.06%, at 17% of its range.
+
+22 Oct opened FLAT on the computed verdict (NIFTY -0.23%, BankNIFTY -0.29%).
+NIFTY opened at 22,687.75 and flushed to 22,564.90 inside the first minute. It
+made the day's low of 22,554.85 at 09:35, 4.85 above the note's 22,550 support,
+and then chopped between about 22,555 and 22,698 until 10:19. It was at 22,767.35
+by 10:35 and made the day's high of 22,785.00 at 11:14. BankNIFTY's first minute
+touched 54,459.35, 41 points under IH's 54,500, and then held.
+
+| | IH | the agent |
+|---|---|---|
+| read | flat open after continuous selling: sellers are seated, so BUY while the round numbers hold | FLAT; the note's BUY branch, which v5f argues against ("a one-way day seats nobody") |
+| entry | **09:17-09:18**: BankNIFTY 54,600 CE and 54,700 CE x1,170 each, SENSEX x900, NIFTY x1,430 (the NIFTY leg at 09:18, on a bar of 22,589.15-22,629.10) | **09:33** SHORT x3, **09:58** SHORT x1, **10:18** LONG x1 |
+| exit | about **10:17**, booked on the first move all three indices made together (NIFTY 22,659-22,691 that minute) | AI_STOP 09:37; its own exit at 09:58:58; AI_STOP 10:19 |
+| result | about **+3 lakh**. At the booking screen: BankNIFTY legs +1,24,430.00 and +93,471.80, SENSEX +76,698.50; the NIFTY row is not legible. Mid-trade he sat about 60,000 down. | **+273.90** |
+
+### IH's reason is v5f's opposite
+
+On 16 Sep IH said that with no retracement "traders do come, but they also book
+their target and leave". That became v5f. On 22 Oct he said:
+
+- "Yesterday there was a big selling... the market gave continuous selling. We can
+  say directly that more sellers came in than buyers."
+- "With this kind of selling, nobody will be sitting with buys... the sellers
+  should be seated."
+- "The market closed below the round number, so they will have held their trades
+  too."
+
+His discriminator was the round number, not the retracement. "As long as the
+market is above this level, we can target these sellers. If it goes below, the
+sellers come into confidence... even if a retracement comes, you will not cut."
+His invalidation levels were SENSEX 73,000 and BankNIFTY 54,500, with the NIFTY
+support unnamed. The test he describes is measurable, so it was measured.
+
+### The agent: IH's trade at 09:30, then the trades it could afford
+
+- **09:15-09:29: HOLD.** Each decision stated the FLAT verdict, quoted the
+  note's BUY branch and set v5f against it.
+- **09:30: it wanted IH's trade, and sizing refused it.** The trade was a long off
+  the 22,564.90 / 22,557.95 double bottom, with the stop at 22,548. That stop was
+  57 points away, 3,705 per lot against a 2,500 budget. The decision held and
+  cited SLH-025 ("a stop squeezed inside the real invalidation"), so the guard's
+  guidance reached the model on its first day.
+- **09:33: SHORT, 3 lots, stop 22,598 (12.3 points), three minutes later**, citing
+  v5f. NIFTY made 22,554.85 at 09:35, 9.85 short of the 22,545 target, and the
+  stop went at 09:37. The NIFTY leg lost 1,300.65; the BankNIFTY mirror made
+  2,751.30.
+- **09:51: the same long, refused again** (42-point stop). It held.
+- **09:58: SHORT, 1 lot, stop 22,657.** The agent exited after 42 seconds, once
+  BankNIFTY traded through its hammer's high. That is v5w's play-out condition,
+  and it was met. The stop was never touched, and NIFTY made 22,587.85 by 10:04,
+  44.8 points (1.8R) from the entry. The trade lost 502.75.
+- **10:18: LONG, 1 lot, citing the note's branch, stop 22,656.** The rationale
+  named "the 78% fibo floor (22,647.86)" as support, yet the stop sat 8 points
+  above that floor. A stop just under the floor (about 34 points) would still
+  have fitted one lot. NIFTY's low was 22,653.85 at 10:19: the stop went, but the named floor
+  never broke. NIFTY was 22,767 by 10:35. The 10:23 re-entry was refused by the
+  5-minute cooldown (39 s left). The trade lost 674.00.
+
+Both shorts followed v5f, the long followed the note, and IH sat in one long
+through the same chop.
+
+### Measured and refused
+
+**1. IH's round-number test.** Setup:
+
+- One-way down day: 3:15-to-3:15 at or below -0.5%, with the 3:15 level in the
+  bottom third of the session range. 21 Oct qualifies; 157 such days were
+  followed by a FLAT open, 22 Oct included.
+- The round number is the first multiple below the open.
+- HELD means no one-minute close below it before the entry minute (a wick does
+  not count). This is closer to IH's "trades below" than a wick test, and it
+  keeps 22 Oct's BankNIFTY wick as HELD (its 09:15 bar closed at 54,585.20).
+- Each trade uses the agent's shape: 16 / 45 points, a 15-minute limit, scored
+  in R. BankNIFTY points are scaled 2.4x.
+
+Results, in R at 09:18 / 09:20 / 09:25:
+
+| index, level | every such session, long | HELD -> long | BROKE -> short |
+|---|---|---|---|
+| NIFTY 500s | -0.129 / -0.148 / +0.046 (157) | -0.156 / -0.175 / -0.038 (149-153) | 4-8 sessions, -1.000 / -0.047 / -1.000 |
+| NIFTY 100s | same | -0.209 / -0.209 / -0.004 (106-120) | -0.205 / +0.445 / +0.135 (37-51) |
+| BankNIFTY 500s | +0.197 / -0.068 / +0.030 (152) | +0.267 / -0.078 / +0.040 (121-129) | +0.208 / +0.388 / +0.090 (23-31) |
+
+On NIFTY, the index the agent trades, holding above the number is worse than
+not asking. BankNIFTY's +0.07R lift at 09:18 is gone by 09:20. With a wick
+counting as a break, every NIFTY row stays negative.
+
+**2. The closest form.** This version requires the first three minutes to flush
+at least 0.15% below the open and hold the number, and the market to have
+recovered a third of the flush by 09:17. Long at 09:18:
+
+| level | sessions | long | 2021-23 / 2024-26 |
+|---|---|---|---|
+| NIFTY 100s | 12 | +0.163 | +0.449 / -0.237 |
+| NIFTY 500s | 27 | -0.149 | -0.220 / -0.083 |
+| BankNIFTY 500s | 30 | -0.135 | -0.025 / -0.230 |
+| BankNIFTY 1,000s | 37 | -0.195 | -0.242 / -0.151 |
+
+**3. "Sit in ONE direction."** IH, on beginners: "sometimes they look for sell
+trades, sometimes buy trades... stay in one direction". In this book's 189
+trades:
+
+| trade | n | NIFTY pts | mean R | rupees |
+|---|---|---|---|---|
+| first of the session | 68 | +333.5 | +0.231 | +19,274 |
+| later, same side, no flip yet | 67 | +81.6 | +0.147 | +18,207 |
+| later, OPPOSITE the first | 46 | +53.2 | +0.055 | +21,544 |
+| later, back after a flip | 8 | +63.4 | +0.599 | +10,174 |
+
+The flips are the weakest group in R, but they are positive, and banning them
+would have cost 21,544.
+
+**4. A stop with room** ("we bought a little low, so we could take the small
+retracements"). Each journal trade is replayed on the 1-minute bars with its
+stop widened by W points at the same rupee risk. A stopped trade is re-run to
+the wider stop, its target or 15 minutes; any other trade keeps its exit, but
+the R is measured against the wider stop.
+
+| widen | trades | mean R | Jul-Aug | Sep-Oct | stopped trades now surviving |
+|---|---|---|---|---|---|
+| 0 | 184 | +0.187 | +0.154 | +0.232 | 0 of 24 |
+| +5 | 179 | +0.154 | +0.104 | +0.221 | 6 of 24 |
+| +12 | 164 | +0.111 | +0.090 | +0.141 | 14 of 24 |
+
+Only 24 trades exit on the stop, and the wider stop shrinks every other
+trade's R. Tight stops are not the problem either: stops under 12 points are
+the book's best band (+0.316R, 38 trades). IH's real stop was the round number,
+100+ NIFTY points away. The 2,500 budget caps the agent at about 38 points per
+lot, so his stop cannot be carried over.
+
+### Observed, not enough to act on
+
+- **The other side after a sizing refusal.** Three trades so far (12 Oct, and
+  09:33 and 09:58 today) entered the opposite way within 35 minutes of a refused
+  long. Their NIFTY legs made -23.15, -12.85 and -12.15 points. SLH-025 covers
+  only a squeeze in the same direction within one pass. Watch it.
+- **A stop inside the level the rationale names** (10:18): one case.
+- **v5w's BankNIFTY play-out** exit cost the 09:58 short, which the replay
+  already expected (-14 points on 31 exits). It is one case, and the operator's
+  revert test is live results.
+
+### Already in the corpus
+
+- "When all three move together the target can be raised; if one lags, take a
+  normal target": v3s LAGGARDS NEVER JOINED, plus SLH-026 for the raise. No
+  MODIFY_TARGET today; trade 1 came within 9.85 of its target.
+- "Sideways is when neither side is interested... it takes time to add
+  sellers": v5w's ten-candle stall rule.
+
+### Latency
+
+74 calls on `claude-sonnet-5`: median 31.8 s, p95 44.7 s, worst 47.7 s.
