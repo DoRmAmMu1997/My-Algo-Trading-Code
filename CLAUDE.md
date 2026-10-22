@@ -71,6 +71,8 @@ One process, cooperating threads:
   kill-switch still caps the day): the legs are TIED for hard risk
   (stop/target, max-loss, 15:15 square-off close both) but the agent evaluates each leg's
   premise INDEPENDENTLY and can cut one alone via the EXIT `exit_leg` selector (NIFTY|BNF|BOTH).
+  The NIFTY stop fires on a completed 1-min candle's CLOSE beyond it, plus an intrabar backstop
+  at 1.5x its distance (SLH-027, `SL_HUNTING_STOP_ON_CLOSE` / `_STOP_BACKSTOP_MULTIPLE`).
   Entry stays NIFTY-only (the mirror copies it). It stops opening NEW positions after 10:30
   (`SL_HUNTING_NO_NEW_ENTRY_HOUR`/`_MINUTE`, default 10:30) — not a square-off (exits + the 15:15 square-off
   still run; when flat past the cutoff it skips the LLM call entirely). After a target, stop, or

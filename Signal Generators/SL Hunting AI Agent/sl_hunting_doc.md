@@ -11055,7 +11055,7 @@ fails it, and the unmutated note passes:
 * the date set to October 21;
 * the Sensex support moved to 72,200.
 
-## 22 Oct - IH bought the flat open the agent had argued out of, and the round-number test the data refused (diligence addendum)
+## v5x - 22 Oct live match: IH's round-number test, and a stop that fires on a close (operator's call)
 
 **Sources.**
 
@@ -11069,8 +11069,10 @@ fails it, and the unmutated note passes:
   v5v, v5w, SLH-025 and SLH-026 live, and the note was injected (1,494 chars).
 - **The 5-year NIFTY and BankNIFTY CSVs**, now through 22 Oct.
 
-**No knowledge change.** Every candidate below was measured and refused, and
-v5f stands.
+**Adopted on the operator's call, against the measurement below:** v5x (IH's
+round-number test, plus a stop placed beyond the level the rationale names) and
+SLH-027 (the stop fires on a candle close, with an intrabar backstop). v5f
+stands as the default. "Stay in one direction" was not adopted.
 
 ### The session
 
@@ -11138,7 +11140,7 @@ support unnamed. The test he describes is measurable, so it was measured.
 Both shorts followed v5f, the long followed the note, and IH sat in one long
 through the same chop.
 
-### Measured and refused
+### Measured
 
 **1. IH's round-number test.** Setup:
 
@@ -11175,6 +11177,8 @@ recovered a third of the flush by 09:17. Long at 09:18:
 | BankNIFTY 500s | 30 | -0.135 | -0.025 / -0.230 |
 | BankNIFTY 1,000s | 37 | -0.195 | -0.242 / -0.151 |
 
+Both forms measure against IH's test. It is adopted anyway as v5x (below).
+
 **3. "Sit in ONE direction."** IH, on beginners: "sometimes they look for sell
 trades, sometimes buy trades... stay in one direction". In this book's 189
 trades:
@@ -11187,7 +11191,7 @@ trades:
 | later, back after a flip | 8 | +63.4 | +0.599 | +10,174 |
 
 The flips are the weakest group in R, but they are positive, and banning them
-would have cost 21,544.
+would have cost 21,544. Not adopted (operator, 22 Oct).
 
 **4. A stop with room** ("we bought a little low, so we could take the small
 retracements"). Each journal trade is replayed on the 1-minute bars with its
@@ -11205,7 +11209,9 @@ Only 24 trades exit on the stop, and the wider stop shrinks every other
 trade's R. Tight stops are not the problem either: stops under 12 points are
 the book's best band (+0.316R, 38 trades). IH's real stop was the round number,
 100+ NIFTY points away. The 2,500 budget caps the agent at about 38 points per
-lot, so his stop cannot be carried over.
+lot, so his stop cannot be carried over. A fixed buffer was therefore refused;
+"wider stops" became v5x's placement rule plus SLH-027's closing basis (below),
+which replays better than the old stop.
 
 ### Observed, not enough to act on
 
@@ -11213,10 +11219,118 @@ lot, so his stop cannot be carried over.
   09:33 and 09:58 today) entered the opposite way within 35 minutes of a refused
   long. Their NIFTY legs made -23.15, -12.85 and -12.15 points. SLH-025 covers
   only a squeeze in the same direction within one pass. Watch it.
-- **A stop inside the level the rationale names** (10:18): one case.
 - **v5w's BankNIFTY play-out** exit cost the 09:58 short, which the replay
   already expected (-14 points on 31 exits). It is one case, and the operator's
   revert test is live results.
+
+### Adopted: v5x (operator's call)
+
+The operator's instruction (22 Oct):
+
+- encode the round-number test, and keep v5f;
+- do not ban direction changes;
+- build wider stops judged on a closing basis: "I am seeing a lot of market
+  whipsaw recently and it is stopping out my trades before going towards
+  target". Trade 3 was the evidence.
+
+Two rules, both tagged (v5x):
+
+- **WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET.** It
+  sits right after v5f, with a pointer left inside v5f's practical form.
+  - Scope: a one-way selling day (down, with its 3:15 level in the bottom third
+    of its range); a FLAT verdict; and no 1-minute close below BankNIFTY's or
+    NIFTY's next 500 under the open.
+  - While both numbers hold, the BUY side is the side the agent's normal
+    pattern+confirmation entries may take. The first close below either number
+    ends it, and v5f's follow governs.
+  - It creates no entry and relaxes nothing. It does not cover a one-way buying
+    day, and a reclaim after a close below is v5u.
+  - The rule carries the measurement it was adopted against and its revert
+    condition.
+- **THE STOP FIRES ON A CLOSE, SO PUT IT WHERE A CLOSE MEANS YOU ARE WRONG.** It
+  sits right after v5e and restates v5e on the 10:18 case: the stop goes beyond
+  the level the rationale names (below a fibo floor or structure low). If that
+  stop does not fit the budget, the answer is HOLD (SLH-025). RISK's "~10-15
+  points" guide now carries a pointer: it is a guide, not a placement.
+
+To review: split live trades that cite (v5x) by which rule they used, and
+compare AI_STOP exits before and after SLH-027.
+
+### SLH-027 - the stop fires on a close
+
+The operator's choices (22 Oct):
+
+- stop-losses judged on a closing basis;
+- an intrabar backstop at 1.5x the stop distance, chosen over none and 2x;
+- no fixed point buffer, because every buffer replayed worse.
+
+The replay below covers the book's journal trades on 1-minute bars. A stopped
+trade is re-run until a close beyond the stop, the backstop, its target or 15
+minutes. Every other trade keeps its exit. R is measured against the stop
+actually used.
+
+| stop | mean R | Jul-Aug | Sep-Oct | stopped trades: mean / worst | survive |
+|---|---|---|---|---|---|
+| intrabar (before) | +0.187 | +0.154 | +0.232 | -1.000 / -1.00 | 0 of 24 |
+| close only | +0.189 | +0.129 | +0.272 | -0.983 / -3.32 | 5 |
+| close + 2x backstop | +0.196 | +0.128 | +0.289 | -0.929 / -2.00 | 5 |
+| **close + 1.5x backstop** | **+0.201** | +0.133 | +0.293 | -0.893 / -1.50 | 5 |
+| close + 1.5x, stop +5 pts | +0.148 | +0.108 | +0.203 | -0.697 / -1.50 | 9 |
+
+It is better in Sep-Oct and worse in Jul-Aug, which fits the operator's
+observation that the whipsaw is recent. On 22 Oct, trade 3's 10:19 candle closed
+at 22,661.00, above its 22,656.00 stop, and the backstop sat at 22,644.40, so
+the trade would have stayed in.
+
+**What it does:**
+
+- **The rule.** `closing_stop_or_target_hit` (executor, pure) checks the
+  backstop on the live price, the stop on the newest completed candle's close
+  since the entry, and the target on a touch. Exit reasons stay AI_STOP and
+  AI_TARGET; the log line names the trigger.
+- **Which candle counts.** The worker stamps the entry time. It skips the
+  still-forming candle and any candle that finished before the fill. A resumed
+  position has no stamp, so any completed candle counts.
+- **Fail-safe.** If the closing read fails, that poll judges the stop on the
+  live price, exactly as before. A bug cannot switch the stop off; the first
+  version of this code had one, and the master suite caught it.
+- **What the model is told.** `position_state` carries `stop_fires`, read from
+  the worker, so the model learns how its open stop fires even with the switch
+  off. The order-tool text says the same.
+- **Knobs:**
+  - `SL_HUNTING_STOP_ON_CLOSE`: default true; false restores the intrabar stop.
+  - `SL_HUNTING_STOP_BACKSTOP_MULTIPLE`: default 1.5, allowed range 1-3.
+    Outside it, paper falls back to 1.5 and live is blocked by a new
+    `float_range` rule in `_live_config_errors`.
+
+**Unchanged:** the target (still a touch), max-loss, the 15:15 square-off, the
+BankNIFTY mirror (hard risk still closes both legs) and sizing. Sizing still
+uses the stop distance, so a backstop exit can lose up to about 1.5x the budget
+on the NIFTY leg; the daily max-loss caps the day.
+
+### Validation
+
+**New tests:**
+
+- 10 pure tests (`test_sl_hunting_closing_stop.py`);
+- 10 worker tests (`test_slh027_*` in the master suite);
+- 2 knowledge tests (`test_v5x_*`).
+
+**Negative-tested with 21 mutants, all caught:**
+
+- 7 on the pure rule: the multiple ignored, its floor removed, the stop judged
+  on price, a close AT the stop not counting, the backstop removed, the target
+  removed, and the target checked before the stop.
+- 7 on the worker: the forming candle counted, candles from before the entry
+  counted, the entry clock never stamped, the fail-safe dropping the stop, the
+  switch ignored, the live range unchecked, and `stop_fires` not reported.
+- 7 on the prompt: v5f's pointer, the wick clause, "creates NO entry", the
+  measurement, the close wording, RISK's pointer and the order-tool sentence.
+
+**Gates:** the master suite (657), market-data health (28), pytest (1,766),
+ruff, mypy (82 files, then the master file), compileall, bandit (CI's flags)
+and pre-commit are all clean. The first gate run caught two things: a mypy
+bound type, and AGENTS.md needing the same sentence as CLAUDE.md.
 
 ### Already in the corpus
 

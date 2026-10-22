@@ -5416,6 +5416,112 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
 
         self.assertEqual(worker.pos.target_underlying, 24400.0)
 
+    # ----- SLH-027: the stop fires on a candle CLOSE, with an intrabar backstop -----
+    # LONG 24300, stop 24290 (10 points), target 24400, entered 10:18:30, so the
+    # 1.5x backstop sits at 24285. Candles are stamped with their START minute.
+    def _slh027_worker(self):
+        worker, store = self._make_worker()
+        worker._stop_on_close = True
+        worker._stop_backstop_multiple = 1.5
+        entered = datetime(2026, 10, 22, 10, 18, 30, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=entered):
+            self.assertTrue(worker.enter_position("LONG", 24300.0, 24290.0, 24400.0))
+        return worker, store
+
+    def _slh027_poll(self, worker, store, spot, bars, now):
+        store.update_ltp_map({
+            (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID): spot,
+        })
+        closes = [close for _, close in bars]
+        frame = pd.DataFrame({
+            "timestamp": [pd.Timestamp(f"2026-10-22 {start}") for start, _ in bars],
+            "open": closes, "high": closes, "low": closes, "close": closes,
+        })
+        # The decision bar is already "seen", so the poll runs only the risk checks.
+        worker._last_decision_bar = frame["timestamp"].iloc[-1]
+        clock = datetime(2026, 10, 22, *now, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=clock), \
+                patch.object(worker, "exit_position", wraps=worker.exit_position) as exits:
+            worker.process_strategy_frame(frame)
+        return exits
+
+    def test_slh027_a_wick_through_the_stop_does_not_exit(self):
+        """22 Oct, 10:19: the low went 2.15 through the stop and the candle closed
+        5 above it. Spot below the stop with no completed candle CLOSED beyond it --
+        the 10:19 candle is still forming -- must leave the trade open."""
+        worker, store = self._slh027_worker()
+        exits = self._slh027_poll(
+            worker, store, 24288.0, [("10:18", 24292.0), ("10:19", 24288.0)], (10, 19, 30)
+        )
+        exits.assert_not_called()
+        self.assertTrue(worker.pos.active)
+
+    def test_slh027_a_completed_candle_closing_beyond_the_stop_exits_the_basket(self):
+        worker, store = self._slh027_worker()
+        exits = self._slh027_poll(
+            worker, store, 24292.0, [("10:18", 24292.0), ("10:19", 24289.0)], (10, 20, 5)
+        )
+        exits.assert_called_once_with("AI_STOP")
+        self.assertFalse(worker.pos.active)
+        self.assertFalse(worker._mirror_pos.active)  # hard risk still closes both legs
+
+    def test_slh027_a_candle_that_closed_before_the_entry_is_ignored(self):
+        """The 10:17 candle ended at 10:18:00, before the 10:18:30 fill: its close says
+        nothing about this trade, however far beyond the stop it sits."""
+        worker, store = self._slh027_worker()
+        exits = self._slh027_poll(worker, store, 24295.0, [("10:17", 24280.0)], (10, 18, 45))
+        exits.assert_not_called()
+        self.assertTrue(worker.pos.active)
+
+    def test_slh027_the_backstop_exits_intrabar(self):
+        worker, store = self._slh027_worker()
+        exits = self._slh027_poll(worker, store, 24285.0, [("10:18", 24300.0)], (10, 18, 45))
+        exits.assert_called_once_with("AI_STOP")
+
+    def test_slh027_short_of_the_backstop_a_forming_candle_cannot_stop_it(self):
+        worker, store = self._slh027_worker()
+        exits = self._slh027_poll(worker, store, 24285.5, [("10:18", 24285.5)], (10, 18, 45))
+        exits.assert_not_called()
+
+    def test_slh027_the_target_still_fires_on_a_touch(self):
+        worker, store = self._slh027_worker()
+        exits = self._slh027_poll(worker, store, 24400.0, [("10:18", 24390.0)], (10, 18, 45))
+        exits.assert_called_once_with("AI_TARGET")
+
+    def test_slh027_switched_off_restores_the_intrabar_stop(self):
+        worker, store = self._slh027_worker()
+        worker._stop_on_close = False
+        exits = self._slh027_poll(worker, store, 24289.5, [("10:18", 24295.0)], (10, 18, 45))
+        exits.assert_called_once_with("AI_STOP")
+
+    def test_slh027_an_unreadable_frame_falls_back_to_the_intrabar_stop(self):
+        """A bug in the closing read must never switch the stop OFF."""
+        worker, store = self._slh027_worker()
+        with patch.object(worker, "_last_close_since_entry", side_effect=RuntimeError("bad")):
+            exits = self._slh027_poll(worker, store, 24295.0, [("10:18", 24295.0)], (10, 18, 45))
+            exits.assert_not_called()
+            exits = self._slh027_poll(worker, store, 24289.5, [("10:18", 24295.0)], (10, 18, 50))
+        exits.assert_called_once_with("AI_STOP")
+
+    def test_slh027_position_state_says_how_the_stop_fires(self):
+        worker, _store = self._slh027_worker()
+        state = master_file.SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(worker).snapshot()
+        self.assertIn("CLOSES beyond the stop", state["stop_fires"])
+        self.assertIn("backstop 24285.00", state["stop_fires"])
+
+        worker._stop_on_close = False
+        state = master_file.SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(worker).snapshot()
+        self.assertEqual(state["stop_fires"], "the moment NIFTY spot touches the stop")
+
+    def test_slh027_a_backstop_multiple_outside_one_to_three_blocks_live(self):
+        worker, _store = self._make_worker()
+        message = "SL_HUNTING_STOP_BACKSTOP_MULTIPLE must be a number from 1 to 3"
+        for raw, blocked in (("0.5", True), ("3.5", True), ("1.5", False), ("3", False)):
+            with self.subTest(raw=raw), \
+                    patch.dict(os.environ, {"SL_HUNTING_STOP_BACKSTOP_MULTIPLE": raw}):
+                errors = master_file._live_config_errors(worker, "SL_HUNTING")
+                self.assertEqual(message in errors, blocked)
+
     def test_live_basket_pnl_uses_nifty_and_bnf_broker_fills(self):
         worker, _store = self._make_worker()
         worker.live_trading = True
