@@ -11343,3 +11343,62 @@ bound type, and AGENTS.md needing the same sentence as CLAUDE.md.
 ### Latency
 
 74 calls on `claude-sonnet-5`: median 31.8 s, p95 44.7 s, worst 47.7 s.
+
+## October 23 pre-open note
+
+[Prediction For 23 OCT 2026](https://www.youtube.com/watch?v=E8ZaDDdgnio), uploaded
+2026-10-22 21:10:22 IST, 108 s, 14 transcript segments. The raw transcript is
+`E8ZaDDdgnio-transcript.txt` in the same archive.
+
+**Read.** October 22 recovered through the closing price and evicted the sellers
+who were seated after October 21's selling, so no seller stops remain to hunt.
+Momentum stayed small in all three indices, so buyers and sellers sit at one
+price level. In IH's words on NIFTY: "we will not do the targeting work on them.
+We will go with the market."
+
+**Plan.** No branch buys.
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP DOWN | SELL, with the market: do not target either crowd; identify selling-side setups |
+| GAP UP | SELL, the same plan |
+
+BankNIFTY's gap-up sentence is cut off in the transcript; Sensex and NIFTY
+both state that a gap keeps the same selling plan.
+
+**How it meets the corpus.** v5x does not apply on October 23: it needs a one-way
+selling day, and October 22 closed -0.32% on the 3:15 levels, with its 3:15 level
+at 49% of its range. The note stays advisory.
+
+**Levels.** All twelve sit on the same drawn lines as the October 22 note. Two
+captions were garbled again and one spoken value is rounded; all three are
+resolved from the 1080p frames at 0:40, 1:10 and 1:39:
+
+* **NIFTY resistance**, spoken "23280", is the drawn 23,002.20 / 22,883.00 pair,
+  recorded as 23,000 / 22,880.
+* **Sensex's second support**, spoken "72", is the drawn 72,214.26, recorded as
+  72,210.
+* **BankNIFTY's first support** is spoken 54,400 but drawn at 54,388.75, and is
+  kept at 54,390 as on October 22.
+
+The other nine match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,880 / 23,000 | 22,550 / 22,420 |
+| BankNIFTY | 55,100 / 55,400 | 54,390 / 54,200 |
+| Sensex | 73,970 / 74,800 | 72,700 / 72,210 |
+
+NIFTY's 22,550 support held on October 22: the day's low was 22,554.85.
+
+The note renders 1,412 characters on October 23 and nothing on any other date.
+`test_shipped_note_matches_october_23_intraday_hunter_plan` pins the date gate,
+the source, both SELL branches (no line may BUY) and all twelve levels. Each of
+these mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into BUY;
+* the date set to October 22;
+* BankNIFTY's support recorded as the spoken 54,400;
+* the "do not target either crowd" clause dropped;
+* the Sensex support moved to 72,200.
