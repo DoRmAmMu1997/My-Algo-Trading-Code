@@ -123,7 +123,8 @@ POSITION_STATE_DESCRIPTION = (
     "of yours takes about half a minute, so any order you send fills later than "
     "that mark and at a different price. While you are flat it also carries "
     "`last_closed_trade_today`: the last trade you closed this session, when, "
-    "and what it booked."
+    "and what it booked. While a NIFTY leg is open it carries `stop_fires`: how "
+    "that stop actually triggers (SLH-027)."
 )
 
 
@@ -157,6 +158,10 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "BRACKET the current price on the correct side (LONG: stop below, target "
         "above; SHORT: reversed), with the stop within ~3% and the target within "
         "~10% of the current price -- otherwise the order is rejected. "
+        "The target fires the moment price touches it; the stop, by default, only "
+        "when a completed 1-minute NIFTY candle CLOSES beyond it, with an intrabar "
+        "backstop at 1.5x its distance from the entry (SLH-027) -- position_state's "
+        "stop_fires says how the open stop actually fires. "
         "reason is the PERMANENT record of this trade: it is written verbatim to the "
         "trade journal, the log and the operator's alert, and it is what the reflection "
         "coach reads later to work out what worked. The reasoning in your final JSON is "

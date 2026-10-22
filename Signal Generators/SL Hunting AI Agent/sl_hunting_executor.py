@@ -141,6 +141,72 @@ def stop_or_target_hit(direction: str, stop: float, target: float, price: float)
     return None
 
 
+# SLH-027 (operator, 2026-10-22): the NIFTY stop fires on a CLOSE. Whipsaw kept
+# taking the stop on a wick and then running to the target (22 Oct, 10:19: the low
+# poked 2.15 points through a long's stop, the candle closed 5 points above it, and
+# NIFTY stood 88 points above the entry 16 minutes later). A wick no longer exits; a
+# completed candle closing beyond the stop does. A closing stop alone lets one fast
+# candle run arbitrarily far first, so an intrabar BACKSTOP still exits at once at
+# this multiple of the stop's distance from the entry. Replayed on the book's 189
+# trades: close-only +0.189R with a -3.32R worst trade; 1.5x backstop +0.201R with
+# -1.5R worst (intrabar today: +0.187R).
+DEFAULT_STOP_BACKSTOP_MULTIPLE = 1.5
+
+
+def backstop_level(direction: str, entry: float, stop: float, multiple: float) -> float:
+    """The intrabar emergency level `multiple` x the stop's distance beyond the entry.
+
+    Worked example: a LONG at 22,679.20 with its stop at 22,656.00 (23.20 points)
+    and a 1.5x multiple has its backstop at 22,679.20 - 34.80 = 22,644.40.
+    Without an entry price there is no distance to scale, so the stop itself is
+    returned -- the position falls back to an intrabar stop rather than to none.
+    """
+    s, e = float(stop or 0.0), float(entry or 0.0)
+    if not s or e <= 0:
+        return s
+    reach = abs(e - s) * max(1.0, float(multiple))
+    return e - reach if (direction or "").strip().upper() == "LONG" else e + reach
+
+
+def closing_stop_or_target_hit(
+    direction: str,
+    entry: float,
+    stop: float,
+    target: float,
+    price: float,
+    last_close: float | None,
+    backstop_multiple: float = DEFAULT_STOP_BACKSTOP_MULTIPLE,
+) -> tuple[str, str] | None:
+    """SLH-027's mechanical exit: `(exit_reason, trigger)` or None.
+
+    - the BACKSTOP is checked against the live `price` (intrabar, like the old stop);
+    - the STOP is checked only against `last_close`, the close of the newest
+      COMPLETED candle since the entry (None = no candle has closed yet);
+    - the TARGET still fires the moment `price` touches it.
+
+    The exit reason stays "AI_STOP" / "AI_TARGET" so the journal, the Sheet and every
+    review script keep reading one name; `trigger` ("backstop" / "close" / "target")
+    is only for the log line. A stop is checked before a target, as in
+    `stop_or_target_hit`.
+    """
+    side = (direction or "").strip().upper()
+    if side not in ("LONG", "SHORT"):
+        return None
+    price = float(price)
+    s, t = float(stop or 0.0), float(target or 0.0)
+    if s:
+        backstop = backstop_level(side, entry, s, backstop_multiple)
+        if (price <= backstop) if side == "LONG" else (price >= backstop):
+            return "AI_STOP", "backstop"
+        if last_close is not None:
+            close = float(last_close)
+            if (close <= s) if side == "LONG" else (close >= s):
+                return "AI_STOP", "close"
+    if t and ((price >= t) if side == "LONG" else (price <= t)):
+        return "AI_TARGET", "target"
+    return None
+
+
 # The furthest a target may sit from the current price, as a fraction of it. The
 # order tool holds an entry's target to this (SLH-002), and a raised target is held
 # to the same bound so MODIFY_TARGET cannot park a target where it never fires.
@@ -740,6 +806,14 @@ class MasterWorkerExecutor:
                 "stop": round(float(getattr(pos, "stop_underlying", 0.0) or 0.0), 2),
                 "target": round(float(getattr(pos, "target_underlying", 0.0) or 0.0), 2),
             })
+            # SLH-027: how this stop actually fires (a candle close plus an intrabar
+            # backstop, or a plain touch when the operator switched that off), read
+            # from the worker so the model never relies on a description that the
+            # configuration has made untrue.
+            rule_getter = getattr(self._w, "stop_rule", None)
+            if callable(rule_getter):
+                with contextlib.suppress(Exception):
+                    snap["stop_fires"] = str(rule_getter())
         else:
             # Only the BankNIFTY mirror remains: no fresh NIFTY entry until it is
             # closed (EXIT exit_leg=BNF) -- the agent should manage this leg, not enter.

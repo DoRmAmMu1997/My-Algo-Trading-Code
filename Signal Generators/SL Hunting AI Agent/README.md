@@ -30,7 +30,11 @@ and runs one agentic pass:
 targets are levels on the NIFTY **underlying** (spot). With a position open,
 `MODIFY_TARGET` can only **raise** its target -- further in the trade's favour, never
 closer or removed (SLH-026). The target is a mechanical level checked against spot,
-so raising it sends nothing to the broker. The agent does **not** choose
+so raising it sends nothing to the broker. The stop fires on a **close** (SLH-027):
+only when a completed 1-minute NIFTY candle closes beyond it, with an intrabar
+backstop at `SL_HUNTING_STOP_BACKSTOP_MULTIPLE` (default 1.5) times the stop's
+distance from the entry; `SL_HUNTING_STOP_ON_CLOSE=false` restores the plain intrabar
+stop. The agent does **not** choose
 the lot count. Position size floors the affordable whole lots from the agent's
 stop distance, never exceeds `SL_HUNTING_RISK_BUDGET`, skips the setup when even
 one NIFTY lot is unaffordable, and caps at `SL_HUNTING_MAX_LOTS` (default 5).

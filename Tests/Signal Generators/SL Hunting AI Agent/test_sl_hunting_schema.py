@@ -3792,3 +3792,75 @@ def test_v5w_stall_and_banknifty_candle_wait_and_no_pullback_hold():
     assert "WHAT IT NEVER TOUCHES: the hard stop, the mechanical target, max-loss, the 15:15 square-off" in rule
     assert "a decisive break of the level your premise named" in rule
     assert "those still exit at once" in rule
+
+
+def test_v5x_round_number_test_narrows_v5f_on_the_operators_call():
+    """v5x (operator's call, 22 Oct): IH's round-number test after a one-way SELLING day.
+
+    Adopted against its measurement, so the test pins the rule as stated: its full
+    scope, what it allows and what ends it, the measurement it was adopted against,
+    and the pointer left inside v5f, which stays the default and is not reworded.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET (v5x)")
+    assert "ADOPTED ON THE OPERATOR'S CALL (22 Oct), AGAINST ITS MEASUREMENT" in rule
+    assert "v5f stands as the default" in rule
+    # Scope, every arm.
+    assert ("yesterday was a one-way SELLING day: down on the day, and its 3:15 level in "
+            "the bottom third of its range") in rule
+    assert "today's computed verdict is FLAT" in rule
+    assert ("neither index has CLOSED a 1-minute candle below its next major round number "
+            "under the open") in rule
+    assert "BankNIFTY's next 500 (IH's 54,500 on 22 Oct) and NIFTY's next 500 (22,500 that day)" in rule
+    assert "A wick does not count" in rule
+    # What it allows, and that it allows nothing more.
+    assert ("the BUY side, hunting those sellers, is the side your normal "
+            "pattern+confirmation entries may take") in rule
+    assert "It creates NO entry by itself, and it relaxes no RISK rule, gate or stop" in rule
+    # What ends it, and the cases it does not cover.
+    assert "the first 1-minute CLOSE below either number" in rule
+    assert "v5f governs: follow the selling" in rule
+    assert "NOT v5u" in rule
+    assert "after a one-way BUYING day nothing here applies" in rule
+    # The measurement it was adopted against, and the revert condition.
+    assert "-0.156 / -0.175 / -0.038" in rule
+    assert "reverted if live results are negative" in rule
+    # v5f is unchanged and points here; v5x sits between v5f and v5k.
+    v5f_rule = _flat_rule(prompt, "A ONE-WAY DAY LEAVES NOBODY SEATED")
+    assert "If it ran one way, assume no seated crowd and stop there." in v5f_rule
+    assert "[Narrowed by v5x, next: after a one-way SELLING day that opens FLAT" in v5f_rule
+    v5f = prompt.index("\n- A ONE-WAY DAY LEAVES NOBODY SEATED")
+    v5x = prompt.index("\n- WHILE THE ROUND NUMBER HOLDS")
+    v5k = prompt.index("\n- A GAP THAT CLEARS THE STOPS")
+    assert v5f < v5x < v5k
+
+
+def test_v5x_stop_fires_on_a_close_and_goes_beyond_the_named_level():
+    """v5x + SLH-027 (operator, 22 Oct): the stop is judged on a candle close, and it
+    belongs beyond the level the rationale names -- 10:18's long put it 8 points inside
+    its own fibo floor. The prompt, the order tool and position_state must all say how
+    the stop fires, and RISK's tight-stop guide must point here."""
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "THE STOP FIRES ON A CLOSE, SO PUT IT WHERE A CLOSE MEANS YOU ARE WRONG")
+    assert ("exits when a COMPLETED 1-minute NIFTY candle CLOSES beyond it, not when a wick "
+            "pokes through") in rule
+    assert "An intrabar BACKSTOP at 1.5x the stop's distance from the entry still exits at once" in rule
+    assert "`position_state` states exactly how your open stop fires (`stop_fires`)" in rule
+    assert ("It changes nothing in v5e: the stop goes beyond the level your own rationale "
+            "names, never inside it") in rule
+    assert "8 points INSIDE that floor" in rule
+    assert "below a fibo floor or structure low and above a ceiling" in rule
+    assert "A wider stop costs size, not risk" in rule
+    assert "If that stop does not fit the budget, HOLD (SLH-025)" in rule
+    # Placed right after v5e, before the hammer bullet.
+    v5e = prompt.index("\n- THE LEVEL YOU BROKE TO GET IN IS THE LEVEL PRICE COMES BACK TO (v5e)")
+    here = prompt.index("\n- THE STOP FIRES ON A CLOSE")
+    hammer = prompt.index("\n- Hammer / long-wick / doji")
+    assert v5e < here < hammer
+    assert "[Narrowed by v5x: this is a guide, not a placement." in _flat_rule(
+        prompt, "Keep the underlying (spot) stop TIGHT")
+    from sl_hunting_tools import POSITION_STATE_DESCRIPTION, order_tool_description
+    text = " ".join(order_tool_description("paper").split())
+    assert "the stop, by default, only when a completed 1-minute NIFTY candle CLOSES beyond it" in text
+    assert "position_state's stop_fires says how the open stop actually fires" in text
+    assert "`stop_fires`" in POSITION_STATE_DESCRIPTION

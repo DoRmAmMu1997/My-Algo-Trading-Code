@@ -15388,6 +15388,24 @@ if SL_HUNTING_AVAILABLE:
     SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES = _env_int(
         "SL_HUNTING_POST_EXIT_COOLDOWN_MINUTES", 5
     )
+    # Closing-basis stop (SLH-027, operator 2026-10-22). The NIFTY stop exits only
+    # when a COMPLETED strategy-timeframe candle (1-min by default) closes beyond
+    # it, not when a wick pokes through -- whipsaw had been taking stops that the
+    # candle then closed back above. An intrabar BACKSTOP at
+    # SL_HUNTING_STOP_BACKSTOP_MULTIPLE x the stop's distance from the entry still
+    # exits at once, so one fast candle costs at most about that multiple of the
+    # risk the lots were sized on (1.5x by default; the daily max-loss and the
+    # 15:15 square-off are unchanged). The target still fires on a touch.
+    # Set SL_HUNTING_STOP_ON_CLOSE=false to restore the plain intrabar stop.
+    # A backstop multiple outside 1-3 falls back to 1.5 here (paper) and blocks
+    # live trading in `_live_config_errors`.
+    SL_HUNTING_STOP_ON_CLOSE = _env_bool("SL_HUNTING_STOP_ON_CLOSE", True)
+    SL_HUNTING_STOP_BACKSTOP_MULTIPLE = _env_float("SL_HUNTING_STOP_BACKSTOP_MULTIPLE", 1.5)
+    if not (
+        math.isfinite(SL_HUNTING_STOP_BACKSTOP_MULTIPLE)
+        and 1.0 <= SL_HUNTING_STOP_BACKSTOP_MULTIPLE <= 3.0
+    ):
+        SL_HUNTING_STOP_BACKSTOP_MULTIPLE = 1.5
     # Trade journal (v3): record each trade's entry context + exit outcome to a
     # gitignored JSONL the reflection coach reads. Best-effort; never blocks trading.
     SL_HUNTING_JOURNAL_ENABLED = _env_bool("SL_HUNTING_JOURNAL_ENABLED", True)
@@ -15568,6 +15586,14 @@ if SL_HUNTING_AVAILABLE:
             # state machine; the final confirmed leg close consumes it once.
             self._cooldown_trade_open = False
             self._post_exit_cooldown_deadline_monotonic: float | None = None
+            # SLH-027: the stop fires on a completed candle's close, so the worker
+            # must know which candles closed AFTER the entry -- one that finished
+            # before the fill says nothing about this trade. Stamped (naive IST,
+            # like the candles) when an entry succeeds; None (e.g. a resumed
+            # position) lets any completed candle count, the conservative side.
+            self._stop_on_close = SL_HUNTING_STOP_ON_CLOSE
+            self._stop_backstop_multiple = SL_HUNTING_STOP_BACKSTOP_MULTIPLE
+            self._stop_clock_from: datetime | None = None
             # SLH-020: the last COMPLETE trade this session (whole basket flat),
             # stated to the model while it is flat and on a same-side re-entry
             # after a win. Informational only -- nothing reads it to refuse an
@@ -15707,6 +15733,7 @@ if SL_HUNTING_AVAILABLE:
             )
             if ok:
                 self._cooldown_trade_open = True
+                self._stop_clock_from = _ist_now().replace(tzinfo=None)
                 # SLH-020: what this trade books is measured from here, on the
                 # same realized_pnl basis SLH-019's realised_pnl uses.
                 self._trade_direction = str(direction).strip().upper()
@@ -16193,6 +16220,48 @@ if SL_HUNTING_AVAILABLE:
             )
             return True
 
+        def _last_close_since_entry(self, strategy_frame: pd.DataFrame) -> float | None:
+            """SLH-027: the close of the newest candle that has FINISHED since the entry.
+
+            A candle carries its START time, so it has finished once start + the
+            strategy timeframe is at or before now; the shared one-minute frame can
+            also hold the still-forming minute, and that one is skipped. A candle that
+            finished before the entry is skipped too. None means no candle has closed
+            on this trade yet, and then only the backstop can stop it.
+            """
+            if strategy_frame is None or strategy_frame.empty:
+                return None
+            if "timestamp" not in strategy_frame.columns or "close" not in strategy_frame.columns:
+                return None
+            stamps = pd.to_datetime(strategy_frame["timestamp"], errors="coerce")
+            if stamps.dt.tz is not None:
+                stamps = stamps.dt.tz_convert(IST_TIMEZONE).dt.tz_localize(None)
+            ends = stamps + pd.Timedelta(minutes=max(1, int(self.derived_timeframe_minutes)))
+            done = ends <= pd.Timestamp(_ist_now().replace(tzinfo=None))
+            if self._stop_clock_from is not None:
+                done = done & (ends > pd.Timestamp(self._stop_clock_from))
+            closes = strategy_frame["close"].to_numpy()[done.to_numpy(dtype=bool)]
+            if not len(closes):
+                return None
+            close = float(closes[-1])
+            return close if math.isfinite(close) and close > 0 else None
+
+        def stop_rule(self) -> str:
+            """SLH-027: one line for `position_state` saying how THIS stop fires."""
+            if not self._stop_on_close:
+                return "the moment NIFTY spot touches the stop"
+            backstop = SL_HUNTING_EXECUTOR_MODULE.backstop_level(
+                self.pos.direction,
+                self.pos.entry_underlying,
+                self.pos.stop_underlying,
+                self._stop_backstop_multiple,
+            )
+            return (
+                f"when a completed {int(self.derived_timeframe_minutes)}-minute NIFTY candle "
+                f"CLOSES beyond the stop (a wick does not count); intrabar at the backstop "
+                f"{backstop:.2f} ({self._stop_backstop_multiple:g}x the stop distance)"
+            )
+
         def exit_nifty_leg_only(self, reason: str) -> None:
             """Close ONLY the NIFTY leg (premise-invalidation on NIFTY), leaving the
             BankNIFTY mirror running. Sets the suppress flag so after_exit does not
@@ -16665,14 +16734,55 @@ if SL_HUNTING_AVAILABLE:
             # bar-cadence decisions -- the agent only re-decides per completed bar, so
             # we cannot wait for it to call EXIT. Mirrors CPR Algo 3's spot stop/target
             # check; _get_underlying_spot reads the live LTP cache.
+            # SLH-027: by default the STOP is judged on the last completed candle's
+            # close (plus an intrabar backstop) instead of on the live price; the
+            # target still fires on a touch.
             if self.pos.active:
                 spot = self._get_underlying_spot(fallback=0.0)
                 if spot > 0:
-                    hit = SL_HUNTING_EXECUTOR_MODULE.stop_or_target_hit(
-                        self.pos.direction, self.pos.stop_underlying, self.pos.target_underlying, spot
-                    )
+                    if self._stop_on_close:
+                        try:
+                            last_close = self._last_close_since_entry(strategy_frame)
+                        except Exception as exc:  # noqa: BLE001 - never lose the stop
+                            # A frame the helper cannot read must not switch the
+                            # stop OFF: judge it on the live price this poll,
+                            # exactly as the intrabar stop always did.
+                            self.log.warning(
+                                "SL Hunting closing-stop read failed (%s); using spot=%.2f "
+                                "as the close this poll.", exc, spot,
+                            )
+                            last_close = spot
+                        fired =SL_HUNTING_EXECUTOR_MODULE.closing_stop_or_target_hit(
+                            self.pos.direction,
+                            self.pos.entry_underlying,
+                            self.pos.stop_underlying,
+                            self.pos.target_underlying,
+                            spot,
+                            last_close,
+                            self._stop_backstop_multiple,
+                        )
+                        hit = fired[0] if fired else None
+                        if fired and fired[1] == "close":
+                            self.log.info(
+                                "SL Hunting %s: a completed candle closed at %.2f beyond the "
+                                "stop %.2f (spot=%.2f); exiting.",
+                                hit, last_close, self.pos.stop_underlying, spot,
+                            )
+                        elif fired and fired[1] == "backstop":
+                            self.log.info(
+                                "SL Hunting %s: spot=%.2f reached the intrabar backstop "
+                                "(%gx the stop distance, stop %.2f); exiting.",
+                                hit, spot, self._stop_backstop_multiple, self.pos.stop_underlying,
+                            )
+                        elif hit:
+                            self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
+                    else:
+                        hit = SL_HUNTING_EXECUTOR_MODULE.stop_or_target_hit(
+                            self.pos.direction, self.pos.stop_underlying, self.pos.target_underlying, spot
+                        )
+                        if hit:
+                            self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
                     if hit:
-                        self.log.info("SL Hunting %s hit at spot=%.2f; exiting.", hit, spot)
                         self._invalidate_agent_inference(hit)
                         with self._agent_action_lock:
                             self.exit_position(hit)
@@ -17786,6 +17896,12 @@ def _live_config_errors(
                 "integer_range",
                 (0, 59),
             ),
+            # SLH-027: the backstop bounds how far one candle can run past
+            # the stop, so live refuses a value the paper path had to replace.
+            "SL_HUNTING_STOP_BACKSTOP_MULTIPLE": (
+                "float_range",
+                (1, 3),
+            ),
         })
 
     if normalized_prefix == "CPR_ALGO4":
@@ -17822,6 +17938,12 @@ def _live_config_errors(
             low, high = bounds
             if not value.is_integer() or not low <= value <= high:
                 errors.append(f"{name} must be an integer from {low} to {high}")
+        elif rule == "float_range":
+            if bounds is None:  # pragma: no cover - every such rule ships bounds
+                raise AssertionError(f"{name}: float_range rule without bounds")
+            low, high = bounds
+            if not low <= value <= high:
+                errors.append(f"{name} must be a number from {low:g} to {high:g}")
 
     lots = getattr(worker, "lots", None)
     if isinstance(lots, bool) or not isinstance(lots, int) or lots <= 0:

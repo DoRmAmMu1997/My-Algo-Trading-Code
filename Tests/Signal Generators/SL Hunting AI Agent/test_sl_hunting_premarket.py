@@ -201,37 +201,39 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_22_intraday_hunter_plan():
-    """Render the October 21 evening forecast on Thursday, without losing its side flip.
+def test_shipped_note_matches_october_23_intraday_hunter_plan():
+    """Render the October 22 evening forecast on Friday: SELL on every open.
 
-    Hj3d2kKke_I was uploaded 21 Oct at 21:10 IST. Its direct Hindi transcript
-    buys a flat-to-gap-up open against sellers seated by October 21's selling,
-    but on a GAP DOWN goes WITH the market and sells, because sellers seated on a
-    gap down hold with confidence. Sensex expiry is context, not an instruction.
-    Frames at 0:46, 1:16 and 1:52 check the levels: NIFTY's garbled "2300 2280"
-    is the drawn 23,002.20 / 22,883 pair (23,000 / 22,880), and Sensex's garbled
-    second support "72" is the drawn 72,214.26 line, recorded as 72,210. The
-    other nine match their spoken values and drawn labels.
+    E8ZaDDdgnio was uploaded 22 Oct at 21:10 IST. Its direct Hindi transcript
+    says October 22's recovery broke the closing price and evicted the sellers,
+    so no seller stops remain, and with little momentum both crowds sit at one
+    price level: it will not target either, and goes with the market. Flat to
+    gap down is SELL, and a gap up keeps the same SELL plan. No branch buys.
+    Frames at 0:40, 1:10 and 1:39 check the levels, all twelve on the same drawn
+    lines as the October 22 note: NIFTY's garbled "23280" is the 23,002.20 /
+    22,883 pair (23,000 / 22,880); Sensex's garbled "72" is 72,214.26 (72,210);
+    BankNIFTY's spoken 54,400 is the 54,388.75 line, kept at 54,390.
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 22))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-22" in block
-    assert "Hj3d2kKke_I" in block
-    assert "uploaded 2026-10-21" in note.source
-    assert "sellers are likely seated" in note.context
-    assert "Sensex has its weekly expiry on October 22" in note.context
-    assert format_premarket_note(note, date(2026, 10, 21)) == ""
-    assert format_premarket_note(note, date(2026, 10, 23)) == ""
+    block = format_premarket_note(note, date(2026, 10, 23))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-23" in block
+    assert "E8ZaDDdgnio" in block
+    assert "uploaded 2026-10-22" in note.source
+    assert "evicted the sellers, so no seller stops remain to hunt" in note.context
+    assert "buyers and sellers sit at one price level" in note.context
+    assert format_premarket_note(note, date(2026, 10, 22)) == ""
+    assert format_premarket_note(note, date(2026, 10, 26)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
-    assert "buying-side setups" in buy
-    sell = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL, WITH THE MARKET"))
-    assert "hold with confidence and cannot be targeted" in sell
+    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> SELL, WITH THE MARKET"))
+    assert "do not target either crowd" in sell
     assert "selling-side setups" in sell
+    gap_up = next(line for line in note.plan if line.startswith("GAP UP -> SELL"))
+    assert "selling-side setups" in gap_up
+    assert not any("BUY" in line for line in note.plan)
     assert not any("EXPIR" in line.upper() for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block

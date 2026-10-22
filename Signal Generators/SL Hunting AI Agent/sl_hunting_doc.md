@@ -11054,3 +11054,351 @@ fails it, and the unmutated note passes:
 * the gap-down branch turned into BUY;
 * the date set to October 21;
 * the Sensex support moved to 72,200.
+
+## v5x - 22 Oct live match: IH's round-number test, and a stop that fires on a close (operator's call)
+
+**Sources.**
+
+- **IH's live session:** `zpDHFRj9pmU`, uploaded 2026-10-22 11:21 IST, traded on
+  the 22 Oct note (`Hj3d2kKke_I`: "FLAT TO GAP UP -> BUY", "GAP DOWN -> SELL,
+  WITH THE MARKET"). Clock times come from the taskbar clock in the frame,
+  figures from his positions screen, and his words are my translation of the
+  Hindi auto-transcript (`zpDHFRj9pmU-transcript.txt` in the archive).
+- **This book:** three journal rows, 72 decisions (no agent errors) and the
+  runner log. The model was `claude-sonnet-5`. It was the first session with
+  v5v, v5w, SLH-025 and SLH-026 live, and the note was injected (1,494 chars).
+- **The 5-year NIFTY and BankNIFTY CSVs**, now through 22 Oct.
+
+**Adopted on the operator's call, against the measurement below:** v5x (IH's
+round-number test, plus a stop placed beyond the level the rationale names) and
+SLH-027 (the stop fires on a candle close, with an intrabar backstop). v5f
+stands as the default. "Stay in one direction" was not adopted.
+
+### The session
+
+21 Oct gapped up, made 23,120.90 at 09:40, then sold continuously to 22,649.90 at
+14:47. Its 3:15 level, 22,739.20, was -0.59% on 19 Oct's and sat 19% up its
+range. BankNIFTY was -1.06%, at 17% of its range.
+
+22 Oct opened FLAT on the computed verdict (NIFTY -0.23%, BankNIFTY -0.29%).
+NIFTY opened at 22,687.75 and flushed to 22,564.90 inside the first minute. It
+made the day's low of 22,554.85 at 09:35, 4.85 above the note's 22,550 support,
+and then chopped between about 22,555 and 22,698 until 10:19. It was at 22,767.35
+by 10:35 and made the day's high of 22,785.00 at 11:14. BankNIFTY's first minute
+touched 54,459.35, 41 points under IH's 54,500, and then held.
+
+| | IH | the agent |
+|---|---|---|
+| read | flat open after continuous selling: sellers are seated, so BUY while the round numbers hold | FLAT; the note's BUY branch, which v5f argues against ("a one-way day seats nobody") |
+| entry | **09:17-09:18**: BankNIFTY 54,600 CE and 54,700 CE x1,170 each, SENSEX x900, NIFTY x1,430 (the NIFTY leg at 09:18, on a bar of 22,589.15-22,629.10) | **09:33** SHORT x3, **09:58** SHORT x1, **10:18** LONG x1 |
+| exit | about **10:17**, booked on the first move all three indices made together (NIFTY 22,659-22,691 that minute) | AI_STOP 09:37; its own exit at 09:58:58; AI_STOP 10:19 |
+| result | about **+3 lakh**. At the booking screen: BankNIFTY legs +1,24,430.00 and +93,471.80, SENSEX +76,698.50; the NIFTY row is not legible. Mid-trade he sat about 60,000 down. | **+273.90** |
+
+### IH's reason is v5f's opposite
+
+On 16 Sep IH said that with no retracement "traders do come, but they also book
+their target and leave". That became v5f. On 22 Oct he said:
+
+- "Yesterday there was a big selling... the market gave continuous selling. We can
+  say directly that more sellers came in than buyers."
+- "With this kind of selling, nobody will be sitting with buys... the sellers
+  should be seated."
+- "The market closed below the round number, so they will have held their trades
+  too."
+
+His discriminator was the round number, not the retracement. "As long as the
+market is above this level, we can target these sellers. If it goes below, the
+sellers come into confidence... even if a retracement comes, you will not cut."
+His invalidation levels were SENSEX 73,000 and BankNIFTY 54,500, with the NIFTY
+support unnamed. The test he describes is measurable, so it was measured.
+
+### The agent: IH's trade at 09:30, then the trades it could afford
+
+- **09:15-09:29: HOLD.** Each decision stated the FLAT verdict, quoted the
+  note's BUY branch and set v5f against it.
+- **09:30: it wanted IH's trade, and sizing refused it.** The trade was a long off
+  the 22,564.90 / 22,557.95 double bottom, with the stop at 22,548. That stop was
+  57 points away, 3,705 per lot against a 2,500 budget. The decision held and
+  cited SLH-025 ("a stop squeezed inside the real invalidation"), so the guard's
+  guidance reached the model on its first day.
+- **09:33: SHORT, 3 lots, stop 22,598 (12.3 points), three minutes later**, citing
+  v5f. NIFTY made 22,554.85 at 09:35, 9.85 short of the 22,545 target, and the
+  stop went at 09:37. The NIFTY leg lost 1,300.65; the BankNIFTY mirror made
+  2,751.30.
+- **09:51: the same long, refused again** (42-point stop). It held.
+- **09:58: SHORT, 1 lot, stop 22,657.** The agent exited after 42 seconds, once
+  BankNIFTY traded through its hammer's high. That is v5w's play-out condition,
+  and it was met. The stop was never touched, and NIFTY made 22,587.85 by 10:04,
+  44.8 points (1.8R) from the entry. The trade lost 502.75.
+- **10:18: LONG, 1 lot, citing the note's branch, stop 22,656.** The rationale
+  named "the 78% fibo floor (22,647.86)" as support, yet the stop sat 8 points
+  above that floor. A stop just under the floor (about 34 points) would still
+  have fitted one lot. NIFTY's low was 22,653.85 at 10:19: the stop went, but the named floor
+  never broke. NIFTY was 22,767 by 10:35. The 10:23 re-entry was refused by the
+  5-minute cooldown (39 s left). The trade lost 674.00.
+
+Both shorts followed v5f, the long followed the note, and IH sat in one long
+through the same chop.
+
+### Measured
+
+**1. IH's round-number test.** Setup:
+
+- One-way down day: 3:15-to-3:15 at or below -0.5%, with the 3:15 level in the
+  bottom third of the session range. 21 Oct qualifies; 157 such days were
+  followed by a FLAT open, 22 Oct included.
+- The round number is the first multiple below the open.
+- HELD means no one-minute close below it before the entry minute (a wick does
+  not count). This is closer to IH's "trades below" than a wick test, and it
+  keeps 22 Oct's BankNIFTY wick as HELD (its 09:15 bar closed at 54,585.20).
+- Each trade uses the agent's shape: 16 / 45 points, a 15-minute limit, scored
+  in R. BankNIFTY points are scaled 2.4x.
+
+Results, in R at 09:18 / 09:20 / 09:25:
+
+| index, level | every such session, long | HELD -> long | BROKE -> short |
+|---|---|---|---|
+| NIFTY 500s | -0.129 / -0.148 / +0.046 (157) | -0.156 / -0.175 / -0.038 (149-153) | 4-8 sessions, -1.000 / -0.047 / -1.000 |
+| NIFTY 100s | same | -0.209 / -0.209 / -0.004 (106-120) | -0.205 / +0.445 / +0.135 (37-51) |
+| BankNIFTY 500s | +0.197 / -0.068 / +0.030 (152) | +0.267 / -0.078 / +0.040 (121-129) | +0.208 / +0.388 / +0.090 (23-31) |
+
+On NIFTY, the index the agent trades, holding above the number is worse than
+not asking. BankNIFTY's +0.07R lift at 09:18 is gone by 09:20. With a wick
+counting as a break, every NIFTY row stays negative.
+
+**2. The closest form.** This version requires the first three minutes to flush
+at least 0.15% below the open and hold the number, and the market to have
+recovered a third of the flush by 09:17. Long at 09:18:
+
+| level | sessions | long | 2021-23 / 2024-26 |
+|---|---|---|---|
+| NIFTY 100s | 12 | +0.163 | +0.449 / -0.237 |
+| NIFTY 500s | 27 | -0.149 | -0.220 / -0.083 |
+| BankNIFTY 500s | 30 | -0.135 | -0.025 / -0.230 |
+| BankNIFTY 1,000s | 37 | -0.195 | -0.242 / -0.151 |
+
+Both forms measure against IH's test. It is adopted anyway as v5x (below).
+
+**3. "Sit in ONE direction."** IH, on beginners: "sometimes they look for sell
+trades, sometimes buy trades... stay in one direction". In this book's 189
+trades:
+
+| trade | n | NIFTY pts | mean R | rupees |
+|---|---|---|---|---|
+| first of the session | 68 | +333.5 | +0.231 | +19,274 |
+| later, same side, no flip yet | 67 | +81.6 | +0.147 | +18,207 |
+| later, OPPOSITE the first | 46 | +53.2 | +0.055 | +21,544 |
+| later, back after a flip | 8 | +63.4 | +0.599 | +10,174 |
+
+The flips are the weakest group in R, but they are positive, and banning them
+would have cost 21,544. Not adopted (operator, 22 Oct).
+
+**4. A stop with room** ("we bought a little low, so we could take the small
+retracements"). Each journal trade is replayed on the 1-minute bars with its
+stop widened by W points at the same rupee risk. A stopped trade is re-run to
+the wider stop, its target or 15 minutes; any other trade keeps its exit, but
+the R is measured against the wider stop.
+
+| widen | trades | mean R | Jul-Aug | Sep-Oct | stopped trades now surviving |
+|---|---|---|---|---|---|
+| 0 | 184 | +0.187 | +0.154 | +0.232 | 0 of 24 |
+| +5 | 179 | +0.154 | +0.104 | +0.221 | 6 of 24 |
+| +12 | 164 | +0.111 | +0.090 | +0.141 | 14 of 24 |
+
+Only 24 trades exit on the stop, and the wider stop shrinks every other
+trade's R. Tight stops are not the problem either: stops under 12 points are
+the book's best band (+0.316R, 38 trades). IH's real stop was the round number,
+100+ NIFTY points away. The 2,500 budget caps the agent at about 38 points per
+lot, so his stop cannot be carried over. A fixed buffer was therefore refused;
+"wider stops" became v5x's placement rule plus SLH-027's closing basis (below),
+which replays better than the old stop.
+
+### Observed, not enough to act on
+
+- **The other side after a sizing refusal.** Three trades so far (12 Oct, and
+  09:33 and 09:58 today) entered the opposite way within 35 minutes of a refused
+  long. Their NIFTY legs made -23.15, -12.85 and -12.15 points. SLH-025 covers
+  only a squeeze in the same direction within one pass. Watch it.
+- **v5w's BankNIFTY play-out** exit cost the 09:58 short, which the replay
+  already expected (-14 points on 31 exits). It is one case, and the operator's
+  revert test is live results.
+
+### Adopted: v5x (operator's call)
+
+The operator's instruction (22 Oct):
+
+- encode the round-number test, and keep v5f;
+- do not ban direction changes;
+- build wider stops judged on a closing basis: "I am seeing a lot of market
+  whipsaw recently and it is stopping out my trades before going towards
+  target". Trade 3 was the evidence.
+
+Two rules, both tagged (v5x):
+
+- **WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET.** It
+  sits right after v5f, with a pointer left inside v5f's practical form.
+  - Scope: a one-way selling day (down, with its 3:15 level in the bottom third
+    of its range); a FLAT verdict; and no 1-minute close below BankNIFTY's or
+    NIFTY's next 500 under the open.
+  - While both numbers hold, the BUY side is the side the agent's normal
+    pattern+confirmation entries may take. The first close below either number
+    ends it, and v5f's follow governs.
+  - It creates no entry and relaxes nothing. It does not cover a one-way buying
+    day, and a reclaim after a close below is v5u.
+  - The rule carries the measurement it was adopted against and its revert
+    condition.
+- **THE STOP FIRES ON A CLOSE, SO PUT IT WHERE A CLOSE MEANS YOU ARE WRONG.** It
+  sits right after v5e and restates v5e on the 10:18 case: the stop goes beyond
+  the level the rationale names (below a fibo floor or structure low). If that
+  stop does not fit the budget, the answer is HOLD (SLH-025). RISK's "~10-15
+  points" guide now carries a pointer: it is a guide, not a placement.
+
+To review: split live trades that cite (v5x) by which rule they used, and
+compare AI_STOP exits before and after SLH-027.
+
+### SLH-027 - the stop fires on a close
+
+The operator's choices (22 Oct):
+
+- stop-losses judged on a closing basis;
+- an intrabar backstop at 1.5x the stop distance, chosen over none and 2x;
+- no fixed point buffer, because every buffer replayed worse.
+
+The replay below covers the book's journal trades on 1-minute bars. A stopped
+trade is re-run until a close beyond the stop, the backstop, its target or 15
+minutes. Every other trade keeps its exit. R is measured against the stop
+actually used.
+
+| stop | mean R | Jul-Aug | Sep-Oct | stopped trades: mean / worst | survive |
+|---|---|---|---|---|---|
+| intrabar (before) | +0.187 | +0.154 | +0.232 | -1.000 / -1.00 | 0 of 24 |
+| close only | +0.189 | +0.129 | +0.272 | -0.983 / -3.32 | 5 |
+| close + 2x backstop | +0.196 | +0.128 | +0.289 | -0.929 / -2.00 | 5 |
+| **close + 1.5x backstop** | **+0.201** | +0.133 | +0.293 | -0.893 / -1.50 | 5 |
+| close + 1.5x, stop +5 pts | +0.148 | +0.108 | +0.203 | -0.697 / -1.50 | 9 |
+
+It is better in Sep-Oct and worse in Jul-Aug, which fits the operator's
+observation that the whipsaw is recent. On 22 Oct, trade 3's 10:19 candle closed
+at 22,661.00, above its 22,656.00 stop, and the backstop sat at 22,644.40, so
+the trade would have stayed in.
+
+**What it does:**
+
+- **The rule.** `closing_stop_or_target_hit` (executor, pure) checks the
+  backstop on the live price, the stop on the newest completed candle's close
+  since the entry, and the target on a touch. Exit reasons stay AI_STOP and
+  AI_TARGET; the log line names the trigger.
+- **Which candle counts.** The worker stamps the entry time. It skips the
+  still-forming candle and any candle that finished before the fill. A resumed
+  position has no stamp, so any completed candle counts.
+- **Fail-safe.** If the closing read fails, that poll judges the stop on the
+  live price, exactly as before. A bug cannot switch the stop off; the first
+  version of this code had one, and the master suite caught it.
+- **What the model is told.** `position_state` carries `stop_fires`, read from
+  the worker, so the model learns how its open stop fires even with the switch
+  off. The order-tool text says the same.
+- **Knobs:**
+  - `SL_HUNTING_STOP_ON_CLOSE`: default true; false restores the intrabar stop.
+  - `SL_HUNTING_STOP_BACKSTOP_MULTIPLE`: default 1.5, allowed range 1-3.
+    Outside it, paper falls back to 1.5 and live is blocked by a new
+    `float_range` rule in `_live_config_errors`.
+
+**Unchanged:** the target (still a touch), max-loss, the 15:15 square-off, the
+BankNIFTY mirror (hard risk still closes both legs) and sizing. Sizing still
+uses the stop distance, so a backstop exit can lose up to about 1.5x the budget
+on the NIFTY leg; the daily max-loss caps the day.
+
+### Validation
+
+**New tests:**
+
+- 10 pure tests (`test_sl_hunting_closing_stop.py`);
+- 10 worker tests (`test_slh027_*` in the master suite);
+- 2 knowledge tests (`test_v5x_*`).
+
+**Negative-tested with 21 mutants, all caught:**
+
+- 7 on the pure rule: the multiple ignored, its floor removed, the stop judged
+  on price, a close AT the stop not counting, the backstop removed, the target
+  removed, and the target checked before the stop.
+- 7 on the worker: the forming candle counted, candles from before the entry
+  counted, the entry clock never stamped, the fail-safe dropping the stop, the
+  switch ignored, the live range unchecked, and `stop_fires` not reported.
+- 7 on the prompt: v5f's pointer, the wick clause, "creates NO entry", the
+  measurement, the close wording, RISK's pointer and the order-tool sentence.
+
+**Gates:** the master suite (657), market-data health (28), pytest (1,766),
+ruff, mypy (82 files, then the master file), compileall, bandit (CI's flags)
+and pre-commit are all clean. The first gate run caught two things: a mypy
+bound type, and AGENTS.md needing the same sentence as CLAUDE.md.
+
+### Already in the corpus
+
+- "When all three move together the target can be raised; if one lags, take a
+  normal target": v3s LAGGARDS NEVER JOINED, plus SLH-026 for the raise. No
+  MODIFY_TARGET today; trade 1 came within 9.85 of its target.
+- "Sideways is when neither side is interested... it takes time to add
+  sellers": v5w's ten-candle stall rule.
+
+### Latency
+
+74 calls on `claude-sonnet-5`: median 31.8 s, p95 44.7 s, worst 47.7 s.
+
+## October 23 pre-open note
+
+[Prediction For 23 OCT 2026](https://www.youtube.com/watch?v=E8ZaDDdgnio), uploaded
+2026-10-22 21:10:22 IST, 108 s, 14 transcript segments. The raw transcript is
+`E8ZaDDdgnio-transcript.txt` in the same archive.
+
+**Read.** October 22 recovered through the closing price and evicted the sellers
+who were seated after October 21's selling, so no seller stops remain to hunt.
+Momentum stayed small in all three indices, so buyers and sellers sit at one
+price level. In IH's words on NIFTY: "we will not do the targeting work on them.
+We will go with the market."
+
+**Plan.** No branch buys.
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP DOWN | SELL, with the market: do not target either crowd; identify selling-side setups |
+| GAP UP | SELL, the same plan |
+
+BankNIFTY's gap-up sentence is cut off in the transcript; Sensex and NIFTY
+both state that a gap keeps the same selling plan.
+
+**How it meets the corpus.** v5x does not apply on October 23: it needs a one-way
+selling day, and October 22 closed -0.32% on the 3:15 levels, with its 3:15 level
+at 49% of its range. The note stays advisory.
+
+**Levels.** All twelve sit on the same drawn lines as the October 22 note. Two
+captions were garbled again and one spoken value is rounded; all three are
+resolved from the 1080p frames at 0:40, 1:10 and 1:39:
+
+* **NIFTY resistance**, spoken "23280", is the drawn 23,002.20 / 22,883.00 pair,
+  recorded as 23,000 / 22,880.
+* **Sensex's second support**, spoken "72", is the drawn 72,214.26, recorded as
+  72,210.
+* **BankNIFTY's first support** is spoken 54,400 but drawn at 54,388.75, and is
+  kept at 54,390 as on October 22.
+
+The other nine match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,880 / 23,000 | 22,550 / 22,420 |
+| BankNIFTY | 55,100 / 55,400 | 54,390 / 54,200 |
+| Sensex | 73,970 / 74,800 | 72,700 / 72,210 |
+
+NIFTY's 22,550 support held on October 22: the day's low was 22,554.85.
+
+The note renders 1,412 characters on October 23 and nothing on any other date.
+`test_shipped_note_matches_october_23_intraday_hunter_plan` pins the date gate,
+the source, both SELL branches (no line may BUY) and all twelve levels. Each of
+these mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into BUY;
+* the date set to October 22;
+* BankNIFTY's support recorded as the spoken 54,400;
+* the "do not target either crowd" clause dropped;
+* the Sensex support moved to 72,200.

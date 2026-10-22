@@ -701,6 +701,44 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   seated crowd and stop there. If it did retrace, is today's gap the size that
   crowd would have produced? If it is not, the crowd is absent, and the plan is
   to FOLLOW the move rather than to hunt it.
+  [Narrowed by v5x, next: after a one-way SELLING day that opens FLAT, the
+  round-number test below decides whether the sellers are still huntable.]
+- WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET (v5x).
+  ADOPTED ON THE OPERATOR'S CALL (22 Oct), AGAINST ITS MEASUREMENT (below). v5f
+  stands as the default; v5x is the one case where IH hunts that crowd anyway,
+  and he names the test that decides it. 21 Oct sold continuously all day, and
+  on 22 Oct IH bought the FLAT open: "with this kind of selling, nobody will be
+  sitting with buys... the sellers should be seated", and "the market closed
+  below the round number, so they will have held their trades too". His
+  condition was a LEVEL, not a retracement: "as long as the market is above this
+  level, we can target these sellers. If it goes below, the sellers come into
+  confidence... even if a retracement comes, you will not cut."
+  SCOPE, all of it required:
+  * yesterday was a one-way SELLING day: down on the day, and its 3:15 level in
+    the bottom third of its range;
+  * today's computed verdict is FLAT;
+  * neither index has CLOSED a 1-minute candle below its next major round number
+    under the open: BankNIFTY's next 500 (IH's 54,500 on 22 Oct) and NIFTY's next
+    500 (22,500 that day). A wick does not count. BankNIFTY's first minute on
+    22 Oct touched 54,459.35, closed at 54,585.20, and IH still bought.
+  WHAT IT ALLOWS: while both numbers hold, the BUY side, hunting those sellers,
+  is the side your normal pattern+confirmation entries may take, where v5f alone
+  would say follow the selling. IH entered as the first rejection began to be
+  covered: "if it goes below 500, then wherever we buy, we cannot target these
+  sellers... if we need an entry to target them, it will be made right here."
+  It creates NO entry by itself, and it relaxes no RISK rule, gate or stop.
+  WHAT ENDS IT: the first 1-minute CLOSE below either number. The sellers are
+  then confident, the hunt is over and v5f governs: follow the selling. A long
+  taken on v5x treats that close as its premise invalidation.
+  NOT v5u: a number closed below and later reclaimed is v5u's flush-and-reclaim,
+  on v5u's own conditions. Only the selling side was observed; after a one-way
+  BUYING day nothing here applies.
+  MEASURED AGAINST IT (5-year CSVs, the agent's trade shape, R at 09:18 / 09:20 /
+  09:25): after a one-way down day and a flat open, buying while NIFTY's next 500
+  held scored -0.156 / -0.175 / -0.038, against -0.129 / -0.148 / +0.046 for
+  every such session. NIFTY's 100s were worse, and BankNIFTY's 500s added +0.07
+  at 09:18 only. IH booked about 3 lakh on 22 Oct. Every trade that cites (v5x)
+  is reviewed, and the rule is reverted if live results are negative.
 - A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
   open too SMALL to be the crowd's: the crowd that would have forced a big gap is
   not there to force one. This is the other end of the same measurement. An open
@@ -1494,6 +1532,27 @@ confirmation must have ALREADY printed.
   DISTANCE FROM THE FILL reaches the same law from the other side: there the stop
   was too close because price had moved, here because a level was in the way, and
   in both the thing that gives is the SIZE, never the stop.
+- THE STOP FIRES ON A CLOSE, SO PUT IT WHERE A CLOSE MEANS YOU ARE WRONG (v5x,
+  SLH-027). Since 22 Oct the NIFTY stop exits when a COMPLETED 1-minute NIFTY
+  candle CLOSES beyond it, not when a wick pokes through. An intrabar BACKSTOP
+  at 1.5x the stop's distance from the entry still exits at once, so the worst
+  a fast candle can cost is about 1.5x the risk you sized. `position_state`
+  states exactly how your open stop fires (`stop_fires`); trust that over this
+  paragraph if the two ever differ.
+  It changes nothing in v5e: the stop goes beyond the level your own rationale
+  names, never inside it. 22 Oct, 10:18: a LONG at 22,679.20 named "the 78%
+  fibo floor (22,647.86)" as its support and put the stop at 22,656.00, 8 points
+  INSIDE that floor. The low was 22,653.85, so the stop went, but the floor never
+  broke, and NIFTY stood 88 points above the entry 16 minutes later. A stop just
+  under the floor was about 34 points, still one lot inside the budget. The
+  10:19 candle closed at 22,661.00, so on a closing basis even the squeezed stop
+  would have held.
+  So: name the level, then put the stop beyond it, below a fibo floor or
+  structure low and above a ceiling, where a CLOSE beyond it means the read is
+  wrong. A wider stop costs size, not risk: the lots shrink to keep the rupee
+  risk inside the budget. If that stop does not fit the budget, HOLD (SLH-025).
+  The ~10-15 point guide in RISK is a guide, never a reason to put a stop inside
+  a level you named.
 - Hammer / long-wick / doji: direction is decided by where the full-body
   confirmation candle closes (above the high → long; below the low → short). Color
   of the wicked candle itself does NOT matter.
@@ -1578,7 +1637,9 @@ RISK DISCIPLINE
 ---------------
 - Keep the underlying (spot) stop TIGHT: aim for ~10-15 NIFTY points beyond the
   pattern. If the required stop is larger than that, either wait for a pullback
-  entry that tightens it, or SKIP the trade (HOLD).
+  entry that tightens it, or SKIP the trade (HOLD). [Narrowed by v5x: this is a
+  guide, not a placement. The stop still goes BEYOND any level your rationale
+  names, and it fires on a candle CLOSE (see THE STOP FIRES ON A CLOSE).]
 - Position size is computed AUTOMATICALLY to risk ~Rs.2500 per trade from your stop
   distance — you do NOT choose lots. A tighter stop just means more lots for the
   same rupee risk, so set an honest, tight stop; never widen it to "get size".
