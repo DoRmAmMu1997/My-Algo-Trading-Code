@@ -14389,3 +14389,152 @@ class TestSecondaryInstrumentFeed(unittest.TestCase):
             "the primary must load FIRST, so its scroll-back is ready as early as before",
         )
         self.assertIn("banknifty", str(wanted[master_file.SECONDARY_INSTRUMENT]).lower())
+
+
+class TestPositionGroupMonitorWiring(unittest.TestCase):
+    """The optional position-group monitor's touch points in the master.
+
+    The monitor itself is tested in Tests/Dependencies/test_position_group_monitor.py;
+    these cases pin how the master hosts it, above all that its watched legs can
+    never reach the feed-health gate that drives the 30-second liquidation.
+    """
+
+    def _sub(self, security_id=49081, *, health=True):
+        return master_file.OptionSubscription(
+            security_id=security_id, exchange_segment="NSE_FNO", trading_symbol="OPT",
+            right="CE", strike=24500.0, expiry=date.today() + timedelta(days=30),
+            affects_feed_health=health,
+        )
+
+    def test_subscription_defaults_to_health_gated(self):
+        sub = master_file.OptionSubscription(
+            security_id=1, exchange_segment="NSE_FNO", trading_symbol="X",
+            right="CE", strike=1.0, expiry=None,
+        )
+        self.assertTrue(sub.affects_feed_health)
+
+    def test_shared_contract_stays_gated_while_a_worker_holds_it(self):
+        store = master_file.SharedMarketDataStore()
+        store.register_option_subscription(self._sub(), owner_id="WORKER")
+        store.register_option_subscription(self._sub(health=False), owner_id="position_group_monitor")
+        (snapshot,) = store.snapshot_option_subscriptions()
+        self.assertTrue(snapshot.affects_feed_health)
+        store.unregister_option_subscription("NSE_FNO", 49081, owner_id="WORKER")
+        (snapshot,) = store.snapshot_option_subscriptions()
+        self.assertFalse(snapshot.affects_feed_health)
+        # Registering the worker again, after the monitor, gates it again.
+        store.register_option_subscription(self._sub(), owner_id="WORKER")
+        (snapshot,) = store.snapshot_option_subscriptions()
+        self.assertTrue(snapshot.affects_feed_health)
+
+    def test_rest_producer_fetches_watched_legs_but_does_not_require_them(self):
+        store = master_file.SharedMarketDataStore()
+        broker = MagicMock()
+        broker.fetch_ltp_map.return_value = {}
+        fetcher = master_file.CentralMarketDataFetcher(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        store.register_option_subscription(self._sub(1), owner_id="WORKER")
+        store.register_option_subscription(self._sub(2, health=False), owner_id="position_group_monitor")
+        required = fetcher.refresh_index_and_option_ltps()
+        requested = broker.fetch_ltp_map.call_args[0][0]
+        self.assertCountEqual(requested["NSE_FNO"], [1, 2])
+        self.assertIn(("NSE_FNO", 1), required)
+        self.assertNotIn(("NSE_FNO", 2), required)
+
+    def test_websocket_producer_touches_watched_legs_but_does_not_require_them(self):
+        store = master_file.SharedMarketDataStore()
+        fetcher = master_file.WebSocketMarketDataFetcher(
+            store=store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        store.register_option_subscription(self._sub(2, health=False), owner_id="position_group_monitor")
+        index_key = (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID)
+        store.touch_ltp_freshness = MagicMock()
+        store.record_market_data_refresh = MagicMock(return_value=MagicMock(reasons=[]))
+        fetcher._confirmed_keys = {index_key, ("NSE_FNO", 2)}
+        fetcher._last_packet_monotonic = time.monotonic()
+        fetcher._record_health_if_due()
+        store.touch_ltp_freshness.assert_called_once_with({index_key, ("NSE_FNO", 2)})
+        self.assertEqual(
+            store.record_market_data_refresh.call_args[1]["required_ltp_keys"], {index_key}
+        )
+
+    @staticmethod
+    def _fake_client_class(*, logs_in):
+        class FakeClient:
+            api_key_env = "FAKEBROKER_API_KEY"
+
+            def ensure_logged_in(self):
+                return logs_in
+
+        return FakeClient
+
+    def _build(self, store, events, client_classes):
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            master_file, "GROUP_MONITOR_STATE_FILE", str(Path(folder) / "s.json")
+        ):
+            return master_file._build_position_group_monitor(
+                store, events, client_classes=client_classes
+            )
+
+    def test_builder_logs_in_configured_brokers_and_alerts_on_failure(self):
+        store = master_file.SharedMarketDataStore()
+        events = master_file.queue.Queue()
+        with patch.dict(os.environ, {"FAKEBROKER_API_KEY": "k"}):
+            failed = self._build(store, events, {"FAKE": self._fake_client_class(logs_in=False)})
+            ok = self._build(store, events, {"FAKE": self._fake_client_class(logs_in=True)})
+        self.assertEqual(dict(failed.clients), {})
+        self.assertEqual(list(ok.clients), ["FAKE"])
+        self.assertEqual(events.get_nowait()["action"], "GROUP_BROKER_LOGIN_FAILED")
+        self.assertTrue(events.empty())
+
+    def test_builder_skips_brokers_without_an_api_key(self):
+        with patch.dict(os.environ, {"FAKEBROKER_API_KEY": ""}):
+            monitor = self._build(
+                master_file.SharedMarketDataStore(), None,
+                {"FAKE": self._fake_client_class(logs_in=True)},
+            )
+        self.assertEqual(dict(monitor.clients), {})
+
+    def test_builder_subscribes_legs_exempt_from_feed_health(self):
+        store = master_file.SharedMarketDataStore()
+        monitor = self._build(store, None, {})
+        leg = SimpleNamespace(symbol="S", right="CE", strike=24500.0, expiry=date(2026, 11, 26))
+        contract = SimpleNamespace(segment="NSE_FNO", security_id=777)
+        monitor._subscribe(leg, contract)
+        (sub,) = store.snapshot_option_subscriptions()
+        self.assertEqual(sub.security_id, 777)
+        self.assertFalse(sub.affects_feed_health)
+        store.update_ltp_map({("NSE_FNO", 777): 12.5})
+        self.assertEqual(monitor._read_ltp(contract), 12.5)
+
+    def test_interrupted_session_stops_the_monitor_at_once(self):
+        monitor = MagicMock()
+        monitor.is_alive.return_value = False
+        master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        monitor.request_stop.assert_called_once()
+        monitor.join.assert_called_once()
+
+    def test_natural_end_keeps_watching_until_the_stop_time(self):
+        monitor = MagicMock()
+        monitor.is_alive.side_effect = [True, True, False, False]
+        before_stop = datetime(2026, 10, 23, 15, 20, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=before_stop):
+            master_file._wait_for_position_group_monitor(monitor, natural_eod=True)
+        self.assertGreaterEqual(monitor.join.call_count, 2)
+        monitor.request_stop.assert_called_once()
+
+    def test_wait_is_a_no_op_without_a_monitor(self):
+        master_file._wait_for_position_group_monitor(None, natural_eod=True)
+
+    def test_group_alerts_render_reason_and_pnl(self):
+        text = master_file.format_trade_message({
+            "action": "GROUP_EXIT_FAILED", "strategy": "Position Groups", "direction": "Nov IC",
+            "reason": "stopped at BUY 75 X: REJECTED", "pnl": 15100.0, "mode": "LIVE", "ts": "t",
+        })
+        self.assertIn("stopped at BUY 75 X", text)
+        self.assertIn("Group P&amp;L", text)
+
+    def test_monitor_is_off_by_default_in_the_template(self):
+        template = (REPO_ROOT / "Dependencies" / "env.example").read_text(encoding="utf-8")
+        self.assertIn("\nGROUP_MONITOR_ENABLED=false", template)

@@ -404,7 +404,10 @@ class PositionGroupMonitor(threading.Thread):
                 watches[group.fingerprint] = existing
                 continue
             if group.broker not in self.clients:
-                self._emit("GROUP_UNMONITORABLE", group.name, f"no {group.broker} client is configured")
+                self._emit(
+                    "GROUP_UNMONITORABLE", group.name,
+                    f"no logged-in {group.broker} client (no API key, or its token expired)",
+                )
                 continue
             contracts: dict[tuple[str, str, str], DhanContract] = {}
             missing: list[str] = []
