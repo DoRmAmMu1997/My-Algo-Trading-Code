@@ -67,6 +67,7 @@ component folder's own `Readme.md`.
 | [0018](adr/0018-cpr-algo4-as-separate-worker.md) | CPR Algo 4 is its own worker, not a fourth algo inside the CPR worker |
 | [0019](adr/0019-cpr-ai-trend-day-rider.md) | CPR AI trades the Trend-Day Rider: a backtested gate that Codex may only veto |
 | [0020](adr/0020-a-second-index-on-the-monitoring-chart.md) | The chart gains a NIFTY/BankNIFTY switch, a chart-only indicator menu and hand-drawn S/R: an instrument dimension in the store, the feed-health gate pinned to the primary, browser-side indicator maths kept honest by a node drift test, and drawings in localStorage because the server is GET-only |
+| [0021](adr/0021-position-group-target-monitor.md) | An opt-in thread squares off groups of hand-carried Zerodha/mStock option-selling legs at a rupee target: an operator-owned groups file, prices from the Dhan feed exempt from the feed-health gate, a broker-book pre-check before any order, shorts closed first, no blind retries -- and its own single live switch |
 
 ## Keeping these documents honest
 

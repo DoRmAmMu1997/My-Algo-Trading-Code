@@ -144,6 +144,24 @@ One process, cooperating threads:
   intraday close -- those strategies are untouched, only the input WINDOW differs, and
   a test feeds an untruncated session through both to prove the algebra has not forked.
   See `docs/adr/0017`.
+- An **optional, opt-in position-group target monitor** (`GROUP_MONITOR_ENABLED`, default
+  false; `docs/adr/0021`) watches the operator's CARRIED, hand-placed option-selling
+  positions in a separate Zerodha/mStock account and **squares off a whole group with real
+  orders** once `booked_pnl + Σ(ltp − entry) × qty` holds at/above its target for
+  `GROUP_MONITOR_CONFIRM_TICKS` fresh ticks. Deliberate deviation: that one switch is its
+  ONLY live gate (it ignores `LIVE_TRADING_ENABLED`). The operator owns
+  `Dependencies/position_groups.json` (gitignored; `algo.py group-legs` appends broker legs
+  to `unassigned`, the runner only reads it); the runner owns `position_groups.state.json`,
+  where `SQUARED_OFF`/`EXIT_FAILED` are terminal and `EXITING` reloads as `EXIT_FAILED`.
+  Before any order the broker book must still hold every leg (else NO orders), shorts are
+  bought back before longs are sold, and any order not proven FILLED stops the group with no
+  retry. Its broker clients (`Dependencies/position_brokers.py`, narrow
+  `PositionBrokerClient` surface, `requests`-based, one Kite-shaped base) are NOT
+  `LIVE_BROKER` choices and need a daily `algo.py setup-broker-token`. Legs are priced off
+  the Dhan feed through `OptionSubscription(affects_feed_health=False)`: a watched leg must
+  never trip the feed-health gate that drives the 30-second liquidation, and health
+  ownership is per owner so a contract shared with a trading worker stays gated. It is
+  waited for (until 15:30) only after the unchanged end-of-day sequence.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading). That same `publish_trade_event` choke point also
   mirrors every event into the **crash-durable session state** (`Dependencies/session_state.py`,
@@ -172,7 +190,7 @@ One process, cooperating threads:
 ## Repository layout
 ```
 nifty_multi_strategy_master.py   # the multithreaded paper/live runner (the "big one")
-algo.py                                             # unified CLI: fetch-data / fetch-expired-options / backtest / run / setup-token / diagnose / check-env
+algo.py                                             # unified CLI: fetch-data / fetch-expired-options / backtest / run / setup-token / setup-broker-token / group-legs / diagnose / check-env
 Tests/                                             # EVERY test, mirroring the source tree (docs/adr/0010)
   test_nifty_multi_strategy_master.py              #   unittest suite for the master
   test_market_data_health.py                       #   unittest suite for the shared feed-health gates
@@ -202,6 +220,8 @@ Dependencies/
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
   Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py
   Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py
+  position_group_monitor.py / position_groups.py   # the optional carried-position target monitor
+  position_brokers.py / position_groups_cli.py     #   + its Zerodha/mStock clients and CLI (adr/0021)
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 scripts/check_coverage_thresholds.py               # branch-coverage policy gate
@@ -273,7 +293,8 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   their modules are imported via `load_module()` (master ~L1024), not regular imports; the
   filenames themselves were renamed to identifiers by ADR-0014.
 - **CLI:** prefer `python algo.py <command>` (`fetch-data` / `fetch-expired-options` / `backtest` /
-  `run` / `setup-token` / `diagnose` / `check-env`); each underlying script still runs standalone, and
+  `run` / `setup-token` / `setup-broker-token` / `group-legs` / `diagnose` / `check-env`); each underlying
+  script still runs standalone, and
   any flag beyond the selector passes straight through. A bare `python algo.py` prints help.
   `fetch-expired-options` is a long job (~2,700 calls for a 5-year NIFTY backfill) -- it takes
   `--dry-run` to print the call plan first, and resumes per chunk from its `_manifest.json`.
