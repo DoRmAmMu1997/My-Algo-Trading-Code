@@ -57,7 +57,7 @@ import math
 import sys
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
@@ -95,7 +95,6 @@ ACTIVE = "ACTIVE"
 EXITING = "EXITING"
 SQUARED_OFF = "SQUARED_OFF"
 EXIT_FAILED = "EXIT_FAILED"
-_TERMINAL = frozenset({SQUARED_OFF, EXIT_FAILED})
 
 # Broker exchange code -> (Dhan EXCH_ID in the instrument CSV, Dhan feed segment).
 _EXCHANGE_TO_DHAN = {"NFO": ("NSE", "NSE_FNO"), "BFO": ("BSE", "BSE_FNO")}
@@ -221,15 +220,42 @@ def exit_plan(group: Group, contracts: Mapping[tuple[str, str, str], DhanContrac
     return orders
 
 
+def _held_quantity(leg: Leg, positions: list[Any]) -> int | None:
+    """The broker quantity for this leg IN ITS OWN PRODUCT, or None if ambiguous.
+
+    A broker lists one row per (symbol, product), so a carried NRML leg and an
+    intraday MIS trade on the same strike are two rows.  The closing order is
+    sent in the leg's product, so it must be checked against that product's row
+    alone -- reading the MIS row could pass the check and then flip the NRML
+    position.  A single row with no product label (mStock's documented sample
+    leaves ``product`` blank) is accepted as the leg's; several rows with no
+    matching label are ambiguous and refuse the exit.
+    """
+
+    rows = [p for p in positions if p.exchange == leg.exchange and p.symbol == leg.symbol]
+    if not rows:
+        return 0
+    matching = [p for p in rows if str(p.product_type or "").strip().upper() == leg.product]
+    if len(matching) == 1:
+        return int(matching[0].quantity)
+    if len(rows) == 1 and not str(rows[0].product_type or "").strip():
+        return int(rows[0].quantity)
+    if not matching and all(str(p.product_type or "").strip() for p in rows):
+        # Held, but only in other products: nothing of THIS product to close.
+        return 0
+    return None
+
+
 def holdings_mismatch(group: Group, positions: list[Any]) -> list[str]:
     """Return why the broker book no longer matches the group (empty = safe to close)."""
 
-    held = {(position.exchange, position.symbol): position.quantity for position in positions}
     problems: list[str] = []
     for leg in group.legs:
-        quantity = held.get((leg.exchange, leg.symbol), 0)
-        if quantity == 0:
-            problems.append(f"{leg.symbol}: not held at {group.broker}")
+        quantity = _held_quantity(leg, positions)
+        if quantity is None:
+            problems.append(f"{leg.symbol}: several broker rows, none clearly {leg.product}")
+        elif quantity == 0:
+            problems.append(f"{leg.symbol}: no {leg.product} position held at {group.broker}")
         elif (quantity < 0) != (leg.quantity < 0) or abs(quantity) < abs(leg.quantity):
             problems.append(f"{leg.symbol}: broker holds {quantity}, file says {leg.quantity}")
     return problems
@@ -292,7 +318,6 @@ class _Watch:
     streak: int = 0
     last_pnl: float | None = None
     precheck_alerted: bool = False
-    filled: list[str] = field(default_factory=list)
 
 
 class PositionGroupMonitor(threading.Thread):
@@ -306,6 +331,7 @@ class PositionGroupMonitor(threading.Thread):
         clients: Mapping[str, PositionBrokerClient],
         contract_index_loader: Callable[[], Mapping[ContractKey, DhanContract]],
         subscribe: Callable[[Leg, DhanContract], None],
+        unsubscribe: Callable[[DhanContract], None],
         read_ltp: Callable[[DhanContract], float],
         alert: Callable[[dict[str, Any]], None],
         now: Callable[[], datetime],
@@ -321,6 +347,7 @@ class PositionGroupMonitor(threading.Thread):
         self._contract_index_loader = contract_index_loader
         self._contract_index: Mapping[ContractKey, DhanContract] | None = None
         self._subscribe = subscribe
+        self._unsubscribe = unsubscribe
         self._read_ltp = read_ltp
         self._alert = alert
         self._now = now
@@ -331,6 +358,9 @@ class PositionGroupMonitor(threading.Thread):
         self._config_mtime: float | None = None
         self._bad_mtime_alerted: float | None = None
         self._watches: dict[str, _Watch] = {}
+        # (fingerprint, reason) pairs already alerted as unmonitorable, so a
+        # later edit to some OTHER group does not repeat the same alert.
+        self._unmonitorable_alerted: set[tuple[str, str]] = set()
         self._last_log: datetime | None = None
 
     # -- lifecycle --------------------------------------------------------
@@ -404,9 +434,8 @@ class PositionGroupMonitor(threading.Thread):
                 watches[group.fingerprint] = existing
                 continue
             if group.broker not in self.clients:
-                self._emit(
-                    "GROUP_UNMONITORABLE", group.name,
-                    f"no logged-in {group.broker} client (no API key, or its token expired)",
+                self._unmonitorable(
+                    group, f"no logged-in {group.broker} client (no API key, or its token expired)"
                 )
                 continue
             contracts: dict[tuple[str, str, str], DhanContract] = {}
@@ -418,10 +447,8 @@ class PositionGroupMonitor(threading.Thread):
                 else:
                     contracts[leg.key] = contract
             if missing:
-                self._emit(
-                    "GROUP_UNMONITORABLE",
-                    group.name,
-                    "no Dhan contract for " + ", ".join(missing) + "; this group is NOT watched",
+                self._unmonitorable(
+                    group, "no Dhan contract for " + ", ".join(missing) + "; this group is NOT watched"
                 )
                 continue
             for leg in group.legs:
@@ -432,7 +459,27 @@ class PositionGroupMonitor(threading.Thread):
                 group.name, group.broker, len(group.legs), group.target, group.booked_pnl,
                 self.state.status(group),
             )
+        # Release the feed for groups that left the file or changed their legs --
+        # but never a contract a watched group still uses. Every leg is held
+        # under ONE subscription owner, so releasing a contract the new set
+        # just re-registered would silently unsubscribe it.
+        still_used = {contract for watch in watches.values() for contract in watch.contracts.values()}
+        released: set[DhanContract] = set()
+        for fingerprint, old in self._watches.items():
+            if fingerprint in watches:
+                continue
+            for contract in old.contracts.values():
+                if contract not in still_used and contract not in released:
+                    released.add(contract)
+                    self._unsubscribe(contract)
         self._watches = watches
+
+    def _unmonitorable(self, group: Group, reason: str) -> None:
+        key = (group.fingerprint, reason)
+        if key in self._unmonitorable_alerted:
+            return
+        self._unmonitorable_alerted.add(key)
+        self._emit("GROUP_UNMONITORABLE", group.name, reason)
 
     def _maybe_log(self, now: datetime) -> None:
         if self._last_log and (now - self._last_log).total_seconds() < self.log_every_seconds:
@@ -441,8 +488,8 @@ class PositionGroupMonitor(threading.Thread):
         for watch in self._watches.values():
             pnl = "n/a (a leg has no fresh price)" if watch.last_pnl is None else f"{watch.last_pnl:,.0f}"
             log.info(
-                "Group %r: P&L %s / target %,.0f [%s]",
-                watch.group.name, pnl, watch.group.target, self.state.status(watch.group),
+                "Group %r: P&L %s / target %s [%s]",
+                watch.group.name, pnl, f"{watch.group.target:,.0f}", self.state.status(watch.group),
             )
 
     # -- square-off ----------------------------------------------------------
@@ -473,6 +520,19 @@ class PositionGroupMonitor(threading.Thread):
             )
             return
 
+        try:
+            plan = exit_plan(group, watch.contracts)
+        except ValueError as exc:
+            # E.g. a freeze limit that cannot fit one lot: refuse before any
+            # order rather than leave the group half-planned.
+            self.state.update(group, status=EXIT_FAILED, reason=f"no exit plan: {exc}", last_pnl=pnl)
+            self._emit(
+                "GROUP_EXIT_FAILED", group.name,
+                f"target reached but no exit plan could be built ({exc}); NO orders were sent",
+                pnl=pnl,
+            )
+            return
+
         self.state.update(group, status=EXITING, trigger_pnl=pnl)
         self._emit(
             "GROUP_TARGET_HIT", group.name,
@@ -480,7 +540,7 @@ class PositionGroupMonitor(threading.Thread):
         )
         realised = group.booked_pnl
         done: list[str] = []
-        for number, order in enumerate(exit_plan(group, watch.contracts), start=1):
+        for number, order in enumerate(plan, start=1):
             tag = f"GM{group.fingerprint[:10]}{number:03d}"
             try:
                 result = client.place_market_order(

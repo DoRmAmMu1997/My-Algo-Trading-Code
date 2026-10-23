@@ -14510,14 +14510,32 @@ class TestPositionGroupMonitorWiring(unittest.TestCase):
 
     def test_interrupted_session_stops_the_monitor_at_once(self):
         monitor = MagicMock()
-        monitor.is_alive.return_value = False
+        monitor.is_alive.side_effect = [True, False, False]
         master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
         monitor.request_stop.assert_called_once()
         monitor.join.assert_called_once()
 
-    def test_natural_end_keeps_watching_until_the_stop_time(self):
+    def test_ctrl_c_during_the_final_join_lets_a_square_off_finish(self):
         monitor = MagicMock()
         monitor.is_alive.side_effect = [True, True, False, False]
+        monitor.join.side_effect = [KeyboardInterrupt, None]
+        master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        self.assertEqual(monitor.join.call_count, 2)
+
+    def test_builder_unsubscribe_releases_the_leg(self):
+        store = master_file.SharedMarketDataStore()
+        monitor = self._build(store, None, {})
+        leg = SimpleNamespace(symbol="S", right="CE", strike=24500.0, expiry=date(2026, 11, 26))
+        contract = SimpleNamespace(segment="NSE_FNO", security_id=777)
+        monitor._subscribe(leg, contract)
+        monitor._unsubscribe(contract)
+        self.assertEqual(store.snapshot_option_subscriptions(), [])
+
+    def test_natural_end_keeps_watching_until_the_stop_time(self):
+        monitor = MagicMock()
+        # Alive until it has been joined twice inside the watch loop, i.e. the
+        # monitor ended on its own while the master was still waiting.
+        monitor.is_alive.side_effect = lambda: monitor.join.call_count < 2
         before_stop = datetime(2026, 10, 23, 15, 20, tzinfo=master_file.IST_TIMEZONE)
         with patch.object(master_file, "_ist_now", return_value=before_stop):
             master_file._wait_for_position_group_monitor(monitor, natural_eod=True)

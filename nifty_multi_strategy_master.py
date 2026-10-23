@@ -19950,6 +19950,11 @@ def _build_position_group_monitor(
             owner_id="position_group_monitor",
         )
 
+    def unsubscribe(contract) -> None:
+        store.unregister_option_subscription(
+            contract.segment, contract.security_id, owner_id="position_group_monitor"
+        )
+
     def read_ltp(contract) -> float:
         return store.get_ltp_by_secid(
             contract.segment,
@@ -19964,6 +19969,7 @@ def _build_position_group_monitor(
         clients=clients,
         contract_index_loader=load_contract_index,
         subscribe=subscribe,
+        unsubscribe=unsubscribe,
         read_ltp=read_ltp,
         alert=alert,
         now=lambda: _ist_now().replace(tzinfo=None),
@@ -19993,7 +19999,17 @@ def _wait_for_position_group_monitor(monitor: Any, *, natural_eod: bool) -> None
         except KeyboardInterrupt:
             logger.warning("Interrupt received: stopping the position-group monitor.")
     monitor.request_stop()
-    monitor.join(timeout=GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS)
+    # A square-off may be mid-way through its orders, so a further Ctrl+C is
+    # ignored here (as the worker shutdown does) instead of abandoning it.
+    deadline = time.monotonic() + GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS
+    while monitor.is_alive() and time.monotonic() < deadline:
+        try:
+            monitor.join(timeout=max(0.0, min(1.0, deadline - time.monotonic())))
+        except KeyboardInterrupt:
+            logger.error(
+                "Interrupt ignored: the position-group monitor may be mid-square-off; "
+                "waiting up to %.0fs for it to finish.", GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS,
+            )
     if monitor.is_alive():
         logger.error(
             "Position-group monitor did not stop within %.0fs; check %s for a group "

@@ -108,6 +108,8 @@ class Harness:
         self.prices: dict[int, float] = {111: 100.0, 222: 40.0}
         self.alerts: list[dict[str, Any]] = []
         self.subscribed: list[int] = []
+        self.unsubscribed: list[int] = []
+        self.feed_log: list[tuple[str, int]] = []
         self.broker = FakeBroker()
         self.now = MARKET_TIME
         self.index_loads = 0
@@ -123,7 +125,8 @@ class Harness:
             state_path=self.state_path,
             clients={"ZERODHA": self.broker},
             contract_index_loader=load_index,
-            subscribe=lambda _leg, contract: self.subscribed.append(contract.security_id),
+            subscribe=lambda _leg, contract: self._feed("sub", contract.security_id),
+            unsubscribe=lambda contract: self._feed("unsub", contract.security_id),
             read_ltp=lambda contract: self.prices.get(contract.security_id, 0.0),
             alert=self.alerts.append,
             now=lambda: self.now,
@@ -142,6 +145,17 @@ class Harness:
     def ticks(self, count: int) -> None:
         for _ in range(count):
             self.monitor.tick()
+
+    def _feed(self, kind: str, security_id: int) -> None:
+        (self.subscribed if kind == "sub" else self.unsubscribed).append(security_id)
+        self.feed_log.append((kind, security_id))
+
+    def live_feed(self) -> set[int]:
+        """Replay the feed log with the store's semantics: ONE owner per contract."""
+        live: set[int] = set()
+        for kind, security_id in self.feed_log:
+            (live.add if kind == "sub" else live.discard)(security_id)
+        return live
 
     def actions(self) -> list[str]:
         return [alert["action"] for alert in self.alerts]
@@ -429,3 +443,75 @@ def test_alert_events_carry_the_telegram_fields(tmp_path: Path) -> None:
     event = h.alerts[0]
     assert event["strategy"] == monitor_module.STRATEGY_LABEL
     assert event["direction"] == "Spread" and event["mode"] == "LIVE" and "pnl" in event
+
+
+# --- self-review fixes ------------------------------------------------------------
+def _held(*rows: tuple[str, str, int]) -> list[PositionDetail]:
+    return [PositionDetail(symbol=s, exchange="NFO", product_type=p, quantity=q) for s, p, q in rows]
+
+
+def test_precheck_reads_only_the_legs_own_product_row() -> None:
+    (group,) = parse_config(config_document()).groups
+    # NRML short is down to -50; a larger intraday MIS row must not mask that.
+    rows = _held((SHORT_CE, "NRML", -50), (SHORT_CE, "MIS", -200), (LONG_CE, "NRML", 150))
+    assert any("broker holds -50" in p for p in holdings_mismatch(group, rows))
+    rows = _held((SHORT_CE, "MIS", -200), (SHORT_CE, "NRML", -150), (LONG_CE, "NRML", 150))
+    assert holdings_mismatch(group, rows) == []
+
+
+def test_precheck_product_edge_cases() -> None:
+    (group,) = parse_config(config_document()).groups
+    long_ok = (LONG_CE, "NRML", 150)
+    # One unlabelled row (mStock's sample shape) counts as the leg's own.
+    assert holdings_mismatch(group, _held((SHORT_CE, "", -150), long_ok)) == []
+    # Held only intraday: nothing NRML to close.
+    assert any("no NRML" in p for p in holdings_mismatch(group, _held((SHORT_CE, "MIS", -150), long_ok)))
+    # Two unlabelled rows: ambiguous, refuse.
+    ambiguous = _held((SHORT_CE, "", -150), (SHORT_CE, "", -75), long_ok)
+    assert any("several broker rows" in p for p in holdings_mismatch(group, ambiguous))
+
+
+def test_unplannable_exit_fails_before_any_order(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    broken = dict(CONTRACTS)
+    broken[("NSE", "NIFTY", date(2025, 11, 27), 2450000, "CE")] = DhanContract("NSE_FNO", 111, 75, 50)
+    h.monitor._contract_index_loader = lambda: broken
+    h.set_pnl(1.0, 40.0)
+    h.ticks(3)
+    assert h.broker.orders == []
+    assert h.actions() == ["GROUP_EXIT_FAILED"]
+    assert h.state()["status"] == "EXIT_FAILED"
+    assert "no exit plan" in h.state()["reason"]
+
+
+def test_periodic_pnl_log_formats_cleanly(tmp_path: Path, caplog, capsys) -> None:
+    h = Harness(tmp_path)
+    h.set_pnl(95.0, 40.0)
+    with caplog.at_level("INFO", logger=monitor_module.log.name):
+        h.ticks(1)
+    assert "P&L 750 / target 1,000 [ACTIVE]" in caplog.text
+    assert "Logging error" not in capsys.readouterr().err
+
+
+def test_unmonitorable_alert_is_not_repeated_on_unrelated_edits(tmp_path: Path) -> None:
+    legs = [leg(SHORT_CE, -150, 100.0, 24500), leg("NIFTY25N2799900CE", 150, 1.0, 99900)]
+    h = Harness(tmp_path, config_document(legs=legs))
+    h.ticks(1)
+    for target in (2000, 3000):
+        h.write(config_document(legs=legs, target=target))
+        h.ticks(1)
+    assert h.actions() == ["GROUP_UNMONITORABLE"]
+
+
+def test_removed_group_releases_its_feed_subscriptions(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.ticks(1)
+    # Same contracts, different quantities: a new group, but the feed must stay.
+    h.write(config_document(legs=[leg(SHORT_CE, -75, 100.0, 24500), leg(LONG_CE, 75, 40.0, 25000)]))
+    h.ticks(1)
+    assert h.unsubscribed == []
+    assert h.live_feed() == {111, 222}
+    h.write({"schema_version": 1, "groups": [], "unassigned": []})
+    h.ticks(1)
+    assert sorted(h.unsubscribed) == [111, 222]
+    assert h.live_feed() == set()
