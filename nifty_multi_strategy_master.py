@@ -741,6 +741,37 @@ DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS = min(
     max(_env_float("DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS", 2.0), 0.5), 15.0
 )
 
+# -----------------------------------------------------------------------------
+# Optional position-group target monitor (Dependencies/position_group_monitor.py,
+# docs/adr/0021). Watches the operator's CARRIED option-selling positions in a
+# separate broker account (Zerodha / mStock), groups them as
+# Dependencies/position_groups.json says, prices them off this runner's Dhan
+# feed, and SQUARES OFF A WHOLE GROUP WITH REAL ORDERS once its P&L reaches the
+# group's target. Off by default. Deliberately independent of
+# LIVE_TRADING_ENABLED: enabling the monitor IS the live switch for it, so the
+# intraday strategies can stay on paper while it acts on real positions.
+# -----------------------------------------------------------------------------
+GROUP_MONITOR_ENABLED = _env_bool("GROUP_MONITOR_ENABLED", False)
+GROUP_MONITOR_FILE = _env_str(
+    "GROUP_MONITOR_FILE", str(ROOT_DIR / "Dependencies" / "position_groups.json")
+).strip()
+GROUP_MONITOR_STATE_FILE = _env_str(
+    "GROUP_MONITOR_STATE_FILE", str(ROOT_DIR / "Dependencies" / "position_groups.state.json")
+).strip()
+GROUP_MONITOR_POLL_SECONDS = min(max(_env_float("GROUP_MONITOR_POLL_SECONDS", 1.0), 0.5), 30.0)
+# Consecutive fresh ticks at/above target before a square-off fires, so one
+# odd print on an illiquid strike cannot close a three-month position.
+GROUP_MONITOR_CONFIRM_TICKS = min(max(_env_int("GROUP_MONITOR_CONFIRM_TICKS", 3), 1), 60)
+# A leg priced older than this counts as unpriced, and its group is skipped.
+GROUP_MONITOR_MAX_LTP_AGE_SECONDS = min(
+    max(_env_float("GROUP_MONITOR_MAX_LTP_AGE_SECONDS", 10.0), 2.0), 120.0
+)
+# The monitor keeps watching after the strategies' 15:15 square-off, until here.
+GROUP_MONITOR_STOP_TIME = dt_time(15, 30)
+# A square-off in progress is allowed to finish at shutdown (each order is
+# bounded by its broker's own deadlines); the monitor is a daemon after this.
+GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS = 120.0
+
 
 # Telegram trade-notification settings. See Dependencies/.env for the one-time
 # bot/channel setup. When disabled (or token/chat blank) the notifier thread is
@@ -2276,6 +2307,11 @@ class OptionSubscription:
     right: str
     strike: float
     expiry: date | None
+    # False for a leg that is only WATCHED, never traded, by this runner (the
+    # position-group monitor's carried legs). It is still fetched and kept
+    # fresh, but a missing or stale price on it must never trip the feed-health
+    # gate -- that gate drives the 30-second liquidation of every live strategy.
+    affects_feed_health: bool = True
 
 
 # =============================================================================
@@ -2397,6 +2433,10 @@ class SharedMarketDataStore:
         # Track logical owners separately so one worker's exit cannot tear down
         # another worker's still-open market-data leg.
         self._option_subscription_owners: dict[tuple[str, int], set[str]] = {}
+        # The subset of each key's owners that need it health-gated. A contract
+        # the group monitor shares with a trading worker stays gated for exactly
+        # as long as that worker holds it.
+        self._option_subscription_health_owners: dict[tuple[str, int], set[str]] = {}
         self.market_data_health = MarketDataHealth()
         self.execution_safety = ExecutionSafetyCoordinator()
         # The execution ledger is separate from market-data snapshots because it
@@ -2632,6 +2672,11 @@ class SharedMarketDataStore:
             owners = self._option_subscription_owners.setdefault(key, set())
             newly_owned = normalized_owner not in owners
             owners.add(normalized_owner)
+            health_owners = self._option_subscription_health_owners.setdefault(key, set())
+            if subscription.affects_feed_health:
+                health_owners.add(normalized_owner)
+            else:
+                health_owners.discard(normalized_owner)
             self._option_subscriptions[key] = subscription
             return newly_owned
 
@@ -2659,16 +2704,28 @@ class SharedMarketDataStore:
             if owners is None:
                 return
             owners.discard(normalized_owner)
+            self._option_subscription_health_owners.get(key, set()).discard(normalized_owner)
             if owners:
                 return
             self._option_subscription_owners.pop(key, None)
+            self._option_subscription_health_owners.pop(key, None)
             self._option_subscriptions.pop(key, None)
             self._ltp_snapshots.pop(key, None)
 
     def snapshot_option_subscriptions(self) -> list[OptionSubscription]:
-        """Return a list copy of all currently subscribed option legs."""
+        """Return a list copy of all currently subscribed option legs.
+
+        Each copy's ``affects_feed_health`` is true when ANY current owner needs
+        the leg health-gated, whatever the last registrant asked for.
+        """
         with self._lock:
-            return list(self._option_subscriptions.values())
+            return [
+                replace(
+                    subscription,
+                    affects_feed_health=bool(self._option_subscription_health_owners.get(key)),
+                )
+                for key, subscription in self._option_subscriptions.items()
+            ]
 
     # ------------------------------------------------------------------
     # Whole-feed health
@@ -4122,11 +4179,14 @@ class CentralMarketDataFetcher(threading.Thread):
             if int(sub.security_id) not in securities[segment]:
                 securities[segment].append(int(sub.security_id))
 
-        required_keys = {
-            (segment, int(security_id))
-            for segment, security_ids in securities.items()
-            for security_id in security_ids
-        }
+        # Every leg is fetched, but only health-gated legs (and the index) are
+        # REQUIRED: a watched-only leg must not be able to trip liquidation.
+        required_keys = {(NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)}
+        required_keys.update(
+            (str(sub.exchange_segment), int(sub.security_id))
+            for sub in subscriptions
+            if sub.affects_feed_health
+        )
 
         try:
             ltp_map = self.broker.fetch_ltp_map(securities)
@@ -4665,11 +4725,18 @@ class WebSocketMarketDataFetcher(threading.Thread):
         ):
             return
         self._last_health_monotonic = now_monotonic
+        subscriptions = self.store.snapshot_option_subscriptions()
         required_keys = {(NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)}
         required_keys.update(
             (str(sub.exchange_segment), int(sub.security_id))
-            for sub in self.store.snapshot_option_subscriptions()
+            for sub in subscriptions
+            if sub.affects_feed_health
         )
+        # Watched-only legs are re-stamped too (a quiet strike is not a dead
+        # feed) but stay out of required_keys, so they cannot trip liquidation.
+        subscribed_keys = required_keys | {
+            (str(sub.exchange_segment), int(sub.security_id)) for sub in subscriptions
+        }
         with self._feed_lock:
             alive = (
                 self._last_packet_monotonic is not None
@@ -4678,7 +4745,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
             )
             confirmed = set(self._confirmed_keys)
         if alive:
-            touchable = required_keys & confirmed
+            touchable = subscribed_keys & confirmed
             if touchable:
                 self.store.touch_ltp_freshness(touchable)
         health = self.store.record_market_data_refresh(
@@ -17222,10 +17289,14 @@ def format_trade_message(event: dict) -> str:
         )
         if reason:
             lines.append(f"Reason: {reason}")
-    elif action == "EXIT_FAILED":
+    elif action == "EXIT_FAILED" or action.startswith("GROUP_"):
+        # GROUP_* come from the position-group monitor: the reason IS the
+        # message (what triggered, what filled, what is still open).
         reason = html.escape(str(event.get("reason", "")))
         if reason:
             lines.append(f"Reason: {reason}")
+        if action.startswith("GROUP_") and event.get("pnl") is not None:
+            lines.append(f"Group P&amp;L: <b>{_format_inr(event['pnl'])}</b>")
 
     for leg in legs:
         symbol = html.escape(str(leg.get("symbol", "?")))
@@ -19803,6 +19874,150 @@ def _emit_supervisor_heartbeat(
     return now
 
 
+def _latest_dhan_instrument_master() -> Path | None:
+    """Newest ``all_instrument <date>.csv`` by modification time, or None."""
+
+    matches = glob.glob(INSTRUMENT_MASTER_GLOB)
+    return Path(max(matches, key=os.path.getmtime)) if matches else None
+
+
+def _build_position_group_monitor(
+    store: SharedMarketDataStore,
+    event_queue: queue.Queue | None,
+    *,
+    client_classes: Mapping[str, Any] | None = None,
+) -> Any:
+    """Construct the optional position-group monitor, or return None.
+
+    Imported lazily so a disabled monitor costs nothing and a missing
+    dependency only disables the monitor. Each broker whose API key is in
+    ``.env`` is logged in NOW, in the open: an expired token is reported at
+    startup with an alert, not discovered at the moment a target is hit. A
+    group on a broker that did not log in is then reported unmonitorable.
+    """
+
+    # importlib rather than `from Dependencies... import`: these modules import
+    # their siblings by BARE name (as the broker adapters do), and a static
+    # import here would make mypy see broker_contract under two module names --
+    # the clash the CI workflow's separate master mypy run exists to avoid.
+    brokers_module = importlib.import_module("Dependencies.position_brokers")
+    monitor_module = importlib.import_module("Dependencies.position_group_monitor")
+    POSITION_CLIENT_CLASSES = brokers_module.POSITION_CLIENT_CLASSES
+    PositionGroupMonitor = monitor_module.PositionGroupMonitor
+    build_dhan_contract_index = monitor_module.build_dhan_contract_index
+
+    def alert(event: dict) -> None:
+        if event_queue is not None:
+            event_queue.put_nowait(event)
+
+    clients: dict[str, Any] = {}
+    for name, factory in (client_classes or POSITION_CLIENT_CLASSES).items():
+        client = factory()
+        if not _env_str(client.api_key_env, ""):
+            continue
+        if client.ensure_logged_in():
+            clients[name] = client
+            continue
+        logger.error(
+            "Position-group monitor: %s login failed; its groups are NOT watched this "
+            "session. Run 'python algo.py setup-broker-token --broker %s' and restart.",
+            name, name.lower(),
+        )
+        alert({
+            "action": "GROUP_BROKER_LOGIN_FAILED", "strategy": "Position Groups",
+            "direction": name, "mode": "LIVE", "ts": _ist_now().isoformat(timespec="seconds"),
+            "reason": f"{name} login failed; groups on it are NOT watched. Refresh the token and restart.",
+        })
+
+    def load_contract_index():
+        path = _latest_dhan_instrument_master()
+        if path is None:
+            logger.error("Position-group monitor: no Dhan instrument master found; nothing can be priced.")
+            return {}
+        return build_dhan_contract_index(path)
+
+    def subscribe(leg, contract) -> None:
+        store.register_option_subscription(
+            OptionSubscription(
+                security_id=contract.security_id,
+                exchange_segment=contract.segment,
+                trading_symbol=leg.symbol,
+                right=leg.right,
+                strike=leg.strike,
+                expiry=leg.expiry,
+                affects_feed_health=False,
+            ),
+            owner_id="position_group_monitor",
+        )
+
+    def unsubscribe(contract) -> None:
+        store.unregister_option_subscription(
+            contract.segment, contract.security_id, owner_id="position_group_monitor"
+        )
+
+    def read_ltp(contract) -> float:
+        return store.get_ltp_by_secid(
+            contract.segment,
+            contract.security_id,
+            0.0,
+            max_age_seconds=GROUP_MONITOR_MAX_LTP_AGE_SECONDS,
+        )
+
+    return PositionGroupMonitor(
+        config_path=Path(GROUP_MONITOR_FILE),
+        state_path=Path(GROUP_MONITOR_STATE_FILE),
+        clients=clients,
+        contract_index_loader=load_contract_index,
+        subscribe=subscribe,
+        unsubscribe=unsubscribe,
+        read_ltp=read_ltp,
+        alert=alert,
+        now=lambda: _ist_now().replace(tzinfo=None),
+        poll_seconds=GROUP_MONITOR_POLL_SECONDS,
+        confirm_ticks=GROUP_MONITOR_CONFIRM_TICKS,
+    )
+
+
+def _wait_for_position_group_monitor(monitor: Any, *, natural_eod: bool) -> None:
+    """Let the monitor watch until GROUP_MONITOR_STOP_TIME, then stop it.
+
+    Called after the strategies have finished (their 15:15 square-off), while
+    the market-data fetcher is still running. An interrupted session stops the
+    monitor at once. A square-off already in progress is allowed to finish.
+    """
+
+    if monitor is None:
+        return
+    if natural_eod:
+        logger.info(
+            "Strategies are done; the position-group monitor keeps watching until %s.",
+            GROUP_MONITOR_STOP_TIME.strftime("%H:%M"),
+        )
+        try:
+            while monitor.is_alive() and _ist_now().time() < GROUP_MONITOR_STOP_TIME:
+                monitor.join(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.warning("Interrupt received: stopping the position-group monitor.")
+    monitor.request_stop()
+    # A square-off may be mid-way through its orders, so a further Ctrl+C is
+    # ignored here (as the worker shutdown does) instead of abandoning it.
+    deadline = time.monotonic() + GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS
+    while monitor.is_alive() and time.monotonic() < deadline:
+        try:
+            monitor.join(timeout=max(0.0, min(1.0, deadline - time.monotonic())))
+        except KeyboardInterrupt:
+            logger.error(
+                "Interrupt ignored: the position-group monitor may be mid-square-off; "
+                "waiting up to %.0fs for it to finish.", GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS,
+            )
+    if monitor.is_alive():
+        logger.error(
+            "Position-group monitor did not stop within %.0fs; check %s for a group "
+            "left EXITING and the broker book by hand.",
+            GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS, GROUP_MONITOR_STATE_FILE,
+        )
+
+
 def _start_and_supervise_runtime_threads(
     fetcher: MarketDataFetcher,
     telegram_worker: TelegramMessageWorker | None,
@@ -20548,6 +20763,27 @@ def main() -> None:
     else:
         logger.info("Monitoring dashboard disabled (DASHBOARD_ENABLED=false).")
 
+    # -------------------------------------------------------------------------
+    # Optional position-group target monitor (real orders on carried positions).
+    # -------------------------------------------------------------------------
+    # Built after Telegram so its alerts have a queue, and started just before
+    # the fetcher: its first ticks simply see no fresh prices yet. A failure here
+    # disables the monitor only -- never the strategies.
+    group_monitor = None
+    if GROUP_MONITOR_ENABLED:
+        try:
+            group_monitor = _build_position_group_monitor(store, trade_event_queue)
+            group_monitor.start()
+            logger.warning(
+                "Position-group monitor ENABLED (%s): groups reaching their target are "
+                "squared off with REAL orders.", GROUP_MONITOR_FILE,
+            )
+        except Exception:  # noqa: BLE001 - an optional monitor must never stop a session
+            group_monitor = None
+            logger.exception("Could not start the position-group monitor; continuing without it.")
+    else:
+        logger.info("Position-group monitor disabled (GROUP_MONITOR_ENABLED=false).")
+
     natural_eod = _start_and_supervise_runtime_threads(
         fetcher,
         telegram_worker,
@@ -20618,6 +20854,12 @@ def main() -> None:
                 "Monitoring dashboard did not stop cleanly; the process still exits."
             )
 
+    # The position-group monitor outlives the strategies (it watches carried
+    # positions until GROUP_MONITOR_STOP_TIME) but needs the fetcher and the
+    # notifier, so it is waited for AFTER the unchanged end-of-day sequence above
+    # and BEFORE they are released.
+    _wait_for_position_group_monitor(group_monitor, natural_eod=natural_eod)
+
     # Only a fully finalized flat session may release the fetcher/notifier.
     stop_event.set()
     for worker in workers:
@@ -20626,7 +20868,7 @@ def main() -> None:
     if telegram_worker is not None:
         telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
-    supervised_threads = [fetcher, telegram_worker, *workers]
+    supervised_threads = [fetcher, telegram_worker, group_monitor, *workers]
     alive_threads = [
         thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
     ]

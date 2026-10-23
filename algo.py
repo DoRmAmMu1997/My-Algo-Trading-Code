@@ -41,6 +41,16 @@ The commands:
                Interactive (opens a browser / asks you to paste a code).
       python algo.py setup-token
 
+  setup-broker-token  Daily interactive login for the position-group monitor's
+               brokers; writes <BROKER>_ACCESS_TOKEN into .env.
+      python algo.py setup-broker-token --broker zerodha
+      python algo.py setup-broker-token --broker mstock
+
+  group-legs   Add newly found carried broker legs to Dependencies/position_groups.json
+               (read-only towards the broker), or validate that file with --check.
+      python algo.py group-legs --broker zerodha
+      python algo.py group-legs --check
+
   diagnose     Read-only broker connectivity + option-symbol check (can optionally
                place a confirmation-gated round-trip TEST order with --place-order).
       python algo.py diagnose --broker kotak CE 23950
@@ -121,6 +131,12 @@ BROKER_DIAGNOSTICS = {
 # Commands that always map to exactly one script (no selector needed).
 MASTER_SCRIPT = "nifty_multi_strategy_master.py"
 TOKEN_SETUP_SCRIPT = "Dependencies/dhan_token_setup.py"
+POSITION_BROKER_TOKEN_SCRIPT = "Dependencies/position_broker_token_setup.py"
+GROUP_LEGS_SCRIPT = "Dependencies/position_groups_cli.py"
+
+# `setup-broker-token --broker <key>`: the brokers the position-group monitor
+# reads carried positions from. Not LIVE_BROKER choices.
+POSITION_BROKERS = ("mstock", "zerodha")
 CHECK_ENV_SCRIPT = "Dependencies/check_env_config.py"
 
 
@@ -198,6 +214,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="One-time interactive DhanHQ login that writes a fresh token into .env.",
     )
 
+    broker_token = sub.add_parser(
+        "setup-broker-token",
+        help="Daily interactive login for a position-group monitor broker (writes its token into .env).",
+    )
+    broker_token.add_argument(
+        "--broker", required=True, choices=POSITION_BROKERS,
+        help="Which broker to log in to.",
+    )
+
+    sub.add_parser(
+        "group-legs",
+        help="Add new carried broker legs to the position-groups file (--broker X), or --check it.",
+    )
+
     diagnose = sub.add_parser(
         "diagnose",
         help="Read-only broker connectivity / option-symbol check (supports --place-order).",
@@ -245,6 +275,10 @@ def main(argv=None) -> int:
         return _run(MASTER_SCRIPT, forwarded)
     if args.command == "setup-token":
         return _run(TOKEN_SETUP_SCRIPT, forwarded)
+    if args.command == "setup-broker-token":
+        return _run(POSITION_BROKER_TOKEN_SCRIPT, ["--broker", args.broker, *forwarded])
+    if args.command == "group-legs":
+        return _run(GROUP_LEGS_SCRIPT, forwarded)
     if args.command == "diagnose":
         return _run(BROKER_DIAGNOSTICS[args.broker], forwarded)
     if args.command == "check-env":

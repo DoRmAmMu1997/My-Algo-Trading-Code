@@ -414,6 +414,72 @@ def test_open_snapshot_types_reuse_contract_invariants() -> None:
         )
 
 
+def test_position_detail_carries_price_and_contract_identity() -> None:
+    contract = _contract_module()
+    detail = contract.PositionDetail(
+        symbol="NIFTY25N2724500CE",
+        exchange="NFO",
+        product_type="NRML",
+        quantity=-75,
+        average_price=120.5,
+        underlying="NIFTY",
+        expiry=date(2025, 11, 27),
+        strike=24500.0,
+        right="CE",
+    )
+    assert detail.quantity == -75
+    with pytest.raises(FrozenInstanceError):
+        detail.quantity = 75  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"quantity": 0}, "never flat"),
+        ({"quantity": True}, "integer"),
+        ({"quantity": 7.5}, "integer"),
+        ({"average_price": -1.0}, "non-negative"),
+        ({"average_price": float("nan")}, "non-negative"),
+        ({"right": "FUT"}, "right"),
+    ],
+)
+def test_position_detail_rejects_impossible_rows(overrides, message) -> None:
+    contract = _contract_module()
+    fields = {"symbol": "X", "exchange": "NFO", "product_type": "NRML", "quantity": 75}
+    fields.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        contract.PositionDetail(**fields)
+
+
+def test_position_broker_protocol_is_the_narrow_monitor_surface() -> None:
+    contract = _contract_module()
+
+    class FakePositionBroker:
+        broker_name = "ZERODHA"
+        is_logged_in = True
+
+        def ensure_logged_in(self):
+            return True
+
+        def list_position_details(self):
+            return contract.BrokerQueryResult.success([])
+
+        def place_market_order(
+            self, symbol, side, quantity, exchange_segment, product_type, *, order_tag=""
+        ):
+            return None
+
+        def get_order_status(self, order_id, requested_quantity=0):
+            return None
+
+        def logout(self):
+            return {}
+
+    assert isinstance(FakePositionBroker(), contract.PositionBrokerClient)
+    # A position broker is not a full execution client: it has no resolver.
+    assert not isinstance(FakePositionBroker(), contract.ExecutionClient)
+
+
 def test_indeterminate_query_uses_safe_defaults() -> None:
     contract = _contract_module()
     result = contract.BrokerQueryResult.indeterminate(" ", broker_state=" timed-out ")
