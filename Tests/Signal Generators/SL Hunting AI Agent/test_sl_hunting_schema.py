@@ -3864,3 +3864,47 @@ def test_v5x_stop_fires_on_a_close_and_goes_beyond_the_named_level():
     assert "the stop, by default, only when a completed 1-minute NIFTY candle CLOSES beyond it" in text
     assert "position_state's stop_fires says how the open stop actually fires" in text
     assert "`stop_fires`" in POSITION_STATE_DESCRIPTION
+
+
+def test_v5y_a_straight_run_books_at_its_target_and_only_a_pulled_back_run_is_raised():
+    """v5y (23 Oct, measured): narrows v5w's raise arm.
+
+    A move that reaches the target without a pullback gave back after it in every
+    variant tested; a move that had already pulled back was flat. So a straight run
+    is booked by its mechanical target -- never early (v5w stands) and never raised --
+    and MODIFY_TARGET is kept for a run that already absorbed a real retracement.
+    The test pins the rule, its evidence, its placement between v5w and PROFIT-HOLD,
+    the pointer left inside v5w, and the order tool's description of MODIFY_TARGET.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK")
+    assert rule.startswith("- A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK (v5y).")
+    assert "This narrows v5w's \"RAISE it with MODIFY_TARGET while the run keeps going\"" in rule
+    assert "the retracement has already happened, so the risk of a retracement is lower now" in rule
+    # The measurement, both arms, and its robustness.
+    assert "Straight runs, with no pullback over 10 points before the target (47 sessions)" in rule
+    assert "stood 5.2 points WORSE 15 minutes after the target" in rule
+    assert "Runs that had pulled back 20+ points first were flat (+0.7)" in rule
+    assert "negative in all 12 variants tried" in rule
+    # What it changes.
+    assert "a run that has NOT pulled back is booked by its mechanical target" in rule
+    assert "Do not book it early (v5w still holds), and do not RAISE it" in rule
+    assert "MODIFY_TARGET is for a run that has ALREADY absorbed a real retracement" in rule
+    assert "about 20 NIFTY points or more from its best price since the entry" in rule
+    assert "is IH's practice, not a measured edge" in rule
+    # The case that produced it.
+    assert "zero meaningful retracement since entry" in rule
+    # Placement and the pointer inside v5w.
+    v5w = prompt.index("\n- A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN")
+    v5y = prompt.index("\n- A STRAIGHT RUN BOOKS AT ITS TARGET")
+    hold = prompt.index("\n- PROFIT-HOLD")
+    assert v5w < v5y < hold
+    v5w_rule = _flat_rule(prompt, "A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN")
+    assert ("[Narrowed by v5y, below: raise only a run that has ALREADY pulled back; "
+            "a straight run is booked by its target.]") in v5w_rule
+    # The order tool says the same thing, and no longer offers raising a straight run.
+    from sl_hunting_tools import order_tool_description
+    text = " ".join(order_tool_description("paper").split())
+    assert "It is for a run that has ALREADY taken a real retracement and is moving again (v5y)" in text
+    assert "a straight run is booked by its target" in text
+    assert "has not pulled back gets more room" not in text

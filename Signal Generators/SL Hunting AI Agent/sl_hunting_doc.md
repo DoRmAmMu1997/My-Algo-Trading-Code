@@ -11402,3 +11402,153 @@ these mutations fails it, and the unmutated note passes:
 * BankNIFTY's support recorded as the spoken 54,400;
 * the "do not target either crowd" clause dropped;
 * the Sensex support moved to 72,200.
+
+## v5y - 23 Oct live match: a straight run books at its target
+
+**Sources.**
+
+- **IH's live session:** `PbYJghYguf4`, uploaded 2026-10-23 10:43 IST. He traded
+  on the 23 Oct note (`E8ZaDDdgnio`: SELL on every open). Clock times come from
+  the taskbar clock in the frame, and his words are my translation of the Hindi
+  auto-transcript (`PbYJghYguf4-transcript.txt` in the archive).
+- **This book:** three journal rows, 84 decisions (3 agent errors) and the runner
+  log. The model was `claude-sonnet-5`, and calls took a median 29.3 s (p95
+  44.6 s, worst 65.9 s).
+- **The runner:** `main` at `4768a24`, so v5x, SLH-026 and SLH-027 were live and
+  the note injected (1,412 chars).
+  - The operator stopped it at 10:03 and restarted it at 10:04 with
+    `LIVE_TRADING_ENABLED=false`, so the third trade was paper.
+- **The 5-year NIFTY and BankNIFTY CSVs**, now through 23 Oct.
+
+**Adopted: v5y**, measured. The other candidates were refused.
+
+### The session
+
+The open was FLAT on the computed verdict (NIFTY +0.33%, BankNIFTY +0.24%).
+NIFTY made the day's high of 22,787.25 at 09:16, bounced to 22,763.50 at 09:27,
+then sold off: 22,600 at 10:00 and 22,471.60 at 10:15. It made the low of
+22,372.00 at 12:51, and the 3:15 level was 22,517.00 (-0.66%). BankNIFTY broke
+54,500 at about 09:58.
+
+| | IH | the agent |
+|---|---|---|
+| read | yesterday's recovery evicted the sellers, with no big crowd left on either side: follow the continued selling | the note's SELL branch on a FLAT open |
+| entry | **09:22**: puts, SENSEX x900 and NIFTY x1,430 among the legs | **09:31** SHORT 22,729.85 (live) · **09:44** SHORT 22,702.00 (live) · **10:13** SHORT 22,516.85 (paper) |
+| path | about 1 lakh down on the 09:27 bounce, which he called a retracement that "is good for us" | 09:29 SHORT refused by sizing (41-pt stop); 09:31 took it with the SAME stop from a better entry (34 pts) |
+| exit | about **09:58-09:59**: held past his target, booked as BankNIFTY broke 54,500 ("retracement risk rises after the breakdown") | AI_TARGET 09:35 (+61.3 pts) · AI_TARGET **09:58** (+84.0 pts) · own exit 10:44 (+1.7 pts) |
+| result | target over-achieved (the figure is not legible) | live **+6,579.50**; paper **-2,017.00** (the BankNIFTY mirror leg gave back) |
+
+The live book and IH were on the same side, and the agent's second target filled
+in the minute he booked. Its 09:31 stop sat "above the double-top high (22764)
+rather than inside it", which is v5x's placement rule in its own words.
+
+The 10:13 paper short is where it diverged. It came 15 minutes after BankNIFTY's
+break. At 10:18 the agent raised its target from 22,420 to 22,400 with
+MODIFY_TARGET, citing a "runaway trend... zero meaningful retracement since
+entry". It exited at 10:44, once BankNIFTY traded through its reversal cluster
+(v5w's play-out condition).
+
+### Measured
+
+**1. Retracement timing: ADOPTED as v5y.** IH: "if the retracement had not
+happened and the momentum had come continuously, we would have had to run. But
+the retracement has already happened, so the risk of a retracement is lower
+now."
+
+- **Setup.** On the 5-year NIFTY CSV, enter at 09:20, 09:35 and 10:00 following
+  the move since 09:15 (at least 0.15%). Take every entry that reached +45
+  points, measure the pullback taken BEFORE that, and score the next 15 minutes.
+- **Scoring.** "Extend" means +25 more points came before 20 points were given
+  back; "giveback" means the reverse.
+
+| before the target | n | extend | giveback | drift after 15 min |
+|---|---|---|---|---|
+| straight run (pullback < 10) | 47 | 38% | 51% | **-5.2** (2021-23 -5.0, 2024-26 -5.2) |
+| pullback 10-20 | 171 | 36% | 37% | -0.7 |
+| pullback >= 20 | 685 | 35% | 41% | +0.7 |
+
+**Robustness.** Straight runs were negative in all 12 variants:
+
+- targets of 35, 45 and 60 points;
+- 10-, 15- and 20-minute windows;
+- straight-run cutoffs of under 8, 10 and 12 points;
+- both halves of the data, every time.
+
+The 21 Oct test of the book's own no-pullback profitable exits agreed (median
+-4.5 points ten minutes later). Only 2 of the book's own entries ran straight to
++45, too few to add anything.
+
+So v5w's "RAISE it with MODIFY_TARGET while the run keeps going" is the
+measured-negative case. v5y keeps v5w's "do not book a straight run early" and
+removes the raise from it: the mechanical target books a straight run, and
+MODIFY_TARGET is kept for a run that has ALREADY absorbed a real retracement
+(about 20 points from its best price). That use is IH's practice, not a
+measured edge, since it was flat in the same test.
+
+**2. Eviction without extension: inconclusive, not encoded.** IH's thesis: a
+selling day seats sellers, the next day's recovery through the close evicts
+them, and if it does not extend, follow the original selling. The test took a
+FLAT open where D-2 was down at least 0.5%, and D-1's high crossed D-2's 3:15
+level but closed back below it. Results for a NIFTY short, in R:
+
+| entry | 09:18 | 09:20 | 09:22 | 09:25 |
+|---|---|---|---|---|
+| candidate (67) | -0.098 | +0.192 | +0.318 | +0.000 |
+| D-1 held above (control) | +0.402 | +0.578 | +0.349 | +0.551 |
+| no selling day (baseline) | +0.109 | +0.118 | +0.053 | +0.131 |
+
+The candidate's halves disagree at three of four minutes, and the control the
+mechanism says should fail beats it. On BankNIFTY the candidate was positive at
+every minute (+0.23 to +0.67R), but the agent trades NIFTY. The 23 Oct note
+already carried this read as advisory, which is where it stays.
+
+**3. The round-number break: refused.** IH booked as BankNIFTY broke 54,500 and
+said that after the breakdown "the chances of a retracement increase, so one
+should not keep sitting". The agent's 10:13 short came 15 minutes after the same
+break. The test took the first BankNIFTY close through a 500 during a 0.5%+
+move, from 09:25 to 11:00 (431 events), then a NIFTY entry with the move:
+
+| NIFTY entry | R |
+|---|---|
+| the minute after the break | **+0.253** (2021-23 +0.245, 2024-26 +0.259) |
+| +5 / +10 / +15 minutes | +0.087 / +0.016 / +0.089 |
+| same minutes, no-event days | +0.019 / +0.006 |
+
+The continuation after a break is positive, so booking AT the break gives up
+edge; it fades to nothing within ten minutes. Neither "book at the break" nor
+"never enter after it" is supported.
+
+### v5x and SLH-027, first full day
+
+- **v5x placement:** the 09:31 entry put its stop beyond the double-top high and
+  said so. The round-number rule did not apply, because 22 Oct was not a one-way
+  selling day.
+- **SLH-027:** no trade reached its stop, so the closing-basis stop has not
+  fired live yet.
+- **SLH-026:** one raise, the 10:18 straight-run raise above. v5y now rules it
+  out.
+- **Housekeeping:** at 09:58:32 a final output claimed an EXIT after the target
+  had already closed the trade inside the same pass. The order tool accepted
+  nothing, which is the existing guard working.
+
+### Validation
+
+`test_v5y_a_straight_run_books_at_its_target_and_only_a_pulled_back_run_is_raised`
+pins the rule, its evidence, its place between v5w and PROFIT-HOLD, the pointer
+inside v5w, and the order tool's new MODIFY_TARGET sentence.
+
+**Negative-tested with 8 mutants, all caught:**
+
+- the v5w pointer removed;
+- a straight run allowed to be raised;
+- any run allowed to be raised;
+- the retracement size loosened to 5 points;
+- the measurement altered;
+- the robustness claim dropped;
+- the "not a measured edge" caveat dropped;
+- the tool text reverted to v5w's.
+
+**Gates:** the master suite (673), market-data health (28), pytest (1,793),
+ruff, mypy (82 files, then the master file), compileall, bandit (CI's flags)
+and pre-commit are all clean. The first ruff run caught a 140-character
+assertion, which is now split.

@@ -2505,7 +2505,8 @@ RISK DISCIPLINE
   IH on 21 Oct: "no retracement came, the market keeps going up, so we will make
   the target BIGGER here." Do not book on the approach to a round number: let the
   mechanical target book it, RAISE it with MODIFY_TARGET while the run keeps going,
-  or let the ten-candle rule end it. The same day this
+  or let the ten-candle rule end it. [Narrowed by v5y, below: raise only a run that
+  has ALREADY pulled back; a straight run is booked by its target.] The same day this
   book closed its long at 23,077.75 at 09:23 on a BankNIFTY shooting star with
   NIFTY pausing under 23,100; its own target at 23,100 traded at 09:34.
   WHAT THIS OVERRIDES, for discretionary exits only: the stall clause of the exit
@@ -2515,6 +2516,31 @@ RISK DISCIPLINE
   TOUCHES: the hard stop, the mechanical target, max-loss, the 15:15 square-off,
   and a decisive break of the level your premise named (a loss of L2, a breakdown
   of the lower point) -- those still exit at once.
+- A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK
+  (v5y). This narrows v5w's "RAISE it with MODIFY_TARGET while the run keeps
+  going". IH held a put basket past its target on 23 Oct and said why he could:
+  "if the retracement had not happened and the momentum had come continuously, we
+  would have had to run. But the retracement has already happened, so the risk of
+  a retracement is lower now." A move that reaches the target WITHOUT a pullback
+  is the one that retraces right there; a move that took its retracement on the
+  way is not.
+  MEASURED (5-year NIFTY: entries at 09:20, 09:35 and 10:00 following the move
+  since 09:15, every one that reached +45 points). Straight runs, with no pullback
+  over 10 points before the target (47 sessions), stood 5.2 points WORSE 15
+  minutes after the target: 51% gave back 20 points before adding 25, and 38% the
+  other way. Runs that had pulled back 20+ points first were flat (+0.7). Straight
+  runs were negative in all 12 variants tried (targets of 35, 45 and 60 points;
+  10-, 15- and 20-minute windows), and in both halves of the data. This book's own
+  no-pullback profitable exits agreed on 21 Oct (median -4.5 points ten minutes
+  later).
+  SO: a run that has NOT pulled back is booked by its mechanical target. Do not
+  book it early (v5w still holds), and do not RAISE it. MODIFY_TARGET is for a run
+  that has ALREADY absorbed a real retracement, about 20 NIFTY points or more from
+  its best price since the entry, and is moving again. Raising after a retracement
+  is IH's practice, not a measured edge (it was flat in the same test), so raise
+  sparingly. 23 Oct, 10:18: a short raised its target from 22,420 to 22,400,
+  citing "zero meaningful retracement since entry". That is the exact case this
+  rule takes away.
 - PROFIT-HOLD: when a trade is in profit and the original premise is still intact,
   do not cut it just to search for a "second-best" or "third-best" trade. Hold the
   valid winner until target, stall/theta (a stall per v5w's ten candles), or
