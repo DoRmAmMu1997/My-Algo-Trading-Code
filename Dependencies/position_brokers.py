@@ -344,16 +344,13 @@ class KiteStyleBrokerClient:
                 return True
             self._api_key = _env_str(self.api_key_env)
             self._access_token = _env_str(self.access_token_env)
-            missing = [
-                name
-                for name, value in (
-                    (self.api_key_env, self._api_key),
-                    (self.access_token_env, self._access_token),
+            if not self._api_key or not self._access_token:
+                # Only the broker's name is logged: nothing derived from a
+                # credential, not even which of the two is the blank one.
+                log.error(
+                    "%s login disabled: its API key or access token is missing from .env.",
+                    self.broker_name,
                 )
-                if not value
-            ]
-            if missing:
-                log.error("%s login disabled: missing %s.", self.broker_name, ", ".join(missing))
                 return False
             if self._session is None:
                 self._session = requests.Session()

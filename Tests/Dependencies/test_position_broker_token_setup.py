@@ -59,20 +59,37 @@ def test_zerodha_login_exchanges_the_request_token_with_the_documented_checksum(
         sent.update(url=url, data=data, headers=headers, timeout=timeout)
         return FakeResponse({"status": "success", "data": {"access_token": "ACCESS"}})
 
+    opened: list[str] = []
     token = setup.zerodha_login(
         {"ZERODHA_API_KEY": "key", "ZERODHA_API_SECRET": "secret"},
         ask=lambda _prompt: "https://x/?request_token=RT",
         post=post,
+        open_url=lambda url: opened.append(url) or True,
     )
     assert token == "ACCESS"
+    assert opened == ["https://kite.zerodha.com/connect/login?v=3&api_key=key"]
     assert sent["data"]["checksum"] == hashlib.sha256(b"keyRTsecret").hexdigest()
     assert sent["headers"] == {"X-Kite-Version": "3"}
     assert sent["timeout"] == 10.0
 
 
+def test_login_url_with_the_api_key_is_never_printed(capsys) -> None:
+    def post(url, *, data, headers, timeout):
+        return FakeResponse({"status": "success", "data": {"access_token": "A"}})
+
+    for browser_opened in (True, False):
+        setup.zerodha_login(
+            {"ZERODHA_API_KEY": "kite_key_value", "ZERODHA_API_SECRET": "s"},
+            ask=lambda _p: "RT",
+            post=post,
+            open_url=lambda _url, result=browser_opened: result,
+        )
+    assert "kite_key_value" not in capsys.readouterr().out
+
+
 def test_zerodha_login_needs_key_and_secret() -> None:
     with pytest.raises(RuntimeError, match="ZERODHA_API_SECRET"):
-        setup.zerodha_login({"ZERODHA_API_KEY": "key"}, ask=lambda _p: "RT")
+        setup.zerodha_login({"ZERODHA_API_KEY": "key"}, ask=lambda _p: "RT", open_url=lambda _u: True)
 
 
 def test_refused_login_raises_without_echoing_the_secret() -> None:
@@ -84,6 +101,7 @@ def test_refused_login_raises_without_echoing_the_secret() -> None:
             {"ZERODHA_API_KEY": "key", "ZERODHA_API_SECRET": "secret123"},
             ask=lambda _p: "RT",
             post=post,
+            open_url=lambda _u: True,
         )
     assert "secret123" not in str(raised.value)
 

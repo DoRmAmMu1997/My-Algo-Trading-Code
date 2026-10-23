@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import re
 import sys
+import webbrowser
 from collections.abc import Callable
 from getpass import getpass
 from pathlib import Path
@@ -137,6 +138,7 @@ def zerodha_login(
     *,
     ask: Callable[[str], str] = input,
     post: Callable[..., Any] = requests.post,
+    open_url: Callable[[str], bool] = webbrowser.open,
 ) -> str:
     """Run the Kite browser-login exchange and return the new access token."""
 
@@ -144,8 +146,14 @@ def zerodha_login(
     api_secret = env.get("ZERODHA_API_SECRET", "")
     if not api_key or not api_secret:
         raise RuntimeError("Set ZERODHA_API_KEY and ZERODHA_API_SECRET in Dependencies/.env first.")
-    print("1. Open this URL in your browser and log in to Kite:")
-    print("   " + KITE_LOGIN_URL.format(api_key=api_key))
+    # The URL carries the API key, so it goes straight to the browser and is
+    # never printed: console output is routinely pasted into chats and logs.
+    opened = open_url(KITE_LOGIN_URL.format(api_key=api_key))
+    if opened:
+        print("1. Log in to Kite in the browser window that just opened.")
+    else:
+        print("1. Open this URL in your browser (put your ZERODHA_API_KEY in place of <key>):")
+        print("   " + KITE_LOGIN_URL.format(api_key="<key>"))
     print("2. Paste the URL you were redirected to (or just its request_token).")
     request_token = extract_request_token(ask("Redirect URL: "))
     if not request_token:
