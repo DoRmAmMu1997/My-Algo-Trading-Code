@@ -44,6 +44,7 @@ The commands:
   setup-broker-token  Daily interactive login for the position-group monitor's
                brokers; writes <BROKER>_ACCESS_TOKEN into .env.
       python algo.py setup-broker-token --broker zerodha
+      python algo.py setup-broker-token --broker mstock
 
   diagnose     Read-only broker connectivity + option-symbol check (can optionally
                place a confirmation-gated round-trip TEST order with --place-order).
@@ -129,7 +130,7 @@ POSITION_BROKER_TOKEN_SCRIPT = "Dependencies/position_broker_token_setup.py"
 
 # `setup-broker-token --broker <key>`: the brokers the position-group monitor
 # reads carried positions from. Not LIVE_BROKER choices.
-POSITION_BROKERS = ("zerodha",)
+POSITION_BROKERS = ("mstock", "zerodha")
 CHECK_ENV_SCRIPT = "Dependencies/check_env_config.py"
 
 

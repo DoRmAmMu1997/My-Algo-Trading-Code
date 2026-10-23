@@ -761,7 +761,35 @@ class ZerodhaPositionClient(KiteStyleBrokerClient):
         return (f"/orders/{order_id}", None)
 
 
+class MStockPositionClient(KiteStyleBrokerClient):
+    """Mirae Asset mStock Type-A API (a Kite-shaped clone with its own paths).
+
+    Differences from Kite that matter here: the order-status endpoint is
+    ``/order/details?order_no=...&segment=D`` rather than ``/orders/<id>``, the
+    instrument master is one all-exchange CSV, there is no market-protection
+    field, and MARKET orders still carry ``price=0``.  mStock does not publish
+    its full order-status vocabulary; any label this module does not recognize
+    stays transient and ends as ``UNKNOWN`` at the fill timeout -- never as a
+    guessed fill or rejection.
+    """
+
+    broker_name = "MSTOCK"
+    base_url = "https://api.mstock.trade/openapi/typea"
+    version_header = ("X-Mirae-Version", "1")
+    api_key_env = "MSTOCK_API_KEY"
+    access_token_env = "MSTOCK_ACCESS_TOKEN"
+    validation_path = "/portfolio/positions"
+    extra_order_fields = {"price": "0"}
+
+    def _instrument_paths(self) -> tuple[str, ...]:
+        return ("/instruments/scriptmaster",)
+
+    def _order_status_request(self, order_id: str) -> tuple[str, dict[str, Any] | None]:
+        return ("/order/details", {"order_no": order_id, "segment": "D"})
+
+
 # Constructed lazily by the monitor; one client per broker per process.
 POSITION_CLIENT_CLASSES: dict[str, Callable[[], KiteStyleBrokerClient]] = {
     "ZERODHA": ZerodhaPositionClient,
+    "MSTOCK": MStockPositionClient,
 }

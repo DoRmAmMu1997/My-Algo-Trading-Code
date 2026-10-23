@@ -107,3 +107,54 @@ def test_main_failure_leaves_env_untouched(tmp_path: Path, monkeypatch, capsys) 
     assert setup.main(["--broker", "zerodha"]) == 1
     assert env.read_text() == "ZERODHA_API_KEY=key\n"
     assert "ERROR" in capsys.readouterr().out
+
+
+def _mstock_post(calls: list[tuple[str, dict]]):
+    def post(url, *, data, headers, timeout):
+        calls.append((url.rsplit("/typea", 1)[-1], data))
+        assert headers == {"X-Mirae-Version": "1"}
+        if url.endswith("/connect/login"):
+            return FakeResponse({"status": "success", "data": {"cid": "X"}})
+        return FakeResponse({"status": "success", "data": {"access_token": "MTOKEN"}})
+
+    return post
+
+
+def test_mstock_login_uses_otp_by_default() -> None:
+    calls: list[tuple[str, dict]] = []
+    token = setup.mstock_login(
+        {"MSTOCK_API_KEY": "k", "MSTOCK_USERNAME": "u"},
+        ask=lambda _p: "123456",
+        ask_secret=lambda _p: "pw",
+        post=_mstock_post(calls),
+    )
+    assert token == "MTOKEN"
+    assert calls == [
+        ("/connect/login", {"username": "u", "password": "pw"}),
+        ("/session/token", {"api_key": "k", "request_token": "123456", "checksum": "L"}),
+    ]
+
+
+def test_mstock_login_uses_totp_when_enabled() -> None:
+    calls: list[tuple[str, dict]] = []
+    setup.mstock_login(
+        {"MSTOCK_API_KEY": "k", "MSTOCK_USERNAME": "u", "MSTOCK_TOTP_ENABLED": "true"},
+        ask=lambda _p: "654321",
+        ask_secret=lambda _p: "pw",
+        post=_mstock_post(calls),
+    )
+    assert calls[1] == ("/session/verifytotp", {"api_key": "k", "totp": "654321"})
+
+
+def test_mstock_bad_password_raises_without_echoing_it() -> None:
+    def post(url, *, data, headers, timeout):
+        return FakeResponse({"status": "error", "message": "Invalid password hunter2"})
+
+    with pytest.raises(RuntimeError) as raised:
+        setup.mstock_login(
+            {"MSTOCK_API_KEY": "k", "MSTOCK_USERNAME": "u"},
+            ask=lambda _p: "1",
+            ask_secret=lambda _p: "hunter2",
+            post=post,
+        )
+    assert "hunter2" not in str(raised.value)

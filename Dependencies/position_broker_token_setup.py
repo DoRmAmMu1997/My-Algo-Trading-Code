@@ -19,6 +19,9 @@ from there at startup.  No token, secret or password is ever printed.
 
 * ``ZERODHA_API_KEY`` / ``ZERODHA_API_SECRET`` (from developers.kite.trade)
   -> writes ``ZERODHA_ACCESS_TOKEN``
+* ``MSTOCK_API_KEY`` / ``MSTOCK_USERNAME`` (+ ``MSTOCK_TOTP_ENABLED`` when your
+  account uses an authenticator app) -> writes ``MSTOCK_ACCESS_TOKEN``.  The
+  mStock password is typed at the prompt and never stored.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import hashlib
 import re
 import sys
 from collections.abc import Callable
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -45,6 +49,8 @@ _HTTP_TIMEOUT_SECONDS = 10.0
 
 KITE_LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
 KITE_SESSION_URL = "https://api.kite.trade/session/token"
+MSTOCK_BASE_URL = "https://api.mstock.trade/openapi/typea"
+MSTOCK_HEADERS = {"X-Mirae-Version": "1"}
 
 
 def read_env_file(path: Path | None = None) -> dict[str, str]:
@@ -157,8 +163,58 @@ def zerodha_login(
     return _access_token_from(response, (api_secret, request_token))
 
 
+def mstock_login(
+    env: dict[str, str],
+    *,
+    ask: Callable[[str], str] = input,
+    ask_secret: Callable[[str], str] = getpass,
+    post: Callable[..., Any] = requests.post,
+) -> str:
+    """Run mStock's password + OTP (or TOTP) exchange and return the access token.
+
+    Step 1 posts the username and password; mStock then texts an OTP unless the
+    account has an authenticator (TOTP) enabled.  Step 2 trades that code for an
+    access token.  The ``checksum`` value ``L`` is the one mStock's own
+    documentation sends; it is not derived from any secret.
+    """
+
+    api_key = env.get("MSTOCK_API_KEY", "")
+    username = env.get("MSTOCK_USERNAME", "")
+    if not api_key or not username:
+        raise RuntimeError("Set MSTOCK_API_KEY and MSTOCK_USERNAME in Dependencies/.env first.")
+    password = ask_secret("mStock password: ")
+    response = post(
+        f"{MSTOCK_BASE_URL}/connect/login",
+        data={"username": username, "password": password},
+        headers=MSTOCK_HEADERS,
+        timeout=_HTTP_TIMEOUT_SECONDS,
+    )
+    body = response.json() if response is not None else None
+    if not isinstance(body, dict) or str(body.get("status")).lower() != "success":
+        message = body.get("message") if isinstance(body, dict) else body
+        raise RuntimeError(redact_text(f"mStock login refused: {message}", (password,)))
+    if env.get("MSTOCK_TOTP_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        code = ask("Authenticator (TOTP) code: ").strip()
+        response = post(
+            f"{MSTOCK_BASE_URL}/session/verifytotp",
+            data={"api_key": api_key, "totp": code},
+            headers=MSTOCK_HEADERS,
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        )
+    else:
+        code = ask("OTP sent to your phone: ").strip()
+        response = post(
+            f"{MSTOCK_BASE_URL}/session/token",
+            data={"api_key": api_key, "request_token": code, "checksum": "L"},
+            headers=MSTOCK_HEADERS,
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        )
+    return _access_token_from(response, (password, code))
+
+
 BROKER_LOGINS: dict[str, tuple[str, Callable[..., str]]] = {
     "zerodha": ("ZERODHA_ACCESS_TOKEN", zerodha_login),
+    "mstock": ("MSTOCK_ACCESS_TOKEN", mstock_login),
 }
 
 

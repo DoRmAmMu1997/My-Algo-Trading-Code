@@ -368,3 +368,90 @@ def test_logout_clears_the_token() -> None:
     client.logout()
     assert client.is_logged_in is False
     assert client._access_token == ""
+
+
+# ---------------------------------------------------------------------------
+# mStock: same shape, different paths
+# ---------------------------------------------------------------------------
+def mstock(routes: dict[tuple[str, str], Any], monkeypatch) -> tuple[Any, FakeSession]:
+    monkeypatch.setenv("MSTOCK_API_KEY", "mstock_key_123")
+    monkeypatch.setenv("MSTOCK_ACCESS_TOKEN", "mstock_token_secret")
+    base = {
+        ("GET", "/portfolio/positions"): ok({"net": []}),
+        ("GET", "/instruments/scriptmaster"): FakeResponse(200, None, INSTRUMENT_CSV),
+    }
+    base.update(routes)
+    session = FakeSession(base)
+    return position_brokers.MStockPositionClient(session=session), session
+
+
+def test_mstock_uses_its_own_headers_and_order_status_path(monkeypatch) -> None:
+    client, session = mstock(
+        {
+            ("POST", "/orders/regular"): ok({"order_id": "M1"}),
+            ("GET", "/order/details"): ok([order_row("COMPLETE", 75)]),
+        },
+        monkeypatch,
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.FILLED
+    _method, _path, _params, form, headers = next(
+        call for call in session.calls if call[1] == "/orders/regular"
+    )
+    assert headers["X-Mirae-Version"] == "1"
+    assert headers["Authorization"] == "token mstock_key_123:mstock_token_secret"
+    assert form["price"] == "0" and "market_protection" not in form
+    status_call = next(call for call in session.calls if call[1] == "/order/details")
+    assert status_call[2] == {"order_no": "M1", "segment": "D"}
+
+
+def test_mstock_title_case_rejection_is_still_a_rejection(monkeypatch) -> None:
+    client, _ = mstock(
+        {
+            ("POST", "/orders/regular"): ok({"order_id": "M1"}),
+            ("GET", "/order/details"): ok([order_row("Rejected", 0)]),
+        },
+        monkeypatch,
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.REJECTED
+
+
+def test_mstock_unrecognized_state_ends_unknown_not_guessed(monkeypatch) -> None:
+    monkeypatch.setattr(position_brokers, "_FILL_TIMEOUT_SECONDS", 0.05)
+    client, _ = mstock(
+        {
+            ("POST", "/orders/regular"): ok({"order_id": "M1"}),
+            ("GET", "/order/details"): ok([order_row("Pending", 0)]),
+        },
+        monkeypatch,
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.UNKNOWN
+
+
+def test_mstock_tag_lookup_reads_list_shaped_tags(monkeypatch) -> None:
+    client, _ = mstock(
+        {
+            ("POST", "/orders/regular"): ConnectionError("reset"),
+            ("GET", "/orders"): ok([{"order_id": "M1", "tag": ["GM1"]}]),
+            ("GET", "/order/details"): ok([order_row("Traded", 75)]),
+        },
+        monkeypatch,
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.FILLED
+
+
+def test_mstock_positions_resolve_identity_from_the_scriptmaster(monkeypatch) -> None:
+    client, _ = mstock(
+        {
+            ("GET", "/portfolio/positions"): ok(
+                {"net": [{"tradingsymbol": "NIFTY25N2723500PE", "exchange": "NFO",
+                          "product": "NRML", "quantity": 75, "average_price": 40}]}
+            )
+        },
+        monkeypatch,
+    )
+    (position,) = client.list_position_details().items
+    assert (position.underlying, position.strike, position.right) == ("NIFTY", 23500.0, "PE")
