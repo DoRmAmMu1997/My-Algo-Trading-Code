@@ -3908,3 +3908,38 @@ def test_v5y_a_straight_run_books_at_its_target_and_only_a_pulled_back_run_is_ra
     assert "It is for a run that has ALREADY taken a real retracement and is moving again (v5y)" in text
     assert "a straight run is booked by its target" in text
     assert "has not pulled back gets more room" not in text
+
+
+def test_v5y_after_a_round_number_breaks_the_entry_waits_for_the_shakeout():
+    """v5y, second rule (operator, 23 Oct): a round-number break is continuation but not
+    the entry -- a shakeout back to the broken number usually follows, and the entry is
+    taken once that retest has failed. Pins the rule, its measurement, what it does not
+    cover (a reclaim; a runaway with no shakeout), its cost, and its placement right
+    after the clean-break bullet it qualifies."""
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER")
+    assert "(v5y, operator 23 Oct)" in rule
+    assert "is continuation, but it is not the entry" in rule
+    # The measurement.
+    assert "after 80% of BankNIFTY's 500-breaks and 86% of NIFTY's 100-breaks" in rule
+    assert "a NIFTY entry taken at the break scored -0.05R and -0.19R" in rule
+    assert "+0.13R (BankNIFTY's 500s) and +0.18R (NIFTY's 100s) per trade" in rule
+    assert "positive in both halves of the data" in rule
+    # The entry, and that it is still a pattern entry.
+    assert "ENTER WHEN THE SHAKEOUT IS DONE" in rule
+    assert "a 1-minute candle has closed back through it in the move's direction" in rule
+    assert "pattern+confirmation still applies" in rule
+    # What it is not, and what it costs.
+    assert "NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a reclaim" in rule
+    assert "v5u's flush-and-reclaim" in rule
+    assert "one break in five to seven never comes back and simply runs" in rule
+    assert "+0.09R against +0.25R" in rule
+    assert "RUNAWAY_TREND's case" in rule
+    assert "never as a chase of the break candle" in rule
+    # The 23 Oct cases.
+    assert "The 09:44 short came after that shakeout and made its target" in rule
+    # Placed directly after the clean-break bullet it qualifies.
+    clean = prompt.index("\n- A clean BREAK of a level (not a wick) means continuation")
+    here = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
+    assert clean < here
+    assert "\n- " not in prompt[clean + 3:here]

@@ -11403,7 +11403,7 @@ these mutations fails it, and the unmutated note passes:
 * the "do not target either crowd" clause dropped;
 * the Sensex support moved to 72,200.
 
-## v5y - 23 Oct live match: a straight run books at its target
+## v5y - 23 Oct live match: a straight run books at its target, and the shakeout after a round-number break
 
 **Sources.**
 
@@ -11420,7 +11420,13 @@ these mutations fails it, and the unmutated note passes:
     `LIVE_TRADING_ENABLED=false`, so the third trade was paper.
 - **The 5-year NIFTY and BankNIFTY CSVs**, now through 23 Oct.
 
-**Adopted: v5y**, measured. The other candidates were refused.
+**Adopted: v5y, two rules.**
+
+- A straight run books at its target (measured).
+- After a round-number break, the entry waits for the shakeout. This is the
+  operator's rephrasing of candidate 3, measured per trade.
+
+Candidate 2 was not encoded.
 
 ### The session
 
@@ -11518,6 +11524,41 @@ The continuation after a break is positive, so booking AT the break gives up
 edge; it fades to nothing within ten minutes. Neither "book at the break" nor
 "never enter after it" is supported.
 
+**3b. Rephrased by the operator, and ADOPTED as v5y's second rule.** The
+operator: "after a round-number breakdown there is often a shakeout of retail
+traders... tell the agent to enter after the shakeout is done."
+
+- **Shakeout:** within 30 minutes, the leading index trades back to the broken
+  number.
+- **Done:** after that touch, the first 1-minute close back through the number
+  in the break's direction.
+- **Entries:** NIFTY, in the agent's trade shape.
+
+| leader, level | events | shakeout | at the break, when one came | after the shakeout, per trade | at the break, same events |
+|---|---|---|---|---|---|
+| BankNIFTY 500s | 431 | 80% | -0.049 | **+0.127** (+0.110 / +0.138) | +0.036 |
+| NIFTY 100s | 405 | 86% | -0.186 | **+0.175** (+0.169 / +0.179) | -0.109 |
+
+The breaks with no shakeout are the runaways (+1.4R and +2.1R at the break).
+That is why, per break, waiting earned less than entering at once (BankNIFTY:
++0.087 against +0.253; NIFTY's 100s: +0.124 against +0.137).
+
+Counting "back within 0.05% of the number" as a shakeout finds one after 94-96%
+of breaks. Under that looser definition the after-shakeout entry is still
+positive in both halves, but no longer beats the at-break entry on the same
+events.
+
+The rule states both the gain and the cost. It hands a no-shakeout run to
+RUNAWAY_TREND, and it separates a shakeout from a reclaim (the trap rule and
+v5u).
+
+On 23 Oct both cases happened on NIFTY:
+
+- **22,700:** broke at 09:33 and was retested at 09:40. The 09:44 short came
+  after that shakeout and made +84 points.
+- **22,500:** broke at 10:15, just after the 10:13 short went in, and was
+  retested at 10:20. That short went out flat.
+
 ### v5x and SLH-027, first full day
 
 - **v5x placement:** the 09:31 entry put its stop beyond the double-top high and
@@ -11537,7 +11578,20 @@ edge; it fades to nothing within ten minutes. Neither "book at the break" nor
 pins the rule, its evidence, its place between v5w and PROFIT-HOLD, the pointer
 inside v5w, and the order tool's new MODIFY_TARGET sentence.
 
-**Negative-tested with 8 mutants, all caught:**
+`test_v5y_after_a_round_number_breaks_the_entry_waits_for_the_shakeout` pins the
+shakeout rule: its measurement, the reclaim and runaway carve-outs, its cost, and
+its place directly after the clean-break bullet it qualifies. The rule's 7 mutants
+are all caught:
+
+- the break allowed as the entry;
+- the shakeout frequency altered;
+- the pattern requirement dropped;
+- the reclaim carve-out dropped;
+- the cost hidden;
+- the RUNAWAY_TREND pointer dropped;
+- the resumption close removed.
+
+**The straight-run rule: negative-tested with 8 mutants, all caught:**
 
 - the v5w pointer removed;
 - a straight run allowed to be raised;
@@ -11548,7 +11602,7 @@ inside v5w, and the order tool's new MODIFY_TARGET sentence.
 - the "not a measured edge" caveat dropped;
 - the tool text reverted to v5w's.
 
-**Gates:** the master suite (673), market-data health (28), pytest (1,793),
+**Gates:** the master suite (673), market-data health (28), pytest (1,794),
 ruff, mypy (82 files, then the master file), compileall, bandit (CI's flags)
 and pre-commit are all clean. The first ruff run caught a 140-character
 assertion, which is now split.

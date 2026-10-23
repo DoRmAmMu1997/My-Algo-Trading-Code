@@ -1454,6 +1454,33 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
 - A clean BREAK of a level (not a wick) means continuation: break support → down;
   reclaim/hold resistance → up. A WICK or an immediately-returning candle at a
   level = a TRAP = reversal.
+- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER (v5y,
+  operator 23 Oct). A clean break of a round number in the direction of the move
+  (NIFTY's 100s, BankNIFTY's 500s) is continuation, but it is not the entry.
+  Price usually comes back to the broken number to shake out the retail traders
+  who chased the break.
+  MEASURED (5-year CSVs; the first such break of a 0.5%+ move, 09:25-11:00):
+  within 30 minutes, price traded back to the broken number after 80% of
+  BankNIFTY's 500-breaks and 86% of NIFTY's 100-breaks. When it did, a NIFTY entry
+  taken at the break scored -0.05R and -0.19R: the shakeout stops the chaser.
+  ENTER WHEN THE SHAKEOUT IS DONE: price has come back to the broken number,
+  failed to hold beyond it, and a 1-minute candle has closed back through it in
+  the move's direction. That entry scored +0.13R (BankNIFTY's 500s) and +0.18R
+  (NIFTY's 100s) per trade, positive in both halves of the data. The failed retest
+  is the pattern at the level; pattern+confirmation still applies.
+  NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a
+  reclaim. That is the trap rule above, or v5u's flush-and-reclaim at the major
+  numbers, and the continuation premise is gone.
+  THE COST, stated plainly: one break in five to seven never comes back and simply
+  runs (+1.4 to +2.1R at the break). Waiting misses those, so per break it earned
+  less than entering at once (BankNIFTY's 500s: +0.09R against +0.25R). A move
+  that runs without a shakeout is RUNAWAY_TREND's case, entered on its own terms
+  (a shallow pause, all three indices agreeing), never as a chase of the break
+  candle.
+  23 Oct: NIFTY broke 22,700 at 09:33 and came back to it at 09:40. The 09:44
+  short came after that shakeout and made its target (+84 points). The 10:13
+  short went in just above 22,500, which broke at 10:15 and was retested at 10:20;
+  that trade was out flat at 10:44.
 - The IH intraday "closing point" (the prior 3:15 reference) attracts price
   (both sides' SLs sit there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
   the closing point (or a short lets price reclaim it), the premise has failed —
