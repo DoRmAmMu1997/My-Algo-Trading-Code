@@ -175,3 +175,23 @@ def test_mstock_bad_password_raises_without_echoing_it() -> None:
             post=post,
         )
     assert "hunter2" not in str(raised.value)
+
+
+@pytest.mark.parametrize("token", ["abc\nLIVE_TRADING_ENABLED=true", "a=b", "has space", ""])
+def test_malformed_token_never_reaches_env(tmp_path: Path, monkeypatch, token: str) -> None:
+    env = tmp_path / ".env"
+    env.write_text("ZERODHA_API_KEY=key\n")
+    monkeypatch.setattr(setup, "ENV_PATH", env)
+    monkeypatch.setitem(setup.BROKER_LOGINS, "zerodha", ("ZERODHA_ACCESS_TOKEN", lambda _env: token))
+    assert setup.main(["--broker", "zerodha"]) == 1
+    assert env.read_text() == "ZERODHA_API_KEY=key\n"
+
+
+def test_jwt_shaped_token_is_accepted(tmp_path: Path, monkeypatch) -> None:
+    env = tmp_path / ".env"
+    env.write_text("")
+    monkeypatch.setattr(setup, "ENV_PATH", env)
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig-_x"
+    monkeypatch.setitem(setup.BROKER_LOGINS, "mstock", ("MSTOCK_ACCESS_TOKEN", lambda _env: jwt))
+    assert setup.main(["--broker", "mstock"]) == 0
+    assert env.read_text() == f"MSTOCK_ACCESS_TOKEN={jwt}\n"

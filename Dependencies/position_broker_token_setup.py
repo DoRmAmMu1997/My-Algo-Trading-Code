@@ -43,10 +43,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from Dependencies.env_file import replace_env_value  # noqa: E402
 from Dependencies.secret_redaction import environment_secrets, redact_text  # noqa: E402
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 _HTTP_TIMEOUT_SECONDS = 10.0
+
+# Every access token either broker issues is plain ASCII: Kite's is
+# alphanumeric, mStock's is a JWT (base64url segments joined by dots). Anything
+# else -- above all a line break or '=' -- is refused before it reaches .env.
+_TOKEN_SHAPE = re.compile(r"[A-Za-z0-9._-]+")
 
 KITE_LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
 KITE_SESSION_URL = "https://api.kite.trade/session/token"
@@ -84,20 +90,7 @@ def write_env_value(key: str, value: str, path: Path | None = None) -> None:
     ``path`` defaults to ``ENV_PATH`` at call time (see ``read_env_file``).
     """
 
-    path = ENV_PATH if path is None else path
-    raw = path.read_text(encoding="utf-8") if path.exists() else ""
-    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=.*$")
-    replaced = False
-    lines: list[str] = []
-    for line in raw.splitlines():
-        if pattern.match(line) and not line.lstrip().startswith("#"):
-            lines.append(f"{key}={value}")
-            replaced = True
-        else:
-            lines.append(line)
-    if not replaced:
-        lines.append(f"{key}={value}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    replace_env_value(ENV_PATH if path is None else path, key, value)
 
 
 def extract_request_token(pasted: str) -> str:
@@ -239,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
         token = login(env)
     except Exception as exc:
         print(f"ERROR: {redact_text(exc, environment_secrets(env))}")
+        return 1
+    if not _TOKEN_SHAPE.fullmatch(token):
+        print(f"ERROR: the broker returned a malformed access token; {ENV_PATH.name} was not changed.")
         return 1
     write_env_value(env_key, token)
     print(f"OK: {env_key} updated in {ENV_PATH.name}. It expires overnight; rerun tomorrow.")
