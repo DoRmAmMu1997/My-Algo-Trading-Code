@@ -1454,6 +1454,33 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
 - A clean BREAK of a level (not a wick) means continuation: break support → down;
   reclaim/hold resistance → up. A WICK or an immediately-returning candle at a
   level = a TRAP = reversal.
+- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER (v5y,
+  operator 23 Oct). A clean break of a round number in the direction of the move
+  (NIFTY's 100s, BankNIFTY's 500s) is continuation, but it is not the entry.
+  Price usually comes back to the broken number to shake out the retail traders
+  who chased the break.
+  MEASURED (5-year CSVs; the first such break of a 0.5%+ move, 09:25-11:00):
+  within 30 minutes, price traded back to the broken number after 80% of
+  BankNIFTY's 500-breaks and 86% of NIFTY's 100-breaks. When it did, a NIFTY entry
+  taken at the break scored -0.05R and -0.19R: the shakeout stops the chaser.
+  ENTER WHEN THE SHAKEOUT IS DONE: price has come back to the broken number,
+  failed to hold beyond it, and a 1-minute candle has closed back through it in
+  the move's direction. That entry scored +0.13R (BankNIFTY's 500s) and +0.18R
+  (NIFTY's 100s) per trade, positive in both halves of the data. The failed retest
+  is the pattern at the level; pattern+confirmation still applies.
+  NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a
+  reclaim. That is the trap rule above, or v5u's flush-and-reclaim at the major
+  numbers, and the continuation premise is gone.
+  THE COST, stated plainly: one break in five to seven never comes back and simply
+  runs (+1.4 to +2.1R at the break). Waiting misses those, so per break it earned
+  less than entering at once (BankNIFTY's 500s: +0.09R against +0.25R). A move
+  that runs without a shakeout is RUNAWAY_TREND's case, entered on its own terms
+  (a shallow pause, all three indices agreeing), never as a chase of the break
+  candle.
+  23 Oct: NIFTY broke 22,700 at 09:33 and came back to it at 09:40. The 09:44
+  short came after that shakeout and made its target (+84 points). The 10:13
+  short went in just above 22,500, which broke at 10:15 and was retested at 10:20;
+  that trade was out flat at 10:44.
 - The IH intraday "closing point" (the prior 3:15 reference) attracts price
   (both sides' SLs sit there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
   the closing point (or a short lets price reclaim it), the premise has failed —
@@ -2505,7 +2532,8 @@ RISK DISCIPLINE
   IH on 21 Oct: "no retracement came, the market keeps going up, so we will make
   the target BIGGER here." Do not book on the approach to a round number: let the
   mechanical target book it, RAISE it with MODIFY_TARGET while the run keeps going,
-  or let the ten-candle rule end it. The same day this
+  or let the ten-candle rule end it. [Narrowed by v5y, below: raise only a run that
+  has ALREADY pulled back; a straight run is booked by its target.] The same day this
   book closed its long at 23,077.75 at 09:23 on a BankNIFTY shooting star with
   NIFTY pausing under 23,100; its own target at 23,100 traded at 09:34.
   WHAT THIS OVERRIDES, for discretionary exits only: the stall clause of the exit
@@ -2515,6 +2543,31 @@ RISK DISCIPLINE
   TOUCHES: the hard stop, the mechanical target, max-loss, the 15:15 square-off,
   and a decisive break of the level your premise named (a loss of L2, a breakdown
   of the lower point) -- those still exit at once.
+- A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK
+  (v5y). This narrows v5w's "RAISE it with MODIFY_TARGET while the run keeps
+  going". IH held a put basket past its target on 23 Oct and said why he could:
+  "if the retracement had not happened and the momentum had come continuously, we
+  would have had to run. But the retracement has already happened, so the risk of
+  a retracement is lower now." A move that reaches the target WITHOUT a pullback
+  is the one that retraces right there; a move that took its retracement on the
+  way is not.
+  MEASURED (5-year NIFTY: entries at 09:20, 09:35 and 10:00 following the move
+  since 09:15, every one that reached +45 points). Straight runs, with no pullback
+  over 10 points before the target (47 sessions), stood 5.2 points WORSE 15
+  minutes after the target: 51% gave back 20 points before adding 25, and 38% the
+  other way. Runs that had pulled back 20+ points first were flat (+0.7). Straight
+  runs were negative in all 12 variants tried (targets of 35, 45 and 60 points;
+  10-, 15- and 20-minute windows), and in both halves of the data. This book's own
+  no-pullback profitable exits agreed on 21 Oct (median -4.5 points ten minutes
+  later).
+  SO: a run that has NOT pulled back is booked by its mechanical target. Do not
+  book it early (v5w still holds), and do not RAISE it. MODIFY_TARGET is for a run
+  that has ALREADY absorbed a real retracement, about 20 NIFTY points or more from
+  its best price since the entry, and is moving again. Raising after a retracement
+  is IH's practice, not a measured edge (it was flat in the same test), so raise
+  sparingly. 23 Oct, 10:18: a short raised its target from 22,420 to 22,400,
+  citing "zero meaningful retracement since entry". That is the exact case this
+  rule takes away.
 - PROFIT-HOLD: when a trade is in profit and the original premise is still intact,
   do not cut it just to search for a "second-best" or "third-best" trade. Hold the
   valid winner until target, stall/theta (a stall per v5w's ten candles), or
