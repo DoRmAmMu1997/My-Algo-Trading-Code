@@ -32,10 +32,8 @@ Dependencies/session_state*.json.tmp
 # Position-group monitor: the operator's grouped live positions and the runner's
 # per-group status file (docs/adr/0021). Account data, never repository content;
 # position_groups.example.json is the committed template.
-Dependencies/position_groups.json
-Dependencies/position_groups.json.tmp
-Dependencies/position_groups.state.json
-Dependencies/position_groups.state.json.tmp
+Dependencies/position_groups.json*
+Dependencies/position_groups.state.json*
 
 # IDE / OS
 .vscode/

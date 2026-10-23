@@ -89,6 +89,12 @@ files = [
     "Dependencies/session_state.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
+    # The position-group monitor and its broker clients, typed from the start.
+    "Dependencies/position_brokers.py",
+    "Dependencies/position_broker_token_setup.py",
+    "Dependencies/position_groups.py",
+    "Dependencies/position_groups_cli.py",
+    "Dependencies/position_group_monitor.py",
     # Added 2026-09-02. Nothing imports this script, so unlike every other
     # module here it was never reached transitively either -- a canary type
     # error planted in it escaped the gate entirely. It decides whether the
