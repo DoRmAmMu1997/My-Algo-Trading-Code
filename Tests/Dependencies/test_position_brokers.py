@@ -11,9 +11,8 @@ import time
 from datetime import date
 from typing import Any
 
-import pytest
-
 import position_brokers
+import pytest
 from broker_contract import OrderStatus, PositionBrokerClient
 
 INSTRUMENT_CSV = (

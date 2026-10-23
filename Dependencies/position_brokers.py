@@ -53,7 +53,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import requests
 
@@ -206,7 +206,7 @@ class KiteStyleBrokerClient:
     # A cheap authenticated read used to prove a token works.
     validation_path = ""
     # Per-broker order-placement extras (e.g. Kite's market_protection).
-    extra_order_fields: dict[str, str] = {}
+    extra_order_fields: ClassVar[dict[str, str]] = {}
 
     def __init__(self, *, session: Any = None) -> None:
         self.is_logged_in = False
@@ -752,7 +752,7 @@ class ZerodhaPositionClient(KiteStyleBrokerClient):
     validation_path = "/user/profile"
     # Exchanges now reject API MARKET orders without market protection; -1 asks
     # Kite to apply its automatic protection band.
-    extra_order_fields = {"market_protection": "-1"}
+    extra_order_fields: ClassVar[dict[str, str]] = {"market_protection": "-1"}
 
     def _instrument_paths(self) -> tuple[str, ...]:
         return ("/instruments/NFO", "/instruments/BFO")
@@ -779,7 +779,7 @@ class MStockPositionClient(KiteStyleBrokerClient):
     api_key_env = "MSTOCK_API_KEY"
     access_token_env = "MSTOCK_ACCESS_TOKEN"
     validation_path = "/portfolio/positions"
-    extra_order_fields = {"price": "0"}
+    extra_order_fields: ClassVar[dict[str, str]] = {"price": "0"}
 
     def _instrument_paths(self) -> tuple[str, ...]:
         return ("/instruments/scriptmaster",)

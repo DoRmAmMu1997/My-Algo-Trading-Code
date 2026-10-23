@@ -6,9 +6,8 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import position_broker_token_setup as setup
+import pytest
 
 
 class FakeResponse:

@@ -117,9 +117,11 @@ class Group:
         typo in either must not resurrect a group that was already squared off.
         """
 
-        parts = [self.name, self.broker] + sorted(
-            f"{leg.exchange}:{leg.symbol}:{leg.quantity}" for leg in self.legs
-        )
+        parts = [
+            self.name,
+            self.broker,
+            *sorted(f"{leg.exchange}:{leg.symbol}:{leg.quantity}" for leg in self.legs),
+        ]
         return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 

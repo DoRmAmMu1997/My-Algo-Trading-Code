@@ -7,10 +7,9 @@ import json
 from datetime import date
 from pathlib import Path
 
-import pytest
-
 import position_groups
 import position_groups_cli
+import pytest
 from broker_contract import BrokerQueryResult, PositionDetail
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,9 +43,9 @@ def group(name: str = "IC", legs: list | None = None, **overrides) -> dict:
 
 
 def detail(symbol: str = "NIFTY25N2724500CE", quantity: int = -75, **overrides) -> PositionDetail:
-    fields = dict(symbol=symbol, exchange="NFO", product_type="NRML", quantity=quantity,
-                  average_price=120.456, underlying="NIFTY", expiry=date(2025, 11, 27),
-                  strike=24500.0, right="CE")
+    fields = {"symbol": symbol, "exchange": "NFO", "product_type": "NRML", "quantity": quantity,
+              "average_price": 120.456, "underlying": "NIFTY", "expiry": date(2025, 11, 27),
+              "strike": 24500.0, "right": "CE"}
     fields.update(overrides)
     return PositionDetail(**fields)
 
