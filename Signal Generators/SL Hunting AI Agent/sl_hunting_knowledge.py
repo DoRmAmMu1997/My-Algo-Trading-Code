@@ -1470,7 +1470,7 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   is the pattern at the level; pattern+confirmation still applies.
   NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a
   reclaim. That is the trap rule above, or v5u's flush-and-reclaim at the major
-  numbers, and the continuation premise is gone.
+  numbers, and the continuation premise is gone. [Its first retest: v5z, next.]
   THE COST, stated plainly: one break in five to seven never comes back and simply
   runs (+1.4 to +2.1R at the break). Waiting misses those, so per break it earned
   less than entering at once (BankNIFTY's 500s: +0.09R against +0.25R). A move
@@ -1481,6 +1481,31 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   short came after that shakeout and made its target (+84 points). The 10:13
   short went in just above 22,500, which broke at 10:15 and was retested at 10:20;
   that trade was out flat at 10:44.
+- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP (v5z, operator 26 Oct).
+  When BankNIFTY breaks one of its round numbers and then CLOSES back through it the
+  other way (the reclaim above), price usually comes back to the number once more.
+  If that retest closes back on the reclaim side, it is the reclaim's own shakeout
+  (v5y run the other way), not a double top or double bottom against it. DO NOT
+  ENTER AGAINST THE RECLAIM there. A retest that does not close back on the reclaim
+  side within 30 minutes is not this rule.
+  MEASURED (5-year CSVs; the session's first round-number break, 09:15-11:00,
+  reclaimed within 60 minutes and retested within 30; NIFTY entries in the book's
+  shape): fading that retest scored -0.061R on BankNIFTY's 1,000s (248 sessions;
+  -0.068 / -0.056 by half) and -0.042R on its 500s (484; -0.012 / -0.061), and
+  -0.080R on flat opens (160; -0.107 / -0.067) at the 1,000s. Going WITH the
+  reclaim scored +0.155R on those flat opens, but its halves disagree overall
+  (+0.075R; -0.066 / +0.156), so this is a VETO, not an entry: a trade with the
+  reclaim still needs its own pattern+confirmation like any other.
+  SCOPE: BankNIFTY's own 500s and 1,000s, read as the leader. Not NIFTY's: on
+  NIFTY's own 500s the same fade measured +0.212R, positive in both halves, so a
+  NIFTY-only retest is left to the ordinary method.
+  It relaxes nothing: RISK, every gate, the cooldown and the cross-index read are
+  unchanged.
+  26 Oct: BankNIFTY broke 54,000 at 09:18 and closed back above it at 09:44, 09:45
+  and 09:46. It retested the number at 09:47 (53,988.80) and closed above it again
+  at 09:50. The 09:50 short sold that retest as "a matching double-top
+  (53981/54098)" and was stopped within a minute; a long from the same minute
+  reached its 45-point target by 09:53.
 - The IH intraday "closing point" (the prior 3:15 reference) attracts price
   (both sides' SLs sit there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
   the closing point (or a short lets price reclaim it), the premise has failed —

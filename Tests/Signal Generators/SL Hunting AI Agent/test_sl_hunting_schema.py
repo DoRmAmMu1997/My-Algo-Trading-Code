@@ -3943,3 +3943,45 @@ def test_v5y_after_a_round_number_breaks_the_entry_waits_for_the_shakeout():
     here = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
     assert clean < here
     assert "\n- " not in prompt[clean + 3:here]
+
+
+def test_v5z_a_reclaimed_banknifty_round_numbers_first_retest_is_not_a_double_top():
+    """v5z (operator, 26 Oct, measured): a veto on fading the reclaim's first retest.
+
+    The 09:50 short sold BankNIFTY's first retest of a reclaimed 54,000 as a double
+    top and was stopped within a minute. Measured, fading that retest is negative in
+    both halves on BankNIFTY's own numbers, while going with the reclaim is not clean
+    enough to be an entry. Pins the veto, its measurement, its BankNIFTY-only scope
+    (NIFTY's 500s measured the other way), what it does not relax, the 26 Oct case,
+    its placement right after v5y's shakeout rule, and the pointer inside v5y.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP")
+    assert rule.startswith(
+        "- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP (v5z, operator 26 Oct).")
+    # The event, and the veto.
+    assert "CLOSES back through it the other way" in rule
+    assert "closes back on the reclaim side" in rule
+    assert "DO NOT ENTER AGAINST THE RECLAIM" in rule
+    assert "A retest that does not close back on the reclaim side within 30 minutes is not this rule" in rule
+    # The measurement, both halves.
+    assert "-0.061R on BankNIFTY's 1,000s (248 sessions; -0.068 / -0.056 by half)" in rule
+    assert "-0.042R on its 500s (484; -0.012 / -0.061)" in rule
+    assert "-0.080R on flat opens (160; -0.107 / -0.067)" in rule
+    # A veto, not an entry: the with-the-reclaim side is not clean.
+    assert "+0.075R; -0.066 / +0.156" in rule
+    assert "this is a VETO, not an entry" in rule
+    assert "still needs its own pattern+confirmation" in rule
+    # Scope: BankNIFTY's numbers only, because NIFTY's 500s measured the other way.
+    assert "SCOPE: BankNIFTY's own 500s and 1,000s" in rule
+    assert "on NIFTY's own 500s the same fade measured +0.212R, positive in both halves" in rule
+    # What it does not relax, and the case that produced it.
+    assert "It relaxes nothing" in rule
+    assert "a matching double-top (53981/54098)" in rule
+    # Placed directly after v5y's shakeout rule, which points here.
+    v5y = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
+    here = prompt.index("\n- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST")
+    assert v5y < here
+    assert "\n- " not in prompt[v5y + 3:here]
+    v5y_rule = _flat_rule(prompt, "AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER")
+    assert "and the continuation premise is gone. [Its first retest: v5z, next.]" in v5y_rule

@@ -11648,3 +11648,266 @@ level sat at 34.8% of NIFTY's range and 16.1% of BankNIFTY's, so v5x's
 morning. `test_sl_hunting_premarket.py` is retargeted to 26 Oct in the same
 change, and its 19 tests pass.
 
+## v5z - 26 Oct live match: IH bought the lone BankNIFTY break, the agent followed v5x's end clause
+
+**Sources.**
+
+- **IH's live session:** `A6CgbrMM9DA`, uploaded 2026-10-26 10:48:37 IST, 10:01.
+  Clock times come from the taskbar clock in the frame and figures from his
+  positions screen at 8:02. His words are my translation of the Hindi
+  auto-transcript (265 segments).
+- **IH's lesson:** [Master Risk-Reward Ratio](https://www.youtube.com/watch?v=K2PiBp8jrDs),
+  uploaded 2026-10-25 10:15:07 IST, 10:16, 247 segments.
+- **This book:** three journal rows, 55 decisions (9 agent errors) and the
+  runner log. The model was `claude-sonnet-5`. SL Hunting ran PAPER all day
+  (see Operational).
+- **The 5-year NIFTY and BankNIFTY CSVs**, rebuilt on this machine through
+  26 Oct with the Data Extractors. The earlier copies, the book's journal
+  history and the transcript archive are not in this checkout. The raw
+  transcripts sit outside git, in the session scratchpad.
+
+**Adopted: v5z-2**, on the operator's call after the measurement below. It is a
+veto on fading BankNIFTY's first retest of a reclaimed round number. v5z-1 and
+v5z-3 stay open.
+
+### The session
+
+23 Oct's 3:15 level was 22,516.40, and its low 22,372.00 at 12:51. BankNIFTY's
+3:15 level was 54,111.55, and its low 53,942.35.
+
+26 Oct opened FLAT on the computed verdict (NIFTY +0.04%, BankNIFTY +0.26%):
+
+- **09:15:** NIFTY opened at 22,524.40 and its first minute closed at
+  22,480.05, under 22,500. v5x's end clause fired at once.
+- **09:18-09:19:** BankNIFTY closed below 54,000 at 09:18 and below 23 Oct's
+  low at 09:19 (53,904.80).
+- **09:25-09:26:** BankNIFTY made 53,777.50 at 09:25. NIFTY made 22,387.35 at
+  09:26, 15.35 points above its own 23 Oct low. Sensex held its low too, by
+  IH's account; it is not in this data.
+- **09:44-09:52:** BankNIFTY closed back above 54,000 at 09:44, 09:45 and
+  09:46, retested it at 09:47 (53,988.80) and closed above it again at 09:50.
+  NIFTY closed above 22,500 at 09:52.
+- **10:08:** NIFTY made 22,706.15. The 3:15 level was 22,717.05 and the close
+  22,753.20.
+
+| | IH | the agent |
+|---|---|---|
+| read | two days of continuous selling with a 4-5 minute retracement: sellers seated, and the round-number breakdown adds fresh ones. Entry where BankNIFTY broke its lower point while NIFTY and Sensex held theirs | FLAT. The note's BUY branch was void under v5x (closes below 22,500 and 54,000), so v5f governs: follow the selling |
+| entry | **09:24-09:25**: BankNIFTY OCT 53900 CE and 54000 CE x1,170 each, SENSEX OCT 72600 CE x900, NIFTY OCT 22400 CE x1,430 (avg 169.28) | 09:41 SHORT refused by sizing (41-pt stop) · **09:50** SHORT x2 at 22,460.10 · **10:04** SHORT x1 at 22,627.90 · **10:17** LONG x1 at 22,677.00 |
+| path | about 3 lakh up by 09:35, a small loss at 09:40, held for BankNIFTY's 54,000 breakout: "their SLs will sit just above the round number" | stops at 22,478 / 22,665 / 22,648 |
+| exit | about **09:46**: the breakout came without fast follow-through, "so we will have to take a normal target" | AI_STOP 09:51:51 (backstop) · AI_STOP 10:07:00 (close) · MAX_LOSS 10:20:31 |
+| result | **+2,73,727.10** open at 09:44 (BankNIFTY +80,788.50 and +64,409.00, SENSEX +76,878.00, NIFTY +51,651.60). The booking screen is not legible. | paper **-7,899.50** (-3,481.50 / -2,853.50 / -1,564.50; NIFTY legs -1,540.50 / -1,040.00 / -604.50) |
+
+IH took NIFTY from about 22,400 to 22,488 and left. The larger leg, 22,460 to
+22,706, came after he booked, and the agent was short into it twice.
+
+### The agent: the opposite side, and then the top
+
+- **09:23-09:50: HOLD.** 18 of the 20 decisions called the BUY branch void,
+  because v5x's end clause had fired at 09:15 and v5f's follow became the
+  frame. The two that did not (09:47 and 09:48) saw the long off 22,387 only
+  once it had "already run". At 09:41, with
+  IH sitting long, the agent tried a SHORT at 22,417.15 (stop 22,458). Sizing
+  refused it: 2,655.25 for one lot against the 2,500 budget.
+- **09:50 SHORT, four minutes after IH booked.** The trade sold BankNIFTY's
+  first retest of the reclaimed 54,000 as "a matching double-top
+  (53981/54098)". v5y already removes that premise: "a return that CLOSES back
+  beyond the number and holds there is a reclaim... the continuation premise is
+  gone", and BankNIFTY had closed above 54,000 three times. The backstop filled
+  at 22,494.20 within 42 seconds. A long from the same minute would have
+  reached its 45-point target by 09:53.
+- **10:04 SHORT** against a 270-point run, off the 22,659 / 22,657 double top.
+  The 10:06 candle closed at 22,675.40, beyond the stop.
+- **10:17 LONG**, the third trade in 27 minutes and a flip after two losses.
+  It entered with 1,165 rupees left before the 7,500 max-loss and a stop worth
+  1,885 on the NIFTY leg alone. MAX_LOSS flattened it at 10:20, at -7,932 for
+  the session, with its own stop untouched.
+
+### Measured
+
+All entries are NIFTY, in the book's trade shape (16-point stop, 45-point
+target, out after 15 minutes, entered at the next minute's open), scored in R,
+with the 2021-23 / 2024-26 halves in brackets.
+
+**1. IH's entry: the lone BankNIFTY break of yesterday's low.** The setup:
+
+- The previous day closed -0.5% or worse on the 3:15 levels, and today's open
+  is FLAT on both indices.
+- The first prior-low break between 09:15 and 10:30 is classified as
+  BankNIFTY alone (BankNIFTY closes below its low while NIFTY's low so far is
+  above its own), NIFTY alone, or both.
+- Entries come 1 and 6 minutes after the break (IH waited about 6), or on the
+  first covering candle: a NIFTY close above the prior bar's high within 20
+  minutes, with NIFTY still holding.
+
+| first break | n | long +1 | long +6 | long on covering | short on covering |
+|---|---|---|---|---|---|
+| BankNIFTY alone | 20-26 | -0.619 (-0.593 / -0.635) | -0.104 (-0.757 / +0.114) | -0.156 (-0.889 / +0.137) | **+0.544** (+1.632 / +0.109) |
+| both | 53 | -0.202 | -0.090 | - | short +1: +0.239 (+0.113 / +0.293) |
+| NIFTY alone | 23 | -0.085 | +0.218 (+0.538 / -0.199) | - | short +1: +0.596 |
+
+With IH's own stop (NIFTY's prior low, 1 point under), a target of 45 points
+or twice the stop, and 15, 30 or 60 minutes, the long scores -0.27 to +0.10R
+over 20-21 sessions. The halves disagree in every variant: 2021-23 is negative,
+2024-26 positive. Only 5 to 9 of those stops fit the book's budget, which caps
+it near 38 points. 26 Oct itself needed a 42.9-point stop and scored +1.05R at
+45 points.
+
+The lone break is not an edge for a NIFTY long in either shape. If anything,
+the first covering candle is sold (+0.54R, both halves positive, 21 sessions).
+
+**2. v5u's ten-minute window.** BankNIFTY took 26 minutes to reclaim 54,000
+and NIFTY 37 minutes to reclaim 22,500. For the first major-number flush of
+each session (NIFTY 20+ points deep, BankNIFTY 50+), long NIFTY at the
+reclaim, by reclaim delay:
+
+| leader | 0-10 min | 11-20 | 21-30 | 31-60 |
+|---|---|---|---|---|
+| BankNIFTY 1,000s | +0.066 (53) | -0.334 (12) | -0.047 (8) | -0.678 (10) |
+| NIFTY 500s | +0.259 (47) | +1.086 (8) | +0.596 (4) | +0.916 (5) |
+
+Past ten minutes the samples are 4-12 sessions, and BankNIFTY's late reclaims
+are negative. The window stays where it is.
+
+By v5u's own definition, NIFTY's 09:15 flush to 22,470.05 (30 points), closed
+back above 22,500 at 09:16, was a v5u long. In this shape it was stopped. The
+agent was holding on the auth failure.
+
+**3. The first retest of a reclaimed round number (the 09:50 short).** The
+setup:
+
+- A round number breaks (the first 1-minute close through it, 09:15-11:00) and
+  is reclaimed within 60 minutes.
+- Price trades back to it within 30 minutes of the reclaim, and the retest is
+  done at the first close back on the reclaim side.
+- NIFTY enters the next minute, WITH the reclaim (v5y's shakeout entry) or
+  AGAINST it (the agent's trade).
+
+| leader | n | with the reclaim | against it |
+|---|---|---|---|
+| BankNIFTY 1,000s | 248 | +0.075 (-0.066 / +0.156) | -0.061 (-0.068 / -0.056) |
+| ... flat opens | 160 | **+0.155** (+0.019 / +0.222) | -0.080 (-0.107 / -0.067) |
+| BankNIFTY 500s | 484 | +0.073 (-0.023 / +0.132) | -0.042 (-0.012 / -0.061) |
+| NIFTY 500s | 160 | -0.077 (-0.047 / -0.094) | **+0.212** (+0.189 / +0.226) |
+| NIFTY 100s | 661 | -0.037 (-0.042 / -0.034) | +0.062 (+0.093 / +0.043) |
+
+On 26 Oct BankNIFTY's 54,000 broke at 09:18, was reclaimed at 09:44, retested
+at 09:47 and done at 09:50. A long at 09:51 (22,476.10) reached its target at
+09:53, +2.81R; the agent sold the same minute. With BankNIFTY as the leader,
+fading the retest is negative in both halves. On NIFTY's own 500s, fading is
+the better side. The effects are 0.06-0.2R and depend on the leader, so this
+is not a clean rule.
+
+**4. The risk-reward lesson: not measured.** Testing it needs the book's
+journal (target-hit rate and give-backs by R:R), which is not on this machine.
+
+### Candidates, for the operator's call
+
+- **v5z-1, v5x's end clause.** On 22 Oct IH said "if it goes below 500... we
+  cannot target these sellers". On 26 Oct both numbers had closed below before
+  he bought, and he said the breakdown added sellers to target. His line was
+  the lower point. The choices:
+  - (a) Narrow the clause: a round-number close ends the hunt only once NIFTY
+    also closes below yesterday's low, and a lone BankNIFTY break of its own
+    low is the divergence-fails case. Measurement 1 does not support it.
+  - (b) Revert v5x on its own review condition. Its only live trade so far is
+    26 Oct's 09:50 short, which cited it and lost 3,481.50.
+  - (c) Leave it and keep watching.
+- **v5z-2, a veto: BankNIFTY's first retest of a reclaimed major number is not
+  a double top.** Fading it measured -0.04 to -0.08R, negative in both halves;
+  going with it measured +0.155R on flat opens for the 1,000s. NIFTY's own 500s
+  say the opposite, so the veto would be scoped to BankNIFTY as the leader.
+  v5y's reclaim sentence already removes the short's premise, and the agent
+  did not apply it. **Adopted** (below).
+- **v5z-3, risk-reward (the 25 Oct lesson).** Change R:R by moving the target
+  only; the stop stays where a close means you are wrong. The diagnosis runs
+  both ways: accurate trades that miss their targets need a nearer target,
+  inaccurate ones a farther target. His own option-buying default is about 1:1,
+  because time decay means "with a big ratio I would have to wait for three or
+  four momentums". The corpus prefers about 1:2 and allows 1:1 only when every
+  condition holds (OPTION-TIME-ADJUSTED REWARD/RISK). The overlap is v4s,
+  SLH-025 and v5x's placement rule. The net-new part is the 1:1 default, and it
+  needs the journal before it moves anything.
+
+### Adopted: v5z-2 (operator, 26 Oct)
+
+**A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP.** It
+sits in LEVELS, directly after v5y's shakeout rule, whose "NOT A SHAKEOUT"
+sentence now ends with a pointer to it.
+
+- **The event:** BankNIFTY breaks one of its 500s or 1,000s, closes back
+  through it the other way, comes back to the number, and closes back on the
+  reclaim side.
+- **The veto:** do not enter against the reclaim there. A retest that does not
+  close back within 30 minutes is not this rule.
+- **A veto, not an entry.** Going with the reclaim was not clean in both
+  halves, so a trade that way still needs its own pattern+confirmation.
+- **Scope:** BankNIFTY's own numbers only, because NIFTY's own 500s measured the
+  other way (+0.212R for the fade). It relaxes no RISK rule, gate, cooldown or
+  cross-index read.
+- The rule carries its measurement and the 26 Oct case.
+
+To review: decisions that cite (v5z) are checked against what the fade would
+have made. The rule is reverted if the vetoed fades would have paid.
+
+### Validation
+
+`test_v5z_a_reclaimed_banknifty_round_numbers_first_retest_is_not_a_double_top`
+pins the rule. It failed before the rule existed and passes with it. Its 11
+in-memory mutants are all caught:
+
+- the veto flipped to an entry against the reclaim;
+- the measurement altered;
+- the halves dropped;
+- the veto turned into an entry;
+- the pattern requirement dropped;
+- the scope widened to every index;
+- NIFTY's counter-result dropped;
+- the relaxes-nothing clause dropped;
+- the 30-minute carve-out dropped;
+- the v5y pointer removed;
+- the rule moved to the end of LEVELS.
+
+**Gates:** the master suite (673), market-data health (28), pytest (1,795),
+ruff, mypy (82 files, then the master file), compileall and bandit (CI's
+skips, on the changed files) are all clean. pre-commit was not run: its hooks
+are not installed on this machine. They cover ruff, which was run, and four
+file checks these edits do not touch.
+
+### Already in the corpus
+
+- One index breaks a level while the others hold, and the break fails:
+  DIVERGENCE in CROSS-INDEX CONFIRMATION, and the triple-index read in BNF
+  SPECIFIC.
+- "Seeing BankNIFTY's breakdown, others sell NIFTY and Sensex, and the market
+  targets them": the seller-recruitment loop, with the lower point as its
+  premise-ending level.
+- Holding for the round-number breakout because the breakdown sellers' stops
+  sit above it: the SL-hunt premise, v5u and the trap rule.
+- Booking when the breakout brings no fast follow-through, and "in greed we
+  gave back what was in hand": v5w, TARGET-BOOKED, PROFIT-HOLD and v5y.
+
+### Operational
+
+- **The open was lost to an expired token.** The `claude` CLI's OAuth token
+  had expired, so 09:15-09:22 were eight forced HOLDs. The 09:15:51 restart
+  then hit the broker exposure audit ("Open-order query was indeterminate"),
+  which blocked LIVE: SL Hunting ran PAPER all day.
+- **Sizing ignores the max-loss headroom.** `_compute_entry_sizing` sizes on
+  the fixed 2,500 budget and never on what is left before the max-loss. Trade
+  3 could only end at MAX_LOSS: its stop risk exceeded the room left, so it
+  closed at -7,932 against a 7,500 limit.
+  - The fix: refuse an entry whose stop risk (NIFTY leg plus mirror) exceeds
+    the remaining room. Not built.
+- **SLH-027's first two firings both cost.** Neither trade recovered (NIFTY
+  went on to 22,706.15), so the closing basis saved nothing on the day and
+  cost about 30 NIFTY points:
+  - Trade 1's backstop (22,486.95) filled at 22,494.20: -34.1 points, -1.91R.
+    The intrabar stop sat at 22,478.
+  - Trade 2's stop fired on a close and filled at 22,678.55 (-1.37R), where
+    the intrabar stop was 22,665.
+- **Expiry eve.** All three NIFTY legs used the 27 Oct expiry, one day out.
+  The BankNIFTY mirror used the 4-step ITM strike for expiry week.
+- **Latency.** 47 completed calls: median 39.9 s, p95 62.6 s, worst 77.1 s.
+  Five calls passed the 60 s warning, and the 09:26 call was abandoned at
+  90 s.
