@@ -535,9 +535,10 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # Timedelta for exactly this reason; Index.values is now read-only; float
     # groupby sum/mean may differ in the last few digits. The whole suite,
     # MAT-106's 8-decimal indicator snapshot included, ran on 3.1.0 in this PR's
-    # own CI on 3.12 and 3.13 and failed only on these pin assertions. It does
-    # add Pandas4Warning deprecations (.dt.dayofweek in dashboard_history and the
-    # index fetcher) -- warnings, not breaks. pandas-stubs stays at 3.0.5.260914
+    # own CI on 3.12 and 3.13 and failed only on these pin assertions. Its new
+    # Pandas4Warning on `.dayofweek` was cleared in the same PR by moving our three
+    # uses to `.day_of_week`; the one left comes from inside backtesting.py.
+    # pandas-stubs stays at 3.0.5.260914
     # because no 3.1 stubs exist yet, so mypy types pandas 3.1 with 3.0-line stubs
     # (it passes); move the stubs when a 3.1 snapshot ships.
     for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.0", "TA-Lib==0.6.8", "numpy==2.5.4"):
