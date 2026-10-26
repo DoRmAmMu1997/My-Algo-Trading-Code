@@ -91,7 +91,15 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # names (connect, ConnectionClosed, protocol.State.CLOSED) were confirmed on
     # an isolated 17.2 install. If the feed does not tick at 09:15, revert this
     # pin first.
-    assert "websockets==17.2" in core
+    # 17.2 -> 17.3 (2026-10-26, PR #224). No new API and nothing removed: two bug
+    # fixes plus non-blocking reads in the THREADING implementation, which
+    # marketfeed does not use. The client fix is for non-ASCII HTTP Basic
+    # credentials, which marketfeed never sends. The asyncio fix closes a race
+    # between the next frame of a fragmented message and a CANCELLED recv();
+    # marketfeed awaits recv() plainly and the runner never cancels it. Its three
+    # names were confirmed on an isolated 17.3 install. If the feed does not tick
+    # at 09:15, revert this pin first.
+    assert "websockets==17.3" in core
     # 2.3.3.260113 -> 3.0.5.260730 (2026-09-01, PR #150). A correction more than
     # an upgrade. `pandas` is pinned at 3.0.5 and is NOT in the Dependabot ignore
     # list, so it moved to the 3.x line while a semver-major ignore pinned the
@@ -269,7 +277,22 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # check is the test: on the next session decisions return and
     # "SLHuntingAgent decision latency" has not crept up. If either fails,
     # revert this pin first.
-    assert "claude-agent-sdk==0.2.168" in ai
+    # 0.2.168 -> 0.2.172 (2026-10-26, PR #224), bundled CLI 2.1.301 -> 2.1.308.
+    # The win_amd64 wheel is still published and still carries
+    # _bundled/claude.exe: installed from it on Windows and run
+    # (`claude.exe --version` = 2.1.308). Diffed against the installed 0.2.168,
+    # the Python package moved in two places only: a docstring in types.py
+    # (0.2.169's include_hook_events note) and _internal/sessions.py, 0.2.170's
+    # parallel-tool-call fix to get_session_messages -- a session-HISTORY reader
+    # neither agent calls. The transport, query() and the error classes are
+    # byte-identical and ClaudeAgentOptions changed only in that docstring, so
+    # the options we pass, the FILE form of system_prompt and the ResultError
+    # classification above all still hold. 0.2.171 and 0.2.172 only move the
+    # bundled CLI, which is where any risk sits: it was run for --version, not
+    # for a decision. The standing check is the test: on the next session
+    # decisions return and "SLHuntingAgent decision latency" has not crept up.
+    # If either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.172" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -352,7 +375,15 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # byte-identical; only its METADATA moves the lockstep CLI pin,
     # openai-codex-cli-bin, to 0.162.1, which publishes a win_amd64 wheel.
     # Standing check unchanged.
-    assert "openai-codex==0.162.1" in ai
+    # 0.162.1 -> 0.163.0 (2026-10-26, PR #224). Same isolated introspection, all
+    # surfaces intact (names, context manager, enum members, thread_start params
+    # by name with no **kwargs, SYNC Thread.run taking approval_mode /
+    # output_schema / effort by name, TurnResult fields). Diffed against the
+    # installed 0.162.1, only the generated protocol models moved, and only by
+    # addition (a thread read-state notification plus optional fields; no line
+    # removed). The lockstep CLI, openai-codex-cli-bin 0.163.0, publishes a
+    # win_amd64 wheel. Standing check unchanged.
+    assert "openai-codex==0.163.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -495,7 +526,21 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # on non-finite input, StringDType hashing, typing fixes and an MSVC
     # workaround. MAT-106's 8-decimal indicator snapshot passed UNCHANGED on it
     # in this PR's own CI, on both 3.12 and 3.13.
-    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.4"):
+    # pandas 3.0.6 -> 3.1.0 (2026-10-26, PR #224). A MINOR, so its
+    # backwards-incompatible list was read against this repo rather than
+    # assumed. What has any reach here: numeric input to to_datetime() now
+    # defaults to MICROSECOND resolution whatever its `unit` (the master's bar
+    # parser and the Data Extractors pass one), which is harmless because nothing
+    # reads a timestamp's raw integer -- the dashboard's epoch math divides a
+    # Timedelta for exactly this reason; Index.values is now read-only; float
+    # groupby sum/mean may differ in the last few digits. The whole suite,
+    # MAT-106's 8-decimal indicator snapshot included, ran on 3.1.0 in this PR's
+    # own CI on 3.12 and 3.13 and failed only on these pin assertions. It does
+    # add Pandas4Warning deprecations (.dt.dayofweek in dashboard_history and the
+    # index fetcher) -- warnings, not breaks. pandas-stubs stays at 3.0.5.260914
+    # because no 3.1 stubs exist yet, so mypy types pandas 3.1 with 3.0-line stubs
+    # (it passes); move the stubs when a 3.1 snapshot ships.
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.0", "TA-Lib==0.6.8", "numpy==2.5.4"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
