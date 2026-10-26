@@ -94,6 +94,20 @@ def test_block_declares_itself_advisory_and_non_overriding():
     assert "It can be WRONG" in block
 
 
+def test_block_points_a_round_number_cross_against_it_to_v5z():
+    """v5z (operator, 26 Oct): the one case where the note's side outranks the live
+    read. The block must say so next to "your read wins", or the two would disagree
+    inside the same prompt."""
+    block = format_premarket_note(PremarketNote.model_validate(_note()), TODAY)
+    lines = block.splitlines()
+    read_wins = next(i for i, line in enumerate(lines) if "your read wins" in line)
+    exception = next(i for i, line in enumerate(lines) if line.startswith("One exception (v5z):"))
+    assert exception == read_wins + 1
+    assert " ".join(lines[exception:exception + 2]) == (
+        "One exception (v5z): a round number crossed AGAINST its side does not by itself "
+        "make your read win -- the note's side stands until v5z's own line breaks.")
+
+
 # --------------------------------------------------------------------------
 # Untrusted third-party text is bounded before it reaches the prompt
 # --------------------------------------------------------------------------

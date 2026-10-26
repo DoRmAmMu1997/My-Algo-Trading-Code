@@ -20,7 +20,9 @@ THE TWO SAFETY PROPERTIES THAT MATTER
    that scope deliberately: the note may inform the read, but it can never stand
    in for pattern + confirmation, never override the post-exit cooldown, and
    never justify an entry on its own. It carries the same weight as the
-   `cross_index` verdict — a vote, not an instruction.
+   `cross_index` verdict — a vote, not an instruction. One exception, also the
+   operator's (26 Oct, v5z in the knowledge): a round number crossed AGAINST the
+   note's side does not by itself overrule that side.
 
 WHY THE FIELDS ARE BOUNDED AND SINGLE-LINE
 ------------------------------------------
@@ -195,6 +197,8 @@ def format_premarket_note(note: PremarketNote | None, today: date) -> str:
         "rule, does NOT create an entry on its own, and does NOT override the post-exit",
         "cooldown, your stop/target, or any RISK rule. If your own live read disagrees with",
         "it, your read wins -- and if it merely restates method you already know, ignore it.",
+        "One exception (v5z): a round number crossed AGAINST its side does not by itself",
+        "make your read win -- the note's side stands until v5z's own line breaks.",
         "It can be WRONG: it is one person's forecast made before the session existed.",
         "",
         f"Prior session: {note.context}",

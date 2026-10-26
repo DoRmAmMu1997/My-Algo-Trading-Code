@@ -11666,9 +11666,14 @@ change, and its 19 tests pass.
   history and the transcript archive are not in this checkout. The raw
   transcripts sit outside git, in the session scratchpad.
 
-**Adopted: v5z-2**, on the operator's call after the measurement below. It is a
-veto on fading BankNIFTY's first retest of a reclaimed round number. v5z-1 and
-v5z-3 stay open.
+**Adopted: v5z-2 and v5z-1**, both on the operator's call after a measurement.
+
+- **v5z-2** is a veto on fading BankNIFTY's first retest of a reclaimed round
+  number.
+- **v5z-1**, in the operator's reframing, lets the pre-open note's side stand
+  through a round-number cross against it.
+
+v5z-3 stays open.
 
 ### The session
 
@@ -11813,6 +11818,7 @@ journal (target-hit rate and give-backs by R:R), which is not on this machine.
   - (b) Revert v5x on its own review condition. Its only live trade so far is
     26 Oct's 09:50 short, which cited it and lost 3,481.50.
   - (c) Leave it and keep watching.
+  **Reframed by the operator and adopted** (see "Adopted: v5z-1", below).
 - **v5z-2, a veto: BankNIFTY's first retest of a reclaimed major number is not
   a double top.** Fading it measured -0.04 to -0.08R, negative in both halves;
   going with it measured +0.155R on flat opens for the 1,000s. NIFTY's own 500s
@@ -11894,7 +11900,86 @@ not contradict existing knowledge. Neither passes that test.
     distant target... to manufacture a ratio".
 
 Either could still be adopted as a deliberate change to the rule it conflicts
-with, on the operator's call, as v5x was.
+with, on the operator's call, as v5x was. The operator then did that for v5z-1
+(next).
+
+### Adopted: v5z-1, reframed (operator, 26 Oct evening)
+
+**The operator's reframing:** a round-number cross may be the market seating
+and trapping the opposite crowd, so the agent should look for the price-action
+move. For the benefit of the doubt, the pre-open note takes precedence.
+
+**Scope (operator's choice):** the round-number case only. A blanket "the note
+always wins" would have overridden v5q, v5k, v5f, the standing-premise rule and
+the PRE-OPEN block's "your read wins", several of them measured.
+
+**Measured** before encoding, on the 5-year CSVs. The setup:
+
+- FLAT opens after a day that moved 0.5% or more (3:15 to 3:15).
+- The first close beyond NIFTY's or BankNIFTY's next 500 from the open, by
+  10:30.
+- NIFTY still holding yesterday's extreme on the note's side.
+- The note's side (against the cross) is entered on the first NIFTY covering
+  close within 20 minutes, in the book's shape.
+
+| prior day | cross | note's side | following the cross |
+|---|---|---|---|
+| down | down (IH's 26 Oct case) | **+0.708R** (27; +0.691 / +0.721) | -0.017R |
+| up | up (the mirror) | **+0.608R** (19; +1.818 / +0.176) | -0.475R |
+| up | down (a BUY note that follows) | +0.106R (70; +0.117 / +0.098) | -0.003R |
+| down | up (a SELL note that follows) | **-0.164R** (59; -0.296 / -0.114) | +0.399R |
+
+Further checks:
+
+- **The covering window does not matter:** 10, 20 and 30 minutes all gave
+  +0.65 to +0.71R in the down-day case.
+- **The hold of yesterday's extreme does:** without it the down-day case falls
+  to +0.148R (69).
+- **The covering candle is the trigger:** buying at a fixed minute after the
+  cross lost (-0.068R at six minutes).
+
+This is a different test from measurement 1, which keyed on the lone
+BankNIFTY break of yesterday's low rather than on the round-number cross.
+
+**The rule**, A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS;
+THE NOTE'S SIDE STANDS, sits between v5x and v5k:
+
+- **Scope:** a pre-open note that names a side, a FLAT open, a prior move of
+  0.5%+, a 500-cross against the note's side by 10:30, and NIFTY still holding
+  yesterday's extreme on that side.
+- **What it changes:** the note's side outranks v5x's end clause and v5f's
+  follow, and the agent does not take the opposite side on the cross.
+- **The entry is price action:** the covering candle, with pattern+confirmation.
+  A reclaim of the number is the same hunt.
+- **What ends it:** NIFTY trading beyond yesterday's extreme on the note's side.
+- **Not covered:** the measured-negative case, a SELL note that follows a down
+  day with an upward cross.
+- It relaxes nothing (RISK, gates, cooldown, max-loss, v5q, v5k, the
+  standing-premise rule), and it is reverted if live results are negative.
+
+**Two pointers keep the prompt consistent:**
+
+- v5x's end clause now ends with "[Narrowed by v5z, next: ...]".
+- The PRE-OPEN block (`sl_hunting_premarket.py`) carries one exception line
+  right after "your read wins": a round number crossed AGAINST the note's side
+  does not by itself make the live read win.
+
+**Validation:**
+
+- `test_v5z_a_round_number_crossed_against_the_note_seats_the_crowd_it_hunts`
+  and `test_block_points_a_round_number_cross_against_it_to_v5z` both failed
+  before the change and pass with it.
+- 16 mutants, all caught. On the rule (13): precedence reversed, "outranks"
+  made "yields", the opposite side allowed, the pattern requirement dropped,
+  the hold of yesterday's extreme dropped, the FLAT scope dropped, the end line
+  moved to the round number, the negative-case carve-out dropped, the negative
+  case hidden, the measurement altered, the relaxes-nothing clause dropped, the
+  v5x pointer removed, and the rule moved after v5k. On the PRE-OPEN block (3):
+  the exception removed, moved away from "your read wins", and weakened.
+- **Gates:** the master suite (673), market-data health (28), pytest (1,797),
+  ruff, mypy (82 files, then the master file), compileall and bandit (CI's
+  skips, on the changed files) are all clean. pre-commit was not run, for the
+  reason given under v5z-2.
 
 ### Already in the corpus
 
@@ -11933,3 +12018,4 @@ with, on the operator's call, as v5x was.
 - **Latency.** 47 completed calls: median 39.9 s, p95 62.6 s, worst 77.1 s.
   Five calls passed the 60 s warning, and the 09:26 call was abandoned at
   90 s.
+
