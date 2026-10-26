@@ -1,43 +1,43 @@
 {
-  "for_date": "2026-10-23",
-  "source": "Intraday Hunter, 'Prediction For 23 OCT 2026' (E8ZaDDdgnio, uploaded 2026-10-22)",
-  "context": "October 22 recovered through the closing price and evicted the sellers, so no seller stops remain to hunt. Momentum stayed small: buyers and sellers sit at one price level.",
+  "for_date": "2026-10-26",
+  "source": "Intraday Hunter, 'Prediction For 26 OCT 2026' (-sQI9q-As48, uploaded 2026-10-25)",
+  "context": "October 23 sold continuously across BankNIFTY, Sensex and NIFTY; the retracement was short and rejection resumed, so sellers are likely seated.",
   "plan": [
-    "FLAT TO GAP DOWN -> SELL, WITH THE MARKET: do not target either crowd; identify selling-side setups.",
-    "GAP UP -> SELL, the same plan: identify selling-side setups."
+    "FLAT TO GAP UP -> BUY: sellers are seated; identify buying-side setups to target them.",
+    "GAP DOWN -> BUY, the same plan: identify buying-side setups."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22880,
-        23000
+        22670,
+        22800
       ],
       "support": [
-        22550,
-        22420
+        22240,
+        22080
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55100,
-        55400
+        54500,
+        54810
       ],
       "support": [
-        54390,
-        54200
+        53620,
+        53450
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73970,
-        74800
+        73500,
+        73970
       ],
       "support": [
-        72700,
-        72210
+        72510,
+        72060
       ]
     }
   ]

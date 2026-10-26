@@ -11606,3 +11606,45 @@ are all caught:
 ruff, mypy (82 files, then the master file), compileall, bandit (CI's flags)
 and pre-commit are all clean. The first ruff run caught a 140-character
 assertion, which is now split.
+
+## October 26 pre-open note
+
+[Prediction For 26 OCT 2026](https://www.youtube.com/watch?v=-sQI9q-As48), uploaded
+2026-10-25 21:00:22 IST, 94 s, 41 transcript segments. The note was written on
+25 Oct and shipped uncommitted; the runner injected it (1,369 chars) on 26 Oct.
+
+**Read.** October 23 sold continuously in all three indices. It retraced, but
+only briefly, and the rejection resumed, so the sellers should be seated.
+
+**Plan.** Every branch buys.
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY: identify buying-side setups to target the seated sellers |
+| GAP DOWN | BUY, the same plan |
+
+**Levels.** Three spoken values are garbled or rounded in the captions:
+
+* **BankNIFTY resistance**, spoken "54800 54500", is drawn at 54,812.10 and
+  54,504.75 (the 0:30 frame), recorded as 54,810 / 54,500.
+* **BankNIFTY's first support**, spoken 53,670, is drawn below the 53,700
+  gridline (label 53,6xx at 0:30), recorded as 53,620.
+* **Sensex "7260"** and **NIFTY "2280"** are recorded as 72,060 and 22,080.
+  These two were not re-read from the frames on 26 Oct.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,670 / 22,800 | 22,240 / 22,080 |
+| BankNIFTY | 54,500 / 54,810 | 53,620 / 53,450 |
+| Sensex | 73,500 / 73,970 | 72,510 / 72,060 |
+
+**How the levels played.** No support was reached: NIFTY's low was 22,387.35
+and BankNIFTY's 53,777.50. NIFTY closed through 22,670 at 10:06, and the high
+was 22,753.20, short of 22,800. BankNIFTY topped at 54,392.50, under 54,500.
+
+**How it meets the corpus.** 23 Oct closed -0.66% on the 3:15 levels. Its 3:15
+level sat at 34.8% of NIFTY's range and 16.1% of BankNIFTY's, so v5x's
+"bottom third" held for BankNIFTY only. The agent treated v5x as in scope all
+morning. `test_sl_hunting_premarket.py` is retargeted to 26 Oct in the same
+change, and its 19 tests pass.
+
