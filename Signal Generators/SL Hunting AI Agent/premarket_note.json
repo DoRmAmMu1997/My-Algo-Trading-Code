@@ -1,21 +1,22 @@
 {
-  "for_date": "2026-10-26",
-  "source": "Intraday Hunter, 'Prediction For 26 OCT 2026' (-sQI9q-As48, uploaded 2026-10-25)",
-  "context": "October 23 sold continuously across BankNIFTY, Sensex and NIFTY; the retracement was short and rejection resumed, so sellers are likely seated.",
+  "for_date": "2026-10-27",
+  "source": "Intraday Hunter, 'Prediction For 27 OCT 2026' (mSE4vo8crr0, uploaded 2026-10-26)",
+  "context": "October 26 made positive momentum in all three indices; the buyers it drew were already shaken out by a retracement, and the market is trying to go up again.",
   "plan": [
-    "FLAT TO GAP UP -> BUY: sellers are seated; identify buying-side setups to target them.",
-    "GAP DOWN -> BUY, the same plan: identify buying-side setups."
+    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the retracement already removed the buyers, so follow the renewed upside and identify buying-side setups; positive momentum from the open is the better case.",
+    "SMALL GAP DOWN -> BUY, the same plan, better if the levels do not break: a breakdown near BankNIFTY's round number raises the risk on buyers.",
+    "EXPIRY: NIFTY and BankNIFTY both expire on October 27. Treat expiry as context for an already valid setup, not as an entry premise."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22670,
-        22800
+        22880,
+        23000
       ],
       "support": [
-        22240,
-        22080
+        22500,
+        22320
       ]
     },
     {
@@ -25,19 +26,19 @@
         54810
       ],
       "support": [
-        53620,
-        53450
+        54000,
+        53620
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73500,
-        73970
+        74050,
+        74530
       ],
       "support": [
-        72510,
-        72060
+        73000,
+        72510
       ]
     }
   ]

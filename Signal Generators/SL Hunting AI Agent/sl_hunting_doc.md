@@ -12019,3 +12019,63 @@ THE NOTE'S SIDE STANDS, sits between v5x and v5k:
   Five calls passed the 60 s warning, and the 09:26 call was abandoned at
   90 s.
 
+## October 27 pre-open note
+
+[Prediction For 27 OCT 2026](https://www.youtube.com/watch?v=mSE4vo8crr0), uploaded
+2026-10-26 21:10:20 IST, 105 s, 50 transcript segments.
+
+**Read.** October 26 made positive momentum in all three indices. The buyers it
+drew were already shaken out by a retracement, and the market is trying to go
+up again. In IH's words on NIFTY: "when the market again makes upside momentum,
+we follow the market continuously." This is a follow, not a hunt.
+
+**Plan.** No branch sells.
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, with the market: identify buying-side setups; positive momentum from the open is the better case |
+| SMALL GAP DOWN | BUY, the same plan, better if the levels do not break: a breakdown near BankNIFTY's round number raises the risk on buyers |
+
+IH gives no branch for a big gap down, and none is invented. NIFTY and
+BankNIFTY both expire on October 27. The note carries that as context, not as
+an entry premise.
+
+**Levels.** The 1080p frames at 0:40, 1:12 and 1:37 resolve two garbled
+captions and one rounded value:
+
+* **NIFTY resistance**, spoken "2280 23000", is drawn at 22,881.70 / 23,002.20,
+  and recorded as 22,880 / 23,000. It is the same line the 23 Oct note resolved,
+  not 22,800.
+* **Sensex support**, spoken "7372500", is drawn at 73,007.15 / 72,512.00, and
+  recorded as 73,000 / 72,510, the same 72,510 line as on 26 Oct.
+* **BankNIFTY's second support** is spoken 53,670 but drawn at 53,621.75, and is
+  kept at 53,620, as on 26 Oct.
+
+The other nine match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,880 / 23,000 | 22,500 / 22,320 |
+| BankNIFTY | 54,500 / 54,810 | 54,000 / 53,620 |
+| Sensex | 74,050 / 74,530 | 73,000 / 72,510 |
+
+**How it meets the corpus.** October 26 closed +0.89% on the 3:15 levels
+(22,717.05 against 22,516.40). If 27 Oct opens FLAT and NIFTY or BankNIFTY
+closes below its next 500 under the open, v5z-1 applies to this BUY note.
+That is the up-day, down-cross case, measured at a thin +0.106R. v5x does not
+apply: 26 Oct was not a selling day.
+
+The note renders 1,863 characters on October 27 and nothing on any other date.
+`test_shipped_note_matches_october_27_intraday_hunter_plan` pins the date gate,
+the source, both BUY branches (no line may SELL, no big-gap-down branch), the
+expiry line and all twelve levels. Each of these 8 mutations fails it, and the
+unmutated note passes:
+
+* NIFTY's resistance recorded as the spoken 22,800;
+* the date set to October 26;
+* the small-gap-down branch turned into SELL;
+* the "levels do not break" clause dropped;
+* the expiry line dropped;
+* Sensex's support moved to 72,500;
+* a big-gap-down branch invented;
+* BankNIFTY's support recorded as the spoken 53,670.
