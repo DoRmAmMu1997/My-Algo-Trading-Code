@@ -11874,6 +11874,28 @@ skips, on the changed files) are all clean. pre-commit was not run: its hooks
 are not installed on this machine. They cover ruff, which was run, and four
 file checks these edits do not touch.
 
+### v5z-1 and v5z-3: not encoded (checked against the corpus, 26 Oct)
+
+The operator asked for the other two candidates to be encoded only if they do
+not contradict existing knowledge. Neither passes that test.
+
+- **v5z-1 contradicts v5x.** v5x's "WHAT ENDS IT: the first 1-minute CLOSE
+  below either number" is the clause v5z-1 would replace with "only once NIFTY
+  also closes below yesterday's low". It agrees with DIVERGENCE and with the
+  seller-recruitment rule's lower point, but not with v5x. Its measurement is
+  flat as well.
+- **v5z-3 is half duplicate, half contradiction.**
+  - "Keep the stop, move the target" is already in the corpus: "choose the
+    stop THE PREMISE REQUIRES" (v4), v5e and v5x's placement, SLH-025, and
+    RISK's "never widen it to get size".
+  - His 1:1 default, and lowering or raising the target by accuracy, pull
+    against OPTION-TIME-ADJUSTED REWARD/RISK: "normally prefer approximately
+    1:2", 1:1 "only when EVERY condition is true", and "never fabricate a
+    distant target... to manufacture a ratio".
+
+Either could still be adopted as a deliberate change to the rule it conflicts
+with, on the operator's call, as v5x was.
+
 ### Already in the corpus
 
 - One index breaks a level while the others hold, and the break fails:
