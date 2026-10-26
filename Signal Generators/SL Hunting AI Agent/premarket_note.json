@@ -1,10 +1,11 @@
 {
-  "for_date": "2026-10-23",
-  "source": "Intraday Hunter, 'Prediction For 23 OCT 2026' (E8ZaDDdgnio, uploaded 2026-10-22)",
-  "context": "October 22 recovered through the closing price and evicted the sellers, so no seller stops remain to hunt. Momentum stayed small: buyers and sellers sit at one price level.",
+  "for_date": "2026-10-27",
+  "source": "Intraday Hunter, 'Prediction For 27 OCT 2026' (mSE4vo8crr0, uploaded 2026-10-26)",
+  "context": "October 26 made positive momentum in all three indices; the buyers it drew were already shaken out by a retracement, and the market is trying to go up again.",
   "plan": [
-    "FLAT TO GAP DOWN -> SELL, WITH THE MARKET: do not target either crowd; identify selling-side setups.",
-    "GAP UP -> SELL, the same plan: identify selling-side setups."
+    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the retracement already removed the buyers, so follow the renewed upside and identify buying-side setups; positive momentum from the open is the better case.",
+    "SMALL GAP DOWN -> BUY, the same plan, better if the levels do not break: a breakdown near BankNIFTY's round number raises the risk on buyers.",
+    "EXPIRY: NIFTY and BankNIFTY both expire on October 27. Treat expiry as context for an already valid setup, not as an entry premise."
   ],
   "levels": [
     {
@@ -14,30 +15,30 @@
         23000
       ],
       "support": [
-        22550,
-        22420
+        22500,
+        22320
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55100,
-        55400
+        54500,
+        54810
       ],
       "support": [
-        54390,
-        54200
+        54000,
+        53620
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        73970,
-        74800
+        74050,
+        74530
       ],
       "support": [
-        72700,
-        72210
+        73000,
+        72510
       ]
     }
   ]

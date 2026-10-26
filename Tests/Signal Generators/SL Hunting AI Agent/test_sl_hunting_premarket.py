@@ -94,6 +94,20 @@ def test_block_declares_itself_advisory_and_non_overriding():
     assert "It can be WRONG" in block
 
 
+def test_block_points_a_round_number_cross_against_it_to_v5z():
+    """v5z (operator, 26 Oct): the one case where the note's side outranks the live
+    read. The block must say so next to "your read wins", or the two would disagree
+    inside the same prompt."""
+    block = format_premarket_note(PremarketNote.model_validate(_note()), TODAY)
+    lines = block.splitlines()
+    read_wins = next(i for i, line in enumerate(lines) if "your read wins" in line)
+    exception = next(i for i, line in enumerate(lines) if line.startswith("One exception (v5z):"))
+    assert exception == read_wins + 1
+    assert " ".join(lines[exception:exception + 2]) == (
+        "One exception (v5z): a round number crossed AGAINST its side does not by itself "
+        "make your read win -- the note's side stands until v5z's own line breaks.")
+
+
 # --------------------------------------------------------------------------
 # Untrusted third-party text is bounded before it reaches the prompt
 # --------------------------------------------------------------------------
@@ -201,45 +215,48 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_23_intraday_hunter_plan():
-    """Render the October 22 evening forecast on Friday: SELL on every open.
+def test_shipped_note_matches_october_27_intraday_hunter_plan():
+    """Render the October 26 evening forecast for expiry day: BUY, with the market.
 
-    E8ZaDDdgnio was uploaded 22 Oct at 21:10 IST. Its direct Hindi transcript
-    says October 22's recovery broke the closing price and evicted the sellers,
-    so no seller stops remain, and with little momentum both crowds sit at one
-    price level: it will not target either, and goes with the market. Flat to
-    gap down is SELL, and a gap up keeps the same SELL plan. No branch buys.
-    Frames at 0:40, 1:10 and 1:39 check the levels, all twelve on the same drawn
-    lines as the October 22 note: NIFTY's garbled "23280" is the 23,002.20 /
-    22,883 pair (23,000 / 22,880); Sensex's garbled "72" is 72,214.26 (72,210);
-    BankNIFTY's spoken 54,400 is the 54,388.75 line, kept at 54,390.
+    mSE4vo8crr0 was uploaded 26 Oct at 21:10 IST. Its direct Hindi transcript
+    says October 26 made positive momentum in all three indices and the buyers it
+    drew were already shaken out by a retracement, so the market is followed up:
+    flat to gap up is BUY, a SMALL gap down keeps the same plan, and no branch
+    sells. No big-gap-down branch is given, and none is invented. NIFTY and
+    BankNIFTY both expire on 27 Oct. Frames at 0:40, 1:12 and 1:37 check the
+    levels. NIFTY's garbled "2280" is the drawn 22,881.70 (22,880), Sensex's
+    "7372500" is 73,007.15 / 72,512.00 (73,000 / 72,510), and BankNIFTY's spoken
+    53,670 is the drawn 53,621.75 (53,620), as on 26 Oct.
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 23))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-23" in block
-    assert "E8ZaDDdgnio" in block
-    assert "uploaded 2026-10-22" in note.source
-    assert "evicted the sellers, so no seller stops remain to hunt" in note.context
-    assert "buyers and sellers sit at one price level" in note.context
-    assert format_premarket_note(note, date(2026, 10, 22)) == ""
+    block = format_premarket_note(note, date(2026, 10, 27))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-27" in block
+    assert "mSE4vo8crr0" in block
+    assert "uploaded 2026-10-26" in note.source
+    assert "positive momentum" in note.context
+    assert "shaken out by a retracement" in note.context
     assert format_premarket_note(note, date(2026, 10, 26)) == ""
+    assert format_premarket_note(note, date(2026, 10, 28)) == ""
 
-    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> SELL, WITH THE MARKET"))
-    assert "do not target either crowd" in sell
-    assert "selling-side setups" in sell
-    gap_up = next(line for line in note.plan if line.startswith("GAP UP -> SELL"))
-    assert "selling-side setups" in gap_up
-    assert not any("BUY" in line for line in note.plan)
-    assert not any("EXPIR" in line.upper() for line in note.plan)
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY, WITH THE MARKET"))
+    assert "buying-side setups" in buy
+    gap_down = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> BUY"))
+    assert "the same plan" in gap_down
+    assert "levels do not break" in gap_down
+    assert not any("SELL" in line for line in note.plan)
+    assert not any("BIG GAP DOWN" in line for line in note.plan)
+    expiry = next(line for line in note.plan if line.startswith("EXPIRY"))
+    assert "NIFTY and BankNIFTY" in expiry
+    assert "not as an entry premise" in expiry
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [22880.0, 23000.0], "support": [22550.0, 22420.0]},
-        {"index": "BANKNIFTY", "resistance": [55100.0, 55400.0], "support": [54390.0, 54200.0]},
-        {"index": "SENSEX", "resistance": [73970.0, 74800.0], "support": [72700.0, 72210.0]},
+        {"index": "NIFTY", "resistance": [22880.0, 23000.0], "support": [22500.0, 22320.0]},
+        {"index": "BANKNIFTY", "resistance": [54500.0, 54810.0], "support": [54000.0, 53620.0]},
+        {"index": "SENSEX", "resistance": [74050.0, 74530.0], "support": [73000.0, 72510.0]},
     ]

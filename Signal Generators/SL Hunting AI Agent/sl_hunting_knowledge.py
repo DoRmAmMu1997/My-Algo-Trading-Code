@@ -729,7 +729,9 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   It creates NO entry by itself, and it relaxes no RISK rule, gate or stop.
   WHAT ENDS IT: the first 1-minute CLOSE below either number. The sellers are
   then confident, the hunt is over and v5f governs: follow the selling. A long
-  taken on v5x treats that close as its premise invalidation.
+  taken on v5x treats that close as its premise invalidation. [Narrowed by v5z,
+  next: when the pre-open note names the BUY side, that close ends this test,
+  not the note's side.]
   NOT v5u: a number closed below and later reclaimed is v5u's flush-and-reclaim,
   on v5u's own conditions. Only the selling side was observed; after a one-way
   BUYING day nothing here applies.
@@ -739,6 +741,56 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   every such session. NIFTY's 100s were worse, and BankNIFTY's 500s added +0.07
   at 09:18 only. IH booked about 3 lakh on 22 Oct. Every trade that cites (v5x)
   is reviewed, and the rule is reverted if live results are negative.
+- A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS; THE NOTE'S SIDE STANDS
+  (v5z, operator's call 26 Oct). Adopted on the operator's call, for the benefit of the doubt, and measured
+  below. On 26 Oct NIFTY closed under 22,500 at 09:15 and BankNIFTY under 54,000
+  at 09:18, so v5x's test had ended; IH bought anyway at 09:24: "the market just
+  made a round-number breakdown; sellers will gather in the market -- these are
+  the ones we have to target." Whoever sells a break keeps the stop just beyond
+  the number, so the break SEATS a fresh crowd against the note, and that crowd
+  is the hunt.
+  SCOPE, all of it required:
+  * today's pre-open note names a side for today's open, and the computed verdict is FLAT;
+  * yesterday moved at least 0.5% (3:15 level to 3:15 level);
+  * by 10:30, NIFTY or BankNIFTY CLOSES a 1-minute candle beyond its next 500 from
+    the open AGAINST the note's side (below it for a BUY note, above it for a SELL
+    note);
+  * NIFTY still holds yesterday's extreme on the note's side: it has not traded
+    below yesterday's low (BUY), or above yesterday's high (SELL).
+  WHAT IT CHANGES: the note's side takes precedence over the cross. It outranks
+  v5x's end clause and v5f's follow, and it is the one case where the PRE-OPEN
+  block's "your read wins" does not apply to that cross. Do not take the
+  opposite side on the cross: the break is the crowd being seated, not a reason
+  to join it.
+  THE ENTRY IS PRICE ACTION ON THE NOTE'S SIDE: the covering, the first NIFTY
+  candle to close beyond the prior candle's extreme in the note's direction,
+  within about 20 minutes, with the ordinary pattern+confirmation. A reclaim of
+  the number is the same hunt (v5u, and v5z's reclaim-retest veto in LEVELS).
+  WHAT ENDS IT: NIFTY trading beyond yesterday's extreme on the note's side
+  (below yesterday's low for a BUY note). That is IH's 26 Oct line: "if the
+  market goes below this, we may be wrong on direction". After it, the ordinary
+  method governs.
+  NOT COVERED: a SELL note that FOLLOWS a down day, with an upward cross. That
+  case measured the other way (below), so the up cross is left to the ordinary
+  method.
+  MEASURED (5-year CSVs; FLAT opens; the first such cross by 10:30; NIFTY entries
+  in the book's shape, taken at the covering):
+  * after a down day, a down cross (IH's 26 Oct case): the note's side scored
+    +0.708R (27 sessions; +0.691 / +0.721 by half), following the cross -0.017R;
+  * after an up day, an up cross (the mirror): +0.608R (19; +1.818 / +0.176),
+    following -0.475R;
+  * after an up day, a down cross (a BUY note that follows): +0.106R (70; +0.117
+    / +0.098), following -0.003R;
+  * after a down day, an up cross (a SELL note that follows): -0.164R (59; -0.296
+    / -0.114), following +0.399R. This is the case left out.
+  Without the hold of yesterday's extreme, the down-day case falls to +0.148R
+  (69): the hold is most of the edge. Buying at a fixed minute after the cross,
+  with no covering candle, lost (-0.068R at six minutes). On 26 Oct itself the
+  first covering (09:27) was stopped in the 16-point shape; IH's wider line held.
+  It creates NO entry by itself, and it relaxes nothing: RISK, every gate, the
+  cooldown, max-loss, v5q, v5k and A STANDING PREMISE IS NOT A SECOND REASON still
+  apply. Every trade that cites (v5z) is reviewed, and the rule is reverted if
+  live results are negative.
 - A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
   open too SMALL to be the crowd's: the crowd that would have forced a big gap is
   not there to force one. This is the other end of the same measurement. An open
@@ -1470,7 +1522,7 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   is the pattern at the level; pattern+confirmation still applies.
   NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a
   reclaim. That is the trap rule above, or v5u's flush-and-reclaim at the major
-  numbers, and the continuation premise is gone.
+  numbers, and the continuation premise is gone. [Its first retest: v5z, next.]
   THE COST, stated plainly: one break in five to seven never comes back and simply
   runs (+1.4 to +2.1R at the break). Waiting misses those, so per break it earned
   less than entering at once (BankNIFTY's 500s: +0.09R against +0.25R). A move
@@ -1481,6 +1533,31 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   short came after that shakeout and made its target (+84 points). The 10:13
   short went in just above 22,500, which broke at 10:15 and was retested at 10:20;
   that trade was out flat at 10:44.
+- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP (v5z, operator 26 Oct).
+  When BankNIFTY breaks one of its round numbers and then CLOSES back through it the
+  other way (the reclaim above), price usually comes back to the number once more.
+  If that retest closes back on the reclaim side, it is the reclaim's own shakeout
+  (v5y run the other way), not a double top or double bottom against it. DO NOT
+  ENTER AGAINST THE RECLAIM there. A retest that does not close back on the reclaim
+  side within 30 minutes is not this rule.
+  MEASURED (5-year CSVs; the session's first round-number break, 09:15-11:00,
+  reclaimed within 60 minutes and retested within 30; NIFTY entries in the book's
+  shape): fading that retest scored -0.061R on BankNIFTY's 1,000s (248 sessions;
+  -0.068 / -0.056 by half) and -0.042R on its 500s (484; -0.012 / -0.061), and
+  -0.080R on flat opens (160; -0.107 / -0.067) at the 1,000s. Going WITH the
+  reclaim scored +0.155R on those flat opens, but its halves disagree overall
+  (+0.075R; -0.066 / +0.156), so this is a VETO, not an entry: a trade with the
+  reclaim still needs its own pattern+confirmation like any other.
+  SCOPE: BankNIFTY's own 500s and 1,000s, read as the leader. Not NIFTY's: on
+  NIFTY's own 500s the same fade measured +0.212R, positive in both halves, so a
+  NIFTY-only retest is left to the ordinary method.
+  It relaxes nothing: RISK, every gate, the cooldown and the cross-index read are
+  unchanged.
+  26 Oct: BankNIFTY broke 54,000 at 09:18 and closed back above it at 09:44, 09:45
+  and 09:46. It retested the number at 09:47 (53,988.80) and closed above it again
+  at 09:50. The 09:50 short sold that retest as "a matching double-top
+  (53981/54098)" and was stopped within a minute; a long from the same minute
+  reached its 45-point target by 09:53.
 - The IH intraday "closing point" (the prior 3:15 reference) attracts price
   (both sides' SLs sit there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
   the closing point (or a short lets price reclaim it), the premise has failed —

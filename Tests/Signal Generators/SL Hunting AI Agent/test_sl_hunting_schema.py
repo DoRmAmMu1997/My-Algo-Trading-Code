@@ -3943,3 +3943,100 @@ def test_v5y_after_a_round_number_breaks_the_entry_waits_for_the_shakeout():
     here = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
     assert clean < here
     assert "\n- " not in prompt[clean + 3:here]
+
+
+def test_v5z_a_reclaimed_banknifty_round_numbers_first_retest_is_not_a_double_top():
+    """v5z (operator, 26 Oct, measured): a veto on fading the reclaim's first retest.
+
+    The 09:50 short sold BankNIFTY's first retest of a reclaimed 54,000 as a double
+    top and was stopped within a minute. Measured, fading that retest is negative in
+    both halves on BankNIFTY's own numbers, while going with the reclaim is not clean
+    enough to be an entry. Pins the veto, its measurement, its BankNIFTY-only scope
+    (NIFTY's 500s measured the other way), what it does not relax, the 26 Oct case,
+    its placement right after v5y's shakeout rule, and the pointer inside v5y.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP")
+    assert rule.startswith(
+        "- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP (v5z, operator 26 Oct).")
+    # The event, and the veto.
+    assert "CLOSES back through it the other way" in rule
+    assert "closes back on the reclaim side" in rule
+    assert "DO NOT ENTER AGAINST THE RECLAIM" in rule
+    assert "A retest that does not close back on the reclaim side within 30 minutes is not this rule" in rule
+    # The measurement, both halves.
+    assert "-0.061R on BankNIFTY's 1,000s (248 sessions; -0.068 / -0.056 by half)" in rule
+    assert "-0.042R on its 500s (484; -0.012 / -0.061)" in rule
+    assert "-0.080R on flat opens (160; -0.107 / -0.067)" in rule
+    # A veto, not an entry: the with-the-reclaim side is not clean.
+    assert "+0.075R; -0.066 / +0.156" in rule
+    assert "this is a VETO, not an entry" in rule
+    assert "still needs its own pattern+confirmation" in rule
+    # Scope: BankNIFTY's numbers only, because NIFTY's 500s measured the other way.
+    assert "SCOPE: BankNIFTY's own 500s and 1,000s" in rule
+    assert "on NIFTY's own 500s the same fade measured +0.212R, positive in both halves" in rule
+    # What it does not relax, and the case that produced it.
+    assert "It relaxes nothing" in rule
+    assert "a matching double-top (53981/54098)" in rule
+    # Placed directly after v5y's shakeout rule, which points here.
+    v5y = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
+    here = prompt.index("\n- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST")
+    assert v5y < here
+    assert "\n- " not in prompt[v5y + 3:here]
+    v5y_rule = _flat_rule(prompt, "AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER")
+    assert "and the continuation premise is gone. [Its first retest: v5z, next.]" in v5y_rule
+
+
+def test_v5z_a_round_number_crossed_against_the_note_seats_the_crowd_it_hunts():
+    """v5z (operator's call, 26 Oct, measured): the pre-open note's side outranks a
+    round-number cross against it.
+
+    On 26 Oct v5x's test had ended by 09:18 and the agent followed the selling, while
+    IH bought: the break seats a fresh crowd, and that crowd is the hunt. Pins the
+    scope, the precedence over v5x/v5f and the PRE-OPEN block, the price-action entry,
+    what ends it, the one measured-negative case it leaves out, the measurement, what
+    it does not relax, its place between v5x and v5k, and the pointer inside v5x.
+    """
+    prompt = build_system_prompt()
+    heading = "A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS; THE NOTE'S SIDE STANDS"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v5z, operator's call 26 Oct).")
+    assert "for the benefit of the doubt" in rule
+    assert "sellers will gather in the market -- these are the ones we have to target" in rule
+    # Scope, every arm.
+    assert "today's pre-open note names a side for today's open, and the computed verdict is FLAT" in rule
+    assert "yesterday moved at least 0.5% (3:15 level to 3:15 level)" in rule
+    assert "CLOSES a 1-minute candle beyond its next 500 from the open AGAINST the note's side" in rule
+    assert "it has not traded below yesterday's low (BUY), or above yesterday's high (SELL)" in rule
+    # What it changes: precedence, and no trade on the other side of the cross.
+    assert "the note's side takes precedence over the cross" in rule
+    assert "It outranks v5x's end clause and v5f's follow" in rule
+    assert "the PRE-OPEN block's \"your read wins\" does not apply to that cross" in rule
+    assert "Do not take the opposite side on the cross" in rule
+    # The entry is price action, not the cross itself.
+    assert "THE ENTRY IS PRICE ACTION ON THE NOTE'S SIDE" in rule
+    assert "the first NIFTY candle to close beyond the prior candle's extreme in the note's direction" in rule
+    assert "with the ordinary pattern+confirmation" in rule
+    # What ends it, and the case left out.
+    assert "WHAT ENDS IT: NIFTY trading beyond yesterday's extreme on the note's side" in rule
+    assert "NOT COVERED: a SELL note that FOLLOWS a down day, with an upward cross" in rule
+    # The measurement, every combination, and why the hold matters.
+    assert "+0.708R (27 sessions; +0.691 / +0.721 by half)" in rule
+    assert "+0.608R (19; +1.818 / +0.176)" in rule
+    assert "+0.106R (70; +0.117 / +0.098)" in rule
+    assert "-0.164R (59; -0.296 / -0.114)" in rule
+    assert "falls to +0.148R (69)" in rule
+    assert "-0.068R at six minutes" in rule
+    # What it does not relax, and the revert condition.
+    assert "It creates NO entry by itself, and it relaxes nothing" in rule
+    assert "v5q, v5k and A STANDING PREMISE IS NOT A SECOND REASON still apply" in rule
+    assert "reverted if live results are negative" in rule
+    # Placed between v5x and v5k; v5x's end clause points here.
+    v5x = prompt.index("\n- WHILE THE ROUND NUMBER HOLDS")
+    here = prompt.index("\n- " + heading)
+    v5k = prompt.index("\n- A GAP THAT CLEARS THE STOPS")
+    assert v5x < here < v5k
+    assert "\n- " not in prompt[v5x + 3:here]
+    v5x_rule = _flat_rule(prompt, "WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET (v5x)")
+    assert ("[Narrowed by v5z, next: when the pre-open note names the BUY side, that close ends this "
+            "test, not the note's side.]") in v5x_rule
