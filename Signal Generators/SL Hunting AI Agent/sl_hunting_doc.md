@@ -12256,3 +12256,75 @@ never on the day the held contract expires.]", and before PROFIT-HOLD.
 - **Latency.** 72 calls: median 35.3 s, p95 50.6 s, worst 73.1 s. One call
   passed the 60 s warning, and none was abandoned.
 - **Entries stopped at 11:00** (TIME_CUTOFF), the configured cutoff.
+
+## October 28 pre-open note
+
+[Prediction For 28 OCT 2026](https://www.youtube.com/watch?v=uPI7ZVBhQmY), uploaded
+2026-10-27 21:37:14 IST, 112 s, 53 transcript segments.
+
+**Read.** The three indices split. BankNIFTY sold continuously, so its sellers
+are seated. Sensex and NIFTY saw both buying and selling, with a retracement,
+so neither side is seated in size there. In IH's words on NIFTY: "not many
+people will have carried their buying positions either, so we will go with the
+market."
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY: target BankNIFTY's seated sellers, while NIFTY and Sensex go with the market; identify buying-side setups |
+| GAP DOWN | SELL, with the market: the seated sellers sit in profit and cannot be targeted; identify selling-side setups |
+| OPEN BELOW NIFTY'S LOWER POINT | no pre-set side: "there will be a different plan", which he does not state; follow the developing chart |
+
+NIFTY's lower point is the 22,640 support, close to 27 Oct's low of 22,636.85.
+
+**Levels.** The 1080p frames at 0:33, 1:06 and 1:41 resolve three garbled
+captions and two rounded values:
+
+* **BankNIFTY support**, spoken "5453670", is drawn at 54,006.35 / 53,621.75 and
+  recorded as 54,000 / 53,620, the same 53,620 line as on 26 and 27 Oct.
+* **BankNIFTY's first resistance** is spoken 54,600 but drawn at 54,609.80, and is
+  recorded as 54,610.
+* **Sensex resistance**, spoken "7474500", is drawn at 74,003.01 / 74,506.61 and
+  recorded as 74,000 / 74,510.
+* **NIFTY resistance**, spoken "22960 2364", is drawn at 22,961.45 / 23,064.50 and
+  recorded as 22,960 / 23,060.
+
+The other levels match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,960 / 23,060 | 22,640 / 22,500 |
+| BankNIFTY | 54,610 / 54,940 | 54,000 / 53,620 |
+| Sensex | 74,000 / 74,510 | 73,200 / 72,700 |
+
+**How it meets the corpus.**
+
+- **v5z-1 does not apply.** It needs yesterday to have moved 0.5% or more, and
+  27 Oct closed +0.19% on NIFTY's 3:15 levels (22,760.75 against 22,717.05).
+  BankNIFTY was -0.33% (54,141.05 against 54,317.75).
+- **v5x does not apply,** for the same reason: 27 Oct was not a selling day.
+- **v6a-1 does not apply.** The held NIFTY contract next expires on 3 Nov, and
+  `contract_expires_today` will say so.
+- The note stays advisory.
+
+The note renders 1,804 characters on October 28 and nothing on any other date.
+`test_shipped_note_matches_october_28_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- the three branches: BUY on flat to gap up with BankNIFTY's hunt, SELL with
+  the market on a gap down, and no pre-set side below the lower point;
+- that there is no expiry line;
+- all twelve levels.
+
+Each of these 9 mutations fails it, and the unmutated note passes:
+
+* NIFTY's resistance recorded as 23,064;
+* BankNIFTY's resistance recorded as the spoken 54,600;
+* Sensex's resistance recorded as the spoken 74,500;
+* the date set to October 27;
+* the gap-down branch turned into BUY;
+* the lower-point line dropped;
+* a side invented for the lower-point open;
+* an expiry line added;
+* BankNIFTY's hunt dropped from the flat branch.
