@@ -16424,6 +16424,22 @@ if SL_HUNTING_AVAILABLE:
                 f"{backstop:.2f} ({self._stop_backstop_multiple:g}x the stop distance)"
             )
 
+        def contract_expiry_state(self) -> dict[str, Any]:
+            """v6a: for `position_state`, when the held NIFTY option expires.
+
+            Read from the contract this position actually holds (``option_expiry``,
+            locked at entry) against the IST trading date, so the agent never has to
+            work expiry out from the weekday or the pre-open note. Empty when no
+            expiry was recorded: better to say nothing than to guess.
+            """
+            expiry = getattr(self.pos, "option_expiry", None)
+            if not isinstance(expiry, date):
+                return {}
+            return {
+                "contract_expiry": expiry.isoformat(),
+                "contract_expires_today": expiry == _ist_now().date(),
+            }
+
         def exit_nifty_leg_only(self, reason: str) -> None:
             """Close ONLY the NIFTY leg (premise-invalidation on NIFTY), leaving the
             BankNIFTY mirror running. Sets the suppress flag so after_exit does not

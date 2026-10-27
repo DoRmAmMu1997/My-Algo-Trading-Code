@@ -5513,6 +5513,30 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         state = master_file.SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(worker).snapshot()
         self.assertEqual(state["stop_fires"], "the moment NIFTY spot touches the stop")
 
+    def test_v6a_position_state_says_whether_the_held_contract_expires_today(self):
+        """v6a: no MODIFY_TARGET raise on the day the held NIFTY contract expires,
+        so position_state must say which day that is -- judged on the IST trading
+        date, from the contract the worker actually holds."""
+        worker, _store = self._slh027_worker()
+        worker.pos.option_expiry = date(2026, 10, 27)
+        executor = master_file.SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(worker)
+        expiry_day = datetime(2026, 10, 27, 9, 40, tzinfo=master_file.IST_TIMEZONE)
+        day_before = datetime(2026, 10, 26, 15, 0, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=expiry_day):
+            state = executor.snapshot()
+        self.assertEqual(state["contract_expiry"], "2026-10-27")
+        self.assertIs(state["contract_expires_today"], True)
+        with patch.object(master_file, "_ist_now", return_value=day_before):
+            state = executor.snapshot()
+        self.assertEqual(state["contract_expiry"], "2026-10-27")
+        self.assertIs(state["contract_expires_today"], False)
+        # No expiry recorded on the position: say nothing rather than guess.
+        worker.pos.option_expiry = None
+        with patch.object(master_file, "_ist_now", return_value=expiry_day):
+            state = executor.snapshot()
+        self.assertNotIn("contract_expiry", state)
+        self.assertNotIn("contract_expires_today", state)
+
     def test_slh027_a_backstop_multiple_outside_one_to_three_blocks_live(self):
         worker, _store = self._make_worker()
         message = "SL_HUNTING_STOP_BACKSTOP_MULTIPLE must be a number from 1 to 3"

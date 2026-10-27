@@ -215,48 +215,51 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_27_intraday_hunter_plan():
-    """Render the October 26 evening forecast for expiry day: BUY, with the market.
+def test_shipped_note_matches_october_28_intraday_hunter_plan():
+    """Render the October 27 evening forecast: BUY on flat to gap up, SELL on a gap down.
 
-    mSE4vo8crr0 was uploaded 26 Oct at 21:10 IST. Its direct Hindi transcript
-    says October 26 made positive momentum in all three indices and the buyers it
-    drew were already shaken out by a retracement, so the market is followed up:
-    flat to gap up is BUY, a SMALL gap down keeps the same plan, and no branch
-    sells. No big-gap-down branch is given, and none is invented. NIFTY and
-    BankNIFTY both expire on 27 Oct. Frames at 0:40, 1:12 and 1:37 check the
-    levels. NIFTY's garbled "2280" is the drawn 22,881.70 (22,880), Sensex's
-    "7372500" is 73,007.15 / 72,512.00 (73,000 / 72,510), and BankNIFTY's spoken
-    53,670 is the drawn 53,621.75 (53,620), as on 26 Oct.
+    uPI7ZVBhQmY was uploaded 27 Oct at 21:37 IST. Its direct Hindi transcript
+    says BankNIFTY sold continuously, so its sellers are seated and flat to gap up
+    is BUY to target them, while Sensex and NIFTY saw both buying and selling with
+    a retracement, so neither side is seated and flat to gap up is BUY with the
+    market. On a gap down the sellers sit in profit and cannot be targeted, so it
+    is SELL, with the market. An open below NIFTY's lower point gets "a different
+    plan" that he does not state, so none is invented. Frames at 0:33, 1:06 and
+    1:41 check the levels. BankNIFTY's spoken 54,600 is drawn at 54,609.80
+    (54,610) and its garbled "5453670" is 54,006.35 / 53,621.75 (54,000 /
+    53,620); Sensex's "7474500" is 74,003.01 / 74,506.61 (74,000 / 74,510); and
+    NIFTY's "2364" is 23,064.50 (23,060).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 27))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-27" in block
-    assert "mSE4vo8crr0" in block
-    assert "uploaded 2026-10-26" in note.source
-    assert "positive momentum" in note.context
-    assert "shaken out by a retracement" in note.context
-    assert format_premarket_note(note, date(2026, 10, 26)) == ""
-    assert format_premarket_note(note, date(2026, 10, 28)) == ""
+    block = format_premarket_note(note, date(2026, 10, 28))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-28" in block
+    assert "uPI7ZVBhQmY" in block
+    assert "uploaded 2026-10-27" in note.source
+    assert "BankNIFTY sold continuously" in note.context
+    assert "neither side is seated in size" in note.context
+    assert format_premarket_note(note, date(2026, 10, 27)) == ""
+    assert format_premarket_note(note, date(2026, 10, 29)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY, WITH THE MARKET"))
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
+    assert "target BankNIFTY's seated sellers" in buy
+    assert "NIFTY and Sensex go with the market" in buy
     assert "buying-side setups" in buy
-    gap_down = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> BUY"))
-    assert "the same plan" in gap_down
-    assert "levels do not break" in gap_down
-    assert not any("SELL" in line for line in note.plan)
-    assert not any("BIG GAP DOWN" in line for line in note.plan)
-    expiry = next(line for line in note.plan if line.startswith("EXPIRY"))
-    assert "NIFTY and BankNIFTY" in expiry
-    assert "not as an entry premise" in expiry
+    gap_down = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL, WITH THE MARKET"))
+    assert "cannot be targeted" in gap_down
+    assert "selling-side setups" in gap_down
+    below = next(line for line in note.plan if line.startswith("OPEN BELOW NIFTY'S LOWER POINT -> NO PRE-SET SIDE"))
+    assert "follow the developing chart" in below
+    assert len(note.plan) == 3
+    assert not any("EXPIR" in line.upper() for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [22880.0, 23000.0], "support": [22500.0, 22320.0]},
-        {"index": "BANKNIFTY", "resistance": [54500.0, 54810.0], "support": [54000.0, 53620.0]},
-        {"index": "SENSEX", "resistance": [74050.0, 74530.0], "support": [73000.0, 72510.0]},
+        {"index": "NIFTY", "resistance": [22960.0, 23060.0], "support": [22640.0, 22500.0]},
+        {"index": "BANKNIFTY", "resistance": [54610.0, 54940.0], "support": [54000.0, 53620.0]},
+        {"index": "SENSEX", "resistance": [74000.0, 74510.0], "support": [73200.0, 72700.0]},
     ]

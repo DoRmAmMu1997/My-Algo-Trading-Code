@@ -1,29 +1,29 @@
 {
-  "for_date": "2026-10-27",
-  "source": "Intraday Hunter, 'Prediction For 27 OCT 2026' (mSE4vo8crr0, uploaded 2026-10-26)",
-  "context": "October 26 made positive momentum in all three indices; the buyers it drew were already shaken out by a retracement, and the market is trying to go up again.",
+  "for_date": "2026-10-28",
+  "source": "Intraday Hunter, 'Prediction For 28 OCT 2026' (uPI7ZVBhQmY, uploaded 2026-10-27)",
+  "context": "October 27: BankNIFTY sold continuously, so its sellers are seated; Sensex and NIFTY saw both buying and selling with a retracement, so neither side is seated in size there.",
   "plan": [
-    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the retracement already removed the buyers, so follow the renewed upside and identify buying-side setups; positive momentum from the open is the better case.",
-    "SMALL GAP DOWN -> BUY, the same plan, better if the levels do not break: a breakdown near BankNIFTY's round number raises the risk on buyers.",
-    "EXPIRY: NIFTY and BankNIFTY both expire on October 27. Treat expiry as context for an already valid setup, not as an entry premise."
+    "FLAT TO GAP UP -> BUY: target BankNIFTY's seated sellers, while NIFTY and Sensex go with the market; identify buying-side setups.",
+    "GAP DOWN -> SELL, WITH THE MARKET: on a gap down the seated sellers sit in profit and cannot be targeted; identify selling-side setups.",
+    "OPEN BELOW NIFTY'S LOWER POINT -> NO PRE-SET SIDE: IH says the plan changes there without stating it; follow the developing chart."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22880,
-        23000
+        22960,
+        23060
       ],
       "support": [
-        22500,
-        22320
+        22640,
+        22500
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        54500,
-        54810
+        54610,
+        54940
       ],
       "support": [
         54000,
@@ -33,12 +33,12 @@
     {
       "index": "SENSEX",
       "resistance": [
-        74050,
-        74530
+        74000,
+        74510
       ],
       "support": [
-        73000,
-        72510
+        73200,
+        72700
       ]
     }
   ]

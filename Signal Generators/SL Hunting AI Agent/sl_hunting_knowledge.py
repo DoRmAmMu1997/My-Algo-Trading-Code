@@ -2644,7 +2644,23 @@ RISK DISCIPLINE
   is IH's practice, not a measured edge (it was flat in the same test), so raise
   sparingly. 23 Oct, 10:18: a short raised its target from 22,420 to 22,400,
   citing "zero meaningful retracement since entry". That is the exact case this
-  rule takes away.
+  rule takes away. [Narrowed by v6a, next: never on the day the held contract expires.]
+- ON AN EXPIRY DAY THE MECHANICAL TARGET BOOKS IT: NO RAISE (v6a, operator 27 Oct).
+  This narrows v5y's raise for a run that has ALREADY pulled back. When the NIFTY
+  contract you hold expires today (`position_state` says `contract_expires_today`),
+  do NOT raise the target with MODIFY_TARGET, whatever the run has done: the
+  mechanical target books it. What counts is the contract you hold, not whether
+  some other index expires today. IH, booking his expiry-day basket on 27 Oct:
+  "today is expiry... as soon as a retracement or a rejection comes, profit can
+  drop a lot. We won't run after more momentum."
+  MEASURED (v5y's own test on the 5-year NIFTY CSV, split by NIFTY's weekly expiry
+  day): runs that had pulled back 20+ points before reaching +45 stood 2.9 points
+  WORSE 15 minutes later on expiry days (134 sessions; -3.2 / -2.7 by half),
+  giving back 20 before adding 25 in 43% of them against 37% the other way. On
+  other days the same runs were flat (+1.1, 433 sessions, halves disagreeing).
+  The effect is small, so this narrows the raise and is not a reason to exit
+  early: v5w still holds, and the target is not lowered. It creates no entry and
+  changes no stop.
 - PROFIT-HOLD: when a trade is in profit and the original premise is still intact,
   do not cut it just to search for a "second-best" or "third-best" trade. Hold the
   valid winner until target, stall/theta (a stall per v5w's ten candles), or

@@ -124,7 +124,9 @@ POSITION_STATE_DESCRIPTION = (
     "that mark and at a different price. While you are flat it also carries "
     "`last_closed_trade_today`: the last trade you closed this session, when, "
     "and what it booked. While a NIFTY leg is open it carries `stop_fires`: how "
-    "that stop actually triggers (SLH-027)."
+    "that stop actually triggers (SLH-027), and `contract_expiry` with "
+    "`contract_expires_today`: whether the option you hold expires this session "
+    "(v6a)."
 )
 
 
@@ -152,7 +154,9 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "the new level as target (stop is ignored) with a reason. It is for a run "
         "that has ALREADY taken a real retracement and is moving again (v5y); a "
         "straight run is booked by its target, and to book earlier, EXIT "
-        "instead. It changes nothing else -- the stop, the size and both legs stay "
+        "instead. On the day the held NIFTY contract expires (position_state's "
+        "contract_expires_today) do not raise at all: the mechanical target books "
+        "it (v6a). It changes nothing else -- the stop, the size and both legs stay "
         "as they are -- and like any order it is the one action of this pass. "
         "stop and target are NIFTY "
         "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
