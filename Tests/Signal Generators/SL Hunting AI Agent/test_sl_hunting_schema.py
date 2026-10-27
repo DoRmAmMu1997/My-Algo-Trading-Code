@@ -3910,6 +3910,50 @@ def test_v5y_a_straight_run_books_at_its_target_and_only_a_pulled_back_run_is_ra
     assert "has not pulled back gets more room" not in text
 
 
+def test_v6a_on_an_expiry_day_the_mechanical_target_books_it():
+    """v6a (operator, 27 Oct, measured): narrows v5y's raise for a pulled-back run.
+
+    On the day the held NIFTY contract expires, a run that had already pulled back
+    stood worse 15 minutes after its target in both halves of the data, so the
+    target is not raised at all that day. Pins the rule, its evidence and its
+    limits, its place between v5y's straight-run rule and PROFIT-HOLD, the pointer
+    left inside v5y, and the order tool and position_state text it relies on.
+    """
+    prompt = build_system_prompt()
+    heading = "ON AN EXPIRY DAY THE MECHANICAL TARGET BOOKS IT: NO RAISE"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6a, operator 27 Oct).")
+    assert "This narrows v5y's raise for a run that has ALREADY pulled back" in rule
+    # The trigger is the contract held, read from position_state.
+    assert ("When the NIFTY contract you hold expires today (`position_state` says "
+            "`contract_expires_today`)") in rule
+    assert ("do NOT raise the target with MODIFY_TARGET, whatever the run has done: "
+            "the mechanical target books it") in rule
+    assert "What counts is the contract you hold" in rule
+    assert "We won't run after more momentum" in rule
+    # The measurement, both halves, and the comparison it rests on.
+    assert "2.9 points WORSE 15 minutes later on expiry days (134 sessions; -3.2 / -2.7 by half)" in rule
+    assert "in 43% of them against 37% the other way" in rule
+    assert "the same runs were flat (+1.1, 433 sessions, halves disagreeing)" in rule
+    # Its limits.
+    assert "not a reason to exit early: v5w still holds, and the target is not lowered" in rule
+    assert "It creates no entry and changes no stop" in rule
+    # Placed right after v5y's straight-run rule, which points here.
+    v5y = prompt.index("\n- A STRAIGHT RUN BOOKS AT ITS TARGET")
+    here = prompt.index("\n- " + heading)
+    hold = prompt.index("\n- PROFIT-HOLD")
+    assert v5y < here < hold
+    assert "\n- " not in prompt[v5y + 3:here]
+    v5y_rule = _flat_rule(prompt, "A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK")
+    assert "[Narrowed by v6a, next: never on the day the held contract expires.]" in v5y_rule
+    # The order tool and position_state say the same thing.
+    from sl_hunting_tools import POSITION_STATE_DESCRIPTION, order_tool_description
+    text = " ".join(order_tool_description("paper").split())
+    assert ("On the day the held NIFTY contract expires (position_state's contract_expires_today) "
+            "do not raise at all: the mechanical target books it (v6a)") in text
+    assert "`contract_expires_today`" in POSITION_STATE_DESCRIPTION
+
+
 def test_v5y_after_a_round_number_breaks_the_entry_waits_for_the_shakeout():
     """v5y, second rule (operator, 23 Oct): a round-number break is continuation but not
     the entry -- a shakeout back to the broken number usually follows, and the entry is

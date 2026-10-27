@@ -12079,3 +12079,180 @@ unmutated note passes:
 * Sensex's support moved to 72,500;
 * a big-gap-down branch invented;
 * BankNIFTY's support recorded as the spoken 53,670.
+
+## v6a - 27 Oct live match: the same long with a tighter stop, and the raise on expiry day
+
+**Sources.**
+
+- **IH's live session:** `wNEwGuJgFGU`, uploaded 2026-10-27 10:23:51 IST, 8:27.
+  He traded on the 27 Oct note (`mSE4vo8crr0`: BUY, with the market). Clock
+  times come from the taskbar clock in the frame, figures from his positions
+  screen at 2:05 and 7:25, and his words are my translation of the Hindi
+  auto-transcript (210 segments).
+- **This book:** three journal rows, 72 decisions (no agent errors) and the
+  runner log. The model was `claude-sonnet-5`. The run was LIVE through Kotak,
+  and the note was injected (1,863 chars).
+- **The 5-year NIFTY and BankNIFTY CSVs**, refreshed through 27 Oct.
+
+**Adopted: v6a-1**, on the operator's call after the measurement below. On the
+day the held NIFTY contract expires, MODIFY_TARGET is not used and the
+mechanical target books it. `position_state` now reports the contract's expiry
+so the rule can be applied.
+
+### The session
+
+26 Oct's 3:15 level was 22,717.05 (+0.89% on 23 Oct's). 27 Oct opened FLAT on
+the computed verdict (NIFTY -0.04%, BankNIFTY +0.19%), and NIFTY and BankNIFTY
+both expired.
+
+- **09:15-09:19:** NIFTY opened at 22,707.55, touched 22,724.35 in the first
+  minute, and flushed to 22,653.20 at 09:19.
+- **09:22-09:26:** it closed back above 22,700 at 09:22 (22,711.50), retested
+  the number at 09:24-09:25 (low 22,676.05), and closed above it again at 09:26.
+- **09:30-10:04:** it reached 22,750.20 at 09:30, ranged 22,705-22,767 until
+  09:59, then ran to 22,804.50 at 10:04, BankNIFTY's day high minute
+  (54,654.05).
+- **10:21:** it fell back to 22,684.55.
+
+The day's high was 22,829.75 (12:43), the low 22,636.85 (14:17), and the 3:15
+level 22,760.75. IH's NIFTY line, 22,625, never broke.
+
+| | IH | the agent |
+|---|---|---|
+| read | follow: 26 Oct's recovery buyers were already shaken out by a retracement, and their "mindset turned" to hunting breakdowns, so nobody is seated to hunt | FLAT and the note's BUY branch; later, two shorts at double tops |
+| entry | **09:18-09:19**, into the opening flush: BankNIFTY OCT 54200 CE and 54300 CE x1,170 each, SENSEX OCT 73300 CE x900, NIFTY OCT 22650 CE x1,430 (avg 96.50) | **09:23** LONG x2 at 22,711.15 · 09:37 LONG refused by sizing · **09:57** SHORT x1 at 22,729.20 · **10:14** SHORT x1 at 22,772.30 |
+| lines | NIFTY 22,625, Sensex 73,220 and BankNIFTY "160" (about 54,160), all named before the entry. The basket sat 21,533 down at 09:19. | stops at 22,694 / 22,756 / 22,794 |
+| exit | about **09:26**, the normal target on BankNIFTY's strong candle: "today is expiry... we won't run after more momentum" | AI_STOP 09:25:00 · own exit 09:59 · AI_TARGET 10:20 |
+| result | **+2,22,602.25** booked (BankNIFTY +91,646.60 and +82,918.65, SENSEX +27,945.00, NIFTY +20,092.00) | live **+3,091.25** (-3,171.00 / +13.25 / +6,249.00) |
+
+### The agent: IH's long four minutes later, and the stop he sat through
+
+- **09:23 LONG, 2 lots, stop 22,694.** This was IH's side, taken at the 09:22
+  reclaim of 22,700. The rationale cited v4t's early-retracement trap.
+  - The stop sat 6 points under the number. The 09:24 candle closed at
+    22,693.90, 0.10 beyond it, and the stop went at 09:25 for -3,171.00. An
+    intrabar stop would have gone too (low 22,691.80), so SLH-027 changed
+    nothing.
+  - IH sat through the same dip with his line 86 points lower.
+- **v5y already had the better entry.** The 22,700 break was retested at 09:24
+  and done at the 09:26 close (22,700.65). A long at 09:27 (22,702.05) would
+  have reached its 45-point target at 09:30 (+2.81R) without touching its
+  stop. This is a compliance gap, not a new rule.
+- **09:37: the same long, refused by sizing.** Entry 22,741.35, stop 22,692:
+  3,207.75 for one lot. NIFTY reached that entry's +45 by 10:01. This is
+  SLH-025 as designed.
+- **09:57 SHORT, against the note,** off the 22,766-67 double top. The agent
+  exited after 90 seconds as cross-index flipped up: NIFTY leg -22.75, mirror
+  +36.00.
+- **10:14 SHORT at the 22,800 double top: AI_TARGET in six minutes.** NIFTY
+  leg +2,730.00, mirror +3,519.00. IH was flat by then. No MODIFY_TARGET was
+  used today.
+
+### Measured: the raise on an expiry day (v6a-1)
+
+IH, booking at 09:26: "today is expiry... as soon as a retracement or a
+rejection comes, profit can drop a lot. We won't run after more momentum." And
+later: "if it goes a little sideways, there will be a problem; a small
+rejection, a problem. In such a situation take the normal target and go."
+
+v5y lets MODIFY_TARGET raise a run that has already pulled back about 20
+points, with no expiry exception. The test is v5y's own:
+
+- On the 5-year NIFTY CSV, enter at 09:20, 09:35 and 10:00 with the move since
+  09:15 (at least 0.15%).
+- Keep the entries that reach +45 within 60 minutes, and class them by the
+  pullback before that touch.
+- Score what follows: "extend" is +25 more before 20 given back, "giveback" is
+  the reverse, and drift is the position 15 minutes later.
+- Split by NIFTY's weekly expiry day, from `expiry_calendar.weekly_expiry_dates`
+  (262 expiry days).
+
+| before the target | expiry day | other days |
+|---|---|---|
+| pullback >= 20 (v5y's raise case) | n 134: extend 37%, giveback 43%, drift **-2.9** (-3.2 / -2.7) | n 433: 36% / 44%, drift +1.1 (-4.4 / +4.1) |
+| pullback 10-20 | n 40: 40% / 38%, drift -2.3 (+6.7 / -8.3) | n 131: 34% / 37%, drift -0.4 |
+| straight (< 10) | n 9: 33% / 67%, drift -22.2 | n 39: 38% / 49%, drift -2.0 |
+
+The straight-run and 10-20 counts reproduce v5y's (47 and 171).
+
+On expiry days the raise case drifts against the position in both halves; on
+other days it is flat with its halves disagreeing. The effect is small, about 3
+points, but it agrees with IH and with the corpus: EXPIRY-DAY RANGE ("take the
+momentum you got and stop"), the time-cost rule ("SHRINK the target... especially
+on an expiry session"), and the reminder that what counts is the days-to-expiry
+of the contract actually held.
+
+### Candidate, for the operator's call
+
+- **v6a-1, ON AN EXPIRY DAY THE MECHANICAL TARGET BOOKS IT.** When the NIFTY
+  contract held expires today, do not RAISE the target with MODIFY_TARGET, even
+  after a pullback: book the mechanical target, measured above.
+  - It narrows v5y's raise carve-out the way v5y narrowed v5w, and contradicts
+    nothing: the expiry rules above already point the same way.
+  - It creates no entry and changes no stop.
+  - **Adopted** (next).
+
+### Adopted: v6a-1 (operator, 27 Oct)
+
+**ON AN EXPIRY DAY THE MECHANICAL TARGET BOOKS IT: NO RAISE.** It sits right
+after v5y's straight-run rule, which now ends with "[Narrowed by v6a, next:
+never on the day the held contract expires.]", and before PROFIT-HOLD.
+
+- **The trigger is the contract held,** not the calendar. The prompt had no way
+  to know it, so `position_state` now carries `contract_expiry` (ISO date) and
+  `contract_expires_today` while a NIFTY leg is open. They come from a new
+  worker method, `contract_expiry_state`, which reads the position's own
+  `option_expiry` (locked at entry) against `_ist_now()`. The executor's
+  snapshot copies exactly those two keys, the same way SLH-027's `stop_fires`
+  is read. With no expiry recorded, both fields are left out rather than
+  guessed.
+- **What it changes:** no MODIFY_TARGET raise that day, whatever the run has
+  done. The order tool's MODIFY_TARGET text says the same, and
+  POSITION_STATE_DESCRIPTION names the new fields.
+- **What it does not change:** v5w (no early booking) still holds, and the
+  target is never lowered. No entry, stop, sizing or order path changes.
+- The rule carries its measurement (pullback >= 20 on expiry days: -2.9 points,
+  both halves negative; other days flat, halves disagreeing) and IH's words.
+
+**Validation.**
+
+- `test_v6a_on_an_expiry_day_the_mechanical_target_books_it` (schema) and
+  `test_v6a_position_state_says_whether_the_held_contract_expires_today`
+  (master) both failed before the change and pass with it.
+- **15 mutants, all caught.**
+  - 11 on the text: the raise allowed on expiry, the trigger widened to any
+    index, the measurement altered, the halves dropped, the other-days
+    comparison hidden, an early exit licensed, the no-entry/no-stop clause
+    dropped, the v5y pointer removed, the rule moved after PROFIT-HOLD, the
+    order-tool sentence removed, and the position_state field left
+    undescribed.
+  - 4 on the code, each written into the source, run, and restored: the IST
+    clock replaced by `date.today()`, the comparison inverted, today's date
+    reported as the expiry, and the executor never copying the fields.
+- **Gates:** the master suite (674), market-data health (28), pytest (1,798),
+  ruff, mypy (82 files, then the master file), compileall and bandit (CI's
+  skips, on the changed files) are all clean. pre-commit was not run: its hooks
+  are not installed on this machine.
+
+### Already in the corpus
+
+- **"SL hunting does not mean always working the opposite side; if no retail
+  crowd is seated, follow what is running":** the FOLLOW rules (v4o, v5f, v5k,
+  v5r) and v4t's "nobody is seated on that side, which makes the trade a
+  FOLLOW".
+- **"Whoever bought and got shaken out, his mindset turns; he keeps looking for
+  breakdowns while the market covers up":** REGIME MEMORY DECIDES WHO SHOWS UP
+  AT A LEVEL (v4b).
+- **Naming the invalidation lines before entering and accepting the loss to
+  them:** NAME THE LAST POINT (v4e), with SLH-025 when the line does not fit
+  the budget.
+- **"Two indices expire today; take the normal target":** TWO EXPIRIES AT ONCE
+  (v4o) and EXPIRY-DAY RANGE. v6a-1 is the one piece they do not already say.
+
+### Operational
+
+- **The login held.** Every one of the 72 decisions completed with no auth
+  failure, and the run was LIVE from 08:55.
+- **Latency.** 72 calls: median 35.3 s, p95 50.6 s, worst 73.1 s. One call
+  passed the 60 s warning, and none was abandoned.
+- **Entries stopped at 11:00** (TIME_CUTOFF), the configured cutoff.
