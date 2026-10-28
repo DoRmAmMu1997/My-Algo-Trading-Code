@@ -215,51 +215,46 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_october_28_intraday_hunter_plan():
-    """Render the October 27 evening forecast: BUY on flat to gap up, SELL on a gap down.
+def test_shipped_note_matches_october_29_intraday_hunter_plan():
+    """Render the October 28 evening forecast: BUY with the market, no branch sells.
 
-    uPI7ZVBhQmY was uploaded 27 Oct at 21:37 IST. Its direct Hindi transcript
-    says BankNIFTY sold continuously, so its sellers are seated and flat to gap up
-    is BUY to target them, while Sensex and NIFTY saw both buying and selling with
-    a retracement, so neither side is seated and flat to gap up is BUY with the
-    market. On a gap down the sellers sit in profit and cannot be targeted, so it
-    is SELL, with the market. An open below NIFTY's lower point gets "a different
-    plan" that he does not state, so none is invented. Frames at 0:33, 1:06 and
-    1:41 check the levels. BankNIFTY's spoken 54,600 is drawn at 54,609.80
-    (54,610) and its garbled "5453670" is 54,006.35 / 53,621.75 (54,000 /
-    53,620); Sensex's "7474500" is 74,003.01 / 74,506.61 (74,000 / 74,510); and
-    NIFTY's "2364" is 23,064.50 (23,060).
+    ayTWUf543jg was uploaded 28 Oct at 21:10 IST. Its direct Hindi transcript
+    says all three indices recovered after the selling and the buyers that drew
+    booked their targets and left, so there is no crowd to target: flat to gap up
+    is BUY with the market, and a small gap down keeps the same plan. No branch
+    sells and no big-gap-down branch is given, so none is invented. Frames at
+    0:40, 1:20 and 1:43 check the levels, which sit on the same drawn lines as
+    the 28 Oct note except NIFTY's resistance, back on 22,881.7x / 23,00x
+    (22,880 / 23,000). BankNIFTY's spoken 54,600 stays 54,610 (54,609.80) and
+    Sensex's 74,500 stays 74,510 (74,506.61).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 10, 28))
-    assert "PRE-OPEN ANALYST NOTE for 2026-10-28" in block
-    assert "uPI7ZVBhQmY" in block
-    assert "uploaded 2026-10-27" in note.source
-    assert "BankNIFTY sold continuously" in note.context
-    assert "neither side is seated in size" in note.context
-    assert format_premarket_note(note, date(2026, 10, 27)) == ""
-    assert format_premarket_note(note, date(2026, 10, 29)) == ""
+    block = format_premarket_note(note, date(2026, 10, 29))
+    assert "PRE-OPEN ANALYST NOTE for 2026-10-29" in block
+    assert "ayTWUf543jg" in block
+    assert "uploaded 2026-10-28" in note.source
+    assert "recovered" in note.context
+    assert "booked their targets and left" in note.context
+    assert format_premarket_note(note, date(2026, 10, 28)) == ""
+    assert format_premarket_note(note, date(2026, 10, 30)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY"))
-    assert "target BankNIFTY's seated sellers" in buy
-    assert "NIFTY and Sensex go with the market" in buy
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY, WITH THE MARKET"))
+    assert "no crowd to target" in buy
     assert "buying-side setups" in buy
-    gap_down = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL, WITH THE MARKET"))
-    assert "cannot be targeted" in gap_down
-    assert "selling-side setups" in gap_down
-    below = next(line for line in note.plan if line.startswith("OPEN BELOW NIFTY'S LOWER POINT -> NO PRE-SET SIDE"))
-    assert "follow the developing chart" in below
-    assert len(note.plan) == 3
+    gap_down = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> BUY"))
+    assert "the same plan" in gap_down
+    assert len(note.plan) == 2
+    assert not any("SELL" in line for line in note.plan)
     assert not any("EXPIR" in line.upper() for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [22960.0, 23060.0], "support": [22640.0, 22500.0]},
+        {"index": "NIFTY", "resistance": [22880.0, 23000.0], "support": [22640.0, 22500.0]},
         {"index": "BANKNIFTY", "resistance": [54610.0, 54940.0], "support": [54000.0, 53620.0]},
         {"index": "SENSEX", "resistance": [74000.0, 74510.0], "support": [73200.0, 72700.0]},
     ]
