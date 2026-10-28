@@ -12443,3 +12443,63 @@ at 09:20 / 09:30 on split-ups (both halves positive), but split-downs disagree.
   passed the 60 s warning, and none was abandoned.
 - **Entries stopped at 11:00** (TIME_CUTOFF).
 
+## October 29 pre-open note
+
+[Prediction For 29 OCT 2026](https://www.youtube.com/watch?v=ayTWUf543jg), uploaded
+2026-10-28 21:10:34 IST, 112 s, 50 transcript segments.
+
+**Read.** All three indices recovered after the selling (BankNIFTY traded back
+above 54,000). The buyers it drew booked their targets and left, so there is no
+crowd to hunt. In IH's words on BankNIFTY: "they will have booked their targets
+and gone, so there is no need to target the buyers."
+
+**Plan.** No branch sells.
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, with the market: the recovery's buyers already booked, so there is no crowd to target |
+| SMALL GAP DOWN | BUY, the same plan |
+
+IH gives no branch for a big gap down, and none is invented.
+
+**Levels.** The 1080p frames at 0:40, 1:20 and 1:43 show every level on a drawn
+line already used in recent notes:
+
+- **Sensex** is unchanged from 28 Oct. Its spoken 74,500 stays 74,510
+  (74,506.61).
+- **BankNIFTY** is unchanged from 28 Oct. Its spoken 54,600 stays 54,610
+  (54,609.80).
+- **NIFTY's supports** are unchanged.
+- **NIFTY's resistance** is back on the 22,881.7x / 23,00x lines (22,880 /
+  23,000) of the 23 and 27 Oct notes. Both match their spoken values.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 22,880 / 23,000 | 22,640 / 22,500 |
+| BankNIFTY | 54,610 / 54,940 | 54,000 / 53,620 |
+| Sensex | 74,000 / 74,510 | 73,200 / 72,700 |
+
+**How it meets the corpus.**
+
+- **v5z-1 and v5x do not apply.** 28 Oct moved -0.24% on NIFTY's 3:15 levels
+  (22,706.80 against 22,760.75).
+- **v6a-1 does not apply.** The held NIFTY contract next expires on 3 Nov.
+- The note stays advisory.
+
+The note renders 1,613 characters on October 29 and nothing on any other date.
+`test_shipped_note_matches_october_29_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- both BUY branches: no line may SELL, and there is no expiry line;
+- all twelve levels.
+
+Each of these 8 mutations fails it, and the unmutated note passes:
+
+* NIFTY's resistance left at the 28 Oct note's 22,960;
+* BankNIFTY's resistance recorded as the spoken 54,600;
+* Sensex's resistance recorded as the spoken 74,500;
+* the date set to October 28;
+* the small-gap-down branch turned into SELL;
+* a big-gap-down SELL branch invented;
+* the no-crowd reason dropped;
+* an expiry line added.

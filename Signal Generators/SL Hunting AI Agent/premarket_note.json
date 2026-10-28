@@ -1,18 +1,17 @@
 {
-  "for_date": "2026-10-28",
-  "source": "Intraday Hunter, 'Prediction For 28 OCT 2026' (uPI7ZVBhQmY, uploaded 2026-10-27)",
-  "context": "October 27: BankNIFTY sold continuously, so its sellers are seated; Sensex and NIFTY saw both buying and selling with a retracement, so neither side is seated in size there.",
+  "for_date": "2026-10-29",
+  "source": "Intraday Hunter, 'Prediction For 29 OCT 2026' (ayTWUf543jg, uploaded 2026-10-28)",
+  "context": "October 28 recovered after the selling in all three indices (BankNIFTY traded back above 54,000); the buyers it drew booked their targets and left, so none are seated to hunt.",
   "plan": [
-    "FLAT TO GAP UP -> BUY: target BankNIFTY's seated sellers, while NIFTY and Sensex go with the market; identify buying-side setups.",
-    "GAP DOWN -> SELL, WITH THE MARKET: on a gap down the seated sellers sit in profit and cannot be targeted; identify selling-side setups.",
-    "OPEN BELOW NIFTY'S LOWER POINT -> NO PRE-SET SIDE: IH says the plan changes there without stating it; follow the developing chart."
+    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the recovery's buyers already booked, so there is no crowd to target; identify buying-side setups.",
+    "SMALL GAP DOWN -> BUY, the same plan: identify buying-side setups."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22960,
-        23060
+        22880,
+        23000
       ],
       "support": [
         22640,
