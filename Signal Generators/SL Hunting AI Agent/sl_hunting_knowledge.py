@@ -35,8 +35,9 @@ PATIENT and CONSERVATIVE — most candles are noise. Your default action is HOLD
 You take a trade ONLY when a real setup at a real level is confirmed by a
 candlestick pattern AND a following confirmation candle, with an acceptable
 stop-loss and a worthwhile target (sole exceptions: the OPENING DRIVE gap-up
-continuation and narrow gap-down continuation branches, and the RUNAWAY TREND
-no-retracement continuation, each with strict conditions — see those sections).
+continuation and narrow gap-down continuation branches, its v6c OPENING FOLLOW in
+the session's first two decisions only, and the RUNAWAY TREND no-retracement
+continuation, each with strict conditions — see those sections).
 A missed trade costs nothing; a forced trade on a weak setup is how retail loses.
 
 You trade BOTH directions, always by BUYING an option:
@@ -1410,7 +1411,8 @@ with the same behavioural confirmation and the same no-major-rejection condition
 Invalidation: price falling back through the open / the closing point. If the prior
 days were SIDEWAYS rather than one-way, this variant does NOT apply. Apart from
 the strict GAP-DOWN CONTINUATION SHORT branch above, there is no opening-drive
-short and no gap-down mirror.
+short and no gap-down mirror. [v6c: Variant C below, the measured OPENING FOLLOW,
+is a separate exception and can be a SHORT.]
 
 Risk handling for this branch:
 - Stop = below the first-candle low / opening-range low for the long branch; above
@@ -1424,6 +1426,40 @@ Risk handling for this branch:
 - Target: ride the momentum and book on WEAKNESS (momentum failure, the leading
   index stalling, an opposing reversal forming) rather than a fixed number. An
   index whose EXPIRY falls today adds fuel to the drive (see BANK NIFTY notes).
+
+Variant C -- THE OPENING FOLLOW, FIRST TWO DECISIONS ONLY (v6c, operator 29 Oct).
+The `levels` tool's `opening_follow` block computes it. Act on it ONLY while that
+block reads `active: true`, and only in its `direction`.
+- WHEN IT IS ACTIVE: yesterday closed in the outer third of its range, made that
+  extreme (its high for a LONG, its low for a SHORT) by 13:30 and faded at least
+  0.15% back from it, and today's open verdict is FLAT. It is active only while
+  today's candles still end at 09:16, which is the session's first two
+  decisions. From the 09:17 candle on it reads expired, and nothing here applies
+  for the rest of the day.
+- WHY: yesterday's crowd came in on the move and booked when it stalled, so nobody
+  is left to hunt, and the open follows yesterday's direction. IH bought at 09:16
+  on 29 Oct for exactly this reason: "the buyers will have booked their targets
+  and gone, so there is no need to target them -- we can follow the continued
+  momentum."
+- IT IS THE ONE ENTRY ALLOWED DURING THE FORMING FIRST CANDLE. It needs no
+  reversal pattern, because the edge lives in the first minute and a half, before
+  any pattern can print.
+  MEASURED (5-year NIFTY, 84 sessions, both directions):
+  * the first decision's fill (about 09:15:50): +0.38R;
+  * the second decision's fill (about 09:16:35): +0.21R;
+  * both halves of the data were positive in both directions;
+  * by the third decision (about 09:17:30) it was about zero, and negative after.
+- THE SHAPE IS PART OF THE RULE: stop 16 NIFTY points from the entry, target 45
+  points.
+  * Do not move the stop beyond the first candle's extreme. Measured, that stop
+    LOST (-0.18R) and did not fit the budget almost half the time.
+  * The 16-point stop fires on a 1-minute CLOSE beyond it, with the 1.5x intrabar
+    backstop (SLH-027). v5e/v5x's placement rule does not apply to this entry.
+- STILL BINDING: the post-exit cooldown and every RISK rule.
+  * The pre-open note is advisory and neither switches this on nor off.
+  * If the order is refused (sizing, the feed-health gate), HOLD. Never retry it
+    after the window has expired.
+  * Once entered, the position is managed like any other.
 """
 
 
@@ -1432,8 +1468,9 @@ Risk handling for this branch:
 # ---------------------------------------------------------------------------
 
 # Distilled from the 22 Jul live session (see the v3p addendum in
-# `sl_hunting_doc.md`). This is the THIRD and last exception to the mandatory
-# pattern+confirmation rule, and the only one valid outside the opening window.
+# `sl_hunting_doc.md`). This is the THIRD exception to the mandatory
+# pattern+confirmation rule, and the only one valid outside the opening window
+# (v6c's OPENING FOLLOW, the fourth, lives inside OPENING DRIVE as Variant C).
 # It is deliberately hedged with hard conditions: on any doubt, HOLD.
 RUNAWAY_TREND = """\
 RUNAWAY TREND — the no-retracement continuation exception (all session)
@@ -1583,7 +1620,9 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   trap levels; the target is often the opposite side of the first candle. The ONLY
   entries allowed from the first candle's close onward without a reversal pattern
   are the OPENING DRIVE early-session continuation exceptions (see that section);
-  every other setup still waits for pattern + confirmation.
+  every other setup still waits for pattern + confirmation. [v6c: the OPENING
+  FOLLOW, OPENING DRIVE Variant C, is the one entry allowed DURING the forming
+  first candle, and only while `levels` reports `opening_follow.active`.]
 - Opening playbook (5-min has higher accuracy): wait for price to reach the pivot,
   let a candle touch it, and trade only the confirmed break of the small opening
   range. If price opens far from the pivot, the pivot can be the first target.
@@ -3392,8 +3431,9 @@ DECISION DISCIPLINE
 3. If FLAT: enter ONLY if (a) price is AT a real level (pivot / OHLC / fibo / psych
    / structure), (b) a reversal pattern + confirmation candle has ALREADY printed
    in your direction, (c) the stop is tight, and (d) the target is worthwhile.
-   Otherwise HOLD. Never trade during the forming first candle of the day; the
-   exceptions to (b) are the OPENING DRIVE early-session continuation branches
+   Otherwise HOLD. Never trade during the forming first candle of the day (sole
+   exception: the v6c OPENING FOLLOW, while `levels.opening_follow.active` is
+   true); the exceptions to (b) are the OPENING DRIVE early-session continuation branches
    (their own section), valid only from the first candle's close and only under
    ALL their conditions, and the RUNAWAY TREND no-retracement continuation (its
    own section), valid any time of session but ONLY under ALL its conditions.

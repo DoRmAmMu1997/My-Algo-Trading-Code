@@ -5546,6 +5546,13 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
                 errors = master_file._live_config_errors(worker, "SL_HUNTING")
                 self.assertEqual(message in errors, blocked)
 
+    def test_v6c_opening_follow_is_on_by_default_in_the_agents_indicator_config(self):
+        """The kill switch defaults ON and reaches the config the agent's tools read;
+        the master builds that config from SL_HUNTING_OPENING_FOLLOW_ENABLED."""
+        self.assertTrue(master_file.SL_HUNTING_INDICATOR_CONFIG.opening_follow_enabled)
+        source = Path(master_file.__file__).read_text(encoding="utf-8")
+        self.assertIn('opening_follow_enabled=_env_bool("SL_HUNTING_OPENING_FOLLOW_ENABLED", True)', source)
+
     def test_live_basket_pnl_uses_nifty_and_bnf_broker_fills(self):
         worker, _store = self._make_worker()
         worker.live_trading = True

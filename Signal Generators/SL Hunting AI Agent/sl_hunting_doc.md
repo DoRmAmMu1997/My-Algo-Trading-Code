@@ -12504,7 +12504,7 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * the no-crowd reason dropped;
 * an expiry line added.
 
-## 29 Oct - IH bought the flat open at 09:16; the v6b agent sat out (diligence addendum)
+## v6c - 29 Oct live match: IH bought the flat open at 09:16, and the opening follow
 
 **Sources.**
 
@@ -12521,8 +12521,9 @@ Each of these 8 mutations fails it, and the unmutated note passes:
   Finance's public chart API. Checked against the Dhan CSV on the 1,080 bars of
   21-23 Oct, NIFTY's closes agree to a median of 0.00 and a p95 of 0.40 points.
 
-**No knowledge change.** v6b-1 (28 Oct) is still the operator's call; today was
-not a split open, so it adds no evidence either way.
+**Adopted: v6c, the OPENING FOLLOW**, on the operator's request and measured
+(below). v6b-1 (28 Oct) is still the operator's call; today was not a split
+open, so it adds no evidence either way.
 
 ### The session
 
@@ -12567,7 +12568,7 @@ at 54,167.80 (-0.20%). Sensex had its weekly expiry.
 
   The trade reaches +45 at 09:34. Under the old intrabar stop it was a -1R.
 
-### Measured: IH's morning thesis (not encoded)
+### Measured: IH's morning thesis
 
 IH's thesis: after a selling day that recovered and then gave no momentum after
 1 PM, the recovery's buyers booked and left, so a flat open follows the
@@ -12590,15 +12591,80 @@ Each cell shows the result, with 2021-23 / 2024-26 in brackets.
 
 - **The edge is IH's own minute.** It is +0.25R at 09:16, both halves positive,
   and gone by 09:18.
-- **The agent cannot capture it.** Its decisions take 30-40 s, the first candle
-  closes at 09:16:00, and a first-candle entry needs a scoped exception it does
-  not have.
+- **The first read was that the agent could not capture it**: its decisions take
+  30-40 s, and a first-candle entry needs a scoped exception. The operator asked
+  for a window that only the first two decisions may act on, which is v6c below.
 - **IH's literal V** (a morning low 0.4% below the open) leaves 10 sessions:
   +0.14 to +0.78R, too few to use.
 - **The mirror** (an up day that ran into the close, then buy) is negative at
   every minute in both halves. Against the all-flat-open baseline, though, the
   lift is small (-0.17R at 09:16, near zero by 09:25). Most of it is the general
   weakness of flat-open longs in this sample, so it is not encoded as a veto.
+
+### Adopted: v6c, the OPENING FOLLOW (first two decisions only)
+
+The operator's question: could the setup be checked only by the session's first
+two SDK calls, which regularly happen by 09:17, and be invalid from the third?
+
+**When the calls fill.** The agent decides each time a NEW minute appears in its
+frame, not when one completes. The 22 Oct decisions log shows the first decision
+at 09:15:48 (with the 09:15 candle still forming), the second at 09:16:34 and the
+third at 09:17:29. A first attempt at this measurement assumed completed candles
+and put each call a minute late; that made the second call look negative and
+was corrected.
+
+**Measured at those fills** (84 sessions, both directions, 16-point stop judged
+on the close, 45-point target):
+
+| decision | fill | R | 2021-23 / 2024-26 | up / down |
+|---|---|---|---|---|
+| 1st | ~09:15:50 (the 09:15 close) | **+0.384** | +0.32 / +0.43 | +0.46 / +0.30 |
+| 2nd | ~09:16:35 (mid-09:16) | **+0.209** | +0.24 / +0.19 | +0.24 / +0.17 |
+| 2nd, worst case | the 09:16 close | +0.124 | +0.16 / +0.09 | +0.11 / +0.14 |
+| 3rd | ~09:17:30 (mid-09:17) | -0.018 | +0.04 / -0.06 | +0.02 / -0.06 |
+
+Other shapes (12/35, 20/55) kept both halves positive at the first two fills.
+A stop beyond the first candle's extreme LOST (-0.18R at the 09:16 close) and
+did not fit the one-lot budget almost half the time. So the 16-point shape is
+part of the rule.
+
+**The operator's choices:** an agent decision, not a host-made entry; a kill
+switch, on by default.
+
+**What it is:**
+
+- **Code.** `pivot_and_levels` (the `levels` tool) gains an `opening_follow`
+  block beside the open verdict.
+  - It is active only for a stalled prior session, a FLAT verdict, and a frame
+    that started at 09:15 and still ends by 09:16.
+  - It carries the direction, the prior session's shape, its extreme time and
+    fade, the 16/45 shape, and the reason when it is not active.
+  - The settlement prints after 15:15 never count as yesterday's extreme.
+  - BankNIFTY's levels leave the block out.
+  - `SL_HUNTING_OPENING_FOLLOW_ENABLED` (default true) switches it off; the tool
+    then says so.
+- **Prompt.** OPENING DRIVE Variant C states the rule and acts only on the
+  block. It is the one entry allowed during the forming first candle, it needs
+  no reversal pattern, and its shape overrides v5e/v5x's stop placement. The
+  cooldown, RISK rules and sizing still bind. Pointers sit in every rule that
+  banned it:
+  - ROLE's exception list;
+  - STRUCTURE's first-candle bullet;
+  - DECISION_RULES #3;
+  - Variant B's "no opening-drive short".
+
+On 29 Oct the block read LONG at 09:15 and 09:16 and expired at 09:17.
+
+**Validation:**
+
+- 10 flag tests (`test_sl_hunting_opening_follow.py`) and a prompt-wiring test
+  (`test_v6c_*`).
+- A master test that the kill switch defaults on.
+- 18 mutants, all caught. The first run left the 13:30 rule unpinned; a
+  late-high case was added, and it is now caught.
+- Gates: the master suite (675), market-data health (28), pytest (1,809), ruff,
+  mypy (82 files, then the master file), compileall, bandit (CI's flags) and
+  pre-commit are all clean.
 
 ### Already in the corpus
 
