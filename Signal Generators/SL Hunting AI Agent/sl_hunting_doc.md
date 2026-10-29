@@ -12503,3 +12503,251 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * a big-gap-down SELL branch invented;
 * the no-crowd reason dropped;
 * an expiry line added.
+
+## v6c - 29 Oct live match: IH bought the flat open at 09:16, and the opening follow
+
+**Sources.**
+
+- **IH's live session:** `lGR689kYUo4`, uploaded 2026-10-29 10:36 IST, 9:31. He
+  traded on the 29 Oct note (`ayTWUf543jg`: FLAT TO GAP UP -> BUY; SMALL GAP
+  DOWN -> BUY). Clock times come from the taskbar clock in the frame, and his
+  words are my translation of the Hindi auto-transcript
+  (`lGR689kYUo4-transcript.txt` in the archive, 75 segments).
+- **This book:** the runner ran on the operator's other machine. The operator
+  reports the agent took **no trade**. Its decisions log is not on this
+  machine, so its reasons are not read here; only what the rules allowed is.
+- **Prices:** the 5-year CSVs on this machine end on 23 Oct, and this machine's
+  Dhan token had expired. The 23-29 Oct one-minute bars come from Yahoo
+  Finance's public chart API. Checked against the Dhan CSV on the 1,080 bars of
+  21-23 Oct, NIFTY's closes agree to a median of 0.00 and a p95 of 0.40 points.
+
+**Adopted: v6c, the OPENING FOLLOW**, on the operator's request and measured
+(below). v6b-1 (28 Oct) is still the operator's call; today was not a split
+open, so it adds no evidence either way.
+
+### The session
+
+28 Oct sold to 22,497.90 at 10:22, recovered to 22,777.85 at 13:00, and drifted
+to a 3:15 level of 22,707.05 (top quarter of its range).
+
+29 Oct opened FLAT on both indices: NIFTY at 22,690.65 (-0.07%) and BankNIFTY
+at 54,167.80 (-0.20%). Sensex had its weekly expiry.
+
+- **09:15-09:20:** the first candle's low was the day's low, 22,656.85. NIFTY
+  rose to 22,736.95 at 09:20.
+- **09:21-09:22:** a full rejection candle took it to 22,679.75.
+- **09:22-09:39:** it ground back to 22,763.80 at 09:39.
+- **Rest of day:** 22,870 at 10:30, and a 3:15 level of 22,939.25 (+1.02%).
+
+| | IH | the agent |
+|---|---|---|
+| read | yesterday's recovery drew buyers, but with no momentum after 1 PM they booked and left: no crowd to hunt, so follow the momentum | the note's BUY branch on a FLAT open |
+| entry | **09:16**, straight after the open: BankNIFTY 54,200 CE and 54,300 CE x1,170, SENSEX x900, NIFTY x1,430 | none (operator's report) |
+| path | about 1 lakh up at once and over 2 lakh, then the 09:21 rejection took him into a small loss: "either the target comes or the loss; nothing in between, unless too much time passes" | - |
+| exit | about **09:39**, booked "just before the peak" at about 2.5-2.6 lakh, against a 50-60k plan | - |
+
+### What the rules allowed at 09:16
+
+- **IH's entry was off the first candle.** None of the scoped exceptions covers
+  it:
+  - OPENING_DRIVE's gap-up branch needs a gap-up.
+  - Its flat-open variant needs multi-day selling, and 26 and 27 Oct were up
+    days.
+  - v5x needs a one-way selling day, and 28 Oct was a V.
+- **The honest stop did not fit.** A long's stop below the first candle's low
+  (22,656.85) sat 44 points from the 09:16 open. That is over the roughly
+  38-point one-lot budget, so SLH-025 would refuse it. This is the third
+  session running (27, 28 and now 29 Oct) where the honest long stop did not
+  fit the budget on the open.
+- **SLH-027 in the book's shape.** A 16-point stop from the 09:16 open sits at
+  22,685.15, and the 09:21 rejection pierced it intrabar. On SLH-027's closing
+  basis it holds:
+  - the 09:21 and 09:22 candles closed at 22,693.90 and 22,691.25;
+  - the 1.5x backstop (22,677.15) was never touched, since the low was
+    22,679.75.
+
+  The trade reaches +45 at 09:34. Under the old intrabar stop it was a -1R.
+
+### Measured: IH's morning thesis
+
+IH's thesis: after a selling day that recovered and then gave no momentum after
+1 PM, the recovery's buyers booked and left, so a flat open follows the
+recovery.
+
+The broad test classed every prior day that closed in its top (bottom) third by
+when its high (low) came:
+
+- **stalled:** by 13:30, with the 3:15 level at least 0.15% back from it;
+- **ran:** after 14:15.
+
+Entries follow that day's direction on a FLAT open, in the book's shape, in R.
+Each cell shows the result, with 2021-23 / 2024-26 in brackets.
+
+| prior day | n | 09:16 | 09:18 | 09:20 | 09:25 |
+|---|---|---|---|---|---|
+| up-close, stalled: buy | 45 | **+0.252** (+0.14 / +0.34) | -0.035 | -0.031 | -0.032 |
+| up-close, ran into the close: buy | 237 | -0.221 (-0.29 / -0.16) | -0.160 | -0.231 | -0.114 |
+| every flat open: buy | 941 | -0.056 | -0.088 | -0.165 | -0.105 |
+
+- **The edge is IH's own minute.** It is +0.25R at 09:16, both halves positive,
+  and gone by 09:18.
+- **The first read was that the agent could not capture it**: its decisions take
+  30-40 s, and a first-candle entry needs a scoped exception. The operator asked
+  for a window that only the first two decisions may act on, which is v6c below.
+- **IH's literal V** (a morning low 0.4% below the open) leaves 10 sessions:
+  +0.14 to +0.78R, too few to use.
+- **The mirror** (an up day that ran into the close, then buy) is negative at
+  every minute in both halves. Against the all-flat-open baseline, though, the
+  lift is small (-0.17R at 09:16, near zero by 09:25). Most of it is the general
+  weakness of flat-open longs in this sample, so it is not encoded as a veto.
+
+### Adopted: v6c, the OPENING FOLLOW (first two decisions only)
+
+The operator's question: could the setup be checked only by the session's first
+two SDK calls, which regularly happen by 09:17, and be invalid from the third?
+
+**When the calls fill.** The agent decides each time a NEW minute appears in its
+frame, not when one completes. The 22 Oct decisions log shows the first decision
+at 09:15:48 (with the 09:15 candle still forming), the second at 09:16:34 and the
+third at 09:17:29. A first attempt at this measurement assumed completed candles
+and put each call a minute late; that made the second call look negative and
+was corrected.
+
+**Measured at those fills** (84 sessions, both directions, 16-point stop judged
+on the close, 45-point target):
+
+| decision | fill | R | 2021-23 / 2024-26 | up / down |
+|---|---|---|---|---|
+| 1st | ~09:15:50 (the 09:15 close) | **+0.384** | +0.32 / +0.43 | +0.46 / +0.30 |
+| 2nd | ~09:16:35 (mid-09:16) | **+0.209** | +0.24 / +0.19 | +0.24 / +0.17 |
+| 2nd, worst case | the 09:16 close | +0.124 | +0.16 / +0.09 | +0.11 / +0.14 |
+| 3rd | ~09:17:30 (mid-09:17) | -0.018 | +0.04 / -0.06 | +0.02 / -0.06 |
+
+Other shapes (12/35, 20/55) kept both halves positive at the first two fills.
+A stop beyond the first candle's extreme LOST (-0.18R at the 09:16 close) and
+did not fit the one-lot budget almost half the time. So the 16-point shape is
+part of the rule.
+
+**The operator's choices:** an agent decision, not a host-made entry; a kill
+switch, on by default.
+
+**What it is:**
+
+- **Code.** `pivot_and_levels` (the `levels` tool) gains an `opening_follow`
+  block beside the open verdict.
+  - It is active only for a stalled prior session, a FLAT verdict, and a frame
+    that started at 09:15 and still ends by 09:16.
+  - It carries the direction, the prior session's shape, its extreme time and
+    fade, the 16/45 shape, and the reason when it is not active.
+  - The settlement prints after 15:15 never count as yesterday's extreme.
+  - BankNIFTY's levels leave the block out.
+  - `SL_HUNTING_OPENING_FOLLOW_ENABLED` (default true) switches it off; the tool
+    then says so.
+- **Prompt.** OPENING DRIVE Variant C states the rule and acts only on the
+  block. It is the one entry allowed during the forming first candle, it needs
+  no reversal pattern, and its shape overrides v5e/v5x's stop placement. The
+  cooldown, RISK rules and sizing still bind. Pointers sit in every rule that
+  banned it:
+  - ROLE's exception list;
+  - STRUCTURE's first-candle bullet;
+  - DECISION_RULES #3;
+  - Variant B's "no opening-drive short".
+
+On 29 Oct the block read LONG at 09:15 and 09:16 and expired at 09:17.
+
+**Validation:**
+
+- 10 flag tests (`test_sl_hunting_opening_follow.py`) and a prompt-wiring test
+  (`test_v6c_*`).
+- A master test that the kill switch defaults on.
+- 18 mutants, all caught. The first run left the 13:30 rule unpinned; a
+  late-high case was added, and it is now caught.
+- Gates: the master suite (675), market-data health (28), pytest (1,809), ruff,
+  mypy (82 files, then the master file), compileall, bandit (CI's flags) and
+  pre-commit are all clean.
+
+### Already in the corpus
+
+- **"Slow and steady wins: a slow move gives the target, a fast one starts
+  rotating":** SLOW-but-CONTINUOUS (v3j), and v5y's straight run.
+- **Repeated rejections near the target, "to create sellers' stops", held
+  through:** v5w's ten-candle stall rule.
+- **Booking "just before the peak", at 2.5 of a possible 3.4 lakh:** BOOK BEFORE
+  THE ROUND NUMBER (v4d), and v5y.
+- **"Target or loss, nothing in between":** the hard stop and target. Its time
+  arm is the theta and time-cutoff rules.
+
+### For the operator
+
+- The other machine's `Backtest Outputs/sl_hunting_decisions.jsonl` for 29 Oct
+  would show why the agent held, if you want that diagnosed. The likely reasons
+  are the first-candle rule and the sizing refusals above.
+- This machine's Dhan token has expired. `python algo.py setup-token` refreshes
+  it, and the local CSVs refresh only where `fetch-data` runs.
+
+## October 30 pre-open note
+
+[Prediction For 30 OCT 2026](https://www.youtube.com/watch?v=A2dkFyTJwQw), uploaded
+2026-10-29 21:10:11 IST, 114 s, 14 transcript segments. The raw transcript is
+`A2dkFyTJwQw-transcript.txt` in the same archive.
+
+**Read.** October 29 rallied with continuous positive momentum in all three
+indices, so buyers are seated, holding for a bigger target with wide stops.
+Small rejections will not shake them out, and they cannot be targeted until the
+levels are crossed. On a gap up, no sellers' stops sit above to hunt.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO SMALL GAP DOWN | BUY, with the market: identify buying-side setups |
+| GAP UP | SELL: no sellers' stops sit above to hunt; identify selling-side setups |
+
+BankNIFTY and Sensex say "flat to gap down"; NIFTY, the index the agent trades,
+says a small gap down or flat. The note uses NIFTY's wording.
+
+**Levels.** The 1080p frames at 0:43, 1:12 and 1:44 check every level against
+its drawn line:
+
+- **Sensex's first support**, spoken "7360", is the drawn 73,659.62, recorded as
+  73,660.
+- **Sensex's 74,500** stays 74,510 (74,506.61), as in the 28 and 29 Oct notes.
+- The other ten match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,000 / 23,200 | 22,800 / 22,640 |
+| BankNIFTY | 55,000 / 55,400 | 54,500 / 54,290 |
+| Sensex | 74,510 / 75,000 | 73,660 / 73,200 |
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 29 Oct ran into the close (high
+  22,961.60 at 15:12, closing at 93% of its range), which is the "ran" case, not
+  a stall. That mirror case measured negative for a flat-open buy at every minute
+  (29 Oct section), though barely worse than any flat-open buy. The note's
+  flat-open BUY is advisory and still needs the agent's own setup.
+- **v5z can apply on a FLAT open.** 29 Oct moved +1.02%, and the note names a
+  side. Its trigger would be BankNIFTY closing below 54,500 by 10:30 while NIFTY
+  holds 29 Oct's low (22,656.85). NIFTY's own next 500 below, 22,500, sits under
+  that low, so NIFTY cannot be the trigger.
+- **v5x does not apply** (29 Oct was not a selling day), nor **v6a** (the NIFTY
+  contract held expires on 3 Nov).
+
+The note renders 1,633 characters on October 30 and nothing on any other date.
+`test_shipped_note_matches_october_30_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- both branches;
+- all twelve levels.
+
+Each of these 8 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into BUY;
+* the date set to October 29;
+* Sensex's support recorded as the garbled 73,600;
+* Sensex's resistance recorded as the spoken 74,500;
+* BankNIFTY's support recorded as 54,300;
+* the gap-up branch's reason dropped;
+* an expiry line added.

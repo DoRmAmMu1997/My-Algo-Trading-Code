@@ -1,43 +1,43 @@
 {
-  "for_date": "2026-10-29",
-  "source": "Intraday Hunter, 'Prediction For 29 OCT 2026' (ayTWUf543jg, uploaded 2026-10-28)",
-  "context": "October 28 recovered after the selling in all three indices (BankNIFTY traded back above 54,000); the buyers it drew booked their targets and left, so none are seated to hunt.",
+  "for_date": "2026-10-30",
+  "source": "Intraday Hunter, 'Prediction For 30 OCT 2026' (A2dkFyTJwQw, uploaded 2026-10-29)",
+  "context": "October 29 rallied with continuous momentum in all three indices, so buyers are seated, holding for a bigger target with wide stops: small rejections will not shake them out.",
   "plan": [
-    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the recovery's buyers already booked, so there is no crowd to target; identify buying-side setups.",
-    "SMALL GAP DOWN -> BUY, the same plan: identify buying-side setups."
+    "FLAT TO SMALL GAP DOWN -> BUY, WITH THE MARKET: the seated buyers cannot be targeted until the levels are crossed; identify buying-side setups.",
+    "GAP UP -> SELL: no sellers' stops sit above to hunt; identify selling-side setups."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        22880,
-        23000
+        23000,
+        23200
       ],
       "support": [
-        22640,
-        22500
+        22800,
+        22640
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        54610,
-        54940
+        55000,
+        55400
       ],
       "support": [
-        54000,
-        53620
+        54500,
+        54290
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        74000,
-        74510
+        74510,
+        75000
       ],
       "support": [
-        73200,
-        72700
+        73660,
+        73200
       ]
     }
   ]

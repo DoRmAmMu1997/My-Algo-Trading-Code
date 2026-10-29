@@ -4084,3 +4084,44 @@ def test_v5z_a_round_number_crossed_against_the_note_seats_the_crowd_it_hunts():
     v5x_rule = _flat_rule(prompt, "WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET (v5x)")
     assert ("[Narrowed by v5z, next: when the pre-open note names the BUY side, that close ends this "
             "test, not the note's side.]") in v5x_rule
+
+
+def test_v6c_the_opening_follow_is_wired_into_every_first_candle_rule():
+    """v6c (operator, 29 Oct): OPENING DRIVE Variant C, the opening follow.
+
+    It is the one entry allowed during the forming first candle, valid only while the
+    `levels` tool reports `opening_follow.active` (the session's first two decisions).
+    A new exception is unreachable unless every rule that forbids it says so, so the
+    test pins the variant itself AND the pointer in each place that bans first-candle
+    or pattern-free entries: ROLE, STRUCTURE, DECISION_RULES #3 and Variant B's
+    "no opening-drive short".
+    """
+    prompt = build_system_prompt()
+    start = prompt.index("Variant C -- THE OPENING FOLLOW, FIRST TWO DECISIONS ONLY (v6c")
+    variant = " ".join(prompt[start:prompt.index("RUNAWAY TREND", start)].split())
+    # It acts only on the computed block.
+    assert "The `levels` tool's `opening_follow` block computes it" in variant
+    assert "Act on it ONLY while that block reads `active: true`, and only in its `direction`" in variant
+    assert "It is active only while today's candles still end at 09:16" in variant
+    assert "From the 09:17 candle on it reads expired" in variant
+    # The measurement and the shape.
+    assert "the first decision's fill (about 09:15:50): +0.38R" in variant
+    assert "the second decision's fill (about 09:16:35): +0.21R" in variant
+    assert "stop 16 NIFTY points from the entry, target 45 points" in variant
+    assert "Do not move the stop beyond the first candle's extreme" in variant
+    assert "v5e/v5x's placement rule does not apply to this entry" in variant
+    # What still binds.
+    assert "STILL BINDING: the post-exit cooldown and every RISK rule" in variant
+    assert "Never retry it after the window has expired" in variant
+    assert "IT IS THE ONE ENTRY ALLOWED DURING THE FORMING FIRST CANDLE" in variant
+    # Every first-candle / pattern-free gate points at it.
+    flat = " ".join(prompt.split())
+    assert "its v6c OPENING FOLLOW in the session's first two decisions only" in flat
+    assert ("[v6c: the OPENING FOLLOW, OPENING DRIVE Variant C, is the one entry allowed DURING "
+            "the forming first candle, and only while `levels` reports `opening_follow.active`.]") in flat
+    assert ("Never trade during the forming first candle of the day (sole exception: the v6c "
+            "OPENING FOLLOW, while `levels.opening_follow.active` is true)") in flat
+    assert "[v6c: Variant C below, the measured OPENING FOLLOW, is a separate exception and can be a SHORT.]" in flat
+    # It sits inside OPENING DRIVE, after Variant B and before RUNAWAY TREND.
+    variant_b = prompt.index("Variant B — FLAT-OPEN seller-hunt long")
+    assert variant_b < start < prompt.index("RUNAWAY TREND — the no-retracement")

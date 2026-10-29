@@ -1698,9 +1698,14 @@ if SL_HUNTING_ENABLED:
         SL_HUNTING_EXECUTOR_MODULE = importlib.import_module("sl_hunting_executor")
         SL_HUNTING_JOURNAL_MODULE = importlib.import_module("sl_hunting_journal")
         SL_HUNTING_LESSONS_MODULE = importlib.import_module("sl_hunting_lessons")
+        # v6c: the opening-follow window (first two decisions of a FLAT open after
+        # a stalled prior session) has its own kill switch; off makes the
+        # `levels` tool report it switched off, so the agent never sees it active.
         SL_HUNTING_INDICATOR_CONFIG = importlib.import_module(
             "sl_hunting_indicators"
-        ).SLHuntingIndicatorConfig()
+        ).SLHuntingIndicatorConfig(
+            opening_follow_enabled=_env_bool("SL_HUNTING_OPENING_FOLLOW_ENABLED", True)
+        )
         SL_HUNTING_AVAILABLE = True
         logging.getLogger(LOGGER_NAME).info(
             "SL Hunting AI Agent loaded (model=%s); add SL_HUNTING_LIVE_TRADING + "
