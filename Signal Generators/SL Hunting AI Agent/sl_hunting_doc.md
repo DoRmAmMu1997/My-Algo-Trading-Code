@@ -12503,3 +12503,118 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * a big-gap-down SELL branch invented;
 * the no-crowd reason dropped;
 * an expiry line added.
+
+## 29 Oct - IH bought the flat open at 09:16; the v6b agent sat out (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `lGR689kYUo4`, uploaded 2026-10-29 10:36 IST, 9:31. He
+  traded on the 29 Oct note (`ayTWUf543jg`: FLAT TO GAP UP -> BUY; SMALL GAP
+  DOWN -> BUY). Clock times come from the taskbar clock in the frame, and his
+  words are my translation of the Hindi auto-transcript
+  (`lGR689kYUo4-transcript.txt` in the archive, 75 segments).
+- **This book:** the runner ran on the operator's other machine. The operator
+  reports the agent took **no trade**. Its decisions log is not on this
+  machine, so its reasons are not read here; only what the rules allowed is.
+- **Prices:** the 5-year CSVs on this machine end on 23 Oct, and this machine's
+  Dhan token had expired. The 23-29 Oct one-minute bars come from Yahoo
+  Finance's public chart API. Checked against the Dhan CSV on the 1,080 bars of
+  21-23 Oct, NIFTY's closes agree to a median of 0.00 and a p95 of 0.40 points.
+
+**No knowledge change.** v6b-1 (28 Oct) is still the operator's call; today was
+not a split open, so it adds no evidence either way.
+
+### The session
+
+28 Oct sold to 22,497.90 at 10:22, recovered to 22,777.85 at 13:00, and drifted
+to a 3:15 level of 22,707.05 (top quarter of its range).
+
+29 Oct opened FLAT on both indices: NIFTY at 22,690.65 (-0.07%) and BankNIFTY
+at 54,167.80 (-0.20%). Sensex had its weekly expiry.
+
+- **09:15-09:20:** the first candle's low was the day's low, 22,656.85. NIFTY
+  rose to 22,736.95 at 09:20.
+- **09:21-09:22:** a full rejection candle took it to 22,679.75.
+- **09:22-09:39:** it ground back to 22,763.80 at 09:39.
+- **Rest of day:** 22,870 at 10:30, and a 3:15 level of 22,939.25 (+1.02%).
+
+| | IH | the agent |
+|---|---|---|
+| read | yesterday's recovery drew buyers, but with no momentum after 1 PM they booked and left: no crowd to hunt, so follow the momentum | the note's BUY branch on a FLAT open |
+| entry | **09:16**, straight after the open: BankNIFTY 54,200 CE and 54,300 CE x1,170, SENSEX x900, NIFTY x1,430 | none (operator's report) |
+| path | about 1 lakh up at once and over 2 lakh, then the 09:21 rejection took him into a small loss: "either the target comes or the loss; nothing in between, unless too much time passes" | - |
+| exit | about **09:39**, booked "just before the peak" at about 2.5-2.6 lakh, against a 50-60k plan | - |
+
+### What the rules allowed at 09:16
+
+- **IH's entry was off the first candle.** None of the scoped exceptions covers
+  it:
+  - OPENING_DRIVE's gap-up branch needs a gap-up.
+  - Its flat-open variant needs multi-day selling, and 26 and 27 Oct were up
+    days.
+  - v5x needs a one-way selling day, and 28 Oct was a V.
+- **The honest stop did not fit.** A long's stop below the first candle's low
+  (22,656.85) sat 44 points from the 09:16 open. That is over the roughly
+  38-point one-lot budget, so SLH-025 would refuse it. This is the third
+  session running (27, 28 and now 29 Oct) where the honest long stop did not
+  fit the budget on the open.
+- **SLH-027 in the book's shape.** A 16-point stop from the 09:16 open sits at
+  22,685.15, and the 09:21 rejection pierced it intrabar. On SLH-027's closing
+  basis it holds:
+  - the 09:21 and 09:22 candles closed at 22,693.90 and 22,691.25;
+  - the 1.5x backstop (22,677.15) was never touched, since the low was
+    22,679.75.
+
+  The trade reaches +45 at 09:34. Under the old intrabar stop it was a -1R.
+
+### Measured: IH's morning thesis (not encoded)
+
+IH's thesis: after a selling day that recovered and then gave no momentum after
+1 PM, the recovery's buyers booked and left, so a flat open follows the
+recovery.
+
+The broad test classed every prior day that closed in its top (bottom) third by
+when its high (low) came:
+
+- **stalled:** by 13:30, with the 3:15 level at least 0.15% back from it;
+- **ran:** after 14:15.
+
+Entries follow that day's direction on a FLAT open, in the book's shape, in R.
+Each cell shows the result, with 2021-23 / 2024-26 in brackets.
+
+| prior day | n | 09:16 | 09:18 | 09:20 | 09:25 |
+|---|---|---|---|---|---|
+| up-close, stalled: buy | 45 | **+0.252** (+0.14 / +0.34) | -0.035 | -0.031 | -0.032 |
+| up-close, ran into the close: buy | 237 | -0.221 (-0.29 / -0.16) | -0.160 | -0.231 | -0.114 |
+| every flat open: buy | 941 | -0.056 | -0.088 | -0.165 | -0.105 |
+
+- **The edge is IH's own minute.** It is +0.25R at 09:16, both halves positive,
+  and gone by 09:18.
+- **The agent cannot capture it.** Its decisions take 30-40 s, the first candle
+  closes at 09:16:00, and a first-candle entry needs a scoped exception it does
+  not have.
+- **IH's literal V** (a morning low 0.4% below the open) leaves 10 sessions:
+  +0.14 to +0.78R, too few to use.
+- **The mirror** (an up day that ran into the close, then buy) is negative at
+  every minute in both halves. Against the all-flat-open baseline, though, the
+  lift is small (-0.17R at 09:16, near zero by 09:25). Most of it is the general
+  weakness of flat-open longs in this sample, so it is not encoded as a veto.
+
+### Already in the corpus
+
+- **"Slow and steady wins: a slow move gives the target, a fast one starts
+  rotating":** SLOW-but-CONTINUOUS (v3j), and v5y's straight run.
+- **Repeated rejections near the target, "to create sellers' stops", held
+  through:** v5w's ten-candle stall rule.
+- **Booking "just before the peak", at 2.5 of a possible 3.4 lakh:** BOOK BEFORE
+  THE ROUND NUMBER (v4d), and v5y.
+- **"Target or loss, nothing in between":** the hard stop and target. Its time
+  arm is the theta and time-cutoff rules.
+
+### For the operator
+
+- The other machine's `Backtest Outputs/sl_hunting_decisions.jsonl` for 29 Oct
+  would show why the agent held, if you want that diagnosed. The likely reasons
+  are the first-candle rule and the sizing refusals above.
+- This machine's Dhan token has expired. `python algo.py setup-token` refreshes
+  it, and the local CSVs refresh only where `fetch-data` runs.
