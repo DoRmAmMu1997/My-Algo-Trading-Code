@@ -12684,3 +12684,70 @@ On 29 Oct the block read LONG at 09:15 and 09:16 and expired at 09:17.
   are the first-candle rule and the sizing refusals above.
 - This machine's Dhan token has expired. `python algo.py setup-token` refreshes
   it, and the local CSVs refresh only where `fetch-data` runs.
+
+## October 30 pre-open note
+
+[Prediction For 30 OCT 2026](https://www.youtube.com/watch?v=A2dkFyTJwQw), uploaded
+2026-10-29 21:10:11 IST, 114 s, 14 transcript segments. The raw transcript is
+`A2dkFyTJwQw-transcript.txt` in the same archive.
+
+**Read.** October 29 rallied with continuous positive momentum in all three
+indices, so buyers are seated, holding for a bigger target with wide stops.
+Small rejections will not shake them out, and they cannot be targeted until the
+levels are crossed. On a gap up, no sellers' stops sit above to hunt.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO SMALL GAP DOWN | BUY, with the market: identify buying-side setups |
+| GAP UP | SELL: no sellers' stops sit above to hunt; identify selling-side setups |
+
+BankNIFTY and Sensex say "flat to gap down"; NIFTY, the index the agent trades,
+says a small gap down or flat. The note uses NIFTY's wording.
+
+**Levels.** The 1080p frames at 0:43, 1:12 and 1:44 check every level against
+its drawn line:
+
+- **Sensex's first support**, spoken "7360", is the drawn 73,659.62, recorded as
+  73,660.
+- **Sensex's 74,500** stays 74,510 (74,506.61), as in the 28 and 29 Oct notes.
+- The other ten match both their spoken values and their drawn labels.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,000 / 23,200 | 22,800 / 22,640 |
+| BankNIFTY | 55,000 / 55,400 | 54,500 / 54,290 |
+| Sensex | 74,510 / 75,000 | 73,660 / 73,200 |
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 29 Oct ran into the close (high
+  22,961.60 at 15:12, closing at 93% of its range), which is the "ran" case, not
+  a stall. That mirror case measured negative for a flat-open buy at every minute
+  (29 Oct section), though barely worse than any flat-open buy. The note's
+  flat-open BUY is advisory and still needs the agent's own setup.
+- **v5z can apply on a FLAT open.** 29 Oct moved +1.02%, and the note names a
+  side. Its trigger would be BankNIFTY closing below 54,500 by 10:30 while NIFTY
+  holds 29 Oct's low (22,656.85). NIFTY's own next 500 below, 22,500, sits under
+  that low, so NIFTY cannot be the trigger.
+- **v5x does not apply** (29 Oct was not a selling day), nor **v6a** (the NIFTY
+  contract held expires on 3 Nov).
+
+The note renders 1,633 characters on October 30 and nothing on any other date.
+`test_shipped_note_matches_october_30_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- both branches;
+- all twelve levels.
+
+Each of these 8 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into BUY;
+* the date set to October 29;
+* Sensex's support recorded as the garbled 73,600;
+* Sensex's resistance recorded as the spoken 74,500;
+* BankNIFTY's support recorded as 54,300;
+* the gap-up branch's reason dropped;
+* an expiry line added.
