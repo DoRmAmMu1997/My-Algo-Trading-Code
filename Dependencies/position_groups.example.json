@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "groups": [
+    {
+      "name": "Nov iron condor",
+      "broker": "ZERODHA",
+      "target": 15000,
+      "booked_pnl": -2300,
+      "legs": [
+        {"symbol": "NIFTY25N2724500CE", "exchange": "NFO", "product": "NRML", "quantity": -75,
+         "entry_price": 120.5, "underlying": "NIFTY", "expiry": "2025-11-27", "strike": 24500, "right": "CE"},
+        {"symbol": "NIFTY25N2725000CE", "exchange": "NFO", "product": "NRML", "quantity": 75,
+         "entry_price": 42.0, "underlying": "NIFTY", "expiry": "2025-11-27", "strike": 25000, "right": "CE"},
+        {"symbol": "NIFTY25N2723500PE", "exchange": "NFO", "product": "NRML", "quantity": -75,
+         "entry_price": 110.0, "underlying": "NIFTY", "expiry": "2025-11-27", "strike": 23500, "right": "PE"},
+        {"symbol": "NIFTY25N2723000PE", "exchange": "NFO", "product": "NRML", "quantity": 75,
+         "entry_price": 38.25, "underlying": "NIFTY", "expiry": "2025-11-27", "strike": 23000, "right": "PE"}
+      ]
+    }
+  ],
+  "unassigned": []
+}

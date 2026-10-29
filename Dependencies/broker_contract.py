@@ -11,6 +11,7 @@ import math
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
@@ -305,6 +306,47 @@ class OpenPosition:
 
 
 @dataclass(frozen=True, slots=True)
+class PositionDetail:
+    """One non-flat position with the detail a P&L monitor needs.
+
+    ``OpenPosition`` above answers only "is the account flat?", so it carries no
+    price or contract identity.  The position-group monitor needs both: an
+    average price to pre-fill a leg's entry price, and the option's
+    (underlying, expiry, strike, right) to find the same contract in Dhan's feed.
+    The identity fields are empty when the broker's instrument master did not
+    list the symbol -- the monitor then refuses to watch that leg rather than
+    guess.  ``average_price`` 0.0 means "the broker reported none", exactly like
+    ``OrderResult.average_fill_price``; Zerodha reports 0 for some carried-forward
+    rows, which is why the operator, not the broker, owns a leg's entry price.
+    """
+
+    symbol: str
+    exchange: str
+    product_type: str
+    quantity: int
+    average_price: float = 0.0
+    underlying: str = ""
+    expiry: date | None = None
+    strike: float | None = None
+    right: str = ""
+
+    def __post_init__(self) -> None:
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, int):
+            raise ValueError("quantity must be an integer")
+        if self.quantity == 0:
+            raise ValueError("a PositionDetail is never flat; skip zero-quantity rows")
+        if (
+            isinstance(self.average_price, bool)
+            or not isinstance(self.average_price, (int, float))
+            or not math.isfinite(self.average_price)
+            or self.average_price < 0
+        ):
+            raise ValueError("average_price must be finite and non-negative")
+        if self.right not in {"", "CE", "PE"}:
+            raise ValueError("right must be CE, PE or empty")
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerQueryResult[QueryItem]:
     """Typed list-query result that distinguishes empty from indeterminate."""
 
@@ -384,5 +426,44 @@ class ExecutionClient(Protocol):
     def recover_after_reconciliation(self) -> bool: ...
 
     def extract_order_id(self, order_response: Any) -> str: ...
+
+    def logout(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class PositionBrokerClient(Protocol):
+    """The narrow surface the position-group monitor needs from a broker.
+
+    Deliberately smaller than :class:`ExecutionClient`: these clients only read
+    an account's carried positions and close them.  They never open exposure,
+    so they have no contract resolver, and they are not selectable as
+    ``LIVE_BROKER``.  ``place_market_order`` keeps the ExecutionClient shape
+    (``exchange_segment`` is the broker's own exchange code, e.g. ``NFO``) and
+    the same promise: it returns only after the order book proves an outcome.
+    """
+
+    broker_name: str
+    is_logged_in: bool
+
+    def ensure_logged_in(self) -> bool: ...
+
+    def list_position_details(self) -> BrokerQueryResult[PositionDetail]: ...
+
+    def place_market_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        exchange_segment: str,
+        product_type: str,
+        *,
+        order_tag: str = "",
+    ) -> OrderResult: ...
+
+    def get_order_status(
+        self,
+        order_id: str,
+        requested_quantity: int = 0,
+    ) -> OrderResult: ...
 
     def logout(self) -> dict[str, Any]: ...
