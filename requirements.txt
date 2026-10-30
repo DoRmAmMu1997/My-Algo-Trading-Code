@@ -17,6 +17,10 @@
 #   * CI's `pip_audit --local` now sees the dev tooling too, so an advisory in
 #     e.g. bandit can fail the build. Judge such a finding on whether it
 #     touches the runtime block before treating it as a trading risk.
+#
+# Python 3.14: every pin below (TA-Lib, numpy, pandas, mypy included) ships a
+# cp314 win_amd64 wheel, so supporting 3.14 needed no version change
+# (dry-run resolve, wheels only, 2026-10-30). CI runs 3.12, 3.13 and 3.14.
 
 # ---- LIVE RUNTIME (DEPS-001: the verified live-runner set) -------------------
 dhanhq==2.3.0

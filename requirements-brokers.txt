@@ -1,5 +1,10 @@
 # Exact optional broker dependency environment validated on Python 3.12/3.13.
 #
+# NOT 3.14: Kotak's v2.0.1 tag hard-pins numpy==2.1.0, which has no cp314 wheel,
+# so this full file cannot resolve there. The live-app route in README.md
+# (Kotak with --no-deps on top of requirements.txt) is unaffected, which is why
+# the core set still runs on 3.14 while this isolated set stays on 3.12/3.13.
+#
 # Kotak does not publish the required v2.0.1 instruction as a usable PyPI release.
 # Install the official repository tag exactly as Kotak documents. Shoonya's client
 # is vendored, but it needs the pinned TOTP and WebSocket packages below. Flattrade

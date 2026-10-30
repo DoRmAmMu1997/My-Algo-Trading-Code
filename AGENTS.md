@@ -293,7 +293,7 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   modules by basename — there are no `__init__.py` files). A `Tests/` folder mirroring a
   spaced-name source folder carries a `conftest.py` that puts the SOURCE folder on `sys.path`,
   never the test folder, so tests exercise the same import resolution production uses.
-- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):**
+- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13 + 3.14; the isolated broker set stays on 3.12 + 3.13):**
   `python -m unittest Tests.test_nifty_multi_strategy_master`,
   `python -m unittest Tests.test_market_data_health`,
   `python -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q`,

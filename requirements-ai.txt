@@ -1,6 +1,8 @@
 # Exact optional runtime set for BOTH in-process AI agents.
 #
-# These versions are the Python 3.12/3.13 set validated by the MAT safety stack.
+# These versions are the Python 3.12/3.13/3.14 set validated by the MAT safety stack.
+# Every pin here ships a cp314 (or py3-none) win_amd64 wheel, so 3.14 needed no
+# version change (dry-run resolve, wheels only, 2026-10-30).
 # Both agents are independently opt-in and default-OFF (SL_HUNTING_ENABLED,
 # CPR_AI_ENABLED), but they run inside the SAME master process, so Python can
 # only ever install ONE version of the packages they share. Keeping them in one
