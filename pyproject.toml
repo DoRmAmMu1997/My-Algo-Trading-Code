@@ -13,8 +13,11 @@
 # moved to `.day_of_week` in PR #224, and 0.6.6 is the latest backtesting release,
 # so no bump clears it. It is scoped by message AND module, so a new `.dayofweek`
 # in our code still warns. Drop it once backtesting ships the rename.
+# The category is the builtin DeprecationWarning (Pandas4Warning's base), NOT
+# pandas.errors.Pandas4Warning: the isolated broker job runs Kotak's older pandas,
+# which has no such class, and pytest refuses to start on an unresolvable category.
 filterwarnings = [
-    "ignore:DatetimeIndex.dayofweek is deprecated:pandas.errors.Pandas4Warning:backtesting._stats",
+    "ignore:DatetimeIndex.dayofweek is deprecated:DeprecationWarning:backtesting._stats",
 ]
 
 [tool.ruff]
