@@ -12751,3 +12751,108 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * BankNIFTY's support recorded as 54,300;
 * the gap-up branch's reason dropped;
 * an expiry line added.
+
+## 30 Oct - IH and the agent bought the same flat open; the agent went blind at 09:46 (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `Y-drgR_JNMQ`, uploaded 2026-10-30 10:59 IST, 8:57. He
+  traded on the 30 Oct note (`A2dkFyTJwQw`: FLAT TO SMALL GAP DOWN -> BUY).
+  Clock times come from the taskbar clock in the frame, and his words are my
+  translation of the Hindi auto-transcript (71 segments, read in full in the
+  watch page's transcript panel; the timedtext URL returned nothing).
+- **This book:** `Backtest Outputs/sl_hunting_decisions.jsonl` and
+  `sl_hunting_journal.jsonl` on this machine, 53 decisions for 30 Oct.
+- **Prices:** Yahoo Finance's public one-minute chart API, as on 29 Oct. The
+  agent's own logged prices agree with it to within 0.05 points where they
+  overlap (its 09:25 low 22,919.85 against Yahoo's 22,919.90).
+
+**No knowledge change.** Everything IH said today is already in the corpus, and
+the one new candidate measured as no edge (below).
+
+### The session
+
+29 Oct closed its 3:15 at 22,940.75 after running into the close. 30 Oct opened
+FLAT on both indices: NIFTY +0.10% and BankNIFTY -0.02% by the agent's
+classification.
+
+- **09:15:** the first candle spiked to 22,976.60 and was rejected to 22,933.15.
+- **09:16-09:26:** NIFTY ground down to 22,919.90 at 09:25. BankNIFTY made its
+  low first, 54,630.10 at 09:18.
+- **09:27-09:36:** a sharp recovery to 22,994.55.
+- **09:37-09:48:** a pullback to 22,955.10, with BankNIFTY lagging.
+- **09:49-09:52:** a second push to 23,019.15 at 09:52.
+- **Rest of day:** 22,905.10 at 10:16 (the day's low), 23,020 first reached at
+  11:13, a high of 23,118.00 at 12:57, and a 3:15 level of 23,010.00.
+
+| | IH | the agent |
+|---|---|---|
+| read | buyers seated by 29 Oct's continuous rally have big targets, so big stops below BankNIFTY's 54,500: they cannot be hunted until it breaks. A flat open with a small rejection recruits nobody new, so follow the momentum | the note's BUY branch, taken on a confirmed flush-and-reclaim |
+| entry | **09:16-09:17**, into the first candle's rejection: BankNIFTY 54,800 CE and 54,900 CE x1,170, SENSEX 74,200 CE x900, NIFTY 22,950 CE x1,430 | **09:34:52**, LONG at 22,972.05, stop 22,955.00 (17 pts), target 23,020.00, 2 lots, BankNIFTY mirror |
+| path | named the adverse move in advance ("at most 680", unnamed, but BankNIFTY's 54,680, since the "640" he then calls is its 09:18 low of 54,630); it went past it. Held: "the loss is still inside its limit", and early on the premium has barely moved | +22 at 09:36; then 22 consecutive decisions, 09:46:17-10:07:14, returned "Agent usage-limited; holding." |
+| exit | **09:52-09:54**, near the 23,019 peak: BankNIFTY lagged, so the day looked sideways, and a target that keeps being approached and turned is booked rather than watched | **10:07:50**, MAX_LOSS_BREACH at 22,950.00: -22.05 pts, -8,286.00, -1.29R |
+| result | **+1,20,270.40** (54,800 CE +10,764.00; 54,900 CE +17,339.40; SENSEX +62,280.00; NIFTY +29,887.00) | **-8,286.00** |
+
+### What the rules did
+
+- **The entry was right.** Same side as IH, and later than him, because no
+  first-candle exception covered 09:16 (v6c's opening follow was inactive: 29 Oct
+  ran into the close). The 09:34 entry was a dip after the confirmed reclaim,
+  per WHEN THE STOPS ARE ABOVE YOU, PREFER A DIP TO A CHASE (v4a).
+- **The exit was never decided.** The agent was blind from 09:46. At 09:51-09:52
+  NIFTY touched 23,019.15, 0.85 short of the target, with BankNIFTY lagging.
+  That is LAGGARDS NEVER JOINED and BOOK WHEN THE PROFIT STOPS GROWING (v4f),
+  the exact read IH booked on. No decision ran to apply it.
+- **The kill-switch beat the stop by ten seconds.** NIFTY closed 10:05 and 10:06
+  above the 22,955 stop (22,957.60 and 22,959.25) and 10:07 below it
+  (22,945.35), so SLH-027's closing stop would have fired at 10:08:00. The
+  basket's loss crossed `SL_HUNTING_DAILY_MAX_LOSS_PCT` first, at 10:07:50. The
+  exit is the same; the -1.29R is the BankNIFTY mirror's drag, which was
+  already -2,134.50 against a +136.50 NIFTY leg at 09:41.
+
+### Measured: a target just past a round number (not encoded)
+
+The agent's target, 23,020, sat 20 points past the 23,000 round number, and
+the peak stopped 0.85 short of it. The question was whether a target just past
+a round number is turned more often than one elsewhere.
+
+The test used the 5-year NIFTY CSV (to 29 Oct), 09:30-14:30. On the first touch
+of L-5 from below (above, for shorts), it asks whether price reaches L+20 before
+L-30 within 30 bars. Each cell gives the hit rate, then 2021-23 / 2024-26.
+
+| L | up | down |
+|---|---|---|
+| 100s | 0.530 (0.536 / 0.528), n=1,493 | 0.537 (0.561 / 0.525), n=1,589 |
+| 50s | 0.519 (0.513 / 0.522), n=1,510 | 0.526 (0.488 / 0.545), n=1,538 |
+| other 25s | 0.508 (0.502 / 0.510), n=3,043 | 0.520 (0.529 / 0.516), n=3,035 |
+
+A target 20 past a round 100 is reached slightly MORE often, not less, in both
+directions and both halves. Today's miss was a near miss, not a placement error.
+v4d's BOOK BEFORE THE ROUND NUMBER is a holding-side rule for a three-index run
+and is not extended to target placement.
+
+### Already in the corpus
+
+- **"Their target is big, so their SL is big, below the 500; we cannot target
+  them until it breaks":** A CROWD WHOSE STOPS ARE TOO FAR AWAY (v4n), in
+  nearly the same words.
+- **"On a gap-up others buy too and no sellers' stops sit above, so it can
+  fall":** THE MISSING RIP IS THE TELL (v3z), and the note's gap-up branch.
+- **Holding past the named adverse move while the loss limit is pending:** THE
+  LOSS LIMIT IS A PERMISSION TO WAIT (v4h).
+- **"The same loss two or three hours in is not worth sitting through; the
+  premium decays and the psychology changes":** TIME SPENT IN THE TRADE SHRINKS
+  THE ACHIEVABLE TARGET (v4g/v4h) and THE PERMISSION TO WAIT ENDS (v4j).
+- **Booking because BankNIFTY lagged and a sideways market keeps turning near
+  the target:** LAGGARDS NEVER JOINED, MASKED BNF LAG / TARGET-REACHABILITY
+  (v5s), and v4f.
+
+### For the operator
+
+- **The usage limit is the day's real finding, and it is not knowledge.** For 21
+  minutes an open position had no one deciding its exit. Only the mechanical
+  stop, target and kill-switch remained, and through the near-target that was
+  the whole difference between this trade and IH's. It needs a mechanical
+  answer, not a prompt line: for example, a cheaper fallback model while a
+  position is open, or a tighter mechanical exit once decisions start failing.
+  That is a mechanics change, left for the operator's call.
