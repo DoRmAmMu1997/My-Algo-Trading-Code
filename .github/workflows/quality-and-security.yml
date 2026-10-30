@@ -19,9 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.13 is the operator's live runtime; 3.12 catches accidental use of
-        # newer-only syntax before an interpreter downgrade would reveal it.
-        python-version: ["3.12", "3.13"]
+        # 3.14 is the operator's local runtime and 3.13 the previous one; 3.12
+        # catches accidental use of newer-only syntax before an interpreter
+        # downgrade would reveal it.
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out repository
@@ -107,6 +108,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Deliberately no 3.14: Kotak's v2.0.1 tag pins numpy==2.1.0, which has
+        # no cp314 wheel (see requirements-brokers.txt).
         python-version: ["3.12", "3.13"]
 
     steps:

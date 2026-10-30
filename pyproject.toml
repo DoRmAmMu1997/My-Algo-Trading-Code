@@ -7,6 +7,18 @@
 [tool.pytest.ini_options]
 # Deliberately present but empty: this table is what makes pytest use THIS file as
 # its config, which anchors rootdir (and so every test node id) at the repo root.
+#
+# The one filter: pandas 3.1's Pandas4Warning on `.dayofweek`, raised from INSIDE
+# backtesting.py (`backtesting/_stats.py`), not from this repo -- our own uses
+# moved to `.day_of_week` in PR #224, and 0.6.6 is the latest backtesting release,
+# so no bump clears it. It is scoped by message AND module, so a new `.dayofweek`
+# in our code still warns. Drop it once backtesting ships the rename.
+# The category is the builtin DeprecationWarning (Pandas4Warning's base), NOT
+# pandas.errors.Pandas4Warning: the isolated broker job runs Kotak's older pandas,
+# which has no such class, and pytest refuses to start on an unresolvable category.
+filterwarnings = [
+    "ignore:DatetimeIndex.dayofweek is deprecated:DeprecationWarning:backtesting._stats",
+]
 
 [tool.ruff]
 # Measured against this codebase: at 100 columns there are ~455 long lines, at
@@ -14,8 +26,8 @@
 # written to a ~100-120 column style, so 120 keeps the lint signal about real
 # problems instead of wrapping churn.
 line-length = 120
-# Local runtime is Python 3.13; CI also runs 3.12, so target the older of the
-# two to avoid suggesting syntax 3.12 cannot parse.
+# Local runtime is Python 3.14; CI also runs 3.12 and 3.13, so target the oldest
+# to avoid suggesting syntax 3.12 cannot parse.
 target-version = "py312"
 extend-exclude = [
     # Vendored third-party Shoonya SDK -- never linted, never rewritten locally.
@@ -51,7 +63,7 @@ external = ["BLE"]
 "My Backtest Files (For Reference)/**" = ["E402"]
 
 [tool.mypy]
-# CI runs 3.12 and 3.13; pin the older so local runs stay honest about what CI
+# CI runs 3.12, 3.13 and 3.14; pin the oldest so local runs stay honest about what CI
 # will accept.
 python_version = "3.12"
 # Scope: every module that both has an identifier filename AND type-checks

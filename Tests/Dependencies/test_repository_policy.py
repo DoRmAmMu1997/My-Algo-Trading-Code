@@ -584,6 +584,13 @@ def test_ci_runs_audit_branch_coverage_and_every_exact_dependency_set():
     assert "python -m pip_audit" in workflow
     assert "python -m coverage run" in workflow
     assert "scripts/check_coverage_thresholds.py" in workflow
+    # 3.14 is the operator's local runtime, so the core gate must cover it. The
+    # isolated broker set must NOT: Kotak's tag pins numpy==2.1.0, which has no
+    # cp314 wheel, so adding 3.14 there would only ever produce a red build.
+    verify_versions = parsed["jobs"]["verify"]["strategy"]["matrix"]["python-version"]
+    broker_versions = parsed["jobs"]["broker-dependencies"]["strategy"]["matrix"]["python-version"]
+    assert verify_versions == ["3.12", "3.13", "3.14"]
+    assert broker_versions == ["3.12", "3.13"]
 
 
 def test_dependabot_updates_python_and_github_actions_weekly():
