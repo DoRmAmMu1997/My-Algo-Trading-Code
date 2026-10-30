@@ -7,6 +7,15 @@
 [tool.pytest.ini_options]
 # Deliberately present but empty: this table is what makes pytest use THIS file as
 # its config, which anchors rootdir (and so every test node id) at the repo root.
+#
+# The one filter: pandas 3.1's Pandas4Warning on `.dayofweek`, raised from INSIDE
+# backtesting.py (`backtesting/_stats.py`), not from this repo -- our own uses
+# moved to `.day_of_week` in PR #224, and 0.6.6 is the latest backtesting release,
+# so no bump clears it. It is scoped by message AND module, so a new `.dayofweek`
+# in our code still warns. Drop it once backtesting ships the rename.
+filterwarnings = [
+    "ignore:DatetimeIndex.dayofweek is deprecated:pandas.errors.Pandas4Warning:backtesting._stats",
+]
 
 [tool.ruff]
 # Measured against this codebase: at 100 columns there are ~455 long lines, at
