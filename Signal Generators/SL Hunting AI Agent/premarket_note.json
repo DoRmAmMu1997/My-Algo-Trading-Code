@@ -1,21 +1,21 @@
 {
-  "for_date": "2026-10-30",
-  "source": "Intraday Hunter, 'Prediction For 30 OCT 2026' (A2dkFyTJwQw, uploaded 2026-10-29)",
-  "context": "October 29 rallied with continuous momentum in all three indices, so buyers are seated, holding for a bigger target with wide stops: small rejections will not shake them out.",
+  "for_date": "2026-11-02",
+  "source": "Intraday Hunter, 'Prediction For 02 NOV 2026' (7vmzOJG4Y2c, uploaded 2026-11-01)",
+  "context": "October 30 gave positive momentum in all three indices. Buyers came in, but the market has already driven them out with a retracement, so no seated crowd is left to hunt.",
   "plan": [
-    "FLAT TO SMALL GAP DOWN -> BUY, WITH THE MARKET: the seated buyers cannot be targeted until the levels are crossed; identify buying-side setups.",
-    "GAP UP -> SELL: no sellers' stops sit above to hunt; identify selling-side setups."
+    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the buyers were already shaken out by the retracement; identify buying-side setups.",
+    "SMALL GAP DOWN -> BUY: the risk rises, but the same plan stands for now."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23000,
-        23200
+        23200,
+        23300
       ],
       "support": [
-        22800,
-        22640
+        23000,
+        22830
       ]
     },
     {
@@ -32,12 +32,12 @@
     {
       "index": "SENSEX",
       "resistance": [
-        74510,
-        75000
+        75000,
+        75400
       ],
       "support": [
-        73660,
-        73200
+        74200,
+        73660
       ]
     }
   ]

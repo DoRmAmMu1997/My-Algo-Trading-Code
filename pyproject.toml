@@ -281,6 +281,10 @@ omit = [
 # 3.13. The figure had grown with the tests added since PR #181, not from any
 # change in what CI runs.
 #
+# 75.0 (2026-11-01, PR #230), at the operator's direction: CI measured 75.1% on
+# PR #230 (c1ee9f2), identical on Python 3.12, 3.13 and 3.14. The margin is
+# roughly 0.1pp, the thinnest yet, and was chosen knowingly.
+#
 # USE THE CI NUMBER, NOT A LOCAL ONE. CI installs core + dev + ai + codex-ai
 # only, deliberately (Kotak's official tag pins older pandas/requests and cannot
 # share the audited core environment), so it lacks the optional extras -- the
@@ -289,14 +293,14 @@ omit = [
 # high (74.3% against 73.8%). Before PR #181 that gap was about 2 points, most
 # of it the SL Hunting tests CI was not running.
 #
-# The margin at 74.0 is roughly 0.6pp, on the order of 175 statements and
-# branches. That is deliberate pressure: a PR that adds materially untested code
+# The margin at 74.0 was roughly 0.6pp, on the order of 175 statements and
+# branches; at 75.0 it is about 0.1pp. That is deliberate pressure: a PR that adds materially untested code
 # should go red. It is NOT an invitation to lower the floor when it does.
 #
 # Raising this is deliberate and one-way: only move it UP, and only after a CI
 # run shows real headroom. Lowering it to make a red build pass defeats the gate
 # -- fix the tests instead.
-fail_under = 74.0
+fail_under = 75.0
 precision = 1
 show_missing = true
 skip_covered = false

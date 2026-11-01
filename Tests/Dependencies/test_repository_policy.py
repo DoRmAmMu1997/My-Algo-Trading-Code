@@ -618,7 +618,9 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     # 73.0 -> 74.0 (2026-10-01, PR #195), at the operator's direction. CI measured
     # 74.6% on main (2c3f4c7) and 74.7% on PR #195, identically on 3.12 and 3.13.
     # Margin ~0.6pp.
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 74.0
+    # 74.0 -> 75.0 (2026-11-01, PR #230), at the operator's direction. CI measured
+    # 75.1% on PR #230 (c1ee9f2), identically on 3.12, 3.13 and 3.14. Margin ~0.1pp.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 75.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
