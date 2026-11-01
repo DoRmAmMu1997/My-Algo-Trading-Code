@@ -12893,17 +12893,18 @@ the frames instead:
 - **Garbled speech, resolved.** NIFTY's supports, spoken "232830", are 22,996 and
   22,828: 23,000 and 22,830. Sensex's resistances, spoken "7575400", are 75,003
   and 75,404: 75,000 and 75,400.
-- **One spoken value overruled.** NIFTY's second resistance, spoken 23,300, is
-  drawn 15 px (about 11 points) ABOVE the 23,300 gridline, at about 23,311,
-  three times the method's worst case. It is recorded as 23,310, the drawn line,
-  as with Sensex's 74,510 and BankNIFTY's 54,610 before it.
+- **The spoken value stands.** NIFTY's second resistance, spoken 23,300, is
+  drawn about 11 points (15 px) above the 23,300 gridline, at about 23,311. On
+  the operator's call (1 Nov) it is recorded as the spoken 23,300: 11 NIFTY
+  points is about 0.05%, within the error of a hand-drawn line. When IH says a
+  level and the drawn line is only a few points off, the spoken level wins.
 - **One kept.** BankNIFTY's 55,400 reads 55,408, 5 px out on its 1.67-point
   pixels, and the same line was label-checked as 55,400 for 30 Oct. It stays
   55,400.
 
 | Index | Resistance | Support |
 |---|---|---|
-| NIFTY | 23,200 / 23,310 | 23,000 / 22,830 |
+| NIFTY | 23,200 / 23,300 | 23,000 / 22,830 |
 | BankNIFTY | 55,000 / 55,400 | 54,500 / 54,290 |
 | Sensex | 75,000 / 75,400 | 74,200 / 73,660 |
 
@@ -12935,7 +12936,7 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * a NIFTY level moved by 3 points;
 * the small-gap-down branch turned into SELL;
 * the date set to October 30;
-* NIFTY's second resistance recorded as the spoken 23,300;
+* NIFTY's second resistance recorded as the drawn 23,310;
 * Sensex's first resistance recorded as a garbled 75,750;
 * NIFTY's first support recorded as a garbled 23,280;
 * the buy branch's retracement reason dropped;

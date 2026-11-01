@@ -227,9 +227,9 @@ def test_shipped_note_matches_november_2_intraday_hunter_plan():
     from the frames' pixels (calibrated on 30 Oct's high and low and the chart's
     gridlines, checked to 1.6 points on Sensex's 73,659.62). Two spoken values
     were garbled: NIFTY's supports "232830" are 23,000 / 22,830, and Sensex's
-    resistances "7575400" are 75,000 / 75,400. NIFTY's spoken 23,300 is drawn
-    15 px above the 23,300 gridline, at about 23,311, so it is recorded as
-    23,310.
+    resistances "7575400" are 75,000 / 75,400. NIFTY's 23,300 is drawn about
+    11 points higher (23,311); the operator's rule is that a spoken level a few
+    points from its drawn line stands, so 23,300 is recorded.
     """
     import os
 
@@ -258,7 +258,7 @@ def test_shipped_note_matches_november_2_intraday_hunter_plan():
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [23200.0, 23310.0], "support": [23000.0, 22830.0]},
+        {"index": "NIFTY", "resistance": [23200.0, 23300.0], "support": [23000.0, 22830.0]},
         {"index": "BANKNIFTY", "resistance": [55000.0, 55400.0], "support": [54500.0, 54290.0]},
         {"index": "SENSEX", "resistance": [75000.0, 75400.0], "support": [74200.0, 73660.0]},
     ]
