@@ -12365,6 +12365,39 @@ class TestSessionStatePersistence(unittest.TestCase):
             option_lot_size=75,
         )
 
+    # -- end-of-day cleanup ----------------------------------------------
+    def test_session_state_files_are_removed_only_after_a_published_natural_eod(self):
+        """The files are the only durable record when the Sheet write fails, so
+        a Ctrl+C or an unpublished day must keep them for reconciliation."""
+        outcome = master_file.SessionFinalizationOutcome
+        cases = [
+            (True, outcome(finalized=True, results_published=True), True),
+            (True, outcome(finalized=True, results_published=False), False),
+            (False, outcome(finalized=True, results_published=False), False),
+            (False, outcome(finalized=True, results_published=True), False),
+        ]
+        for natural_eod, finalization, expect_removed in cases:
+            with self.subTest(natural_eod=natural_eod, finalization=finalization):
+                state = MagicMock()
+                master_file._remove_published_session_state(
+                    state, finalization, natural_eod=natural_eod
+                )
+                self.assertEqual(state.remove_session_files.called, expect_removed)
+        # Persistence disabled: nothing to remove, and nothing raises.
+        master_file._remove_published_session_state(
+            None, outcome(finalized=True, results_published=True), natural_eod=True
+        )
+
+    def test_main_removes_session_state_only_after_marking_it_clean(self):
+        """Read as source, like the dashboard ordering test: the cleanup must
+        follow the final snapshot and mark_clean_shutdown, never precede them."""
+        source = (REPO_ROOT / "nifty_multi_strategy_master.py").read_text(encoding="utf-8")
+        main_source = source[source.index("def main() -> None:"):]
+        self.assertLess(
+            main_source.index("session_state.mark_clean_shutdown("),
+            main_source.index("_remove_published_session_state("),
+        )
+
     # -- the choke point -------------------------------------------------
     def test_every_trade_event_reaches_the_state_store(self):
         """One hook on publish_trade_event covers all 25 call sites."""
