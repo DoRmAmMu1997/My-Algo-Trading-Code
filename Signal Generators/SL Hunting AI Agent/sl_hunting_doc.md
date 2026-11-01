@@ -12856,3 +12856,87 @@ and is not extended to target placement.
   answer, not a prompt line: for example, a cheaper fallback model while a
   position is open, or a tighter mechanical exit once decisions start failing.
   That is a mechanics change, left for the operator's call.
+
+## November 2 pre-open note
+
+[Prediction For 02 NOV 2026](https://www.youtube.com/watch?v=7vmzOJG4Y2c), uploaded
+2026-11-01 21:00:27 IST, 90 s, 11 transcript segments, read in full in the
+watch page's transcript panel. It is the Sunday-evening forecast for Monday's
+session.
+
+**Read.** October 30 gave positive momentum in all three indices. Buyers came
+in, but the market has already driven them out with a retracement, so no seated
+crowd is left to hunt.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, with the market: identify buying-side setups |
+| SMALL GAP DOWN | BUY: "the risk will rise, but for now the same plan stands" |
+
+No branch sells, and no big-gap-down branch is given, so none is invented. All
+three indices get the same wording.
+
+**Levels, measured from pixels.** This recording crops TradingView's price
+axis, so no line's label is visible in any frame. Each line was measured from
+the frames instead:
+
+- **Method.** The frames at 0:33 (BankNIFTY), 0:56 (Sensex) and 1:24 (NIFTY)
+  were read pixel by pixel. Each chart's scale comes from 30 Oct's high and low
+  candles (Yahoo prices; their columns sit where each session's clock puts
+  them), then is refined on the chart's own gridlines (25 points apart on
+  NIFTY, 100 on the other two).
+- **Accuracy.** Sensex's first support reads 73,661, against the drawn
+  73,659.62 the 30 Oct note read off its label. Every Sensex line is within 6
+  points of its spoken value, and every BankNIFTY line within 9.
+- **Garbled speech, resolved.** NIFTY's supports, spoken "232830", are 22,996 and
+  22,828: 23,000 and 22,830. Sensex's resistances, spoken "7575400", are 75,003
+  and 75,404: 75,000 and 75,400.
+- **One spoken value overruled.** NIFTY's second resistance, spoken 23,300, is
+  drawn 15 px (about 11 points) ABOVE the 23,300 gridline, at about 23,311,
+  three times the method's worst case. It is recorded as 23,310, the drawn line,
+  as with Sensex's 74,510 and BankNIFTY's 54,610 before it.
+- **One kept.** BankNIFTY's 55,400 reads 55,408, 5 px out on its 1.67-point
+  pixels, and the same line was label-checked as 55,400 for 30 Oct. It stays
+  55,400.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,200 / 23,310 | 23,000 / 22,830 |
+| BankNIFTY | 55,000 / 55,400 | 54,500 / 54,290 |
+| Sensex | 75,000 / 75,400 | 74,200 / 73,660 |
+
+BankNIFTY's four levels and NIFTY's 23,200 and 23,000 are the 30 Oct note's
+lines, still drawn.
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 30 Oct's 3:15 level, 23,010.85,
+  sat at 0.497 of its range (22,905.10-23,118.00), not in the outer third.
+- **v5z does not apply.** NIFTY moved +0.31% from 3:15 level to 3:15 level, under
+  the 0.5% it needs.
+- **v5x does not apply** (30 Oct was not a selling day), nor **v6a** (the NIFTY
+  contract held expires on 3 Nov).
+- **It is the 29 Oct note's read again.** With no seated crowd left to hunt,
+  IH follows the momentum rather than fading it. BankNIFTY's weak 30 Oct close
+  (0.12 of its range, -0.51%) is one plain reason a gap down would raise the
+  risk he names.
+
+The note renders 1,599 characters on November 2 and nothing on any other date.
+`test_shipped_note_matches_november_2_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- both branches;
+- all twelve levels.
+
+Each of these 8 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the small-gap-down branch turned into SELL;
+* the date set to October 30;
+* NIFTY's second resistance recorded as the spoken 23,300;
+* Sensex's first resistance recorded as a garbled 75,750;
+* NIFTY's first support recorded as a garbled 23,280;
+* the buy branch's retracement reason dropped;
+* an expiry line added.
