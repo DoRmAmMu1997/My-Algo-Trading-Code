@@ -32,7 +32,7 @@ gspread==6.2.1
 # Timezone data. Bumping this is desirable in its own right: every trading-day
 # boundary, the 15:15 square-off and the pre-open note's date gate are computed
 # in Asia/Kolkata, so stale tz data is a correctness risk rather than a chore.
-pytz==2026.5
+pytz==2026.6
 # The broker, symbol-master and Telegram HTTP paths all use requests. Keep this
 # at the newest release that clears the repository audit (2.33.0 was the first
 # past PYSEC-2026-2275; 2.34.2 is the current audited pin).
@@ -55,9 +55,9 @@ TA-Lib==0.6.8
 # enforces the same ruleset as CI, and
 # `test_precommit_ruff_rev_matches_the_requirements_dev_pin` fails the build if
 # they separate.
-pytest==9.1.1
-ruff==0.17.2
-mypy==2.4.0
+pytest==9.2.0
+ruff==0.17.3
+mypy==2.4.1
 bandit==1.9.4
 pre-commit==4.7.0
 coverage==7.17.0
@@ -73,7 +73,7 @@ pip-audit==2.10.1
 # they describe. pandas-stubs tracks the pandas release it types, so keep this
 # on the same major as the pandas pin above.
 types-requests==2.33.0.20261006
-pandas-stubs==3.0.5.260914
+pandas-stubs==3.1.0.261029
 
 # ---- Exact optional dependency sets -----------------------------------------
 # Live broker compatibility manifest:
