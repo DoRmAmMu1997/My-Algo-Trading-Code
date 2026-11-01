@@ -20197,6 +20197,34 @@ def _finalize_flat_session(
     )
 
 
+def _remove_published_session_state(
+    session_state: SessionStateStore | None,
+    finalization: SessionFinalizationOutcome,
+    *,
+    natural_eod: bool,
+) -> None:
+    """Delete the session state files once the day's books are in the Sheet.
+
+    The files exist to rebuild a day that ended badly. After a NATURAL end of
+    day whose Google Sheet write succeeded, the session is flat and its P&L is
+    published, so the current file, its marks and every old recovery archive
+    are just clutter for the next run to archive again.
+
+    Anything short of that keeps them: a Ctrl+C mid-day, or a Sheet outage,
+    leaves these files as the only durable trade record (ADR-0012).
+    """
+
+    if session_state is None:
+        return
+    if not (natural_eod and finalization.results_published):
+        logger.info(
+            "Keeping session state files: the end-of-day results were not "
+            "published to the Google Sheet."
+        )
+        return
+    session_state.remove_session_files()
+
+
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
@@ -20624,6 +20652,9 @@ def main() -> None:
         session_state.mark_clean_shutdown(
             results_published=finalization.results_published,
         )
+    _remove_published_session_state(
+        session_state, finalization, natural_eod=natural_eod
+    )
 
     # Stopped only NOW: the flatten, the broker-confirmed-flat wait, the
     # finalization, the Google Sheet write and mark_clean_shutdown have all

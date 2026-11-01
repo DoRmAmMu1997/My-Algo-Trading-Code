@@ -281,6 +281,59 @@ def test_mark_clean_shutdown_flips_the_flag(state_path: Path):
     assert state["results_published"] is False
 
 
+def test_remove_session_files_deletes_current_marks_and_every_recovery_archive(
+    state_path: Path,
+):
+    """A published end of day leaves nothing behind for the next run to archive.
+
+    The first store is a run that died mid-day; constructing the second one
+    archives it (state + marks under one timestamp), exactly as a real restart
+    does.  Unrelated neighbours -- the module itself, another JSON -- must
+    survive, so the cleanup can never reach past its own filename family.
+    """
+
+    crashed = _store(state_path)
+    crashed.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    store = _store(state_path)
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    store.mark_clean_shutdown(results_published=True)
+    neighbours = [
+        state_path.with_name("session_state.py"),
+        state_path.with_name("all_instrument 2026-08-10.json"),
+    ]
+    for neighbour in neighbours:
+        neighbour.write_text("keep", encoding="utf-8")
+    assert len(list(state_path.parent.glob("session_state.*.recovery*.json"))) == 2
+
+    removed = store.remove_session_files()
+
+    assert sorted(path.name for path in state_path.parent.iterdir()) == sorted(
+        neighbour.name for neighbour in neighbours
+    )
+    assert len(removed) == 4
+
+
+def test_no_write_recreates_the_files_after_removal(state_path: Path):
+    """A straggling event after cleanup must not resurrect a half-empty file."""
+
+    store = _store(state_path)
+    store.remove_session_files()
+
+    store.record_trade_event({"action": "EXIT", "strategy": "Renko", "pnl": 10.0})
+    store.update_worker_snapshot([{"strategy": "Renko"}], force=True)
+    store.mark_clean_shutdown(results_published=True)
+
+    assert not state_path.exists()
+    assert not _marks_path_for(state_path).exists()
+
+
+def test_remove_session_files_tolerates_files_that_are_already_gone(state_path: Path):
+    store = _store(state_path)
+    state_path.unlink()
+
+    assert store.remove_session_files() == []
+
+
 def test_restart_archives_old_file_and_carries_same_day_trade_book(state_path: Path):
     """A normal restart must not erase the crash evidence it was built to save.
 

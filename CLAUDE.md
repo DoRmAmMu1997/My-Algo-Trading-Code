@@ -162,8 +162,10 @@ One process, cooperating threads:
   new snapshot key not named there is silently dropped.
   Resuming OPEN exposure remains opt-in (`SESSION_STATE_RESUME_ENABLED`,
   default false) and deliberately narrow — today's date, an unclean shutdown, PAPER, single-leg
-  only; live positions are never restored because the broker account is the authority there. See
-  `docs/adr/0012`.
+  only; live positions are never restored because the broker account is the authority there.
+  After a natural end of day whose Sheet write SUCCEEDED, shutdown deletes the state file, its
+  marks and every recovery archive (`_remove_published_session_state`); a Ctrl+C or a Sheet
+  outage keeps them as the only durable record. See `docs/adr/0012`.
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
   **`execution_client`** (see Broker layer). On a clean end-of-day, per-strategy P&L is written to a
   Google Sheet with separate PAPER/LIVE/MIXED row labels. All behaviour is driven by a single `.env`
