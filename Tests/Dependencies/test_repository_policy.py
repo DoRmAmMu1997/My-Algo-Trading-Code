@@ -128,7 +128,13 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # pandas' private typing helpers -- and nothing here does: the repo has no
     # `pandas._typing` or `_stubs_only` import at all. "Align Index subtraction
     # overloads" (#1938) is the other TYP change, and the mypy run covers it.
-    assert "pandas-stubs==3.0.5.260914" in core
+    # 3.0.5.260914 -> 3.1.0.261029 (2026-11-02, PR #232). The move PR #224 was
+    # waiting for: the first 3.1 snapshot, so mypy finally types pandas 3.1.0
+    # with 3.1 stubs and the majors-AND-minors match again. Typing-only, so
+    # verified before the merge like the bumps above: on a clean install of this
+    # PR's pins both CI invocations pass (82 source files, then the master alone)
+    # with no issues.
+    assert "pandas-stubs==3.1.0.261029" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
     #
@@ -292,7 +298,16 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # for a decision. The standing check is the test: on the next session
     # decisions return and "SLHuntingAgent decision latency" has not crept up.
     # If either fails, revert this pin first.
-    assert "claude-agent-sdk==0.2.172" in ai
+    # 0.2.172 -> 0.2.174 (2026-11-02, PR #232), bundled CLI 2.1.308 -> 2.1.310.
+    # Both releases are bundled-CLI bumps only, and a diff of the installed
+    # Python package against 0.2.172 confirms it: only _version.py and
+    # _cli_version.py changed, so query(), ClaudeAgentOptions, the transport and
+    # the error classes are byte-identical and none of the reasoning above needs
+    # revisiting. The win_amd64 wheel is still published with _bundled/claude.exe
+    # (installed from it on Windows; `claude.exe --version` = 2.1.310). Same
+    # standing check: on the next session decisions return and "SLHuntingAgent
+    # decision latency" has not crept up. If either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.174" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -305,7 +320,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # TypedDict closed/extra_items, named tuples in Sequence) for field types
     # neither agent's strict models declare. The whole suite ran on it in this
     # PR's own CI and failed only on these pin assertions.
-    assert "pydantic==2.14.1" in ai
+    # 2.14.1 -> 2.14.2 (2026-11-02, PR #232). Patch. openai-codex 0.163.0 still
+    # declares pydantic>=2.12 and mcp 2.3.0 stays inside its window; the whole
+    # suite, SL Hunting and CPR AI included, passes on a clean install of this
+    # PR's pins.
+    assert "pydantic==2.14.2" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -538,9 +557,8 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # own CI on 3.12 and 3.13 and failed only on these pin assertions. Its new
     # Pandas4Warning on `.dayofweek` was cleared in the same PR by moving our three
     # uses to `.day_of_week`; the one left comes from inside backtesting.py.
-    # pandas-stubs stays at 3.0.5.260914
-    # because no 3.1 stubs exist yet, so mypy types pandas 3.1 with 3.0-line stubs
-    # (it passes); move the stubs when a 3.1 snapshot ships.
+    # pandas-stubs stayed at 3.0.5.260914 because no 3.1 stubs existed yet; the
+    # first 3.1 snapshot arrived in PR #232 (see the pandas-stubs pin above).
     for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.0", "TA-Lib==0.6.8", "numpy==2.5.4"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
@@ -552,7 +570,10 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # what actually type-checks 2.3.1, on both 3.12 and 3.13.
     # mypy 2.3.1 -> 2.4.0 (2026-10-05, PR #198): both CI invocations (82 files, then
     # the master alone) pass on an isolated 2.4.0 install.
-    for tool_pin in ("pytest==9.1.1", "mypy==2.4.0", "bandit==1.9.4", "pip-audit==2.10.1"):
+    # mypy 2.4.0 -> 2.4.1 and pytest 9.1.1 -> 9.2.0 (2026-11-02, PR #232): a mypy
+    # patch and a pytest minor, tooling-only. Both mypy invocations and every
+    # suite pass on a clean install of this PR's pins.
+    for tool_pin in ("pytest==9.2.0", "mypy==2.4.1", "bandit==1.9.4", "pip-audit==2.10.1"):
         assert tool_pin in core
     assert all("==" in line for line in core)
 
