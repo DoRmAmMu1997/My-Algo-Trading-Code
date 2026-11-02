@@ -160,8 +160,21 @@
   <span class="muted">Charts by TradingView Lightweight Charts™ — Apache-2.0</span>
 </footer>
 
+<!-- The live/paper toggle's confirmation (ADR-0021). An in-page dialog rather
+     than the built-in prompt box, which a browser can silently suppress. No <form>: the
+     CSP's form-action 'none' stays true, and the buttons are wired in JS. -->
+<dialog id="live-toggle-dialog" aria-labelledby="live-toggle-message">
+  <p id="live-toggle-message"></p>
+  <input type="text" id="live-toggle-input" autocomplete="off" spellcheck="false"
+         aria-label="Type the strategy name to confirm">
+  <div class="dialog-buttons">
+    <button type="button" id="live-toggle-cancel">Cancel</button>
+    <button type="button" id="live-toggle-confirm">Confirm</button>
+  </div>
+</dialog>
 <script src="/vendor/lightweight-charts.standalone.production.js"></script>
 <script src="/dashboard_indicators.js"></script>
 <script src="/dashboard.js"></script>
+<script src="/dashboard_live_toggle.js"></script>
 </body>
 </html>

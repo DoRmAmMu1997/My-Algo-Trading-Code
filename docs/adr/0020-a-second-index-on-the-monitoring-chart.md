@@ -173,6 +173,11 @@ but GET.** That is a safety property ([`ADR-0016`](0016-read-only-loopback-monit
 §2), not an omission, so there is no endpoint to save to and there is not going
 to be one. A test asserts the page never issues a POST, PUT, PATCH or DELETE.
 
+> **Amended 2026-11-02** ([`ADR-0021`](0021-dashboard-live-mode-toggle.md)):
+> the opt-in live/paper toggle adds one POST, isolated in
+> `dashboard_live_toggle.js`. `dashboard.js` still issues none, and drawings still
+> never reach the server.
+
 They get **their own storage key**, not a corner of `prefs`. `PREFS_KEY` is
 versioned so a future rename falls back to defaults; an afternoon's levels must
 not be collateral damage of renaming a checkbox.

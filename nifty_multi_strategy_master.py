@@ -291,13 +291,27 @@ from dhanhq import DhanContext, DhanLogin, MarketFeed, dhanhq
 
 from Dependencies import dashboard_history, dashboard_indicators, dashboard_snapshot
 from Dependencies.broker_contract import ExecutionClient, OrderResult, OrderStatus
-from Dependencies.dashboard_server import DashboardEventSink, DashboardServer, start_dashboard
+from Dependencies.dashboard_server import (
+    DashboardEventSink,
+    DashboardServer,
+    LiveToggleRoute,
+    start_dashboard,
+)
 from Dependencies.execution_ledger import (
     ExecutionLedger,
     LegSpec,
     LiveLegState,
     OrderAttemptHandle,
     OrderIntent,
+)
+from Dependencies.live_mode_control import (
+    STATUS_APPLIED,
+    STATUS_REFUSED,
+    TARGET_LIVE,
+    LiveModeController,
+    LiveModeRequest,
+    LiveModeSlot,
+    parse_toggle_request,
 )
 from Dependencies.market_data_health import (
     MarketDataHealth,
@@ -734,6 +748,13 @@ DASHBOARD_MAX_TRADE_EVENTS = min(max(_env_int("DASHBOARD_MAX_TRADE_EVENTS", 2000
 DASHBOARD_STALE_MARK_SECONDS = min(
     max(_env_float("DASHBOARD_STALE_MARK_SECONDS", 15.0), 1.0), 300.0
 )
+# Per-strategy LIVE/PAPER toggle on the dashboard (ADR-0021). OFF by default:
+# with it off the dashboard stays GET-only, exactly as before. With it on, the
+# page gains one guarded POST that can only REQUEST a mode change. Paper -> live
+# still needs LIVE_TRADING_ENABLED=true at startup, the strategy's strict
+# live-config check and a broker gate; a change applies only once the strategy
+# is flat, and lasts for this session only -- `.env` is never written.
+DASHBOARD_LIVE_TOGGLE_ENABLED = _env_bool("DASHBOARD_LIVE_TOGGLE_ENABLED", False)
 # How long shutdown waits for the dashboard to close. It is stopped LAST, after
 # the session is broker-confirmed flat and the results are published, so this
 # can never delay flattening.
@@ -4947,6 +4968,11 @@ class BasePaperStrategyWorker(threading.Thread):
         # real orders on the active broker (see `_place_real_leg`) in addition to
         # the usual paper bookkeeping.
         self.live_trading = False
+        # Dashboard live/paper toggle mailbox (ADR-0021). The controller thread
+        # only ever writes a REQUEST here; `_apply_pending_live_mode_if_safe`,
+        # running on THIS worker's own thread while it is flat, is the only
+        # runtime writer of `live_trading` above.
+        self.live_mode_slot = LiveModeSlot()
         # Actual session provenance is derived from order outcomes, not merely
         # from the live configuration flag. A live-enabled worker can execute a
         # confirmed broker fill and later take an explicit zero-fill paper
@@ -6983,7 +7009,13 @@ class BasePaperStrategyWorker(threading.Thread):
         time.sleep(delay)
 
     def _run_shutdown_cycle_if_requested(self) -> bool:
-        """Translate stop signals and drive shutdown instead of exiting early."""
+        """Translate stop signals and drive shutdown instead of exiting early.
+
+        Also the per-poll safe point for a dashboard live/paper toggle: while
+        RUNNING it calls `_apply_pending_live_mode_if_safe` (ADR-0021). Every
+        worker loop calls this once per poll on its own thread, so a new loop
+        must call it too, or toggles for that worker stay PENDING forever.
+        """
 
         if (
             self.stop_event.is_set()
@@ -6991,9 +7023,82 @@ class BasePaperStrategyWorker(threading.Thread):
         ):
             self.request_worker_shutdown("STOP_EVENT")
         if self.lifecycle.snapshot().state is LifecycleState.RUNNING:
+            # Every worker loop calls this once per poll, on the worker's own
+            # thread and never mid-order -- the one place a dashboard toggle
+            # may safely change `live_trading` (ADR-0021).
+            self._apply_pending_live_mode_if_safe()
             return False
         self._advance_shutdown_lifecycle()
         return True
+
+    def _live_mode_change_deferred(self) -> bool:
+        """True while another thread of THIS worker may be placing an order.
+
+        The base worker places every order on its own loop thread, so nothing
+        else can be mid-order when the loop runs the apply step. A worker that
+        places orders from a helper thread (the SL Hunting agent's inference
+        pass) must override this, or a flip could land between the order
+        path's two reads of `live_trading`.
+        """
+
+        return False
+
+    def _apply_pending_live_mode_if_safe(self) -> None:
+        """Apply a dashboard LIVE/PAPER request, but only while this worker is flat.
+
+        Runs on the worker's own thread, so no order of this worker can be in
+        flight. A request made while a position is open simply stays PENDING
+        and takes effect before the next entry -- in BOTH directions, because:
+
+        * live -> paper with a live leg open would switch off the live-only
+          protections (the stale-feed liquidation clock) for real exposure, and
+          a later add-on would be paper on top of a live position;
+        * paper -> live with a paper position open would make a live add-on to a
+          paper trade.
+
+        A promotion is re-checked against the entry freezes here, because one
+        may have appeared after the controller's broker gate passed.
+        """
+
+        seen = self.live_mode_slot.pending()
+        if seen is None:
+            return
+        if seen == self.live_trading:
+            self.live_mode_slot.resolve(seen, STATUS_APPLIED, "Already in that mode.")
+            return
+        if (
+            self._paper_positions_active()
+            or self._owned_open_positions()
+            or self._orphan_live_legs
+            or self._indeterminate_exit_paths
+            or self._live_mode_change_deferred()
+        ):
+            return  # stays PENDING until flat and idle
+        if seen:
+            store_frozen, _ = self.store.execution_safety.entry_freeze_snapshot()
+            if store_frozen or self._live_execution_frozen:
+                reason = "Live entries are frozen pending reconciliation."
+                if self.live_mode_slot.resolve(seen, STATUS_REFUSED, reason):
+                    self.log.error("LIVE MODE TOGGLE REFUSED at apply | %s", reason)
+                    _enqueue_live_mode_alert(
+                        self.trade_event_queue, "LIVE_MODE_REFUSED", self.strategy_name,
+                        f"PAPER -> LIVE refused: {reason}", "PAPER",
+                    )
+                return
+        if not self.live_mode_slot.resolve(seen, STATUS_APPLIED):
+            return  # a newer request replaced this one; the next poll handles it
+        self.live_trading = seen
+        mode = "LIVE" if seen else "PAPER"
+        self.log.warning(
+            "LIVE MODE TOGGLE APPLIED | %s is now %s from its next entry%s.",
+            self.strategy_name,
+            mode,
+            f" (real {LIVE_BROKER} orders)" if seen else "",
+        )
+        _enqueue_live_mode_alert(
+            self.trade_event_queue, "LIVE_MODE_APPLIED", self.strategy_name,
+            f"Now {mode} from the next entry (dashboard toggle).", mode,
+        )
 
     def handle_max_loss_and_stop(self, total_pnl: float, open_pnl: float) -> None:
         """Request a retrying shutdown after a risk breach."""
@@ -16460,6 +16565,18 @@ if SL_HUNTING_AVAILABLE:
             leaving the NIFTY leg running. Does not touch self.pos or the journal row."""
             self._close_bnf_mirror(reason)
 
+        def _live_mode_change_deferred(self) -> bool:
+            """Defer a dashboard live/paper flip while an inference pass exists.
+
+            The agent places orders from its `sl-hunting-inference` thread, via
+            the locked tool context, not from this loop thread. The pass also
+            told the agent `live_active` when it began, so the mode must not
+            change until that pass is harvested.
+            """
+
+            with self._agent_inference_lock:
+                return self._agent_inference_thread is not None
+
         def _paper_positions_active(self) -> bool:
             """Treat either NIFTY or its BankNIFTY mirror as owned exposure."""
 
@@ -18252,6 +18369,58 @@ def _live_config_errors(
     return tuple(dict.fromkeys(errors))
 
 
+def _live_broker_login_ok(client: ExecutionClient, *, purpose: str) -> bool:
+    """Log in to the live broker; True only on an explicit ``True``.
+
+    Shared by the startup gate and a dashboard paper-to-live promotion
+    (ADR-0021). ``purpose`` only labels the log lines.
+    """
+
+    logger.warning("Logging in to %s for LIVE trading now (%s).", LIVE_BROKER, purpose)
+    try:
+        login_ok = client.ensure_logged_in() is True
+    except Exception:  # noqa: BLE001 - a broker SDK failure must fail closed.
+        login_ok = False
+    if not login_ok:
+        logger.error("%s login failed (%s); live trading stays off.", LIVE_BROKER, purpose)
+    return login_ok
+
+
+def _preload_and_audit_live_account(client: ExecutionClient) -> StartupExposureAudit:
+    """After a successful login: preload symbols, then audit both broker books.
+
+    Shared by the startup gate and a dashboard paper-to-live promotion so the
+    two paths cannot drift apart. It never freezes entries and never arms a
+    worker: callers decide what a failed audit means for them.
+    """
+
+    # Preload remains best effort, but the attempt must finish before the audit
+    # so account reconciliation is always the final broker gate.
+    logger.info(
+        "%s login OK; downloading NSE F&O scrip master (one-time)...",
+        LIVE_BROKER,
+    )
+    try:
+        preload_ok = client.preload_scrip_master() is True
+    except Exception:  # noqa: BLE001 - lazy symbol lookup remains available.
+        preload_ok = False
+    if not preload_ok:
+        logger.warning(
+            "Scrip master preload failed; symbols will be resolved lazily on first order."
+        )
+
+    try:
+        return audit_startup_exposure(client)
+    except Exception:  # pragma: no cover - pure audit already catches broker failures.
+        # This defensive boundary also uses fixed vocabulary: an SDK exception
+        # can contain request headers or tokens and must never reach logs.
+        return StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Startup exposure audit failed internally.",),
+            evidence=("startup_audit=indeterminate",),
+        )
+
+
 def _configure_startup_live_trading(
     workers: Sequence[BasePaperStrategyWorker],
     store: SharedMarketDataStore,
@@ -18333,16 +18502,7 @@ def _configure_startup_live_trading(
         )
         return 0, audit
 
-    logger.warning("Logging in to %s for LIVE trading now.", LIVE_BROKER)
-    try:
-        login_ok = client.ensure_logged_in() is True
-    except Exception:  # noqa: BLE001 - a broker SDK failure must fail closed.
-        login_ok = False
-    if not login_ok:
-        logger.error(
-            "%s login failed at startup; forcing all strategies to PAPER.",
-            LIVE_BROKER,
-        )
+    if not _live_broker_login_ok(client, purpose="startup"):
         audit = StartupExposureAudit(
             safe_to_enable_live=False,
             reasons=("Broker login failed before the startup exposure audit.",),
@@ -18354,33 +18514,8 @@ def _configure_startup_live_trading(
         )
         return 0, audit
 
-    # Preload remains best effort, but the attempt must finish before the audit
-    # so account reconciliation is always the final broker gate.
-    logger.info(
-        "%s login OK; downloading NSE F&O scrip master (one-time)...",
-        LIVE_BROKER,
-    )
-    try:
-        preload_ok = client.preload_scrip_master() is True
-    except Exception:  # noqa: BLE001 - lazy symbol lookup remains available.
-        preload_ok = False
-    if not preload_ok:
-        logger.warning(
-            "Scrip master preload failed; symbols will be resolved lazily on first order."
-        )
-
-    try:
-        audit = audit_startup_exposure(client)
-    except Exception:  # pragma: no cover - pure audit already catches broker failures.
-        # This defensive boundary also uses fixed vocabulary: an SDK exception
-        # can contain request headers or tokens and must never reach logs.
-        audit = StartupExposureAudit(
-            safe_to_enable_live=False,
-            reasons=("Startup exposure audit failed internally.",),
-            evidence=("startup_audit=indeterminate",),
-        )
+    audit = _preload_and_audit_live_account(client)
     store.startup_exposure_audit = audit
-
     if not audit.safe_to_enable_live:
         store.execution_safety.freeze_entries(
             "Startup exposure audit did not prove the broker account flat."
@@ -18423,12 +18558,164 @@ def _enqueue_startup_exposure_alert(
         "mode": "PAPER",
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+    return _put_runner_alert(event_queue, event, "the startup exposure alert")
+
+
+def _put_runner_alert(event_queue: queue.Queue, event: dict, what: str) -> bool:
+    """Non-blocking hand-off of a runner (non-trade) alert to the notifier queue."""
+
     try:
         event_queue.put_nowait(event)
         return True
     except Exception:  # noqa: BLE001 - alerts must never block the runner.
-        logger.warning("Could not enqueue the startup exposure alert.")
+        logger.warning("Could not enqueue %s.", what)
         return False
+
+
+def _enqueue_live_mode_alert(
+    event_queue: queue.Queue | None,
+    action: str,
+    strategy: str,
+    detail: str,
+    mode: str,
+) -> None:
+    """Best-effort Telegram alert for a dashboard live/paper toggle (ADR-0021).
+
+    Goes straight onto the notifier queue, like the startup-block alert, and
+    deliberately NOT through ``publish_trade_event``: a toggle is not a trade,
+    so it must not reach the session-state trade list, the dashboard's
+    closed-trade ledger, or the PAPER/LIVE/MIXED provenance a Sheet row uses.
+    """
+
+    if event_queue is None:
+        return
+    event = {
+        "action": action,
+        "strategy": strategy,
+        "direction": detail,
+        "mode": mode,
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _put_runner_alert(event_queue, event, f"the live toggle alert for {strategy}")
+
+
+def _live_promotion_refusal(
+    worker: BasePaperStrategyWorker,
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    *,
+    master_live: bool,
+    stop_event: threading.Event,
+    any_worker_live: bool,
+) -> str:
+    """Why ``worker`` may NOT be armed live right now, or "" when it may.
+
+    The runtime twin of ``_configure_startup_live_trading``. It runs on the
+    toggle controller's thread, never on an HTTP thread, because it may log in
+    to the broker. Every answer is fixed vocabulary (plus the strategy's own
+    config errors), safe for a log line, a Telegram message and the page.
+
+    * The GLOBAL switch is the value read at startup. It stays `.env`-only:
+      the dashboard can arm a strategy only inside a session that was started
+      with live trading allowed.
+    * The strategy's live-money limits must pass the same strict
+      ``_live_config_errors`` check startup uses.
+    * Any entry freeze refuses, because a freeze means unreconciled exposure.
+    * Broker: if no strategy is ARMED live right now (``any_worker_live``),
+      run the full startup sequence -- login, symbol preload and the
+      flat-account audit. If one is, other strategies may legitimately hold
+      positions, so the flat-account audit no longer applies; a fresh login
+      check does. Armed workers, not ``store.live_session_started``, decide
+      this: that flag also turns on for a promotion still PENDING, and an
+      account that changed since that audit must be audited again.
+
+    A refusal never freezes anything: with nothing armed there is nothing to
+    protect, and the next request simply runs the whole gate again.
+    """
+
+    if not master_live:
+        return "LIVE_TRADING_ENABLED was false at startup; restart with it on to allow live."
+    if stop_event.is_set() or not worker.lifecycle.snapshot().entry_allowed:
+        return "The strategy is shutting down."
+    prefix = STRATEGY_ENV_PREFIX.get(worker.strategy_name)
+    if prefix is None:
+        return "No env prefix is mapped for this strategy."
+    config_errors = _live_config_errors(worker, prefix)
+    if config_errors:
+        return "Live config invalid: " + "; ".join(config_errors)
+    store_frozen, _ = store.execution_safety.entry_freeze_snapshot()
+    if store_frozen or worker._live_execution_frozen:
+        return "Live entries are frozen pending reconciliation."
+    if client is None:
+        return "The live broker execution client is unavailable."
+
+    if not _live_broker_login_ok(client, purpose=f"dashboard promotion of {worker.strategy_name}"):
+        return "Broker login failed."
+    if any_worker_live:
+        return ""
+
+    audit = _preload_and_audit_live_account(client)
+    if not audit.safe_to_enable_live:
+        return "Broker account not proven flat: " + (
+            " ".join(audit.reasons) or "account state was indeterminate."
+        )
+    # From here shutdown treats the session as live: it re-logs in and checks
+    # the account books, exactly as after a live startup.
+    store.live_session_started = True
+    return ""
+
+
+def _handle_live_mode_request(
+    request: LiveModeRequest,
+    workers_by_name: Mapping[str, BasePaperStrategyWorker],
+    store: SharedMarketDataStore,
+    client: ExecutionClient | None,
+    *,
+    master_live: bool,
+    stop_event: threading.Event,
+    event_queue: queue.Queue | None,
+) -> None:
+    """Process one dashboard toggle on the controller thread (ADR-0021).
+
+    It never writes ``worker.live_trading``. A request that passes the gate is
+    left in the worker's slot, and the worker applies it on its own thread
+    once it is flat.
+    """
+
+    worker = workers_by_name.get(request.strategy)
+    if worker is None:  # the server validated the name; defensive only
+        return
+    live = request.target == TARGET_LIVE
+    current = "LIVE" if worker.live_trading else "PAPER"
+    logger.warning(
+        "LIVE MODE TOGGLE requested from the dashboard | %s: %s -> %s",
+        worker.strategy_name,
+        current,
+        request.target,
+    )
+    if live and not worker.live_trading:
+        refusal = _live_promotion_refusal(
+            worker,
+            store,
+            client,
+            master_live=master_live,
+            stop_event=stop_event,
+            any_worker_live=any(w.live_trading for w in workers_by_name.values()),
+        )
+        if refusal:
+            worker.live_mode_slot.refuse(live, refusal)
+            logger.error("LIVE MODE TOGGLE REFUSED | %s | %s", worker.strategy_name, refusal)
+            _enqueue_live_mode_alert(
+                event_queue, "LIVE_MODE_REFUSED", worker.strategy_name,
+                f"{current} -> LIVE refused: {refusal}", current,
+            )
+            return
+    worker.live_mode_slot.request(live)
+    _enqueue_live_mode_alert(
+        event_queue, "LIVE_MODE_REQUESTED", worker.strategy_name,
+        f"{current} -> {request.target} requested; applies once the strategy is flat.",
+        current,
+    )
 
 
 _SHUTDOWN_RETRY_DELAYS_SECONDS = (1.0, 2.0, 5.0)
@@ -19407,6 +19694,10 @@ def _dashboard_worker_view(
         "live_trading": bool(getattr(worker, "live_trading", False)),
         "positions": [],
     }
+    # The dashboard toggle's state (ADR-0021): a lock-guarded copy, no calls out.
+    slot = getattr(worker, "live_mode_slot", None)
+    if isinstance(slot, LiveModeSlot):
+        view.update(slot.view())
     try:
         view["mode"] = worker.session_execution_mode()
     except Exception:  # noqa: BLE001 - reporting only
@@ -20542,6 +20833,7 @@ def main() -> None:
     # detaches it completely and the session continues without it.
     dashboard: DashboardServer | None = None
     dashboard_sink: DashboardEventSink | None = None
+    live_mode_controller: LiveModeController | None = None
     if DASHBOARD_ENABLED and not (1024 <= DASHBOARD_PORT <= 65535):
         logger.warning(
             "DASHBOARD_PORT=%s is outside 1024-65535; the monitoring dashboard is "
@@ -20563,7 +20855,28 @@ def main() -> None:
                 instrument: _DashboardChartCache(max_bars=DASHBOARD_CHART_BARS)
                 for instrument in _dashboard_chart_instruments()
             }
+            live_toggle_route: LiveToggleRoute | None = None
+            if DASHBOARD_LIVE_TOGGLE_ENABLED:
+                workers_by_name = {worker.strategy_name: worker for worker in workers}
+                live_mode_controller = LiveModeController(
+                    lambda request: _handle_live_mode_request(
+                        request,
+                        workers_by_name,
+                        store,
+                        execution_client,
+                        master_live=master_live,
+                        stop_event=stop_event,
+                        event_queue=trade_event_queue,
+                    )
+                )
+                live_mode_controller.start()
+                live_toggle_route = LiveToggleRoute(
+                    parse=parse_toggle_request,
+                    submit=live_mode_controller.submit,
+                    strategies=frozenset(workers_by_name),
+                )
             dashboard = start_dashboard(
+                live_toggle=live_toggle_route,
                 port=DASHBOARD_PORT,
                 refresh_seconds=DASHBOARD_REFRESH_SECONDS,
                 builder=lambda: _dashboard_document(
@@ -20576,7 +20889,14 @@ def main() -> None:
                 renderer=dashboard_snapshot.render_document_bytes,
                 log=logger,
             )
-            if dashboard is not None:
+            if dashboard is not None and live_toggle_route is not None:
+                logger.warning(
+                    "Monitoring dashboard at %s (refresh %.2fs) with the LIVE/PAPER "
+                    "TOGGLE ON: one guarded POST can request a strategy mode change. "
+                    "It cannot place, cancel or modify an order.",
+                    dashboard.url, DASHBOARD_REFRESH_SECONDS,
+                )
+            elif dashboard is not None:
                 logger.info(
                     "Monitoring dashboard READ-ONLY at %s (refresh %.2fs). It serves GET "
                     "only and cannot place, cancel or modify an order.",
@@ -20586,11 +20906,15 @@ def main() -> None:
                 for worker in workers:
                     worker.dashboard_event_sink = None
                 dashboard_sink = None
+                if live_mode_controller is not None:
+                    live_mode_controller.stop()
         except Exception:  # noqa: BLE001 - a monitor must never stop a session
             dashboard = None
             dashboard_sink = None
             for worker in workers:
                 worker.dashboard_event_sink = None
+            if live_mode_controller is not None:
+                live_mode_controller.stop()
             logger.exception(
                 "Could not start the monitoring dashboard; trading continues without it."
             )
@@ -20603,6 +20927,10 @@ def main() -> None:
         workers,
         session_state=session_state,
     )
+    # No more toggles once shutdown begins: a request queued now is dropped,
+    # and a worker past RUNNING never applies one anyway.
+    if live_mode_controller is not None:
+        live_mode_controller.stop()
 
     # Even after every local owner reaches STOPPED, the execution ledger gets
     # one process-wide proof. Unresolved RUNNER exposure keeps this process

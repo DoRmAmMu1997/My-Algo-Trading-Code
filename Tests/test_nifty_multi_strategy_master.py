@@ -14453,3 +14453,281 @@ class TestSecondaryInstrumentFeed(unittest.TestCase):
             "the primary must load FIRST, so its scroll-back is ready as early as before",
         )
         self.assertIn("banknifty", str(wanted[master_file.SECONDARY_INSTRUMENT]).lower())
+
+
+class TestDashboardLiveModeToggle(unittest.TestCase):
+    """ADR-0021: the dashboard may REQUEST a mode change; only the worker applies it.
+
+    The order path reads `live_trading` more than once per order, so the flag
+    must only ever change on the worker's own thread and only while flat.
+    These tests pin that, and pin the promotion gate's refusals.
+    """
+
+    class _Client:
+        def __init__(self, *, login_ok=True, orders=(), positions=()):
+            self.login_ok = login_ok
+            self.orders = orders
+            self.positions = positions
+            self.calls = []
+
+        def ensure_logged_in(self):
+            self.calls.append("login")
+            return self.login_ok
+
+        def preload_scrip_master(self):
+            self.calls.append("preload")
+            return True
+
+        def list_open_orders(self):
+            self.calls.append("orders")
+            return BrokerQueryResult.success(self.orders)
+
+        def list_open_positions(self):
+            self.calls.append("positions")
+            return BrokerQueryResult.success(self.positions)
+
+        def place_market_order(self, *args, **kwargs):
+            raise AssertionError("a toggle must never place an order")
+
+    def setUp(self):
+        self.store = master_file.SharedMarketDataStore()
+        self.stop_event = threading.Event()
+        self.worker = master_file.AtmSingleLegStrategyWorker(
+            store=self.store, stop_event=self.stop_event, broker=MagicMock()
+        )
+        self.worker.strategy_name = "Renko"
+        self.events = master_file.queue.Queue()
+        self.worker.trade_event_queue = self.events
+        patcher = patch.object(master_file, "_live_config_errors", return_value=())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _drain(self):
+        out = []
+        while not self.events.empty():
+            out.append(self.events.get_nowait())
+        return out
+
+    def _handle(self, target, *, client=None, master_live=True, others=None):
+        workers = {"Renko": self.worker, **(others or {})}
+        master_file._handle_live_mode_request(
+            master_file.LiveModeRequest("Renko", target),
+            workers,
+            self.store,
+            client,
+            master_live=master_live,
+            stop_event=self.stop_event,
+            event_queue=self.events,
+        )
+
+    # -- the worker-side safe point ------------------------------------
+    def test_the_handler_never_writes_live_trading_itself(self):
+        self._handle("LIVE", client=self._Client())
+        self.assertFalse(self.worker.live_trading)
+        self.assertIs(self.worker.live_mode_slot.pending(), True)
+
+    def test_a_flat_worker_applies_the_request_on_its_own_loop(self):
+        self._handle("LIVE", client=self._Client())
+        self.assertFalse(self.worker._run_shutdown_cycle_if_requested())
+        self.assertTrue(self.worker.live_trading)
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "APPLIED")
+        actions = [event["action"] for event in self._drain()]
+        self.assertEqual(actions, ["LIVE_MODE_REQUESTED", "LIVE_MODE_APPLIED"])
+
+    def test_a_request_waits_while_a_position_is_open(self):
+        self.worker.pos.active = True
+        self._handle("LIVE", client=self._Client())
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "PENDING")
+
+        self.worker.pos.active = False
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertTrue(self.worker.live_trading)
+
+    def test_asking_for_the_current_mode_withdraws_a_pending_promotion(self):
+        """The dashboard's Cancel button: withdrawn before the position closes."""
+        self.worker.pos.active = True
+        self._handle("LIVE", client=self._Client())
+        self._handle("PAPER")
+        self.worker._run_shutdown_cycle_if_requested()  # resolves while still in position
+        self.assertIsNone(self.worker.live_mode_slot.pending())
+
+        self.worker.pos.active = False
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+
+    def test_asking_for_the_current_mode_withdraws_a_pending_demotion(self):
+        self.worker.live_trading = True
+        self.worker.pos.active = True
+        self._handle("PAPER")
+        self._handle("LIVE", client=None, master_live=False)  # no gate: already live
+        self.worker.pos.active = False
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertTrue(self.worker.live_trading)
+
+    def test_demotion_also_waits_for_flat(self):
+        """Live -> paper mid-trade would switch off live-only protections."""
+        self.worker.live_trading = True
+        self.worker.pos.active = True
+        self._handle("PAPER")
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertTrue(self.worker.live_trading)
+
+        self.worker.pos.active = False
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+
+    def test_demotion_needs_no_broker_and_ignores_the_global_switch(self):
+        self.worker.live_trading = True
+        self._handle("PAPER", client=None, master_live=False)
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+
+    def test_an_orphan_live_leg_keeps_the_request_pending(self):
+        self.worker._orphan_live_legs.append({"quantity": 75})
+        self._handle("LIVE", client=self._Client())
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+
+    def test_a_freeze_that_appears_after_the_gate_refuses_at_apply(self):
+        self._handle("LIVE", client=self._Client())
+        self.store.execution_safety.freeze_entries("ambiguous fill elsewhere")
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+        view = self.worker.live_mode_slot.view()
+        self.assertEqual(view["toggle_status"], "REFUSED")
+        self.assertIn("frozen", view["toggle_reason"])
+
+    def test_a_shutting_down_worker_never_applies(self):
+        self._handle("LIVE", client=self._Client())
+        self.stop_event.set()
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+
+    def test_a_request_for_the_current_mode_resolves_without_change(self):
+        self._handle("PAPER")
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "APPLIED")
+        self.assertIsNone(self.worker.live_mode_slot.pending())
+
+    # -- the promotion gate --------------------------------------------
+    def test_promotion_is_refused_when_the_global_switch_was_off(self):
+        client = self._Client()
+        self._handle("LIVE", client=client, master_live=False)
+        self.assertEqual(client.calls, [])
+        view = self.worker.live_mode_slot.view()
+        self.assertEqual(view["toggle_status"], "REFUSED")
+        self.assertIn("LIVE_TRADING_ENABLED", view["toggle_reason"])
+        self.assertIsNone(self.worker.live_mode_slot.pending())
+        self.assertEqual(self._drain()[-1]["action"], "LIVE_MODE_REFUSED")
+
+    def test_promotion_is_refused_on_invalid_live_config(self):
+        with patch.object(master_file, "_live_config_errors", return_value=("RENKO_LOTS bad",)):
+            self._handle("LIVE", client=self._Client())
+        self.assertIn("RENKO_LOTS bad", self.worker.live_mode_slot.view()["toggle_reason"])
+
+    def test_promotion_is_refused_while_entries_are_frozen(self):
+        self.store.execution_safety.freeze_entries("unreconciled")
+        client = self._Client()
+        self._handle("LIVE", client=client)
+        self.assertEqual(client.calls, [])
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "REFUSED")
+
+    def test_promotion_is_refused_without_an_execution_client(self):
+        self._handle("LIVE", client=None)
+        self.assertIn("unavailable", self.worker.live_mode_slot.view()["toggle_reason"])
+
+    def test_first_promotion_runs_the_full_startup_sequence(self):
+        client = self._Client()
+        self._handle("LIVE", client=client)
+        self.assertEqual(client.calls, ["login", "preload", "orders", "positions"])
+        self.assertTrue(self.store.live_session_started)
+        self.assertIs(self.worker.live_mode_slot.pending(), True)
+
+    def test_first_promotion_is_refused_when_the_account_is_not_flat(self):
+        from Dependencies.broker_contract import OpenOrder
+
+        client = self._Client(
+            orders=(
+                OpenOrder(
+                    order_id="X", symbol="NIFTY", side="BUY", requested_quantity=75,
+                    filled_quantity=0, remaining_quantity=75, broker_state="OPEN",
+                ),
+            )
+        )
+        self._handle("LIVE", client=client)
+        self.assertFalse(self.store.live_session_started)
+        self.assertIn("not proven flat", self.worker.live_mode_slot.view()["toggle_reason"])
+        # A refusal never freezes: nothing is armed, and the next click re-runs the gate.
+        self.assertFalse(self.store.execution_safety.entry_freeze_snapshot()[0])
+
+    def test_first_promotion_is_refused_when_login_fails(self):
+        client = self._Client(login_ok=False)
+        self._handle("LIVE", client=client)
+        self.assertEqual(client.calls, ["login"])
+        self.assertFalse(self.store.live_session_started)
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "REFUSED")
+
+    def _armed_live_worker(self):
+        return {"EMA": SimpleNamespace(live_trading=True)}
+
+    def test_a_later_promotion_skips_the_flat_audit(self):
+        """Other strategies may legitimately hold live positions by now."""
+        self.store.live_session_started = True
+        client = self._Client(positions=(object(),))  # would fail a flat audit
+        self._handle("LIVE", client=client, others=self._armed_live_worker())
+        self.assertEqual(client.calls, ["login"])
+        self.assertIs(self.worker.live_mode_slot.pending(), True)
+
+    def test_a_pending_promotion_does_not_waive_the_next_flat_audit(self):
+        """`live_session_started` turns on at gate time; only ARMED workers skip the audit."""
+        self.store.live_session_started = True  # an earlier promotion still PENDING
+        client = self._Client(positions=(object(),))
+        self._handle("LIVE", client=client)
+        self.assertEqual(client.calls, ["login", "preload", "orders", "positions"])
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "REFUSED")
+
+    def test_a_later_promotion_is_refused_when_login_fails(self):
+        self.store.live_session_started = True
+        self._handle(
+            "LIVE", client=self._Client(login_ok=False), others=self._armed_live_worker()
+        )
+        self.assertEqual(
+            self.worker.live_mode_slot.view()["toggle_reason"], "Broker login failed."
+        )
+
+    def test_a_worker_that_orders_off_thread_can_defer_the_flip(self):
+        """SL Hunting places orders from its inference thread; the flip must wait."""
+        self._handle("LIVE", client=self._Client())
+        with patch.object(self.worker, "_live_mode_change_deferred", return_value=True):
+            self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertTrue(self.worker.live_trading)
+
+    def test_sl_hunting_defers_while_an_inference_pass_exists(self):
+        worker_cls = master_file.SLHuntingAIWorker
+        fake = SimpleNamespace(
+            _agent_inference_lock=threading.Lock(), _agent_inference_thread=object()
+        )
+        self.assertTrue(worker_cls._live_mode_change_deferred(fake))
+        fake._agent_inference_thread = None
+        self.assertFalse(worker_cls._live_mode_change_deferred(fake))
+
+    def test_toggle_alerts_never_reach_the_trade_books(self):
+        """A toggle is not a trade: no session-state row, no MIXED provenance."""
+        self.worker.session_state = MagicMock()
+        self._handle("LIVE", client=self._Client())
+        self.worker._run_shutdown_cycle_if_requested()
+        self.worker.session_state.record_trade_event.assert_not_called()
+        self.assertEqual(self.worker.session_execution_mode(), "LIVE")
+
+    def test_the_dashboard_row_carries_the_toggle_state(self):
+        self._handle("LIVE", client=self._Client())
+        view = master_file._dashboard_worker_view(
+            self.worker, self.store, master_file.dashboard_snapshot.pair_trade_events([])
+        )
+        self.assertEqual(view["requested_mode"], "LIVE")
+        self.assertEqual(view["toggle_status"], "PENDING")
