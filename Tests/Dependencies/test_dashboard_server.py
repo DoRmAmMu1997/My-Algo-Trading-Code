@@ -1302,3 +1302,12 @@ def test_the_only_page_post_is_the_toggle_and_it_lives_in_its_own_file():
     assert '"/api/live-mode"' in source
     for verb in ("PUT", "PATCH", "DELETE"):
         assert f'"{verb}"' not in source
+    # A browser can silently suppress these; the in-page <dialog> cannot be.
+    for suppressible in ("window.prompt", "window.alert", "window.confirm"):
+        assert suppressible not in source
+
+
+def test_a_stalled_request_body_cannot_pin_a_handler_thread_forever():
+    from dashboard_server import DashboardRequestHandler
+
+    assert 0 < DashboardRequestHandler.timeout <= 30

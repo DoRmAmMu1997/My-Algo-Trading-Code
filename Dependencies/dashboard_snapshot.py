@@ -591,6 +591,7 @@ def strategy_rows(worker_views: Sequence[Mapping[str, object]]) -> list[dict[str
                 "requested_mode": view.get("requested_mode"),
                 "toggle_status": str(view.get("toggle_status", "")),
                 "toggle_reason": str(view.get("toggle_reason", "")),
+                "toggle_at": str(view.get("toggle_at", "")),
                 "snapshot_valid": bool(view.get("snapshot_valid", True)),
                 "trades": _int_or_zero(view.get("completed_trades")),
                 "realized": round(realized, 2),

@@ -111,7 +111,7 @@ One process, cooperating threads:
   A `LiveModeController` thread runs `_live_promotion_refusal`, the runtime twin of
   the startup gate. Paper -> live still needs `LIVE_TRADING_ENABLED` at startup,
   a clean `_live_config_errors` and a broker login, plus the flat-account audit
-  (via the shared `_login_and_audit_live_account`) when nothing is live yet. The
+  (via the shared `_live_broker_login_ok` + `_preload_and_audit_live_account`) when nothing is live yet. The
   controller NEVER writes `live_trading`; the worker applies the request itself
   in `_apply_pending_live_mode_if_safe` (called from `_run_shutdown_cycle_if_requested`),
   and only when flat, because the order path reads that flag more than once per

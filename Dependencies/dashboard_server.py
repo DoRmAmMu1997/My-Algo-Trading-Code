@@ -471,6 +471,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     # threads accumulate over a six-hour session. A fresh loopback handshake
     # once a second costs nothing.
     protocol_version = "HTTP/1.0"
+    # Per-socket read deadline. Without it a client that declares a POST body
+    # and never sends it pins a handler thread for the rest of the session.
+    timeout = 10
     server_version = "AlgoDashboard"
     sys_version = ""
 

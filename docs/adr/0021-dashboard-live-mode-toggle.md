@@ -66,7 +66,7 @@ wording, unless every check passes:
 - **The broker.**
   - If nothing has gone live yet this session, it runs the startup sequence:
     login, symbol preload and the flat-account audit. That sequence is extracted
-    into `_login_and_audit_live_account`, so startup and runtime cannot drift
+    into `_live_broker_login_ok` and `_preload_and_audit_live_account`, so startup and runtime cannot drift
     apart.
   - If a strategy is already live, other strategies may legitimately hold
     positions, so the flat-account audit no longer applies and only a fresh login

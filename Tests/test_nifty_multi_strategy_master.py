@@ -14508,10 +14508,11 @@ class TestDashboardLiveModeToggle(unittest.TestCase):
             out.append(self.events.get_nowait())
         return out
 
-    def _handle(self, target, *, client=None, master_live=True):
+    def _handle(self, target, *, client=None, master_live=True, others=None):
+        workers = {"Renko": self.worker, **(others or {})}
         master_file._handle_live_mode_request(
             master_file.LiveModeRequest("Renko", target),
-            {"Renko": self.worker},
+            workers,
             self.store,
             client,
             master_live=master_live,
@@ -14648,20 +14649,51 @@ class TestDashboardLiveModeToggle(unittest.TestCase):
         self.assertFalse(self.store.live_session_started)
         self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "REFUSED")
 
+    def _armed_live_worker(self):
+        return {"EMA": SimpleNamespace(live_trading=True)}
+
     def test_a_later_promotion_skips_the_flat_audit(self):
         """Other strategies may legitimately hold live positions by now."""
         self.store.live_session_started = True
         client = self._Client(positions=(object(),))  # would fail a flat audit
-        self._handle("LIVE", client=client)
+        self._handle("LIVE", client=client, others=self._armed_live_worker())
         self.assertEqual(client.calls, ["login"])
         self.assertIs(self.worker.live_mode_slot.pending(), True)
 
+    def test_a_pending_promotion_does_not_waive_the_next_flat_audit(self):
+        """`live_session_started` turns on at gate time; only ARMED workers skip the audit."""
+        self.store.live_session_started = True  # an earlier promotion still PENDING
+        client = self._Client(positions=(object(),))
+        self._handle("LIVE", client=client)
+        self.assertEqual(client.calls, ["login", "preload", "orders", "positions"])
+        self.assertEqual(self.worker.live_mode_slot.view()["toggle_status"], "REFUSED")
+
     def test_a_later_promotion_is_refused_when_login_fails(self):
         self.store.live_session_started = True
-        self._handle("LIVE", client=self._Client(login_ok=False))
+        self._handle(
+            "LIVE", client=self._Client(login_ok=False), others=self._armed_live_worker()
+        )
         self.assertEqual(
             self.worker.live_mode_slot.view()["toggle_reason"], "Broker login failed."
         )
+
+    def test_a_worker_that_orders_off_thread_can_defer_the_flip(self):
+        """SL Hunting places orders from its inference thread; the flip must wait."""
+        self._handle("LIVE", client=self._Client())
+        with patch.object(self.worker, "_live_mode_change_deferred", return_value=True):
+            self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertTrue(self.worker.live_trading)
+
+    def test_sl_hunting_defers_while_an_inference_pass_exists(self):
+        worker_cls = master_file.SLHuntingAIWorker
+        fake = SimpleNamespace(
+            _agent_inference_lock=threading.Lock(), _agent_inference_thread=object()
+        )
+        self.assertTrue(worker_cls._live_mode_change_deferred(fake))
+        fake._agent_inference_thread = None
+        self.assertFalse(worker_cls._live_mode_change_deferred(fake))
 
     def test_toggle_alerts_never_reach_the_trade_books(self):
         """A toggle is not a trade: no session-state row, no MIXED provenance."""

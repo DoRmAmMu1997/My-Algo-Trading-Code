@@ -315,11 +315,27 @@
    * dashboard_live_toggle.js owns the click, the typed confirmation and the
    * one POST, so this file stays free of any write. It sets
    * body[data-live-toggle="on"] only when the runner switched the toggle on. */
-  function toggleCell(row) {
+  /* A refusal is news, not a state: it is shown for this long after it
+   * happened, then the row goes back to just its mode badge. */
+  const REFUSAL_SHOWN_SECONDS = 10 * 60;
+
+  function clockSeconds(value) {
+    const match = /^(\d{2}):(\d{2}):(\d{2})$/.exec(String(value || ""));
+    return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : null;
+  }
+
+  function refusalIsRecent(row, now) {
+    const at = clockSeconds(row.toggle_at);
+    const current = clockSeconds(now);
+    if (at === null || current === null) return true;  /* unknown: keep showing */
+    return current - at >= 0 && current - at < REFUSAL_SHOWN_SECONDS;
+  }
+
+  function toggleCell(row, now) {
     let note = "";
     if (row.toggle_status === "PENDING") {
       note = ` <span class="flag warn" title="Applies once the strategy is flat">→ ${text(row.requested_mode)} pending</span>`;
-    } else if (row.toggle_status === "REFUSED") {
+    } else if (row.toggle_status === "REFUSED" && refusalIsRecent(row, now)) {
       note = ` <span class="flag bad" title="${attr(row.toggle_reason)}">${text(row.requested_mode)} refused</span>`;
     }
     if (document.body.dataset.liveToggle !== "on") return note;
@@ -337,7 +353,7 @@
         (row) => `<tr>
           <td>${text(row.strategy)}${row.snapshot_valid === false
             ? ' <span class="flag bad">READ FAILED</span>' : ""}</td>
-          <td><span class="badge ${row.live_trading ? "live" : "subtle"}">${text(row.mode)}</span>${toggleCell(row)}</td>
+          <td><span class="badge ${row.live_trading ? "live" : "subtle"}">${text(row.mode)}</span>${toggleCell(row, doc.generated_at)}</td>
           <td class="num">${row.trades}</td>
           <td class="num">${money(row.realized)}</td>
           <td class="num">${money(row.open)}</td>

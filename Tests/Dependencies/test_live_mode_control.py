@@ -146,11 +146,13 @@ def test_a_refusal_records_its_reason_and_clears_nothing_else():
     assert view["requested_mode"] == TARGET_LIVE
 
 
-def test_refusing_does_not_cancel_a_different_pending_request():
+def test_a_refusal_cancels_an_older_pending_request():
+    """The latest click wins: the page must show the refusal, not a stale PENDING."""
     slot = LiveModeSlot()
-    slot.request(False)
+    slot.request(True)
     slot.refuse(True, "frozen")
-    assert slot.pending() is False
+    assert slot.pending() is None
+    assert slot.view()["toggle_status"] == STATUS_REFUSED
 
 
 # ---------------------------------------------------------------------------

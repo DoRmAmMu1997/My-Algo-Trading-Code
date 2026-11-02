@@ -7009,7 +7009,13 @@ class BasePaperStrategyWorker(threading.Thread):
         time.sleep(delay)
 
     def _run_shutdown_cycle_if_requested(self) -> bool:
-        """Translate stop signals and drive shutdown instead of exiting early."""
+        """Translate stop signals and drive shutdown instead of exiting early.
+
+        Also the per-poll safe point for a dashboard live/paper toggle: while
+        RUNNING it calls `_apply_pending_live_mode_if_safe` (ADR-0021). Every
+        worker loop calls this once per poll on its own thread, so a new loop
+        must call it too, or toggles for that worker stay PENDING forever.
+        """
 
         if (
             self.stop_event.is_set()
@@ -7024,6 +7030,18 @@ class BasePaperStrategyWorker(threading.Thread):
             return False
         self._advance_shutdown_lifecycle()
         return True
+
+    def _live_mode_change_deferred(self) -> bool:
+        """True while another thread of THIS worker may be placing an order.
+
+        The base worker places every order on its own loop thread, so nothing
+        else can be mid-order when the loop runs the apply step. A worker that
+        places orders from a helper thread (the SL Hunting agent's inference
+        pass) must override this, or a flip could land between the order
+        path's two reads of `live_trading`.
+        """
+
+        return False
 
     def _apply_pending_live_mode_if_safe(self) -> None:
         """Apply a dashboard LIVE/PAPER request, but only while this worker is flat.
@@ -7053,8 +7071,9 @@ class BasePaperStrategyWorker(threading.Thread):
             or self._owned_open_positions()
             or self._orphan_live_legs
             or self._indeterminate_exit_paths
+            or self._live_mode_change_deferred()
         ):
-            return  # stays PENDING until flat
+            return  # stays PENDING until flat and idle
         if seen:
             store_frozen, _ = self.store.execution_safety.entry_freeze_snapshot()
             if store_frozen or self._live_execution_frozen:
@@ -16546,6 +16565,18 @@ if SL_HUNTING_AVAILABLE:
             leaving the NIFTY leg running. Does not touch self.pos or the journal row."""
             self._close_bnf_mirror(reason)
 
+        def _live_mode_change_deferred(self) -> bool:
+            """Defer a dashboard live/paper flip while an inference pass exists.
+
+            The agent places orders from its `sl-hunting-inference` thread, via
+            the locked tool context, not from this loop thread. The pass also
+            told the agent `live_active` when it began, so the mode must not
+            change until that pass is harvested.
+            """
+
+            with self._agent_inference_lock:
+                return self._agent_inference_thread is not None
+
         def _paper_positions_active(self) -> bool:
             """Treat either NIFTY or its BankNIFTY mirror as owned exposure."""
 
@@ -18338,20 +18369,11 @@ def _live_config_errors(
     return tuple(dict.fromkeys(errors))
 
 
-_LOGIN_FAILED_EVIDENCE = "broker_login=failed"
-
-
-def _login_and_audit_live_account(
-    client: ExecutionClient,
-    *,
-    purpose: str,
-) -> StartupExposureAudit:
-    """Log in, preload symbols, then audit both broker books -- in that order.
+def _live_broker_login_ok(client: ExecutionClient, *, purpose: str) -> bool:
+    """Log in to the live broker; True only on an explicit ``True``.
 
     Shared by the startup gate and a dashboard paper-to-live promotion
-    (ADR-0021) so the two paths cannot drift apart. It never freezes entries and
-    never arms a worker: callers decide what a failed audit means for them.
-    ``purpose`` only labels the log lines.
+    (ADR-0021). ``purpose`` only labels the log lines.
     """
 
     logger.warning("Logging in to %s for LIVE trading now (%s).", LIVE_BROKER, purpose)
@@ -18360,16 +18382,17 @@ def _login_and_audit_live_account(
     except Exception:  # noqa: BLE001 - a broker SDK failure must fail closed.
         login_ok = False
     if not login_ok:
-        logger.error(
-            "%s login failed (%s); live trading stays off.",
-            LIVE_BROKER,
-            purpose,
-        )
-        return StartupExposureAudit(
-            safe_to_enable_live=False,
-            reasons=("Broker login failed before the startup exposure audit.",),
-            evidence=(_LOGIN_FAILED_EVIDENCE,),
-        )
+        logger.error("%s login failed (%s); live trading stays off.", LIVE_BROKER, purpose)
+    return login_ok
+
+
+def _preload_and_audit_live_account(client: ExecutionClient) -> StartupExposureAudit:
+    """After a successful login: preload symbols, then audit both broker books.
+
+    Shared by the startup gate and a dashboard paper-to-live promotion so the
+    two paths cannot drift apart. It never freezes entries and never arms a
+    worker: callers decide what a failed audit means for them.
+    """
 
     # Preload remains best effort, but the attempt must finish before the audit
     # so account reconciliation is always the final broker gate.
@@ -18479,14 +18502,20 @@ def _configure_startup_live_trading(
         )
         return 0, audit
 
-    audit = _login_and_audit_live_account(client, purpose="startup")
-    store.startup_exposure_audit = audit
-    if _LOGIN_FAILED_EVIDENCE in audit.evidence:
+    if not _live_broker_login_ok(client, purpose="startup"):
+        audit = StartupExposureAudit(
+            safe_to_enable_live=False,
+            reasons=("Broker login failed before the startup exposure audit.",),
+            evidence=("broker_login=failed",),
+        )
+        store.startup_exposure_audit = audit
         store.execution_safety.freeze_entries(
             "Startup exposure audit could not query the broker account."
         )
         return 0, audit
 
+    audit = _preload_and_audit_live_account(client)
+    store.startup_exposure_audit = audit
     if not audit.safe_to_enable_live:
         store.execution_safety.freeze_entries(
             "Startup exposure audit did not prove the broker account flat."
@@ -18529,11 +18558,17 @@ def _enqueue_startup_exposure_alert(
         "mode": "PAPER",
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+    return _put_runner_alert(event_queue, event, "the startup exposure alert")
+
+
+def _put_runner_alert(event_queue: queue.Queue, event: dict, what: str) -> bool:
+    """Non-blocking hand-off of a runner (non-trade) alert to the notifier queue."""
+
     try:
         event_queue.put_nowait(event)
         return True
     except Exception:  # noqa: BLE001 - alerts must never block the runner.
-        logger.warning("Could not enqueue the startup exposure alert.")
+        logger.warning("Could not enqueue %s.", what)
         return False
 
 
@@ -18561,10 +18596,7 @@ def _enqueue_live_mode_alert(
         "mode": mode,
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    try:
-        event_queue.put_nowait(event)
-    except Exception:  # noqa: BLE001 - alerts must never block the runner.
-        logger.warning("Could not enqueue the live toggle alert for %s.", strategy)
+    _put_runner_alert(event_queue, event, f"the live toggle alert for {strategy}")
 
 
 def _live_promotion_refusal(
@@ -18574,6 +18606,7 @@ def _live_promotion_refusal(
     *,
     master_live: bool,
     stop_event: threading.Event,
+    any_worker_live: bool,
 ) -> str:
     """Why ``worker`` may NOT be armed live right now, or "" when it may.
 
@@ -18588,10 +18621,13 @@ def _live_promotion_refusal(
     * The strategy's live-money limits must pass the same strict
       ``_live_config_errors`` check startup uses.
     * Any entry freeze refuses, because a freeze means unreconciled exposure.
-    * Broker: if no strategy has gone live yet this session, run the full
-      startup sequence -- login, symbol preload and the flat-account audit. If
-      one already has, other strategies may legitimately hold positions, so the
-      flat-account audit no longer applies; a fresh login check does.
+    * Broker: if no strategy is ARMED live right now (``any_worker_live``),
+      run the full startup sequence -- login, symbol preload and the
+      flat-account audit. If one is, other strategies may legitimately hold
+      positions, so the flat-account audit no longer applies; a fresh login
+      check does. Armed workers, not ``store.live_session_started``, decide
+      this: that flag also turns on for a promotion still PENDING, and an
+      account that changed since that audit must be audited again.
 
     A refusal never freezes anything: with nothing armed there is nothing to
     protect, and the next request simply runs the whole gate again.
@@ -18613,16 +18649,12 @@ def _live_promotion_refusal(
     if client is None:
         return "The live broker execution client is unavailable."
 
-    if store.live_session_started:
-        try:
-            login_ok = client.ensure_logged_in() is True
-        except Exception:  # noqa: BLE001 - a broker SDK failure must fail closed.
-            login_ok = False
-        return "" if login_ok else "Broker login failed."
+    if not _live_broker_login_ok(client, purpose=f"dashboard promotion of {worker.strategy_name}"):
+        return "Broker login failed."
+    if any_worker_live:
+        return ""
 
-    audit = _login_and_audit_live_account(
-        client, purpose=f"dashboard promotion of {worker.strategy_name}"
-    )
+    audit = _preload_and_audit_live_account(client)
     if not audit.safe_to_enable_live:
         return "Broker account not proven flat: " + (
             " ".join(audit.reasons) or "account state was indeterminate."
@@ -18663,7 +18695,12 @@ def _handle_live_mode_request(
     )
     if live and not worker.live_trading:
         refusal = _live_promotion_refusal(
-            worker, store, client, master_live=master_live, stop_event=stop_event
+            worker,
+            store,
+            client,
+            master_live=master_live,
+            stop_event=stop_event,
+            any_worker_live=any(w.live_trading for w in workers_by_name.values()),
         )
         if refusal:
             worker.live_mode_slot.refuse(live, refusal)

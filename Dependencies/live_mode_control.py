@@ -146,14 +146,20 @@ class LiveModeSlot:
             self._at = _clock()
 
     def refuse(self, live: bool, reason: str) -> None:
-        """Record a refused request without disturbing one already waiting."""
+        """Record a refused request; it also cancels anything still waiting.
+
+        The operator's latest click wins, as it does for :meth:`request`: a
+        refusal that left an older request PENDING would show the page a
+        status the operator no longer wants, while Telegram reported the
+        refusal.
+        """
 
         with self._lock:
-            if self._requested is None:
-                self._last_target = bool(live)
-                self._status = STATUS_REFUSED
-                self._reason = str(reason)
-                self._at = _clock()
+            self._requested = None
+            self._last_target = bool(live)
+            self._status = STATUS_REFUSED
+            self._reason = str(reason)
+            self._at = _clock()
 
     def pending(self) -> bool | None:
         """The waiting request, or None. Read by the worker's own thread."""
