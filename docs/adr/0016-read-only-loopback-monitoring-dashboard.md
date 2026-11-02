@@ -51,6 +51,12 @@ a worker, or any mutable runner state.
 > set exactly as `/api/history` validates `tf`. Being GET-only is unchanged, and
 > it is why user-drawn chart overlays persist in the browser rather than here.
 
+> **Amended 2026-11-02** ([`ADR-0021`](0021-dashboard-live-mode-toggle.md)):
+> with the opt-in `DASHBOARD_LIVE_TOGGLE_ENABLED`, exactly one POST
+> (`/api/live-mode`) is served. It is guarded by Origin, a per-process token and
+> a typed confirmation, and it only queues a per-strategy LIVE/PAPER request.
+> With the knob off (the default), this section holds unchanged.
+
 ### 3. Loopback only, with no host setting
 
 `DASHBOARD_BIND_HOST = "127.0.0.1"` is a module constant. **The absence of an

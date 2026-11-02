@@ -587,6 +587,10 @@ def strategy_rows(worker_views: Sequence[Mapping[str, object]]) -> list[dict[str
                 "strategy": str(view.get("strategy", "")),
                 "mode": str(view.get("mode", "PAPER")),
                 "live_trading": bool(view.get("live_trading", False)),
+                # The dashboard live/paper toggle's state (ADR-0021).
+                "requested_mode": view.get("requested_mode"),
+                "toggle_status": str(view.get("toggle_status", "")),
+                "toggle_reason": str(view.get("toggle_reason", "")),
                 "snapshot_valid": bool(view.get("snapshot_valid", True)),
                 "trades": _int_or_zero(view.get("completed_trades")),
                 "realized": round(realized, 2),

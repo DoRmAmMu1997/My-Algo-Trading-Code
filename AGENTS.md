@@ -104,6 +104,19 @@ One process, cooperating threads:
   `Dependencies/dashboard_snapshot.py`, chart indicators in `dashboard_indicators.py`,
   transport in `dashboard_server.py`, the collector in the master beside
   `_worker_session_state_snapshot`; see `docs/adr/0016`.
+  **One opt-in exception to read-only:** `DASHBOARD_LIVE_TOGGLE_ENABLED` (default
+  false) adds a per-strategy LIVE/PAPER button and exactly one POST,
+  `/api/live-mode`. That POST is guarded by Origin, a per-process token and a
+  typed strategy name, and it only QUEUES a request (`Dependencies/live_mode_control.py`).
+  A `LiveModeController` thread runs `_live_promotion_refusal`, the runtime twin of
+  the startup gate. Paper -> live still needs `LIVE_TRADING_ENABLED` at startup,
+  a clean `_live_config_errors` and a broker login, plus the flat-account audit
+  (via the shared `_login_and_audit_live_account`) when nothing is live yet. The
+  controller NEVER writes `live_trading`; the worker applies the request itself
+  in `_apply_pending_live_mode_if_safe` (called from `_run_shutdown_cycle_if_requested`),
+  and only when flat, because the order path reads that flag more than once per
+  order. Session-only; `.env` is never written. Toggle alerts bypass
+  `publish_trade_event` so they never touch the trade books. See `docs/adr/0021`.
   The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a
   1m/5m/**D** toggle (the two minute timeframes ride in ONE `/api/chart` payload,
   so switching between them needs no fetch). It also switches INSTRUMENT between

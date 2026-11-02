@@ -41,9 +41,11 @@ from dashboard_server import (
     DashboardBuilderThread,
     DashboardEventSink,
     DashboardPublisher,
+    LiveToggleRoute,
     load_assets,
     start_dashboard,
 )
+from live_mode_control import LiveModeRequest, parse_toggle_request
 
 QUIET = logging.getLogger("test_dashboard_server")
 QUIET.addHandler(logging.NullHandler())
@@ -1116,3 +1118,187 @@ def test_a_level_priced_off_the_visible_scale_is_not_grabbable():
 
     assert _run_hit_test([line], {}, 0.0) is None
     assert _run_hit_test([line], {}, 300.0) is None
+
+
+# ---------------------------------------------------------------------------
+# The live/paper toggle route (ADR-0021)
+# ---------------------------------------------------------------------------
+# The one write path this server has. Every check below is asserted on a real
+# socket because a cross-site forgery is exactly the kind of thing a mock of
+# the request object would paper over.
+@pytest.fixture()
+def toggle_server():
+    """A dashboard with the live toggle wired to a recording submit callable."""
+
+    submitted = []
+    state = {"accept": True}
+
+    def submit(request):
+        submitted.append(request)
+        return state["accept"]
+
+    running = start_dashboard(
+        port=0,
+        refresh_seconds=30.0,
+        builder=lambda: {"generated_at": "10:00:00"},
+        renderer=_render,
+        log=QUIET,
+        live_toggle=LiveToggleRoute(
+            parse=parse_toggle_request,
+            submit=submit,
+            strategies=frozenset({"Renko", "CPR"}),
+        ),
+    )
+    assert running is not None
+    running.submitted = submitted
+    running.accept = state
+    try:
+        yield running
+    finally:
+        running.stop(timeout=2.0)
+
+
+def _token(server) -> str:
+    status, _, body = get(server.url + "api/live-mode")
+    assert status == 200
+    document = json.loads(body)
+    assert document["enabled"] is True
+    return document["token"]
+
+
+def _post(server, payload, *, headers=None, raw=None):
+    origin = server.url.rstrip("/")
+    merged = {"Content-Type": "application/json", "Origin": origin}
+    merged.update(headers or {})
+    body = raw if raw is not None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        server.url + "api/live-mode", data=body, method="POST", headers=merged
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:  # nosec B310
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+def _payload(server, **overrides):
+    payload = {"strategy": "Renko", "target": "LIVE", "confirm": "Renko", "token": _token(server)}
+    payload.update(overrides)
+    return payload
+
+
+def test_a_valid_toggle_is_accepted_and_handed_to_submit(toggle_server):
+    status, body = _post(toggle_server, _payload(toggle_server))
+    assert status == 202, body
+    assert json.loads(body) == {"accepted": True}
+    assert toggle_server.submitted == [LiveModeRequest("Renko", "LIVE")]
+
+
+def test_a_full_controller_queue_answers_503(toggle_server):
+    toggle_server.accept["accept"] = False
+    status, _ = _post(toggle_server, _payload(toggle_server))
+    assert status == 503
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"token": "forged"},
+        {"confirm": "renko"},
+        {"strategy": "Nope", "confirm": "Nope"},
+        {"target": "MIXED"},
+    ],
+)
+def test_a_bad_body_is_400_and_never_submitted(toggle_server, overrides):
+    status, _ = _post(toggle_server, _payload(toggle_server, **overrides))
+    assert status == 400
+    assert toggle_server.submitted == []
+
+
+def test_a_cross_site_origin_is_refused(toggle_server):
+    """A page on another website can make the browser POST here; it must fail."""
+    status, _ = _post(
+        toggle_server, _payload(toggle_server), headers={"Origin": "https://evil.example"}
+    )
+    assert status == 403
+    assert toggle_server.submitted == []
+
+
+def test_a_missing_origin_is_refused(toggle_server):
+    payload = _payload(toggle_server)
+    request = urllib.request.Request(
+        toggle_server.url + "api/live-mode",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(request, timeout=5)  # nosec B310
+        raise AssertionError("expected a refusal")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+    assert toggle_server.submitted == []
+
+
+def test_a_cross_site_fetch_metadata_header_is_refused(toggle_server):
+    status, _ = _post(
+        toggle_server, _payload(toggle_server), headers={"Sec-Fetch-Site": "cross-site"}
+    )
+    assert status == 403
+
+
+def test_a_foreign_host_is_refused_on_post_too(toggle_server):
+    status, _ = _post(toggle_server, _payload(toggle_server), headers={"Host": "evil.example"})
+    assert status == 403
+
+
+def test_a_form_encoded_post_is_refused(toggle_server):
+    """A plain HTML form cannot send JSON, so it never reaches the parser."""
+    status, _ = _post(
+        toggle_server,
+        None,
+        raw=b"strategy=Renko&target=LIVE",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert status == 415
+    assert toggle_server.submitted == []
+
+
+def test_an_oversized_body_is_refused_unread(toggle_server):
+    status, _ = _post(toggle_server, None, raw=b"{" + b" " * 4096 + b"}")
+    assert status == 413
+
+
+def test_post_to_any_other_path_is_still_refused(toggle_server):
+    status, _, _ = get(toggle_server.url + "api/state", method="POST")
+    assert status in (404, 405)
+
+
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE", "OPTIONS"])
+def test_the_other_verbs_stay_refused_with_the_toggle_on(toggle_server, method):
+    status, _, _ = get(toggle_server.url + "api/live-mode", method=method)
+    assert status == 405
+
+
+def test_with_the_toggle_off_the_route_reports_disabled_and_post_is_405(server):
+    status, _, body = get(server.url + "api/live-mode")
+    assert status == 200
+    assert json.loads(body) == {"enabled": False}
+    status, headers, _ = get(server.url + "api/live-mode", method="POST")
+    assert status == 405
+    assert headers["Allow"] == "GET"
+
+
+def test_each_server_mints_its_own_token(toggle_server):
+    first = _token(toggle_server)
+    assert len(first) >= 32
+    assert first == _token(toggle_server)  # stable for the process
+
+
+def test_the_only_page_post_is_the_toggle_and_it_lives_in_its_own_file():
+    """dashboard.js stays POST-free (see the drawings test); the toggle is isolated."""
+    source = (ASSETS_DIR / "dashboard_live_toggle.js").read_text(encoding="utf-8")
+    assert source.count('method: "POST"') == 1
+    assert '"/api/live-mode"' in source
+    for verb in ("PUT", "PATCH", "DELETE"):
+        assert f'"{verb}"' not in source

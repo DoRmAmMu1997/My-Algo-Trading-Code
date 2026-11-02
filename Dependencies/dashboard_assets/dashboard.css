@@ -346,6 +346,15 @@ tfoot td { font-weight: 600; border-top: 1px solid var(--line); }
 .flag.warn { background: #4a3a12; color: #ffd98a; }
 .flag.bad { background: #4a1d1d; color: #ff9c9c; }
 
+/* The live/paper toggle (ADR-0021). Going LIVE is the risky direction, so it
+ * carries the same red as the LIVE badge. */
+.live-toggle {
+  margin-left: 6px; padding: 0 6px; font-size: 10px; font-weight: 600;
+  border: 1px solid var(--muted); border-radius: 3px;
+  background: var(--panel-2); color: var(--muted); cursor: pointer;
+}
+.live-toggle.to-live { border-color: var(--neg); color: #ffb4b4; }
+
 .leg-row td { color: var(--muted); }
 .leg-row td:first-child { padding-left: 22px; }
 

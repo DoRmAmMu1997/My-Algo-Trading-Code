@@ -306,6 +306,29 @@
   }
 
   /* -------------------------------------------------------- strategy rollup */
+  function attr(value) {
+    return String(value)
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+
+  /* The live/paper toggle (ADR-0021). The button only carries data attributes;
+   * dashboard_live_toggle.js owns the click, the typed confirmation and the
+   * one POST, so this file stays free of any write. It sets
+   * body[data-live-toggle="on"] only when the runner switched the toggle on. */
+  function toggleCell(row) {
+    let note = "";
+    if (row.toggle_status === "PENDING") {
+      note = ` <span class="flag warn" title="Applies once the strategy is flat">→ ${text(row.requested_mode)} pending</span>`;
+    } else if (row.toggle_status === "REFUSED") {
+      note = ` <span class="flag bad" title="${attr(row.toggle_reason)}">${text(row.requested_mode)} refused</span>`;
+    }
+    if (document.body.dataset.liveToggle !== "on") return note;
+    const target = row.live_trading ? "PAPER" : "LIVE";
+    return `${note} <button type="button" class="live-toggle${target === "LIVE" ? " to-live" : ""}"
+      data-strategy="${attr(row.strategy)}" data-target="${target}"
+      title="Switch to ${target} from the next entry">→ ${target}</button>`;
+  }
+
   function renderStrategies(doc) {
     const rows = doc.strategies || [];
     nodes.strategyEmpty.hidden = rows.length > 0;
@@ -314,7 +337,7 @@
         (row) => `<tr>
           <td>${text(row.strategy)}${row.snapshot_valid === false
             ? ' <span class="flag bad">READ FAILED</span>' : ""}</td>
-          <td><span class="badge ${row.live_trading ? "live" : "subtle"}">${text(row.mode)}</span></td>
+          <td><span class="badge ${row.live_trading ? "live" : "subtle"}">${text(row.mode)}</span>${toggleCell(row)}</td>
           <td class="num">${row.trades}</td>
           <td class="num">${money(row.realized)}</td>
           <td class="num">${money(row.open)}</td>

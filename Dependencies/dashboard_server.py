@@ -1,14 +1,17 @@
-"""Loopback transport for the read-only monitoring dashboard.
+"""Loopback transport for the monitoring dashboard.
 
 This module owns everything between "the runner knows its state" and "a
 browser tab on this machine shows it": a bounded in-memory mirror of the trade
 events, one background thread that rebuilds the page's data on a fixed
 cadence, and a tiny stdlib HTTP server that hands the result out.
 
-**It is read-only by construction.** `do_GET` is the only request method
-implemented; every other verb answers 405. No route reaches a broker, a
-worker, or any mutable runner state. There is no code path from this module to
-placing, cancelling or modifying an order.
+**It is read-only by construction, with ONE opt-in exception (ADR-0021).**
+`do_GET` is the only request method implemented unless the runner passes a
+`LiveToggleRoute`; every other verb answers 405. With the route passed, exactly
+one POST is served -- `/api/live-mode`, the per-strategy live/paper toggle --
+and even that only VALIDATES a request and hands it to a callable that queues
+it. No route reaches a broker or a worker from an HTTP thread, and there is no
+code path from this module to placing, cancelling or modifying an order.
 
 **It binds 127.0.0.1 and nothing else.** `DASHBOARD_BIND_HOST` is a module
 constant rather than a setting on purpose: there is no value anybody can put in
@@ -35,10 +38,12 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import socket
 import threading
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -83,6 +88,12 @@ ASSET_ROUTES: Mapping[str, tuple[str, str]] = {
         "dashboard_indicators.js",
         "text/javascript; charset=utf-8",
     ),
+    # The live/paper toggle's click handler (ADR-0021). Always served; it draws
+    # nothing unless GET /api/live-mode says the runner switched the toggle on.
+    "/dashboard_live_toggle.js": (
+        "dashboard_live_toggle.js",
+        "text/javascript; charset=utf-8",
+    ),
     "/vendor/lightweight-charts.standalone.production.js": (
         "vendor/lightweight-charts.standalone.production.js",
         "text/javascript; charset=utf-8",
@@ -109,6 +120,33 @@ SECURITY_HEADERS: Mapping[str, str] = {
 }
 
 _JSON_CONTENT_TYPE = "application/json; charset=utf-8"
+
+#: The one write path's URL (ADR-0021). GET on it tells the page whether the
+#: toggle is on and, if so, hands out the per-process token.
+LIVE_TOGGLE_PATH = "/api/live-mode"
+
+#: Refused before the body is read. `live_mode_control` re-checks its own cap.
+_MAX_TOGGLE_BODY_BYTES = 1024
+
+
+@dataclass(frozen=True)
+class LiveToggleRoute:
+    """What the runner hands the server to switch on the live/paper toggle.
+
+    Injected rather than imported, so this module keeps importing nothing from
+    its siblings:
+
+    * ``parse`` is ``live_mode_control.parse_toggle_request``: body, strategies
+      and token in; a request object, or a refusal string, out.
+    * ``submit`` must only QUEUE the parsed request and return at once -- True
+      if queued, False if the queue was full. It runs on an HTTP thread, so it
+      must never log in to a broker or touch a worker.
+    * ``strategies`` is the frozen set of names a request may name.
+    """
+
+    parse: Callable[..., object]
+    submit: Callable[[Any], bool]
+    strategies: frozenset[str]
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +443,9 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
         self.publisher = publisher
         self.dashboard_log = log
         self.allowed_hosts = allowed_hosts
+        # The live toggle (ADR-0021). None = off, and POST stays 405.
+        self.live_toggle: LiveToggleRoute | None = None
+        self.live_toggle_token = ""
         self.assets: dict[str, tuple[bytes, str]] = {}
         super().__init__(address, handler)
 
@@ -532,6 +573,23 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._serve_history()
             return
 
+        if path == LIVE_TOGGLE_PATH:
+            # Readable only by a page on this exact origin: there is no CORS
+            # header, so a page on another website can make the browser ask but
+            # can never read the answer -- which is what makes the token worth
+            # having.
+            route = self.server.live_toggle  # type: ignore[attr-defined]
+            document: dict[str, Any] = {"enabled": route is not None}
+            if route is not None:
+                document["token"] = self.server.live_toggle_token  # type: ignore[attr-defined]
+            self._send(
+                HTTPStatus.OK,
+                json.dumps(document).encode("utf-8"),
+                _JSON_CONTENT_TYPE,
+                Cache_Control="no-store",
+            )
+            return
+
         asset = self.server.assets.get(path)  # type: ignore[attr-defined]
         if asset is None:
             self._plain(HTTPStatus.NOT_FOUND, "Not found.\n")
@@ -611,9 +669,92 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         self._send(HTTPStatus.OK, payload, _JSON_CONTENT_TYPE, Cache_Control="no-store")
 
+    # -- the one write path (ADR-0021) -----------------------------------
+    def do_POST(self) -> None:
+        """Validate a live/paper toggle and queue it. Nothing else, ever.
+
+        With no `LiveToggleRoute` this is the same 405 every other verb gets.
+        With one, the checks run cheapest-first and each refusal is a fixed
+        one-line body:
+
+        * Host must be ours (DNS rebinding), and Origin must be exactly this
+          page's origin -- a browser always sends Origin on a POST, and a page
+          on another website cannot fake it. A `Sec-Fetch-Site` header, when
+          present, must say `same-origin`.
+        * Content-Type must be JSON. A plain HTML form cannot send that, and a
+          script on another site cannot send it without a CORS preflight,
+          which answers 405 here.
+        * The body is capped before it is read, then parsed by
+          the injected `route.parse` (`parse_toggle_request`): token, typed
+          confirmation, known strategy, LIVE or PAPER.
+
+        Only then is the request handed to `submit`, which merely queues it.
+        """
+
+        route = self.server.live_toggle  # type: ignore[attr-defined]
+        if route is None:
+            self._method_not_allowed()
+            return
+        if not self._host_is_allowed():
+            self._plain(HTTPStatus.FORBIDDEN, "This dashboard serves localhost only.\n")
+            return
+        if self.path.split("?", 1)[0] != LIVE_TOGGLE_PATH:
+            self._plain(HTTPStatus.NOT_FOUND, "Not found.\n")
+            return
+        if not self._origin_is_ours():
+            self._plain(HTTPStatus.FORBIDDEN, "Cross-origin requests are refused.\n")
+            return
+        content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._plain(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Send application/json.\n")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or "-1")
+        except ValueError:
+            length = -1
+        if length < 0:
+            self._plain(HTTPStatus.LENGTH_REQUIRED, "Content-Length is required.\n")
+            return
+        if length > _MAX_TOGGLE_BODY_BYTES:
+            self.close_connection = True  # the unread body must not be parsed as a request
+            self._plain(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body is too large.\n")
+            return
+
+        parsed = route.parse(
+            self.rfile.read(length),
+            strategies=route.strategies,
+            token=self.server.live_toggle_token,  # type: ignore[attr-defined]
+        )
+        if isinstance(parsed, str):
+            self._plain(HTTPStatus.BAD_REQUEST, parsed + "\n")
+            return
+        try:
+            accepted = route.submit(parsed) is True
+        except Exception:  # noqa: BLE001 - a toggle failure must never reach the client as a traceback
+            accepted = False
+        if not accepted:
+            self._plain(HTTPStatus.SERVICE_UNAVAILABLE, "The toggle is busy; try again.\n")
+            return
+        self._send(
+            HTTPStatus.ACCEPTED,
+            json.dumps({"accepted": True}).encode("utf-8"),
+            _JSON_CONTENT_TYPE,
+            Cache_Control="no-store",
+        )
+
+    def _origin_is_ours(self) -> bool:
+        """True only for a request sent by this dashboard's own page."""
+
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        allowed = {f"http://{host}" for host in self.server.allowed_hosts}  # type: ignore[attr-defined]
+        if origin not in allowed:
+            return False
+        fetch_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        return fetch_site in ("", "same-origin")
+
     # -- everything else -------------------------------------------------
     def _method_not_allowed(self) -> None:
-        """Structural read-only guarantee: nothing but GET is implemented."""
+        """Structural guarantee: nothing but GET (and the opt-in toggle POST)."""
 
         self._plain(
             HTTPStatus.METHOD_NOT_ALLOWED,
@@ -621,7 +762,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             Allow="GET",
         )
 
-    do_POST = _method_not_allowed
     do_PUT = _method_not_allowed
     do_PATCH = _method_not_allowed
     do_DELETE = _method_not_allowed
@@ -715,6 +855,7 @@ def start_dashboard(
     chart_builder: Callable[[str], Mapping[str, Any]] | None = None,
     history_builder: Callable[[], Mapping[str, bytes]] | None = None,
     assets_dir: Path = ASSETS_DIR,
+    live_toggle: LiveToggleRoute | None = None,
 ) -> DashboardServer | None:
     """Bind, wire and start the dashboard, or return None and log why.
 
@@ -752,6 +893,11 @@ def start_dashboard(
         }
     )
     httpd.assets = load_assets(assets_dir)
+    if live_toggle is not None:
+        # Minted per process, so a token copied from an old tab dies with the
+        # runner that issued it.
+        httpd.live_toggle = live_toggle
+        httpd.live_toggle_token = secrets.token_urlsafe(32)
 
     builder_thread = DashboardBuilderThread(
         builder=builder,
