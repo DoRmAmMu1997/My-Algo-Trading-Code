@@ -14545,6 +14545,27 @@ class TestDashboardLiveModeToggle(unittest.TestCase):
         self.worker._run_shutdown_cycle_if_requested()
         self.assertTrue(self.worker.live_trading)
 
+    def test_asking_for_the_current_mode_withdraws_a_pending_promotion(self):
+        """The dashboard's Cancel button: withdrawn before the position closes."""
+        self.worker.pos.active = True
+        self._handle("LIVE", client=self._Client())
+        self._handle("PAPER")
+        self.worker._run_shutdown_cycle_if_requested()  # resolves while still in position
+        self.assertIsNone(self.worker.live_mode_slot.pending())
+
+        self.worker.pos.active = False
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertFalse(self.worker.live_trading)
+
+    def test_asking_for_the_current_mode_withdraws_a_pending_demotion(self):
+        self.worker.live_trading = True
+        self.worker.pos.active = True
+        self._handle("PAPER")
+        self._handle("LIVE", client=None, master_live=False)  # no gate: already live
+        self.worker.pos.active = False
+        self.worker._run_shutdown_cycle_if_requested()
+        self.assertTrue(self.worker.live_trading)
+
     def test_demotion_also_waits_for_flat(self):
         """Live -> paper mid-trade would switch off live-only protections."""
         self.worker.live_trading = True

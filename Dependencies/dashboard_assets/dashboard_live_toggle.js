@@ -45,7 +45,16 @@
     }
   }
 
-  function confirmText(strategy, target) {
+  function confirmText(strategy, target, cancel) {
+    if (cancel) {
+      return [
+        `Withdraw the pending switch for ${strategy}?`,
+        "",
+        `It stays ${target}.`,
+        "",
+        "Type the strategy name exactly to confirm:",
+      ].join("\n");
+    }
     const lines = [`Switch ${strategy} to ${target}?`, ""];
     if (target === "LIVE") {
       lines.push("LIVE places REAL broker orders with real money.");
@@ -58,9 +67,9 @@
     return lines.join("\n");
   }
 
-  function ask(strategy, target) {
+  function ask(strategy, target, cancel) {
     pending = { strategy, target };
-    message.textContent = confirmText(strategy, target);
+    message.textContent = confirmText(strategy, target, cancel);
     input.hidden = false;
     input.value = "";
     cancelButton.hidden = false;
@@ -126,7 +135,7 @@
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button.live-toggle");
     if (!button || !token || sending) return;
-    ask(button.dataset.strategy, button.dataset.target);
+    ask(button.dataset.strategy, button.dataset.target, button.dataset.cancel === "1");
   });
 
   init();

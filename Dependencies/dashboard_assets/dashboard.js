@@ -339,6 +339,14 @@
       note = ` <span class="flag bad" title="${attr(row.toggle_reason)}">${text(row.requested_mode)} refused</span>`;
     }
     if (document.body.dataset.liveToggle !== "on") return note;
+    const current = row.live_trading ? "LIVE" : "PAPER";
+    if (row.toggle_status === "PENDING") {
+      /* Withdraw the pending switch by asking for the mode the strategy is
+       * already in; the worker resolves that without changing anything. */
+      return `${note} <button type="button" class="live-toggle"
+        data-strategy="${attr(row.strategy)}" data-target="${current}" data-cancel="1"
+        title="Withdraw the pending switch; stay ${current}">Cancel</button>`;
+    }
     const target = row.live_trading ? "PAPER" : "LIVE";
     return `${note} <button type="button" class="live-toggle${target === "LIVE" ? " to-live" : ""}"
       data-strategy="${attr(row.strategy)}" data-target="${target}"
