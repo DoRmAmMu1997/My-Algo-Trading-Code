@@ -602,7 +602,30 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   not a long one — the flat index is the honest read (see GAP-SIZE ASYMMETRY: the
   smaller-gap index is the tell, and a ZERO-gap major index is that rule at its
   strongest). HOLD, or trade the flat index's read instead; do NOT fire this branch on
-  NIFTY's gap alone.
+  NIFTY's gap alone. [Overruled by v6d, next, when today's pre-open note names the
+  side NIFTY gapped toward.]
+- THE PRE-OPEN NOTE OUTRANKS A SPLIT GAP (v6d, operator's call 2 Nov). When today's
+  pre-open note gives a branch for today's open that names the side NIFTY gapped
+  toward -- a BUY branch on a GAP_UP verdict, a SELL branch on a GAP_DOWN verdict --
+  that side stands even though BankNIFTY opened FLAT. The SHARED-GAP REQUIREMENT
+  above, and GAP-SIZE ASYMMETRY, do NOT void that branch, and the flat BankNIFTY is
+  NOT a tell against it; the PRE-OPEN block's "your read wins" does not apply to the
+  split. WHY: IH writes the note after analysing all three charts the evening before,
+  so the split was in front of him when he chose the side. On 2 Nov he bought exactly
+  this open (NIFTY +0.92%, BankNIFTY +0.41%, FLAT) at 09:21 and booked about 2 lakh,
+  while the book held on SHARED-GAP.
+  WHAT IT DOES NOT RELAX: every other condition of the branch (the first ~15 minutes,
+  the gap holding above/at a round number, no MAJOR rejection, and the rest), every
+  RISK rule, the sizing gate and the post-exit cooldown. It creates no trade on the
+  other side. When the note gives no branch for today's open, or its branch names
+  the other side, SHARED-GAP stands as written.
+  MEASURED AGAINST IT, adopted anyway (5-year CSVs, the book's shape: 16-point
+  closing stop, 45-point target, out after 15 minutes). On 24 NIFTY-only gap-ups,
+  going with the gap scored +0.615R at 09:16 but -0.159 / -0.137 / -0.152 / -0.594 at
+  09:20 / 09:22 / 09:25 / 09:30. After a prior close in the middle third of its range
+  (9 sessions), 09:22 scored -0.643R. NIFTY-only gap-downs (17) went the other way:
+  +0.284R at 09:22 and +0.485R at 09:25. Every trade that cites (v6d) is reviewed, and
+  the rule is reverted if live results are negative.
 - GAP-DOWN CONTINUATION SHORT branch: ONLY as ENTER_SHORT on a narrow/moderate
   gap-down after prior breakdown + retracement + continuation likely let sellers
   book. The open/early recovery must fail below the closing point / round number
@@ -3272,7 +3295,8 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   running against a capped majority is suspect, and the capped indices are the
   honest read (the divergence-fails rule, two holders against one breaker). Do not
   rush an entry merely because the leader moved first; wait for at least one other
-  index to reclaim its closing point.
+  index to reclaim its closing point. [On the open, it yields to the pre-open note:
+  v6d.]
 - LAGGARDS NEVER JOINED → BOOK WHAT YOU HAVE (the HOLDING-side counterpart of
   SOLO-LEADER VETO, which only governs ENTRY). While already in a position, if the
   leader (usually BankNIFTY) is delivering your direction but the other TWO indices

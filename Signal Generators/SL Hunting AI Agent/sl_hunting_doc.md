@@ -12954,8 +12954,10 @@ Each of these 8 mutations fails it, and the unmutated note passes:
   74 decisions for 2 Nov, every one a HOLD, and no trade in the journal.
 - **Prices:** Yahoo Finance's public one-minute chart API, as on 30 Oct.
 
-**No knowledge change.** IH's entry is the case SHARED-GAP REQUIREMENT vetoes,
-and the measurement below backs the veto, not his trade.
+**Knowledge change: v6d, on the operator's call.** IH's entry is the case
+SHARED-GAP REQUIREMENT vetoes, and the measurement below backs the veto, not his
+trade. The operator ruled that the pre-open note overrules it anyway, because IH
+analyses all three charts before he records the forecast (v6d, below).
 
 ### The session
 
@@ -13014,9 +13016,9 @@ What the numbers say:
 - **From 09:20 on, the with-gap long loses.** At IH's own minute, the side
   SHARED-GAP calls the honest read made money in both halves. Today, at +60
   points for IH, was the exception.
-- **The rule stands as written, and no measurement is added to it.** At n=24
-  and n=9, with signs flipping between minutes, a figure in the prompt would
-  claim more than the sample holds.
+- **On the evidence alone, the rule would stand.** At n=24 and n=9, with signs
+  flipping between minutes, the sample is small either way. The operator's call
+  below decides it.
 - **Shared gap-ups**, for contrast (142 sessions): +0.16R with the gap at
   09:16, then between -0.18R and -0.04R from 09:22.
 
@@ -13041,3 +13043,58 @@ What the numbers say:
 - **The agent was usage-limited again, 10:21-10:29.** It was flat and an entry
   was unlikely, so nothing was lost today. It is the second session in three,
   so the mechanics question raised on 30 Oct is still open.
+
+### v6d - the pre-open note outranks a split gap (operator's call, 2 Nov)
+
+The operator's ruling, after reading the measurement above: "if the premarket
+note says buy, the premarket note should overrule, since IH does his market
+analysis beforehand... if that rule and premarket note clash, premarket note
+overrules."
+
+**What changed in the prompt.**
+
+- **A new rule in OPENING DRIVE, straight after SHARED-GAP REQUIREMENT:** THE
+  PRE-OPEN NOTE OUTRANKS A SPLIT GAP (v6d).
+  - **When it applies:** today's note gives a branch for today's open that names
+    the side NIFTY gapped toward. That means a BUY branch on a GAP_UP verdict, or
+    a SELL branch on a GAP_DOWN verdict.
+  - **What it overrides:** SHARED-GAP REQUIREMENT and GAP-SIZE ASYMMETRY no longer
+    void that branch, and a flat BankNIFTY is not a tell against it.
+- **Pointers on the two rules it overrides:** SHARED-GAP REQUIREMENT ends "[Overruled
+  by v6d, next, ...]", and GAP-SIZE ASYMMETRY ends "[On the open, it yields to the
+  pre-open note: v6d.]".
+- **A second exception in the PRE-OPEN block,** straight after v5z's, so "your
+  read wins" never disagrees with v6d inside the same prompt.
+
+**Its scope.**
+
+- **GAP-SIZE ASYMMETRY is included.** "That rule" was SHARED-GAP, but on 2 Nov the
+  agent cited both rules on nearly every HOLD. Waiving one alone would have left
+  the same veto standing under the other name.
+- **It is symmetric.** A SELL note on a NIFTY-only gap-down is covered too. On the
+  measurement, that direction was the better one: +0.284R at 09:22.
+- **It relaxes nothing else.** Every other condition of the OPENING DRIVE branch
+  still applies: the first ~15 minutes, the gap holding at a round number, and no
+  MAJOR rejection. So do every RISK rule, the sizing gate and the post-exit
+  cooldown. It creates no trade on the other side.
+- **Where it does not apply:** when the note gives no branch for today's open, or
+  names the other side, SHARED-GAP stands as written.
+- **It is measured against and reviewable.** The rule carries the numbers above
+  and, like v5x and v5z, says every trade that cites it is reviewed and the rule
+  is reverted if live results are negative.
+
+**Tests.**
+
+- `test_v6d_the_pre_open_note_outranks_a_split_gap` (schema) and
+  `test_block_points_a_split_gap_to_v6d` (premarket).
+- 11 mutants, all caught:
+  * either pointer dropped;
+  * the gap-down direction dropped;
+  * GAP-SIZE ASYMMETRY left un-overridden;
+  * the RISK rules relaxed;
+  * a trade on the other side allowed;
+  * the measurement's sign flipped;
+  * the revert clause dropped;
+  * "your read wins" left applying;
+  * the PRE-OPEN line renamed;
+  * the PRE-OPEN line's "yields to it" removed.

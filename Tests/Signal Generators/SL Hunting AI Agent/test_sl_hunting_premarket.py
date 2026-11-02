@@ -108,6 +108,19 @@ def test_block_points_a_round_number_cross_against_it_to_v5z():
         "make your read win -- the note's side stands until v5z's own line breaks.")
 
 
+def test_block_points_a_split_gap_to_v6d():
+    """v6d (operator, 2 Nov): a split gap does not void the note's branch. Like
+    v5z, it must sit beside "your read wins", straight after v5z's two lines."""
+    block = format_premarket_note(PremarketNote.model_validate(_note()), TODAY)
+    lines = block.splitlines()
+    v5z = next(i for i, line in enumerate(lines) if line.startswith("One exception (v5z):"))
+    v6d = next(i for i, line in enumerate(lines) if line.startswith("A second (v6d):"))
+    assert v6d == v5z + 2
+    assert " ".join(lines[v6d:v6d + 2]) == (
+        "A second (v6d): a split gap -- NIFTY gapped toward its side while BankNIFTY "
+        "opened FLAT -- does not void its branch; SHARED-GAP REQUIREMENT yields to it.")
+
+
 # --------------------------------------------------------------------------
 # Untrusted third-party text is bounded before it reaches the prompt
 # --------------------------------------------------------------------------
