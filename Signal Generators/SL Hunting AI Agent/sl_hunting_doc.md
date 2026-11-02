@@ -12941,3 +12941,103 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * NIFTY's first support recorded as a garbled 23,280;
 * the buy branch's retracement reason dropped;
 * an expiry line added.
+
+## 2 Nov - IH bought the NIFTY-only gap-up; the agent held on SHARED-GAP (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `mCLRHNs8mso`, uploaded 2026-11-02 10:44 IST, 11:03. He
+  traded on the 2 Nov note (`7vmzOJG4Y2c`: FLAT TO GAP UP -> BUY). Clock times
+  come from the taskbar clock in the frame, and his words are my translation of
+  the Hindi auto-transcript (87 segments, read in full).
+- **This book:** `Backtest Outputs/sl_hunting_decisions.jsonl` on this machine,
+  74 decisions for 2 Nov, every one a HOLD, and no trade in the journal.
+- **Prices:** Yahoo Finance's public one-minute chart API, as on 30 Oct.
+
+**No knowledge change.** IH's entry is the case SHARED-GAP REQUIREMENT vetoes,
+and the measurement below backs the veto, not his trade.
+
+### The session
+
+30 Oct's 3:15 levels were NIFTY 23,010.85 and BankNIFTY 54,641.60.
+
+2 Nov opened split:
+- NIFTY at 23,222.30 (+0.92%, GAP_UP);
+- Sensex +1.05%;
+- BankNIFTY at 54,866.15 (+0.41%; the agent's levels tool read +0.36%), FLAT.
+
+- **09:15-09:16:** NIFTY spiked to 23,292.45. BankNIFTY touched 55,045.80 at
+  09:16, above the note's 55,000, and that was its high of the morning.
+- **09:17-09:26:** a pullback to 23,246.75. BankNIFTY sank to 54,850.60.
+- **09:27-09:51:** NIFTY ground up through the note's 23,300 at 09:40 to
+  23,330.25 at 09:51. BankNIFTY stayed under 55,000, mostly 54,870-54,990.
+- **09:52-10:30:** NIFTY ranged 23,287-23,338. BankNIFTY drifted to 54,776.
+
+| | IH | the agent |
+|---|---|---|
+| read | the gap is up in all three ("BankNIFTY too"). 30 Oct's buyers were shaken out by its retracement, so no buyers' stops sit below to hunt: the round-number resistance "will not work", a pullback stays small, and a breakout follows | NIFTY GAP_UP beside a FLAT BankNIFTY fails SHARED-GAP REQUIREMENT, so the note's gap-up BUY is void, and GAP-SIZE ASYMMETRY makes BankNIFTY the honest read |
+| entry | **09:21-09:22**, straight in, before the pullback: BankNIFTY 55,000 CE and 55,100 CE x1,170, SENSEX 75,200 CE x900, NIFTY 23,250 CE x1,430. "Waiting for the retracement may be a good setup, but you may miss the trade" | none; 74 HOLDs. 10:21-10:29 returned "Agent usage-limited; holding." before the 10:30 entry cutoff |
+| path | a small loss into the 09:26 pullback, then profit from about 09:29 | - |
+| exit | about **09:51**, near NIFTY's 23,330 high: "when two indices run far, one lags or goes sideways". BankNIFTY never broke out, so he booked the normal target | - |
+| result | **+2,03,065.90** (55,000 CE +18,802.15; 55,100 CE +7,452.90; SENSEX +1,29,735.00; NIFTY +47,075.85) | 0.00 |
+
+### Measured: the NIFTY-only gap-up (not encoded)
+
+The case is NIFTY gapping 0.5% or more against its 3:15 level while
+BankNIFTY's gap stays under 0.5% (FLAT), and shared gaps (both 0.5%+ the same
+way) for contrast.
+
+- **Data:** the 5-year CSVs, to 29 Oct.
+- **Trade:** NIFTY, entered at the open of the given minute, in the book's
+  shape: a 16-point stop on a one-minute close, the 1.5x intrabar backstop, a
+  45-point target, and out after 15 minutes.
+- **Units:** R, with 2021-23 / 2024-26 in brackets.
+
+| NIFTY-only gap-up (n=24) | 09:16 | 09:20 | 09:22 | 09:25 | 09:30 |
+|---|---|---|---|---|---|
+| long, with the gap | **+0.615** (+0.22 / +0.95) | -0.159 | -0.137 | -0.152 | -0.594 |
+| short, against it | -0.179 | +0.015 | **+0.414** (+0.57 / +0.28) | +0.255 | -0.008 |
+
+IH's exact premise adds that the prior session's buyers were shaken out. Taking
+that as a prior 3:15 level in the MIDDLE third of its range, as on 30 Oct (0.497),
+leaves 9 sessions:
+
+- **Long at 09:22:** -0.643 (-0.38 / -0.85).
+- **Short at 09:22:** +0.863 (+1.00 / +0.75).
+- **The same at 30 minutes:** -0.674 and +0.883, both halves agreeing.
+
+What the numbers say:
+
+- **Only the first minute pays with the gap.** The +0.62R at 09:16 is v6c-like
+  territory: it needs a first-candle exception the agent does not have, and the
+  sample is 24.
+- **From 09:20 on, the with-gap long loses.** At IH's own minute, the side
+  SHARED-GAP calls the honest read made money in both halves. Today, at +60
+  points for IH, was the exception.
+- **The rule stands as written, and no measurement is added to it.** At n=24
+  and n=9, with signs flipping between minutes, a figure in the prompt would
+  claim more than the sample holds.
+- **Shared gap-ups**, for contrast (142 sessions): +0.16R with the gap at
+  09:16, then between -0.18R and -0.04R from 09:22.
+
+### Already in the corpus
+
+- **"Buyers came on the momentum; a rejection or retracement drove them out, so
+  there is no crowd to target":** the 29 Oct, 30 Oct and 2 Nov notes' read, and
+  v4n's profit-then-fade.
+- **"A retracement-first entry is a good setup, but you may miss the trade; it
+  depends how much risk you take":** ENTRY TIME IS A RISK DIAL (v4l).
+- **"A small retracement we will bear easily; a big one should not come":**
+  PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES (v4d).
+- **"A breakout comes in two or three straight candles, not slowly":** SETUP
+  STALENESS.
+- **Booking because BankNIFTY lagged while NIFTY and Sensex ran:** LAGGARDS NEVER
+  JOINED, in the same words as the 30 Oct booking.
+- **His aside on sizing to the loss you can bear:** the risk budget and the
+  size multiplier.
+
+### For the operator
+
+- **The agent was usage-limited again, 10:21-10:29.** It was flat and an entry
+  was unlikely, so nothing was lost today. It is the second session in three,
+  so the mechanics question raised on 30 Oct is still open.
