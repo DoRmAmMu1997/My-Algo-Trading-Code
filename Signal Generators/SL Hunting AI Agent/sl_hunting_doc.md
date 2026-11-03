@@ -13179,3 +13179,157 @@ Each of these 9 mutations fails it, and the unmutated note passes:
 * the expiry dropped from the context;
 * an expiry line added to the plan;
 * the sell branch's seated-buyers reason dropped.
+
+## 3 Nov - IH and the agent both sold the gap-up on the note, and both were wrong (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `a38ioF5qi2w`, uploaded 2026-11-03 11:08 IST, 8:05. He
+  traded on the 3 Nov note (`vILEtZ1G8Zo`: GAP UP -> SELL). Clock times come from
+  the taskbar clock in the frame, and his words are my translation of the Hindi
+  auto-transcript (64 segments, read in full).
+- **This book:** `Backtest Outputs/sl_hunting_decisions.jsonl` and
+  `sl_hunting_journal.jsonl` on this machine: 73 decisions and two trades.
+- **Prices:** Yahoo Finance's public one-minute chart API.
+
+**No knowledge change.** Both books took the note's side and lost to a trend
+day, and everything IH said is already in the corpus.
+
+### The session
+
+2 Nov's 3:15 levels were NIFTY 23,330.25 and BankNIFTY 54,868.70. 3 Nov, NIFTY's
+weekly expiry, opened with a SHARED gap-up:
+- NIFTY at 23,582.25 (+1.08%);
+- BankNIFTY at 55,437.65 (+1.04%);
+- Sensex +1.01%.
+
+v6d had nothing to decide.
+
+- **09:15:** the first candle spiked to 23,607.30 and flushed to 23,482.95, the
+  day's low.
+- **09:16-09:30:** NIFTY recovered to 23,632.00.
+- **09:30-10:12:** it chopped 23,605-23,640, under a series of double tops.
+- **10:13 on:** it broke out, to 23,664.85 by 10:33 and a high of 23,746.10 at
+  13:41. The 3:15 level was 23,729.80, at 0.94 of the day's range.
+- **BankNIFTY** crossed 55,500 at 10:00, held above it from 10:18, and reached
+  55,735.75 at 13:51.
+
+| | IH | the agent |
+|---|---|---|
+| read | the note's GAP UP -> SELL: after days of buying and another big gap-up, a continuing rise brings only buyers, so "nobody will sell", the move turns or goes sideways, and profit-booking should come | the note's SELL on a shared GAP_UP, taken on confirmed double tops |
+| entry | **09:22**, at once, NIFTY about 23,585: BankNIFTY 55,300 PE and 55,200 PE x1,170, SENSEX 76,300 PE x900, NIFTY 23,600 PE x1,430 | **09:41:10**, SHORT 23,610.20, stop 23,628, target 23,560. Again at **09:54:55**, SHORT 23,624.15, stop 23,642, target 23,582, at a fresh high after the first stop |
+| path | the loss grew as NIFTY ground up. He named a last point ("15 to [unclear] more of loss") and refused to average: "do not think, if it does not fall from here it will fall from there" | first short stopped at **09:47:16**, 23,629.10 (-18.90 pts). From **10:20:40** to 10:29 every decision was "Agent usage-limited; holding." |
+| exit | about **10:17**: "BankNIFTY has started trading above the round number... up to a limit you can be right or wrong; after it, you are only wrong" | second short stopped at **10:25:08**, 23,643.45 (-19.30 pts), by the mechanical stop while the agent was blind |
+| result | about **-2,74,652** (the open P&L on his positions screen just before he exits: -79,290.90 / -69,849.00 / -74,519.25 / -50,993.05) | **-6,942.50** (-3,045.00 and -3,897.50; -1.06R and -1.08R) |
+
+### What the rules did
+
+- **Both books followed the note, and the note was wrong.** IH sold the open and
+  the agent waited for a confirmed pattern. The agent's first stop was 18 points
+  away; IH's position took about 50 NIFTY points before he cut.
+- **The re-entry passed its gates.** The second short came 7.6 minutes after the
+  first stop, past the 5-minute cooldown. It was at a fresh session high
+  (23,639-23,640 against 23,628-23,632), which meets POST-EXIT RE-ENTRY GATE's
+  "a fresh swing high formed since". MOVE-EXHAUSTION's own measurement counts
+  re-entries after a LOSING exit as the profitable case: +33,714.25 over 43.
+  That rule is about re-entering after a win, so it does not bar this one.
+- **The outage did not change this trade.** The second short was stopped by its
+  own mechanical stop at 10:25. But it is the third session running with the
+  agent usage-limited around 10:20 (30 Oct, 2 Nov, 3 Nov).
+
+### Already in the corpus
+
+- **"Nobody will sell on a continuing rise; one-sided participation turns or
+  stalls":** BOTH-SIDES PARTICIPATION and THE MISSING RIP IS THE TELL (v3z).
+- **"The trap takes time, so we carry a little more loss, but not if too much time
+  passes or it breaks out":** THE LOSS LIMIT IS A PERMISSION TO WAIT (v4h), TIME
+  SPENT SHRINKS THE TARGET (v4g), and THE PERMISSION TO WAIT ENDS (v4j).
+- **"If it does not fall from here, it will fall from there; do not average":**
+  DO NOT THINK YOUR WAY THROUGH A LOSS (v4n), and the one-position RISK rules.
+- **Cutting once BankNIFTY traded above its round number:** THE ROUND NUMBER IS
+  WHERE THE THESIS DIES (v4g).
+- **"The rejection has to come before the breakout; after the breakout it goes
+  higher":** the same rule's invalidation side, and SETUP STALENESS.
+
+### For the operator
+
+- **The usage limit has now hit three sessions running**, each time around
+  10:20. It cost nothing today, because the mechanical stop closed the trade,
+  but the 30 Oct mechanics question still stands.
+
+## November 4 pre-open note
+
+[Prediction For 04 NOV 2026](https://www.youtube.com/watch?v=5AHShMhih8k), uploaded
+2026-11-03 21:10:15 IST, 100 s, 14 transcript segments, read in full in the
+watch page's transcript panel.
+
+**Read.** 3 Nov gave continuous positive momentum in all three indices.
+BankNIFTY also saw "a little rejection". Buyers are trying to come in, but at
+this pace they cannot build big quantity, so there is no crowd worth targeting:
+go with the market.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, with the market: identify buying-side setups |
+| SMALL GAP DOWN | BUY: "the risk will rise, but for now the same plan stands" |
+
+No branch sells, so none is invented. All three indices get the same wording.
+
+**Levels.** The labels in the frames at 0:31 (BankNIFTY), 1:00 (Sensex) and 1:30
+(NIFTY) were read at 3.2x:
+
+| Index | Drawn labels | Spoken | Recorded |
+|---|---|---|---|
+| NIFTY | R 23,860.05 / 23,937.55, S 23,627.60 / 23,567.20 | 23,860 / 23,940, 23,630 / (not spoken) | 23,860 / 23,940, 23,630 / 23,570 |
+| BankNIFTY | R 55,913.75 / 56,202.60, S 55,213.80 / 55,002.85 | 55,900 / 56,200, 55,200 / 55,000 | spoken |
+| Sensex | R 77,009.59 / 77,301.11, S 76,371.17 / 76,006.90 | (not spoken), 76,370 / 76,000 | 77,000 / 77,300, 76,370 / 76,000 |
+
+- **Every spoken value sits within 14 points of its drawn line,** so the spoken
+  value stands.
+- **NIFTY's unspoken second support** is the 23,567.20 line IH called 23,570 for
+  3 Nov, so it is recorded as 23,570.
+- **Sensex's unspoken resistances** are recorded as the round numbers they are
+  drawn at.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,860 / 23,940 | 23,630 / 23,570 |
+| BankNIFTY | 55,900 / 56,200 | 55,200 / 55,000 |
+| Sensex | 77,000 / 77,300 | 76,370 / 76,000 |
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 3 Nov's 3:15 level, 23,729.80, sat
+  at 0.938 of its range, but its high came at 13:41, after 13:30, and it faded
+  only 0.069%.
+- **v6d CAN apply.** The FLAT TO GAP UP branch is BUY, so on a NIFTY GAP_UP beside
+  a FLAT BankNIFTY the split no longer voids it.
+- **v5z can apply on a FLAT open.** NIFTY moved +1.71% from 3:15 level to 3:15
+  level, and the FLAT branch is BUY.
+  - **The trigger** would be NIFTY closing below 23,500, or BankNIFTY below
+    55,000, by 10:30.
+  - **The condition:** NIFTY must still hold 3 Nov's low, 23,482.95. For NIFTY
+    that leaves a 17-point window.
+- **v6a does not apply.** The NIFTY contract held expires on 10 Nov.
+- **v5x does not apply** (3 Nov was not a selling day).
+
+The note renders 1,774 characters on November 4 and nothing on any other date.
+`test_shipped_note_matches_november_4_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- both branches;
+- all twelve levels.
+
+Each of these 9 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into SELL;
+* the small-gap-down branch turned into SELL;
+* the date set to November 3;
+* NIFTY's 23,570 recorded as the drawn 23,567;
+* Sensex's 77,000 recorded as the drawn-and-rounded 77,010;
+* BankNIFTY's 55,900 recorded as the drawn-and-rounded 55,910;
+* the buy branch's quantity reason dropped;
+* an expiry line added.
