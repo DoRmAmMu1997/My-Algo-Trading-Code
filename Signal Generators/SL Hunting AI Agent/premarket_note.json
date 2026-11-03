@@ -1,28 +1,28 @@
 {
-  "for_date": "2026-11-02",
-  "source": "Intraday Hunter, 'Prediction For 02 NOV 2026' (7vmzOJG4Y2c, uploaded 2026-11-01)",
-  "context": "October 30 gave positive momentum in all three indices. Buyers came in, but the market has already driven them out with a retracement, so no seated crowd is left to hunt.",
+  "for_date": "2026-11-03",
+  "source": "Intraday Hunter, 'Prediction For 03 NOV 2026' (vILEtZ1G8Zo, uploaded 2026-11-02)",
+  "context": "November 2 saw selling, but the market recovered just as much, so buyers are seated in all three indices. Today is NIFTY's weekly expiry.",
   "plan": [
-    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the buyers were already shaken out by the retracement; identify buying-side setups.",
-    "SMALL GAP DOWN -> BUY: the risk rises, but the same plan stands for now."
+    "GAP UP -> SELL: target the seated buyers; identify selling-side setups.",
+    "FLAT TO GAP DOWN -> BUY, WITH THE MARKET: there is little space to work with; identify buying-side setups."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        23200,
-        23300
+        23500,
+        23570
       ],
       "support": [
-        23000,
-        22830
+        23200,
+        23120
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
         55000,
-        55400
+        55500
       ],
       "support": [
         54500,
@@ -32,12 +32,12 @@
     {
       "index": "SENSEX",
       "resistance": [
-        75000,
-        75400
+        75800,
+        76000
       ],
       "support": [
-        74200,
-        73660
+        75000,
+        74700
       ]
     }
   ]

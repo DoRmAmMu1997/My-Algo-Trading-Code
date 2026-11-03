@@ -13098,3 +13098,84 @@ overrules."
   * "your read wins" left applying;
   * the PRE-OPEN line renamed;
   * the PRE-OPEN line's "yields to it" removed.
+
+## November 3 pre-open note
+
+[Prediction For 03 NOV 2026](https://www.youtube.com/watch?v=vILEtZ1G8Zo), uploaded
+2026-11-02 21:10:12 IST, 102 s, 13 transcript segments, read in full in the
+watch page's transcript panel. 3 Nov is NIFTY's weekly expiry, which IH names
+at the start.
+
+**Read.** 2 Nov saw selling, but the market recovered just as much, so buyers
+are seated in all three indices. NIFTY and Sensex were already positive, and
+BankNIFTY held its support under resistance.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| GAP UP | SELL: target the seated buyers; identify selling-side setups |
+| FLAT TO GAP DOWN | BUY, with the market: "we will not have much space"; identify buying-side setups |
+
+All three indices get the same wording. The expiry is carried in the context,
+not as a plan line, because IH gives it no branch of its own.
+
+**Levels.** This recording shows TradingView's labels. The frames at 0:33
+(NIFTY), 1:02 (BankNIFTY) and 1:32 (Sensex) were read at 3.2x:
+
+| Index | Drawn labels (R2 / R1 / S1 / S2) | Spoken | Recorded |
+|---|---|---|---|
+| NIFTY | 23,567.20 / 23,500.15 / 23,200.50 / 23,122.35 | 23,570 / 23,500 / 23,200 / 23,120 | spoken |
+| BankNIFTY | 55,509.65 / 55,002.85 / 54,502.85 / 54,289.90 | 55,500 / 55,000 / 54,500 / 54,290 | spoken |
+| Sensex | 76,006.90 / 75,801.74 / 75,003.97 / 74,701.73 | (the auto-transcript dropped the numbers) | 76,000 / 75,800 / 75,000 / 74,700 |
+
+- **NIFTY and BankNIFTY:** every drawn line sits within 10 points of what IH
+  said, so the spoken value stands, on the operator's 1 Nov rule.
+- **Sensex has no speech to defer to.** Each of its lines is a round number drawn
+  a few points off, as every other line on these charts is. They are recorded as
+  those round numbers: 76,006.90 becomes 76,000, not 76,010.
+- **BankNIFTY's 54,500 / 54,290** are the same lines as the 30 Oct and 2 Nov
+  notes.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,500 / 23,570 | 23,200 / 23,120 |
+| BankNIFTY | 55,000 / 55,500 | 54,500 / 54,290 |
+| Sensex | 75,800 / 76,000 | 75,000 / 74,700 |
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 2 Nov's 3:15 level, 23,330.25, sat
+  at 0.804 of its range (23,207.05-23,360.20), and its high came at 10:54. But it
+  faded only 0.128% from that high, under the 0.15% v6c needs.
+- **v6d does not apply.** Neither branch names the side NIFTY would gap toward:
+  a gap up is SELL, a gap down is BUY. A split gap therefore changes nothing here.
+- **v5z can apply on a FLAT open.** NIFTY moved +1.39% from 3:15 level to 3:15
+  level, and the FLAT branch is BUY.
+  - **Its trigger** would be BankNIFTY closing below 54,500 by 10:30, while NIFTY
+    holds 2 Nov's low (23,207.05).
+  - **NIFTY cannot trigger it.** NIFTY's next 500 below, 23,000, lies under that
+    low, so it could not be crossed while the low holds.
+- **v6a applies.** The NIFTY contract held expires today, so the mechanical
+  target books it and MODIFY_TARGET may not raise it.
+- **v5x does not apply** (2 Nov was not a selling day).
+
+The note renders 1,702 characters on November 3 and nothing on any other date.
+`test_shipped_note_matches_november_3_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- the expiry in the context, and its absence from the plan;
+- both branches;
+- all twelve levels.
+
+Each of these 9 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into BUY;
+* the flat-to-gap-down branch turned into SELL;
+* the date set to November 2;
+* Sensex's 76,000 recorded as the drawn-and-rounded 76,010;
+* BankNIFTY's 55,500 recorded as the drawn-and-rounded 55,510;
+* the expiry dropped from the context;
+* an expiry line added to the plan;
+* the sell branch's seated-buyers reason dropped.
