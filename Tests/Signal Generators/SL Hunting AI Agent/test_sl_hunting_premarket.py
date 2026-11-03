@@ -228,49 +228,47 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_november_3_intraday_hunter_plan():
-    """Render the November 2 evening forecast: SELL a gap up, BUY flat to gap down.
+def test_shipped_note_matches_november_4_intraday_hunter_plan():
+    """Render the November 3 evening forecast: BUY with the market, no branch sells.
 
-    vILEtZ1G8Zo was uploaded 2 Nov at 21:10 IST. Its direct Hindi transcript says
-    the day's selling was recovered just as much, so buyers are seated in all
-    three indices: a gap up is SELL to target them, and flat to gap down is BUY
-    with the market because there is little space to work with. 3 Nov is
-    NIFTY's weekly expiry, which the context carries; the plan does not. The
-    labels in the frames at 0:33, 1:02 and 1:32 check the levels. NIFTY's drawn
-    23,567.20 / 23,500.15 / 23,200.50 / 23,122.35 and BankNIFTY's 55,509.65 /
-    55,002.85 / 54,502.85 / 54,289.90 sit a few points from their spoken values,
-    so the spoken values stand. The auto-transcript drops Sensex's numbers; its
-    drawn 75,801.74 / 76,006.90 / 75,003.97 / 74,701.73 are recorded as the round
-    75,800 / 76,000 / 75,000 / 74,700.
+    5AHShMhih8k was uploaded 3 Nov at 21:10 IST. Its direct Hindi transcript says
+    all three indices gave continuous positive momentum, and the buyers trying to
+    come in cannot build big quantity at that pace, so there is no crowd worth
+    targeting: flat to gap up is BUY with the market, and a small gap down raises
+    the risk but keeps the same plan. No branch sells, so none is invented. The
+    labels in the frames at 0:31, 1:00 and 1:30 check the levels; every spoken
+    value sits within 4 points of its drawn line. Three were not spoken: Sensex's
+    resistances (drawn 77,009.59 / 77,301.11, recorded 77,000 / 77,300) and
+    NIFTY's second support (drawn 23,567.20, the line IH called 23,570 on 2 Nov).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 11, 3))
-    assert "PRE-OPEN ANALYST NOTE for 2026-11-03" in block
-    assert "vILEtZ1G8Zo" in block
-    assert "uploaded 2026-11-02" in note.source
-    assert "recovered just as much" in note.context
-    assert "buyers are seated" in note.context
-    assert "NIFTY's weekly expiry" in note.context
-    assert format_premarket_note(note, date(2026, 11, 2)) == ""
-    assert format_premarket_note(note, date(2026, 11, 4)) == ""
+    block = format_premarket_note(note, date(2026, 11, 4))
+    assert "PRE-OPEN ANALYST NOTE for 2026-11-04" in block
+    assert "5AHShMhih8k" in block
+    assert "uploaded 2026-11-03" in note.source
+    assert "continuous positive momentum" in note.context
+    assert "cannot build big quantity" in note.context
+    assert format_premarket_note(note, date(2026, 11, 3)) == ""
+    assert format_premarket_note(note, date(2026, 11, 5)) == ""
 
-    sell = next(line for line in note.plan if line.startswith("GAP UP -> SELL"))
-    assert "target the seated buyers" in sell
-    assert "selling-side setups" in sell
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> BUY, WITH THE MARKET"))
-    assert "little space" in buy
+    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY, WITH THE MARKET"))
+    assert "no big quantity to target" in buy
     assert "buying-side setups" in buy
+    gap_down = next(line for line in note.plan if line.startswith("SMALL GAP DOWN -> BUY"))
+    assert "the risk rises" in gap_down
+    assert "the same plan" in gap_down
     assert len(note.plan) == 2
+    assert not any("SELL" in line for line in note.plan)
     assert not any("EXPIR" in line.upper() for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [23500.0, 23570.0], "support": [23200.0, 23120.0]},
-        {"index": "BANKNIFTY", "resistance": [55000.0, 55500.0], "support": [54500.0, 54290.0]},
-        {"index": "SENSEX", "resistance": [75800.0, 76000.0], "support": [75000.0, 74700.0]},
+        {"index": "NIFTY", "resistance": [23860.0, 23940.0], "support": [23630.0, 23570.0]},
+        {"index": "BANKNIFTY", "resistance": [55900.0, 56200.0], "support": [55200.0, 55000.0]},
+        {"index": "SENSEX", "resistance": [77000.0, 77300.0], "support": [76370.0, 76000.0]},
     ]
