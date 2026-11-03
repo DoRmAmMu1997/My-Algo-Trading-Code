@@ -12941,3 +12941,241 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * NIFTY's first support recorded as a garbled 23,280;
 * the buy branch's retracement reason dropped;
 * an expiry line added.
+
+## 2 Nov - IH bought the NIFTY-only gap-up; the agent held on SHARED-GAP (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `mCLRHNs8mso`, uploaded 2026-11-02 10:44 IST, 11:03. He
+  traded on the 2 Nov note (`7vmzOJG4Y2c`: FLAT TO GAP UP -> BUY). Clock times
+  come from the taskbar clock in the frame, and his words are my translation of
+  the Hindi auto-transcript (87 segments, read in full).
+- **This book:** `Backtest Outputs/sl_hunting_decisions.jsonl` on this machine,
+  74 decisions for 2 Nov, every one a HOLD, and no trade in the journal.
+- **Prices:** Yahoo Finance's public one-minute chart API, as on 30 Oct.
+
+**Knowledge change: v6d, on the operator's call.** IH's entry is the case
+SHARED-GAP REQUIREMENT vetoes, and the measurement below backs the veto, not his
+trade. The operator ruled that the pre-open note overrules it anyway, because IH
+analyses all three charts before he records the forecast (v6d, below).
+
+### The session
+
+30 Oct's 3:15 levels were NIFTY 23,010.85 and BankNIFTY 54,641.60.
+
+2 Nov opened split:
+- NIFTY at 23,222.30 (+0.92%, GAP_UP);
+- Sensex +1.05%;
+- BankNIFTY at 54,866.15 (+0.41%; the agent's levels tool read +0.36%), FLAT.
+
+- **09:15-09:16:** NIFTY spiked to 23,292.45. BankNIFTY touched 55,045.80 at
+  09:16, above the note's 55,000, and that was its high of the morning.
+- **09:17-09:26:** a pullback to 23,246.75. BankNIFTY sank to 54,850.60.
+- **09:27-09:51:** NIFTY ground up through the note's 23,300 at 09:40 to
+  23,330.25 at 09:51. BankNIFTY stayed under 55,000, mostly 54,870-54,990.
+- **09:52-10:30:** NIFTY ranged 23,287-23,338. BankNIFTY drifted to 54,776.
+
+| | IH | the agent |
+|---|---|---|
+| read | the gap is up in all three ("BankNIFTY too"). 30 Oct's buyers were shaken out by its retracement, so no buyers' stops sit below to hunt: the round-number resistance "will not work", a pullback stays small, and a breakout follows | NIFTY GAP_UP beside a FLAT BankNIFTY fails SHARED-GAP REQUIREMENT, so the note's gap-up BUY is void, and GAP-SIZE ASYMMETRY makes BankNIFTY the honest read |
+| entry | **09:21-09:22**, straight in, before the pullback: BankNIFTY 55,000 CE and 55,100 CE x1,170, SENSEX 75,200 CE x900, NIFTY 23,250 CE x1,430. "Waiting for the retracement may be a good setup, but you may miss the trade" | none; 74 HOLDs. 10:21-10:29 returned "Agent usage-limited; holding." before the 10:30 entry cutoff |
+| path | a small loss into the 09:26 pullback, then profit from about 09:29 | - |
+| exit | about **09:51**, near NIFTY's 23,330 high: "when two indices run far, one lags or goes sideways". BankNIFTY never broke out, so he booked the normal target | - |
+| result | **+2,03,065.90** (55,000 CE +18,802.15; 55,100 CE +7,452.90; SENSEX +1,29,735.00; NIFTY +47,075.85) | 0.00 |
+
+### Measured: the NIFTY-only gap-up (not encoded)
+
+The case is NIFTY gapping 0.5% or more against its 3:15 level while
+BankNIFTY's gap stays under 0.5% (FLAT), and shared gaps (both 0.5%+ the same
+way) for contrast.
+
+- **Data:** the 5-year CSVs, to 29 Oct.
+- **Trade:** NIFTY, entered at the open of the given minute, in the book's
+  shape: a 16-point stop on a one-minute close, the 1.5x intrabar backstop, a
+  45-point target, and out after 15 minutes.
+- **Units:** R, with 2021-23 / 2024-26 in brackets.
+
+| NIFTY-only gap-up (n=24) | 09:16 | 09:20 | 09:22 | 09:25 | 09:30 |
+|---|---|---|---|---|---|
+| long, with the gap | **+0.615** (+0.22 / +0.95) | -0.159 | -0.137 | -0.152 | -0.594 |
+| short, against it | -0.179 | +0.015 | **+0.414** (+0.57 / +0.28) | +0.255 | -0.008 |
+
+IH's exact premise adds that the prior session's buyers were shaken out. Taking
+that as a prior 3:15 level in the MIDDLE third of its range, as on 30 Oct (0.497),
+leaves 9 sessions:
+
+- **Long at 09:22:** -0.643 (-0.38 / -0.85).
+- **Short at 09:22:** +0.863 (+1.00 / +0.75).
+- **The same at 30 minutes:** -0.674 and +0.883, both halves agreeing.
+
+What the numbers say:
+
+- **Only the first minute pays with the gap.** The +0.62R at 09:16 is v6c-like
+  territory: it needs a first-candle exception the agent does not have, and the
+  sample is 24.
+- **From 09:20 on, the with-gap long loses.** At IH's own minute, the side
+  SHARED-GAP calls the honest read made money in both halves. Today, at +60
+  points for IH, was the exception.
+- **On the evidence alone, the rule would stand.** At n=24 and n=9, with signs
+  flipping between minutes, the sample is small either way. The operator's call
+  below decides it.
+- **Shared gap-ups**, for contrast (142 sessions): +0.16R with the gap at
+  09:16, then between -0.18R and -0.04R from 09:22.
+
+### Already in the corpus
+
+- **"Buyers came on the momentum; a rejection or retracement drove them out, so
+  there is no crowd to target":** the 29 Oct, 30 Oct and 2 Nov notes' read, and
+  v4n's profit-then-fade.
+- **"A retracement-first entry is a good setup, but you may miss the trade; it
+  depends how much risk you take":** ENTRY TIME IS A RISK DIAL (v4l).
+- **"A small retracement we will bear easily; a big one should not come":**
+  PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES (v4d).
+- **"A breakout comes in two or three straight candles, not slowly":** SETUP
+  STALENESS.
+- **Booking because BankNIFTY lagged while NIFTY and Sensex ran:** LAGGARDS NEVER
+  JOINED, in the same words as the 30 Oct booking.
+- **His aside on sizing to the loss you can bear:** the risk budget and the
+  size multiplier.
+
+### For the operator
+
+- **The agent was usage-limited again, 10:21-10:29.** It was flat and an entry
+  was unlikely, so nothing was lost today. It is the second session in three,
+  so the mechanics question raised on 30 Oct is still open.
+
+### v6d - the pre-open note outranks a split gap (operator's call, 2 Nov)
+
+The operator's ruling, after reading the measurement above: "if the premarket
+note says buy, the premarket note should overrule, since IH does his market
+analysis beforehand... if that rule and premarket note clash, premarket note
+overrules."
+
+**What changed in the prompt.**
+
+- **A new rule in OPENING DRIVE, straight after SHARED-GAP REQUIREMENT:** THE
+  PRE-OPEN NOTE OUTRANKS A SPLIT GAP (v6d).
+  - **When it applies:** today's note gives a branch for today's open that names
+    the side NIFTY gapped toward. That means a BUY branch on a GAP_UP verdict, or
+    a SELL branch on a GAP_DOWN verdict.
+  - **What it overrides:** SHARED-GAP REQUIREMENT and GAP-SIZE ASYMMETRY no longer
+    void that branch, and a flat BankNIFTY is not a tell against it.
+- **Pointers on the two rules it overrides:** SHARED-GAP REQUIREMENT ends "[Overruled
+  by v6d, next, ...]", and GAP-SIZE ASYMMETRY ends "[On the open, it yields to the
+  pre-open note: v6d.]".
+- **A second exception in the PRE-OPEN block,** straight after v5z's, so "your
+  read wins" never disagrees with v6d inside the same prompt.
+
+**Its scope.**
+
+- **GAP-SIZE ASYMMETRY is included.** "That rule" was SHARED-GAP, but on 2 Nov the
+  agent cited both rules on nearly every HOLD. Waiving one alone would have left
+  the same veto standing under the other name.
+- **It is symmetric.** A SELL note on a NIFTY-only gap-down is covered too. On the
+  measurement, that direction was the better one: +0.284R at 09:22.
+- **It relaxes nothing else.** Every other condition of the OPENING DRIVE branch
+  still applies: the first ~15 minutes, the gap holding at a round number, and no
+  MAJOR rejection. So do every RISK rule, the sizing gate and the post-exit
+  cooldown. It creates no trade on the other side.
+- **Where it does not apply:** when the note gives no branch for today's open, or
+  names the other side, SHARED-GAP stands as written.
+- **It is measured against and reviewable.** The rule carries the numbers above
+  and, like v5x and v5z, says every trade that cites it is reviewed and the rule
+  is reverted if live results are negative.
+
+**Tests.**
+
+- `test_v6d_the_pre_open_note_outranks_a_split_gap` (schema) and
+  `test_block_points_a_split_gap_to_v6d` (premarket).
+- 11 mutants, all caught:
+  * either pointer dropped;
+  * the gap-down direction dropped;
+  * GAP-SIZE ASYMMETRY left un-overridden;
+  * the RISK rules relaxed;
+  * a trade on the other side allowed;
+  * the measurement's sign flipped;
+  * the revert clause dropped;
+  * "your read wins" left applying;
+  * the PRE-OPEN line renamed;
+  * the PRE-OPEN line's "yields to it" removed.
+
+## November 3 pre-open note
+
+[Prediction For 03 NOV 2026](https://www.youtube.com/watch?v=vILEtZ1G8Zo), uploaded
+2026-11-02 21:10:12 IST, 102 s, 13 transcript segments, read in full in the
+watch page's transcript panel. 3 Nov is NIFTY's weekly expiry, which IH names
+at the start.
+
+**Read.** 2 Nov saw selling, but the market recovered just as much, so buyers
+are seated in all three indices. NIFTY and Sensex were already positive, and
+BankNIFTY held its support under resistance.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| GAP UP | SELL: target the seated buyers; identify selling-side setups |
+| FLAT TO GAP DOWN | BUY, with the market: "we will not have much space"; identify buying-side setups |
+
+All three indices get the same wording. The expiry is carried in the context,
+not as a plan line, because IH gives it no branch of its own.
+
+**Levels.** This recording shows TradingView's labels. The frames at 0:33
+(NIFTY), 1:02 (BankNIFTY) and 1:32 (Sensex) were read at 3.2x:
+
+| Index | Drawn labels (R2 / R1 / S1 / S2) | Spoken | Recorded |
+|---|---|---|---|
+| NIFTY | 23,567.20 / 23,500.15 / 23,200.50 / 23,122.35 | 23,570 / 23,500 / 23,200 / 23,120 | spoken |
+| BankNIFTY | 55,509.65 / 55,002.85 / 54,502.85 / 54,289.90 | 55,500 / 55,000 / 54,500 / 54,290 | spoken |
+| Sensex | 76,006.90 / 75,801.74 / 75,003.97 / 74,701.73 | (the auto-transcript dropped the numbers) | 76,000 / 75,800 / 75,000 / 74,700 |
+
+- **NIFTY and BankNIFTY:** every drawn line sits within 10 points of what IH
+  said, so the spoken value stands, on the operator's 1 Nov rule.
+- **Sensex has no speech to defer to.** Each of its lines is a round number drawn
+  a few points off, as every other line on these charts is. They are recorded as
+  those round numbers: 76,006.90 becomes 76,000, not 76,010.
+- **BankNIFTY's 54,500 / 54,290** are the same lines as the 30 Oct and 2 Nov
+  notes.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 23,500 / 23,570 | 23,200 / 23,120 |
+| BankNIFTY | 55,000 / 55,500 | 54,500 / 54,290 |
+| Sensex | 75,800 / 76,000 | 75,000 / 74,700 |
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 2 Nov's 3:15 level, 23,330.25, sat
+  at 0.804 of its range (23,207.05-23,360.20), and its high came at 10:54. But it
+  faded only 0.128% from that high, under the 0.15% v6c needs.
+- **v6d does not apply.** Neither branch names the side NIFTY would gap toward:
+  a gap up is SELL, a gap down is BUY. A split gap therefore changes nothing here.
+- **v5z can apply on a FLAT open.** NIFTY moved +1.39% from 3:15 level to 3:15
+  level, and the FLAT branch is BUY.
+  - **Its trigger** would be BankNIFTY closing below 54,500 by 10:30, while NIFTY
+    holds 2 Nov's low (23,207.05).
+  - **NIFTY cannot trigger it.** NIFTY's next 500 below, 23,000, lies under that
+    low, so it could not be crossed while the low holds.
+- **v6a applies.** The NIFTY contract held expires today, so the mechanical
+  target books it and MODIFY_TARGET may not raise it.
+- **v5x does not apply** (2 Nov was not a selling day).
+
+The note renders 1,702 characters on November 3 and nothing on any other date.
+`test_shipped_note_matches_november_3_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- the expiry in the context, and its absence from the plan;
+- both branches;
+- all twelve levels.
+
+Each of these 9 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the gap-up branch turned into BUY;
+* the flat-to-gap-down branch turned into SELL;
+* the date set to November 2;
+* Sensex's 76,000 recorded as the drawn-and-rounded 76,010;
+* BankNIFTY's 55,500 recorded as the drawn-and-rounded 55,510;
+* the expiry dropped from the context;
+* an expiry line added to the plan;
+* the sell branch's seated-buyers reason dropped.

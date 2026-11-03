@@ -4125,3 +4125,49 @@ def test_v6c_the_opening_follow_is_wired_into_every_first_candle_rule():
     # It sits inside OPENING DRIVE, after Variant B and before RUNAWAY TREND.
     variant_b = prompt.index("Variant B — FLAT-OPEN seller-hunt long")
     assert variant_b < start < prompt.index("RUNAWAY TREND — the no-retracement")
+
+
+def test_v6d_the_pre_open_note_outranks_a_split_gap():
+    """v6d (operator's call, 2 Nov, measured against): the pre-open note's branch is
+    not voided by a split gap.
+
+    On 2 Nov NIFTY gapped up 0.92% beside a FLAT BankNIFTY; the agent held all morning
+    on SHARED-GAP while IH bought the note's gap-up BUY and booked about 2 lakh. Pins
+    the scope (the note naming NIFTY's gap side, either direction), what it overrides,
+    what it does not relax, the measurement against it, the revert condition, its
+    place right after SHARED-GAP, and the pointers left in SHARED-GAP and GAP-SIZE
+    ASYMMETRY.
+    """
+    prompt = build_system_prompt()
+    heading = "THE PRE-OPEN NOTE OUTRANKS A SPLIT GAP"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6d, operator's call 2 Nov).")
+    # Scope: the note's branch for today's open names NIFTY's gap side, both directions.
+    assert "a BUY branch on a GAP_UP verdict, a SELL branch on a GAP_DOWN verdict" in rule
+    assert "that side stands even though BankNIFTY opened FLAT" in rule
+    # What it overrides.
+    assert "The SHARED-GAP REQUIREMENT above, and GAP-SIZE ASYMMETRY, do NOT void that branch" in rule
+    assert "the flat BankNIFTY is NOT a tell against it" in rule
+    assert "the PRE-OPEN block's \"your read wins\" does not apply to the split" in rule
+    # What it does not relax, and where it does not apply.
+    assert "every other condition of the branch" in rule
+    assert "every RISK rule, the sizing gate and the post-exit cooldown" in rule
+    assert "It creates no trade on the other side" in rule
+    assert ("When the note gives no branch for today's open, or its branch names the other "
+            "side, SHARED-GAP stands as written") in rule
+    # The measurement against it, and the revert condition.
+    assert "MEASURED AGAINST IT, adopted anyway" in rule
+    assert "+0.615R at 09:16 but -0.159 / -0.137 / -0.152 / -0.594" in rule
+    assert "(9 sessions), 09:22 scored -0.643R" in rule
+    assert "+0.284R at 09:22 and +0.485R at 09:25" in rule
+    assert "reverted if live results are negative" in rule
+    # Placed straight after SHARED-GAP, which points here; GAP-SIZE ASYMMETRY points too.
+    shared = prompt.index("\n- SHARED-GAP REQUIREMENT")
+    here = prompt.index("\n- " + heading)
+    assert shared < here < prompt.index("\n- GAP-DOWN CONTINUATION SHORT branch")
+    assert "\n- " not in prompt[shared + 3:here]
+    shared_rule = _flat_rule(prompt, "SHARED-GAP REQUIREMENT")
+    assert ("[Overruled by v6d, next, when today's pre-open note names the side NIFTY "
+            "gapped toward.]") in shared_rule
+    asymmetry = _flat_rule(prompt, "GAP-SIZE ASYMMETRY")
+    assert "[On the open, it yields to the pre-open note: v6d.]" in asymmetry
