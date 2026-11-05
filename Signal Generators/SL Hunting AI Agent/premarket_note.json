@@ -1,43 +1,43 @@
 {
-  "for_date": "2026-11-05",
-  "source": "Intraday Hunter, 'Prediction For 05 NOV 2026' (vjK0bcJFZvo, uploaded 2026-11-04)",
-  "context": "The market has risen for days without a major retracement. November 4 saw selling, then a retracement and a recovery, so buyers are seated; sellers have already been driven out. Today is Sensex's weekly expiry.",
+  "for_date": "2026-11-06",
+  "source": "Intraday Hunter, 'Prediction For 06 NOV 2026' (InV5oCfzG8A, uploaded 2026-11-05)",
+  "context": "November 5 gave continuous positive momentum in all three indices. Buyers may be coming in with good quantity, but on a flat to gap-up open their confidence stays intact, so they will not run and cannot be targeted.",
   "plan": [
-    "GAP UP -> BUY, WITH THE MARKET: the seated buyers are already in good profit; identify buying-side setups.",
-    "FLAT TO GAP DOWN -> SELL: target the seated buyers; identify selling-side setups."
+    "FLAT TO GAP UP -> BUY, WITH THE MARKET: the buyers cannot be targeted while their confidence holds; identify buying-side setups.",
+    "GAP DOWN -> NO PLAN: in a market this positive a sudden gap down may turn sideways or volatile."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        24000,
-        24180
+        24680,
+        24780
       ],
       "support": [
-        23780,
-        23630
+        24380,
+        24300
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        55900,
-        56500
+        58100,
+        58300
       ],
       "support": [
-        55200,
-        55000
+        57200,
+        56800
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        77300,
-        77750
+        79500,
+        79700
       ],
       "support": [
-        76700,
-        76370
+        78800,
+        78600
       ]
     }
   ]

@@ -13480,3 +13480,189 @@ Each of these 9 mutations fails it, and the unmutated note passes:
 * the expiry dropped from the context;
 * an expiry line added to the plan;
 * the sell branch's seated-buyers reason dropped.
+
+## 5 Nov - a 2% gap-up: IH bought the 09:31 dip that stopped the agent's first long (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `W0eUUrGCG3g`, uploaded 2026-11-05 10:34 IST, 8:29. He
+  traded on the 5 Nov note (`vjK0bcJFZvo`: GAP UP -> BUY). Clock times come from
+  the taskbar clock in the frame, and his words are my translation of the Hindi
+  auto-transcript (67 segments, read in full).
+- **This book:** `Backtest Outputs/sl_hunting_decisions.jsonl` and
+  `sl_hunting_journal.jsonl` on this machine: 71 decisions and two trades.
+- **Prices:** Yahoo Finance's public one-minute chart API.
+
+**No knowledge change.** IH's "wait on a big gap" is already in the corpus, and
+on the measurement below the agent's earlier entry minute is the better one.
+
+### The session
+
+4 Nov's 3:15 levels were NIFTY 23,913.30 and BankNIFTY 55,815.65. 5 Nov, Sensex's
+expiry, opened with a big SHARED gap-up:
+- NIFTY at 24,378.05 (+1.94%);
+- BankNIFTY at 57,086.70 (+2.28%);
+- Sensex +2.19%.
+
+- **09:15:** the first candle flushed to 24,298.45 (NIFTY's day low).
+- **09:16-09:30:** a 24,330-24,370 box.
+- **09:31-09:33:** a dip to 24,305.35. BankNIFTY made its day low, 56,718.20, at
+  09:33.
+- **09:34 on:** a straight run to 24,441.95 by 09:55, and a high of 24,579.35 at
+  13:48. The 3:15 level was 24,542.45, at 0.87 of the day's range.
+
+| | IH | the agent |
+|---|---|---|
+| read | "a sudden big gap-up or gap-down is a problem market: it gives no direct trade; wait, and a psychology forms." Retail holds little quantity after days of rising without a retracement, so profit-booking is unlikely: buy with the market, on a dip | the note's GAP UP -> BUY on a shared gap, as the OPENING DRIVE continuation |
+| entry | **09:31-09:32**, into the dip ("we are getting the market lower"): BankNIFTY 56,800 CE and 56,900 CE, SENSEX 78,900 CE x900, NIFTY 24,350 CE x1,430 | **09:24:44**, LONG 24,348.60, stop 24,330 (18.6 pts), target 24,420. Again at **09:41:58**, LONG 24,371.65, stop 24,354, target 24,430, after a confirmed double bottom |
+| path | profit from about 09:36: "it was only about who would be afraid and who would not" | the first long: the 09:31 candle fell through both its closing stop and the 1.5x backstop (24,320.70) and closed at 24,314.25. It filled at 24,313.95 at 09:31:59, -34.65 pts |
+| exit | about **09:43**, near 24,385: "a good profit is already achieved; do not get greedy" | the second long reached its target at **09:52:42**, 24,432.00 (+60.35 pts) |
+| result | **+2,59,339.05** (56,800 CE +75,114.75; 56,900 CE +72,517.10; SENSEX +65,961.00; NIFTY +45,746.20; the four legs' sum, as the total row was cut off) | **+5,689.70** (-4,462.30 at -1.86R, then +10,152.00 at +3.42R) |
+
+### What the rules did
+
+- **The first long's loss ran to 1.86R** because one 30-point candle broke both
+  the closing stop and the backstop at once. That is SLH-027 as designed: a fast
+  candle through a closing stop is the case the backstop caps, not prevents.
+- **The re-entry was the day.** It came 10 minutes after the stop, on a new
+  structural event (a double bottom at 24,305 / 24,317 with BankNIFTY's own), and
+  it booked at its mechanical target on a straight run, per v5y.
+- **The agent was blind from 09:36.** One call timed out and the next was still
+  running at 09:37. From 10:04 to the 10:30 cutoff, 26 decisions were "Agent
+  usage-limited; holding." It was flat by then, so no position went unmanaged.
+
+### Measured: buying a big shared gap-up early versus on the dip (not encoded)
+
+The test took every day both NIFTY and BankNIFTY gapped up 1% or more against
+their 3:15 levels (5-year CSVs, to 29 Oct). It went long NIFTY at the open of the
+given minute in the book's shape: a 16-point closing stop, the 1.5x backstop, a
+45-point target, and out after 15 minutes. Results are in R, with 2021-23 /
+2024-26 in brackets.
+
+| entry | 09:16 | 09:20 | 09:24 | 09:28 | 09:32 | 09:36 | 09:40 |
+|---|---|---|---|---|---|---|---|
+| shared gap-up 1%+ (n=30) | +0.608 (+0.60 / +0.62) | +0.674 | **+0.837** (+1.04 / +0.57) | -0.464 (-0.48 / -0.44) | -0.470 (-0.20 / -0.83) | -0.243 | +0.068 |
+| shared gap-up 0.5-1% (n=112) | +0.042 | -0.004 | -0.223 | -0.094 | -0.063 | +0.095 | +0.098 |
+
+- **On the big gaps, buying early won.** The first quarter-hour scored positive
+  in both halves, and the dip minutes, 09:28 and 09:32, lost in both halves.
+- **The agent's 09:24 entry is the best minute measured;** today was the
+  exception. IH's dip entry is the measured-worse minute that paid today.
+- **Nothing is encoded either way.** At n=30 the corpus keeps both readings: GAP
+  SIZE IS A RISK DIAL (normal target, rejection-triggered exit) and the
+  counter-bounce entry timing under MULTI-DAY ACCUMULATION.
+
+**Re-run for bigger gaps (operator's question: does IH's rule hold for a bigger
+gap-up?).** The same test was run at higher thresholds on the smaller of the two
+indices' gaps. It also ran IH's rule as an EVENT rather than a clock minute: wait
+for a pullback of at least P points from the session high, then buy the open
+after the first one-minute close above the prior candle's high, by 10:30.
+
+| shared gap-up | n | buy 09:24 | 09:28 | 09:32 | 09:36 | 09:40 | dip >= 30, then turn | dip >= 50, then turn |
+|---|---|---|---|---|---|---|---|---|
+| 1.0%+ | 30 | **+0.837** (+1.04 / +0.57) | -0.464 | -0.470 | -0.243 | +0.068 | +0.413 (+0.79 / -0.06) | +0.776 (+1.25 / +0.30) |
+| 1.25%+ | 20 | **+0.800** (+0.90 / +0.70) | -0.574 | -0.587 | -0.136 | +0.325 | - | - |
+| 1.5%+ | 11 | **+0.853** (+0.60 / +1.00) | -0.552 | -1.119 | -0.136 | +0.063 | +0.108 (-0.33 / +0.36) | +0.473 (+0.68 / +0.36) |
+| 1.75%+ | 7 | +0.052 | -1.090 | -1.346 | +0.390 | +0.574 | -0.209 | -0.209 |
+| 2.0%+ | 6 | +0.024 | -1.067 | -1.402 | +0.662 | +0.621 | -0.052 | -0.052 |
+
+- **IH's rule does not hold at 1.5% either.** Buying the dip once it turns makes
+  money (+0.11R to +0.78R), but it never beats buying at 09:24, at any
+  threshold up to 1.5%. Buying INTO the dip, as IH did at 09:31, is the worst
+  minute at every threshold, and worse the bigger the gap (-1.12R at 1.5%+).
+- **Past 1.75% everything is too thin to read.** Six and seven sessions, with
+  the older half one or two days. The late clock minutes (09:36-09:40) turn
+  positive there, but the event version of the same idea does not, and both
+  rest on the same five recent days.
+- **No change.** The agent's early OPENING DRIVE long stays the measured-better
+  entry on a big shared gap-up.
+
+### Already in the corpus
+
+- **"A big gap gives no direct trade; wait for the psychology":** ENTRY TIMING under
+  MULTI-DAY ACCUMULATION ("buying the open on a big gap-up is where the market traps YOU; wait
+  for the counter-bounce"), and GAP SIZE IS A RISK DIAL.
+- **"Retail holds no big quantity, so profit-booking is unlikely":** the 30 Oct,
+  4 Nov and 5 Nov notes' read, and A ONE-WAY DAY LEAVES NOBODY SEATED (v5f).
+- **"Who is afraid sells and loses; who follows the market profits":**
+  BOTH-SIDES PARTICIPATION.
+- **Booking "a good profit, not greed":** BOOK BEFORE THE ROUND NUMBER (v4d), and
+  v4f.
+
+### For the operator
+
+- **The agent call failures are back:** a timeout at 09:36, then usage limits
+  from 10:04. That is the fourth of the last five sessions.
+
+## November 6 pre-open note
+
+[Prediction For 06 NOV 2026](https://www.youtube.com/watch?v=InV5oCfzG8A), uploaded
+2026-11-05 21:10:01 IST, 115 s, 14 transcript segments, read in full in the
+watch page's transcript panel.
+
+**Read.** 5 Nov gave continuous positive momentum in all three indices. Buyers
+may be coming in, even with good quantity, but on a flat to gap-up open "their
+confidence stays intact": they will not run, so they cannot be targeted.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | BUY, with the market: identify buying-side setups |
+| GAP DOWN | no plan: "in a market this positive a sudden gap down may turn sideways or volatile" |
+
+All three indices get the same wording.
+- **The gap-down branch is new in kind.** IH names no side, and the note does
+  not invent one: it records the branch as NO PLAN.
+- **It names no side to act on,** so v5z and v6d have nothing to key on in it.
+
+**Levels.** This recording crops TradingView's labels to their first five
+characters, which still reads each line to the nearest 10 points. The frames at
+0:39 (BankNIFTY), 1:22 (Sensex) and 1:44 (NIFTY) were read that way:
+
+| Index | Drawn (cropped) | Spoken | Recorded |
+|---|---|---|---|
+| NIFTY | R 24,67x / 24,77x, S 24,38x / 24,30x | 24,680 / 24,780, (not spoken) | 24,680 / 24,780, 24,380 / 24,300 |
+| BankNIFTY | R 58,10x / 58,30x, S 57,20x / 56,80x | 58,100 / 58,300, 57,200 / (not spoken) | spoken, 56,800 |
+| Sensex | R 79,50x / 79,70x, S 78,81x / (not read) | 79,500 / 79,700, 78,800 / 78,600 | spoken |
+
+- **Every spoken value agrees with its cropped label** to within 10 points.
+- **NIFTY's 24,30x line sits on the 24,300 gridline,** and its 24,38x line just
+  under the 24,400 one, at about 24,380.
+- **BankNIFTY's 56,80x** sits on the 56,800 gridline.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 24,680 / 24,780 | 24,380 / 24,300 |
+| BankNIFTY | 58,100 / 58,300 | 57,200 / 56,800 |
+| Sensex | 79,500 / 79,700 | 78,800 / 78,600 |
+
+**How it meets the corpus.**
+
+- **v6c's opening follow will NOT be active.** 5 Nov's 3:15 level, 24,542.45, sat
+  at 0.869 of its range, but its high came at 13:48, after 13:30.
+- **v6d CAN apply.** The FLAT TO GAP UP branch is BUY, so on a NIFTY GAP_UP beside
+  a FLAT BankNIFTY the split does not void it.
+- **v5z can apply on a FLAT open.** NIFTY moved +2.63%, and the FLAT branch is BUY.
+  - **The trigger** would be NIFTY closing below 24,500, or BankNIFTY below
+    57,500, by 10:30.
+  - **The condition:** NIFTY must still hold 5 Nov's low, 24,298.45.
+- **v6a does not apply.** The NIFTY contract held expires on 10 Nov.
+
+The note renders 1,826 characters on November 6 and nothing on any other date.
+`test_shipped_note_matches_november_6_intraday_hunter_plan` pins:
+
+- the date gate and the source;
+- both branches, the NO PLAN one included;
+- all twelve levels.
+
+Each of these 8 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the buy branch turned into SELL;
+* a SELL side invented for the gap-down branch;
+* the date set to November 5;
+* NIFTY's 24,380 recorded as 24,390;
+* BankNIFTY's 56,800 recorded as 56,900;
+* the buy branch's confidence reason dropped;
+* an expiry line added.
