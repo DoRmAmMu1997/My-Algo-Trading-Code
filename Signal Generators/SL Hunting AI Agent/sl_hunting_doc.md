@@ -13552,6 +13552,31 @@ given minute in the book's shape: a 16-point closing stop, the 1.5x backstop, a
   SIZE IS A RISK DIAL (normal target, rejection-triggered exit) and the
   counter-bounce entry timing under MULTI-DAY ACCUMULATION.
 
+**Re-run for bigger gaps (operator's question: does IH's rule hold for a bigger
+gap-up?).** The same test was run at higher thresholds on the smaller of the two
+indices' gaps. It also ran IH's rule as an EVENT rather than a clock minute: wait
+for a pullback of at least P points from the session high, then buy the open
+after the first one-minute close above the prior candle's high, by 10:30.
+
+| shared gap-up | n | buy 09:24 | 09:28 | 09:32 | 09:36 | 09:40 | dip >= 30, then turn | dip >= 50, then turn |
+|---|---|---|---|---|---|---|---|---|
+| 1.0%+ | 30 | **+0.837** (+1.04 / +0.57) | -0.464 | -0.470 | -0.243 | +0.068 | +0.413 (+0.79 / -0.06) | +0.776 (+1.25 / +0.30) |
+| 1.25%+ | 20 | **+0.800** (+0.90 / +0.70) | -0.574 | -0.587 | -0.136 | +0.325 | - | - |
+| 1.5%+ | 11 | **+0.853** (+0.60 / +1.00) | -0.552 | -1.119 | -0.136 | +0.063 | +0.108 (-0.33 / +0.36) | +0.473 (+0.68 / +0.36) |
+| 1.75%+ | 7 | +0.052 | -1.090 | -1.346 | +0.390 | +0.574 | -0.209 | -0.209 |
+| 2.0%+ | 6 | +0.024 | -1.067 | -1.402 | +0.662 | +0.621 | -0.052 | -0.052 |
+
+- **IH's rule does not hold at 1.5% either.** Buying the dip once it turns makes
+  money (+0.11R to +0.78R), but it never beats buying at 09:24, at any
+  threshold up to 1.5%. Buying INTO the dip, as IH did at 09:31, is the worst
+  minute at every threshold, and worse the bigger the gap (-1.12R at 1.5%+).
+- **Past 1.75% everything is too thin to read.** Six and seven sessions, with
+  the older half one or two days. The late clock minutes (09:36-09:40) turn
+  positive there, but the event version of the same idea does not, and both
+  rest on the same five recent days.
+- **No change.** The agent's early OPENING DRIVE long stays the measured-better
+  entry on a big shared gap-up.
+
 ### Already in the corpus
 
 - **"A big gap gives no direct trade; wait for the psychology":** ENTRY TIMING under
