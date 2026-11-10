@@ -192,10 +192,13 @@ def replay(frame: pd.DataFrame, config: CPRAlgo4Config) -> tuple[list[ClosedTrad
         elif open_trade is not None and decision.action == "SCALE_IN":
             open_trade.plan.scale_in_used = True
             open_trade.add_price = bar_close
-        elif open_trade is None and decision.action in ("ENTER_LONG", "ENTER_SHORT"):
-            if decision.plan is not None:
-                open_trade = _OpenTrade(plan=decision.plan, regime=engine.regime or "", entry_time=ts)
-                engine.on_entry_filled(decision.plan)
+        elif (
+            open_trade is None
+            and decision.action in ("ENTER_LONG", "ENTER_SHORT")
+            and decision.plan is not None
+        ):
+            open_trade = _OpenTrade(plan=decision.plan, regime=engine.regime or "", entry_time=ts)
+            engine.on_entry_filled(decision.plan)
 
         bar_end = (pd.Timestamp(ts) + pd.Timedelta(minutes=config.bar_minutes)).time()
         if open_trade is not None and bar_end >= SQUARE_OFF_TIME:

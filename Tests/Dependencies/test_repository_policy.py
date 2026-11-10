@@ -99,7 +99,17 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # marketfeed awaits recv() plainly and the runner never cancels it. Its three
     # names were confirmed on an isolated 17.3 install. If the feed does not tick
     # at 09:15, revert this pin first.
-    assert "websockets==17.3" in core
+    # 17.3 -> 17.4 (2026-11-10, PR #239). A SECURITY fix: recv() now rejects a
+    # fragmented message split into more than 4096 frames (WEBSOCKETS_MAX_FRAGMENTS),
+    # closing a memory-exhaustion DoS that affected every implementation. Dhan's
+    # feed sends small binary tick packets, nowhere near that limit, so the cap
+    # cannot trip on it. The one other change chains context onto the
+    # ConnectionClosed that closes a connection -- the exception TYPE is unchanged,
+    # so marketfeed's `except ConnectionClosed` still catches it. Its three names
+    # (connect, ConnectionClosed, protocol.State.CLOSED) are present on an isolated
+    # 17.4 install and dhanhq.marketfeed imports. If the feed does not tick at
+    # 09:15, revert this pin first.
+    assert "websockets==17.4" in core
     # 2.3.3.260113 -> 3.0.5.260730 (2026-09-01, PR #150). A correction more than
     # an upgrade. `pandas` is pinned at 3.0.5 and is NOT in the Dependabot ignore
     # list, so it moved to the 3.x line while a semver-major ignore pinned the
@@ -307,7 +317,20 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # (installed from it on Windows; `claude.exe --version` = 2.1.310). Same
     # standing check: on the next session decisions return and "SLHuntingAgent
     # decision latency" has not crept up. If either fails, revert this pin first.
-    assert "claude-agent-sdk==0.2.174" in ai
+    # 0.2.174 -> 0.2.178 (2026-11-10, PR #239), bundled CLI 2.1.310 -> 2.1.318.
+    # Three of the four releases only move the CLI. 0.2.177 adds `on_failure` to
+    # HookMatcher, and a diff of the installed package confirms that is the whole
+    # Python change: types.py gains the field and query.py forwards it and raises
+    # CLIConnectionError only when some matcher sets on_failure="block". Neither
+    # agent registers hooks at all, so that branch is unreachable and query(), the
+    # options we pass and the error classification are otherwise unchanged. The
+    # win_amd64 wheel still ships _bundled/claude.exe (`--version` = 2.1.318 on
+    # Windows). anyio moves 4.15.1 -> 4.16.0 in the same PR, inside the SDK's
+    # >=4.0.0 and mcp's >=4.10; its fixes are cancellation and socket-close edge
+    # cases, not the subprocess pipes the SDK reads. Same standing check: on the
+    # next session decisions return and "SLHuntingAgent decision latency" has not
+    # crept up. If either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.178" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -324,7 +347,10 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # declares pydantic>=2.12 and mcp 2.3.0 stays inside its window; the whole
     # suite, SL Hunting and CPR AI included, passes on a clean install of this
     # PR's pins.
-    assert "pydantic==2.14.2" in ai
+    # 2.14.2 -> 2.14.3 (2026-11-10, PR #239). Patch. openai-codex 0.163.0 and mcp
+    # 2.3.0 both still declare pydantic>=2.12; the whole suite passes on a clean
+    # install of this PR's pins.
+    assert "pydantic==2.14.3" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -559,7 +585,15 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # uses to `.day_of_week`; the one left comes from inside backtesting.py.
     # pandas-stubs stayed at 3.0.5.260914 because no 3.1 stubs existed yet; the
     # first 3.1 snapshot arrived in PR #232 (see the pandas-stubs pin above).
-    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.0", "TA-Lib==0.6.8", "numpy==2.5.4"):
+    # pandas 3.1.0 -> 3.1.1 (2026-11-10, PR #239). Patch: three regression fixes
+    # (pyarrow-backed astype filling NaT with the epoch, a read-only result from
+    # Series.map on datetimes, and IO treating path objects that have read/write
+    # methods as open handles -- we pass plain str paths) plus bug fixes for
+    # dateutil 3.0 timezone strings (the repo uses none; IST comes from pytz),
+    # PyArrow ffill/bfill copy-on-write and PyArrow regex whitespace. Nothing in
+    # the indicator pipeline moves; MAT-106's snapshot passes unchanged on 3.1.1.
+    # pandas-stubs stays 3.1.0.261029: same 3.1 line.
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.1", "TA-Lib==0.6.8", "numpy==2.5.4"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
