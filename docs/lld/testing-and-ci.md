@@ -142,8 +142,8 @@ Two deliberate properties of the checker:
 ## 5. CI
 
 `.github/workflows/quality-and-security.yml`, on every push and pull request,
-across **Python 3.12 and 3.13** (3.13 is the operator's live runtime; 3.12 catches
-newer-only syntax). `permissions: contents: read` — the workflow only reads.
+across **Python 3.12, 3.13 and 3.14** (3.14 is the operator's local runtime; 3.12
+catches newer-only syntax). `permissions: contents: read` — the workflow only reads.
 
 **Job `verify`:**
 
@@ -160,9 +160,12 @@ newer-only syntax). `permissions: contents: read` — the workflow only reads.
 
 **Job `broker-dependencies`:** installs `requirements-brokers.txt` in its own
 clean environment and re-runs the broker contract and Flattrade adapter suites.
-It is separate because Kotak's official `v2.0.1` tag pins older pandas/requests
-that conflict with the audited core set — asking pip to build that combined graph
-is impossible, so the upstream environment is validated in isolation instead.
+It is separate because Kotak's official SDK (`kotakneoapi`) declares `pandas<3`
+and `websocket-client>=1.9.0`, which conflict with the audited core set — asking
+pip to build that combined graph is impossible, so the upstream environment is
+validated in isolation instead. Every Kotak test runs on fakes except one, which
+imports the adapter against the installed SDK and checks that the SDK accepts
+every argument the adapter passes and that its own logging stays switched off.
 
 CI never runs the authenticated CPR AI smoke command, and never opens a real
 socket — **a green build proves nothing about the websocket transport**, which is

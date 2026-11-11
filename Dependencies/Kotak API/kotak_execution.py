@@ -1,5 +1,5 @@
 """
-Shared Kotak Neo (v2 SDK) order-execution layer for the Multithreading master runner.
+Shared Kotak Neo (v3 SDK) order-execution layer for the Multithreading master runner.
 
 ============================== Plain-English overview ==========================
 This file is the ONE place that talks to the Kotak Neo broker to place real
@@ -38,9 +38,11 @@ Design rules (mirrors `Renko Strategy/kotak_client.py`):
   execution script).
 
 Why a dedicated module (instead of importing the Renko v1 wrapper):
-- The official SDK now used is Kotak-neo-api-v2, downloaded into the top-level
-  "Kotak Neo API/" folder. We add that folder to `sys.path` here so
-  `import neo_api_client` resolves without a global pip install.
+- The official SDK now used is Kotak's v3 client: the PyPI package `kotakneoapi`,
+  which is imported as `neo_api_client` (the same import name the v2 client
+  used; v2 came from a GitHub repository that GitHub disabled on 2026-11-05).
+  A "Kotak Neo API/" folder above this file is still put on `sys.path` when one
+  exists, so a downloaded copy also resolves without a pip install.
 - 24 strategy workers run as threads sharing ONE process. This wrapper holds a
   single authenticated session behind a lock, logs in lazily on the first real
   order, and is therefore safe to call from any worker thread.
@@ -52,9 +54,12 @@ How the master file uses this module:
    entry/exit leg. Login happens automatically on the first such call.
 3. `logout()` is called during graceful shutdown.
 
-NOTE: the v2 SDK kept the login + place_order surface backward-compatible with
-v1, so the BUY/SELL->B/S, MARKET->MKT, INTRADAY->MIS maps below match the
-existing proven wrapper.
+NOTE: the v3 SDK accepts ONLY Kotak's exact codes (B/S, MKT, MIS/NRML, nse_fo)
+and rejects the friendly aliases v2 used to translate, so the BUY/SELL->B/S,
+MARKET->MKT, INTRADAY->MIS maps below must keep producing exactly those codes.
+The calls this file makes are valid on v2 as well: the two place_order
+arguments v3 removed (market_protection, pf) were only ever passed at v2's own
+default values.
 """
 
 import io
@@ -133,7 +138,22 @@ try:
 except Exception:
     pass
 
-from neo_api_client import NeoAPI  # noqa: E402  (resolved from "Kotak Neo API")
+# The v3 SDK sets up its OWN logging the moment it is imported: a JSON console
+# handler on stdout plus a rotating file at ./logs/neo-api-client.log (relative
+# to whatever directory the runner was started from), both on a logger that does
+# NOT propagate.  Nothing it writes therefore passes through this repo's
+# redaction filter, and at its default WARNING level it logs every failed
+# request WITH its body -- a rejected login would print the mobile number and
+# UCC in clear, and all but the middle of the MPIN and TOTP.  Its rotated files
+# (``.log.<date>``) also fall outside the ``*.log`` gitignore.  So both outputs
+# are switched off BEFORE the import; every failure is still reported, scrubbed,
+# through this adapter's own logger.  ``setdefault`` keeps an explicit operator
+# choice: set either variable (in the environment or .env, which is loaded just
+# above) to turn the SDK's own log back on.  v2 ignores both variables.
+os.environ.setdefault("NEO_LOG_LEVEL", "NOLOG")
+os.environ.setdefault("NEO_LOG_FILE_ENABLED", "false")
+
+from neo_api_client import NeoAPI  # noqa: E402  (PyPI ``kotakneoapi``)
 
 # Route status/errors through the logging system so they land in the master
 # runner's log file/handlers (with timestamps + levels), not just stdout.
@@ -339,7 +359,8 @@ class KotakExecutionClient:
         self.is_logged_in = False
         # The "one thread at a time" gate for login + orders + scrip lookups.
         self._lock = threading.RLock()
-        # Kotak's SDK exposes no native timeout argument. Every SDK interaction
+        # Kotak's SDK calls take no per-call deadline (v3's own HTTP timeout is
+        # 30s per phase; v2 had none at all). Every SDK interaction
         # therefore runs through ONE single-worker executor. If a call times out,
         # its thread may still be inside the SDK, but the one-worker queue ensures
         # no later SDK call can overlap it.
@@ -468,7 +489,7 @@ class KotakExecutionClient:
     @staticmethod
     def _normalize_mobile(raw: str) -> str:
         """
-        Kotak Neo v2 requires the mobile number WITH the country code
+        Kotak Neo requires the mobile number WITH the country code
         (e.g. "+919876543210"); a bare 10-digit number is rejected with
         "Invalid field 'MobileNumber'". Kotak accounts are India-only, so a
         plain 10-digit number is prefixed with +91. Already-prefixed numbers
@@ -543,7 +564,9 @@ class KotakExecutionClient:
                 log.error("Kotak login aborted: no TOTP entered.")
                 return False
 
-            # Step 1: initialise API client (v2 constructor; same shape as v1).
+            # Step 1: initialise API client. KEYWORDS ONLY: v3 reordered the
+            # constructor's positional parameters, so a positional call would
+            # silently put "prod" where the consumer key belongs.
             self.client = NeoAPI(
                 environment="prod",
                 access_token=None,
@@ -582,41 +605,17 @@ class KotakExecutionClient:
                 log.error("  totp_validate -> %s", redact_payload(validate_resp, secrets))
                 return False
 
-            # Surface the ORDER-critical fields too, not just edit_token/edit_sid.
-            # place_order authorizes with Auth(edit_token) + Sid(edit_sid) +
-            # sId(serverId); login + scrip lookups (which authorize via
-            # consumer_key) can succeed while serverId is empty, in which case
-            # orders are rejected as "unauthorized".
+            # Surface the ORDER-routing fields too, not just edit_token/edit_sid:
+            # every order call is sent to ``base_url``, which totp_validate
+            # returns for this account's data centre.  (v2 also kept a
+            # ``serverId`` here for its streaming socket; v3 has no such field
+            # and this REST-only adapter never used it.)
             self.is_logged_in = True
-            server_id = getattr(cfg, "serverId", None)
             log.info(
                 "Kotak execution client login successful (2FA complete). "
-                f"serverId={server_id!r}, "
                 f"base_url={'set' if getattr(cfg, 'base_url', None) else 'MISSING'}, "
                 f"data_center={getattr(cfg, 'data_center', None)!r}"
             )
-            if not server_id:
-                # An empty hsServerId does NOT block order placement, contrary
-                # to what an earlier version of this warning asserted (it told
-                # operators to go ask Kotak for order permissions they already
-                # had).  Measured against a live account returning hsServerId "":
-                #
-                #   * limits() -- a REST call that sends the SAME ``sId`` query
-                #     parameter as place_order -- returned stCode 200 / stat Ok.
-                #   * place_order reached Kotak's OMS and was rejected with
-                #     stCode 1041 "Last Traded Price (LTP) not available for
-                #     this instrument", i.e. a market-microstructure refusal
-                #     outside trading hours, NOT an authorization failure.
-                #
-                # hsServerId feeds ``NeoWebSocket(sid, token, server_id,
-                # data_center)`` -- the HS streaming socket, which this
-                # REST-only adapter never opens.  So this is informational and
-                # would only matter if live streaming were added later.
-                log.info(
-                    "Kotak login returned an empty serverId (hsServerId). REST "
-                    "order placement is unaffected: it is the HS streaming "
-                    "socket that needs it, and this adapter never opens one."
-                )
             return True
         except Exception as exc:
             # Reset state on any failure so a stale half-session never leaks.
@@ -955,8 +954,9 @@ class KotakExecutionClient:
                         transaction_type=_SIDE_MAP[side_norm],
                         amo="NO",
                         disclosed_quantity="0",
-                        market_protection="0",
-                        pf="N",
+                        # No market_protection / pf here: v3 removed both
+                        # parameters (it always sends protection "0"), and
+                        # passing either raises TypeError before any request.
                         trigger_price="0",
                         tag=order_tag or None,
                     ),
@@ -985,7 +985,7 @@ class KotakExecutionClient:
     ) -> OrderResult:
         """Normalize one placement acknowledgement and confirm its final fill."""
 
-        # The v2 SDK's place_order does NOT raise on failure -- it RETURNS an
+        # The SDK's place_order does NOT raise on failure -- it RETURNS an
         # error dict instead (e.g. {"Error": ...}, {"Error Message": "Complete
         # the 2fa ..."} when not logged in, or {"stat": "Not_Ok", ...} on a
         # broker rejection). Treat anything without a genuine order
@@ -1066,7 +1066,7 @@ class KotakExecutionClient:
             self._traded_price(latest),
         )
 
-    # Kotak Neo v2's official order-history schema names this field ``avgPrc``.
+    # Kotak Neo's official order-history schema names this field ``avgPrc``.
     # Do not guess aliases: an unrecognized payload is missing evidence, not a
     # reason to reinterpret some other numeric field as money.
     _TRADED_PRICE_KEYS = ("avgPrc",)
@@ -1346,7 +1346,7 @@ class KotakExecutionClient:
         """
         True only when `resp` is a genuine order acknowledgement.
 
-        The v2 place_order returns a dict either way, so we must distinguish a
+        The SDK's place_order returns a dict either way, so we must distinguish a
         real ack from a returned error. A placed order carries a broker order
         number (nOrdNo); we also accept an explicit Ok / 200 status. Any
         Error / Error Message / Not_Ok marker is treated as failure.

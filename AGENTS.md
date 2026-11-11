@@ -308,7 +308,7 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   modules by basename — there are no `__init__.py` files). A `Tests/` folder mirroring a
   spaced-name source folder carries a `conftest.py` that puts the SOURCE folder on `sys.path`,
   never the test folder, so tests exercise the same import resolution production uses.
-- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13 + 3.14; the isolated broker set stays on 3.12 + 3.13):**
+- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13 + 3.14):**
   `python -m unittest Tests.test_nifty_multi_strategy_master`,
   `python -m unittest Tests.test_market_data_health`,
   `python -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q`,
@@ -326,9 +326,12 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   the dev/CI gate tooling (requirements-dev.txt was merged into it); add
   `requirements-ai.txt` for BOTH optional AI agents.
   `requirements-brokers.txt` is the isolated upstream compatibility
-  environment and must not be combined with core because Kotak pins older
-  pandas/requests; use the safe per-broker commands in README. Kotak v2 comes
-  from its official `v2.0.1` Git tag.
+  environment and must not be combined with core because Kotak's SDK declares
+  `pandas<3`; use the safe per-broker commands in README. Kotak's SDK is the
+  PyPI package `kotakneoapi` (v3, imported as `neo_api_client`), installed with
+  `--no-deps`; it replaced the v2 Git tag, whose repository GitHub disabled.
+  The adapter switches the SDK's own stdout/file logging off at import, because
+  that logging bypasses the redaction filter.
 - **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with a
   `Co-Authored-By:` trailer identifying the agent that produced the change. `.env`,
   `Backtest Outputs/`, and `*.log` stay gitignored.
