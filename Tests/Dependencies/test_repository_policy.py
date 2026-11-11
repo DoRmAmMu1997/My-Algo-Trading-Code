@@ -442,7 +442,7 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # since the SDK's in-process MCP server runs on it.
     assert "mcp==2.3.0" in ai
     assert "pyotp==2.9.0" in brokers
-    # Kotak v2 (Git tag v2.0.1) -> kotakneoapi 3.0.13 (2026-11-10). Forced, not
+    # Kotak v2 (Git tag v2.0.1) -> kotakneoapi 3.0.13 (2026-11-10, PR #240). Forced, not
     # chosen: GitHub disabled Kotak-Neo/Kotak-neo-api-v2 on 2026-11-05, so the tag
     # could no longer be cloned and both broker-dependency jobs went red on main.
     # kotakneoapi is Kotak's own successor (MIT, same `neo_api_client` import
