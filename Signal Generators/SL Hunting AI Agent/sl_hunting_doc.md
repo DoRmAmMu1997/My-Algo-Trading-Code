@@ -13666,3 +13666,216 @@ Each of these 8 mutations fails it, and the unmutated note passes:
 * BankNIFTY's 56,800 recorded as 56,900;
 * the buy branch's confidence reason dropped;
 * an expiry line added.
+
+## 6, 9 and 11 Nov - the agent shorted against IH twice, then bought the gap-up with him (diligence addendum)
+
+**Sources.**
+
+- **IH's live sessions:**
+  - 6 Nov: `C-xIbRnlJNM`, uploaded 10:22 IST, 7:32, 61 transcript segments.
+  - 9 Nov: `IQ_n_0oT_zw`, uploaded 10:32 IST, 10:31, 84 segments.
+  - 11 Nov: `BP1yhJGHUyc`, uploaded 10:04 IST, 9:29, 74 segments.
+
+  Clock times come from the taskbar clock in the frame, and his words are my
+  translation of the Hindi auto-transcripts, each read in full. 10 Nov had no
+  session ("a one-day holiday in the middle").
+- **His notes:** the 6 Nov note (`InV5oCfzG8A`) was shipped. The notes for 9 Nov
+  (`mjMnCS7tdKE`, uploaded 8 Nov 20:10 IST) and 11 Nov (`UW5Ud3ffazo`, uploaded
+  10 Nov 21:10 IST) were NOT: the agent ran both sessions with the 6 Nov note on
+  disk, which the date gate ignores. Their plans are quoted from the transcripts
+  below; their levels were not checked against frames.
+- **This book:** `Backtest Outputs/sl_hunting_decisions.jsonl` and
+  `sl_hunting_journal.jsonl` on this machine: 64, 74 and 75 decisions, and one
+  trade each day.
+- **Prices:** the Dhan one-minute CSVs, topped up through 11 Nov before any
+  measurement (the 6, 9 and 11 Nov sessions appended).
+
+**No knowledge change.** One candidate is left for the operator's call: whether
+the note's side should veto an entry on the opposite side (below).
+
+### 6 Nov: IH bought the flat open's pullback at 09:26; the agent shorted it that minute
+
+5 Nov's 3:15 levels were NIFTY 24,542.45 and BankNIFTY 57,770.05. 6 Nov opened
+FLAT: NIFTY 24,538.20 (-0.02%), BankNIFTY 57,812.90 (+0.07%). The shipped note
+said FLAT TO GAP UP -> BUY.
+
+- **09:15-09:16:** a flush to 24,388.05, the day's low.
+- **09:17-09:20:** a full recovery to 24,539.20, at the prior close.
+- **09:21-09:26:** a pullback to 24,464.95. BankNIFTY sat under 57,500.
+- **09:27 on:** straight up: 24,548.55 at 09:34, 24,581.80 at 09:36, a high of
+  24,949.85 at 15:08. The 3:15 level was 24,938.90 (+1.62%).
+
+| | IH | the agent |
+|---|---|---|
+| read | the note's BUY: "after a big move a small rejection is normal... we have been clear on direction for two or three days; the question is only the entry" | "This falsifies the pre-open note's flat-to-buy premise live, so the confirmed reversal is taken against it": a double top at 24,529-24,539 with a confirmed shooting star |
+| entry | **09:26**, before the breakout: BankNIFTY 57,500 CE and 57,600 CE x1,170, SENSEX 79,400 CE, NIFTY 24,500 CE x1,430. Sensex had rejected its 500, BankNIFTY was under its 500 and NIFTY under its closing price: "the rejection has removed the few buyers; the next ones come only after the breakout, so before it there is little retracement" | **09:26:13**, SHORT 24,486.10, stop 24,509, target 24,400, 1 lot |
+| exit | about **09:34**, as NIFTY broke its closing price and all three ran: "now others will start adding... if you want to sit and watch, you are an option seller" | **09:28:31**, stopped at 24,522.55 (-36.45 pts). The 09:27 candle closed at 24,510.45, through the stop, and the 09:28 candle traded through the 1.5x backstop (24,520.45) |
+| result | **+3,41,186.55** (57,500 CE +1,00,315.80; 57,600 CE +1,02,316.50; SENSEX +97,155.00; NIFTY +41,399.25) | **-2,488.25** (-1.59R) |
+
+- **The agent took the other side of IH's trade in the same minute, against the
+  shipped note.** The PRE-OPEN block allows it: "If your own live read disagrees
+  with it, your read wins." v5z and v6d carve out only a round-number cross and
+  a split gap.
+- **Both read the same rejection.** The agent took the double top under the prior
+  close as a reversal. IH took it as the shake-out that made the long safe.
+- **Outage:** 18 decisions from 10:12 to 10:29 returned "Agent usage-limited;
+  holding." The agent was flat.
+
+### 9 Nov: IH bought the opening sell-off at 09:21; the agent, with no note, shorted at 09:48
+
+Sunday 8 Nov had the one-hour Muhurat session (IH: "the event market opened for
+some time"). 9 Nov was also NIFTY's expiry, moved up by the holiday.
+
+Friday's 3:15 levels were NIFTY 24,938.90 and BankNIFTY 58,948.40. Against them
+9 Nov opened at 25,073.65 (+0.54%) and 59,219.95 (+0.46%). The agent's levels
+tool read NIFTY FLAT (+0.2%) and BankNIFTY GAP_UP (+0.51%). Its previous-session
+values (pivot 25,034.52, previous close 24,986.40, previous low 24,985.30) fit
+the Muhurat hour, not Friday, whose low was 24,388.05.
+
+- **09:15:** the day's high, 25,084.05, then a close at 24,993.50.
+- **09:16-09:21:** sold to 24,897.85, with no positive candle.
+- **09:22-09:34:** a bounce to 24,977.45; BankNIFTY reached 59,226.70.
+- **Rest of day:** a 24,895-24,977 range until 10:40, a low of 24,838.75 at 10:44,
+  and a 3:15 level of 25,003.65 (+0.26%). BankNIFTY closed its 3:15 at 59,642.65
+  (+1.18%).
+
+IH's unshipped note for the day: FLAT or GAP UP -> BUY; a small gap down keeps
+the plan; a big gap down, below the supports, has no plan.
+
+| | IH | the agent |
+|---|---|---|
+| read | "after days of continuous buying a little rejection should be no problem; we will not plan a sell." Buyers hold little quantity, and those who do "sit in confidence": one leaving does not start the next leaving | no note: "a split open with no pre-open note to resolve it". Cross-index read WAIT. Then the fourth touch of a descending trendline |
+| entry | **09:21**, into the selling, around the closing price: BankNIFTY 59,100 CE and 59,200 CE, SENSEX 80,800 CE x900, NIFTY 24,900 CE x1,430 | **09:48:58**, SHORT 24,920.25, stop 24,954, target 24,870, 1 lot |
+| path | he named the loss he was prepared to see, about 3 lakh, and set the target to match: "keep your target at least as large as the risk you take" | +15 pts at best (24,905.25 at 09:57), inside a 24,905-24,959 chop |
+| exit | about **09:34**, once BankNIFTY gave momentum | **10:21:36**, its own EXIT at 24,952.20 on a confirmed bullish cluster (-31.95 pts). The 10:22 candle closed at 24,957.05, through the stop, so the mechanical stop was one minute behind |
+| result | **+2,66,496.40** (59,100 CE +85,000.50; 59,200 CE +79,173.90; SENSEX +69,003.00; NIFTY +33,319.00) | **-2,829.75** (-0.95R) |
+
+- **No rule would have made IH's entry:** 09:21, into selling, with no pattern.
+- **The note would have named BUY** on the agent's own FLAT verdict. The agent
+  shorted 27 minutes later, inside the range. NIFTY's low came at 10:44, after the
+  stop.
+- **No outage:** all 74 decisions returned.
+
+### 11 Nov: both bought the 1.3% gap-up within a minute of each other
+
+9 Nov's 3:15 levels were NIFTY 25,003.65 and BankNIFTY 59,642.65. 11 Nov opened
+with a shared GAP_UP: NIFTY 25,337.80 (+1.34%), BankNIFTY 60,524.70 (+1.48%).
+
+- **09:15:** a dip to 25,263.80 and a close back at 25,336.85.
+- **09:16-09:20:** a run to 25,399.10.
+- **09:21-09:26:** a pullback to 25,310.75.
+- **Rest of day:** a high of 25,424.35 at 09:45, then a fade to 25,095.35. The
+  3:15 level was 25,125.80, at 0.09 of the day's range.
+
+IH's unshipped note for the day: FLAT TO GAP UP -> BUY; a small gap down keeps
+the plan.
+
+| | IH | the agent |
+|---|---|---|
+| read | "direction is clear; the question is whether to buy now or wait." His one check: "is the market volatile, fast up and fast down? That hits your stop even when the direction is right." It was not, and "the first candle was not big... there is no fixed entry; take a little risk" | a shared gap-up: the OPENING DRIVE continuation |
+| entry | **09:17**: BankNIFTY 60,500 CE and 60,600 CE x1,170, SENSEX 82,200 CE x900, NIFTY 25,300 CE x1,430 | **09:18:46**, LONG 25,331.90, stop 25,295, target 25,380, 1 lot |
+| exit | about **09:22**, as the profit came off the 09:20 peak: "we will not let it go below 3 lakh" | **09:20:02**, target at 25,381.30 (+49.40 pts) |
+| result | **+3,02,374.65** (60,500 CE +1,00,304.85; 60,600 CE +98,771.40; SENSEX +61,785.50; NIFTY +41,512.90) | **+4,064.25** (+1.34R) |
+
+- **Same side, a minute apart, both out before the 09:21 pullback.** This is the
+  early entry the 5 Nov measurement favoured on a big shared gap-up.
+- **IH bought at once here, where on 5 Nov he waited.** His stated test was
+  volatility, not the size of the gap.
+- **Outage:** 5 decisions from 10:25 to 10:29 were usage-limited. The agent was
+  flat.
+
+### Measured (not encoded)
+
+**1. "After days of rising, do not sell; buy."** The test took every session
+that followed three straight up days (3:15 level to 3:15 level) gaining 2% or
+more together. It traded NIFTY at the open of the given minute in the book's
+shape: a 16-point closing stop, the 1.5x backstop, a 45-point target, and out
+after 15 minutes. Results are in R, with 2021-23 / 2024-26 in brackets.
+
+| after a 3-day, 2%+ rally | n | 09:20 | 09:26 | 09:30 | 09:40 |
+|---|---|---|---|---|---|
+| FLAT open, long | 56 | +0.014 (-0.08 / +0.12) | +0.064 (-0.16 / +0.33) | +0.150 (-0.32 / +0.69) | +0.095 (-0.15 / +0.38) |
+| FLAT open, short | 56 | -0.008 (-0.06 / +0.05) | -0.029 (+0.26 / -0.36) | +0.308 (+0.57 / +0.01) | -0.022 (+0.02 / -0.07) |
+| GAP_UP open, long | 10 | +0.603 | +0.033 | -0.789 | +0.858 |
+| GAP_UP open, short | 10 | -0.037 | -0.352 | +0.494 | -1.118 |
+
+- **On flat opens neither side has an edge.** The halves disagree at every minute,
+  for longs and shorts alike.
+- **A two-day, 1.5% version (76 flat opens) leans against the claim:** its 09:20
+  short scored +0.372R, positive in both halves (+0.11 / +0.61), and its long
+  -0.051R.
+- **So the claim is not a clock-minute rule.** 6 Nov's short lost and IH's long
+  won, but a fixed-minute short after a rally is not measurably worse than a
+  fixed-minute long.
+
+**2. "Check the open is not volatile, then buy the big gap-up at once."** On the
+33 shared gap-ups of 1% or more, the split was the first candle's range against
+its median, 59.7 points.
+
+| first candle | n | long 09:16 | 09:18 | 09:20 | 09:24 |
+|---|---|---|---|---|---|
+| at or under the median | 17 | +0.424 | +0.845 | +1.024 | +0.917 |
+| above the median | 16 | +0.784 | +0.582 | +0.185 | +0.592 |
+
+- **The early long is positive in both groups,** so the first candle's range
+  does not separate them.
+- **It does not capture his judgement either:** 11 Nov's own first candle was 74
+  points, in the "volatile" half, on a day he called calm.
+
+**3. With the note against against it, on this book.** Every shipped note was
+rebuilt from git history (69 dates), and each day's branch was picked by the
+open's verdict. This machine's journal holds only 9 trades, 7 of them on days
+whose branch named one side.
+
+| | trades | mean R |
+|---|---|---|
+| with the note's side | 6 | -0.413 |
+| against it | 1 (6 Nov) | -1.590 |
+
+One trade measures nothing. The other machine's journal holds the history that
+could.
+
+### Candidate for the operator's call: should the note's side veto the opposite entry?
+
+- **What happened:** on 6 Nov the note named BUY on a FLAT open, and the agent
+  shorted a confirmed pattern at 09:26 because "your read wins". IH bought that
+  minute.
+- **What exists today:** the operator has ruled twice that the note stands
+  against a specific contrary signal: a round-number cross (v5z) and a split gap
+  (v6d). Neither covers a contrary candlestick pattern.
+- **The candidate:** while today's note names a side for today's open, do not
+  open a position on the OPPOSITE side. Like v5z, it would need its own ending
+  line (for example NIFTY trading beyond yesterday's extreme against the note).
+- **The evidence is one trade,** and measurement 1 above does not support a
+  blanket "never short after a rally". It is left unencoded.
+
+### Already in the corpus
+
+- **"Build the position before the breakout, after the rejection has removed
+  the early buyers":** THE CROWD'S FEAR IS YOUR WINDOW (v4i: "before the other
+  person applies their mind, we should build our position"), and WHEN THE STOPS
+  ARE ABOVE YOU, PREFER A DIP TO A CHASE (v4a).
+- **Booking as others join, and "if you want to sit and watch, you are an option
+  seller":** BOOK BEFORE THE ROUND NUMBER (v4d), v5m's "captured one momentum
+  and left", and TIME-DECAY discipline.
+- **"Keep your target at least as large as the risk you take":**
+  OPTION-TIME-ADJUSTED REWARD/RISK.
+- **"Wait in a profit; in a loss wait only a limited time":** DISCIPLINE IS
+  ASYMMETRIC (v4e) and FEAR IS NOT A SIGNAL (v4g).
+- **"A volatile market hits your stop even when the direction is right":** IN A
+  RANGE THE CROWD READ CANNOT PAY (v5h) and VOLATILE-DAY SIZING (v3y).
+- **"Go with the market or stay out; never the opposite trade because it has
+  risen for days":** THE METHOD IS NOT ALWAYS A FADE, and RUNAWAY TREND.
+
+### For the operator
+
+- **The agent had no note on 9 or 11 Nov.** Both of IH's forecasts existed the
+  evening before; neither was loaded. A note only reaches the agent when
+  `premarket_note.json` is updated and merged before the open.
+- **The Muhurat hour looks to have been "yesterday" on 9 Nov.** The pivot, the
+  previous low and close, and the open's verdict fit the one-hour Sunday session:
+  FLAT at +0.2%, where Friday's 3:15 level gives +0.54%.
+  Whether a special session should count as the previous session is a mechanics
+  question.
+- **Usage limits:** 18 decisions on 6 Nov and 5 on 11 Nov, none on 9 Nov. The
+  agent was flat each time.
