@@ -286,7 +286,7 @@ omit = [
 # roughly 0.1pp, the thinnest yet, and was chosen knowingly.
 #
 # USE THE CI NUMBER, NOT A LOCAL ONE. CI installs core + dev + ai + codex-ai
-# only, deliberately (Kotak's official tag pins older pandas/requests and cannot
+# only, deliberately (Kotak's official SDK declares pandas<3 and cannot
 # share the audited core environment), so it lacks the optional extras -- the
 # broker SDKs and scikit-learn. A developer machine that has them runs 9 tests
 # CI skips (2 in the master suite, 7 in pytest) and reads about half a point

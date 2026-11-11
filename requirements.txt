@@ -78,8 +78,8 @@ pandas-stubs==3.1.0.261029
 # ---- Exact optional dependency sets -----------------------------------------
 # Live broker compatibility manifest:
 #   requirements-brokers.txt
-# Kotak's official v2.0.1 tag declares dependencies that conflict with this
-# audited set, so do not install both files together. README.md gives the
+# Kotak's official SDK (kotakneoapi) declares dependencies that conflict with
+# this audited set, so do not install both files together. README.md gives the
 # safe per-broker commands. Shoonya's NorenApi client remains vendored under
 # "Dependencies/Shoonya API/".
 #

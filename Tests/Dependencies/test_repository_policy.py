@@ -442,15 +442,38 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # since the SDK's in-process MCP server runs on it.
     assert "mcp==2.3.0" in ai
     assert "pyotp==2.9.0" in brokers
-    assert "websocket-client==1.8.0" in brokers
-    assert any(
-        line == (
-            "neo_api_client @ git+https://github.com/Kotak-Neo/"
-            "Kotak-neo-api-v2.git@v2.0.1"
-        )
-        for line in brokers
-    )
-    assert all("==" in line or " @ git+" in line for line in brokers)
+    # Kotak v2 (Git tag v2.0.1) -> kotakneoapi 3.0.13 (2026-11-10). Forced, not
+    # chosen: GitHub disabled Kotak-Neo/Kotak-neo-api-v2 on 2026-11-05, so the tag
+    # could no longer be cloned and both broker-dependency jobs went red on main.
+    # kotakneoapi is Kotak's own successor (MIT, same `neo_api_client` import
+    # name, same REST endpoints and response fields). Read against the installed
+    # 3.0.13 source: place_order LOST `market_protection` and `pf` (passing
+    # either raises TypeError before any request; both were only ever sent at
+    # v2's default values, and v3 sends "mp": "0" itself); the constructor's
+    # positional order changed (the adapter already used keywords); v3 does NOT
+    # retry requests, so it cannot duplicate an order; and it logs to stdout and
+    # ./logs on import, outside the redaction filter, which the adapter switches
+    # off. Verified with the REAL 3.0.13 SDK over an httpx mock transport (no
+    # network): login, scrip master, a filled order with the exact payload, both
+    # books incl. the empty-book reply, cancel, and reject / timeout / 502 on
+    # placement. NOT verified, because it needs a real session: one live login
+    # and one small order. Run `python algo.py diagnose --broker kotak` before
+    # Kotak is next used live.
+    assert "kotakneoapi==3.0.13" in brokers
+    # kotakneoapi declares websocket-client>=1.9.0 (and never imports it), so the
+    # isolated set cannot resolve with the core's 1.8.0, which the vendored
+    # Shoonya client keeps.
+    assert "websocket-client==1.9.2" in brokers
+    # Every adapter imports requests and v3 (httpx-based) no longer pulls it in,
+    # so the isolated set names it -- at the core's version, never its own.
+    assert [line for line in brokers if line.startswith("requests==")] == [
+        line for line in core if line.startswith("requests==")
+    ]
+    assert all("==" in line for line in brokers)
+    # The live route installs the SAME Kotak pin, with --no-deps (README.md), so
+    # the command an operator copies can never drift from the validated version.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "pip install --no-deps kotakneoapi==3.0.13" in readme
 
 
 def test_precommit_ruff_rev_matches_the_requirements_dev_pin():
@@ -605,13 +628,14 @@ def test_ci_runs_audit_branch_coverage_and_every_exact_dependency_set():
     assert "python -m pip_audit" in workflow
     assert "python -m coverage run" in workflow
     assert "scripts/check_coverage_thresholds.py" in workflow
-    # 3.14 is the operator's local runtime, so the core gate must cover it. The
-    # isolated broker set must NOT: Kotak's tag pins numpy==2.1.0, which has no
-    # cp314 wheel, so adding 3.14 there would only ever produce a red build.
+    # 3.14 is the operator's local runtime, so BOTH gates must cover it. The
+    # isolated broker set could not until 2026-11-10: Kotak's v2.0.1 tag pinned
+    # numpy==2.1.0, which has no cp314 wheel. kotakneoapi 3.x declares ranges, so
+    # the broker set resolves on 3.14 and the exclusion went with the tag.
     verify_versions = parsed["jobs"]["verify"]["strategy"]["matrix"]["python-version"]
     broker_versions = parsed["jobs"]["broker-dependencies"]["strategy"]["matrix"]["python-version"]
     assert verify_versions == ["3.12", "3.13", "3.14"]
-    assert broker_versions == ["3.12", "3.13"]
+    assert broker_versions == ["3.12", "3.13", "3.14"]
 
 
 def test_dependabot_updates_python_and_github_actions_weekly():

@@ -179,9 +179,18 @@ legal. 90% branch-coverage budget.
 
 ### Kotak
 
-- The official v2 client comes from the `v2.0.1` Git tag and pins older
-  pandas/requests, so it lives in `requirements-brokers.txt` and is validated in
-  its own CI job rather than combined with the core set.
+- The official client is the v3 SDK, PyPI `kotakneoapi` (imported as
+  `neo_api_client`). It replaced the v2 Git tag when GitHub disabled that
+  repository on 2026-11-05. It declares `pandas<3`, so it lives in
+  `requirements-brokers.txt` and is validated in its own CI job rather than
+  combined with the core set; the live environment installs it with `--no-deps`.
+- v3 removed `market_protection` and `pf` from `place_order` (it always sends
+  protection `"0"`) and accepts only Kotak's exact codes. It does not retry
+  requests, so it cannot duplicate an order.
+- The SDK configures its own logging at import — a stdout handler and a rotating
+  `./logs` file on a non-propagating logger, outside the redaction filter. The
+  adapter switches both off before importing it (`NEO_LOG_LEVEL`,
+  `NEO_LOG_FILE_ENABLED`); setting either variable turns it back on.
 
 ### Flattrade
 
