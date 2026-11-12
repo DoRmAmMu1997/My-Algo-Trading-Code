@@ -431,6 +431,20 @@ class ExecutionClient(Protocol):
 
 
 @runtime_checkable
+class PositionDetailClient(ExecutionClient, Protocol):
+    """An :class:`ExecutionClient` that can also describe its positions in detail.
+
+    The position-group monitor (``docs/adr/0022``) needs each carried leg's
+    average price and option identity, which ``list_open_positions`` does not
+    carry.  The Zerodha and mStock adapters add exactly this one method to the
+    shared surface; everything else they expose is the ordinary contract, so
+    they are also selectable as ``LIVE_BROKER``.
+    """
+
+    def list_position_details(self) -> BrokerQueryResult[PositionDetail]: ...
+
+
+@runtime_checkable
 class PositionBrokerClient(Protocol):
     """The narrow surface the position-group monitor needs from a broker.
 
