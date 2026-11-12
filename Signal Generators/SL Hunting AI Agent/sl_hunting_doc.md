@@ -13822,7 +13822,7 @@ its median, 59.7 points.
 - **It does not capture his judgement either:** 11 Nov's own first candle was 74
   points, in the "volatile" half, on a day he called calm.
 
-**3. With the note against against it, on this book.** Every shipped note was
+**3. With the note against it, on this book.** Every shipped note was
 rebuilt from git history (69 dates), and each day's branch was picked by the
 open's verdict. This machine's journal holds only 9 trades, 7 of them on days
 whose branch named one side.
@@ -13879,3 +13879,169 @@ could.
   question.
 - **Usage limits:** 18 decisions on 6 Nov and 5 on 11 Nov, none on 9 Nov. The
   agent was flat each time.
+
+## 12 Nov - IH bought a flat open once it traded above his resistance; the agent stayed flat (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `LkJO4xPXAXo`, uploaded 12 Nov 10:30 IST, 8:04, 62
+  transcript segments, read in full. Clock times come from the taskbar clock in
+  the frame, and his words are my translation of the Hindi auto-transcript.
+- **His note:** `IPbJy0Uifyc`, "Prediction For 12 NOV 2026", uploaded 11 Nov
+  21:10 IST, 1:53, 15 segments. It was NOT shipped: no note was merged before the
+  open. Its levels were read from the frames at 0:54, 1:22 and 1:46.
+- **This book:** 73 decisions and no trade.
+- **Prices:** the Dhan one-minute CSVs, topped up through 12 Nov before the
+  measurement.
+
+**No knowledge change.** The session adds one fact to the 6 Nov candidate
+(below).
+
+### The session
+
+11 Nov gapped up, topped at 09:45 and sold off: its 3:15 levels, NIFTY 25,125.80
+and BankNIFTY 60,530.15, sat at 0.09 and 0.15 of the day's range. 12 Nov opened
+FLAT on the agent's measure: NIFTY 25,213.50 (+0.35%), BankNIFTY 60,801.85
+(+0.45%). Against 11 Nov's last prints (25,255.05 and 60,792.40) NIFTY opened
+0.16% lower and BankNIFTY level.
+
+- **09:15:** the day's low, 25,142.95, and a close at 25,229.60.
+- **09:16-09:20:** a run to 25,312.40. BankNIFTY closed above 61,000 at 09:16,
+  and NIFTY above 11 Nov's last print at 09:17.
+- **09:20-09:23:** a pullback to 25,266.55; BankNIFTY dipped to 60,974.10.
+- **09:24-10:00:** up to 25,384.80, the day's high, 40 points short of 11 Nov's.
+- **Rest of day:** sideways. The 3:15 level was 25,275.40 (+0.60%), at 0.55 of
+  the range. BankNIFTY took out 11 Nov's high (61,545.85 at 13:52) and put its
+  3:15 level at 61,475.10 (+1.56%).
+
+### IH's unshipped note
+
+All three indices got the same wording: 11 Nov gave "quite good positive
+momentum, but the fall was quite sharp too", and whoever sold it "will have read
+the market as a top".
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP DOWN | SELL: those sellers "will sit in quite good confidence" and cannot be targeted directly; identify selling-side setups |
+| GAP UP, "an opening above the resistance" | BUY: "the risk on the sellers goes up"; identify buying-side setups |
+
+| Index | Drawn | Spoken (auto-transcript) | Read as |
+|---|---|---|---|
+| NIFTY | R 25,252.70 / 25,445.15, S 24,790.90 / 24,653.30 | "25 440 250", 24,790 / 24,650 | R 25,250 / 25,440, S 24,790 / 24,650 |
+| BankNIFTY | R 60,809.95 / 61,514.10, S 60,007.10 / 59,607.00 | 61,500 / "600800", 59,600 / 60,000 | R 60,800 / 61,500, S 60,000 / 59,600 |
+| Sensex | R 81,812.98 / 82,523.32, S 81,062.86 / 80,703.99 | "82520 81800", "87008160" | R 81,800 / 82,520, S 81,060 / 80,700 |
+
+The first resistance sat on 11 Nov's last print in both indices this book
+holds: 25,252.70 against 25,255.05, and 60,809.95 against 60,792.40.
+
+### IH against the agent
+
+| | IH | the agent |
+|---|---|---|
+| read | "Flat to a slight gap up. Had it worked below the resistance we could comfortably follow the continued selling. But the market has started to move up, so whoever is sitting here with a sell can be our target." The crowd: "when a rejection like this comes after many days, many traders come to think the top is in." Their line: "until 82,000 [Sensex], or 61,000 in BankNIFTY, is crossed, they do not cut" | a FLAT open, opening follow inactive, no note. 09:19: "Price has run 85 points off the open in under 4 minutes straight into the 25300 psych/round number with zero retracement -- chasing here would be entering at the spike extreme" |
+| entry | **09:19-09:20**: BankNIFTY 61,100 CE and 61,200 CE x1,170, SENSEX 82,000 CE x900 (its expiry day), NIFTY 25,250 CE x1,430 | none |
+| path | down **2,18,439.85** at 09:23, against a limit he named: "if the loss goes beyond 3 lakh we cut; while it stays inside the limit, we wait" | 49 HOLDs from 09:16 to 10:04. At 09:26: "a shallow ~46pt pullback that already resolved bullish (09:25 hammer confirmed, new high printed) -- entering now would be chasing the top of a completed leg" |
+| exit | **09:37**: "the target is almost achieved; we will not be greedy now" | - |
+| result | **+2,93,054.65** (61,100 CE +92,722.75; 61,200 CE +86,486.40; SENSEX +73,233.00; NIFTY +40,612.50) | **0** |
+
+- **IH took the branch his note gave to a gap-up, on an open the agent measured
+  FLAT.** NIFTY opened under his first resistance (25,213.50 against 25,250) and
+  closed above it two minutes later. His test was where price worked against the
+  level, not the opening print or its size.
+- **In the book's shape his minute lost and the next covering won.**
+  - A NIFTY long at the 09:19 open (25,299.40) was stopped on 09:20's close
+    (-1.12R).
+  - One at the 09:20 open (25,303.05) hit the 24-point backstop inside that
+    minute (-1.5R).
+  - One at the 09:26 open (25,316.55), after 09:25 closed above the 09:20 high,
+    made +1.96R at the 15-minute exit.
+- **IH's line was wider and held.** He sat through a 35-point pullback, 2.18
+  lakh of his 3 lakh: "a little more retracement and the loss limit itself
+  might have gone."
+- **The agent declined both entries.** Its 09:19 refusal avoided the stop. Its
+  09:26 refusal passed a confirmed hammer just above the pivot and the prior
+  close (25,258.25 and 25,255.05), with no note to name a side.
+- **Outage:** 25 decisions from 10:05 to 10:29 returned "Agent usage-limited;
+  holding." The agent was flat.
+
+### What a shipped note would have done
+
+- **It would have named SELL.** The verdict was FLAT, and the note's FLAT branch
+  is SELL. Its BUY branch hung on a level, which a line such as "GAP UP -> BUY"
+  does not carry. From here on, when IH states a branch as a level, the plan line
+  quotes the level.
+- **v5z missed its scope by 0.01 of a percentage point.** 11 Nov moved +0.49%
+  from 3:15 to 3:15, and v5z needs 0.5%.
+  - **In scope, it would have held the SELL side** through BankNIFTY's close
+    above 61,000 at 09:16. That is the case its own table calls "after an up day,
+    an up cross" (+0.608R over 19 sessions).
+  - **Its entry would have lost.** The first NIFTY candle to close under the
+    prior candle's low was 09:20; a short at the 09:21 open (25,285.75) hit the
+    backstop at 09:25 (-1.5R).
+  - **IH read the same cross as his BUY branch arriving.** One session, recorded
+    for v5z's review.
+
+### Measured (not encoded)
+
+**"After a rejection day, a flat open that works above the resistance is a buy;
+below it, follow the selling."** The test took every FLAT open after a day that
+made a new five-session high before 13:30 and left its 3:15 level in the bottom
+third of its range. It split them on the 09:19 close against yesterday's last
+print, the level IH's first resistance sat on. It traded NIFTY at the open of
+the given minute in the book's shape. Results are in R, with 2021-23 / 2024-26
+in brackets.
+
+| at 09:19 | n | long 09:20 | short 09:20 | long 09:25 | short 09:25 | long 09:30 | short 09:30 |
+|---|---|---|---|---|---|---|---|
+| above yesterday's last print (12 Nov) | 33 | -0.084 (+0.04 / -0.15) | -0.249 (+0.35 / -0.55) | -0.073 (-0.23 / +0.01) | -0.020 (+0.05 / -0.05) | -0.255 (+0.02 / -0.39) | +0.521 (-0.11 / +0.84) |
+| below it | 40 | -0.130 (-0.24 / -0.02) | -0.171 (+0.39 / -0.73) | -0.306 (-0.44 / -0.18) | +0.247 (+0.53 / -0.04) | -0.171 (-0.36 / +0.01) | +0.204 (+0.32 / +0.09) |
+
+- **Above the level the long did not earn at any minute.** The short did not
+  either until 09:30, where the halves disagree.
+- **Below it the long lost at every minute,** which fits "follow the selling".
+  But the short was positive in both halves only at 09:30, and small.
+- **A stop twice as wide does not rescue the long:** with 32 points and 30
+  minutes it scored +0.058R of that stop at 09:20 (+0.13 / +0.02).
+- **A three-session high reads the same** (42 and 51 sessions): the 09:20 long
+  above the level scored -0.205R.
+- **So the level does not pick the side as a clock-minute rule.** Yesterday's
+  last print is also only a proxy for a line IH draws by hand. Not encoded.
+
+### What it adds to the 6 Nov candidate
+
+- **IH traded off the letter of his own note's FLAT branch,** four minutes into
+  the session. A veto keyed to the open's verdict ("the note names SELL on a FLAT
+  open, so no long") would have blocked his own trade.
+- **So a veto, if the operator adopts one,** has to pick the branch by the note's
+  own condition, here a level, and needs an ending line as v5z has.
+- **The evidence is now** one trade for it (6 Nov) and one session against a
+  verdict-keyed version (12 Nov).
+
+### Already in the corpus
+
+- **"Sellers under the resistance sit in confidence; they become the target once
+  price works above it":** CLOSING-PRICE BREAKDOWN IS THE TRIGGER when hunting
+  seated buyers, not the gap. 12 Nov is its mirror, seen once, and the
+  measurement above does not support writing the mirror in.
+- **"One rejection after many up days and traders call the top":** SECOND-DAY
+  RECRUITMENT (v4a) says one adverse day seats nobody. v5v's measurement already
+  overrides it for entries, after IH bought a one-day crowd on 21 Oct.
+- **"It will at least cover this chart; it may not manage a breakout; after
+  them, selling may come again":** A FRESHLY RECRUITED CROWD HAS TIGHT STOPS
+  (v4a): a sharp but small move, and no large target. NIFTY stopped 40 points
+  under 11 Nov's high.
+- **"Until 82,000 or 61,000 is crossed they do not cut":** ROUND NUMBERS AMPLIFY
+  RECRUITMENT (v4c), and v5x's round-number line read from the other side.
+- **"While it stays inside the limit, we wait":** THE LOSS LIMIT IS A PERMISSION
+  TO WAIT (v4h) and PRE-COMMIT THE ADVERSE MOVE YOUR THESIS TOLERATES (v4d).
+- **"The rejection that came is fine for us: it will not trouble us at target
+  time":** A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY
+  PULLED BACK (v5y), the sentence he gave on 23 Oct.
+- **"Take a little risk at entry, or a direct run leaves you behind; if the
+  retracement grows, book the loss and leave":** ENTRY TIME IS A RISK DIAL (v4l).
+
+### For the operator
+
+- **Three sessions in a row ran without a note:** 9, 11 and 12 Nov. On 12 Nov a
+  note written the usual way would have pointed the wrong way (above).
+- **Usage limits again:** 25 decisions on 12 Nov, from 10:05 to the 10:30 cutoff.
