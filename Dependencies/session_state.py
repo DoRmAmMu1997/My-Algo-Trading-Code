@@ -57,6 +57,7 @@ anyway; the record keeps a plain ``had_live_leg`` boolean for forensics instead.
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -311,6 +312,10 @@ class SessionStateStore:
         # Set once after the first write failure so a broken path (bad
         # permissions, missing drive) logs one error instead of one per trade.
         self._write_failure_logged = False
+        # Set by remove_session_files() at a published end of day. From then on
+        # every flush is a no-op, so a straggling event cannot recreate a file
+        # the cleanup just deleted.
+        self._files_removed = False
 
         # Liveness bookkeeping for the supervisor heartbeat and the stall guard.
         # `_marks_writes` counts SUCCESSFUL marks publishes; the two timestamps
@@ -679,6 +684,49 @@ class SessionStateStore:
         except Exception:  # noqa: BLE001 - reporting must never break shutdown
             self._log_write_failure("mark clean shutdown")
 
+    def remove_session_files(self) -> list[Path]:
+        """Delete this session's files and every recovery archive beside them.
+
+        Only for an end of day whose books are already in the Google Sheet:
+        after that, nothing in these files is needed -- the session is flat, so
+        there is nothing to resume, and the P&L they protect has been published.
+        The caller owns that decision (see the master's
+        ``_remove_published_session_state``); this method just deletes.
+
+        Covers ``<stem>.json``, ``<stem>.marks.json`` and every timestamped
+        ``<stem>.<ts>.recovery.json`` / ``.recovery.marks.json`` pair a restart
+        left behind.  A file that cannot be removed is logged and skipped, never
+        raised -- cleanup must not break shutdown.  Returns the paths removed.
+        """
+
+        suffix = self.path.suffix
+        stem = self.path.name[: -len(suffix)] if suffix else self.path.name
+        prefix = glob.escape(stem)
+        candidates = [
+            self.path,
+            self.marks_path,
+            *self.path.parent.glob(f"{prefix}.*.recovery{glob.escape(suffix)}"),
+            *self.path.parent.glob(f"{prefix}.*.recovery.marks{glob.escape(suffix)}"),
+        ]
+        removed: list[Path] = []
+        with self._lock:
+            # Flipped BEFORE deleting, under the same lock every flush takes, so
+            # no write can slip in between the delete and the flag.
+            self._files_removed = True
+            for candidate in candidates:
+                try:
+                    candidate.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    self.log.warning("Could not remove session state file %s.", candidate)
+                    continue
+                removed.append(candidate)
+        self.log.info(
+            "Removed %d session state file(s) after a published end of day.", len(removed)
+        )
+        return removed
+
     def _write_document(self, target: Path, document: Mapping[str, Any], *, durable: bool) -> float:
         """Atomically publish one document. Returns the elapsed seconds.
 
@@ -744,6 +792,8 @@ class SessionStateStore:
         a session -- so the fsync cost is paid rarely and always for a record
         that a crash would otherwise make expensive to rebuild by hand.
         """
+        if self._files_removed:
+            return
         self._state["updated_at"] = _now_ist().isoformat()
         elapsed = self._write_document(
             self.path, self._durable_document_locked(), durable=True
@@ -764,6 +814,8 @@ class SessionStateStore:
         nothing else -- the trades and the P&L rollup are in the durable file
         this method does not touch.
         """
+        if self._files_removed:
+            return
         self._state["updated_at"] = _now_ist().isoformat()
         elapsed = self._write_document(
             self.marks_path, self._marks_document_locked(), durable=False

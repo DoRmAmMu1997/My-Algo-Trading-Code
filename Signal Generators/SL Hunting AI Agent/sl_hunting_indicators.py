@@ -56,6 +56,21 @@ GAP_CLASSIFICATION_THRESHOLD_PCT = 0.5
 # pattern scan never sees an earlier session's copies of them.
 SETTLEMENT_PRINTS_FROM = dt_time(15, 15)
 
+# v6c (operator, 29 Oct): the OPENING FOLLOW. When yesterday closed near one end of
+# its range but made that extreme by 13:30 and then faded (its crowd booked and
+# left), a FLAT open is followed in yesterday's direction -- but only in the first
+# two decisions of the session. The agent decides as each new minute appears, so its
+# first call fills about 09:15:50 and its second about 09:16:35. Measured on five
+# years of NIFTY (84 sessions, a 16-point stop judged on the close, 45-point target):
+# +0.38R and +0.21R at those fills, both halves of the data positive; ~0 by the
+# third call. The window is therefore "today's frame still ends at the 09:16 candle".
+SESSION_FIRST_CANDLE = dt_time(9, 15)
+OPENING_FOLLOW_LAST_CANDLE = dt_time(9, 16)
+OPENING_FOLLOW_STALL_BY = dt_time(13, 30)
+OPENING_FOLLOW_MIN_FADE_PCT = 0.15
+OPENING_FOLLOW_STOP_POINTS = 16.0
+OPENING_FOLLOW_TARGET_POINTS = 45.0
+
 
 @dataclass(frozen=True)
 class SLHuntingIndicatorConfig:
@@ -91,6 +106,9 @@ class SLHuntingIndicatorConfig:
     # Cross-index (NF/BNF): how close (fraction of price) the last price must be to a
     # level to count as "at" that level / pivot.
     cross_index_band_pct: float = 0.15
+    # v6c kill switch: False makes `opening_follow` read "switched off", so the
+    # agent never sees an active window (`SL_HUNTING_OPENING_FOLLOW_ENABLED`).
+    opening_follow_enabled: bool = True
 
     def __post_init__(self) -> None:
         invalid_finite = [
@@ -249,9 +267,84 @@ def _anatomy(row: pd.Series, cfg: SLHuntingIndicatorConfig) -> dict[str, Any]:
 # Pivot, OHLC and key levels
 # ---------------------------------------------------------------------------
 
+def _opening_follow(
+    prev_df: pd.DataFrame | None,
+    level_315: float | None,
+    open_classification: dict[str, Any],
+    today_df: pd.DataFrame,
+    cfg: SLHuntingIndicatorConfig,
+) -> dict[str, Any]:
+    """v6c: is the opening-follow window open right now, and in which direction?
+
+    Worked example (29 Oct 2026): 28 Oct's 3:15 level, 22,707.05, sat in the top
+    quarter of its range; its high, 22,777.85, came at 13:00 and the close faded
+    0.31% from it, so the shape is UP_STALLED. 29 Oct opened FLAT. While today's
+    frame ended at the 09:15 or 09:16 candle the block read active, direction LONG;
+    from the 09:17 candle on it reads expired. Everything is deterministic, like the
+    open verdict beside it: the model reads it, it does not re-derive it.
+    """
+    window = (
+        "today's 09:15 and 09:16 candles only -- the first two decisions of the "
+        "session; expired from the 09:17 candle on"
+    )
+    if not cfg.opening_follow_enabled:
+        return {"available": False, "active": False, "direction": None,
+                "reason": "switched off (SL_HUNTING_OPENING_FOLLOW_ENABLED=false)"}
+    if prev_df is None or prev_df.empty or level_315 is None or not open_classification.get("available"):
+        return {"available": False, "active": False, "direction": None,
+                "reason": "no previous session in the candle window"}
+
+    pre = prev_df[prev_df["timestamp"].dt.time < SETTLEMENT_PRINTS_FROM]
+    pre = pre if not pre.empty else prev_df
+    high, low = float(pre["high"].max()), float(pre["low"].min())
+    shape, setup_direction = "NONE", None
+    prior: dict[str, Any] = {"shape": shape}
+    if high > low:
+        position = (level_315 - low) / (high - low)
+        high_time = pre["timestamp"].iloc[int(np.argmax(pre["high"].to_numpy()))].time()
+        low_time = pre["timestamp"].iloc[int(np.argmin(pre["low"].to_numpy()))].time()
+        fade_from_high = 100.0 * (high - level_315) / high
+        lift_from_low = 100.0 * (level_315 - low) / low
+        if position >= 2 / 3 and high_time <= OPENING_FOLLOW_STALL_BY and fade_from_high >= OPENING_FOLLOW_MIN_FADE_PCT:
+            shape, setup_direction, extreme_time, faded = "UP_STALLED", "LONG", high_time, fade_from_high
+        elif position <= 1 / 3 and low_time <= OPENING_FOLLOW_STALL_BY and lift_from_low >= OPENING_FOLLOW_MIN_FADE_PCT:
+            shape, setup_direction, extreme_time, faded = "DOWN_STALLED", "SHORT", low_time, lift_from_low
+        prior = {"shape": shape, "close_position_in_range": round(position, 3)}
+        if setup_direction is not None:
+            prior.update({"extreme_time": extreme_time.strftime("%H:%M"), "faded_pct": round(faded, 3)})
+
+    verdict = open_classification.get("verdict")
+    first_time = today_df["timestamp"].iloc[0].time()
+    last_time = today_df["timestamp"].iloc[-1].time()
+    in_window = first_time == SESSION_FIRST_CANDLE and last_time <= OPENING_FOLLOW_LAST_CANDLE
+    if setup_direction is None:
+        reason = ("yesterday did not close in the outer third of its range after making that "
+                  "extreme by 13:30 and fading at least 0.15% from it")
+    elif verdict != "FLAT":
+        reason = f"today's open is {verdict}, not FLAT"
+    elif not in_window:
+        reason = "expired: the window covers the session's first two decisions only"
+    else:
+        reason = None
+    active = reason is None
+    return {
+        "available": True,
+        "active": active,
+        "direction": setup_direction if active else None,
+        "prior_session": prior,
+        "open_verdict": verdict,
+        "window": window,
+        "stop_points": OPENING_FOLLOW_STOP_POINTS,
+        "target_points": OPENING_FOLLOW_TARGET_POINTS,
+        "reason": reason,
+    }
+
+
 def pivot_and_levels(
     candles: pd.DataFrame,
     cfg: SLHuntingIndicatorConfig | None = None,
+    *,
+    include_opening_follow: bool = True,
 ) -> dict[str, Any]:
     """Compute the day pivot, previous-day OHLC, today's levels and psych levels.
 
@@ -275,6 +368,7 @@ def pivot_and_levels(
     prev_day: dict[str, Any] | None = None
     pivot: float | None = None
     level_315: float | None = None
+    prev_df: pd.DataFrame | None = None
     if len(dates) >= 2:
         prev = dates[-2]
         prev_df = df[df["_date"] == prev]
@@ -385,7 +479,12 @@ def pivot_and_levels(
             "Above pivot = buyers' market; below = sellers'. A WICK at a level = "
             "trap/reversal; a clean BREAK = continuation."
         ),
-    }
+    } | (
+        # v6c: NIFTY's payload only -- the rule was measured on NIFTY, so BankNIFTY's
+        # levels leave it out rather than show a second, unmeasured window.
+        {"opening_follow": _opening_follow(prev_df, level_315, open_classification, today_df, cfg)}
+        if include_opening_follow else {}
+    )
 
 
 # ---------------------------------------------------------------------------

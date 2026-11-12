@@ -814,6 +814,15 @@ class MasterWorkerExecutor:
             if callable(rule_getter):
                 with contextlib.suppress(Exception):
                     snap["stop_fires"] = str(rule_getter())
+            # v6a: whether the option held expires this session (no MODIFY_TARGET
+            # raise that day). Only these two keys are copied across.
+            expiry_getter = getattr(self._w, "contract_expiry_state", None)
+            if callable(expiry_getter):
+                with contextlib.suppress(Exception):
+                    expiry_state = expiry_getter()
+                    for key in ("contract_expiry", "contract_expires_today"):
+                        if key in expiry_state:
+                            snap[key] = expiry_state[key]
         else:
             # Only the BankNIFTY mirror remains: no fresh NIFTY entry until it is
             # closed (EXIT exit_leg=BNF) -- the agent should manage this leg, not enter.

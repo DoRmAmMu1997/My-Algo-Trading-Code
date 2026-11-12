@@ -17,6 +17,7 @@ import importlib.util
 import io
 import json
 import logging
+import os
 import re
 import subprocess  # nosec B404 - used only to import this repo's own adapters
 import sys
@@ -1864,6 +1865,122 @@ def test_kotak_transmits_execution_ledger_tag(
     assert fake.last_place_kwargs["tag"] == "M2-A1B2-4F8D2Q7J-NE1"
 
 
+def _kotak_place_order_kwargs(kotak_module: ModuleType, monkeypatch) -> dict[str, object]:
+    """Return the exact keyword arguments the adapter hands to ``place_order``."""
+
+    fake = _FakeKotakSdk(
+        history_row={"ordSt": "COMPLETE", "fldQty": "75", "qty": "75"}
+    )
+    client = _ready_kotak_client(kotak_module, monkeypatch, fake)
+    client.place_market_order("NIFTY26NOV24000CE", "SELL", 75, product_type="NORMAL")
+    assert fake.last_place_kwargs is not None
+    return fake.last_place_kwargs
+
+
+def test_kotak_place_order_sends_exactly_the_v3_argument_set(
+    kotak_module: ModuleType,
+    monkeypatch,
+) -> None:
+    """Pin the whole keyword set, not just the fields a test happens to read.
+
+    kotakneoapi 3.x REMOVED ``market_protection`` and ``pf`` from ``place_order``.
+    Passing either raises ``TypeError`` before any request is sent, and the
+    adapter reports that as an INDETERMINATE order -- freezing live entries over
+    an order that was never placed.  ``_FakeKotakSdk.place_order`` takes
+    ``**kwargs``, so it accepts a removed argument silently; only comparing the
+    complete set notices one coming back.  The values are Kotak's exact codes,
+    because v3 also stopped translating the friendly aliases v2 accepted.
+    """
+
+    assert _kotak_place_order_kwargs(kotak_module, monkeypatch) == {
+        "exchange_segment": "nse_fo",
+        "product": "NRML",
+        "price": "0",
+        "order_type": "MKT",
+        "quantity": "75",
+        "validity": "DAY",
+        "trading_symbol": "NIFTY26NOV24000CE",
+        "transaction_type": "S",
+        "amo": "NO",
+        "disclosed_quantity": "0",
+        "trigger_price": "0",
+        "tag": None,
+    }
+
+
+def test_kotak_adapter_fits_the_installed_sdk_and_silences_its_logging(
+    kotak_module: ModuleType,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Check the adapter against the REAL Kotak SDK whenever one is installed.
+
+    Every other Kotak test here runs on fakes, which is why the v2 -> v3 move
+    could remove two ``place_order`` parameters without one test noticing.  This
+    one imports the adapter in a subprocess (this process has an import-only
+    double in ``sys.modules``) and asks the installed SDK two things:
+
+    * does it accept every keyword the adapter passes to ``place_order`` and to
+      the ``NeoAPI`` constructor?
+    * did importing the adapter leave the SDK's own logging switched OFF?  v3
+      otherwise attaches a stdout handler and a rotating ``./logs`` file to a
+      non-propagating logger, bypassing this repo's redaction filter; at its
+      default level a rejected login prints the mobile number and UCC in clear.
+
+    The subprocess runs in an empty directory, without any ``NEO_LOG_*`` variable
+    and with ``.env`` loading stubbed out, so the result reflects the adapter's
+    own defaults rather than this machine's configuration.  It still only
+    imports a module -- no session, no flag, no network.
+    """
+
+    probe = (
+        "import inspect, json, logging, os, sys, types\n"
+        "sys.modules['dotenv'] = types.SimpleNamespace(load_dotenv=lambda *a, **k: False)\n"
+        f"sys.path.insert(0, {str(ROOT / 'Dependencies' / 'Kotak API')!r})\n"
+        "import kotak_execution as ke\n"
+        "print('PROBE ' + json.dumps({\n"
+        "    'place_order': sorted(inspect.signature(ke.NeoAPI.place_order).parameters),\n"
+        "    'constructor': sorted(inspect.signature(ke.NeoAPI.__init__).parameters),\n"
+        "    'sdk_log_handlers': len(logging.getLogger('neo_api_client').handlers),\n"
+        "    'logs_directory_created': os.path.exists('logs'),\n"
+        "}))\n"
+    )
+    environment = {
+        name: value for name, value in os.environ.items() if not name.startswith("NEO_LOG_")
+    }
+    # nosec B603 - argv is [sys.executable, "-c", <literal built from ROOT>]; no
+    # shell, and no external input reaches it.
+    completed = subprocess.run(  # nosec B603
+        [sys.executable, "-c", probe],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    output = completed.stdout + completed.stderr
+    if "No module named 'neo_api_client'" in output:
+        pytest.skip("optional broker SDK 'neo_api_client' is not installed")
+    report_line = next(
+        (line for line in completed.stdout.splitlines() if line.startswith("PROBE ")),
+        None,
+    )
+    assert report_line is not None, f"Kotak adapter failed to import:\n{output}"
+    report = json.loads(report_line.removeprefix("PROBE "))
+
+    sent = set(_kotak_place_order_kwargs(kotak_module, monkeypatch))
+    assert sent <= set(report["place_order"]), (
+        "the adapter passes place_order arguments the installed Kotak SDK does not "
+        f"accept: {sorted(sent - set(report['place_order']))}"
+    )
+    assert {"consumer_key", "environment", "access_token", "neo_fin_key"} <= set(
+        report["constructor"]
+    )
+    assert report["sdk_log_handlers"] == 0
+    assert report["logs_directory_created"] is False
+
+
 @pytest.mark.parametrize(
     ("history_row", "expected_status", "filled", "remaining"),
     [
@@ -2875,7 +2992,6 @@ def test_kotak_login_success_normalizes_mobile_and_validates_two_factor(
     class Configuration:
         edit_token = "trade-token"
         edit_sid = "trade-session"
-        serverId = "server"
         base_url = "https://example.invalid"
         data_center = "dc"
 

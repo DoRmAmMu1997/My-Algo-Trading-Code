@@ -1,4 +1,4 @@
-# ADR-0021: A target monitor for carried option-selling positions
+# ADR-0022: A target monitor for carried option-selling positions
 
 **Status:** Accepted
 **Date:** 2026-10-23

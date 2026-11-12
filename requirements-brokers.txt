@@ -1,15 +1,28 @@
-# Exact optional broker dependency environment validated on Python 3.12/3.13.
+# Optional broker dependency environment, validated on Python 3.12/3.13/3.14.
 #
-# Kotak does not publish the required v2.0.1 instruction as a usable PyPI release.
-# Install the official repository tag exactly as Kotak documents. Shoonya's client
-# is vendored, but it needs the pinned TOTP and WebSocket packages below. Flattrade
-# uses requests/pandas from requirements.txt and needs no extra SDK.
+# Kotak: the official v3 SDK, PyPI `kotakneoapi` (imported as `neo_api_client`).
+# The v2 client this file used to install came from the Git tag
+# Kotak-Neo/Kotak-neo-api-v2@v2.0.1; GitHub disabled that repository on
+# 2026-11-05, so the tag can no longer be cloned. v3 is the same REST backend
+# behind a new client, and the adapter's calls were checked against it call by
+# call (see the Kotak pin review in Tests/Dependencies/test_repository_policy.py).
 #
-# IMPORTANT: Kotak's tag declares older exact pandas/requests constraints, so this
-# full file is an isolated compatibility/CI environment and must not be combined
-# with requirements.txt. For the live app environment, follow README.md: install
-# Shoonya's two pins directly and install the tagged Kotak package with --no-deps
-# so pip cannot silently downgrade the audited core runtime.
-neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.1
+# Shoonya's client is vendored, but it needs the TOTP and WebSocket packages
+# below. Flattrade needs no SDK. `requests` is listed because every adapter
+# imports it and kotakneoapi (httpx-based) no longer brings it in the way v2 did;
+# it must stay equal to the pin in requirements.txt (a policy test checks).
+#
+# IMPORTANT: this is an isolated compatibility/CI environment and must not be
+# combined with requirements.txt. kotakneoapi declares pandas<3 and
+# websocket-client>=1.9.0, which conflict with the audited core set (pandas 3.x,
+# websocket-client 1.8.0 for the vendored Shoonya client). Only the lines below
+# are exact: unlike v2, kotakneoapi declares RANGES for its own dependencies, so
+# the rest of this environment resolves inside those ranges. For the live app
+# environment follow README.md: install Shoonya's pins directly and install
+# kotakneoapi with --no-deps, so pip cannot downgrade the audited core runtime.
+# kotakneoapi never imports websocket-client (it only declares it), which is why
+# 1.9.x here and 1.8.0 in the core set can differ without touching Kotak.
+kotakneoapi==3.0.13
+requests==2.34.2
 pyotp==2.9.0
-websocket-client==1.8.0
+websocket-client==1.9.2

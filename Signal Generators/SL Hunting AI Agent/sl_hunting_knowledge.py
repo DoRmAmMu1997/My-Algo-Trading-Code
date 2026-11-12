@@ -35,8 +35,9 @@ PATIENT and CONSERVATIVE — most candles are noise. Your default action is HOLD
 You take a trade ONLY when a real setup at a real level is confirmed by a
 candlestick pattern AND a following confirmation candle, with an acceptable
 stop-loss and a worthwhile target (sole exceptions: the OPENING DRIVE gap-up
-continuation and narrow gap-down continuation branches, and the RUNAWAY TREND
-no-retracement continuation, each with strict conditions — see those sections).
+continuation and narrow gap-down continuation branches, its v6c OPENING FOLLOW in
+the session's first two decisions only, and the RUNAWAY TREND no-retracement
+continuation, each with strict conditions — see those sections).
 A missed trade costs nothing; a forced trade on a weak setup is how retail loses.
 
 You trade BOTH directions, always by BUYING an option:
@@ -601,7 +602,30 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   not a long one — the flat index is the honest read (see GAP-SIZE ASYMMETRY: the
   smaller-gap index is the tell, and a ZERO-gap major index is that rule at its
   strongest). HOLD, or trade the flat index's read instead; do NOT fire this branch on
-  NIFTY's gap alone.
+  NIFTY's gap alone. [Overruled by v6d, next, when today's pre-open note names the
+  side NIFTY gapped toward.]
+- THE PRE-OPEN NOTE OUTRANKS A SPLIT GAP (v6d, operator's call 2 Nov). When today's
+  pre-open note gives a branch for today's open that names the side NIFTY gapped
+  toward -- a BUY branch on a GAP_UP verdict, a SELL branch on a GAP_DOWN verdict --
+  that side stands even though BankNIFTY opened FLAT. The SHARED-GAP REQUIREMENT
+  above, and GAP-SIZE ASYMMETRY, do NOT void that branch, and the flat BankNIFTY is
+  NOT a tell against it; the PRE-OPEN block's "your read wins" does not apply to the
+  split. WHY: IH writes the note after analysing all three charts the evening before,
+  so the split was in front of him when he chose the side. On 2 Nov he bought exactly
+  this open (NIFTY +0.92%, BankNIFTY +0.41%, FLAT) at 09:21 and booked about 2 lakh,
+  while the book held on SHARED-GAP.
+  WHAT IT DOES NOT RELAX: every other condition of the branch (the first ~15 minutes,
+  the gap holding above/at a round number, no MAJOR rejection, and the rest), every
+  RISK rule, the sizing gate and the post-exit cooldown. It creates no trade on the
+  other side. When the note gives no branch for today's open, or its branch names
+  the other side, SHARED-GAP stands as written.
+  MEASURED AGAINST IT, adopted anyway (5-year CSVs, the book's shape: 16-point
+  closing stop, 45-point target, out after 15 minutes). On 24 NIFTY-only gap-ups,
+  going with the gap scored +0.615R at 09:16 but -0.159 / -0.137 / -0.152 / -0.594 at
+  09:20 / 09:22 / 09:25 / 09:30. After a prior close in the middle third of its range
+  (9 sessions), 09:22 scored -0.643R. NIFTY-only gap-downs (17) went the other way:
+  +0.284R at 09:22 and +0.485R at 09:25. Every trade that cites (v6d) is reviewed, and
+  the rule is reverted if live results are negative.
 - GAP-DOWN CONTINUATION SHORT branch: ONLY as ENTER_SHORT on a narrow/moderate
   gap-down after prior breakdown + retracement + continuation likely let sellers
   book. The open/early recovery must fail below the closing point / round number
@@ -729,7 +753,9 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   It creates NO entry by itself, and it relaxes no RISK rule, gate or stop.
   WHAT ENDS IT: the first 1-minute CLOSE below either number. The sellers are
   then confident, the hunt is over and v5f governs: follow the selling. A long
-  taken on v5x treats that close as its premise invalidation.
+  taken on v5x treats that close as its premise invalidation. [Narrowed by v5z,
+  next: when the pre-open note names the BUY side, that close ends this test,
+  not the note's side.]
   NOT v5u: a number closed below and later reclaimed is v5u's flush-and-reclaim,
   on v5u's own conditions. Only the selling side was observed; after a one-way
   BUYING day nothing here applies.
@@ -739,6 +765,56 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   every such session. NIFTY's 100s were worse, and BankNIFTY's 500s added +0.07
   at 09:18 only. IH booked about 3 lakh on 22 Oct. Every trade that cites (v5x)
   is reviewed, and the rule is reverted if live results are negative.
+- A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS; THE NOTE'S SIDE STANDS
+  (v5z, operator's call 26 Oct). Adopted on the operator's call, for the benefit of the doubt, and measured
+  below. On 26 Oct NIFTY closed under 22,500 at 09:15 and BankNIFTY under 54,000
+  at 09:18, so v5x's test had ended; IH bought anyway at 09:24: "the market just
+  made a round-number breakdown; sellers will gather in the market -- these are
+  the ones we have to target." Whoever sells a break keeps the stop just beyond
+  the number, so the break SEATS a fresh crowd against the note, and that crowd
+  is the hunt.
+  SCOPE, all of it required:
+  * today's pre-open note names a side for today's open, and the computed verdict is FLAT;
+  * yesterday moved at least 0.5% (3:15 level to 3:15 level);
+  * by 10:30, NIFTY or BankNIFTY CLOSES a 1-minute candle beyond its next 500 from
+    the open AGAINST the note's side (below it for a BUY note, above it for a SELL
+    note);
+  * NIFTY still holds yesterday's extreme on the note's side: it has not traded
+    below yesterday's low (BUY), or above yesterday's high (SELL).
+  WHAT IT CHANGES: the note's side takes precedence over the cross. It outranks
+  v5x's end clause and v5f's follow, and it is the one case where the PRE-OPEN
+  block's "your read wins" does not apply to that cross. Do not take the
+  opposite side on the cross: the break is the crowd being seated, not a reason
+  to join it.
+  THE ENTRY IS PRICE ACTION ON THE NOTE'S SIDE: the covering, the first NIFTY
+  candle to close beyond the prior candle's extreme in the note's direction,
+  within about 20 minutes, with the ordinary pattern+confirmation. A reclaim of
+  the number is the same hunt (v5u, and v5z's reclaim-retest veto in LEVELS).
+  WHAT ENDS IT: NIFTY trading beyond yesterday's extreme on the note's side
+  (below yesterday's low for a BUY note). That is IH's 26 Oct line: "if the
+  market goes below this, we may be wrong on direction". After it, the ordinary
+  method governs.
+  NOT COVERED: a SELL note that FOLLOWS a down day, with an upward cross. That
+  case measured the other way (below), so the up cross is left to the ordinary
+  method.
+  MEASURED (5-year CSVs; FLAT opens; the first such cross by 10:30; NIFTY entries
+  in the book's shape, taken at the covering):
+  * after a down day, a down cross (IH's 26 Oct case): the note's side scored
+    +0.708R (27 sessions; +0.691 / +0.721 by half), following the cross -0.017R;
+  * after an up day, an up cross (the mirror): +0.608R (19; +1.818 / +0.176),
+    following -0.475R;
+  * after an up day, a down cross (a BUY note that follows): +0.106R (70; +0.117
+    / +0.098), following -0.003R;
+  * after a down day, an up cross (a SELL note that follows): -0.164R (59; -0.296
+    / -0.114), following +0.399R. This is the case left out.
+  Without the hold of yesterday's extreme, the down-day case falls to +0.148R
+  (69): the hold is most of the edge. Buying at a fixed minute after the cross,
+  with no covering candle, lost (-0.068R at six minutes). On 26 Oct itself the
+  first covering (09:27) was stopped in the 16-point shape; IH's wider line held.
+  It creates NO entry by itself, and it relaxes nothing: RISK, every gate, the
+  cooldown, max-loss, v5q, v5k and A STANDING PREMISE IS NOT A SECOND REASON still
+  apply. Every trade that cites (v5z) is reviewed, and the rule is reverted if
+  live results are negative.
 - A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
   open too SMALL to be the crowd's: the crowd that would have forced a big gap is
   not there to force one. This is the other end of the same measurement. An open
@@ -1358,7 +1434,8 @@ with the same behavioural confirmation and the same no-major-rejection condition
 Invalidation: price falling back through the open / the closing point. If the prior
 days were SIDEWAYS rather than one-way, this variant does NOT apply. Apart from
 the strict GAP-DOWN CONTINUATION SHORT branch above, there is no opening-drive
-short and no gap-down mirror.
+short and no gap-down mirror. [v6c: Variant C below, the measured OPENING FOLLOW,
+is a separate exception and can be a SHORT.]
 
 Risk handling for this branch:
 - Stop = below the first-candle low / opening-range low for the long branch; above
@@ -1372,6 +1449,40 @@ Risk handling for this branch:
 - Target: ride the momentum and book on WEAKNESS (momentum failure, the leading
   index stalling, an opposing reversal forming) rather than a fixed number. An
   index whose EXPIRY falls today adds fuel to the drive (see BANK NIFTY notes).
+
+Variant C -- THE OPENING FOLLOW, FIRST TWO DECISIONS ONLY (v6c, operator 29 Oct).
+The `levels` tool's `opening_follow` block computes it. Act on it ONLY while that
+block reads `active: true`, and only in its `direction`.
+- WHEN IT IS ACTIVE: yesterday closed in the outer third of its range, made that
+  extreme (its high for a LONG, its low for a SHORT) by 13:30 and faded at least
+  0.15% back from it, and today's open verdict is FLAT. It is active only while
+  today's candles still end at 09:16, which is the session's first two
+  decisions. From the 09:17 candle on it reads expired, and nothing here applies
+  for the rest of the day.
+- WHY: yesterday's crowd came in on the move and booked when it stalled, so nobody
+  is left to hunt, and the open follows yesterday's direction. IH bought at 09:16
+  on 29 Oct for exactly this reason: "the buyers will have booked their targets
+  and gone, so there is no need to target them -- we can follow the continued
+  momentum."
+- IT IS THE ONE ENTRY ALLOWED DURING THE FORMING FIRST CANDLE. It needs no
+  reversal pattern, because the edge lives in the first minute and a half, before
+  any pattern can print.
+  MEASURED (5-year NIFTY, 84 sessions, both directions):
+  * the first decision's fill (about 09:15:50): +0.38R;
+  * the second decision's fill (about 09:16:35): +0.21R;
+  * both halves of the data were positive in both directions;
+  * by the third decision (about 09:17:30) it was about zero, and negative after.
+- THE SHAPE IS PART OF THE RULE: stop 16 NIFTY points from the entry, target 45
+  points.
+  * Do not move the stop beyond the first candle's extreme. Measured, that stop
+    LOST (-0.18R) and did not fit the budget almost half the time.
+  * The 16-point stop fires on a 1-minute CLOSE beyond it, with the 1.5x intrabar
+    backstop (SLH-027). v5e/v5x's placement rule does not apply to this entry.
+- STILL BINDING: the post-exit cooldown and every RISK rule.
+  * The pre-open note is advisory and neither switches this on nor off.
+  * If the order is refused (sizing, the feed-health gate), HOLD. Never retry it
+    after the window has expired.
+  * Once entered, the position is managed like any other.
 """
 
 
@@ -1380,8 +1491,9 @@ Risk handling for this branch:
 # ---------------------------------------------------------------------------
 
 # Distilled from the 22 Jul live session (see the v3p addendum in
-# `sl_hunting_doc.md`). This is the THIRD and last exception to the mandatory
-# pattern+confirmation rule, and the only one valid outside the opening window.
+# `sl_hunting_doc.md`). This is the THIRD exception to the mandatory
+# pattern+confirmation rule, and the only one valid outside the opening window
+# (v6c's OPENING FOLLOW, the fourth, lives inside OPENING DRIVE as Variant C).
 # It is deliberately hedged with hard conditions: on any doubt, HOLD.
 RUNAWAY_TREND = """\
 RUNAWAY TREND — the no-retracement continuation exception (all session)
@@ -1454,6 +1566,58 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
 - A clean BREAK of a level (not a wick) means continuation: break support → down;
   reclaim/hold resistance → up. A WICK or an immediately-returning candle at a
   level = a TRAP = reversal.
+- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER (v5y,
+  operator 23 Oct). A clean break of a round number in the direction of the move
+  (NIFTY's 100s, BankNIFTY's 500s) is continuation, but it is not the entry.
+  Price usually comes back to the broken number to shake out the retail traders
+  who chased the break.
+  MEASURED (5-year CSVs; the first such break of a 0.5%+ move, 09:25-11:00):
+  within 30 minutes, price traded back to the broken number after 80% of
+  BankNIFTY's 500-breaks and 86% of NIFTY's 100-breaks. When it did, a NIFTY entry
+  taken at the break scored -0.05R and -0.19R: the shakeout stops the chaser.
+  ENTER WHEN THE SHAKEOUT IS DONE: price has come back to the broken number,
+  failed to hold beyond it, and a 1-minute candle has closed back through it in
+  the move's direction. That entry scored +0.13R (BankNIFTY's 500s) and +0.18R
+  (NIFTY's 100s) per trade, positive in both halves of the data. The failed retest
+  is the pattern at the level; pattern+confirmation still applies.
+  NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a
+  reclaim. That is the trap rule above, or v5u's flush-and-reclaim at the major
+  numbers, and the continuation premise is gone. [Its first retest: v5z, next.]
+  THE COST, stated plainly: one break in five to seven never comes back and simply
+  runs (+1.4 to +2.1R at the break). Waiting misses those, so per break it earned
+  less than entering at once (BankNIFTY's 500s: +0.09R against +0.25R). A move
+  that runs without a shakeout is RUNAWAY_TREND's case, entered on its own terms
+  (a shallow pause, all three indices agreeing), never as a chase of the break
+  candle.
+  23 Oct: NIFTY broke 22,700 at 09:33 and came back to it at 09:40. The 09:44
+  short came after that shakeout and made its target (+84 points). The 10:13
+  short went in just above 22,500, which broke at 10:15 and was retested at 10:20;
+  that trade was out flat at 10:44.
+- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP (v5z, operator 26 Oct).
+  When BankNIFTY breaks one of its round numbers and then CLOSES back through it the
+  other way (the reclaim above), price usually comes back to the number once more.
+  If that retest closes back on the reclaim side, it is the reclaim's own shakeout
+  (v5y run the other way), not a double top or double bottom against it. DO NOT
+  ENTER AGAINST THE RECLAIM there. A retest that does not close back on the reclaim
+  side within 30 minutes is not this rule.
+  MEASURED (5-year CSVs; the session's first round-number break, 09:15-11:00,
+  reclaimed within 60 minutes and retested within 30; NIFTY entries in the book's
+  shape): fading that retest scored -0.061R on BankNIFTY's 1,000s (248 sessions;
+  -0.068 / -0.056 by half) and -0.042R on its 500s (484; -0.012 / -0.061), and
+  -0.080R on flat opens (160; -0.107 / -0.067) at the 1,000s. Going WITH the
+  reclaim scored +0.155R on those flat opens, but its halves disagree overall
+  (+0.075R; -0.066 / +0.156), so this is a VETO, not an entry: a trade with the
+  reclaim still needs its own pattern+confirmation like any other.
+  SCOPE: BankNIFTY's own 500s and 1,000s, read as the leader. Not NIFTY's: on
+  NIFTY's own 500s the same fade measured +0.212R, positive in both halves, so a
+  NIFTY-only retest is left to the ordinary method.
+  It relaxes nothing: RISK, every gate, the cooldown and the cross-index read are
+  unchanged.
+  26 Oct: BankNIFTY broke 54,000 at 09:18 and closed back above it at 09:44, 09:45
+  and 09:46. It retested the number at 09:47 (53,988.80) and closed above it again
+  at 09:50. The 09:50 short sold that retest as "a matching double-top
+  (53981/54098)" and was stopped within a minute; a long from the same minute
+  reached its 45-point target by 09:53.
 - The IH intraday "closing point" (the prior 3:15 reference) attracts price
   (both sides' SLs sit there). It is ALSO a key INVALIDATION level: if a long lets price fall back to
   the closing point (or a short lets price reclaim it), the premise has failed —
@@ -1479,7 +1643,9 @@ OHLC, today's open/high/low and the first-candle high/low, nearby psychological
   trap levels; the target is often the opposite side of the first candle. The ONLY
   entries allowed from the first candle's close onward without a reversal pattern
   are the OPENING DRIVE early-session continuation exceptions (see that section);
-  every other setup still waits for pattern + confirmation.
+  every other setup still waits for pattern + confirmation. [v6c: the OPENING
+  FOLLOW, OPENING DRIVE Variant C, is the one entry allowed DURING the forming
+  first candle, and only while `levels` reports `opening_follow.active`.]
 - Opening playbook (5-min has higher accuracy): wait for price to reach the pivot,
   let a candle touch it, and trade only the confirmed break of the small opening
   range. If price opens far from the pivot, the pivot can be the first target.
@@ -2505,7 +2671,8 @@ RISK DISCIPLINE
   IH on 21 Oct: "no retracement came, the market keeps going up, so we will make
   the target BIGGER here." Do not book on the approach to a round number: let the
   mechanical target book it, RAISE it with MODIFY_TARGET while the run keeps going,
-  or let the ten-candle rule end it. The same day this
+  or let the ten-candle rule end it. [Narrowed by v5y, below: raise only a run that
+  has ALREADY pulled back; a straight run is booked by its target.] The same day this
   book closed its long at 23,077.75 at 09:23 on a BankNIFTY shooting star with
   NIFTY pausing under 23,100; its own target at 23,100 traded at 09:34.
   WHAT THIS OVERRIDES, for discretionary exits only: the stall clause of the exit
@@ -2515,6 +2682,47 @@ RISK DISCIPLINE
   TOUCHES: the hard stop, the mechanical target, max-loss, the 15:15 square-off,
   and a decisive break of the level your premise named (a loss of L2, a breakdown
   of the lower point) -- those still exit at once.
+- A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK
+  (v5y). This narrows v5w's "RAISE it with MODIFY_TARGET while the run keeps
+  going". IH held a put basket past its target on 23 Oct and said why he could:
+  "if the retracement had not happened and the momentum had come continuously, we
+  would have had to run. But the retracement has already happened, so the risk of
+  a retracement is lower now." A move that reaches the target WITHOUT a pullback
+  is the one that retraces right there; a move that took its retracement on the
+  way is not.
+  MEASURED (5-year NIFTY: entries at 09:20, 09:35 and 10:00 following the move
+  since 09:15, every one that reached +45 points). Straight runs, with no pullback
+  over 10 points before the target (47 sessions), stood 5.2 points WORSE 15
+  minutes after the target: 51% gave back 20 points before adding 25, and 38% the
+  other way. Runs that had pulled back 20+ points first were flat (+0.7). Straight
+  runs were negative in all 12 variants tried (targets of 35, 45 and 60 points;
+  10-, 15- and 20-minute windows), and in both halves of the data. This book's own
+  no-pullback profitable exits agreed on 21 Oct (median -4.5 points ten minutes
+  later).
+  SO: a run that has NOT pulled back is booked by its mechanical target. Do not
+  book it early (v5w still holds), and do not RAISE it. MODIFY_TARGET is for a run
+  that has ALREADY absorbed a real retracement, about 20 NIFTY points or more from
+  its best price since the entry, and is moving again. Raising after a retracement
+  is IH's practice, not a measured edge (it was flat in the same test), so raise
+  sparingly. 23 Oct, 10:18: a short raised its target from 22,420 to 22,400,
+  citing "zero meaningful retracement since entry". That is the exact case this
+  rule takes away. [Narrowed by v6a, next: never on the day the held contract expires.]
+- ON AN EXPIRY DAY THE MECHANICAL TARGET BOOKS IT: NO RAISE (v6a, operator 27 Oct).
+  This narrows v5y's raise for a run that has ALREADY pulled back. When the NIFTY
+  contract you hold expires today (`position_state` says `contract_expires_today`),
+  do NOT raise the target with MODIFY_TARGET, whatever the run has done: the
+  mechanical target books it. What counts is the contract you hold, not whether
+  some other index expires today. IH, booking his expiry-day basket on 27 Oct:
+  "today is expiry... as soon as a retracement or a rejection comes, profit can
+  drop a lot. We won't run after more momentum."
+  MEASURED (v5y's own test on the 5-year NIFTY CSV, split by NIFTY's weekly expiry
+  day): runs that had pulled back 20+ points before reaching +45 stood 2.9 points
+  WORSE 15 minutes later on expiry days (134 sessions; -3.2 / -2.7 by half),
+  giving back 20 before adding 25 in 43% of them against 37% the other way. On
+  other days the same runs were flat (+1.1, 433 sessions, halves disagreeing).
+  The effect is small, so this narrows the raise and is not a reason to exit
+  early: v5w still holds, and the target is not lowered. It creates no entry and
+  changes no stop.
 - PROFIT-HOLD: when a trade is in profit and the original premise is still intact,
   do not cut it just to search for a "second-best" or "third-best" trade. Hold the
   valid winner until target, stall/theta (a stall per v5w's ten candles), or
@@ -3087,7 +3295,8 @@ you size or place the NIFTY trade. Advisory, not a hard gate.
   running against a capped majority is suspect, and the capped indices are the
   honest read (the divergence-fails rule, two holders against one breaker). Do not
   rush an entry merely because the leader moved first; wait for at least one other
-  index to reclaim its closing point.
+  index to reclaim its closing point. [On the open, it yields to the pre-open note:
+  v6d.]
 - LAGGARDS NEVER JOINED → BOOK WHAT YOU HAVE (the HOLDING-side counterpart of
   SOLO-LEADER VETO, which only governs ENTRY). While already in a position, if the
   leader (usually BankNIFTY) is delivering your direction but the other TWO indices
@@ -3246,8 +3455,9 @@ DECISION DISCIPLINE
 3. If FLAT: enter ONLY if (a) price is AT a real level (pivot / OHLC / fibo / psych
    / structure), (b) a reversal pattern + confirmation candle has ALREADY printed
    in your direction, (c) the stop is tight, and (d) the target is worthwhile.
-   Otherwise HOLD. Never trade during the forming first candle of the day; the
-   exceptions to (b) are the OPENING DRIVE early-session continuation branches
+   Otherwise HOLD. Never trade during the forming first candle of the day (sole
+   exception: the v6c OPENING FOLLOW, while `levels.opening_follow.active` is
+   true); the exceptions to (b) are the OPENING DRIVE early-session continuation branches
    (their own section), valid only from the first candle's close and only under
    ALL their conditions, and the RUNAWAY TREND no-retracement continuation (its
    own section), valid any time of session but ONLY under ALL its conditions.

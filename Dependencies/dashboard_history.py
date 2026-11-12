@@ -106,7 +106,7 @@ def clip_to_session(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
     clock = frame["timestamp"].dt.time
-    weekday = frame["timestamp"].dt.dayofweek < 5
+    weekday = frame["timestamp"].dt.day_of_week < 5
     inside = weekday & (clock >= HISTORY_SESSION_START) & (clock <= HISTORY_SESSION_END)
     return frame.loc[inside].reset_index(drop=True)
 

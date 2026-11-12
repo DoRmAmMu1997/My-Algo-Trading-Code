@@ -5,7 +5,7 @@ The CI run enables branch measurement globally, then this script applies stricte
 budgets to the live-money safety core and each broker adapter.
 
 Why this script exists at all: Coverage.py has exactly ONE global
-``fail_under`` setting (pyproject pins it to the repository's 74% floor),
+``fail_under`` setting (pyproject pins it to the repository's 75% floor),
 so the stricter 90%/80% per-module budgets have to be enforced from the JSON
 report by hand.  The split is deliberate -- the global floor stops overall
 erosion, while these budgets stop a specific safety module from quietly losing
@@ -60,7 +60,7 @@ SAFETY_THRESHOLDS = {
     # the exact failure this dict's header warns about.
     "Dependencies/broker_rate_limit.py": 90.0,
     # The position-group monitor places real closing orders on carried
-    # positions (docs/adr/0021); its decision logic and the file model that
+    # positions (docs/adr/0022); its decision logic and the file model that
     # feeds it are execution-safety code.
     "Dependencies/position_group_monitor.py": 90.0,
     "Dependencies/position_groups.py": 90.0,

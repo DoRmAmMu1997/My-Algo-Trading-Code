@@ -124,7 +124,9 @@ POSITION_STATE_DESCRIPTION = (
     "that mark and at a different price. While you are flat it also carries "
     "`last_closed_trade_today`: the last trade you closed this session, when, "
     "and what it booked. While a NIFTY leg is open it carries `stop_fires`: how "
-    "that stop actually triggers (SLH-027)."
+    "that stop actually triggers (SLH-027), and `contract_expiry` with "
+    "`contract_expires_today`: whether the option you hold expires this session "
+    "(v6a)."
 )
 
 
@@ -149,9 +151,12 @@ def order_tool_description(venue: str, *, note_active: bool = False) -> str:
         "(buy CALL), ENTER_SHORT (buy PUT), EXIT or MODIFY_TARGET. MODIFY_TARGET "
         "only RAISES an open position's target -- moves it further in the trade's "
         "favour (LONG: higher, SHORT: lower) -- and never lowers or removes it: send "
-        "the new level as target (stop is ignored) with a reason. It is how a run "
-        "that has not pulled back gets more room (v5w); to book earlier, EXIT "
-        "instead. It changes nothing else -- the stop, the size and both legs stay "
+        "the new level as target (stop is ignored) with a reason. It is for a run "
+        "that has ALREADY taken a real retracement and is moving again (v5y); a "
+        "straight run is booked by its target, and to book earlier, EXIT "
+        "instead. On the day the held NIFTY contract expires (position_state's "
+        "contract_expires_today) do not raise at all: the mechanical target books "
+        "it (v6a). It changes nothing else -- the stop, the size and both legs stay "
         "as they are -- and like any order it is the one action of this pass. "
         "stop and target are NIFTY "
         "UNDERLYING price levels (required for entries; ignored for EXIT). They must "
@@ -452,7 +457,7 @@ class SLHuntingToolContext:
             return {"available": False, "reason": "BankNIFTY data unavailable; judge on NIFTY alone."}
         return {
             "available": True,
-            "pivot_and_levels": pivot_and_levels(self.bnf_candles, self.cfg),
+            "pivot_and_levels": pivot_and_levels(self.bnf_candles, self.cfg, include_opening_follow=False),
             "market_structure": market_structure(self.bnf_candles, self.cfg),
             "candle_patterns": candle_patterns(self.bnf_candles, self.cfg),
         }
@@ -665,7 +670,8 @@ class SLHuntingToolContext:
                 return self.executor.exit(exit_reason, self.last_price, leg=leg)
         elif action == "MODIFY_TARGET":
             # Operator, 2026-10-21: RAISE an open position's mechanical target so a
-            # run that has not pulled back gets more room (v5w). Raise-only -- the
+            # run gets more room (v5w; since v5y only a run that has already pulled
+            # back -- a straight run is booked by its target). Raise-only -- the
             # executor refuses a closer, removed or already-passed target. Unlike an
             # EXIT, refusing this is safe (nothing is stranded when a raise does not
             # happen), so like an entry it must carry a real reason and may be sent

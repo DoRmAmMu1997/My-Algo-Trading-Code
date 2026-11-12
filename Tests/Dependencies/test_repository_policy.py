@@ -91,7 +91,15 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # names (connect, ConnectionClosed, protocol.State.CLOSED) were confirmed on
     # an isolated 17.2 install. If the feed does not tick at 09:15, revert this
     # pin first.
-    assert "websockets==17.2" in core
+    # 17.2 -> 17.3 (2026-10-26, PR #224). No new API and nothing removed: two bug
+    # fixes plus non-blocking reads in the THREADING implementation, which
+    # marketfeed does not use. The client fix is for non-ASCII HTTP Basic
+    # credentials, which marketfeed never sends. The asyncio fix closes a race
+    # between the next frame of a fragmented message and a CANCELLED recv();
+    # marketfeed awaits recv() plainly and the runner never cancels it. Its three
+    # names were confirmed on an isolated 17.3 install. If the feed does not tick
+    # at 09:15, revert this pin first.
+    assert "websockets==17.3" in core
     # 2.3.3.260113 -> 3.0.5.260730 (2026-09-01, PR #150). A correction more than
     # an upgrade. `pandas` is pinned at 3.0.5 and is NOT in the Dependabot ignore
     # list, so it moved to the 3.x line while a semver-major ignore pinned the
@@ -120,7 +128,13 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # pandas' private typing helpers -- and nothing here does: the repo has no
     # `pandas._typing` or `_stubs_only` import at all. "Align Index subtraction
     # overloads" (#1938) is the other TYP change, and the mypy run covers it.
-    assert "pandas-stubs==3.0.5.260914" in core
+    # 3.0.5.260914 -> 3.1.0.261029 (2026-11-02, PR #232). The move PR #224 was
+    # waiting for: the first 3.1 snapshot, so mypy finally types pandas 3.1.0
+    # with 3.1 stubs and the majors-AND-minors match again. Typing-only, so
+    # verified before the merge like the bumps above: on a clean install of this
+    # PR's pins both CI invocations pass (82 source files, then the master alone)
+    # with no issues.
+    assert "pandas-stubs==3.1.0.261029" in core
     # Same reasoning for the agent transport: SL_HUNTING_ENABLED=true, so this
     # is an active path, but paper-only until the next session confirms it.
     #
@@ -269,7 +283,31 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # check is the test: on the next session decisions return and
     # "SLHuntingAgent decision latency" has not crept up. If either fails,
     # revert this pin first.
-    assert "claude-agent-sdk==0.2.168" in ai
+    # 0.2.168 -> 0.2.172 (2026-10-26, PR #224), bundled CLI 2.1.301 -> 2.1.308.
+    # The win_amd64 wheel is still published and still carries
+    # _bundled/claude.exe: installed from it on Windows and run
+    # (`claude.exe --version` = 2.1.308). Diffed against the installed 0.2.168,
+    # the Python package moved in two places only: a docstring in types.py
+    # (0.2.169's include_hook_events note) and _internal/sessions.py, 0.2.170's
+    # parallel-tool-call fix to get_session_messages -- a session-HISTORY reader
+    # neither agent calls. The transport, query() and the error classes are
+    # byte-identical and ClaudeAgentOptions changed only in that docstring, so
+    # the options we pass, the FILE form of system_prompt and the ResultError
+    # classification above all still hold. 0.2.171 and 0.2.172 only move the
+    # bundled CLI, which is where any risk sits: it was run for --version, not
+    # for a decision. The standing check is the test: on the next session
+    # decisions return and "SLHuntingAgent decision latency" has not crept up.
+    # If either fails, revert this pin first.
+    # 0.2.172 -> 0.2.174 (2026-11-02, PR #232), bundled CLI 2.1.308 -> 2.1.310.
+    # Both releases are bundled-CLI bumps only, and a diff of the installed
+    # Python package against 0.2.172 confirms it: only _version.py and
+    # _cli_version.py changed, so query(), ClaudeAgentOptions, the transport and
+    # the error classes are byte-identical and none of the reasoning above needs
+    # revisiting. The win_amd64 wheel is still published with _bundled/claude.exe
+    # (installed from it on Windows; `claude.exe --version` = 2.1.310). Same
+    # standing check: on the next session decisions return and "SLHuntingAgent
+    # decision latency" has not crept up. If either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.174" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -282,7 +320,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # TypedDict closed/extra_items, named tuples in Sequence) for field types
     # neither agent's strict models declare. The whole suite ran on it in this
     # PR's own CI and failed only on these pin assertions.
-    assert "pydantic==2.14.1" in ai
+    # 2.14.1 -> 2.14.2 (2026-11-02, PR #232). Patch. openai-codex 0.163.0 still
+    # declares pydantic>=2.12 and mcp 2.3.0 stays inside its window; the whole
+    # suite, SL Hunting and CPR AI included, passes on a clean install of this
+    # PR's pins.
+    assert "pydantic==2.14.2" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -352,7 +394,15 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # byte-identical; only its METADATA moves the lockstep CLI pin,
     # openai-codex-cli-bin, to 0.162.1, which publishes a win_amd64 wheel.
     # Standing check unchanged.
-    assert "openai-codex==0.162.1" in ai
+    # 0.162.1 -> 0.163.0 (2026-10-26, PR #224). Same isolated introspection, all
+    # surfaces intact (names, context manager, enum members, thread_start params
+    # by name with no **kwargs, SYNC Thread.run taking approval_mode /
+    # output_schema / effort by name, TurnResult fields). Diffed against the
+    # installed 0.162.1, only the generated protocol models moved, and only by
+    # addition (a thread read-state notification plus optional fields; no line
+    # removed). The lockstep CLI, openai-codex-cli-bin 0.163.0, publishes a
+    # win_amd64 wheel. Standing check unchanged.
+    assert "openai-codex==0.163.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -392,15 +442,38 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # since the SDK's in-process MCP server runs on it.
     assert "mcp==2.3.0" in ai
     assert "pyotp==2.9.0" in brokers
-    assert "websocket-client==1.8.0" in brokers
-    assert any(
-        line == (
-            "neo_api_client @ git+https://github.com/Kotak-Neo/"
-            "Kotak-neo-api-v2.git@v2.0.1"
-        )
-        for line in brokers
-    )
-    assert all("==" in line or " @ git+" in line for line in brokers)
+    # Kotak v2 (Git tag v2.0.1) -> kotakneoapi 3.0.13 (2026-11-10, PR #240). Forced, not
+    # chosen: GitHub disabled Kotak-Neo/Kotak-neo-api-v2 on 2026-11-05, so the tag
+    # could no longer be cloned and both broker-dependency jobs went red on main.
+    # kotakneoapi is Kotak's own successor (MIT, same `neo_api_client` import
+    # name, same REST endpoints and response fields). Read against the installed
+    # 3.0.13 source: place_order LOST `market_protection` and `pf` (passing
+    # either raises TypeError before any request; both were only ever sent at
+    # v2's default values, and v3 sends "mp": "0" itself); the constructor's
+    # positional order changed (the adapter already used keywords); v3 does NOT
+    # retry requests, so it cannot duplicate an order; and it logs to stdout and
+    # ./logs on import, outside the redaction filter, which the adapter switches
+    # off. Verified with the REAL 3.0.13 SDK over an httpx mock transport (no
+    # network): login, scrip master, a filled order with the exact payload, both
+    # books incl. the empty-book reply, cancel, and reject / timeout / 502 on
+    # placement. NOT verified, because it needs a real session: one live login
+    # and one small order. Run `python algo.py diagnose --broker kotak` before
+    # Kotak is next used live.
+    assert "kotakneoapi==3.0.13" in brokers
+    # kotakneoapi declares websocket-client>=1.9.0 (and never imports it), so the
+    # isolated set cannot resolve with the core's 1.8.0, which the vendored
+    # Shoonya client keeps.
+    assert "websocket-client==1.9.2" in brokers
+    # Every adapter imports requests and v3 (httpx-based) no longer pulls it in,
+    # so the isolated set names it -- at the core's version, never its own.
+    assert [line for line in brokers if line.startswith("requests==")] == [
+        line for line in core if line.startswith("requests==")
+    ]
+    assert all("==" in line for line in brokers)
+    # The live route installs the SAME Kotak pin, with --no-deps (README.md), so
+    # the command an operator copies can never drift from the validated version.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "pip install --no-deps kotakneoapi==3.0.13" in readme
 
 
 def test_precommit_ruff_rev_matches_the_requirements_dev_pin():
@@ -495,7 +568,21 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # on non-finite input, StringDType hashing, typing fixes and an MSVC
     # workaround. MAT-106's 8-decimal indicator snapshot passed UNCHANGED on it
     # in this PR's own CI, on both 3.12 and 3.13.
-    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.0.6", "TA-Lib==0.6.8", "numpy==2.5.4"):
+    # pandas 3.0.6 -> 3.1.0 (2026-10-26, PR #224). A MINOR, so its
+    # backwards-incompatible list was read against this repo rather than
+    # assumed. What has any reach here: numeric input to to_datetime() now
+    # defaults to MICROSECOND resolution whatever its `unit` (the master's bar
+    # parser and the Data Extractors pass one), which is harmless because nothing
+    # reads a timestamp's raw integer -- the dashboard's epoch math divides a
+    # Timedelta for exactly this reason; Index.values is now read-only; float
+    # groupby sum/mean may differ in the last few digits. The whole suite,
+    # MAT-106's 8-decimal indicator snapshot included, ran on 3.1.0 in this PR's
+    # own CI on 3.12 and 3.13 and failed only on these pin assertions. Its new
+    # Pandas4Warning on `.dayofweek` was cleared in the same PR by moving our three
+    # uses to `.day_of_week`; the one left comes from inside backtesting.py.
+    # pandas-stubs stayed at 3.0.5.260914 because no 3.1 stubs existed yet; the
+    # first 3.1 snapshot arrived in PR #232 (see the pandas-stubs pin above).
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.0", "TA-Lib==0.6.8", "numpy==2.5.4"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
@@ -506,7 +593,10 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # what actually type-checks 2.3.1, on both 3.12 and 3.13.
     # mypy 2.3.1 -> 2.4.0 (2026-10-05, PR #198): both CI invocations (82 files, then
     # the master alone) pass on an isolated 2.4.0 install.
-    for tool_pin in ("pytest==9.1.1", "mypy==2.4.0", "bandit==1.9.4", "pip-audit==2.10.1"):
+    # mypy 2.4.0 -> 2.4.1 and pytest 9.1.1 -> 9.2.0 (2026-11-02, PR #232): a mypy
+    # patch and a pytest minor, tooling-only. Both mypy invocations and every
+    # suite pass on a clean install of this PR's pins.
+    for tool_pin in ("pytest==9.2.0", "mypy==2.4.1", "bandit==1.9.4", "pip-audit==2.10.1"):
         assert tool_pin in core
     assert all("==" in line for line in core)
 
@@ -538,6 +628,14 @@ def test_ci_runs_audit_branch_coverage_and_every_exact_dependency_set():
     assert "python -m pip_audit" in workflow
     assert "python -m coverage run" in workflow
     assert "scripts/check_coverage_thresholds.py" in workflow
+    # 3.14 is the operator's local runtime, so BOTH gates must cover it. The
+    # isolated broker set could not until 2026-11-10: Kotak's v2.0.1 tag pinned
+    # numpy==2.1.0, which has no cp314 wheel. kotakneoapi 3.x declares ranges, so
+    # the broker set resolves on 3.14 and the exclusion went with the tag.
+    verify_versions = parsed["jobs"]["verify"]["strategy"]["matrix"]["python-version"]
+    broker_versions = parsed["jobs"]["broker-dependencies"]["strategy"]["matrix"]["python-version"]
+    assert verify_versions == ["3.12", "3.13", "3.14"]
+    assert broker_versions == ["3.12", "3.13", "3.14"]
 
 
 def test_dependabot_updates_python_and_github_actions_weekly():
@@ -565,7 +663,9 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     # 73.0 -> 74.0 (2026-10-01, PR #195), at the operator's direction. CI measured
     # 74.6% on main (2c3f4c7) and 74.7% on PR #195, identically on 3.12 and 3.13.
     # Margin ~0.6pp.
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 74.0
+    # 74.0 -> 75.0 (2026-11-01, PR #230), at the operator's direction. CI measured
+    # 75.1% on PR #230 (c1ee9f2), identically on 3.12, 3.13 and 3.14. Margin ~0.1pp.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 75.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():

@@ -104,6 +104,19 @@ One process, cooperating threads:
   `Dependencies/dashboard_snapshot.py`, chart indicators in `dashboard_indicators.py`,
   transport in `dashboard_server.py`, the collector in the master beside
   `_worker_session_state_snapshot`; see `docs/adr/0016`.
+  **One opt-in exception to read-only:** `DASHBOARD_LIVE_TOGGLE_ENABLED` (default
+  false) adds a per-strategy LIVE/PAPER button and exactly one POST,
+  `/api/live-mode`. That POST is guarded by Origin, a per-process token and a
+  typed strategy name, and it only QUEUES a request (`Dependencies/live_mode_control.py`).
+  A `LiveModeController` thread runs `_live_promotion_refusal`, the runtime twin of
+  the startup gate. Paper -> live still needs `LIVE_TRADING_ENABLED` at startup,
+  a clean `_live_config_errors` and a broker login, plus the flat-account audit
+  (via the shared `_live_broker_login_ok` + `_preload_and_audit_live_account`) when nothing is live yet. The
+  controller NEVER writes `live_trading`; the worker applies the request itself
+  in `_apply_pending_live_mode_if_safe` (called from `_run_shutdown_cycle_if_requested`),
+  and only when flat, because the order path reads that flag more than once per
+  order. Session-only; `.env` is never written. Toggle alerts bypass
+  `publish_trade_event` so they never touch the trade books. See `docs/adr/0021`.
   The chart carries CPR, a session VWAP and a stochastic %K/%D sub-pane, with a
   1m/5m/**D** toggle (the two minute timeframes ride in ONE `/api/chart` payload,
   so switching between them needs no fetch). It also switches INSTRUMENT between
@@ -145,7 +158,7 @@ One process, cooperating threads:
   a test feeds an untruncated session through both to prove the algebra has not forked.
   See `docs/adr/0017`.
 - An **optional, opt-in position-group target monitor** (`GROUP_MONITOR_ENABLED`, default
-  false; `docs/adr/0021`) watches the operator's CARRIED, hand-placed option-selling
+  false; `docs/adr/0022`) watches the operator's CARRIED, hand-placed option-selling
   positions in a separate Zerodha/mStock account and **squares off a whole group with real
   orders** once `booked_pnl + Σ(ltp − entry) × qty` holds at/above its target for
   `GROUP_MONITOR_CONFIRM_TICKS` fresh ticks. Deliberate deviation: that one switch is its
@@ -180,8 +193,10 @@ One process, cooperating threads:
   new snapshot key not named there is silently dropped.
   Resuming OPEN exposure remains opt-in (`SESSION_STATE_RESUME_ENABLED`,
   default false) and deliberately narrow — today's date, an unclean shutdown, PAPER, single-leg
-  only; live positions are never restored because the broker account is the authority there. See
-  `docs/adr/0012`.
+  only; live positions are never restored because the broker account is the authority there.
+  After a natural end of day whose Sheet write SUCCEEDED, shutdown deletes the state file, its
+  marks and every recovery archive (`_remove_published_session_state`); a Ctrl+C or a Sheet
+  outage keeps them as the only durable record. See `docs/adr/0012`.
 - Real orders go through ONE shared, lock-guarded broker session via a broker-agnostic
   **`execution_client`** (see Broker layer). On a clean end-of-day, per-strategy P&L is written to a
   Google Sheet with separate PAPER/LIVE/MIXED row labels. All behaviour is driven by a single `.env`
@@ -221,7 +236,7 @@ Dependencies/
   Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py
   Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py
   position_group_monitor.py / position_groups.py   # the optional carried-position target monitor
-  position_brokers.py / position_groups_cli.py     #   + its Zerodha/mStock clients and CLI (adr/0021)
+  position_brokers.py / position_groups_cli.py     #   + its Zerodha/mStock clients and CLI (adr/0022)
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 scripts/check_coverage_thresholds.py               # branch-coverage policy gate
@@ -314,27 +329,30 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   modules by basename — there are no `__init__.py` files). A `Tests/` folder mirroring a
   spaced-name source folder carries a `conftest.py` that puts the SOURCE folder on `sys.path`,
   never the test folder, so tests exercise the same import resolution production uses.
-- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13):**
+- **Quality gates (run before pushing; CI enforces on Python 3.12 + 3.13 + 3.14):**
   `python -m unittest Tests.test_nifty_multi_strategy_master`,
   `python -m unittest Tests.test_market_data_health`,
   `python -m pytest "Tests/Signal Generators" "Tests/Dependencies" "Tests/Data Extractors" -q`,
   the branch-enabled Coverage.py run plus `scripts/check_coverage_thresholds.py`,
   pip-audit of committed pins locally plus the clean resolved CI environment,
   Ruff, mypy, compileall,
-  Bandit, and pre-commit. Coverage floors are 74% overall, 90% for new
+  Bandit, and pre-commit. Coverage floors are 75% overall, 90% for new
   execution/reconciliation/data-safety modules, and 80% per broker adapter.
   Judge the overall floor from CI, never from a local run: a machine with the
   optional extras CI does not install (the broker SDKs, scikit-learn) runs 9
-  tests CI's verify job skips and reads ~0.5 points high (CI measures 74.6%).
+  tests CI's verify job skips and reads ~0.5 points high (CI measures 75.1%).
   The floor only ever moves UP, and only after a CI run shows headroom -- never
   lower it to make a red build pass.
 - **Dependencies:** `pip install -r requirements.txt` installs the runtime AND
   the dev/CI gate tooling (requirements-dev.txt was merged into it); add
   `requirements-ai.txt` for BOTH optional AI agents.
   `requirements-brokers.txt` is the isolated upstream compatibility
-  environment and must not be combined with core because Kotak pins older
-  pandas/requests; use the safe per-broker commands in README. Kotak v2 comes
-  from its official `v2.0.1` Git tag.
+  environment and must not be combined with core because Kotak's SDK declares
+  `pandas<3`; use the safe per-broker commands in README. Kotak's SDK is the
+  PyPI package `kotakneoapi` (v3, imported as `neo_api_client`), installed with
+  `--no-deps`; it replaced the v2 Git tag, whose repository GitHub disabled.
+  The adapter switches the SDK's own stdout/file logging off at import, because
+  that logging bypasses the redaction filter.
 - **Git / PRs:** branch off `main`; open PRs into `main` with `gh`; end commit messages with a
   `Co-Authored-By:` trailer identifying the agent that produced the change. `.env`,
   `Backtest Outputs/`, and `*.log` stay gitignored.

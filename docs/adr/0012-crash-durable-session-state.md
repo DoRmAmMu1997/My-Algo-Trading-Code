@@ -276,3 +276,8 @@ input to the Sheet writer rather than as an operator-facing recovery record.
       (measured 94.6%).
 - [x] Four `SESSION_STATE_*` keys in `env.example`; `check-env` reports zero
       undocumented keys.
+- [x] Delete the state file, its marks and every `*.recovery*.json` archive at
+      shutdown, but ONLY after a natural end of day whose Google Sheet write
+      succeeded (`_remove_published_session_state`). A Ctrl+C or a Sheet outage
+      keeps them, because then they are the only durable trade record. Writes
+      after the cleanup are no-ops, so a straggling event cannot recreate them.

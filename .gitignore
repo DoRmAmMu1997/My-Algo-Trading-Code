@@ -30,7 +30,7 @@ Dependencies/all_instrument*.csv
 Dependencies/session_state*.json
 Dependencies/session_state*.json.tmp
 # Position-group monitor: the operator's grouped live positions and the runner's
-# per-group status file (docs/adr/0021). Account data, never repository content;
+# per-group status file (docs/adr/0022). Account data, never repository content;
 # position_groups.example.json is the committed template.
 Dependencies/position_groups.json*
 Dependencies/position_groups.state.json*

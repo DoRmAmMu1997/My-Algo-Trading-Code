@@ -1,6 +1,8 @@
 # Exact optional runtime set for BOTH in-process AI agents.
 #
-# These versions are the Python 3.12/3.13 set validated by the MAT safety stack.
+# These versions are the Python 3.12/3.13/3.14 set validated by the MAT safety stack.
+# Every pin here ships a cp314 (or py3-none) win_amd64 wheel, so 3.14 needed no
+# version change (dry-run resolve, wheels only, 2026-10-30).
 # Both agents are independently opt-in and default-OFF (SL_HUNTING_ENABLED,
 # CPR_AI_ENABLED), but they run inside the SAME master process, so Python can
 # only ever install ONE version of the packages they share. Keeping them in one
@@ -13,14 +15,14 @@
 # prevents a fresh install from silently changing the agent transport.
 # Every bump must ship a win_amd64 wheel that bundles claude.exe: 0.2.160-0.2.163
 # did not, and the generic wheel carries no CLI (see the repository-policy ledger).
-claude-agent-sdk==0.2.168
+claude-agent-sdk==0.2.174
 anyio==4.15.1
 sniffio==1.3.1
 
 # -- CPR SRSI/VWAP (Codex) ----------------------------------------------------
 # Uses the operator's existing subscription-backed ChatGPT/Codex authentication;
 # no trading credential or OpenAI API key belongs in the isolated subprocess.
-openai-codex==0.162.1
+openai-codex==0.163.0
 
 # -- Shared by both agents ----------------------------------------------------
 # These are the packages that forced the merge: one process, one version.
@@ -35,4 +37,4 @@ openai-codex==0.162.1
 # claude-agent-sdk uses the LOW-LEVEL `mcp.server.Server` plus mcp.shared.* and
 # mcp.types, none of which 2.x moved, so SL Hunting is unaffected.
 mcp==2.3.0
-pydantic==2.14.1
+pydantic==2.14.2

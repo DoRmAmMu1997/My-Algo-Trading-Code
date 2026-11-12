@@ -130,7 +130,7 @@ def _make_sessions(min_rows: int) -> pd.DataFrame:
     while len(rows) < min_rows:
         session_open = day_start + pd.Timedelta(days=day)
         day += 1
-        if session_open.dayofweek >= 5:  # skip weekends like a real calendar
+        if session_open.day_of_week >= 5:  # skip weekends like a real calendar
             continue
         for i in range(75):
             base = price + math.sin(i / 5.0) * 20.0

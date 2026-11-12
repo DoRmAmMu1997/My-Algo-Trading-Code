@@ -19,9 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.13 is the operator's live runtime; 3.12 catches accidental use of
-        # newer-only syntax before an interpreter downgrade would reveal it.
-        python-version: ["3.12", "3.13"]
+        # 3.14 is the operator's local runtime and 3.13 the previous one; 3.12
+        # catches accidental use of newer-only syntax before an interpreter
+        # downgrade would reveal it.
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out repository
@@ -107,7 +108,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        # 3.14 joined with the move to kotakneoapi 3.x. It was excluded only
+        # because Kotak's v2.0.1 tag pinned numpy==2.1.0, which has no cp314
+        # wheel; v3 declares ranges instead (see requirements-brokers.txt).
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out repository
@@ -120,9 +124,9 @@ jobs:
           cache: pip
 
       - name: Install exact optional broker environment
-        # Kotak v2.0.1 declares older exact pandas/requests constraints that
-        # conflict with the app's newer audited core set. Validate the official
-        # SDK in its own clean environment instead of asking pip to construct an
+        # kotakneoapi declares pandas<3 and websocket-client>=1.9.0, which
+        # conflict with the app's audited core set. Validate the official SDK in
+        # its own clean environment instead of asking pip to construct an
         # impossible combined dependency graph.
         run: |
           python -m pip install --upgrade pip

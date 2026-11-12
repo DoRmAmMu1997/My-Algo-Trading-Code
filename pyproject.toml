@@ -7,6 +7,18 @@
 [tool.pytest.ini_options]
 # Deliberately present but empty: this table is what makes pytest use THIS file as
 # its config, which anchors rootdir (and so every test node id) at the repo root.
+#
+# The one filter: pandas 3.1's Pandas4Warning on `.dayofweek`, raised from INSIDE
+# backtesting.py (`backtesting/_stats.py`), not from this repo -- our own uses
+# moved to `.day_of_week` in PR #224, and 0.6.6 is the latest backtesting release,
+# so no bump clears it. It is scoped by message AND module, so a new `.dayofweek`
+# in our code still warns. Drop it once backtesting ships the rename.
+# The category is the builtin DeprecationWarning (Pandas4Warning's base), NOT
+# pandas.errors.Pandas4Warning: the isolated broker job runs Kotak's older pandas,
+# which has no such class, and pytest refuses to start on an unresolvable category.
+filterwarnings = [
+    "ignore:DatetimeIndex.dayofweek is deprecated:DeprecationWarning:backtesting._stats",
+]
 
 [tool.ruff]
 # Measured against this codebase: at 100 columns there are ~455 long lines, at
@@ -14,8 +26,8 @@
 # written to a ~100-120 column style, so 120 keeps the lint signal about real
 # problems instead of wrapping churn.
 line-length = 120
-# Local runtime is Python 3.13; CI also runs 3.12, so target the older of the
-# two to avoid suggesting syntax 3.12 cannot parse.
+# Local runtime is Python 3.14; CI also runs 3.12 and 3.13, so target the oldest
+# to avoid suggesting syntax 3.12 cannot parse.
 target-version = "py312"
 extend-exclude = [
     # Vendored third-party Shoonya SDK -- never linted, never rewritten locally.
@@ -51,7 +63,7 @@ external = ["BLE"]
 "My Backtest Files (For Reference)/**" = ["E402"]
 
 [tool.mypy]
-# CI runs 3.12 and 3.13; pin the older so local runs stay honest about what CI
+# CI runs 3.12, 3.13 and 3.14; pin the oldest so local runs stay honest about what CI
 # will accept.
 python_version = "3.12"
 # Scope: every module that both has an identifier filename AND type-checks
@@ -275,22 +287,26 @@ omit = [
 # 3.13. The figure had grown with the tests added since PR #181, not from any
 # change in what CI runs.
 #
+# 75.0 (2026-11-01, PR #230), at the operator's direction: CI measured 75.1% on
+# PR #230 (c1ee9f2), identical on Python 3.12, 3.13 and 3.14. The margin is
+# roughly 0.1pp, the thinnest yet, and was chosen knowingly.
+#
 # USE THE CI NUMBER, NOT A LOCAL ONE. CI installs core + dev + ai + codex-ai
-# only, deliberately (Kotak's official tag pins older pandas/requests and cannot
+# only, deliberately (Kotak's official SDK declares pandas<3 and cannot
 # share the audited core environment), so it lacks the optional extras -- the
 # broker SDKs and scikit-learn. A developer machine that has them runs 9 tests
 # CI skips (2 in the master suite, 7 in pytest) and reads about half a point
 # high (74.3% against 73.8%). Before PR #181 that gap was about 2 points, most
 # of it the SL Hunting tests CI was not running.
 #
-# The margin at 74.0 is roughly 0.6pp, on the order of 175 statements and
-# branches. That is deliberate pressure: a PR that adds materially untested code
+# The margin at 74.0 was roughly 0.6pp, on the order of 175 statements and
+# branches; at 75.0 it is about 0.1pp. That is deliberate pressure: a PR that adds materially untested code
 # should go red. It is NOT an invitation to lower the floor when it does.
 #
 # Raising this is deliberate and one-way: only move it UP, and only after a CI
 # run shows real headroom. Lowering it to make a red build pass defeats the gate
 # -- fix the tests instead.
-fail_under = 74.0
+fail_under = 75.0
 precision = 1
 show_missing = true
 skip_covered = false

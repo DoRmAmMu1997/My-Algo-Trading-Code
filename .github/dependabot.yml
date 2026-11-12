@@ -22,16 +22,22 @@ updates:
     # different thing and is labelled as such so nobody reads it as evidence the
     # risk went away.
     ignore:
-      # Kotak's official v2.0.1 tag hard-depends on websocket-client==1.8.0 --
-      # verified against the installed neo_api_client 2.0.0 metadata, which
-      # declares it as an EXACT pin, not a floor. websocket-client is also in
-      # the core set for the vendored Shoonya client, so a bump would have to
-      # move both files and would still be refused by the broker CI job (that
-      # is what happened in PR #76). Bump only with a new validated Kotak tag.
-      - dependency-name: "websocket-client"
-      # Shoonya's TOTP seed generator. NOT a Kotak dependency: neo_api_client
-      # v2.0.1 does not declare pyotp at all, so the original "rides in the same
-      # isolated broker environment" reason was simply wrong. The real reason to
+      # Kotak's v3 SDK, the client every live Kotak order goes through. Held
+      # because NO gate exercises its REST behaviour: every Kotak test runs on
+      # fakes, and the one test that touches the real package only compares the
+      # place_order/constructor signatures and checks its logging stays off. A
+      # release that changed a payload, an endpoint or an error envelope would
+      # go green here and surface as a live order problem. Under v2 this pin was
+      # a Git tag, which Dependabot never proposed; the ignore keeps that
+      # property now that it is a PyPI pin, and it releases often (3.0.0 ->
+      # 3.0.13 between June and October 2026). Bump it deliberately: re-read its
+      # changelog against the adapter and repeat the live login plus one small
+      # order recorded in the Kotak pin review in test_repository_policy.
+      - dependency-name: "kotakneoapi"
+      # Shoonya's TOTP seed generator. Not something Kotak exercises either:
+      # kotakneoapi declares pyotp>=2.9.0 but never imports it (v2.0.1 did not
+      # declare it at all), so the original "rides in the same isolated broker
+      # environment" reason was simply wrong. The real reason to
       # hold it is that nothing exercises it -- `_generate_totp` imports pyotp
       # lazily inside the function, the broker CI job installs the package but
       # runs only the contract and Flattrade suites, and no test ever computes a
@@ -116,6 +122,17 @@ updates:
       #     floating-point drift through the indicator pipeline; MAT-106's
       #     determinism snapshot already pins that to 8 decimal places on both
       #     Python versions, so a minor that moves anything goes red.
+      #   * websocket-client (retired 2026-11-10, with the move to kotakneoapi).
+      #     The reason was mechanical: Kotak's v2.0.1 tag declared
+      #     websocket-client==1.8.0 as an EXACT pin, so a bump could never
+      #     resolve in the broker CI job (PR #76). That tag is gone -- GitHub
+      #     disabled its repository -- and kotakneoapi 3.x declares a range
+      #     (>=1.9.0,<2) and never imports the package. What is left is the
+      #     vendored Shoonya client's module-level `import websocket`, which the
+      #     core CI job already exercises; the Shoonya adapter never opens the
+      #     socket. requirements.txt (1.8.0) and requirements-brokers.txt (1.9.2)
+      #     differ only until a bump levels the core pin, and that bump arrives
+      #     as a red PR on its pin assertion in test_repository_policy.
 
   - package-ecosystem: github-actions
     directory: "/"

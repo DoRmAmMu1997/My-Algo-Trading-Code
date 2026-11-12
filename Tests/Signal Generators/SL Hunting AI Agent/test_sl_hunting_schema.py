@@ -3864,3 +3864,310 @@ def test_v5x_stop_fires_on_a_close_and_goes_beyond_the_named_level():
     assert "the stop, by default, only when a completed 1-minute NIFTY candle CLOSES beyond it" in text
     assert "position_state's stop_fires says how the open stop actually fires" in text
     assert "`stop_fires`" in POSITION_STATE_DESCRIPTION
+
+
+def test_v5y_a_straight_run_books_at_its_target_and_only_a_pulled_back_run_is_raised():
+    """v5y (23 Oct, measured): narrows v5w's raise arm.
+
+    A move that reaches the target without a pullback gave back after it in every
+    variant tested; a move that had already pulled back was flat. So a straight run
+    is booked by its mechanical target -- never early (v5w stands) and never raised --
+    and MODIFY_TARGET is kept for a run that already absorbed a real retracement.
+    The test pins the rule, its evidence, its placement between v5w and PROFIT-HOLD,
+    the pointer left inside v5w, and the order tool's description of MODIFY_TARGET.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK")
+    assert rule.startswith("- A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK (v5y).")
+    assert "This narrows v5w's \"RAISE it with MODIFY_TARGET while the run keeps going\"" in rule
+    assert "the retracement has already happened, so the risk of a retracement is lower now" in rule
+    # The measurement, both arms, and its robustness.
+    assert "Straight runs, with no pullback over 10 points before the target (47 sessions)" in rule
+    assert "stood 5.2 points WORSE 15 minutes after the target" in rule
+    assert "Runs that had pulled back 20+ points first were flat (+0.7)" in rule
+    assert "negative in all 12 variants tried" in rule
+    # What it changes.
+    assert "a run that has NOT pulled back is booked by its mechanical target" in rule
+    assert "Do not book it early (v5w still holds), and do not RAISE it" in rule
+    assert "MODIFY_TARGET is for a run that has ALREADY absorbed a real retracement" in rule
+    assert "about 20 NIFTY points or more from its best price since the entry" in rule
+    assert "is IH's practice, not a measured edge" in rule
+    # The case that produced it.
+    assert "zero meaningful retracement since entry" in rule
+    # Placement and the pointer inside v5w.
+    v5w = prompt.index("\n- A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN")
+    v5y = prompt.index("\n- A STRAIGHT RUN BOOKS AT ITS TARGET")
+    hold = prompt.index("\n- PROFIT-HOLD")
+    assert v5w < v5y < hold
+    v5w_rule = _flat_rule(prompt, "A STALL IS NOT AN EXIT UNTIL TEN CANDLES HAVE SPOKEN")
+    assert ("[Narrowed by v5y, below: raise only a run that has ALREADY pulled back; "
+            "a straight run is booked by its target.]") in v5w_rule
+    # The order tool says the same thing, and no longer offers raising a straight run.
+    from sl_hunting_tools import order_tool_description
+    text = " ".join(order_tool_description("paper").split())
+    assert "It is for a run that has ALREADY taken a real retracement and is moving again (v5y)" in text
+    assert "a straight run is booked by its target" in text
+    assert "has not pulled back gets more room" not in text
+
+
+def test_v6a_on_an_expiry_day_the_mechanical_target_books_it():
+    """v6a (operator, 27 Oct, measured): narrows v5y's raise for a pulled-back run.
+
+    On the day the held NIFTY contract expires, a run that had already pulled back
+    stood worse 15 minutes after its target in both halves of the data, so the
+    target is not raised at all that day. Pins the rule, its evidence and its
+    limits, its place between v5y's straight-run rule and PROFIT-HOLD, the pointer
+    left inside v5y, and the order tool and position_state text it relies on.
+    """
+    prompt = build_system_prompt()
+    heading = "ON AN EXPIRY DAY THE MECHANICAL TARGET BOOKS IT: NO RAISE"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6a, operator 27 Oct).")
+    assert "This narrows v5y's raise for a run that has ALREADY pulled back" in rule
+    # The trigger is the contract held, read from position_state.
+    assert ("When the NIFTY contract you hold expires today (`position_state` says "
+            "`contract_expires_today`)") in rule
+    assert ("do NOT raise the target with MODIFY_TARGET, whatever the run has done: "
+            "the mechanical target books it") in rule
+    assert "What counts is the contract you hold" in rule
+    assert "We won't run after more momentum" in rule
+    # The measurement, both halves, and the comparison it rests on.
+    assert "2.9 points WORSE 15 minutes later on expiry days (134 sessions; -3.2 / -2.7 by half)" in rule
+    assert "in 43% of them against 37% the other way" in rule
+    assert "the same runs were flat (+1.1, 433 sessions, halves disagreeing)" in rule
+    # Its limits.
+    assert "not a reason to exit early: v5w still holds, and the target is not lowered" in rule
+    assert "It creates no entry and changes no stop" in rule
+    # Placed right after v5y's straight-run rule, which points here.
+    v5y = prompt.index("\n- A STRAIGHT RUN BOOKS AT ITS TARGET")
+    here = prompt.index("\n- " + heading)
+    hold = prompt.index("\n- PROFIT-HOLD")
+    assert v5y < here < hold
+    assert "\n- " not in prompt[v5y + 3:here]
+    v5y_rule = _flat_rule(prompt, "A STRAIGHT RUN BOOKS AT ITS TARGET; RAISE ONLY A RUN THAT HAS ALREADY PULLED BACK")
+    assert "[Narrowed by v6a, next: never on the day the held contract expires.]" in v5y_rule
+    # The order tool and position_state say the same thing.
+    from sl_hunting_tools import POSITION_STATE_DESCRIPTION, order_tool_description
+    text = " ".join(order_tool_description("paper").split())
+    assert ("On the day the held NIFTY contract expires (position_state's contract_expires_today) "
+            "do not raise at all: the mechanical target books it (v6a)") in text
+    assert "`contract_expires_today`" in POSITION_STATE_DESCRIPTION
+
+
+def test_v5y_after_a_round_number_breaks_the_entry_waits_for_the_shakeout():
+    """v5y, second rule (operator, 23 Oct): a round-number break is continuation but not
+    the entry -- a shakeout back to the broken number usually follows, and the entry is
+    taken once that retest has failed. Pins the rule, its measurement, what it does not
+    cover (a reclaim; a runaway with no shakeout), its cost, and its placement right
+    after the clean-break bullet it qualifies."""
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER")
+    assert "(v5y, operator 23 Oct)" in rule
+    assert "is continuation, but it is not the entry" in rule
+    # The measurement.
+    assert "after 80% of BankNIFTY's 500-breaks and 86% of NIFTY's 100-breaks" in rule
+    assert "a NIFTY entry taken at the break scored -0.05R and -0.19R" in rule
+    assert "+0.13R (BankNIFTY's 500s) and +0.18R (NIFTY's 100s) per trade" in rule
+    assert "positive in both halves of the data" in rule
+    # The entry, and that it is still a pattern entry.
+    assert "ENTER WHEN THE SHAKEOUT IS DONE" in rule
+    assert "a 1-minute candle has closed back through it in the move's direction" in rule
+    assert "pattern+confirmation still applies" in rule
+    # What it is not, and what it costs.
+    assert "NOT A SHAKEOUT: a return that CLOSES back beyond the number and holds there is a reclaim" in rule
+    assert "v5u's flush-and-reclaim" in rule
+    assert "one break in five to seven never comes back and simply runs" in rule
+    assert "+0.09R against +0.25R" in rule
+    assert "RUNAWAY_TREND's case" in rule
+    assert "never as a chase of the break candle" in rule
+    # The 23 Oct cases.
+    assert "The 09:44 short came after that shakeout and made its target" in rule
+    # Placed directly after the clean-break bullet it qualifies.
+    clean = prompt.index("\n- A clean BREAK of a level (not a wick) means continuation")
+    here = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
+    assert clean < here
+    assert "\n- " not in prompt[clean + 3:here]
+
+
+def test_v5z_a_reclaimed_banknifty_round_numbers_first_retest_is_not_a_double_top():
+    """v5z (operator, 26 Oct, measured): a veto on fading the reclaim's first retest.
+
+    The 09:50 short sold BankNIFTY's first retest of a reclaimed 54,000 as a double
+    top and was stopped within a minute. Measured, fading that retest is negative in
+    both halves on BankNIFTY's own numbers, while going with the reclaim is not clean
+    enough to be an entry. Pins the veto, its measurement, its BankNIFTY-only scope
+    (NIFTY's 500s measured the other way), what it does not relax, the 26 Oct case,
+    its placement right after v5y's shakeout rule, and the pointer inside v5y.
+    """
+    prompt = build_system_prompt()
+    rule = _flat_rule(prompt, "A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP")
+    assert rule.startswith(
+        "- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST IS NOT A DOUBLE TOP (v5z, operator 26 Oct).")
+    # The event, and the veto.
+    assert "CLOSES back through it the other way" in rule
+    assert "closes back on the reclaim side" in rule
+    assert "DO NOT ENTER AGAINST THE RECLAIM" in rule
+    assert "A retest that does not close back on the reclaim side within 30 minutes is not this rule" in rule
+    # The measurement, both halves.
+    assert "-0.061R on BankNIFTY's 1,000s (248 sessions; -0.068 / -0.056 by half)" in rule
+    assert "-0.042R on its 500s (484; -0.012 / -0.061)" in rule
+    assert "-0.080R on flat opens (160; -0.107 / -0.067)" in rule
+    # A veto, not an entry: the with-the-reclaim side is not clean.
+    assert "+0.075R; -0.066 / +0.156" in rule
+    assert "this is a VETO, not an entry" in rule
+    assert "still needs its own pattern+confirmation" in rule
+    # Scope: BankNIFTY's numbers only, because NIFTY's 500s measured the other way.
+    assert "SCOPE: BankNIFTY's own 500s and 1,000s" in rule
+    assert "on NIFTY's own 500s the same fade measured +0.212R, positive in both halves" in rule
+    # What it does not relax, and the case that produced it.
+    assert "It relaxes nothing" in rule
+    assert "a matching double-top (53981/54098)" in rule
+    # Placed directly after v5y's shakeout rule, which points here.
+    v5y = prompt.index("\n- AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH")
+    here = prompt.index("\n- A RECLAIMED BANKNIFTY ROUND NUMBER'S FIRST RETEST")
+    assert v5y < here
+    assert "\n- " not in prompt[v5y + 3:here]
+    v5y_rule = _flat_rule(prompt, "AFTER A ROUND NUMBER BREAKS, LET THE SHAKEOUT FINISH BEFORE YOU ENTER")
+    assert "and the continuation premise is gone. [Its first retest: v5z, next.]" in v5y_rule
+
+
+def test_v5z_a_round_number_crossed_against_the_note_seats_the_crowd_it_hunts():
+    """v5z (operator's call, 26 Oct, measured): the pre-open note's side outranks a
+    round-number cross against it.
+
+    On 26 Oct v5x's test had ended by 09:18 and the agent followed the selling, while
+    IH bought: the break seats a fresh crowd, and that crowd is the hunt. Pins the
+    scope, the precedence over v5x/v5f and the PRE-OPEN block, the price-action entry,
+    what ends it, the one measured-negative case it leaves out, the measurement, what
+    it does not relax, its place between v5x and v5k, and the pointer inside v5x.
+    """
+    prompt = build_system_prompt()
+    heading = "A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS; THE NOTE'S SIDE STANDS"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v5z, operator's call 26 Oct).")
+    assert "for the benefit of the doubt" in rule
+    assert "sellers will gather in the market -- these are the ones we have to target" in rule
+    # Scope, every arm.
+    assert "today's pre-open note names a side for today's open, and the computed verdict is FLAT" in rule
+    assert "yesterday moved at least 0.5% (3:15 level to 3:15 level)" in rule
+    assert "CLOSES a 1-minute candle beyond its next 500 from the open AGAINST the note's side" in rule
+    assert "it has not traded below yesterday's low (BUY), or above yesterday's high (SELL)" in rule
+    # What it changes: precedence, and no trade on the other side of the cross.
+    assert "the note's side takes precedence over the cross" in rule
+    assert "It outranks v5x's end clause and v5f's follow" in rule
+    assert "the PRE-OPEN block's \"your read wins\" does not apply to that cross" in rule
+    assert "Do not take the opposite side on the cross" in rule
+    # The entry is price action, not the cross itself.
+    assert "THE ENTRY IS PRICE ACTION ON THE NOTE'S SIDE" in rule
+    assert "the first NIFTY candle to close beyond the prior candle's extreme in the note's direction" in rule
+    assert "with the ordinary pattern+confirmation" in rule
+    # What ends it, and the case left out.
+    assert "WHAT ENDS IT: NIFTY trading beyond yesterday's extreme on the note's side" in rule
+    assert "NOT COVERED: a SELL note that FOLLOWS a down day, with an upward cross" in rule
+    # The measurement, every combination, and why the hold matters.
+    assert "+0.708R (27 sessions; +0.691 / +0.721 by half)" in rule
+    assert "+0.608R (19; +1.818 / +0.176)" in rule
+    assert "+0.106R (70; +0.117 / +0.098)" in rule
+    assert "-0.164R (59; -0.296 / -0.114)" in rule
+    assert "falls to +0.148R (69)" in rule
+    assert "-0.068R at six minutes" in rule
+    # What it does not relax, and the revert condition.
+    assert "It creates NO entry by itself, and it relaxes nothing" in rule
+    assert "v5q, v5k and A STANDING PREMISE IS NOT A SECOND REASON still apply" in rule
+    assert "reverted if live results are negative" in rule
+    # Placed between v5x and v5k; v5x's end clause points here.
+    v5x = prompt.index("\n- WHILE THE ROUND NUMBER HOLDS")
+    here = prompt.index("\n- " + heading)
+    v5k = prompt.index("\n- A GAP THAT CLEARS THE STOPS")
+    assert v5x < here < v5k
+    assert "\n- " not in prompt[v5x + 3:here]
+    v5x_rule = _flat_rule(prompt, "WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET (v5x)")
+    assert ("[Narrowed by v5z, next: when the pre-open note names the BUY side, that close ends this "
+            "test, not the note's side.]") in v5x_rule
+
+
+def test_v6c_the_opening_follow_is_wired_into_every_first_candle_rule():
+    """v6c (operator, 29 Oct): OPENING DRIVE Variant C, the opening follow.
+
+    It is the one entry allowed during the forming first candle, valid only while the
+    `levels` tool reports `opening_follow.active` (the session's first two decisions).
+    A new exception is unreachable unless every rule that forbids it says so, so the
+    test pins the variant itself AND the pointer in each place that bans first-candle
+    or pattern-free entries: ROLE, STRUCTURE, DECISION_RULES #3 and Variant B's
+    "no opening-drive short".
+    """
+    prompt = build_system_prompt()
+    start = prompt.index("Variant C -- THE OPENING FOLLOW, FIRST TWO DECISIONS ONLY (v6c")
+    variant = " ".join(prompt[start:prompt.index("RUNAWAY TREND", start)].split())
+    # It acts only on the computed block.
+    assert "The `levels` tool's `opening_follow` block computes it" in variant
+    assert "Act on it ONLY while that block reads `active: true`, and only in its `direction`" in variant
+    assert "It is active only while today's candles still end at 09:16" in variant
+    assert "From the 09:17 candle on it reads expired" in variant
+    # The measurement and the shape.
+    assert "the first decision's fill (about 09:15:50): +0.38R" in variant
+    assert "the second decision's fill (about 09:16:35): +0.21R" in variant
+    assert "stop 16 NIFTY points from the entry, target 45 points" in variant
+    assert "Do not move the stop beyond the first candle's extreme" in variant
+    assert "v5e/v5x's placement rule does not apply to this entry" in variant
+    # What still binds.
+    assert "STILL BINDING: the post-exit cooldown and every RISK rule" in variant
+    assert "Never retry it after the window has expired" in variant
+    assert "IT IS THE ONE ENTRY ALLOWED DURING THE FORMING FIRST CANDLE" in variant
+    # Every first-candle / pattern-free gate points at it.
+    flat = " ".join(prompt.split())
+    assert "its v6c OPENING FOLLOW in the session's first two decisions only" in flat
+    assert ("[v6c: the OPENING FOLLOW, OPENING DRIVE Variant C, is the one entry allowed DURING "
+            "the forming first candle, and only while `levels` reports `opening_follow.active`.]") in flat
+    assert ("Never trade during the forming first candle of the day (sole exception: the v6c "
+            "OPENING FOLLOW, while `levels.opening_follow.active` is true)") in flat
+    assert "[v6c: Variant C below, the measured OPENING FOLLOW, is a separate exception and can be a SHORT.]" in flat
+    # It sits inside OPENING DRIVE, after Variant B and before RUNAWAY TREND.
+    variant_b = prompt.index("Variant B — FLAT-OPEN seller-hunt long")
+    assert variant_b < start < prompt.index("RUNAWAY TREND — the no-retracement")
+
+
+def test_v6d_the_pre_open_note_outranks_a_split_gap():
+    """v6d (operator's call, 2 Nov, measured against): the pre-open note's branch is
+    not voided by a split gap.
+
+    On 2 Nov NIFTY gapped up 0.92% beside a FLAT BankNIFTY; the agent held all morning
+    on SHARED-GAP while IH bought the note's gap-up BUY and booked about 2 lakh. Pins
+    the scope (the note naming NIFTY's gap side, either direction), what it overrides,
+    what it does not relax, the measurement against it, the revert condition, its
+    place right after SHARED-GAP, and the pointers left in SHARED-GAP and GAP-SIZE
+    ASYMMETRY.
+    """
+    prompt = build_system_prompt()
+    heading = "THE PRE-OPEN NOTE OUTRANKS A SPLIT GAP"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6d, operator's call 2 Nov).")
+    # Scope: the note's branch for today's open names NIFTY's gap side, both directions.
+    assert "a BUY branch on a GAP_UP verdict, a SELL branch on a GAP_DOWN verdict" in rule
+    assert "that side stands even though BankNIFTY opened FLAT" in rule
+    # What it overrides.
+    assert "The SHARED-GAP REQUIREMENT above, and GAP-SIZE ASYMMETRY, do NOT void that branch" in rule
+    assert "the flat BankNIFTY is NOT a tell against it" in rule
+    assert "the PRE-OPEN block's \"your read wins\" does not apply to the split" in rule
+    # What it does not relax, and where it does not apply.
+    assert "every other condition of the branch" in rule
+    assert "every RISK rule, the sizing gate and the post-exit cooldown" in rule
+    assert "It creates no trade on the other side" in rule
+    assert ("When the note gives no branch for today's open, or its branch names the other "
+            "side, SHARED-GAP stands as written") in rule
+    # The measurement against it, and the revert condition.
+    assert "MEASURED AGAINST IT, adopted anyway" in rule
+    assert "+0.615R at 09:16 but -0.159 / -0.137 / -0.152 / -0.594" in rule
+    assert "(9 sessions), 09:22 scored -0.643R" in rule
+    assert "+0.284R at 09:22 and +0.485R at 09:25" in rule
+    assert "reverted if live results are negative" in rule
+    # Placed straight after SHARED-GAP, which points here; GAP-SIZE ASYMMETRY points too.
+    shared = prompt.index("\n- SHARED-GAP REQUIREMENT")
+    here = prompt.index("\n- " + heading)
+    assert shared < here < prompt.index("\n- GAP-DOWN CONTINUATION SHORT branch")
+    assert "\n- " not in prompt[shared + 3:here]
+    shared_rule = _flat_rule(prompt, "SHARED-GAP REQUIREMENT")
+    assert ("[Overruled by v6d, next, when today's pre-open note names the side NIFTY "
+            "gapped toward.]") in shared_rule
+    asymmetry = _flat_rule(prompt, "GAP-SIZE ASYMMETRY")
+    assert "[On the open, it yields to the pre-open note: v6d.]" in asymmetry

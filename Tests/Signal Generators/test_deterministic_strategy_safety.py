@@ -2,7 +2,7 @@
 
 These checks pin the fail-closed behavior that matters before a signal reaches
 the live-order layer.  They intentionally use tiny fixed fixtures so the same
-assertions run unchanged in the hosted Python 3.12 and 3.13 jobs.
+assertions run unchanged in the hosted Python 3.12, 3.13 and 3.14 jobs.
 """
 
 from __future__ import annotations
@@ -263,7 +263,7 @@ def _fixed_ohlc_fixture(rows: int = 260) -> pd.DataFrame:
 
 
 def test_fixed_fixture_indicator_and_signal_snapshot():
-    """Pin exact rounded indicator values and decisions on Python 3.12/3.13."""
+    """Pin exact rounded indicator values and decisions on Python 3.12/3.13/3.14."""
 
     candles = _fixed_ohlc_fixture()
     ema_module = _load_module("ema_trend_strategy_logic.py", "mat106_snapshot_ema")

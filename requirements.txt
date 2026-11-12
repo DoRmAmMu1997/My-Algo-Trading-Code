@@ -17,10 +17,14 @@
 #   * CI's `pip_audit --local` now sees the dev tooling too, so an advisory in
 #     e.g. bandit can fail the build. Judge such a finding on whether it
 #     touches the runtime block before treating it as a trading risk.
+#
+# Python 3.14: every pin below (TA-Lib, numpy, pandas, mypy included) ships a
+# cp314 win_amd64 wheel, so supporting 3.14 needed no version change
+# (dry-run resolve, wheels only, 2026-10-30). CI runs 3.12, 3.13 and 3.14.
 
 # ---- LIVE RUNTIME (DEPS-001: the verified live-runner set) -------------------
 dhanhq==2.3.0
-pandas==3.0.6
+pandas==3.1.0
 numpy==2.5.4
 backtesting==0.6.6
 python-dotenv==1.2.4
@@ -28,7 +32,7 @@ gspread==6.2.1
 # Timezone data. Bumping this is desirable in its own right: every trading-day
 # boundary, the 15:15 square-off and the pre-open note's date gate are computed
 # in Asia/Kolkata, so stale tz data is a correctness risk rather than a chore.
-pytz==2026.5
+pytz==2026.6
 # The broker, symbol-master and Telegram HTTP paths all use requests. Keep this
 # at the newest release that clears the repository audit (2.33.0 was the first
 # past PYSEC-2026-2275; 2.34.2 is the current audited pin).
@@ -41,7 +45,7 @@ websocket-client==1.8.0
 # `websockets` library at package import time. It already arrives transitively
 # with dhanhq, but per DEPS-001 the exact version the live runner was verified
 # with must be pinned here rather than left to transitive resolution.
-websockets==17.2
+websockets==17.3
 TA-Lib==0.6.8
 
 # ---- DEVELOPMENT / CI QUALITY GATES -----------------------------------------
@@ -51,12 +55,12 @@ TA-Lib==0.6.8
 # enforces the same ruleset as CI, and
 # `test_precommit_ruff_rev_matches_the_requirements_dev_pin` fails the build if
 # they separate.
-pytest==9.1.1
-ruff==0.17.1
-mypy==2.4.0
+pytest==9.2.0
+ruff==0.17.3
+mypy==2.4.1
 bandit==1.9.4
 pre-commit==4.7.0
-coverage==7.16.2
+coverage==7.17.0
 pytest-cov==7.1.0
 pip-audit==2.10.1
 # Type stubs for typed third-party usage in the mypy scope. pandas-stubs is
@@ -69,13 +73,13 @@ pip-audit==2.10.1
 # they describe. pandas-stubs tracks the pandas release it types, so keep this
 # on the same major as the pandas pin above.
 types-requests==2.33.0.20261006
-pandas-stubs==3.0.5.260914
+pandas-stubs==3.1.0.261029
 
 # ---- Exact optional dependency sets -----------------------------------------
 # Live broker compatibility manifest:
 #   requirements-brokers.txt
-# Kotak's official v2.0.1 tag declares dependencies that conflict with this
-# audited set, so do not install both files together. README.md gives the
+# Kotak's official SDK (kotakneoapi) declares dependencies that conflict with
+# this audited set, so do not install both files together. README.md gives the
 # safe per-broker commands. Shoonya's NorenApi client remains vendored under
 # "Dependencies/Shoonya API/".
 #
