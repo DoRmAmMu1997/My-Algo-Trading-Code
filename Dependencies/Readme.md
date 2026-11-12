@@ -122,10 +122,10 @@ The exact upstream broker compatibility environment is recorded in:
 pip install -r requirements-brokers.txt
 ```
 Run that command only in a clean broker-validation environment: Kotak's SDK
-(`kotakneoapi`, the v3 client that replaced the v2 GitHub tag) declares `pandas<3`
-and `websocket-client>=1.9.0`, which conflict with the app's audited core
+(`kotakneoapi`, the v3 client that replaced the v2 GitHub tag) declares `pandas<3`,
+which conflicts with the app's audited core
 runtime. In the live app environment install Shoonya with
-`pip install pyotp==2.9.0 websocket-client==1.8.0`, and install Kotak with the
+`pip install pyotp==2.9.0 websocket-client==1.9.2`, and install Kotak with the
 `--no-deps` commands shown in the root README (uninstall the old `neo-api-client`
 first if it is present). Flattrade uses the pinned core `requests`/`pandas` set.
 

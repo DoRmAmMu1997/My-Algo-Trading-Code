@@ -13,15 +13,15 @@
 # it must stay equal to the pin in requirements.txt (a policy test checks).
 #
 # IMPORTANT: this is an isolated compatibility/CI environment and must not be
-# combined with requirements.txt. kotakneoapi declares pandas<3 and
-# websocket-client>=1.9.0, which conflict with the audited core set (pandas 3.x,
-# websocket-client 1.8.0 for the vendored Shoonya client). Only the lines below
+# combined with requirements.txt. kotakneoapi declares pandas<3, which conflicts
+# with the audited core set (pandas 3.x). Only the lines below
 # are exact: unlike v2, kotakneoapi declares RANGES for its own dependencies, so
 # the rest of this environment resolves inside those ranges. For the live app
 # environment follow README.md: install Shoonya's pins directly and install
 # kotakneoapi with --no-deps, so pip cannot downgrade the audited core runtime.
-# kotakneoapi never imports websocket-client (it only declares it), which is why
-# 1.9.x here and 1.8.0 in the core set can differ without touching Kotak.
+# websocket-client carries the same pin as requirements.txt since PR #241.
+# kotakneoapi only declares it (>=1.9.0) and never imports it; the vendored
+# Shoonya client is its one importer.
 kotakneoapi==3.0.13
 requests==2.34.2
 pyotp==2.9.0

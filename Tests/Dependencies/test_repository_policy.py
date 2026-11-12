@@ -45,7 +45,20 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # The full quality job imports the vendored Shoonya client while measuring
     # broker-adapter coverage, so its import-time WebSocket dependency belongs
     # in the core test/runtime environment as well as the isolated broker set.
-    assert "websocket-client==1.8.0" in core
+    # 1.8.0 -> 1.9.2 (2026-11-12, PR #241). The first bump since the Dependabot
+    # ignore was retired with the move to kotakneoapi (PR #240); it levels the
+    # core pin with requirements-brokers.txt. The repo's one user is the vendored
+    # NorenApi: a module-level `import websocket`, plus a WebSocketApp it builds
+    # only inside start_websocket() -- which nothing here calls (the Shoonya
+    # adapter is REST-only), so no socket is ever opened. On an isolated 1.9.2
+    # install WebSocketApp's constructor is unchanged and run_forever() still
+    # takes ping_interval / ping_payload by name (it only gains `suppress_host`).
+    # The releases: 1.9.0 drops Python 3.8 and fixes teardown / ping-thread races,
+    # 1.9.1 adds 3.14 and raises on malformed redirects, 1.9.2 fixes a close()
+    # race. It needs Python >=3.10; CI runs 3.12-3.14. Side effect: the core set
+    # now meets kotakneoapi's declared websocket-client>=1.9.0, which leaves
+    # pandas<3 as that SDK's one conflict with it.
+    assert "websocket-client==1.9.2" in core
     # dhanhq.marketfeed (the websocket market data producer) hard-imports the
     # async `websockets` library at package import time, so the exact version
     # must be pinned in core rather than left to transitive resolution.
@@ -99,7 +112,17 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # marketfeed awaits recv() plainly and the runner never cancels it. Its three
     # names were confirmed on an isolated 17.3 install. If the feed does not tick
     # at 09:15, revert this pin first.
-    assert "websockets==17.3" in core
+    # 17.3 -> 17.4 (2026-11-12, PR #241). A SECURITY fix: recv() now rejects a
+    # fragmented message split into more than 4096 frames (WEBSOCKETS_MAX_FRAGMENTS),
+    # closing a memory-exhaustion DoS that affected every implementation. Dhan's
+    # feed sends small binary tick packets, nowhere near that limit, so the cap
+    # cannot trip on it. The one other change chains context onto the
+    # ConnectionClosed that closes a connection -- the exception TYPE is unchanged,
+    # so marketfeed's `except ConnectionClosed` still catches it. Its three names
+    # (connect, ConnectionClosed, protocol.State.CLOSED) are present on an isolated
+    # 17.4 install and dhanhq.marketfeed imports. If the feed does not tick at
+    # 09:15, revert this pin first.
+    assert "websockets==17.4" in core
     # 2.3.3.260113 -> 3.0.5.260730 (2026-09-01, PR #150). A correction more than
     # an upgrade. `pandas` is pinned at 3.0.5 and is NOT in the Dependabot ignore
     # list, so it moved to the 3.x line while a semver-major ignore pinned the
@@ -307,7 +330,21 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # (installed from it on Windows; `claude.exe --version` = 2.1.310). Same
     # standing check: on the next session decisions return and "SLHuntingAgent
     # decision latency" has not crept up. If either fails, revert this pin first.
-    assert "claude-agent-sdk==0.2.174" in ai
+    # 0.2.174 -> 0.2.179 (2026-11-12, PR #241), bundled CLI 2.1.310 -> 2.1.319.
+    # Four of the five releases only move the CLI. 0.2.177 adds `on_failure` to
+    # HookMatcher, and a diff of the installed 0.2.179 against 0.2.174 confirms
+    # that is the whole Python change: types.py gains the field and query.py
+    # forwards it and raises CLIConnectionError only when some matcher sets a
+    # blocking on_failure. Neither agent registers hooks at all, so that branch is
+    # unreachable and query(), the options we pass and the error classification
+    # are otherwise unchanged. The win_amd64 wheel still ships
+    # _bundled/claude.exe (`--version` = 2.1.319 on Windows; there is no generic
+    # wheel to fall back to). anyio moves 4.15.1 -> 4.16.0 in the same PR, inside
+    # the SDK's >=4.0.0 and mcp's >=4.10; its fixes are cancellation and
+    # socket-close edge cases, not the subprocess pipes the SDK reads. Same
+    # standing check: on the next session decisions return and "SLHuntingAgent
+    # decision latency" has not crept up. If either fails, revert this pin first.
+    assert "claude-agent-sdk==0.2.179" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -324,7 +361,10 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # declares pydantic>=2.12 and mcp 2.3.0 stays inside its window; the whole
     # suite, SL Hunting and CPR AI included, passes on a clean install of this
     # PR's pins.
-    assert "pydantic==2.14.2" in ai
+    # 2.14.2 -> 2.14.3 (2026-11-12, PR #241). Patch. openai-codex 0.167.0 and mcp
+    # 2.3.0 both still declare pydantic>=2.12; the whole suite passes on a clean
+    # install of this PR's pins.
+    assert "pydantic==2.14.3" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -402,7 +442,20 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # addition (a thread read-state notification plus optional fields; no line
     # removed). The lockstep CLI, openai-codex-cli-bin 0.163.0, publishes a
     # win_amd64 wheel. Standing check unchanged.
-    assert "openai-codex==0.163.0" in ai
+    # 0.163.0 -> 0.167.0 (2026-11-12, PR #241); 0.164-0.166 were never published.
+    # Same isolated introspection, all surfaces intact (names, context manager,
+    # enum members, thread_start params by name with no **kwargs, SYNC Thread.run
+    # taking approval_mode / output_schema / effort by name, TurnResult fields).
+    # Diffed against the installed 0.163.0, every hand-written module is
+    # byte-identical and only the generated protocol models moved. This time not
+    # by addition alone: ImageGenerationThreadItem is gone and ReviewDelivery lost
+    # `detached`, neither of which CPR AI touches. The four item types its
+    # evidence gate reads (userMessage, agentMessage, reasoning, mcpToolCall) keep
+    # their `type` literals, mcpToolCall keeps `tool` and `status`, and all four
+    # only gain optional started/completed timestamps. The lockstep CLI,
+    # openai-codex-cli-bin 0.167.0, publishes a win_amd64 wheel. Standing check
+    # unchanged.
+    assert "openai-codex==0.167.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -460,9 +513,9 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # and one small order. Run `python algo.py diagnose --broker kotak` before
     # Kotak is next used live.
     assert "kotakneoapi==3.0.13" in brokers
-    # kotakneoapi declares websocket-client>=1.9.0 (and never imports it), so the
-    # isolated set cannot resolve with the core's 1.8.0, which the vendored
-    # Shoonya client keeps.
+    # kotakneoapi declares websocket-client>=1.9.0 (and never imports it). The
+    # core set sat at 1.8.0 until PR #241 levelled it, so both files now carry
+    # the same pin.
     assert "websocket-client==1.9.2" in brokers
     # Every adapter imports requests and v3 (httpx-based) no longer pulls it in,
     # so the isolated set names it -- at the core's version, never its own.
@@ -582,7 +635,15 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # uses to `.day_of_week`; the one left comes from inside backtesting.py.
     # pandas-stubs stayed at 3.0.5.260914 because no 3.1 stubs existed yet; the
     # first 3.1 snapshot arrived in PR #232 (see the pandas-stubs pin above).
-    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.0", "TA-Lib==0.6.8", "numpy==2.5.4"):
+    # pandas 3.1.0 -> 3.1.1 (2026-11-12, PR #241). Patch: three regression fixes
+    # (pyarrow-backed astype filling NaT with the epoch, a read-only result from
+    # Series.map on datetimes, and IO treating path objects that have read/write
+    # methods as open handles -- we pass plain str paths) plus bug fixes for
+    # dateutil 3.0 timezone strings (the repo uses none; IST comes from pytz),
+    # PyArrow ffill/bfill copy-on-write and PyArrow regex whitespace. Nothing in
+    # the indicator pipeline moves; MAT-106's snapshot passes unchanged on 3.1.1.
+    # pandas-stubs stays 3.1.0.261029: same 3.1 line.
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.1", "TA-Lib==0.6.8", "numpy==2.5.4"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement

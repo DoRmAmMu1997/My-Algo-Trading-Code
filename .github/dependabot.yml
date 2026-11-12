@@ -130,9 +130,9 @@ updates:
       #     (>=1.9.0,<2) and never imports the package. What is left is the
       #     vendored Shoonya client's module-level `import websocket`, which the
       #     core CI job already exercises; the Shoonya adapter never opens the
-      #     socket. requirements.txt (1.8.0) and requirements-brokers.txt (1.9.2)
-      #     differ only until a bump levels the core pin, and that bump arrives
-      #     as a red PR on its pin assertion in test_repository_policy.
+      #     socket. The first bump after that, 1.8.0 -> 1.9.2 (PR #241), levelled
+      #     the core pin with requirements-brokers.txt. Later ones arrive the
+      #     same way: a red PR on the pin assertions in test_repository_policy.
 
   - package-ecosystem: github-actions
     directory: "/"
