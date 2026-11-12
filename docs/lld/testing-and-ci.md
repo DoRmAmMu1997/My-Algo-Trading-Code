@@ -160,8 +160,8 @@ catches newer-only syntax). `permissions: contents: read` — the workflow only 
 
 **Job `broker-dependencies`:** installs `requirements-brokers.txt` in its own
 clean environment and re-runs the broker contract and Flattrade adapter suites.
-It is separate because Kotak's official SDK (`kotakneoapi`) declares `pandas<3`
-and `websocket-client>=1.9.0`, which conflict with the audited core set — asking
+It is separate because Kotak's official SDK (`kotakneoapi`) declares `pandas<3`,
+which conflicts with the audited core set (pandas 3.x) — asking
 pip to build that combined graph is impossible, so the upstream environment is
 validated in isolation instead. Every Kotak test runs on fakes except one, which
 imports the adapter against the installed SDK and checks that the SDK accepts

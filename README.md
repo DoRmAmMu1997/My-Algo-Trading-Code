@@ -74,7 +74,7 @@ Each subfolder has its own `Readme.md` with the details.
    That covers the core (data fetch, backtests, runner) plus the quality-gate tooling. Install exact optional sets only when needed:
    ```
    pip install -r requirements-ai.txt        # BOTH AI agents: Claude + Codex SDK, shared MCP stack
-   pip install pyotp==2.9.0 websocket-client==1.8.0  # Shoonya runtime
+   pip install pyotp==2.9.0 websocket-client==1.9.2  # Shoonya runtime
    pip uninstall -y neo-api-client            # Kotak: only if the retired v2 SDK is installed
    pip install --no-deps kotakneoapi==3.0.13  # Kotak v3 SDK (imported as neo_api_client)
    pip install "httpx[http2]==0.28.1" structlog==26.1.0 python-decouple==3.8 PyJWT==2.15.1  # what it imports beyond the core set
