@@ -59,7 +59,7 @@ component folder's own `Readme.md`.
 | [0010](adr/0010-tests-in-a-mirrored-tests-tree.md) | Tests consolidated into a mirrored top-level `Tests/` tree |
 | [0011](adr/0011-committed-docs-untracked-superpowers.md) | Committed `docs/` set; Superpowers workspace untracked |
 | [0012](adr/0012-crash-durable-session-state.md) | Per-trade P&L and open positions persisted during the session |
-| [0013](adr/0013-codeql-false-positive-triage.md) | Five CodeQL alerts dismissed as false positives, not patched |
+| [0013](adr/0013-codeql-false-positive-triage.md) | Five CodeQL alerts dismissed as false positives, not patched (addendum: a sixth, Zerodha's mandated login checksum) |
 | [0014](adr/0014-tiered-rename-of-spaced-filenames.md) | Spaced filenames renamed in reviewable tiers, master last (supersedes 0009) |
 | [0015](adr/0015-rolling-relative-strike-expired-options.md) | Expired-options history kept in rolling relative-strike form, expiry date derived |
 | [0016](adr/0016-read-only-loopback-monitoring-dashboard.md) | A read-only loopback dashboard, served by the runner itself |

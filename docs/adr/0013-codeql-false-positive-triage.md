@@ -114,3 +114,27 @@ which is exactly what "false positive" is for.
 - [x] Add `test_secret_redaction_canary_coverage_survives_codeql_pressure` to
       `Tests/Dependencies/test_repository_policy.py`.
 - [ ] Operator dismisses the five alerts in the Security tab with the reasons above.
+
+## Addendum (2026-11-13): a sixth alert of the same kind
+
+| # | Rule | Location |
+|---|---|---|
+| 6 | `py/weak-sensitive-data-hashing` | `Dependencies/Zerodha API/zerodha_execution.py` (`kite_checksum`) |
+
+PR #222 added the Zerodha adapter (ADR-0022). Its login computes
+`sha256(api_key + request_token + api_secret)`, which is the checksum Kite
+Connect's `/session/token` endpoint mandates
+(<https://kite.trade/docs/connect/v3/user/>). CodeQL raised it as alert #9 on that
+pull request and failed the code-scanning check.
+
+It is the same construction as alert 5, for the same reason: a keyed one-time
+proof that we hold the API secret, bound to a single-use request token, computed
+in memory and sent once. There is no stored password, and a slow KDF would
+produce a value Kite rejects. Decision 4 above already covers it -- **a
+recurrence is a dismissal, not a defect** -- so the code is unchanged.
+
+The mStock adapter raises no such alert: its `checksum` field is the literal
+`L` that mStock's documentation prescribes, not a digest of anything.
+
+- [ ] Operator dismisses alert #9 in the Security tab as *false positive*,
+      pointing at this ADR.
