@@ -6,8 +6,9 @@ Two modes:
     python algo.py group-legs --broker zerodha     # add new broker legs to "unassigned"
     python algo.py group-legs --check              # validate the file, print the groups
 
-Fetching logs in with today's token (see ``setup-broker-token``), reads the net
-positions, and appends every option leg not already in the file to its
+Fetching logs in through the broker's own adapter (today's token comes from
+``setup-broker-token``), loads its contract list, reads the net positions, and
+appends every option leg not already in the file to its
 ``unassigned`` list.  It never edits anything already there: a changed
 quantity or a leg the broker no longer holds is printed for you to fix by hand.
 Then open the file, move legs from ``unassigned`` into a group, and set that
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 _DEPENDENCIES_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _DEPENDENCIES_DIR.parent
@@ -28,7 +30,10 @@ for _import_root in (_REPO_ROOT, _DEPENDENCIES_DIR):
     if str(_import_root) not in sys.path:
         sys.path.insert(0, str(_import_root))
 
-import position_brokers  # noqa: E402
+from position_broker_token_setup import (  # noqa: E402
+    BROKER_ADAPTERS,
+    load_adapter_client,
+)
 from position_groups import (  # noqa: E402
     GroupConfigError,
     load_config,
@@ -61,7 +66,7 @@ def _check(path: Path) -> int:
     return 0
 
 
-def _fetch(path: Path, broker: str, client: object | None = None) -> int:
+def _fetch(path: Path, broker: str, client: Any = None) -> int:
     try:
         document = read_document(path)
         parse_config(document)
@@ -70,19 +75,33 @@ def _fetch(path: Path, broker: str, client: object | None = None) -> int:
         print("Fix it (python algo.py group-legs --check lists the problems) and retry.")
         return 1
     if client is None:
-        client = position_brokers.POSITION_CLIENT_CLASSES[broker]()
-    result = client.list_position_details()  # type: ignore[attr-defined]
+        client = load_adapter_client(broker)
+    # The contract list is what gives each leg its underlying, expiry, strike
+    # and CE/PE; position rows alone carry only the broker's symbol.
+    if not client.preload_scrip_master():
+        print(f"ERROR: could not log in to {broker} or load its contract list.")
+        print(f"Run: python algo.py setup-broker-token --broker {broker.lower()}")
+        return 1
+    result = client.list_position_details()
     if result.is_indeterminate:
         print(f"ERROR: could not read {broker} positions: {result.reason}")
         return 1
     report = merge_broker_legs(document, broker, result.items)
     if report.added:
+        # Belt and braces: never write a file this tool would itself reject.
+        try:
+            parse_config(document)
+        except GroupConfigError as exc:
+            print(f"ERROR: the merged file would be invalid ({exc}); nothing was written.")
+            return 1
         write_document_atomic(path, document)
     print(f"{len(report.added)} new leg(s) added to 'unassigned' in {path}:")
     for leg in report.added:
         print(f"  {leg.quantity:>+7} {leg.symbol} @ {leg.entry_price:g} (check this entry price)")
     for symbol in report.unidentified:
         print(f"  skipped {symbol}: not an NFO/BFO option the broker's instrument list knows")
+    for line in report.other_product:
+        print(f"  SECOND PRODUCT (add by hand if it belongs in a group): {line}")
     for line in report.quantity_changed:
         print(f"  QUANTITY DIFFERS (left as-is, fix by hand): {line}")
     for symbol in report.no_longer_held:
@@ -95,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--broker",
-        choices=sorted(name.lower() for name in position_brokers.POSITION_CLIENT_CLASSES),
+        choices=sorted(BROKER_ADAPTERS),
     )
     mode.add_argument("--check", action="store_true", help="Validate the file and print it.")
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)

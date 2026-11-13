@@ -452,11 +452,18 @@ def test_position_detail_rejects_impossible_rows(overrides, message) -> None:
         contract.PositionDetail(**fields)
 
 
-def test_position_broker_protocol_is_the_narrow_monitor_surface() -> None:
+def test_position_detail_client_is_an_execution_client_plus_one_method() -> None:
+    """The monitor's brokers are ordinary adapters that can also describe positions.
+
+    A client offering ONLY ``list_position_details`` (the narrow surface this
+    protocol replaced) must not qualify: without ``cancel_order``,
+    ``list_open_orders`` or ``recover_after_reconciliation`` an order it left
+    hanging could be neither seen nor cleared.
+    """
+
     contract = _contract_module()
 
-    class FakePositionBroker:
-        broker_name = "ZERODHA"
+    class NarrowClient:
         is_logged_in = True
 
         def ensure_logged_in(self):
@@ -476,9 +483,31 @@ def test_position_broker_protocol_is_the_narrow_monitor_surface() -> None:
         def logout(self):
             return {}
 
-    assert isinstance(FakePositionBroker(), contract.PositionBrokerClient)
-    # A position broker is not a full execution client: it has no resolver.
-    assert not isinstance(FakePositionBroker(), contract.ExecutionClient)
+    class FullClient(NarrowClient):
+        def preload_scrip_master(self):
+            return True
+
+        def resolve_option_symbol(self, underlying, expiry, option_type, strike):
+            return ""
+
+        def cancel_order(self, order_id, requested_quantity=0):
+            return None
+
+        def list_open_orders(self):
+            return None
+
+        def list_open_positions(self):
+            return None
+
+        def recover_after_reconciliation(self):
+            return True
+
+        def extract_order_id(self, order_response):
+            return ""
+
+    assert not isinstance(NarrowClient(), contract.PositionDetailClient)
+    assert isinstance(FullClient(), contract.PositionDetailClient)
+    assert isinstance(FullClient(), contract.ExecutionClient)
 
 
 def test_indeterminate_query_uses_safe_defaults() -> None:
@@ -564,6 +593,8 @@ def test_execution_client_protocol_covers_reconciliation_surface() -> None:
         ("Dependencies/Shoonya API", "shoonya_execution"),
         ("Dependencies/Flattrade API", "flattrade_execution"),
         ("Dependencies/Dhan API", "dhan_execution"),
+        ("Dependencies/Zerodha API", "zerodha_execution"),
+        ("Dependencies/Mstock API", "mstock_execution"),
     ],
 )
 def test_adapter_imports_under_its_diagnostic_search_path(

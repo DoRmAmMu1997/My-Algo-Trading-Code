@@ -75,9 +75,10 @@ BROKER_THRESHOLDS = {
     "Dependencies/Shoonya API/shoonya_execution.py": 80.0,
     "Dependencies/Flattrade API/flattrade_execution.py": 80.0,
     "Dependencies/Dhan API/dhan_execution.py": 80.0,
-    # Zerodha + mStock clients for the position-group monitor (not LIVE_BROKER
-    # choices, but they place real orders all the same).
-    "Dependencies/position_brokers.py": 80.0,
+    # Zerodha and mStock: LIVE_BROKER choices, and the brokers the
+    # position-group monitor closes carried positions through.
+    "Dependencies/Zerodha API/zerodha_execution.py": 80.0,
+    "Dependencies/Mstock API/mstock_execution.py": 80.0,
 }
 
 

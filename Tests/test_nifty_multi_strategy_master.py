@@ -3348,6 +3348,8 @@ class TestSelectExecutionClient(unittest.TestCase):
             "shoonya_execution_client": "SHOONYA-CLIENT",
             "flattrade_execution_client": "FLATTRADE-CLIENT",
             "dhan_execution_client": "DHAN-CLIENT",
+            "zerodha_execution_client": "ZERODHA-CLIENT",
+            "mstock_execution_client": "MSTOCK-CLIENT",
         }
         defaults.update(clients)
         with ExitStack() as stack:
@@ -3363,6 +3365,8 @@ class TestSelectExecutionClient(unittest.TestCase):
             "SHOONYA": ("SHOONYA-CLIENT", "NFO"),
             "FLATTRADE": ("FLATTRADE-CLIENT", "NFO"),
             "DHAN": ("DHAN-CLIENT", "NSE_FNO"),
+            "ZERODHA": ("ZERODHA-CLIENT", "NFO"),
+            "MSTOCK": ("MSTOCK-CLIENT", "NFO"),
         }
         for broker, (client, segment) in expected.items():
             with self.subTest(broker=broker), patch.dict(os.environ, {}, clear=False):
@@ -3382,7 +3386,9 @@ class TestSelectExecutionClient(unittest.TestCase):
         self.assertEqual(product, "NORMAL")
 
     def test_unknown_broker_fails_closed(self):
-        for broker in ("ZERODHA", "", "dhann", None):
+        # "ZERODHAA" and "M-STOCK" are near-misses of real choices: a typo must
+        # disable live trading, never fall through to a similarly named broker.
+        for broker in ("UPSTOX", "ZERODHAA", "M-STOCK", "", "dhann", None):
             with self.subTest(broker=broker):
                 self.assertEqual(
                     self._select(broker),
@@ -9184,6 +9190,19 @@ class TestFlattradeMasterIntegration(unittest.TestCase):
         self.assertIs(client, master_file.flattrade_execution_client)
         self.assertEqual((exchange, product), ("NFO", "NORMAL"))
 
+    def test_master_selector_routes_zerodha_and_mstock(self):
+        for broker, attribute, env_key in (
+            ("ZERODHA", "zerodha_execution_client", "ZERODHA_PRODUCT_TYPE"),
+            ("MSTOCK", "mstock_execution_client", "MSTOCK_PRODUCT_TYPE"),
+        ):
+            with self.subTest(broker=broker), patch.dict(os.environ, {env_key: "NORMAL"}, clear=False):
+                client, exchange, product = master_file._select_execution_client(broker.lower())
+                self.assertIs(client, getattr(master_file, attribute))
+                self.assertIsNotNone(client)
+                self.assertEqual((exchange, product), ("NFO", "NORMAL"))
+                # Selectable as LIVE_BROKER means the whole shared contract.
+                self.assertIsInstance(client, master_file.ExecutionClient)
+
     def test_master_selector_fails_closed_for_unknown_broker(self):
         self.assertTrue(hasattr(master_file, "_select_execution_client"))
         with self.assertLogs(master_file.logging.getLogger(master_file.LOGGER_NAME), level="ERROR"):
@@ -14524,40 +14543,123 @@ class TestPositionGroupMonitorWiring(unittest.TestCase):
         )
 
     @staticmethod
-    def _fake_client_class(*, logs_in):
-        class FakeClient:
-            api_key_env = "FAKEBROKER_API_KEY"
+    def _fake_client(*, logs_in, master_loads=True):
+        client = MagicMock()
+        client.ensure_logged_in.return_value = logs_in
+        client.preload_scrip_master.return_value = master_loads
+        client.is_logged_in = logs_in
+        return client
 
-            def ensure_logged_in(self):
-                return logs_in
-
-        return FakeClient
-
-    def _build(self, store, events, client_classes):
+    def _build(self, store, events, broker_clients, quote_broker=None):
         with tempfile.TemporaryDirectory() as folder, patch.object(
             master_file, "GROUP_MONITOR_STATE_FILE", str(Path(folder) / "s.json")
         ):
             return master_file._build_position_group_monitor(
-                store, events, client_classes=client_classes
+                store, events, quote_broker=quote_broker, broker_clients=broker_clients
             )
 
     def test_builder_logs_in_configured_brokers_and_alerts_on_failure(self):
         store = master_file.SharedMarketDataStore()
         events = master_file.queue.Queue()
-        with patch.dict(os.environ, {"FAKEBROKER_API_KEY": "k"}):
-            failed = self._build(store, events, {"FAKE": self._fake_client_class(logs_in=False)})
-            ok = self._build(store, events, {"FAKE": self._fake_client_class(logs_in=True)})
+        good = self._fake_client(logs_in=True)
+        with patch.dict(os.environ, {"FAKE_API_KEY": "k"}):
+            failed = self._build(store, events, {"FAKE": self._fake_client(logs_in=False)})
+            ok = self._build(store, events, {"FAKE": good})
         self.assertEqual(dict(failed.clients), {})
         self.assertEqual(list(ok.clients), ["FAKE"])
         self.assertEqual(events.get_nowait()["action"], "GROUP_BROKER_LOGIN_FAILED")
         self.assertTrue(events.empty())
+        # The contract list is fetched at startup, never when a target is hit.
+        good.preload_scrip_master.assert_called_once()
+
+    def test_builder_keeps_a_broker_whose_contract_list_did_not_load(self):
+        # Closing a carried leg needs the position book, not the contract list.
+        client = self._fake_client(logs_in=True, master_loads=False)
+        with patch.dict(os.environ, {"FAKE_API_KEY": "k"}):
+            monitor = self._build(master_file.SharedMarketDataStore(), None, {"FAKE": client})
+        self.assertEqual(list(monitor.clients), ["FAKE"])
+
+    def test_builder_survives_a_login_that_raises(self):
+        client = self._fake_client(logs_in=True)
+        client.ensure_logged_in.side_effect = RuntimeError("sdk blew up")
+        with patch.dict(os.environ, {"FAKE_API_KEY": "k"}):
+            monitor = self._build(master_file.SharedMarketDataStore(), None, {"FAKE": client})
+        self.assertEqual(dict(monitor.clients), {})
+
+    def test_monitor_brokers_are_the_live_broker_singletons(self):
+        # One account, one session: when the monitor's broker is also
+        # LIVE_BROKER they must be the very same client object.
+        clients = master_file._position_group_broker_clients()
+        self.assertIs(clients["ZERODHA"], master_file.zerodha_execution_client)
+        self.assertIs(clients["MSTOCK"], master_file.mstock_execution_client)
+        self.assertIsNotNone(clients["ZERODHA"])
+        self.assertIsNotNone(clients["MSTOCK"])
+
+    def test_builder_reads_the_bid_ask_from_the_dhan_option_chain(self):
+        quote_broker = MagicMock()
+        quote_broker.fetch_option_chain.return_value = {
+            "status": "success",
+            "data": {"oc": {"24500.000000": {"ce": {"top_bid_price": 88.5, "top_ask_price": 90.0}}}},
+        }
+        monitor = self._build(master_file.SharedMarketDataStore(), None, {}, quote_broker)
+        leg = SimpleNamespace(symbol="S", right="CE", strike=24500.0, expiry=date(2031, 1, 30))
+        contract = SimpleNamespace(
+            segment="NSE_FNO", security_id=777, underlying_security_id=13, underlying_segment="IDX_I"
+        )
+        self.assertEqual(monitor._read_quote(leg, contract), (88.5, 90.0))
+        quote_broker.fetch_option_chain.assert_called_once_with(13, "IDX_I", date(2031, 1, 30))
+        # No underlying id (a contract the Dhan list could not place): no quote.
+        orphan = SimpleNamespace(
+            segment="NSE_FNO", security_id=778, underlying_security_id=0, underlying_segment=""
+        )
+        self.assertEqual(monitor._read_quote(leg, orphan), (0.0, 0.0))
+
+    def test_end_of_day_logout_spares_a_session_the_monitor_still_uses(self):
+        shared = MagicMock()
+        shared.is_logged_in = True
+        monitor = MagicMock()
+        monitor.is_alive.return_value = True
+        monitor.clients = {"ZERODHA": shared}
+        store = master_file.SharedMarketDataStore()
+        flat = master_file.StartupExposureAudit(True, (), ())
+        with patch.object(master_file, "_runner_exposure_audit", return_value=flat), patch.object(
+            master_file, "_warn_if_account_not_flat"
+        ), patch.object(master_file, "_refresh_instrument_master_for_next_day"):
+            master_file._finalize_flat_session(
+                [], store, shared, trade_event_queue=None, natural_eod=False, group_monitor=monitor
+            )
+            shared.logout.assert_not_called()
+            # Without a monitor (or once it has stopped) the logout happens as before.
+            master_file._finalize_flat_session(
+                [], store, shared, trade_event_queue=None, natural_eod=False
+            )
+            shared.logout.assert_called_once()
+
+    def test_monitor_sessions_are_logged_out_once_it_has_stopped(self):
+        client = MagicMock()
+        client.is_logged_in = True
+        monitor = MagicMock()
+        monitor.is_alive.side_effect = [True, False, False]
+        monitor.clients = {"ZERODHA": client}
+        master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        client.logout.assert_called_once()
+
+    def test_a_monitor_that_will_not_stop_keeps_its_session(self):
+        # It may be mid-order: pulling the session away could strand an exit.
+        client = MagicMock()
+        client.is_logged_in = True
+        monitor = MagicMock()
+        monitor.is_alive.return_value = True
+        monitor.clients = {"ZERODHA": client}
+        with patch.object(master_file, "GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS", 0.05):
+            master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        client.logout.assert_not_called()
 
     def test_builder_skips_brokers_without_an_api_key(self):
-        with patch.dict(os.environ, {"FAKEBROKER_API_KEY": ""}):
-            monitor = self._build(
-                master_file.SharedMarketDataStore(), None,
-                {"FAKE": self._fake_client_class(logs_in=True)},
-            )
+        client = self._fake_client(logs_in=True)
+        with patch.dict(os.environ, {"FAKE_API_KEY": ""}):
+            monitor = self._build(master_file.SharedMarketDataStore(), None, {"FAKE": client})
+        client.ensure_logged_in.assert_not_called()
         self.assertEqual(dict(monitor.clients), {})
 
     def test_builder_subscribes_legs_exempt_from_feed_health(self):

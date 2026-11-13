@@ -765,7 +765,7 @@ DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS = min(
 # -----------------------------------------------------------------------------
 # Optional position-group target monitor (Dependencies/position_group_monitor.py,
 # docs/adr/0022). Watches the operator's CARRIED option-selling positions in a
-# separate broker account (Zerodha / mStock), groups them as
+# Zerodha / mStock account, groups them as
 # Dependencies/position_groups.json says, prices them off this runner's Dhan
 # feed, and SQUARES OFF A WHOLE GROUP WITH REAL ORDERS once its P&L reaches the
 # group's target. Off by default. Deliberately independent of
@@ -780,8 +780,11 @@ GROUP_MONITOR_STATE_FILE = _env_str(
     "GROUP_MONITOR_STATE_FILE", str(ROOT_DIR / "Dependencies" / "position_groups.state.json")
 ).strip()
 GROUP_MONITOR_POLL_SECONDS = min(max(_env_float("GROUP_MONITOR_POLL_SECONDS", 1.0), 0.5), 30.0)
-# Consecutive fresh ticks at/above target before a square-off fires, so one
-# odd print on an illiquid strike cannot close a three-month position.
+# Consecutive fresh ticks at/above target before a square-off is CONSIDERED.
+# This only filters a momentary glitch: a last traded price persists until the
+# next trade, so several ticks can all be the same single print. What actually
+# stops one odd print on an illiquid strike from closing a three-month
+# position is the bid/ask re-check the monitor runs before any order.
 GROUP_MONITOR_CONFIRM_TICKS = min(max(_env_int("GROUP_MONITOR_CONFIRM_TICKS", 3), 1), 60)
 # A leg priced older than this counts as unpriced, and its group is skipped.
 GROUP_MONITOR_MAX_LTP_AGE_SECONDS = min(
@@ -1546,9 +1549,10 @@ except Exception as _cpr_ai_import_exc:  # optional strategy, never fatal
     )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, Dhan,
+# Zerodha, or mStock.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All four helpers expose
+# This is how real (non-paper) orders reach the broker. All six helpers expose
 # the SAME contract: login/symbol resolution, typed place/status/cancel results,
 # determinate-or-indeterminate open order/position queries, and logout. The runner
 # uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
@@ -1609,6 +1613,35 @@ except Exception as _dhan_import_exc:
         _dhan_import_exc,
     )
 
+# Zerodha and mStock are requests-only adapters (no SDK). Besides being
+# LIVE_BROKER choices, these same two singletons are what the optional
+# position-group monitor closes carried positions through (docs/adr/0022).
+try:
+    _zerodha_execution_module = load_module(
+        "master_zerodha_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Zerodha API" / "zerodha_execution.py",
+    )
+    zerodha_execution_client = _zerodha_execution_module.zerodha_execution_client
+except Exception as _zerodha_import_exc:
+    zerodha_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Zerodha execution layer unavailable (%s); Zerodha live trading disabled.",
+        _zerodha_import_exc,
+    )
+
+try:
+    _mstock_execution_module = load_module(
+        "master_mstock_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Mstock API" / "mstock_execution.py",
+    )
+    mstock_execution_client = _mstock_execution_module.mstock_execution_client
+except Exception as _mstock_import_exc:
+    mstock_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "mStock execution layer unavailable (%s); mStock live trading disabled.",
+        _mstock_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1634,8 +1667,15 @@ def _select_execution_client(broker_name: str):
     if broker == "DHAN":
         product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return dhan_execution_client, "NSE_FNO", product
+    if broker == "ZERODHA":
+        product = _env_str("ZERODHA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return zerodha_execution_client, "NFO", product
+    if broker == "MSTOCK":
+        product = _env_str("MSTOCK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return mstock_execution_client, "NFO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, DHAN, ZERODHA, "
+        "or MSTOCK); "
         "live trading DISABLED (paper only).",
         broker_name,
     )
@@ -20193,42 +20233,75 @@ def _latest_dhan_instrument_master() -> Path | None:
     return Path(max(matches, key=os.path.getmtime)) if matches else None
 
 
+def _position_group_broker_clients() -> dict[str, Any]:
+    """Broker name, as written in the groups file -> that broker's adapter client.
+
+    These are the SAME singletons ``LIVE_BROKER`` selects from, so when the
+    monitor's broker is also the live broker they share one session, one
+    order gate and one poison flag -- there is only one account behind them.
+    """
+
+    return {"ZERODHA": zerodha_execution_client, "MSTOCK": mstock_execution_client}
+
+
 def _build_position_group_monitor(
     store: SharedMarketDataStore,
     event_queue: queue.Queue | None,
     *,
-    client_classes: Mapping[str, Any] | None = None,
+    quote_broker: Any = None,
+    broker_clients: Mapping[str, Any] | None = None,
 ) -> Any:
-    """Construct the optional position-group monitor, or return None.
+    """Construct the optional position-group monitor.
 
     Imported lazily so a disabled monitor costs nothing and a missing
     dependency only disables the monitor. Each broker whose API key is in
-    ``.env`` is logged in NOW, in the open: an expired token is reported at
-    startup with an alert, not discovered at the moment a target is hit. A
+    ``.env`` is logged in NOW, on the main thread and in the open: an expired
+    token is reported at startup with an alert, not discovered at the moment
+    a target is hit (the monitor's own thread is never allowed to prompt). A
     group on a broker that did not log in is then reported unmonitorable.
+
+    ``quote_broker`` is the Dhan market-data client; its option chain supplies
+    the bid/ask the monitor re-prices a group at before any order.
     """
 
     # importlib rather than `from Dependencies... import`: these modules import
     # their siblings by BARE name (as the broker adapters do), and a static
     # import here would make mypy see broker_contract under two module names --
     # the clash the CI workflow's separate master mypy run exists to avoid.
-    brokers_module = importlib.import_module("Dependencies.position_brokers")
     monitor_module = importlib.import_module("Dependencies.position_group_monitor")
-    POSITION_CLIENT_CLASSES = brokers_module.POSITION_CLIENT_CLASSES
     PositionGroupMonitor = monitor_module.PositionGroupMonitor
     build_dhan_contract_index = monitor_module.build_dhan_contract_index
 
     def alert(event: dict) -> None:
+        # Straight onto the notifier queue, like every runner (non-trade) alert:
+        # a monitor event is not a strategy trade and must not reach the books.
         if event_queue is not None:
-            event_queue.put_nowait(event)
+            _put_runner_alert(event_queue, event, "a position-group alert")
 
     clients: dict[str, Any] = {}
-    for name, factory in (client_classes or POSITION_CLIENT_CLASSES).items():
-        client = factory()
-        if not _env_str(client.api_key_env, ""):
+    available = _position_group_broker_clients() if broker_clients is None else broker_clients
+    for name, client in available.items():
+        # A broker is "configured" when its API key is set; an unconfigured one
+        # is simply not this operator's broker and is skipped without noise.
+        if client is None or not _env_str(f"{name}_API_KEY", ""):
             continue
-        if client.ensure_logged_in():
+        try:
+            logged_in = client.ensure_logged_in() is True
+        except Exception:  # noqa: BLE001 - a login failure must only disable this broker
+            logged_in = False
+        if logged_in:
             clients[name] = client
+            # Fetch the broker's contract list NOW. Nothing may start a
+            # multi-megabyte download at the moment a target is hit.
+            try:
+                preloaded = client.preload_scrip_master() is True
+            except Exception:  # noqa: BLE001 - the exit path does not depend on it
+                preloaded = False
+            if not preloaded:
+                logger.warning(
+                    "Position-group monitor: %s contract list did not load; groups are "
+                    "still watched (closing a leg does not need it).", name,
+                )
             continue
         logger.error(
             "Position-group monitor: %s login failed; its groups are NOT watched this "
@@ -20241,12 +20314,12 @@ def _build_position_group_monitor(
             "reason": f"{name} login failed; groups on it are NOT watched. Refresh the token and restart.",
         })
 
-    def load_contract_index():
+    def load_contract_index(underlyings):
         path = _latest_dhan_instrument_master()
         if path is None:
             logger.error("Position-group monitor: no Dhan instrument master found; nothing can be priced.")
             return {}
-        return build_dhan_contract_index(path)
+        return build_dhan_contract_index(path, underlyings)
 
     def subscribe(leg, contract) -> None:
         store.register_option_subscription(
@@ -20275,6 +20348,20 @@ def _build_position_group_monitor(
             max_age_seconds=GROUP_MONITOR_MAX_LTP_AGE_SECONDS,
         )
 
+    def read_quote(leg, contract) -> tuple[float, float]:
+        # The same /optionchain quote the spread gate reads (the tick feed
+        # carries no bid/ask). (0.0, 0.0) means "no quote", which the monitor
+        # treats as a reason NOT to send orders.
+        if quote_broker is None or not contract.underlying_security_id:
+            return (0.0, 0.0)
+        response = _fetch_option_chain_cached(
+            quote_broker,
+            contract.underlying_security_id,
+            contract.underlying_segment,
+            leg.expiry,
+        )
+        return _parse_option_chain_quote(response, leg.strike, leg.right)
+
     return PositionGroupMonitor(
         config_path=Path(GROUP_MONITOR_FILE),
         state_path=Path(GROUP_MONITOR_STATE_FILE),
@@ -20283,6 +20370,7 @@ def _build_position_group_monitor(
         subscribe=subscribe,
         unsubscribe=unsubscribe,
         read_ltp=read_ltp,
+        read_quote=read_quote,
         alert=alert,
         now=lambda: _ist_now().replace(tzinfo=None),
         poll_seconds=GROUP_MONITOR_POLL_SECONDS,
@@ -20328,6 +20416,17 @@ def _wait_for_position_group_monitor(monitor: Any, *, natural_eod: bool) -> None
             "left EXITING and the broker book by hand.",
             GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS, GROUP_MONITOR_STATE_FILE,
         )
+        return
+    # Only now that nothing can still be mid-order: close the broker sessions
+    # the monitor held (the end-of-day logout deliberately left them open).
+    for name, client in dict(getattr(monitor, "clients", {})).items():
+        if getattr(client, "is_logged_in", False) is not True:
+            continue
+        try:
+            client.logout()
+            logger.info("%s session logged out after the position-group monitor stopped.", name)
+        except Exception as exc:  # noqa: BLE001 - shutdown must not hinge on a logout
+            logger.warning("%s logout failed after the position-group monitor stopped: %s", name, exc)
 
 
 def _start_and_supervise_runtime_threads(
@@ -20656,6 +20755,7 @@ def _finalize_flat_session(
     *,
     trade_event_queue: queue.Queue | None,
     natural_eod: bool,
+    group_monitor: Any = None,
 ) -> SessionFinalizationOutcome:
     """Write results, logout, and refresh once the RUNNER's exposure is flat.
 
@@ -20688,7 +20788,21 @@ def _finalize_flat_session(
         _publish_eod_summary(workers, trade_event_queue)
         results_published = _update_pnl_google_sheet()
 
-    if client is not None and getattr(client, "is_logged_in", False) is True:
+    # The position-group monitor keeps watching until GROUP_MONITOR_STOP_TIME,
+    # after the strategies are done. If it closes positions through this very
+    # broker session, logging out here would cut it off; it logs the session
+    # out itself once it has stopped (_wait_for_position_group_monitor).
+    monitor_shares_session = (
+        group_monitor is not None
+        and group_monitor.is_alive()
+        and any(held is client for held in dict(getattr(group_monitor, "clients", {})).values())
+    )
+    if monitor_shares_session:
+        logger.info(
+            "%s execution session kept open: the position-group monitor is still using it.",
+            LIVE_BROKER,
+        )
+    elif client is not None and getattr(client, "is_logged_in", False) is True:
         try:
             client.logout()
             logger.info("%s execution session logged out after flat audit.", LIVE_BROKER)
@@ -21145,7 +21259,9 @@ def main() -> None:
     group_monitor = None
     if GROUP_MONITOR_ENABLED:
         try:
-            group_monitor = _build_position_group_monitor(store, trade_event_queue)
+            group_monitor = _build_position_group_monitor(
+                store, trade_event_queue, quote_broker=broker
+            )
             group_monitor.start()
             logger.warning(
                 "Position-group monitor ENABLED (%s): groups reaching their target are "
@@ -21184,6 +21300,7 @@ def main() -> None:
         execution_client,
         trade_event_queue=trade_event_queue,
         natural_eod=natural_eod,
+        group_monitor=group_monitor,
     )
     while not finalization:
         _wait_for_shutdown_account_flat(
@@ -21197,6 +21314,7 @@ def main() -> None:
             execution_client,
             trade_event_queue=trade_event_queue,
             natural_eod=natural_eod,
+            group_monitor=group_monitor,
         )
 
     # Every runner-owned book is proven flat, so open positions must not resume.
@@ -21220,6 +21338,13 @@ def main() -> None:
         session_state, finalization, natural_eod=natural_eod
     )
 
+    # The position-group monitor outlives the strategies (it watches carried
+    # positions until GROUP_MONITOR_STOP_TIME) but needs the fetcher and the
+    # notifier, so it is waited for AFTER the unchanged end-of-day sequence above
+    # and BEFORE they are released -- and before the dashboard, so the page stays
+    # up for as long as anything in this process can still place an order.
+    _wait_for_position_group_monitor(group_monitor, natural_eod=natural_eod)
+
     # Stopped only NOW: the flatten, the broker-confirmed-flat wait, the
     # finalization, the Google Sheet write and mark_clean_shutdown have all
     # already run, so the dashboard cannot have delayed any of them -- and the
@@ -21233,12 +21358,6 @@ def main() -> None:
             logger.exception(
                 "Monitoring dashboard did not stop cleanly; the process still exits."
             )
-
-    # The position-group monitor outlives the strategies (it watches carried
-    # positions until GROUP_MONITOR_STOP_TIME) but needs the fetcher and the
-    # notifier, so it is waited for AFTER the unchanged end-of-day sequence above
-    # and BEFORE they are released.
-    _wait_for_position_group_monitor(group_monitor, natural_eod=natural_eod)
 
     # Only a fully finalized flat session may release the fetcher/notifier.
     stop_event.set()

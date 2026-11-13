@@ -138,4 +138,6 @@ jobs:
           python -m pytest
           "Tests/Dependencies/test_broker_contract.py"
           "Tests/Dependencies/Flattrade API/test_flattrade_execution.py"
+          "Tests/Dependencies/Zerodha API/test_zerodha_execution.py"
+          "Tests/Dependencies/Mstock API/test_mstock_execution.py"
           -q

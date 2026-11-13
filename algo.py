@@ -41,8 +41,9 @@ The commands:
                Interactive (opens a browser / asks you to paste a code).
       python algo.py setup-token
 
-  setup-broker-token  Daily interactive login for the position-group monitor's
-               brokers; writes <BROKER>_ACCESS_TOKEN into .env.
+  setup-broker-token  Daily interactive Zerodha / mStock login, saved to .env as
+               <BROKER>_ACCESS_TOKEN so the runner (and the position-group
+               monitor) start without stopping at a prompt.
       python algo.py setup-broker-token --broker zerodha
       python algo.py setup-broker-token --broker mstock
 
@@ -125,7 +126,9 @@ BROKER_DIAGNOSTICS = {
     "dhan": "Dependencies/Dhan API/diagnose_dhan_symbol.py",
     "flattrade": "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
     "kotak": "Dependencies/Kotak API/diagnose_kotak_symbol.py",
+    "mstock": "Dependencies/Mstock API/diagnose_mstock_symbol.py",
     "shoonya": "Dependencies/Shoonya API/diagnose_shoonya_symbol.py",
+    "zerodha": "Dependencies/Zerodha API/diagnose_zerodha_symbol.py",
 }
 
 # Commands that always map to exactly one script (no selector needed).
@@ -134,8 +137,8 @@ TOKEN_SETUP_SCRIPT = "Dependencies/dhan_token_setup.py"
 POSITION_BROKER_TOKEN_SCRIPT = "Dependencies/position_broker_token_setup.py"
 GROUP_LEGS_SCRIPT = "Dependencies/position_groups_cli.py"
 
-# `setup-broker-token --broker <key>`: the brokers the position-group monitor
-# reads carried positions from. Not LIVE_BROKER choices.
+# `setup-broker-token --broker <key>`: the brokers whose daily token this
+# command saves to .env (both are also LIVE_BROKER choices).
 POSITION_BROKERS = ("mstock", "zerodha")
 CHECK_ENV_SCRIPT = "Dependencies/check_env_config.py"
 
@@ -216,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     broker_token = sub.add_parser(
         "setup-broker-token",
-        help="Daily interactive login for a position-group monitor broker (writes its token into .env).",
+        help="Daily interactive Zerodha / mStock login (saves the access token into .env).",
     )
     broker_token.add_argument(
         "--broker", required=True, choices=POSITION_BROKERS,

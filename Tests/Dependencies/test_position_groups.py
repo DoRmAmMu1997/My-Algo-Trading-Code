@@ -164,11 +164,57 @@ def test_merge_refuses_an_invalid_document() -> None:
         position_groups.merge_broker_legs(raw, "ZERODHA", [detail()])
 
 
+def test_merge_never_adds_one_symbol_twice_when_it_is_held_in_two_products() -> None:
+    """A carried NRML short plus an intraday MIS trade on the same strike are TWO
+    broker rows.  The file allows a symbol only once, so adding both would make
+    the tool write a file that fails its own validation."""
+
+    raw = document()
+    report = position_groups.merge_broker_legs(
+        raw,
+        "ZERODHA",
+        # MIS listed first on purpose: the carried NRML row must still win.
+        [detail(quantity=25, product_type="MIS"), detail(quantity=-75)],
+    )
+    (added,) = report.added
+    assert (added.product, added.quantity) == ("NRML", -75)
+    assert report.other_product == ("NIFTY25N2724500CE: also held as MIS (+25); not added",)
+    assert len(raw["unassigned"]) == 1
+    position_groups.parse_config(raw)  # the merged file is still valid
+
+
+def test_merge_compares_quantity_only_against_the_row_of_the_same_product() -> None:
+    raw = document(group())  # the file tracks the NRML leg, quantity -75
+    report = position_groups.merge_broker_legs(
+        raw, "ZERODHA", [detail(quantity=-75), detail(quantity=25, product_type="MIS")]
+    )
+    assert report.added == () and report.quantity_changed == ()
+    assert report.other_product == ("NIFTY25N2724500CE: also held as MIS (+25); not added",)
+
+
+def test_merge_treats_a_blank_broker_product_as_the_tracked_leg() -> None:
+    """mStock's documented position sample leaves ``product`` empty."""
+
+    raw = document(group())
+    report = position_groups.merge_broker_legs(
+        raw, "ZERODHA", [detail(quantity=-150, product_type="")]
+    )
+    assert report.other_product == ()
+    assert report.quantity_changed == ("NIFTY25N2724500CE: file -75, broker -150",)
+
+
 class FakeClient:
-    def __init__(self, result) -> None:
+    def __init__(self, result, *, master_loaded: bool = True) -> None:
         self.result = result
+        self.master_loaded = master_loaded
+        self.calls: list[str] = []
+
+    def preload_scrip_master(self) -> bool:
+        self.calls.append("preload_scrip_master")
+        return self.master_loaded
 
     def list_position_details(self):
+        self.calls.append("list_position_details")
         return self.result
 
 
@@ -195,6 +241,34 @@ def test_cli_fetch_refuses_to_touch_an_invalid_file(tmp_path: Path) -> None:
     client = FakeClient(BrokerQueryResult.success([detail()]))
     assert position_groups_cli._fetch(path, "ZERODHA", client) == 1
     assert path.read_text() == "{broken"
+
+
+def test_cli_fetch_loads_the_contract_master_before_reading_positions(tmp_path: Path) -> None:
+    """Without the master a leg has no (underlying, expiry, strike, right)."""
+
+    client = FakeClient(BrokerQueryResult.success([detail()]))
+    assert position_groups_cli._fetch(tmp_path / "g.json", "ZERODHA", client) == 0
+    assert client.calls == ["preload_scrip_master", "list_position_details"]
+
+    unready = FakeClient(BrokerQueryResult.success([detail()]), master_loaded=False)
+    path = tmp_path / "h.json"
+    assert position_groups_cli._fetch(path, "ZERODHA", unready) == 1
+    assert unready.calls == ["preload_scrip_master"] and not path.exists()
+
+
+def test_cli_fetch_reports_a_second_product_and_writes_a_valid_file(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "g.json"
+    client = FakeClient(
+        BrokerQueryResult.success([detail(), detail(quantity=25, product_type="MIS")])
+    )
+    assert position_groups_cli._fetch(path, "ZERODHA", client) == 0
+    assert "also held as MIS" in capsys.readouterr().out
+    assert position_groups_cli.main(["--check", "--file", str(path)]) == 0
+
+
+def test_cli_offers_exactly_the_brokers_that_have_an_adapter() -> None:
+    with pytest.raises(SystemExit):
+        position_groups_cli.main(["--broker", "kotak"])
 
 
 def test_cli_check_reports_problems(tmp_path: Path, capsys) -> None:
