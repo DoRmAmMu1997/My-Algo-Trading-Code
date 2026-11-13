@@ -421,6 +421,115 @@ def test_invalid_order_arguments_raise_before_anything_is_sent(args, message) ->
     assert session.calls == []
 
 
+def test_partial_then_cancelled_is_terminal_partial() -> None:
+    client, _ = mstock(
+        {
+            ("POST", "/orders/regular"): ok({"order_id": "M1"}),
+            ("GET", "/order/details"): ok([order_row("Cancelled", 25)]),
+        }
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.PARTIAL and result.filled_quantity == 25
+
+
+def test_quantity_mismatch_in_status_is_unknown() -> None:
+    client, _ = mstock(
+        {
+            ("POST", "/orders/regular"): ok({"order_id": "M1"}),
+            ("GET", "/order/details"): ok([order_row("Traded", 150, quantity=150)]),
+        }
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "details", [ConnectionError("reset"), error(500, "GeneralException"), ok([]), ok("garbage")]
+)
+def test_a_failed_status_read_is_unknown_and_keeps_the_order_id(details) -> None:
+    client, _ = mstock(
+        {("POST", "/orders/regular"): ok({"order_id": "M1"}), ("GET", "/order/details"): details}
+    )
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.UNKNOWN and result.order_id == "M1"
+
+
+def test_refusal_with_unreadable_order_book_stays_unknown() -> None:
+    for book in (ConnectionError("down"), ok({"not": "a list"}), ok(["x"])):
+        client, _ = mstock(
+            {("POST", "/orders/regular"): error(400, "MiraeException"), ("GET", "/orders"): book}
+        )
+        result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+        assert result.status is OrderStatus.UNKNOWN
+
+
+def test_an_acknowledgement_without_an_order_id_is_not_a_fill() -> None:
+    client, _ = mstock({("POST", "/orders/regular"): ok({}), ("GET", "/orders"): ok([])})
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.UNKNOWN
+
+
+def test_login_failure_is_a_rejection_because_nothing_was_sent(monkeypatch) -> None:
+    monkeypatch.delenv("MSTOCK_API_KEY")
+    client, session = mstock({})
+    result = client.place_market_order("S", "SELL", 75, "NFO", "NRML", order_tag="GM1")
+    assert result.status is OrderStatus.REJECTED and session.calls == []
+    assert client.list_open_orders().is_indeterminate is True
+    assert client.cancel_order("M1", requested_quantity=75).status is OrderStatus.UNKNOWN
+    assert client.preload_scrip_master() is False
+    assert client.resolve_option_symbol("NIFTY", date(2025, 11, 27), "PE", 23500) == ""
+
+
+@pytest.mark.parametrize(("friendly", "code"), [("INTRADAY", "MIS"), ("MIS", "MIS"), ("NRML", "NRML")])
+def test_product_types_map_to_broker_codes(friendly, code) -> None:
+    client, session = mstock(
+        {
+            ("POST", "/orders/regular"): ok({"order_id": "M1"}),
+            ("GET", "/order/details"): ok([order_row("Traded", 75)]),
+        }
+    )
+    client.place_market_order("S", "BUY", 75, "BFO", friendly, order_tag="GM1")
+    form = next(call[3] for call in session.calls if call[1] == "/orders/regular")
+    assert form["product"] == code and form["exchange"] == "BFO"
+
+
+def test_expired_token_fails_login_without_leaking_it(caplog) -> None:
+    client, _ = mstock(
+        {("GET", "/portfolio/positions"): error(401, "TokenException", "bad mstock_token_secret")}
+    )
+    assert client.ensure_logged_in() is False
+    assert "mstock_token_secret" not in caplog.text
+
+
+@pytest.mark.parametrize("typed", [("", "654321"), ("hunter2-password", "")])
+def test_an_empty_password_or_code_aborts_the_login(monkeypatch, typed) -> None:
+    password, code = typed
+    monkeypatch.delenv("MSTOCK_ACCESS_TOKEN")
+    monkeypatch.setenv("MSTOCK_USERNAME", "trader01")
+    monkeypatch.setattr(ms, "getpass", lambda *_: password)
+    monkeypatch.setattr("builtins.input", lambda *_: code)
+    client, session = mstock({("POST", "/connect/login"): ok({"flag": 0})})
+    assert client.ensure_logged_in() is False
+    assert not any(call[1].startswith("/session") for call in session.calls)
+
+
+def test_a_code_exchange_without_a_token_fails_the_login(monkeypatch) -> None:
+    monkeypatch.delenv("MSTOCK_ACCESS_TOKEN")
+    monkeypatch.setenv("MSTOCK_USERNAME", "trader01")
+    monkeypatch.setattr(ms, "getpass", lambda *_: "hunter2-password")
+    monkeypatch.setattr("builtins.input", lambda *_: "654321")
+    client, _ = mstock(
+        {("POST", "/connect/login"): ok({"flag": 0}), ("POST", "/session/token"): ok({"other": 1})}
+    )
+    assert client.ensure_logged_in() is False
+    assert client.current_access_token() == ""
+
+
+def test_cancel_transport_failure_is_unknown() -> None:
+    client, _ = mstock({("DELETE", "/orders/regular/M1"): ConnectionError("reset")})
+    assert client.cancel_order("M1", requested_quantity=75).status is OrderStatus.UNKNOWN
+
+
 def test_cancel_sends_delete_then_reports_the_resulting_status() -> None:
     client, session = mstock(
         {
