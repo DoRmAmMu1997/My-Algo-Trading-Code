@@ -26,6 +26,7 @@ from position_group_monitor import (
     DhanContract,
     PositionGroupMonitor,
     build_dhan_contract_index,
+    executable_pnl,
     exit_plan,
     group_pnl,
     holdings_mismatch,
@@ -113,12 +114,27 @@ class Harness:
         self.broker = FakeBroker()
         self.now = MARKET_TIME
         self.index_loads = 0
+        self.index_requests: list[frozenset[str]] = []
+        self.index_error: BaseException | None = None
+        # security_id -> (bid, ask); None means "quote the last traded price".
+        self.quotes: dict[int, tuple[float, float]] | None = None
+        self.quote_reads = 0
         self.monitor = self.build()
 
     def build(self) -> PositionGroupMonitor:
-        def load_index():
+        def load_index(underlyings):
             self.index_loads += 1
+            self.index_requests.append(frozenset(underlyings))
+            if self.index_error is not None:
+                raise self.index_error
             return CONTRACTS
+
+        def read_quote(_leg, contract):
+            self.quote_reads += 1
+            if self.quotes is None:
+                ltp = self.prices.get(contract.security_id, 0.0)
+                return (ltp, ltp)
+            return self.quotes.get(contract.security_id, (0.0, 0.0))
 
         return PositionGroupMonitor(
             config_path=self.config_path,
@@ -128,6 +144,7 @@ class Harness:
             subscribe=lambda _leg, contract: self._feed("sub", contract.security_id),
             unsubscribe=lambda contract: self._feed("unsub", contract.security_id),
             read_ltp=lambda contract: self.prices.get(contract.security_id, 0.0),
+            read_quote=read_quote,
             alert=self.alerts.append,
             now=lambda: self.now,
             confirm_ticks=3,
@@ -210,7 +227,10 @@ def test_holdings_mismatch_catches_closed_resized_and_flipped_legs() -> None:
     [
         (datetime(2026, 10, 23, 9, 14, 59), False),
         (datetime(2026, 10, 23, 9, 15), True),
-        (datetime(2026, 10, 23, 15, 29, 30), True),
+        (datetime(2026, 10, 23, 15, 25), True),
+        # A multi-order exit needs time to finish before the 15:30 close.
+        (datetime(2026, 10, 23, 15, 25, 1), False),
+        (datetime(2026, 10, 23, 15, 29, 30), False),
         (datetime(2026, 10, 23, 15, 30), False),
         (datetime(2026, 10, 24, 11, 0), False),  # Saturday
     ],
@@ -222,17 +242,29 @@ def test_action_window(moment: datetime, expected: bool) -> None:
 def test_dhan_index_reads_options_with_lot_and_freeze(tmp_path: Path) -> None:
     path = tmp_path / "all_instrument.csv"
     path.write_text(
-        "EXCH_ID,SEGMENT,SECURITY_ID,INSTRUMENT,UNDERLYING_SYMBOL,LOT_SIZE,SM_EXPIRY_DATE,"
-        "STRIKE_PRICE,OPTION_TYPE,SM_FREEZE_QTY\n"
-        "NSE,D,111,OPTIDX,NIFTY,75,2025-11-27 14:30:00,24500.00000,CE,1801\n"
-        "BSE,D,333,OPTIDX,SENSEX,20,2025-11-27,80000,PE,1001\n"
-        "NSE,D,444,FUTIDX,NIFTY,75,2025-11-27,0,XX,1801\n"
-        "NSE,E,555,EQUITY,INFY,1,,,,\n"
+        "EXCH_ID,SEGMENT,SECURITY_ID,INSTRUMENT,UNDERLYING_SECURITY_ID,UNDERLYING_SYMBOL,"
+        "LOT_SIZE,SM_EXPIRY_DATE,STRIKE_PRICE,OPTION_TYPE,SM_FREEZE_QTY\n"
+        "NSE,D,111,OPTIDX,13,NIFTY,75,2025-11-27 14:30:00,24500.00000,CE,1801\n"
+        "BSE,D,333,OPTIDX,51,SENSEX,20,2025-11-27,80000,PE,1001\n"
+        "NSE,D,666,OPTSTK,1594,INFY,400,2025-11-27,1500,CE,8001\n"
+        "NSE,D,444,FUTIDX,13,NIFTY,75,2025-11-27,0,XX,1801\n"
+        "NSE,E,555,EQUITY,,INFY,1,,,,\n"
     )
     index = build_dhan_contract_index(path)
-    assert index[("NSE", "NIFTY", date(2025, 11, 27), 2450000, "CE")] == DhanContract("NSE_FNO", 111, 75, 1801)
-    assert index[("BSE", "SENSEX", date(2025, 11, 27), 8000000, "PE")].segment == "BSE_FNO"
-    assert len(index) == 2
+    # The underlying's own id and segment are what the option-chain quote needs.
+    assert index[("NSE", "NIFTY", date(2025, 11, 27), 2450000, "CE")] == DhanContract(
+        "NSE_FNO", 111, 75, 1801, 13, "IDX_I"
+    )
+    sensex = index[("BSE", "SENSEX", date(2025, 11, 27), 8000000, "PE")]
+    assert (sensex.segment, sensex.underlying_security_id, sensex.underlying_segment) == (
+        "BSE_FNO", 51, "IDX_I"
+    )
+    assert index[("NSE", "INFY", date(2025, 11, 27), 150000, "CE")].underlying_segment == "NSE_EQ"
+    assert len(index) == 3
+    # Asked for one underlying, the index holds that underlying only.
+    assert list(build_dhan_contract_index(path, {"sensex"})) == [
+        ("BSE", "SENSEX", date(2025, 11, 27), 8000000, "PE")
+    ]
 
 
 # --- the thread's decisions -----------------------------------------------------
@@ -328,6 +360,9 @@ def test_order_exception_stops_the_group(tmp_path: Path) -> None:
     h.set_pnl(1.0, 40.0)
     h.ticks(3)
     assert h.state()["status"] == "EXIT_FAILED"
+    # The exception TYPE is reported; its text (which a transport error could
+    # fill with request details) stays out of Telegram and the state file.
+    assert "TimeoutError" in h.state()["reason"] and "deadline" not in h.state()["reason"]
 
 
 def test_squared_off_group_stays_closed_after_restart(tmp_path: Path) -> None:
@@ -475,7 +510,7 @@ def test_unplannable_exit_fails_before_any_order(tmp_path: Path) -> None:
     h = Harness(tmp_path)
     broken = dict(CONTRACTS)
     broken[("NSE", "NIFTY", date(2025, 11, 27), 2450000, "CE")] = DhanContract("NSE_FNO", 111, 75, 50)
-    h.monitor._contract_index_loader = lambda: broken
+    h.monitor._contract_index_loader = lambda _underlyings: broken
     h.set_pnl(1.0, 40.0)
     h.ticks(3)
     assert h.broker.orders == []
@@ -515,3 +550,139 @@ def test_removed_group_releases_its_feed_subscriptions(tmp_path: Path) -> None:
     h.ticks(1)
     assert sorted(h.unsubscribed) == [111, 222]
     assert h.live_feed() == set()
+
+
+# --- review fixes -------------------------------------------------------------------
+def test_a_failed_load_is_alerted_and_retried_instead_of_watching_nothing(tmp_path: Path) -> None:
+    """A file that parses but cannot be APPLIED (here: the Dhan contract list is
+    unreadable) used to be remembered as applied -- the monitor then ran all day
+    watching nothing, with no alert."""
+
+    h = Harness(tmp_path)
+    h.index_error = OSError("instrument csv is being rewritten")
+    h.set_pnl(1.0, 40.0)
+    h.ticks(5)
+    assert h.actions() == ["GROUP_MONITOR_ERROR"]  # said once, not every tick
+    assert h.index_loads == 1  # and not hammered every second either
+    assert h.subscribed == [] and h.broker.orders == []
+
+    h.index_error = None
+    h.now = MARKET_TIME.replace(minute=1)  # past the retry back-off
+    h.ticks(3)
+    assert h.subscribed == [111, 222]
+    assert h.actions()[-1] == "GROUP_SQUARED_OFF"
+
+
+def test_contract_list_is_loaded_for_the_files_underlyings_only(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.ticks(1)
+    assert h.index_requests == [frozenset({"NIFTY"})]
+    # A new group needs the list again; nothing is kept in memory in between.
+    h.write(config_document(name="Second", legs=[leg(SHORT_CE, -75, 100.0, 24500)]))
+    h.ticks(1)
+    assert h.index_loads == 2
+    assert not hasattr(h.monitor, "_contract_index")
+
+
+def test_executable_pnl_buys_shorts_back_at_the_ask_and_sells_longs_at_the_bid() -> None:
+    (group,) = parse_config(config_document(booked=-500)).groups
+    short, long_ = (leg.key for leg in group.legs)
+    # Short 100 -> buy back at ask 92 (+1200); long 40 -> sell at bid 34 (-900).
+    quotes = {short: (88.0, 92.0), long_: (34.0, 38.0)}
+    assert executable_pnl(group, quotes) == pytest.approx(-200.0)
+    assert executable_pnl(group, {short: (88.0, 92.0)}) is None  # a leg has no quote
+    assert executable_pnl(group, {short: (0.0, 92.0), long_: (34.0, 38.0)}) is None
+    assert executable_pnl(group, {short: (93.0, 92.0), long_: (34.0, 38.0)}) is None  # crossed
+
+
+def test_one_off_market_print_cannot_square_off_a_group(tmp_path: Path) -> None:
+    """The last traded price says the target is hit; the book you could actually
+    trade against does not.  Nothing may be sent."""
+
+    h = Harness(tmp_path)
+    h.set_pnl(1.0, 40.0)  # one stale print on the short: LTP P&L looks like +14850
+    h.quotes = {111: (99.0, 101.0), 222: (39.0, 41.0)}  # the real market: about -300
+    h.ticks(10)
+    assert h.broker.orders == []
+    assert h.monitor.state.status(next(iter(h.monitor._watches.values())).group) == "ACTIVE"
+    assert h.actions() == []  # a quiet "not yet", not an alarm
+    assert h.quote_reads == 2  # one re-check (two legs), then a back-off
+
+    # The market really gets there: the group is closed.
+    h.quotes = {111: (88.0, 90.0), 222: (38.0, 40.0)}  # (90-100)*-150 + (38-40)*150 = +1200
+    h.now = MARKET_TIME.replace(minute=1)
+    h.ticks(3)
+    assert h.actions() == ["GROUP_TARGET_HIT", "GROUP_SQUARED_OFF"]
+
+
+def test_an_unreadable_quote_sends_no_orders_and_says_so_once(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.set_pnl(1.0, 40.0)
+    h.quotes = {111: (0.0, 0.0), 222: (39.0, 41.0)}
+    h.ticks(8)
+    assert h.broker.orders == []
+    assert h.actions() == ["GROUP_QUOTE_UNREADABLE"]
+    h.now = MARKET_TIME.replace(minute=2)
+    h.ticks(8)
+    assert h.actions() == ["GROUP_QUOTE_UNREADABLE"]  # still once
+
+
+def test_a_quote_reader_that_raises_is_treated_as_no_quote(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+
+    def boom(_leg, _contract):
+        raise RuntimeError("option chain down")
+
+    h.monitor._read_quote = boom
+    h.set_pnl(1.0, 40.0)
+    h.ticks(4)
+    assert h.broker.orders == [] and h.actions() == ["GROUP_QUOTE_UNREADABLE"]
+
+
+def test_no_order_is_sent_unless_the_exit_was_written_down_first(tmp_path: Path, monkeypatch) -> None:
+    """EXITING on disk is what turns a crash mid-exit into EXIT_FAILED instead of
+    a second attempt.  If it cannot be written, the exit must not start."""
+
+    h = Harness(tmp_path)
+    h.ticks(1)
+    real_write = monitor_module.write_document_atomic
+
+    def disk_full(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(monitor_module, "write_document_atomic", disk_full)
+    h.set_pnl(1.0, 40.0)
+    h.ticks(6)
+    assert h.broker.orders == []
+    assert h.actions() == ["GROUP_STATE_UNWRITABLE"]
+    (watch,) = h.monitor._watches.values()
+    assert h.monitor.state.status(watch.group) == "ACTIVE"  # not stranded as EXITING
+
+    monkeypatch.setattr(monitor_module, "write_document_atomic", real_write)
+    h.ticks(3)
+    assert h.actions()[-1] == "GROUP_SQUARED_OFF"
+
+
+def test_an_exit_never_starts_too_late_to_finish(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.now = datetime(2026, 10, 23, 15, 27)
+    h.set_pnl(1.0, 40.0)
+    h.ticks(5)
+    assert h.broker.orders == []
+
+
+def test_order_tags_differ_between_attempts_on_the_same_group(tmp_path: Path) -> None:
+    """A tag reused by a second attempt would let the broker's order book answer
+    a lookup with the FIRST attempt's order."""
+
+    first = Harness(tmp_path)
+    first.set_pnl(1.0, 40.0)
+    first.ticks(3)
+    first.state_path.unlink()  # the status file is lost; the same group re-arms
+    second = Harness(tmp_path)
+    second.now = MARKET_TIME.replace(minute=7, second=9)
+    second.set_pnl(1.0, 40.0)
+    second.ticks(3)
+    tags = [order[5] for order in (*first.broker.orders, *second.broker.orders)]
+    assert len(tags) == 4 and len(set(tags)) == 4
+    assert all(tag.isalnum() and len(tag) <= 20 for tag in tags)

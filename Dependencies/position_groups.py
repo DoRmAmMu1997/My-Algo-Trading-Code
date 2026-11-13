@@ -337,6 +337,9 @@ class MergeReport:
     unidentified: tuple[str, ...]
     quantity_changed: tuple[str, ...]
     no_longer_held: tuple[str, ...]
+    # Broker rows for a symbol the file already tracks in ANOTHER product
+    # (a carried NRML leg plus an intraday MIS trade on the same strike).
+    other_product: tuple[str, ...] = ()
 
 
 def merge_broker_legs(
@@ -352,6 +355,11 @@ def merge_broker_legs(
     the file and may be mid-adjustment.  Rows without an option identity (the
     broker's instrument master did not list them) are reported, not added.
 
+    A broker lists one row per (symbol, product), but the file allows a symbol
+    only once.  So when a symbol is held in two products, the carried (NRML)
+    row is the one added or compared, and the other row is only reported --
+    adding both would write a file that fails its own validation.
+
     Raises:
         GroupConfigError: the existing document is invalid; it is not touched.
     """
@@ -364,7 +372,14 @@ def merge_broker_legs(
     added: list[Leg] = []
     unidentified: list[str] = []
     changed: list[str] = []
-    for position in positions:
+    other_product: list[str] = []
+    # Legs this very merge has added, so a second row for the same symbol is
+    # recognised as a duplicate instead of being appended again.
+    tracked = dict(existing)
+    # Carried (NRML, or unlabelled) rows first: they are the legs this file is
+    # about, so they win the symbol's single slot whatever order the broker
+    # happened to list the rows in.
+    for position in sorted(positions, key=lambda row: (row.product_type or "NRML") != "NRML"):
         key = (broker, position.exchange, position.symbol)
         held.add(key)
         product = position.product_type or "NRML"
@@ -377,10 +392,16 @@ def merge_broker_legs(
         ):
             unidentified.append(position.symbol)
             continue
-        if key in existing:
-            if existing[key].quantity != position.quantity:
+        if key in tracked:
+            current = tracked[key]
+            if position.product_type and current.product != product:
+                other_product.append(
+                    f"{position.symbol}: also held as {product} "
+                    f"({position.quantity:+d}); not added"
+                )
+            elif key in existing and current.quantity != position.quantity:
                 changed.append(
-                    f"{position.symbol}: file {existing[key].quantity}, broker {position.quantity}"
+                    f"{position.symbol}: file {current.quantity}, broker {position.quantity}"
                 )
             continue
         leg = Leg(
@@ -396,9 +417,12 @@ def merge_broker_legs(
             right=position.right,
         )
         added.append(leg)
+        tracked[key] = leg
     document.setdefault("schema_version", SCHEMA_VERSION)
     document.setdefault("groups", [])
     document.setdefault("unassigned", [])
     document["unassigned"].extend(leg.to_json(include_broker=True) for leg in added)
     gone = sorted(key[2] for key in existing if key[0] == broker and key not in held)
-    return MergeReport(tuple(added), tuple(unidentified), tuple(changed), tuple(gone))
+    return MergeReport(
+        tuple(added), tuple(unidentified), tuple(changed), tuple(gone), tuple(other_product)
+    )

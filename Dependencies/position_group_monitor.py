@@ -19,7 +19,12 @@ How one tick works
    work), and compute ``booked_pnl + sum((ltp - entry_price) * quantity)``.
    A group with ANY leg's price missing or stale is skipped for that tick.
 3. If the P&L sits at or above ``target`` for ``confirm_ticks`` CONSECUTIVE
-   fresh ticks, square the group off.
+   fresh ticks, the group is re-priced ONCE at prices it could really be closed
+   at -- shorts at the ask, longs at the bid, from Dhan's option chain.  Only
+   if THAT P&L is also at or above ``target`` is the group squared off.  A last
+   traded price can sit far from the live market on a quiet strike, and the
+   consecutive ticks all re-read that same print, so it may raise the question
+   but never answers it.  An unreadable quote sends no orders.
 
 Square-off, and why it is shaped this way
 -----------------------------------------
@@ -36,8 +41,9 @@ Square-off, and why it is shaped this way
   UNKNOWN, an exception) stops the group immediately and alerts with what is
   done and what is still open.  There is NO automatic retry: an unproven
   order retried blindly can close twice and flip into a fresh position.
-* The group is written ``EXITING`` to the state file before the first order.
-  A crash mid-exit therefore comes back as ``EXIT_FAILED`` -- never re-fired.
+* The group is written ``EXITING`` to the state file before the first order,
+  and no order is sent if that write fails.  A crash mid-exit therefore comes
+  back as ``EXIT_FAILED`` -- never re-fired.
 
 Groups that reach ``SQUARED_OFF`` or ``EXIT_FAILED`` stay that way across
 restarts (keyed by a fingerprint of name + legs) until the operator removes or
@@ -56,9 +62,9 @@ import logging
 import math
 import sys
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +79,7 @@ _DEPENDENCIES_DIR = Path(__file__).resolve().parent
 if str(_DEPENDENCIES_DIR) not in sys.path:
     sys.path.insert(0, str(_DEPENDENCIES_DIR))
 
-from broker_contract import OrderStatus, PositionBrokerClient  # noqa: E402
+from broker_contract import OrderStatus, PositionDetailClient  # noqa: E402
 from order_splitting import split_order_quantity  # noqa: E402
 from position_groups import (  # noqa: E402
     Group,
@@ -88,8 +94,15 @@ log = logging.getLogger(__name__)
 
 STRATEGY_LABEL = "Position Groups"
 MARKET_OPEN = time(9, 15)
-# Last minute in which a square-off may start; the closing session is avoided.
-MARKET_LAST_ACTION = time(15, 29)
+# The last moment a square-off may START.  A group is several orders, each of
+# which can take seconds to prove; starting later risks buying the shorts back
+# and then having the hedge sales refused at the 15:30 close.
+MARKET_LAST_ACTION = time(15, 25)
+# How long to wait before re-trying a groups file that could not be loaded.
+APPLY_RETRY_SECONDS = 30.0
+# How long to wait before re-reading the bid/ask after it did not support an
+# exit.  Dhan allows one option-chain request per underlying every 3 seconds.
+QUOTE_RECHECK_SECONDS = 15.0
 
 ACTIVE = "ACTIVE"
 EXITING = "EXITING"
@@ -111,6 +124,11 @@ class DhanContract:
     security_id: int
     lot_size: int
     freeze_qty: int
+    # The UNDERLYING's own Dhan id and segment (NIFTY is 13 on IDX_I).  Dhan's
+    # option chain -- where a live bid/ask comes from -- is asked for by
+    # underlying and expiry, not by the option's own id.
+    underlying_security_id: int = 0
+    underlying_segment: str = ""
 
 
 ContractKey = tuple[str, str, date, int, str]
@@ -121,17 +139,24 @@ def _contract_key(exchange_id: str, underlying: str, expiry: date, strike: float
     return (exchange_id, underlying.upper(), expiry, round(float(strike) * 100), right.upper())
 
 
-def build_dhan_contract_index(csv_path: Path) -> dict[ContractKey, DhanContract]:
-    """Index every NSE/BSE option in the Dhan instrument CSV by its identity.
+def build_dhan_contract_index(
+    csv_path: Path, underlyings: Iterable[str] | None = None
+) -> dict[ContractKey, DhanContract]:
+    """Index the NSE/BSE options in the Dhan instrument CSV by their identity.
 
-    Read once, at monitor start, on the monitor's own thread -- never on a
-    trading path.  Rows with an unparseable field are dropped; a leg whose
-    contract is missing is then reported unmonitorable, never guessed.
+    ``underlyings`` narrows the index to the names given (``{"NIFTY"}``), which
+    is what the monitor passes: the file lists every option on two exchanges,
+    and a groups file names a handful of legs on one or two underlyings.
+
+    Read on the monitor's own thread, when a group is new -- never on a trading
+    path.  Rows with an unparseable field are dropped; a leg whose contract is
+    missing is then reported unmonitorable, never guessed.
     """
 
     columns = [
         "EXCH_ID", "SEGMENT", "INSTRUMENT", "UNDERLYING_SYMBOL", "SM_EXPIRY_DATE",
         "STRIKE_PRICE", "OPTION_TYPE", "SECURITY_ID", "LOT_SIZE", "SM_FREEZE_QTY",
+        "UNDERLYING_SECURITY_ID",
     ]
     header = pd.read_csv(csv_path, nrows=0)
     usecols = [column for column in columns if column in header.columns]
@@ -142,6 +167,9 @@ def build_dhan_contract_index(csv_path: Path) -> dict[ContractKey, DhanContract]
         & raw["INSTRUMENT"].str.upper().isin(["OPTIDX", "OPTSTK"])
         & raw["OPTION_TYPE"].str.upper().isin(["CE", "PE"])
     ]
+    if underlyings is not None:
+        wanted = {str(name).strip().upper() for name in underlyings}
+        frame = frame[frame["UNDERLYING_SYMBOL"].str.strip().str.upper().isin(wanted)]
     index: dict[ContractKey, DhanContract] = {}
     for row in frame.itertuples(index=False):
         try:
@@ -156,8 +184,24 @@ def build_dhan_contract_index(csv_path: Path) -> dict[ContractKey, DhanContract]
         freeze = _positive_int_or_zero(getattr(row, "SM_FREEZE_QTY", ""))
         exchange_id = str(row.EXCH_ID).upper()
         segment = "NSE_FNO" if exchange_id == "NSE" else "BSE_FNO"
-        key = _contract_key(exchange_id, str(row.UNDERLYING_SYMBOL), expiry, strike, str(row.OPTION_TYPE))
-        index[key] = DhanContract(segment, security_id, lot, freeze)
+        # An index option's underlying is an index (IDX_I); a stock option's is
+        # the share on the same exchange.  Only the index case has been seen
+        # working; a wrong guess for a stock just means "no quote", which
+        # never sends an order.
+        underlying_segment = (
+            "IDX_I" if str(row.INSTRUMENT).upper() == "OPTIDX" else f"{exchange_id}_EQ"
+        )
+        key = _contract_key(
+            exchange_id, str(row.UNDERLYING_SYMBOL).strip(), expiry, strike, str(row.OPTION_TYPE)
+        )
+        index[key] = DhanContract(
+            segment,
+            security_id,
+            lot,
+            freeze,
+            _positive_int_or_zero(getattr(row, "UNDERLYING_SECURITY_ID", "")),
+            underlying_segment,
+        )
     return index
 
 
@@ -188,6 +232,33 @@ def group_pnl(group: Group, ltps: Mapping[tuple[str, str, str], float]) -> float
         if ltp is None or not math.isfinite(ltp) or ltp <= 0:
             return None
         total += (ltp - leg.entry_price) * leg.quantity
+    return total
+
+
+def executable_pnl(
+    group: Group, quotes: Mapping[tuple[str, str, str], tuple[float, float]]
+) -> float | None:
+    """The group's P&L if it were closed NOW at the live bid/ask, or None.
+
+    ``quotes`` maps each leg to ``(bid, ask)``.  Closing a short means BUYING
+    it back, which costs the ask; closing a long means SELLING it, which earns
+    the bid.  That is the P&L a market exit can actually achieve, so it -- not
+    the last traded price -- decides whether the target was really reached.
+
+    None when any leg has no usable two-sided quote (missing, zero, or crossed):
+    "unknown" must never be mistaken for "at target".
+    """
+
+    total = group.booked_pnl
+    for leg in group.legs:
+        quote = quotes.get(leg.key)
+        if quote is None:
+            return None
+        bid, ask = quote
+        if not (math.isfinite(bid) and math.isfinite(ask)) or bid <= 0 or ask < bid:
+            return None
+        exit_price = ask if leg.quantity < 0 else bid
+        total += (exit_price - leg.entry_price) * leg.quantity
     return total
 
 
@@ -262,7 +333,7 @@ def holdings_mismatch(group: Group, positions: list[Any]) -> list[str]:
 
 
 def within_action_window(now: datetime) -> bool:
-    return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_LAST_ACTION.replace(second=59)
+    return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_LAST_ACTION
 
 
 # ---------------------------------------------------------------------------
@@ -297,13 +368,30 @@ class GroupStateFile:
     def status(self, group: Group) -> str:
         return str(self.records.get(group.fingerprint, {}).get("status") or ACTIVE)
 
-    def update(self, group: Group, **fields: Any) -> None:
+    def update(self, group: Group, **fields: Any) -> bool:
+        """Record ``fields`` for the group; return whether they reached the disk.
+
+        The in-memory record is updated either way, so a terminal status keeps
+        its hold on this process even while the disk is unwritable.
+        """
+
         record = self.records.setdefault(group.fingerprint, {"name": group.name})
         record.update(fields, updated_at=datetime.now().isoformat(timespec="seconds"))
         try:
             write_document_atomic(self.path, {"schema_version": 1, "groups": self.records})
         except OSError:
             log.exception("Could not write position-group state file %s.", self.path)
+            return False
+        return True
+
+    def forget(self, group: Group) -> None:
+        """Drop an in-memory record that never reached the disk.
+
+        Used only when ``EXITING`` could not be written and therefore no order
+        was sent: the group goes back to ACTIVE so a later tick can try again.
+        """
+
+        self.records.pop(group.fingerprint, None)
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +406,10 @@ class _Watch:
     streak: int = 0
     last_pnl: float | None = None
     precheck_alerted: bool = False
+    quote_alerted: bool = False
+    state_alerted: bool = False
+    # No bid/ask re-check before this moment (set after one that did not pass).
+    recheck_after: datetime | None = None
 
 
 class PositionGroupMonitor(threading.Thread):
@@ -328,27 +420,32 @@ class PositionGroupMonitor(threading.Thread):
         *,
         config_path: Path,
         state_path: Path,
-        clients: Mapping[str, PositionBrokerClient],
-        contract_index_loader: Callable[[], Mapping[ContractKey, DhanContract]],
+        clients: Mapping[str, PositionDetailClient],
+        contract_index_loader: Callable[[frozenset[str]], Mapping[ContractKey, DhanContract]],
         subscribe: Callable[[Leg, DhanContract], None],
         unsubscribe: Callable[[DhanContract], None],
         read_ltp: Callable[[DhanContract], float],
+        read_quote: Callable[[Leg, DhanContract], tuple[float, float]] | None = None,
         alert: Callable[[dict[str, Any]], None],
         now: Callable[[], datetime],
         stop_event: threading.Event | None = None,
         poll_seconds: float = 1.0,
         confirm_ticks: int = 3,
         log_every_seconds: float = 60.0,
+        quote_recheck_seconds: float = QUOTE_RECHECK_SECONDS,
     ) -> None:
         super().__init__(name="PositionGroupMonitor", daemon=True)
         self.config_path = config_path
         self.state = GroupStateFile(state_path)
         self.clients = clients
         self._contract_index_loader = contract_index_loader
-        self._contract_index: Mapping[ContractKey, DhanContract] | None = None
         self._subscribe = subscribe
         self._unsubscribe = unsubscribe
         self._read_ltp = read_ltp
+        # ``(bid, ask)`` for one leg, or None when no quote source is wired (the
+        # last traded price is then all there is).  The runner always wires one.
+        self._read_quote = read_quote
+        self.quote_recheck_seconds = max(0.0, float(quote_recheck_seconds))
         self._alert = alert
         self._now = now
         self.stop_event = stop_event or threading.Event()
@@ -357,6 +454,10 @@ class PositionGroupMonitor(threading.Thread):
         self.log_every_seconds = float(log_every_seconds)
         self._config_mtime: float | None = None
         self._bad_mtime_alerted: float | None = None
+        # A file that parsed but could not be APPLIED: alerted once per version,
+        # retried on a back-off, and never remembered as loaded.
+        self._apply_failed_mtime: float | None = None
+        self._apply_retry_at: datetime | None = None
         self._watches: dict[str, _Watch] = {}
         # (fingerprint, reason) pairs already alerted as unmonitorable, so a
         # later edit to some OTHER group does not repeat the same alert.
@@ -380,20 +481,70 @@ class PositionGroupMonitor(threading.Thread):
     # -- one tick -----------------------------------------------------------
     def tick(self) -> None:
         self._reload_if_changed()
-        now = self._now()
-        in_window = within_action_window(now)
         for watch in list(self._watches.values()):
             if self.state.status(watch.group) != ACTIVE:
                 continue
             pnl = group_pnl(watch.group, self._prices(watch))
             watch.last_pnl = pnl
-            if pnl is None or not in_window:
+            # The clock is read per group: squaring off an earlier group in this
+            # same tick can take long enough to pass the last start time.
+            if pnl is None or not within_action_window(self._now()):
                 watch.streak = 0
                 continue
             watch.streak = watch.streak + 1 if pnl >= watch.group.target else 0
             if watch.streak >= self.confirm_ticks:
-                self._square_off(watch, pnl)
-        self._maybe_log(now)
+                executable = self._executable_pnl_at_target(watch, pnl)
+                if executable is not None:
+                    self._square_off(watch, executable)
+        self._maybe_log(self._now())
+
+    def _executable_pnl_at_target(self, watch: _Watch, ltp_pnl: float) -> float | None:
+        """Return the P&L the group can really be closed at, if THAT is at target.
+
+        Called once the last-traded-price P&L has held at the target.  That
+        price is a memory of the last trade, not an offer: on a quiet far
+        strike one odd print stays "the price" for minutes.  So the group is
+        re-priced at the live bid/ask before any order.  Returns None -- send
+        nothing -- when the quote does not support the exit or cannot be read;
+        the next re-check then waits ``quote_recheck_seconds``.
+        """
+
+        if self._read_quote is None:
+            return ltp_pnl
+        group = watch.group
+        now = self._now()
+        if watch.recheck_after is not None and now < watch.recheck_after:
+            return None
+        quotes: dict[tuple[str, str, str], tuple[float, float]] = {}
+        try:
+            for leg in group.legs:
+                bid, ask = self._read_quote(leg, watch.contracts[leg.key])
+                quotes[leg.key] = (float(bid), float(ask))
+        except Exception:  # noqa: BLE001 - an unreadable quote is "no quote"
+            log.exception("Position-group quote read failed for %r.", group.name)
+            quotes = {}
+        executable = executable_pnl(group, quotes)
+        if executable is not None and executable >= group.target:
+            watch.recheck_after = None
+            return executable
+        watch.recheck_after = now + timedelta(seconds=self.quote_recheck_seconds)
+        if executable is None:
+            if not watch.quote_alerted:
+                watch.quote_alerted = True
+                self._emit(
+                    "GROUP_QUOTE_UNREADABLE", group.name,
+                    "the last traded prices put the group at its target, but a live "
+                    "bid/ask could not be read for every leg, so NO orders were sent; "
+                    "it will be re-checked",
+                    pnl=ltp_pnl,
+                )
+        else:
+            log.info(
+                "Group %r: last-traded P&L %s is at target %s, but closing at the live "
+                "bid/ask would give %s; not squaring off.",
+                group.name, f"{ltp_pnl:,.0f}", f"{group.target:,.0f}", f"{executable:,.0f}",
+            )
+        return None
 
     def _prices(self, watch: _Watch) -> dict[tuple[str, str, str], float]:
         prices: dict[tuple[str, str, str], float] = {}
@@ -410,6 +561,12 @@ class PositionGroupMonitor(threading.Thread):
             return
         if mtime == self._config_mtime:
             return
+        if (
+            self._apply_failed_mtime == mtime
+            and self._apply_retry_at is not None
+            and self._now() < self._apply_retry_at
+        ):
+            return
         try:
             config = load_config(self.config_path)
         except (GroupConfigError, OSError) as exc:
@@ -419,12 +576,32 @@ class PositionGroupMonitor(threading.Thread):
                 log.error("Position-groups file invalid; keeping the last good copy: %s", problems)
                 self._emit("GROUP_FILE_INVALID", "file", "; ".join(problems)[:500])
             return
+        # The file counts as loaded only once it has actually been applied.  If
+        # applying fails (say the Dhan contract list is mid-rewrite), remembering
+        # it as loaded would leave this thread running all day watching nothing.
+        try:
+            self._apply(config)
+        except Exception as exc:  # noqa: BLE001 - reported and retried
+            log.exception("Position-groups file could not be applied; will retry.")
+            self._apply_retry_at = self._now() + timedelta(seconds=APPLY_RETRY_SECONDS)
+            if self._apply_failed_mtime != mtime:
+                self._apply_failed_mtime = mtime
+                self._emit(
+                    "GROUP_MONITOR_ERROR", "file",
+                    f"the groups file is valid but could not be loaded ({type(exc).__name__}); "
+                    "new or changed groups in it are NOT watched yet. Retrying every "
+                    f"{APPLY_RETRY_SECONDS:.0f}s.",
+                )
+            return
+        self._apply_failed_mtime = None
+        self._apply_retry_at = None
         self._config_mtime = mtime
-        self._apply(config)
 
     def _apply(self, config: GroupConfig) -> None:
-        if self._contract_index is None:
-            self._contract_index = self._contract_index_loader()
+        # The Dhan contract list is read only when a group is new to us, only for
+        # the underlyings the file names, and is not kept afterwards: a groups
+        # file is a handful of legs, the list is every option on two exchanges.
+        index: Mapping[ContractKey, DhanContract] | None = None
         watches: dict[str, _Watch] = {}
         for group in config.groups:
             existing = self._watches.get(group.fingerprint)
@@ -438,10 +615,14 @@ class PositionGroupMonitor(threading.Thread):
                     group, f"no logged-in {group.broker} client (no API key, or its token expired)"
                 )
                 continue
+            if index is None:
+                index = self._contract_index_loader(
+                    frozenset(leg.underlying for each in config.groups for leg in each.legs)
+                )
             contracts: dict[tuple[str, str, str], DhanContract] = {}
             missing: list[str] = []
             for leg in group.legs:
-                contract = contract_for(leg, self._contract_index)
+                contract = contract_for(leg, index)
                 if contract is None:
                     missing.append(leg.symbol)
                 else:
@@ -533,22 +714,41 @@ class PositionGroupMonitor(threading.Thread):
             )
             return
 
-        self.state.update(group, status=EXITING, trigger_pnl=pnl)
+        if not self.state.update(group, status=EXITING, trigger_pnl=pnl):
+            # Nothing has been sent.  Without EXITING on disk a crash mid-exit
+            # would reload this group as ACTIVE, so the exit does not start.
+            self.state.forget(group)
+            if not watch.state_alerted:
+                watch.state_alerted = True
+                self._emit(
+                    "GROUP_STATE_UNWRITABLE", group.name,
+                    f"target reached but {self.state.path.name} could not be written, "
+                    "so NO orders were sent; will retry",
+                    pnl=pnl,
+                )
+            return
         self._emit(
             "GROUP_TARGET_HIT", group.name,
             f"P&L {pnl:,.0f} >= target {group.target:,.0f}; squaring off", pnl=pnl,
         )
+        # One stamp per ATTEMPT.  A tag is how a lost acknowledgement is found
+        # again in the broker's order book, so two attempts on the same group
+        # must never share one.  Letters and digits only, 19 characters.
+        attempt = self._now().strftime("%H%M%S")
         realised = group.booked_pnl
         done: list[str] = []
         for number, order in enumerate(plan, start=1):
-            tag = f"GM{group.fingerprint[:10]}{number:03d}"
+            tag = f"GM{group.fingerprint[:8]}{attempt}{number:03d}"
             try:
                 result = client.place_market_order(
                     order.leg.symbol, order.side, order.quantity,
                     order.leg.exchange, order.leg.product, order_tag=tag,
                 )
             except Exception as exc:  # noqa: BLE001 - reported, never retried
-                self._fail(group, done, order, f"order raised {type(exc).__name__}: {exc}", pnl)
+                # The full text goes to the log, which is redacted; the alert and
+                # the state file carry only the exception's type.
+                log.exception("Position-group order raised for %r.", group.name)
+                self._fail(group, done, order, f"order raised {type(exc).__name__}", pnl)
                 return
             if result.status is not OrderStatus.FILLED:
                 self._fail(
@@ -578,7 +778,10 @@ class PositionGroupMonitor(threading.Thread):
         self._emit("GROUP_EXIT_FAILED", group.name, reason, pnl=pnl)
 
     def _emit(self, action: str, group_name: str, reason: str, *, pnl: float | None = None) -> None:
-        failures = {"GROUP_EXIT_FAILED", "GROUP_UNMONITORABLE", "GROUP_FILE_INVALID"}
+        failures = {
+            "GROUP_EXIT_FAILED", "GROUP_UNMONITORABLE", "GROUP_FILE_INVALID",
+            "GROUP_MONITOR_ERROR", "GROUP_QUOTE_UNREADABLE", "GROUP_STATE_UNWRITABLE",
+        }
         log_fn = log.error if action in failures else log.warning
         log_fn("%s | %s | %s", action, group_name, reason)
         event: dict[str, Any] = {
