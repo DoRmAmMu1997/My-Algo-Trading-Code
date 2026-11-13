@@ -70,7 +70,7 @@ is safe to paste when asking for help. `test_repository_policy.py` reuses the sa
 helpers, so CI fails when a new `_env_*` key lands without an `env.example` entry.
 
 ## How live execution works
-The master file guarded-loads all four broker clients and then picks one with
+The master file guarded-loads all six broker clients and then picks one with
 `LIVE_BROKER` (`KOTAK`, `SHOONYA`, `FLATTRADE`, or `DHAN`). The rest of the runner
 only touches a single generic `execution_client`, so the brokers are interchangeable.
 All clients expose the **same surface**:

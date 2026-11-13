@@ -159,22 +159,30 @@ One process, cooperating threads:
   See `docs/adr/0017`.
 - An **optional, opt-in position-group target monitor** (`GROUP_MONITOR_ENABLED`, default
   false; `docs/adr/0022`) watches the operator's CARRIED, hand-placed option-selling
-  positions in a separate Zerodha/mStock account and **squares off a whole group with real
+  positions in a Zerodha/mStock account and **squares off a whole group with real
   orders** once `booked_pnl + Σ(ltp − entry) × qty` holds at/above its target for
-  `GROUP_MONITOR_CONFIRM_TICKS` fresh ticks. Deliberate deviation: that one switch is its
+  `GROUP_MONITOR_CONFIRM_TICKS` fresh ticks **and** the group, re-priced at the live
+  bid/ask from Dhan's option chain (shorts at the ask, longs at the bid), is still at
+  target. The ticks all re-read one cached last-traded print, so only that re-check
+  guards against an off-market print; an unreadable quote sends NO orders. Deliberate
+  deviation: that one switch is its
   ONLY live gate (it ignores `LIVE_TRADING_ENABLED`). The operator owns
   `Dependencies/position_groups.json` (gitignored; `algo.py group-legs` appends broker legs
   to `unassigned`, the runner only reads it); the runner owns `position_groups.state.json`,
-  where `SQUARED_OFF`/`EXIT_FAILED` are terminal and `EXITING` reloads as `EXIT_FAILED`.
+  where `SQUARED_OFF`/`EXIT_FAILED` are terminal and `EXITING` reloads as `EXIT_FAILED`
+  (no order is sent unless `EXITING` reached the disk).
   Before any order the broker book must still hold every leg (else NO orders), shorts are
-  bought back before longs are sold, and any order not proven FILLED stops the group with no
-  retry. Its broker clients (`Dependencies/position_brokers.py`, narrow
-  `PositionBrokerClient` surface, `requests`-based, one Kite-shaped base) are NOT
-  `LIVE_BROKER` choices and need a daily `algo.py setup-broker-token`. Legs are priced off
+  bought back before longs are sold, an exit may START only 09:15-15:25, and any order not
+  proven FILLED stops the group with no retry. Its brokers are the ordinary Zerodha and
+  mStock adapters (see Broker layer) -- the SAME singletons `LIVE_BROKER` selects, so a
+  shared broker means one session, one order gate and one poison flag; the end-of-day
+  logout spares a session the monitor still uses. Its thread never prompts for a login, so
+  run `algo.py setup-broker-token` each morning. Legs are priced off
   the Dhan feed through `OptionSubscription(affects_feed_health=False)`: a watched leg must
   never trip the feed-health gate that drives the 30-second liquidation, and health
   ownership is per owner so a contract shared with a trading worker stays gated. It is
-  waited for (until 15:30) only after the unchanged end-of-day sequence.
+  waited for (until 15:30) only after the unchanged end-of-day sequence, and before the
+  dashboard stops.
 - Each entry/exit is published to a `queue.Queue` consumed by a single `TelegramMessageWorker`
   (best-effort alerts; never blocks trading). That same `publish_trade_event` choke point also
   mirrors every event into the **crash-durable session state** (`Dependencies/session_state.py`,
@@ -235,8 +243,11 @@ Dependencies/
   Shoonya API/   -> NorenApi.py (vendored client), shoonya_execution.py, diagnose_shoonya_symbol.py
   Flattrade API/ -> flattrade_execution.py, diagnose_flattrade_symbol.py
   Dhan API/      -> dhan_execution.py, diagnose_dhan_symbol.py
+  Zerodha API/   -> zerodha_execution.py, diagnose_zerodha_symbol.py
+  Mstock API/    -> mstock_execution.py, diagnose_mstock_symbol.py
   position_group_monitor.py / position_groups.py   # the optional carried-position target monitor
-  position_brokers.py / position_groups_cli.py     #   + its Zerodha/mStock clients and CLI (adr/0022)
+  position_groups_cli.py                           #   + `algo.py group-legs` (adr/0022)
+  position_broker_token_setup.py                   # `algo.py setup-broker-token`: adapter login -> .env
 pyproject.toml                                     # ruff + mypy quality-gate configuration
 .github/workflows/quality-and-security.yml         # CI: tests + compileall + ruff + mypy + bandit
 scripts/check_coverage_thresholds.py               # branch-coverage policy gate
@@ -253,13 +264,14 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   name→prefix map is `STRATEGY_ENV_PREFIX`. **Never commit secrets** — `env.example` holds blank placeholders.
 - **Live-trading safety (critical):** paper by default. A strategy trades live ONLY when the global
   `LIVE_TRADING_ENABLED` **and** that strategy's `<PREFIX>_LIVE_TRADING` are both true. `LIVE_BROKER`
-  (`KOTAK` | `SHOONYA` | `FLATTRADE` | `DHAN`) selects the broker; an unknown value **fails closed**
+  (`KOTAK` | `SHOONYA` | `FLATTRADE` | `DHAN` | `ZERODHA` | `MSTOCK`) selects the broker; an
+  unknown value **fails closed**
   (live disabled, paper only).
   An entry falls back to paper only after an explicit `REJECTED` result with zero fill. `PARTIAL` or
   `UNKNOWN` means exposure may exist: freeze new live entries, keep exits available, and reconcile;
   never treat an acknowledgement, truthy value, or order ID as proof of fill. A rejected live exit
   keeps the position open. Every broker network/SDK call has a ten-second deadline that includes its
-  shared lock/rate-limit wait; native HTTP timeouts remain enabled for Shoonya, Flattrade and Dhan
+  shared lock/rate-limit wait; native HTTP timeouts remain enabled for Shoonya, Flattrade, Zerodha, mStock and Dhan
   (the Dhan SDK ships a 60s default that `_login_locked` overrides down to 10s).
 - **Per-strategy on/off:** each strategy also has a `<PREFIX>_VIRTUAL_TRADING` gate (default true).
   Set it false to stop that strategy's worker thread from starting at all (so it does neither paper
@@ -277,7 +289,8 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   would square it: `<PREFIX>_MAX_LOSS_PER_LOT` (Delta20) and `<PREFIX>_STARTING_CAPITAL` /
   `_DAILY_MAX_LOSS_PCT` (their product carries it). A drift-guard test fails if a new strategy reads
   a size knob with the raw `_env_*` helpers.
-- **Broker layer:** the Kotak, Shoonya, Flattrade and Dhan clients expose the SAME surface —
+- **Broker layer:** the Kotak, Shoonya, Flattrade, Dhan, Zerodha and mStock clients expose the
+  SAME surface —
   `ensure_logged_in`, `preload_scrip_master`, `resolve_option_symbol`, `place_market_order`,
   `get_order_status`, `cancel_order`, `list_open_orders`, `list_open_positions`,
   `recover_after_reconciliation`, `extract_order_id`, `logout`, `is_logged_in` — so the runner only
@@ -293,6 +306,18 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   non-contract states are aliased adapter-locally (`EXPIRED`→`CANCELLED`,
   `PART_TRADED`→`PARTIAL`); `TRANSIT`/`PENDING` stay unmapped so they remain transient.
   Dhan resolves contracts from the local `Dependencies/all_instrument <date>.csv`, not a download.
+  **Zerodha and mStock** are `requests`-only adapters (no SDK) that add ONE method to the surface,
+  `list_position_details` (`PositionDetailClient`), for the position-group monitor; it reads
+  identity from the cached contract list and never downloads. Three things they exist to contain:
+  Kite's `tag` is alphanumeric, max 20, so the ledger's hyphenated tag is squeezed before it is
+  sent AND before it is searched for; `REJECTED` needs a 4xx refusal AND an order-book search that
+  finds no order with that tag (5xx, 429, `NetworkException`/`GeneralException` are `UNKNOWN`); and
+  their interactive login runs on the MAIN thread only -- a worker or monitor thread gets `False`,
+  never a hidden prompt. The mStock adapter was written from documentation that contradicts
+  itself and is UNTESTED against a real account: order-details fields go as query and body, a
+  terminal history row wins wherever it sits, and an error body on HTTP 200 is not a refusal.
+  The startup flat-account audit applies to them like any broker, so `LIVE_BROKER=ZERODHA` will
+  not arm while carried NIFTY/BANKNIFTY positions sit in that same account.
 - **Credential-safe logging:** `setup_logging()` installs `install_redaction_filter` on the root
   logger with `environment_secrets(os.environ)` (every `.env` value whose KEY looks sensitive, ≥8
   chars), so **every** record — lazy `%s` args and exception tracebacks included — is scrubbed before

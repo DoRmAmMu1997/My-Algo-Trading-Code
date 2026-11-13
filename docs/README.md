@@ -68,7 +68,7 @@ component folder's own `Readme.md`.
 | [0019](adr/0019-cpr-ai-trend-day-rider.md) | CPR AI trades the Trend-Day Rider: a backtested gate that Codex may only veto |
 | [0020](adr/0020-a-second-index-on-the-monitoring-chart.md) | The chart gains a NIFTY/BankNIFTY switch, a chart-only indicator menu and hand-drawn S/R: an instrument dimension in the store, the feed-health gate pinned to the primary, browser-side indicator maths kept honest by a node drift test, and drawings in localStorage because the server is GET-only |
 | [0021](adr/0021-dashboard-live-mode-toggle.md) | An opt-in per-strategy LIVE/PAPER toggle on the dashboard: one guarded POST that only queues a request, a runtime twin of the startup live gate, and only the worker's own thread changes its mode, only while flat |
-| [0022](adr/0022-position-group-target-monitor.md) | An opt-in thread squares off groups of hand-carried Zerodha/mStock option-selling legs at a rupee target: an operator-owned groups file, prices from the Dhan feed exempt from the feed-health gate, a broker-book pre-check before any order, shorts closed first, no blind retries -- and its own single live switch |
+| [0022](adr/0022-position-group-target-monitor.md) | An opt-in thread squares off groups of hand-carried Zerodha/mStock option-selling legs at a rupee target: an operator-owned groups file, prices from the Dhan feed exempt from the feed-health gate, a bid/ask re-check and a broker-book pre-check before any order, shorts closed first, no blind retries, its own single live switch -- and Zerodha/mStock as ordinary adapters that are also `LIVE_BROKER` choices |
 
 ## Keeping these documents honest
 

@@ -125,7 +125,7 @@ budgets are enforced from `coverage.json` by
 |---|---|---|
 | Repository floor | **75%** | everything (CI measures **75.1%** as of PR #230, which raised it from 74%; 74% came from 73% in PR #195; PR #181 had made CI run the SL Hunting worker tests; original MAT-110 baseline was 54.7%) |
 | Safety / data-safety | **90%** | `broker_contract`, `execution_ledger`, `startup_exposure`, `trading_lifecycle`, `market_data_health`, `tick_bar_builder`, `next_open_entry`, `risk_sizing`, `order_splitting`, `secret_redaction` |
-| Broker adapters | **80%** | Kotak, Shoonya, Flattrade, Dhan |
+| Broker adapters | **80%** | Kotak, Shoonya, Flattrade, Dhan, Zerodha, mStock |
 
 Two deliberate properties of the checker:
 

@@ -3,7 +3,7 @@
 **Owns:** `ExecutionSafetyCoordinator`, `OptionsContractResolver`,
 `_select_execution_client` (master file) · `Dependencies/broker_contract.py` ·
 `Dependencies/execution_ledger.py` · `Dependencies/startup_exposure.py` ·
-`Dependencies/order_splitting.py` · the four adapters under `Dependencies/*/`
+`Dependencies/order_splitting.py` · the six adapters under `Dependencies/*/`
 **Related ADRs:** [0002](../adr/0002-broker-agnostic-execution-contract.md), [0003](../adr/0003-acknowledgement-is-not-a-fill.md)
 
 > This is the most safety-critical component in the repository. Read
@@ -45,7 +45,9 @@ byte-identical to a rejection. None of those are fills.
    ├─ Dependencies/Kotak API/kotak_execution.py
    ├─ Dependencies/Shoonya API/shoonya_execution.py   (+ vendored NorenApi.py)
    ├─ Dependencies/Flattrade API/flattrade_execution.py
-   └─ Dependencies/Dhan API/dhan_execution.py
+   ├─ Dependencies/Dhan API/dhan_execution.py
+   ├─ Dependencies/Zerodha API/zerodha_execution.py
+   └─ Dependencies/Mstock API/mstock_execution.py
    │
    ▼
  typed OrderResult  ──► execution_ledger applies cumulative filled qty as a DELTA
@@ -196,6 +198,32 @@ legal. 90% branch-coverage budget.
 
 - Pi v2 browser-token flow, exact NFO index scrip master, documented request
   limits, market-order protection, and `SingleOrdHist` fill confirmation.
+
+### Zerodha (Kite Connect) and mStock (Type A)
+
+Both are `requests`-only adapters shaped like Flattrade's. They are `LIVE_BROKER`
+choices and also the brokers the position-group monitor (ADR-0022) closes carried
+positions through -- the same two singletons in both roles.
+
+- **The tag.** Kite accepts only letters and digits, at most 20. The ledger's tag
+  (`M2-ABC-12345678-EN01`) is 20 characters *with hyphens*, so `_broker_tag` squeezes it
+  on the way out and squeezes every tag read back from the order book before comparing.
+- **Refusal needs two proofs.** A `status: error` body with a refusal `error_type` on a
+  4xx (not 429) is only a *candidate* rejection; `REJECTED` is returned only after
+  `GET /orders` succeeded and no row carries the tag. `NetworkException`,
+  `GeneralException`, any 5xx, a 429 and a non-JSON gateway page are `UNKNOWN`.
+- **Login on the main thread only.** `_login_locked` validates the `.env` token first and
+  otherwise runs the interactive flow -- but only on the main thread. A worker or the
+  monitor gets `False` and a log line, never a hidden `input()` under the session lock.
+- **`logout()` is local.** The remote logout would end the token for the day while the
+  monitor may still be sharing it.
+- **One extra method.** `list_position_details()` (`PositionDetailClient`) adds average
+  price and option identity for the monitor. It reads the *cached* contract list and
+  never downloads: it runs at the moment a target is hit.
+- **mStock is untested against a real account** and its documentation contradicts
+  itself, so each doubt is resolved toward `UNKNOWN`: order-details fields are sent as
+  both query and body; a terminal history row wins wherever it sits in the list; an
+  error body on HTTP 200 is not a refusal; an unrecognized status word stays transient.
 
 ### Dhan as both data and execution
 
