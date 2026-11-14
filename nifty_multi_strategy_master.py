@@ -1790,6 +1790,7 @@ SL_HUNTING_AGENT_MODULE: Any = None
 SL_HUNTING_EXECUTOR_MODULE: Any = None
 SL_HUNTING_JOURNAL_MODULE: Any = None
 SL_HUNTING_LESSONS_MODULE: Any = None
+SL_HUNTING_INDICATORS_MODULE: Any = None
 SL_HUNTING_INDICATOR_CONFIG: Any = None
 if SL_HUNTING_ENABLED:
     try:
@@ -1802,9 +1803,8 @@ if SL_HUNTING_ENABLED:
         # v6c: the opening-follow window (first two decisions of a FLAT open after
         # a stalled prior session) has its own kill switch; off makes the
         # `levels` tool report it switched off, so the agent never sees it active.
-        SL_HUNTING_INDICATOR_CONFIG = importlib.import_module(
-            "sl_hunting_indicators"
-        ).SLHuntingIndicatorConfig(
+        SL_HUNTING_INDICATORS_MODULE = importlib.import_module("sl_hunting_indicators")
+        SL_HUNTING_INDICATOR_CONFIG = SL_HUNTING_INDICATORS_MODULE.SLHuntingIndicatorConfig(
             opening_follow_enabled=_env_bool("SL_HUNTING_OPENING_FOLLOW_ENABLED", True)
         )
         SL_HUNTING_AVAILABLE = True
@@ -15951,6 +15951,16 @@ if SL_HUNTING_AVAILABLE:
             # Optional BankNIFTY cross-confirmation, fetched per bar via self.broker
             # exactly like CPR Algo 3 fetches its observation legs.
             self._use_bnf = _env_bool("SL_HUNTING_USE_BNF", True)
+            # v6e: earlier sessions' NIFTY 3:15 levels for the up-run count, from ONE
+            # longer fetch per session (the shared frame is only INTRADAY_LOOKBACK_DAYS
+            # long, which hides the fourth rise in a holiday week). Only the levels
+            # reach the agent, never the bars, so no other strategy or tool changes.
+            self._up_run_lookback_days = max(
+                INTRADAY_LOOKBACK_DAYS, _env_int("SL_HUNTING_UP_RUN_LOOKBACK_DAYS", 10)
+            )
+            self._up_run_history: list[tuple[Any, float]] | None = None
+            self._up_run_history_date: Any = None
+            self._up_run_history_retry_at = 0.0
             # Trade journal (v3): open a row on entry here, close it in after_exit
             # (the universal post-close hook, so EVERY exit path is captured).
             self._journal: Any = (
@@ -17134,6 +17144,8 @@ if SL_HUNTING_AVAILABLE:
                     was_active = self.pos.active
                 nifty_snapshot = strategy_frame.copy(deep=True)
                 bnf_snapshot = bnf_candles.copy(deep=True) if bnf_candles is not None else None
+                history_levels: list[tuple[Any, float]] | None = getattr(self, "_up_run_history", None)
+                up_run_history = tuple(history_levels) if history_levels else None
 
                 def _run_agent() -> None:
                     decision = self.agent.decide(
@@ -17145,6 +17157,7 @@ if SL_HUNTING_AVAILABLE:
                         generation=generation,
                         generation_is_current=self._agent_generation_is_current,
                         execution_lock=self._agent_action_lock,
+                        up_run_history=up_run_history,
                     )
                     with self._agent_inference_lock:
                         self._agent_inference_result = (
@@ -17298,9 +17311,51 @@ if SL_HUNTING_AVAILABLE:
                 )
                 return
 
+            self._refresh_up_run_history()
+
             # Inference runs on its own daemon thread. At most one pass exists;
             # later polls keep enforcing hard risk and only harvest when complete.
             self._start_agent_inference(strategy_frame, bnf_candles)
+
+        def _refresh_up_run_history(self) -> None:
+            """v6e: fetch earlier sessions' NIFTY 3:15 levels once per session.
+
+            One REST call of `SL_HUNTING_UP_RUN_LOOKBACK_DAYS` (default 10) calendar
+            days, reduced to (date, 3:15 level) pairs for the days BEFORE today and
+            cached for the rest of the session. A failure is never fatal: the agent
+            then counts from the shared frame alone (as before), and the fetch is
+            retried no sooner than five minutes later so a broken feed does not add a
+            REST call to every bar.
+            """
+            today = datetime.now().date()
+            if self._up_run_history_date == today:
+                return
+            if time.monotonic() < self._up_run_history_retry_at:
+                return
+            try:
+                frame = self.broker.fetch_index_1m_ohlc(
+                    NIFTY_INDEX_SECURITY_ID,
+                    NIFTY_INDEX_EXCHANGE_SEGMENT,
+                    NIFTY_INDEX_INSTRUMENT_TYPE,
+                    lookback_days=self._up_run_lookback_days,
+                )
+                levels = SL_HUNTING_INDICATORS_MODULE.session_315_levels(frame)
+            except Exception as exc:
+                self._up_run_history_retry_at = time.monotonic() + 300.0
+                self.log.warning(
+                    "SL Hunting up-run history fetch failed (%s); v6e counts from the "
+                    "shared %d-day frame until a retry succeeds.",
+                    exc,
+                    INTRADAY_LOOKBACK_DAYS,
+                )
+                return
+            self._up_run_history = [(day, level) for day, level in levels if day < today]
+            self._up_run_history_date = today
+            self.log.info(
+                "SL Hunting up-run history: %d earlier session(s) over %d days.",
+                len(self._up_run_history),
+                self._up_run_lookback_days,
+            )
 
     SLHuntingAIWorker.__name__ = "SLHuntingAIWorker"
     SLHuntingAIWorker.__qualname__ = "SLHuntingAIWorker"

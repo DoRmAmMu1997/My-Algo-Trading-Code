@@ -29,6 +29,7 @@ oldest → newest. Helper `prepare_candles` normalises this.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import time as dt_time
 from typing import Any, cast
@@ -70,6 +71,14 @@ OPENING_FOLLOW_STALL_BY = dt_time(13, 30)
 OPENING_FOLLOW_MIN_FADE_PCT = 0.15
 OPENING_FOLLOW_STOP_POINTS = 16.0
 OPENING_FOLLOW_TARGET_POINTS = 45.0
+
+# v6e (operator, 14 Nov): after FOUR or more straight up days -- each session's 3:15
+# level above the one before -- a FLAT open is not shorted. On five years of NIFTY
+# the fixed-minute short on a FLAT open scored +0.18R at 09:20 over all 934 such
+# sessions, but -0.18R after four or more up days (104 sessions; negative in both
+# halves and in every full year 2022-25); the long did not take its place (~0).
+# The agent shorted three FLAT opens deep in such a run (6, 9, 13 Nov), all stopped.
+UP_RUN_SHORT_VETO_MIN_DAYS = 4
 
 
 @dataclass(frozen=True)
@@ -340,11 +349,112 @@ def _opening_follow(
     }
 
 
+def _level_315(session: pd.DataFrame) -> float:
+    """The session's 3:15 level: the close of its last bar before 15:15 (SLH-023).
+
+    A session with no bar before 15:15 falls back to its last bar.
+    """
+    pre = session[session["timestamp"].dt.time < SETTLEMENT_PRINTS_FROM]
+    return float((pre if not pre.empty else session)["close"].iloc[-1])
+
+
+def session_315_levels(candles: pd.DataFrame) -> list[tuple[Any, float]]:
+    """Every session's 3:15 level in `candles`, oldest first, as (date, level).
+
+    v6e's history input: the worker fetches a longer NIFTY window once per session
+    and passes these levels in, so the up-run count is not capped by the 7-day frame
+    every strategy shares. Only the levels travel -- never the bars -- so nothing
+    else the agent reads changes.
+    """
+    df = prepare_candles(candles)
+    if df.empty:
+        return []
+    df = df.assign(_date=df["timestamp"].dt.date)
+    return [(day, _level_315(session)) for day, session in df.groupby("_date", sort=True)]
+
+
+def _up_run(
+    df: pd.DataFrame,
+    dates: list[Any],
+    open_classification: dict[str, Any],
+    today_df: pd.DataFrame,
+    prev_day: dict[str, Any] | None,
+    history: Sequence[tuple[Any, float]] | None = None,
+) -> dict[str, Any]:
+    """v6e: how many straight up days came before today, and is the short vetoed?
+
+    Worked example (6 Nov 2026): the 3:15 level had risen on each of the six
+    sessions before. The agent's 7-day candle window (30 Oct - 5 Nov) holds five
+    of them, so it counts the four rises it can see and reports `at_least: true`.
+    6 Nov opened FLAT (-0.02%), so the veto read active; it would have ended had
+    NIFTY traded below 5 Nov's low.
+
+    Counting walks back from yesterday while each session's 3:15 level is above
+    the one before it. From the frame alone it sees only the sessions in the
+    candle window: in a week with a holiday the 7-day window holds four, so at
+    most three rises are visible (13 Nov, after the 10 Nov holiday, would read
+    three with `at_least: true`) -- which is why the worker passes `history`.
+    When every comparison it could make was a rise the true run may be longer,
+    and `at_least` says so. Like the open verdict, the
+    model reads this; it does not re-derive it.
+
+    `history` (from `session_315_levels` on a longer fetch) adds sessions OLDER than
+    the frame's first one; where both cover a date, the frame wins. The worker
+    fetches ten days, so a holiday week no longer hides the fourth rise.
+    """
+    today = dates[-1]
+    by_date = {day: level for day, level in (history or ()) if day < today}
+    by_date.update({day: _level_315(df[df["_date"] == day]) for day in dates[:-1]})
+    if len(by_date) < 2 or not open_classification.get("available"):
+        return {"available": False, "straight_up_days": None, "short_veto_active": False,
+                "reason": "fewer than two previous sessions in the candle window"}
+
+    levels = [by_date[day] for day in sorted(by_date)]
+    up_days = 0
+    while up_days < len(levels) - 1 and levels[-1 - up_days] > levels[-2 - up_days]:
+        up_days += 1
+    at_least = up_days == len(levels) - 1
+
+    verdict = open_classification.get("verdict")
+    yesterday_low = cast(float, prev_day["low"]) if prev_day else None
+    today_low = float(today_df["low"].min())
+    broke_low = yesterday_low is not None and today_low < yesterday_low
+    if up_days < UP_RUN_SHORT_VETO_MIN_DAYS:
+        reason = (f"{up_days} straight up day(s) visible before today; the veto needs "
+                  f"{UP_RUN_SHORT_VETO_MIN_DAYS}")
+        if at_least:
+            reason += (" (the candle window ran out while every session was still rising, "
+                       "so the true run may be longer)")
+    elif verdict != "FLAT":
+        reason = f"today's open is {verdict}, not FLAT"
+    elif broke_low:
+        reason = "ended: NIFTY has traded below yesterday's low today"
+    else:
+        reason = None
+    active = reason is None
+    return {
+        "available": True,
+        "straight_up_days": up_days,
+        "at_least": at_least,
+        "sessions_seen": len(levels),
+        "open_verdict": verdict,
+        "yesterday_low": yesterday_low,
+        "short_veto_active": active,
+        "reason": reason,
+        "note": (
+            "v6e: while short_veto_active is true, do NOT open a SHORT. It ends for the "
+            "session once NIFTY trades below yesterday's low. It never creates a long."
+        ),
+    }
+
+
 def pivot_and_levels(
     candles: pd.DataFrame,
     cfg: SLHuntingIndicatorConfig | None = None,
     *,
     include_opening_follow: bool = True,
+    include_up_run: bool = True,
+    up_run_history: Sequence[tuple[Any, float]] | None = None,
 ) -> dict[str, Any]:
     """Compute the day pivot, previous-day OHLC, today's levels and psych levels.
 
@@ -484,6 +594,10 @@ def pivot_and_levels(
         # levels leave it out rather than show a second, unmeasured window.
         {"opening_follow": _opening_follow(prev_df, level_315, open_classification, today_df, cfg)}
         if include_opening_follow else {}
+    ) | (
+        # v6e: NIFTY's payload only, for the same reason as v6c -- measured on NIFTY.
+        {"up_run": _up_run(df, dates, open_classification, today_df, prev_day, up_run_history)}
+        if include_up_run else {}
     )
 
 

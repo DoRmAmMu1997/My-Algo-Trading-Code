@@ -307,6 +307,7 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
   point / round number. A modest gap-up, flat open, or flat-to-gap-down open after
   that inventory can be a buyer-hunt SHORT, not automatically a with-gap long. The
   tell is whether the early push/recovery fails and leaves those buyers trapped.
+  [After FOUR or more straight up days a FLAT open is not shorted at all: v6e.]
 - AVERAGING TRAP (why the bounce exists, and when to enter): when a crowd is trapped
   in a BIG loss by a gap AGAINST it, the market's counter-bounce is not a threat to
   your fade — it is BAIT to make that crowd AVERAGE DOWN (add size to the loser). The
@@ -650,6 +651,8 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   a percent, or an open clean past the nearby stop clusters, is where the gap
   reading starts to earn itself — and if you are hesitating between the two words,
   that hesitation IS the answer: it is flat.
+  [A note line that names a LEVEL rather than an open type is picked by that
+  level, not by this word: v6e.]
   WHY IT MATTERS MORE THAN IT LOOKS: this is a one-word decision that inverts the
   whole day. On that session the pre-open note branched GAP-DOWN to the BUY side
   and FLAT to the SELL side. IH read flat, sold, and booked a good profit. We read
@@ -814,7 +817,67 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   It creates NO entry by itself, and it relaxes nothing: RISK, every gate, the
   cooldown, max-loss, v5q, v5k and A STANDING PREMISE IS NOT A SECOND REASON still
   apply. Every trade that cites (v5z) is reviewed, and the rule is reverted if
-  live results are negative.
+  live results are negative. [On a FLAT open after four straight up days, v6e,
+  next, outranks its SELL side.]
+- DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED (v6e, operator's call 14 Nov).
+  IH's explainer of 8 Nov: early in a run retail can still be booked, so a sell
+  can work; far into it "retail cannot ride that much momentum; it leaves first",
+  nobody holds the quantity a fall would need, and the run continues. He named his
+  own losses from selling such opens. This book shorted three FLAT opens deep in
+  one run, each on a confirmed reversal pattern, and all three were stopped: 6 Nov
+  (-1.59R), 9 Nov (-0.95R) and 13 Nov (-1.09R). IH bought all three sessions.
+  SCOPE, read from `levels.up_run` (computed in code; do not re-derive it):
+  * NIFTY's 3:15 level rose on each of the last four or more sessions;
+  * today's computed verdict is FLAT;
+  * NIFTY has not traded below yesterday's low today.
+  While `up_run.short_veto_active` is true, do NOT open a SHORT, whatever the
+  pattern, the cross-index read or the setup. That includes the v6c OPENING FOLLOW,
+  a v5z SELL side, and a pre-open note's SELL branch (12 Nov: the note said FLAT ->
+  SELL after nine up days, and IH bought).
+  WHAT ENDS IT: NIFTY trading below yesterday's low. The run's crowd is then
+  being tested, and the ordinary method governs for the rest of the session.
+  IT CREATES NO LONG. The measurement below found no edge in buying here either;
+  a long still needs its own pattern + confirmation at a level, or its own
+  branch. HOLD is the default answer when the short is vetoed.
+  MEASURED (5-year NIFTY, FLAT opens, fixed-minute entries in the book's shape: a
+  16-point closing stop, the 1.5x backstop, a 45-point target, out after 15
+  minutes):
+  * every FLAT open (934): short +0.14R at 09:17 and +0.18R at 09:20, long -0.14R
+    and -0.18R. The short is this data's default edge;
+  * after one to three up days it holds (09:20 short: +0.29R and +0.23R);
+  * after FOUR or more (104): short -0.08R at 09:17 and -0.18R at 09:20 (-0.18 /
+    -0.17 by half; every full year 2022-25 negative), long +0.05R and -0.07R;
+  * no mirror: after four or more DOWN days the FLAT-open short stayed positive
+    (+0.23R at 09:20), so nothing here vetoes a long;
+  * v6c's opening-follow short fell inside this scope once in five years (-1.5R).
+  The count reads ten days of 3:15 levels, fetched once per session. If that
+  fetch failed it falls back to the seven-day candle window, which in a week with
+  a holiday holds four sessions and at most three rises; the block then reports
+  `at_least: true` and the veto stays off. Every SHORT taken on a FLAT open
+  after three or more up days is reviewed, and the rule is reverted if it is
+  found to be blocking winners.
+  EARLY IN A RUN NOTHING CHANGES. After one to three up days the FLAT-open short
+  kept its ordinary edge in the same measurement, which fits IH's other half:
+  "when the momentum has just started, the chances of profit booking arise".
+- A NOTE'S BRANCH NAMED BY A LEVEL IS PICKED BY THE LEVEL (v6e, operator's call
+  14 Nov). Most pre-open notes branch on the open (FLAT / GAP UP / GAP DOWN), and
+  the computed verdict picks the line. Some lines name a LEVEL instead, such as
+  "an opening above the resistance" or "a break below 25,100". That line applies
+  once NIFTY CLOSES a 1-minute candle beyond the level it names, whatever the
+  verdict said at 09:15; the lines named by an open type are still picked by the
+  verdict. On 12 Nov the note said FLAT TO GAP DOWN -> SELL and "an opening above
+  the resistance" -> BUY; NIFTY opened FLAT under the line (25,213.50 against
+  25,250), closed above it at 09:17, and IH bought at once: "had it worked below
+  the resistance we could have followed the selling; it has started to move up,
+  so whoever is sitting here with a sell can be our target".
+  It changes only which side the note votes for. The note stays ADVISORY: no
+  entry without pattern + confirmation, and RISK, the cooldown and v6e's short
+  veto above still bind (a level line that names SELL is still vetoed there).
+  MEASURED, NOT AN EDGE BY ITSELF: on 5-year NIFTY, FLAT opens after a rejection
+  day split by the 09:19 close against yesterday's last print (the level IH drew
+  that day) did not pick the side at a fixed minute (33 above, 40 below; the
+  long above the line did not earn at 09:20, 09:25 or 09:30). The proxy is not
+  his hand-drawn line, so this rule reads the note as he meant it, nothing more.
 - A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
   open too SMALL to be the crowd's: the crowd that would have forced a big gap is
   not there to force one. This is the other end of the same measurement. An open
@@ -1420,6 +1483,20 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   open for the long branch, and no full-body red-to-green reclaim for the short
   branch. Small opposite ticks are acceptable noise; a full-bodied reclaim /
   rejection candle kills the branch for the day.
+- VOLATILE MEANS FAST UP AND FAST DOWN, NOT A WIDE FIRST CANDLE (v6e, operator's
+  call 14 Nov). IH's one check before buying a big shared gap-up at once (11 Nov):
+  "is the market volatile, fast up and fast down? That hits your stop even when
+  the direction is right." If it is not, "there is no fixed entry; take a little
+  risk" and buy. Read his "volatile" as the full-bodied rejection named just
+  above: a move up taken straight back. A first candle that is merely WIDE is not
+  it, and is no reason to wait for a dip on this branch. MEASURED (5-year NIFTY,
+  33 shared gap-ups of 1% or more, long at a fixed minute in the book's shape):
+  +0.60R at 09:16, +0.72R at 09:18 and +0.62R at 09:20 overall; split at the
+  median first-candle range (59.7 points) the long was positive in both groups at
+  every minute tried. The split mostly separates years (range grows with the
+  index), so the range itself carries no signal. 11 Nov: first candle 74 points,
+  no rejection, IH bought at 09:17 and this book at 09:18; both were paid. This
+  relaxes nothing above: SHARED-GAP, GAP SIZE IS A RISK DIAL and RISK still bind.
 - Behavioural confirmation substitutes for the candle rule HERE ONLY: price
   holding above the open / round number without aggressive selling (long branch),
   or failing below the closing point / round number without real recovery (short
@@ -3405,7 +3482,8 @@ You receive a compact recent-candle snapshot for orientation, but the precise
 facts come from these read-only tools. Call the ones you need, once each, before
 deciding:
 - `pivot_and_levels` → pivot, prev-day OHLC, today O/H/L, first-candle hi/lo,
-  psych levels, closing point, and price's distance to each.
+  psych levels, closing point, and price's distance to each; plus NIFTY's v6c
+  `opening_follow` and v6e `up_run` blocks.
 - `candle_patterns`  → reversal patterns on recent completed candles and whether a
   confirmation candle has already closed beyond them.
 - `fibo_levels`      → 50/61/78 retracement and 161/261 extension of recent swings,
@@ -3465,6 +3543,8 @@ DECISION DISCIPLINE
    check the RUNAWAY TREND conditions — repeatedly answering "no confirmed
    reversal pattern at a level" on a day that never retraces is exactly the
    failure that rule exists to prevent.
+   VETO: while `levels.up_run.short_veto_active` is true, no ENTER_SHORT at all
+   (v6e: a FLAT open after four or more straight up days).
 4. If IN A POSITION: EXIT per the RISK rules, else HOLD.
 5. Use the order tool to act, then emit the final JSON describing what you did
    (or HOLD). The configuration — not you — decides paper vs live and the broker.

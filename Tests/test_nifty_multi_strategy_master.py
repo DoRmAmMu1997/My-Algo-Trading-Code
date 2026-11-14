@@ -5559,6 +5559,77 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         source = Path(master_file.__file__).read_text(encoding="utf-8")
         self.assertIn('opening_follow_enabled=_env_bool("SL_HUNTING_OPENING_FOLLOW_ENABLED", True)', source)
 
+    @staticmethod
+    def _sessions_frame(days_and_levels):
+        """A 1-min NIFTY frame of whole sessions, each closing pre-15:15 at its level."""
+        frames = []
+        for day, level in days_and_levels:
+            stamps = pd.date_range(f"{day} 09:15", f"{day} 15:29", freq="1min")
+            frames.append(pd.DataFrame({"timestamp": stamps, "open": level, "high": level + 1.0,
+                                        "low": level - 1.0, "close": level}))
+        return pd.concat(frames, ignore_index=True)
+
+    def test_v6e_up_run_history_is_fetched_once_per_session_over_ten_days(self):
+        """v6e: one longer NIFTY fetch per session; only earlier days' 3:15 levels kept."""
+        worker, _store = self._make_worker()
+        today = datetime.now().date()
+        earlier = [(today - timedelta(days=k), 24000.0 + 100 * (9 - k)) for k in range(9, 0, -1)]
+        frame = self._sessions_frame([*earlier, (today, 25000.0)])
+        worker.broker.fetch_index_1m_ohlc.return_value = frame
+        self.assertEqual(worker._up_run_lookback_days, 10)
+
+        worker._refresh_up_run_history()
+        worker._refresh_up_run_history()
+
+        worker.broker.fetch_index_1m_ohlc.assert_called_once_with(
+            master_file.NIFTY_INDEX_SECURITY_ID,
+            master_file.NIFTY_INDEX_EXCHANGE_SEGMENT,
+            master_file.NIFTY_INDEX_INSTRUMENT_TYPE,
+            lookback_days=10,
+        )
+        self.assertEqual(worker._up_run_history, earlier)      # today's own session excluded
+        self.assertEqual(worker._up_run_history_date, today)
+
+    def test_v6e_up_run_history_failure_falls_back_and_waits_before_retrying(self):
+        worker, _store = self._make_worker()
+        worker.broker.fetch_index_1m_ohlc.side_effect = RuntimeError("DH-901")
+        with self.assertLogs(worker.log, level="WARNING") as logs:
+            worker._refresh_up_run_history()
+        self.assertIn("up-run history fetch failed", "\n".join(logs.output))
+        self.assertIsNone(worker._up_run_history)
+        worker._refresh_up_run_history()                       # inside the 5-minute wait
+        self.assertEqual(worker.broker.fetch_index_1m_ohlc.call_count, 1)
+        worker._up_run_history_retry_at = 0.0
+        worker.broker.fetch_index_1m_ohlc.side_effect = None
+        worker.broker.fetch_index_1m_ohlc.return_value = self._sessions_frame(
+            [(datetime.now().date() - timedelta(days=1), 24000.0)]
+        )
+        worker._refresh_up_run_history()
+        self.assertEqual(len(worker._up_run_history), 1)
+
+    def test_v6e_up_run_lookback_never_falls_below_the_shared_frame(self):
+        with patch.dict(os.environ, {"SL_HUNTING_UP_RUN_LOOKBACK_DAYS": "3"}):
+            worker, _store = self._make_worker()
+        self.assertEqual(worker._up_run_lookback_days, master_file.INTRADAY_LOOKBACK_DAYS)
+
+    def test_v6e_inference_pass_hands_the_history_to_the_agent(self):
+        worker, _store = self._make_worker()
+        worker._up_run_history = [(date(2026, 11, 5), 24542.45)]
+        seen = {}
+
+        def decide(*_args, **kwargs):
+            seen.update(kwargs)
+            return master_file.SL_HUNTING_AGENT_MODULE.SLHuntingDecision(
+                action="HOLD", confidence=0, setup="none", reasoning="test", model_used="m"
+            )
+
+        worker.agent = MagicMock()
+        worker.agent.decide.side_effect = decide
+        frame = self._sessions_frame([(date(2026, 11, 6), 24500.0)])
+        self.assertTrue(worker._start_agent_inference(frame, None))
+        worker._agent_inference_thread.join(5)
+        self.assertEqual(seen["up_run_history"], ((date(2026, 11, 5), 24542.45),))
+
     def test_live_basket_pnl_uses_nifty_and_bnf_broker_fills(self):
         worker, _store = self._make_worker()
         worker.live_trading = True

@@ -36,7 +36,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Literal, SupportsFloat, cast
@@ -678,8 +678,12 @@ class SLHuntingAgent:
         generation: int = 0,
         generation_is_current: Callable[[int], bool] | None = None,
         execution_lock: Any | None = None,
+        up_run_history: Sequence[tuple[Any, float]] | None = None,
     ) -> SLHuntingDecision:
         """Run one agentic pass for the latest bar and return the decision.
+
+        `up_run_history` (v6e) carries earlier sessions' 3:15 levels from the
+        worker's longer once-per-session fetch; see `session_315_levels`.
 
         The agent ACTS by calling its order tool during the loop (the tool drives
         `executor`), so by the time this returns, `executor` already reflects any
@@ -705,6 +709,7 @@ class SLHuntingAgent:
             # SLH-009: the note was already date-gated when the block was built, so a
             # non-empty block means one applies TODAY.
             premarket_note_active=bool(self._premarket_note_active),
+            up_run_history=up_run_history,
         )
         position = executor.snapshot()
         prompt = self._build_user_prompt(prepared, position)

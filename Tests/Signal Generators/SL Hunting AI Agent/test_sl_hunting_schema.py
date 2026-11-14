@@ -4171,3 +4171,109 @@ def test_v6d_the_pre_open_note_outranks_a_split_gap():
             "gapped toward.]") in shared_rule
     asymmetry = _flat_rule(prompt, "GAP-SIZE ASYMMETRY")
     assert "[On the open, it yields to the pre-open note: v6d.]" in asymmetry
+
+
+def test_v6e_deep_in_an_up_run_a_flat_open_is_not_shorted():
+    """v6e (operator's call, 14 Nov): after four or more straight up days, no SHORT
+    on a FLAT open until NIFTY trades below yesterday's low.
+
+    The agent shorted three FLAT opens deep in one run (6, 9, 13 Nov), all stopped,
+    while IH bought all three. Pins the scope read from `levels.up_run`, what it
+    outranks (v6c, v5z's SELL side, a note's SELL branch), that it creates no long,
+    its ending line, the measurement, the holiday-window limit, the review clause,
+    its place right after v5z, and the pointers left in v5z, BUYER-INVENTORY FADE,
+    DECISION RULES #3 and the tool guide.
+    """
+    prompt = build_system_prompt()
+    heading = "DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6e, operator's call 14 Nov).")
+    # Scope, computed in code.
+    assert "read from `levels.up_run` (computed in code; do not re-derive it)" in rule
+    assert "NIFTY's 3:15 level rose on each of the last four or more sessions" in rule
+    assert "today's computed verdict is FLAT" in rule
+    assert "NIFTY has not traded below yesterday's low today" in rule
+    # What it does and what it outranks.
+    assert ("While `up_run.short_veto_active` is true, do NOT open a SHORT, whatever the "
+            "pattern, the cross-index read or the setup") in rule
+    assert ("That includes the v6c OPENING FOLLOW, a v5z SELL side, and a pre-open note's "
+            "SELL branch") in rule
+    # It ends, and it creates no long.
+    assert "WHAT ENDS IT: NIFTY trading below yesterday's low" in rule
+    assert "IT CREATES NO LONG" in rule
+    assert "HOLD is the default answer when the short is vetoed" in rule
+    # The measurement, the mirror that did not hold, and the window's limit.
+    assert "every FLAT open (934): short +0.14R at 09:17 and +0.18R at 09:20" in rule
+    assert "after FOUR or more (104): short -0.08R at 09:17 and -0.18R at 09:20" in rule
+    assert "no mirror: after four or more DOWN days" in rule
+    assert "`at_least: true` and the veto stays off" in rule
+    assert "the rule is reverted if it is found to be blocking winners" in rule
+    # Placed straight after v5z, which points here, before v5k.
+    v5z = prompt.index("\n- A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS")
+    here = prompt.index("\n- " + heading)
+    assert v5z < here < prompt.index("\n- A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+    assert "\n- " not in prompt[v5z + 3:here]
+    v5z_rule = _flat_rule(prompt, "A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS")
+    assert "[On a FLAT open after four straight up days, v6e, next, outranks its SELL side.]" in v5z_rule
+    fade = _flat_rule(prompt, "BUYER-INVENTORY FADE")
+    assert "[After FOUR or more straight up days a FLAT open is not shorted at all: v6e.]" in fade
+    flat = " ".join(prompt.split())
+    assert ("VETO: while `levels.up_run.short_veto_active` is true, no ENTER_SHORT at all "
+            "(v6e: a FLAT open after four or more straight up days).") in flat
+    assert "plus NIFTY's v6c `opening_follow` and v6e `up_run` blocks." in flat
+
+
+def test_v6e_a_notes_branch_named_by_a_level_is_picked_by_the_level():
+    """v6e, second part (operator's call, 14 Nov): on 12 Nov IH's note branched on
+    "an opening above the resistance", NIFTY opened FLAT under it and closed above it
+    two minutes later, and IH bought. Pins the trigger (a 1-minute CLOSE beyond the
+    named level), that open-type lines still go by the verdict, that the note stays
+    advisory and v6e's short veto still binds, the measurement that found no
+    fixed-minute edge, the early-run line in v6e, its place right after v6e, and the
+    pointer left in CLASSIFY THE OPEN.
+    """
+    prompt = build_system_prompt()
+    heading = "A NOTE'S BRANCH NAMED BY A LEVEL IS PICKED BY THE LEVEL"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6e, operator's call 14 Nov).")
+    assert ("That line applies once NIFTY CLOSES a 1-minute candle beyond the level it names, "
+            "whatever the verdict said at 09:15; the lines named by an open type are still "
+            "picked by the verdict.") in rule
+    assert "It changes only which side the note votes for. The note stays ADVISORY" in rule
+    assert "no entry without pattern + confirmation" in rule
+    assert "a level line that names SELL is still vetoed there" in rule
+    assert "MEASURED, NOT AN EDGE BY ITSELF" in rule
+    assert "(33 above, 40 below; the long above the line did not earn at 09:20, 09:25 or 09:30)" in rule
+    # Straight after v6e's first part, before v5k.
+    first = prompt.index("\n- DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED")
+    here = prompt.index("\n- " + heading)
+    assert first < here < prompt.index("\n- A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+    assert "\n- " not in prompt[first + 3:here]
+    up_run = _flat_rule(prompt, "DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED")
+    assert "EARLY IN A RUN NOTHING CHANGES. After one to three up days the FLAT-open short" in up_run
+    classify = _flat_rule(prompt, "CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT, AND SAY WHY")
+    assert ("[A note line that names a LEVEL rather than an open type is picked by that level, "
+            "not by this word: v6e.]") in classify
+
+
+def test_v6e_volatile_means_fast_up_and_fast_down_not_a_wide_first_candle():
+    """v6e, third part (operator's call, 14 Nov): IH's 11 Nov check before buying a
+    big shared gap-up at once. Pins his test read as the full-bodied rejection, that a
+    wide first candle is no reason to wait, the measurement and its caveat, that it
+    relaxes nothing, and its place inside OPENING DRIVE's conditions, straight after
+    the no-MAJOR-rejection condition.
+    """
+    prompt = build_system_prompt()
+    heading = "VOLATILE MEANS FAST UP AND FAST DOWN, NOT A WIDE FIRST CANDLE"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6e, operator's call 14 Nov).")
+    assert "Read his \"volatile\" as the full-bodied rejection named just above" in rule
+    assert "A first candle that is merely WIDE is not it, and is no reason to wait for a dip on this branch." in rule
+    assert "+0.60R at 09:16, +0.72R at 09:18 and +0.62R at 09:20 overall" in rule
+    assert "the long was positive in both groups at every minute tried" in rule
+    assert "the range itself carries no signal" in rule
+    assert "This relaxes nothing above: SHARED-GAP, GAP SIZE IS A RISK DIAL and RISK still bind." in rule
+    rejection = prompt.index("\n- No MAJOR rejection so far")
+    here = prompt.index("\n- " + heading)
+    assert rejection < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
+    assert "\n- " not in prompt[rejection + 3:here]
