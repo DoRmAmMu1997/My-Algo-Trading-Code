@@ -14182,3 +14182,54 @@ with 2021-23 / 2024-26 in brackets.
   12 Nov until it is renewed (`python algo.py setup-token`). If the runner's
   market data uses the same token, it needs renewing before Monday's open.
 - **Four sessions in a row ran without a note:** 9, 11, 12 and 13 Nov.
+
+## v6e - deep in an up run, a FLAT open is not shorted (operator's call, 14 Nov)
+
+The operator adopted the candidate scoped in the 13 Nov section: after four or
+more straight up days, no SHORT on a FLAT open until NIFTY trades below
+yesterday's low.
+
+**Code.** `pivot_and_levels` gains an `up_run` block, in NIFTY's payload only
+(BankNIFTY's levels leave it out, as they leave out v6c's `opening_follow`). It
+counts back from yesterday while each session's 3:15 level is above the one
+before, using the same pre-15:15 reference as the open verdict, so settlement
+prints never count. It reports:
+
+- `straight_up_days`, `sessions_seen`, and `at_least` (true when the window ran
+  out while every session was still rising);
+- `short_veto_active`, true only for four or more rises, a FLAT verdict, and
+  NIFTY still above yesterday's low;
+- a `reason` naming why it is not active.
+
+**Prompt.** The rule sits straight after v5z, with pointers in v5z, BUYER-INVENTORY
+FADE, DECISION RULES #3 and the tool guide. It outranks v6c's opening follow, a
+v5z SELL side and a pre-open note's SELL branch. It creates no long.
+
+**The window's limit.** The agent's candles span `INTRADAY_LOOKBACK_DAYS` (7
+calendar days), which holds five prior sessions in a full week and four in a
+week with a holiday. With four, at most three rises are visible and the veto
+cannot fire. Of the three motivating sessions it would have covered 6 and 9 Nov,
+not 13 Nov (after the 10 Nov holiday). Widening the window changes the frame
+every strategy polls, so it is left to the operator.
+
+**v6c overlap.** v6c's opening-follow short fell inside this scope once in five
+years (-1.5R); its other 39 sessions averaged +0.48R and are untouched.
+
+**Tests.** `test_sl_hunting_up_run.py` (10 tests) pins the count, the scope, every
+reason, the holiday window, the settlement prints and BankNIFTY's omission;
+`test_v6e_deep_in_an_up_run_a_flat_open_is_not_shorted` pins the prompt wiring.
+Each of 10 mutants fails them:
+
+* the threshold lowered to 3;
+* an equal level counted as a rise;
+* the yesterday's-low ending removed;
+* the FLAT check removed;
+* `at_least` forced false;
+* the 3:15 level read from the settlement print;
+* today counted as a prior session;
+* BankNIFTY's payload given the block;
+* the scope's yesterday's-low line dropped from the prompt;
+* the DECISION RULES veto line dropped.
+
+**Review.** Every SHORT on a FLAT open after three or more up days is reviewed,
+and the rule is reverted if it is found to be blocking winners.

@@ -4171,3 +4171,53 @@ def test_v6d_the_pre_open_note_outranks_a_split_gap():
             "gapped toward.]") in shared_rule
     asymmetry = _flat_rule(prompt, "GAP-SIZE ASYMMETRY")
     assert "[On the open, it yields to the pre-open note: v6d.]" in asymmetry
+
+
+def test_v6e_deep_in_an_up_run_a_flat_open_is_not_shorted():
+    """v6e (operator's call, 14 Nov): after four or more straight up days, no SHORT
+    on a FLAT open until NIFTY trades below yesterday's low.
+
+    The agent shorted three FLAT opens deep in one run (6, 9, 13 Nov), all stopped,
+    while IH bought all three. Pins the scope read from `levels.up_run`, what it
+    outranks (v6c, v5z's SELL side, a note's SELL branch), that it creates no long,
+    its ending line, the measurement, the holiday-window limit, the review clause,
+    its place right after v5z, and the pointers left in v5z, BUYER-INVENTORY FADE,
+    DECISION RULES #3 and the tool guide.
+    """
+    prompt = build_system_prompt()
+    heading = "DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6e, operator's call 14 Nov).")
+    # Scope, computed in code.
+    assert "read from `levels.up_run` (computed in code; do not re-derive it)" in rule
+    assert "NIFTY's 3:15 level rose on each of the last four or more sessions" in rule
+    assert "today's computed verdict is FLAT" in rule
+    assert "NIFTY has not traded below yesterday's low today" in rule
+    # What it does and what it outranks.
+    assert ("While `up_run.short_veto_active` is true, do NOT open a SHORT, whatever the "
+            "pattern, the cross-index read or the setup") in rule
+    assert ("That includes the v6c OPENING FOLLOW, a v5z SELL side, and a pre-open note's "
+            "SELL branch") in rule
+    # It ends, and it creates no long.
+    assert "WHAT ENDS IT: NIFTY trading below yesterday's low" in rule
+    assert "IT CREATES NO LONG" in rule
+    assert "HOLD is the default answer when the short is vetoed" in rule
+    # The measurement, the mirror that did not hold, and the window's limit.
+    assert "every FLAT open (934): short +0.14R at 09:17 and +0.18R at 09:20" in rule
+    assert "after FOUR or more (104): short -0.08R at 09:17 and -0.18R at 09:20" in rule
+    assert "no mirror: after four or more DOWN days" in rule
+    assert "`at_least: true` and the veto stays off" in rule
+    assert "the rule is reverted if it is found to be blocking winners" in rule
+    # Placed straight after v5z, which points here, before v5k.
+    v5z = prompt.index("\n- A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS")
+    here = prompt.index("\n- " + heading)
+    assert v5z < here < prompt.index("\n- A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+    assert "\n- " not in prompt[v5z + 3:here]
+    v5z_rule = _flat_rule(prompt, "A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS")
+    assert "[On a FLAT open after four straight up days, v6e, next, outranks its SELL side.]" in v5z_rule
+    fade = _flat_rule(prompt, "BUYER-INVENTORY FADE")
+    assert "[After FOUR or more straight up days a FLAT open is not shorted at all: v6e.]" in fade
+    flat = " ".join(prompt.split())
+    assert ("VETO: while `levels.up_run.short_veto_active` is true, no ENTER_SHORT at all "
+            "(v6e: a FLAT open after four or more straight up days).") in flat
+    assert "plus NIFTY's v6c `opening_follow` and v6e `up_run` blocks." in flat

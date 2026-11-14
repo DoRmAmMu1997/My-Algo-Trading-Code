@@ -457,7 +457,9 @@ class SLHuntingToolContext:
             return {"available": False, "reason": "BankNIFTY data unavailable; judge on NIFTY alone."}
         return {
             "available": True,
-            "pivot_and_levels": pivot_and_levels(self.bnf_candles, self.cfg, include_opening_follow=False),
+            "pivot_and_levels": pivot_and_levels(
+                self.bnf_candles, self.cfg, include_opening_follow=False, include_up_run=False
+            ),
             "market_structure": market_structure(self.bnf_candles, self.cfg),
             "candle_patterns": candle_patterns(self.bnf_candles, self.cfg),
         }
