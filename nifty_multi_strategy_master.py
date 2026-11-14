@@ -17002,9 +17002,8 @@ if SL_HUNTING_AVAILABLE:
                     was_active = self.pos.active
                 nifty_snapshot = strategy_frame.copy(deep=True)
                 bnf_snapshot = bnf_candles.copy(deep=True) if bnf_candles is not None else None
-                up_run_history = (
-                    tuple(self._up_run_history) if getattr(self, "_up_run_history", None) else None
-                )
+                history_levels: list[tuple[Any, float]] | None = getattr(self, "_up_run_history", None)
+                up_run_history = tuple(history_levels) if history_levels else None
 
                 def _run_agent() -> None:
                     decision = self.agent.decide(
