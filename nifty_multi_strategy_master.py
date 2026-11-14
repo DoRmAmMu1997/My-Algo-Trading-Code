@@ -1689,6 +1689,15 @@ execution_client, LIVE_EXCHANGE_SEGMENT, LIVE_PRODUCT_TYPE = _select_execution_c
     LIVE_BROKER
 )
 
+# ADR-0023. Live trading normally arms only when the broker account holds no
+# NIFTY/BANKNIFTY position at all. An operator who carries multi-week option
+# positions in the SAME account can never pass that, so this opt-in switch lets
+# the account audit excuse the carried legs they have DECLARED: legs inside a
+# group of Dependencies/position_groups.json, for this broker, NRML, matching
+# the broker row exactly. Off by default; with it off the audit is unchanged.
+# Independent of GROUP_MONITOR_ENABLED: the groups file is only read here.
+LIVE_TOLERATE_DECLARED_CARRIED_LEGS = _env_bool("LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False)
+
 # =============================================================================
 # SIGNAL GENERATOR PORTS (ATM single-leg strategies ported from public repos)
 # =============================================================================
@@ -2510,6 +2519,11 @@ class SharedMarketDataStore:
         # order leg is registered here before the broker submission starts.
         self.execution_ledger = ExecutionLedger()
         self.startup_exposure_audit: StartupExposureAudit | None = None
+        # ADR-0023: broker symbols of the operator's declared carried legs, as of
+        # the latest account audit. A live entry on one of these contracts is
+        # refused, so the runner's exposure and the operator's never share a
+        # contract. Empty unless LIVE_TOLERATE_DECLARED_CARRIED_LEGS is on.
+        self.declared_carried_symbols: frozenset[str] = frozenset()
         # Remains true after the first worker is enabled live, even if a broker
         # timeout later poisons/logs out the session. Shutdown then knows that a
         # missing session is indeterminate rather than proof of no exposure.
@@ -5400,7 +5414,7 @@ class BasePaperStrategyWorker(threading.Thread):
         client = execution_client
         if client is None:
             return False
-        audit = audit_startup_exposure(client)
+        audit = _audit_live_account(client, self.store)
         if not audit.safe_to_enable_live:
             return False
         recover = getattr(client, "recover_after_reconciliation", None)
@@ -5707,6 +5721,27 @@ class BasePaperStrategyWorker(threading.Thread):
                 quantity,
                 OrderStatus.REJECTED,
                 f"Order was not submitted because {LIVE_BROKER} symbol resolution failed.",
+                broker_state="LOCAL_NOT_SUBMITTED",
+            )
+        # ADR-0023: never open exposure on the very contract of a carried leg the
+        # account audit excused. The broker would keep the two apart by product,
+        # but then one contract would carry both the operator's position and the
+        # runner's. Refused exactly like an unresolvable symbol: nothing is sent,
+        # and this one trade falls back to paper. Exits are never refused.
+        if opens_exposure and broker_symbol in getattr(
+            self.store, "declared_carried_symbols", frozenset()
+        ):
+            self.log.warning(
+                "REAL ORDER SKIPPED (declared carried leg) | %s %s sym=%s dhan=%s | this "
+                "contract is one of the operator's carried legs in the same account; "
+                "falling back to paper.",
+                self.strategy_name, side, broker_symbol, dhan_symbol,
+            )
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.REJECTED,
+                "Order was not submitted because this contract is a declared carried "
+                "leg in the same broker account.",
                 broker_state="LOCAL_NOT_SUBMITTED",
             )
 
@@ -18497,7 +18532,84 @@ def _live_broker_login_ok(client: ExecutionClient, *, purpose: str) -> bool:
     return login_ok
 
 
-def _preload_and_audit_live_account(client: ExecutionClient) -> StartupExposureAudit:
+def _declared_carried_legs() -> tuple[dict[tuple[str, str], int] | None, str]:
+    """The carried legs the account audit may excuse, plus an evidence note.
+
+    Returns ``(None, "")`` when ``LIVE_TOLERATE_DECLARED_CARRIED_LEGS`` is off:
+    the audit then runs exactly as it always has.
+
+    Otherwise returns ``{(symbol, "NRML"): signed quantity}`` for every leg
+    that sits INSIDE A GROUP of the groups file, belongs to ``LIVE_BROKER`` and
+    is carried (NRML). Three things are deliberately left out:
+
+    * legs under ``unassigned`` -- ``algo.py group-legs`` puts whatever the
+      broker holds there automatically, so counting them would let a stray
+      position from a crashed session excuse itself after one command;
+    * MIS legs -- an intraday position is never a carried leg;
+    * everything, when the strategies themselves trade the carry product
+      (``<BROKER>_PRODUCT_TYPE=NORMAL``): a strategy order on the same strike
+      would then merge into the operator's position.
+
+    An empty mapping tolerates nothing, so every failure here fails closed.
+    The note ("" when there is nothing to say) says why the mapping is empty
+    and is fixed vocabulary, safe for a log line and a Telegram alert.
+    """
+
+    if not LIVE_TOLERATE_DECLARED_CARRIED_LEGS:
+        return None, ""
+    if LIVE_PRODUCT_TYPE != "INTRADAY":
+        return {}, "declared_legs=product_not_isolated"
+    try:
+        groups_module = importlib.import_module("Dependencies.position_groups")
+        config = groups_module.load_config(Path(GROUP_MONITOR_FILE))
+    except Exception:  # noqa: BLE001 - an unreadable file must tolerate nothing
+        logger.error(
+            "Declared carried legs could not be read from %s; none are tolerated.",
+            GROUP_MONITOR_FILE,
+        )
+        return {}, "declared_legs=unreadable"
+    declared: dict[tuple[str, str], int] = {}
+    for group in config.groups:
+        if group.broker != LIVE_BROKER:
+            continue
+        for leg in group.legs:
+            if leg.product == "NRML":
+                declared[(leg.symbol, "NRML")] = leg.quantity
+    return declared, ""
+
+
+def _audit_live_account(
+    client: ExecutionClient, store: SharedMarketDataStore | None = None
+) -> StartupExposureAudit:
+    """The ONE read-only check of the live broker account.
+
+    Four decisions rest on "is this account free of exposure the runner could
+    collide with?": arming live at startup, a dashboard paper-to-live
+    promotion, resuming entries after an ambiguous order, and the shutdown
+    warning. They all call this, so the rule for declared carried legs
+    (ADR-0023) cannot drift between them. A test asserts nothing else in this
+    file calls ``audit_startup_exposure``.
+
+    With a ``store``, the symbols of the declared legs are recorded on it for
+    the order path's collision guard.
+    """
+
+    declared, note = _declared_carried_legs()
+    if declared is None:
+        # Switch off: the historical call, argument for argument.
+        audit = audit_startup_exposure(client)
+    else:
+        audit = audit_startup_exposure(client, tolerated_positions=declared)
+    if note:
+        audit = replace(audit, evidence=(*audit.evidence, note))
+    if store is not None:
+        store.declared_carried_symbols = frozenset(symbol for symbol, _product in declared or {})
+    return audit
+
+
+def _preload_and_audit_live_account(
+    client: ExecutionClient, store: SharedMarketDataStore | None = None
+) -> StartupExposureAudit:
     """After a successful login: preload symbols, then audit both broker books.
 
     Shared by the startup gate and a dashboard paper-to-live promotion so the
@@ -18521,7 +18633,7 @@ def _preload_and_audit_live_account(client: ExecutionClient) -> StartupExposureA
         )
 
     try:
-        return audit_startup_exposure(client)
+        return _audit_live_account(client, store)
     except Exception:  # pragma: no cover - pure audit already catches broker failures.
         # This defensive boundary also uses fixed vocabulary: an SDK exception
         # can contain request headers or tokens and must never reach logs.
@@ -18625,7 +18737,7 @@ def _configure_startup_live_trading(
         )
         return 0, audit
 
-    audit = _preload_and_audit_live_account(client)
+    audit = _preload_and_audit_live_account(client, store)
     store.startup_exposure_audit = audit
     if not audit.safe_to_enable_live:
         store.execution_safety.freeze_entries(
@@ -18765,7 +18877,7 @@ def _live_promotion_refusal(
     if any_worker_live:
         return ""
 
-    audit = _preload_and_audit_live_account(client)
+    audit = _preload_and_audit_live_account(client, store)
     if not audit.safe_to_enable_live:
         return "Broker account not proven flat: " + (
             " ".join(audit.reasons) or "account state was indeterminate."
@@ -20606,7 +20718,7 @@ def _advisory_account_audit(
         )
 
     try:
-        return audit_startup_exposure(client)
+        return _audit_live_account(client, store)
     except Exception:  # noqa: BLE001 - raw SDK text may contain credentials
         return StartupExposureAudit(
             safe_to_enable_live=False,
