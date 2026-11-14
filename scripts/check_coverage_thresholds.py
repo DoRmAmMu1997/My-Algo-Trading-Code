@@ -59,6 +59,11 @@ SAFETY_THRESHOLDS = {
     # its own row here so the code cannot escape a budget by moving files --
     # the exact failure this dict's header warns about.
     "Dependencies/broker_rate_limit.py": 90.0,
+    # The position-group monitor places real closing orders on carried
+    # positions (docs/adr/0022); its decision logic and the file model that
+    # feeds it are execution-safety code.
+    "Dependencies/position_group_monitor.py": 90.0,
+    "Dependencies/position_groups.py": 90.0,
 }
 
 # EVERY live execution adapter belongs in this dict. A broker added without a
@@ -70,6 +75,10 @@ BROKER_THRESHOLDS = {
     "Dependencies/Shoonya API/shoonya_execution.py": 80.0,
     "Dependencies/Flattrade API/flattrade_execution.py": 80.0,
     "Dependencies/Dhan API/dhan_execution.py": 80.0,
+    # Zerodha and mStock: LIVE_BROKER choices, and the brokers the
+    # position-group monitor closes carried positions through.
+    "Dependencies/Zerodha API/zerodha_execution.py": 80.0,
+    "Dependencies/Mstock API/mstock_execution.py": 80.0,
 }
 
 

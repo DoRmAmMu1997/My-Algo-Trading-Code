@@ -762,6 +762,40 @@ DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS = min(
     max(_env_float("DASHBOARD_SHUTDOWN_TIMEOUT_SECONDS", 2.0), 0.5), 15.0
 )
 
+# -----------------------------------------------------------------------------
+# Optional position-group target monitor (Dependencies/position_group_monitor.py,
+# docs/adr/0022). Watches the operator's CARRIED option-selling positions in a
+# Zerodha / mStock account, groups them as
+# Dependencies/position_groups.json says, prices them off this runner's Dhan
+# feed, and SQUARES OFF A WHOLE GROUP WITH REAL ORDERS once its P&L reaches the
+# group's target. Off by default. Deliberately independent of
+# LIVE_TRADING_ENABLED: enabling the monitor IS the live switch for it, so the
+# intraday strategies can stay on paper while it acts on real positions.
+# -----------------------------------------------------------------------------
+GROUP_MONITOR_ENABLED = _env_bool("GROUP_MONITOR_ENABLED", False)
+GROUP_MONITOR_FILE = _env_str(
+    "GROUP_MONITOR_FILE", str(ROOT_DIR / "Dependencies" / "position_groups.json")
+).strip()
+GROUP_MONITOR_STATE_FILE = _env_str(
+    "GROUP_MONITOR_STATE_FILE", str(ROOT_DIR / "Dependencies" / "position_groups.state.json")
+).strip()
+GROUP_MONITOR_POLL_SECONDS = min(max(_env_float("GROUP_MONITOR_POLL_SECONDS", 1.0), 0.5), 30.0)
+# Consecutive fresh ticks at/above target before a square-off is CONSIDERED.
+# This only filters a momentary glitch: a last traded price persists until the
+# next trade, so several ticks can all be the same single print. What actually
+# stops one odd print on an illiquid strike from closing a three-month
+# position is the bid/ask re-check the monitor runs before any order.
+GROUP_MONITOR_CONFIRM_TICKS = min(max(_env_int("GROUP_MONITOR_CONFIRM_TICKS", 3), 1), 60)
+# A leg priced older than this counts as unpriced, and its group is skipped.
+GROUP_MONITOR_MAX_LTP_AGE_SECONDS = min(
+    max(_env_float("GROUP_MONITOR_MAX_LTP_AGE_SECONDS", 10.0), 2.0), 120.0
+)
+# The monitor keeps watching after the strategies' 15:15 square-off, until here.
+GROUP_MONITOR_STOP_TIME = dt_time(15, 30)
+# A square-off in progress is allowed to finish at shutdown (each order is
+# bounded by its broker's own deadlines); the monitor is a daemon after this.
+GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS = 120.0
+
 
 # Telegram trade-notification settings. See Dependencies/.env for the one-time
 # bot/channel setup. When disabled (or token/chat blank) the notifier thread is
@@ -1515,9 +1549,10 @@ except Exception as _cpr_ai_import_exc:  # optional strategy, never fatal
     )
 
 # -----------------------------------------------------------------------------
-# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, or Dhan.
+# Live-execution layer (optional) - Kotak Neo, Shoonya, Flattrade, Dhan,
+# Zerodha, or mStock.
 # -----------------------------------------------------------------------------
-# This is how real (non-paper) orders reach the broker. All four helpers expose
+# This is how real (non-paper) orders reach the broker. All six helpers expose
 # the SAME contract: login/symbol resolution, typed place/status/cancel results,
 # determinate-or-indeterminate open order/position queries, and logout. The runner
 # uses whichever one LIVE_BROKER selects via a single generic `execution_client`.
@@ -1578,6 +1613,35 @@ except Exception as _dhan_import_exc:
         _dhan_import_exc,
     )
 
+# Zerodha and mStock are requests-only adapters (no SDK). Besides being
+# LIVE_BROKER choices, these same two singletons are what the optional
+# position-group monitor closes carried positions through (docs/adr/0022).
+try:
+    _zerodha_execution_module = load_module(
+        "master_zerodha_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Zerodha API" / "zerodha_execution.py",
+    )
+    zerodha_execution_client = _zerodha_execution_module.zerodha_execution_client
+except Exception as _zerodha_import_exc:
+    zerodha_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "Zerodha execution layer unavailable (%s); Zerodha live trading disabled.",
+        _zerodha_import_exc,
+    )
+
+try:
+    _mstock_execution_module = load_module(
+        "master_mstock_execution",
+        Path(__file__).resolve().parent / "Dependencies" / "Mstock API" / "mstock_execution.py",
+    )
+    mstock_execution_client = _mstock_execution_module.mstock_execution_client
+except Exception as _mstock_import_exc:
+    mstock_execution_client = None
+    logging.getLogger(LOGGER_NAME).warning(
+        "mStock execution layer unavailable (%s); mStock live trading disabled.",
+        _mstock_import_exc,
+    )
+
 
 def _select_execution_client(broker_name: str):
     """Return client, exchange, and product for one explicit broker selection.
@@ -1603,8 +1667,15 @@ def _select_execution_client(broker_name: str):
     if broker == "DHAN":
         product = _env_str("DHAN_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
         return dhan_execution_client, "NSE_FNO", product
+    if broker == "ZERODHA":
+        product = _env_str("ZERODHA_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return zerodha_execution_client, "NFO", product
+    if broker == "MSTOCK":
+        product = _env_str("MSTOCK_PRODUCT_TYPE", "INTRADAY").upper().strip() or "INTRADAY"
+        return mstock_execution_client, "NFO", product
     logging.getLogger(LOGGER_NAME).error(
-        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, or DHAN); "
+        "Unknown LIVE_BROKER=%r (expected KOTAK, SHOONYA, FLATTRADE, DHAN, ZERODHA, "
+        "or MSTOCK); "
         "live trading DISABLED (paper only).",
         broker_name,
     )
@@ -1617,6 +1688,15 @@ LIVE_BROKER = _env_str("LIVE_BROKER", "KOTAK").upper().strip() or "KOTAK"
 execution_client, LIVE_EXCHANGE_SEGMENT, LIVE_PRODUCT_TYPE = _select_execution_client(
     LIVE_BROKER
 )
+
+# ADR-0023. Live trading normally arms only when the broker account holds no
+# NIFTY/BANKNIFTY position at all. An operator who carries multi-week option
+# positions in the SAME account can never pass that, so this opt-in switch lets
+# the account audit excuse the carried legs they have DECLARED: legs inside a
+# group of Dependencies/position_groups.json, for this broker, NRML, matching
+# the broker row exactly. Off by default; with it off the audit is unchanged.
+# Independent of GROUP_MONITOR_ENABLED: the groups file is only read here.
+LIVE_TOLERATE_DECLARED_CARRIED_LEGS = _env_bool("LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False)
 
 # =============================================================================
 # SIGNAL GENERATOR PORTS (ATM single-leg strategies ported from public repos)
@@ -2302,6 +2382,11 @@ class OptionSubscription:
     right: str
     strike: float
     expiry: date | None
+    # False for a leg that is only WATCHED, never traded, by this runner (the
+    # position-group monitor's carried legs). It is still fetched and kept
+    # fresh, but a missing or stale price on it must never trip the feed-health
+    # gate -- that gate drives the 30-second liquidation of every live strategy.
+    affects_feed_health: bool = True
 
 
 # =============================================================================
@@ -2423,6 +2508,10 @@ class SharedMarketDataStore:
         # Track logical owners separately so one worker's exit cannot tear down
         # another worker's still-open market-data leg.
         self._option_subscription_owners: dict[tuple[str, int], set[str]] = {}
+        # The subset of each key's owners that need it health-gated. A contract
+        # the group monitor shares with a trading worker stays gated for exactly
+        # as long as that worker holds it.
+        self._option_subscription_health_owners: dict[tuple[str, int], set[str]] = {}
         self.market_data_health = MarketDataHealth()
         self.execution_safety = ExecutionSafetyCoordinator()
         # The execution ledger is separate from market-data snapshots because it
@@ -2430,6 +2519,11 @@ class SharedMarketDataStore:
         # order leg is registered here before the broker submission starts.
         self.execution_ledger = ExecutionLedger()
         self.startup_exposure_audit: StartupExposureAudit | None = None
+        # ADR-0023: broker symbols of the operator's declared carried legs, as of
+        # the latest account audit. A live entry on one of these contracts is
+        # refused, so the runner's exposure and the operator's never share a
+        # contract. Empty unless LIVE_TOLERATE_DECLARED_CARRIED_LEGS is on.
+        self.declared_carried_symbols: frozenset[str] = frozenset()
         # Remains true after the first worker is enabled live, even if a broker
         # timeout later poisons/logs out the session. Shutdown then knows that a
         # missing session is indeterminate rather than proof of no exposure.
@@ -2658,6 +2752,11 @@ class SharedMarketDataStore:
             owners = self._option_subscription_owners.setdefault(key, set())
             newly_owned = normalized_owner not in owners
             owners.add(normalized_owner)
+            health_owners = self._option_subscription_health_owners.setdefault(key, set())
+            if subscription.affects_feed_health:
+                health_owners.add(normalized_owner)
+            else:
+                health_owners.discard(normalized_owner)
             self._option_subscriptions[key] = subscription
             return newly_owned
 
@@ -2685,16 +2784,28 @@ class SharedMarketDataStore:
             if owners is None:
                 return
             owners.discard(normalized_owner)
+            self._option_subscription_health_owners.get(key, set()).discard(normalized_owner)
             if owners:
                 return
             self._option_subscription_owners.pop(key, None)
+            self._option_subscription_health_owners.pop(key, None)
             self._option_subscriptions.pop(key, None)
             self._ltp_snapshots.pop(key, None)
 
     def snapshot_option_subscriptions(self) -> list[OptionSubscription]:
-        """Return a list copy of all currently subscribed option legs."""
+        """Return a list copy of all currently subscribed option legs.
+
+        Each copy's ``affects_feed_health`` is true when ANY current owner needs
+        the leg health-gated, whatever the last registrant asked for.
+        """
         with self._lock:
-            return list(self._option_subscriptions.values())
+            return [
+                replace(
+                    subscription,
+                    affects_feed_health=bool(self._option_subscription_health_owners.get(key)),
+                )
+                for key, subscription in self._option_subscriptions.items()
+            ]
 
     # ------------------------------------------------------------------
     # Whole-feed health
@@ -4148,11 +4259,14 @@ class CentralMarketDataFetcher(threading.Thread):
             if int(sub.security_id) not in securities[segment]:
                 securities[segment].append(int(sub.security_id))
 
-        required_keys = {
-            (segment, int(security_id))
-            for segment, security_ids in securities.items()
-            for security_id in security_ids
-        }
+        # Every leg is fetched, but only health-gated legs (and the index) are
+        # REQUIRED: a watched-only leg must not be able to trip liquidation.
+        required_keys = {(NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)}
+        required_keys.update(
+            (str(sub.exchange_segment), int(sub.security_id))
+            for sub in subscriptions
+            if sub.affects_feed_health
+        )
 
         try:
             ltp_map = self.broker.fetch_ltp_map(securities)
@@ -4691,11 +4805,18 @@ class WebSocketMarketDataFetcher(threading.Thread):
         ):
             return
         self._last_health_monotonic = now_monotonic
+        subscriptions = self.store.snapshot_option_subscriptions()
         required_keys = {(NIFTY_INDEX_EXCHANGE_SEGMENT, NIFTY_INDEX_SECURITY_ID)}
         required_keys.update(
             (str(sub.exchange_segment), int(sub.security_id))
-            for sub in self.store.snapshot_option_subscriptions()
+            for sub in subscriptions
+            if sub.affects_feed_health
         )
+        # Watched-only legs are re-stamped too (a quiet strike is not a dead
+        # feed) but stay out of required_keys, so they cannot trip liquidation.
+        subscribed_keys = required_keys | {
+            (str(sub.exchange_segment), int(sub.security_id)) for sub in subscriptions
+        }
         with self._feed_lock:
             alive = (
                 self._last_packet_monotonic is not None
@@ -4704,7 +4825,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
             )
             confirmed = set(self._confirmed_keys)
         if alive:
-            touchable = required_keys & confirmed
+            touchable = subscribed_keys & confirmed
             if touchable:
                 self.store.touch_ltp_freshness(touchable)
         health = self.store.record_market_data_refresh(
@@ -5293,7 +5414,7 @@ class BasePaperStrategyWorker(threading.Thread):
         client = execution_client
         if client is None:
             return False
-        audit = audit_startup_exposure(client)
+        audit = _audit_live_account(client, self.store)
         if not audit.safe_to_enable_live:
             return False
         recover = getattr(client, "recover_after_reconciliation", None)
@@ -5600,6 +5721,27 @@ class BasePaperStrategyWorker(threading.Thread):
                 quantity,
                 OrderStatus.REJECTED,
                 f"Order was not submitted because {LIVE_BROKER} symbol resolution failed.",
+                broker_state="LOCAL_NOT_SUBMITTED",
+            )
+        # ADR-0023: never open exposure on the very contract of a carried leg the
+        # account audit excused. The broker would keep the two apart by product,
+        # but then one contract would carry both the operator's position and the
+        # runner's. Refused exactly like an unresolvable symbol: nothing is sent,
+        # and this one trade falls back to paper. Exits are never refused.
+        if opens_exposure and broker_symbol in getattr(
+            self.store, "declared_carried_symbols", frozenset()
+        ):
+            self.log.warning(
+                "REAL ORDER SKIPPED (declared carried leg) | %s %s sym=%s dhan=%s | this "
+                "contract is one of the operator's carried legs in the same account; "
+                "falling back to paper.",
+                self.strategy_name, side, broker_symbol, dhan_symbol,
+            )
+            return self._synthetic_order_result(
+                quantity,
+                OrderStatus.REJECTED,
+                "Order was not submitted because this contract is a declared carried "
+                "leg in the same broker account.",
                 broker_state="LOCAL_NOT_SUBMITTED",
             )
 
@@ -17360,10 +17502,14 @@ def format_trade_message(event: dict) -> str:
         )
         if reason:
             lines.append(f"Reason: {reason}")
-    elif action == "EXIT_FAILED":
+    elif action == "EXIT_FAILED" or action.startswith("GROUP_"):
+        # GROUP_* come from the position-group monitor: the reason IS the
+        # message (what triggered, what filled, what is still open).
         reason = html.escape(str(event.get("reason", "")))
         if reason:
             lines.append(f"Reason: {reason}")
+        if action.startswith("GROUP_") and event.get("pnl") is not None:
+            lines.append(f"Group P&amp;L: <b>{_format_inr(event['pnl'])}</b>")
 
     for leg in legs:
         symbol = html.escape(str(leg.get("symbol", "?")))
@@ -18386,7 +18532,84 @@ def _live_broker_login_ok(client: ExecutionClient, *, purpose: str) -> bool:
     return login_ok
 
 
-def _preload_and_audit_live_account(client: ExecutionClient) -> StartupExposureAudit:
+def _declared_carried_legs() -> tuple[dict[tuple[str, str], int] | None, str]:
+    """The carried legs the account audit may excuse, plus an evidence note.
+
+    Returns ``(None, "")`` when ``LIVE_TOLERATE_DECLARED_CARRIED_LEGS`` is off:
+    the audit then runs exactly as it always has.
+
+    Otherwise returns ``{(symbol, "NRML"): signed quantity}`` for every leg
+    that sits INSIDE A GROUP of the groups file, belongs to ``LIVE_BROKER`` and
+    is carried (NRML). Three things are deliberately left out:
+
+    * legs under ``unassigned`` -- ``algo.py group-legs`` puts whatever the
+      broker holds there automatically, so counting them would let a stray
+      position from a crashed session excuse itself after one command;
+    * MIS legs -- an intraday position is never a carried leg;
+    * everything, when the strategies themselves trade the carry product
+      (``<BROKER>_PRODUCT_TYPE=NORMAL``): a strategy order on the same strike
+      would then merge into the operator's position.
+
+    An empty mapping tolerates nothing, so every failure here fails closed.
+    The note ("" when there is nothing to say) says why the mapping is empty
+    and is fixed vocabulary, safe for a log line and a Telegram alert.
+    """
+
+    if not LIVE_TOLERATE_DECLARED_CARRIED_LEGS:
+        return None, ""
+    if LIVE_PRODUCT_TYPE != "INTRADAY":
+        return {}, "declared_legs=product_not_isolated"
+    try:
+        groups_module = importlib.import_module("Dependencies.position_groups")
+        config = groups_module.load_config(Path(GROUP_MONITOR_FILE))
+    except Exception:  # noqa: BLE001 - an unreadable file must tolerate nothing
+        logger.error(
+            "Declared carried legs could not be read from %s; none are tolerated.",
+            GROUP_MONITOR_FILE,
+        )
+        return {}, "declared_legs=unreadable"
+    declared: dict[tuple[str, str], int] = {}
+    for group in config.groups:
+        if group.broker != LIVE_BROKER:
+            continue
+        for leg in group.legs:
+            if leg.product == "NRML":
+                declared[(leg.symbol, "NRML")] = leg.quantity
+    return declared, ""
+
+
+def _audit_live_account(
+    client: ExecutionClient, store: SharedMarketDataStore | None = None
+) -> StartupExposureAudit:
+    """The ONE read-only check of the live broker account.
+
+    Four decisions rest on "is this account free of exposure the runner could
+    collide with?": arming live at startup, a dashboard paper-to-live
+    promotion, resuming entries after an ambiguous order, and the shutdown
+    warning. They all call this, so the rule for declared carried legs
+    (ADR-0023) cannot drift between them. A test asserts nothing else in this
+    file calls ``audit_startup_exposure``.
+
+    With a ``store``, the symbols of the declared legs are recorded on it for
+    the order path's collision guard.
+    """
+
+    declared, note = _declared_carried_legs()
+    if declared is None:
+        # Switch off: the historical call, argument for argument.
+        audit = audit_startup_exposure(client)
+    else:
+        audit = audit_startup_exposure(client, tolerated_positions=declared)
+    if note:
+        audit = replace(audit, evidence=(*audit.evidence, note))
+    if store is not None:
+        store.declared_carried_symbols = frozenset(symbol for symbol, _product in declared or {})
+    return audit
+
+
+def _preload_and_audit_live_account(
+    client: ExecutionClient, store: SharedMarketDataStore | None = None
+) -> StartupExposureAudit:
     """After a successful login: preload symbols, then audit both broker books.
 
     Shared by the startup gate and a dashboard paper-to-live promotion so the
@@ -18410,7 +18633,7 @@ def _preload_and_audit_live_account(client: ExecutionClient) -> StartupExposureA
         )
 
     try:
-        return audit_startup_exposure(client)
+        return _audit_live_account(client, store)
     except Exception:  # pragma: no cover - pure audit already catches broker failures.
         # This defensive boundary also uses fixed vocabulary: an SDK exception
         # can contain request headers or tokens and must never reach logs.
@@ -18514,7 +18737,7 @@ def _configure_startup_live_trading(
         )
         return 0, audit
 
-    audit = _preload_and_audit_live_account(client)
+    audit = _preload_and_audit_live_account(client, store)
     store.startup_exposure_audit = audit
     if not audit.safe_to_enable_live:
         store.execution_safety.freeze_entries(
@@ -18654,7 +18877,7 @@ def _live_promotion_refusal(
     if any_worker_live:
         return ""
 
-    audit = _preload_and_audit_live_account(client)
+    audit = _preload_and_audit_live_account(client, store)
     if not audit.safe_to_enable_live:
         return "Broker account not proven flat: " + (
             " ".join(audit.reasons) or "account state was indeterminate."
@@ -20115,6 +20338,209 @@ def _emit_supervisor_heartbeat(
     return now
 
 
+def _latest_dhan_instrument_master() -> Path | None:
+    """Newest ``all_instrument <date>.csv`` by modification time, or None."""
+
+    matches = glob.glob(INSTRUMENT_MASTER_GLOB)
+    return Path(max(matches, key=os.path.getmtime)) if matches else None
+
+
+def _position_group_broker_clients() -> dict[str, Any]:
+    """Broker name, as written in the groups file -> that broker's adapter client.
+
+    These are the SAME singletons ``LIVE_BROKER`` selects from, so when the
+    monitor's broker is also the live broker they share one session, one
+    order gate and one poison flag -- there is only one account behind them.
+    """
+
+    return {"ZERODHA": zerodha_execution_client, "MSTOCK": mstock_execution_client}
+
+
+def _build_position_group_monitor(
+    store: SharedMarketDataStore,
+    event_queue: queue.Queue | None,
+    *,
+    quote_broker: Any = None,
+    broker_clients: Mapping[str, Any] | None = None,
+) -> Any:
+    """Construct the optional position-group monitor.
+
+    Imported lazily so a disabled monitor costs nothing and a missing
+    dependency only disables the monitor. Each broker whose API key is in
+    ``.env`` is logged in NOW, on the main thread and in the open: an expired
+    token is reported at startup with an alert, not discovered at the moment
+    a target is hit (the monitor's own thread is never allowed to prompt). A
+    group on a broker that did not log in is then reported unmonitorable.
+
+    ``quote_broker`` is the Dhan market-data client; its option chain supplies
+    the bid/ask the monitor re-prices a group at before any order.
+    """
+
+    # importlib rather than `from Dependencies... import`: these modules import
+    # their siblings by BARE name (as the broker adapters do), and a static
+    # import here would make mypy see broker_contract under two module names --
+    # the clash the CI workflow's separate master mypy run exists to avoid.
+    monitor_module = importlib.import_module("Dependencies.position_group_monitor")
+    PositionGroupMonitor = monitor_module.PositionGroupMonitor
+    build_dhan_contract_index = monitor_module.build_dhan_contract_index
+
+    def alert(event: dict) -> None:
+        # Straight onto the notifier queue, like every runner (non-trade) alert:
+        # a monitor event is not a strategy trade and must not reach the books.
+        if event_queue is not None:
+            _put_runner_alert(event_queue, event, "a position-group alert")
+
+    clients: dict[str, Any] = {}
+    available = _position_group_broker_clients() if broker_clients is None else broker_clients
+    for name, client in available.items():
+        # A broker is "configured" when its API key is set; an unconfigured one
+        # is simply not this operator's broker and is skipped without noise.
+        if client is None or not _env_str(f"{name}_API_KEY", ""):
+            continue
+        try:
+            logged_in = client.ensure_logged_in() is True
+        except Exception:  # noqa: BLE001 - a login failure must only disable this broker
+            logged_in = False
+        if logged_in:
+            clients[name] = client
+            # Fetch the broker's contract list NOW. Nothing may start a
+            # multi-megabyte download at the moment a target is hit.
+            try:
+                preloaded = client.preload_scrip_master() is True
+            except Exception:  # noqa: BLE001 - the exit path does not depend on it
+                preloaded = False
+            if not preloaded:
+                logger.warning(
+                    "Position-group monitor: %s contract list did not load; groups are "
+                    "still watched (closing a leg does not need it).", name,
+                )
+            continue
+        logger.error(
+            "Position-group monitor: %s login failed; its groups are NOT watched this "
+            "session. Run 'python algo.py setup-broker-token --broker %s' and restart.",
+            name, name.lower(),
+        )
+        alert({
+            "action": "GROUP_BROKER_LOGIN_FAILED", "strategy": "Position Groups",
+            "direction": name, "mode": "LIVE", "ts": _ist_now().isoformat(timespec="seconds"),
+            "reason": f"{name} login failed; groups on it are NOT watched. Refresh the token and restart.",
+        })
+
+    def load_contract_index(underlyings):
+        path = _latest_dhan_instrument_master()
+        if path is None:
+            logger.error("Position-group monitor: no Dhan instrument master found; nothing can be priced.")
+            return {}
+        return build_dhan_contract_index(path, underlyings)
+
+    def subscribe(leg, contract) -> None:
+        store.register_option_subscription(
+            OptionSubscription(
+                security_id=contract.security_id,
+                exchange_segment=contract.segment,
+                trading_symbol=leg.symbol,
+                right=leg.right,
+                strike=leg.strike,
+                expiry=leg.expiry,
+                affects_feed_health=False,
+            ),
+            owner_id="position_group_monitor",
+        )
+
+    def unsubscribe(contract) -> None:
+        store.unregister_option_subscription(
+            contract.segment, contract.security_id, owner_id="position_group_monitor"
+        )
+
+    def read_ltp(contract) -> float:
+        return store.get_ltp_by_secid(
+            contract.segment,
+            contract.security_id,
+            0.0,
+            max_age_seconds=GROUP_MONITOR_MAX_LTP_AGE_SECONDS,
+        )
+
+    def read_quote(leg, contract) -> tuple[float, float]:
+        # The same /optionchain quote the spread gate reads (the tick feed
+        # carries no bid/ask). (0.0, 0.0) means "no quote", which the monitor
+        # treats as a reason NOT to send orders.
+        if quote_broker is None or not contract.underlying_security_id:
+            return (0.0, 0.0)
+        response = _fetch_option_chain_cached(
+            quote_broker,
+            contract.underlying_security_id,
+            contract.underlying_segment,
+            leg.expiry,
+        )
+        return _parse_option_chain_quote(response, leg.strike, leg.right)
+
+    return PositionGroupMonitor(
+        config_path=Path(GROUP_MONITOR_FILE),
+        state_path=Path(GROUP_MONITOR_STATE_FILE),
+        clients=clients,
+        contract_index_loader=load_contract_index,
+        subscribe=subscribe,
+        unsubscribe=unsubscribe,
+        read_ltp=read_ltp,
+        read_quote=read_quote,
+        alert=alert,
+        now=lambda: _ist_now().replace(tzinfo=None),
+        poll_seconds=GROUP_MONITOR_POLL_SECONDS,
+        confirm_ticks=GROUP_MONITOR_CONFIRM_TICKS,
+    )
+
+
+def _wait_for_position_group_monitor(monitor: Any, *, natural_eod: bool) -> None:
+    """Let the monitor watch until GROUP_MONITOR_STOP_TIME, then stop it.
+
+    Called after the strategies have finished (their 15:15 square-off), while
+    the market-data fetcher is still running. An interrupted session stops the
+    monitor at once. A square-off already in progress is allowed to finish.
+    """
+
+    if monitor is None:
+        return
+    if natural_eod:
+        logger.info(
+            "Strategies are done; the position-group monitor keeps watching until %s.",
+            GROUP_MONITOR_STOP_TIME.strftime("%H:%M"),
+        )
+        try:
+            while monitor.is_alive() and _ist_now().time() < GROUP_MONITOR_STOP_TIME:
+                monitor.join(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.warning("Interrupt received: stopping the position-group monitor.")
+    monitor.request_stop()
+    # A square-off may be mid-way through its orders, so a further Ctrl+C is
+    # ignored here (as the worker shutdown does) instead of abandoning it.
+    deadline = time.monotonic() + GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS
+    while monitor.is_alive() and time.monotonic() < deadline:
+        try:
+            monitor.join(timeout=max(0.0, min(1.0, deadline - time.monotonic())))
+        except KeyboardInterrupt:
+            logger.error(
+                "Interrupt ignored: the position-group monitor may be mid-square-off; "
+                "waiting up to %.0fs for it to finish.", GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS,
+            )
+    if monitor.is_alive():
+        logger.error(
+            "Position-group monitor did not stop within %.0fs; check %s for a group "
+            "left EXITING and the broker book by hand.",
+            GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS, GROUP_MONITOR_STATE_FILE,
+        )
+        return
+    # Only now that nothing can still be mid-order: close the broker sessions
+    # the monitor held (the end-of-day logout deliberately left them open).
+    for name, client in dict(getattr(monitor, "clients", {})).items():
+        if getattr(client, "is_logged_in", False) is not True:
+            continue
+        try:
+            client.logout()
+            logger.info("%s session logged out after the position-group monitor stopped.", name)
+        except Exception as exc:  # noqa: BLE001 - shutdown must not hinge on a logout
+            logger.warning("%s logout failed after the position-group monitor stopped: %s", name, exc)
+
+
 def _start_and_supervise_runtime_threads(
     fetcher: MarketDataFetcher,
     telegram_worker: TelegramMessageWorker | None,
@@ -20292,7 +20718,7 @@ def _advisory_account_audit(
         )
 
     try:
-        return audit_startup_exposure(client)
+        return _audit_live_account(client, store)
     except Exception:  # noqa: BLE001 - raw SDK text may contain credentials
         return StartupExposureAudit(
             safe_to_enable_live=False,
@@ -20441,6 +20867,7 @@ def _finalize_flat_session(
     *,
     trade_event_queue: queue.Queue | None,
     natural_eod: bool,
+    group_monitor: Any = None,
 ) -> SessionFinalizationOutcome:
     """Write results, logout, and refresh once the RUNNER's exposure is flat.
 
@@ -20473,7 +20900,21 @@ def _finalize_flat_session(
         _publish_eod_summary(workers, trade_event_queue)
         results_published = _update_pnl_google_sheet()
 
-    if client is not None and getattr(client, "is_logged_in", False) is True:
+    # The position-group monitor keeps watching until GROUP_MONITOR_STOP_TIME,
+    # after the strategies are done. If it closes positions through this very
+    # broker session, logging out here would cut it off; it logs the session
+    # out itself once it has stopped (_wait_for_position_group_monitor).
+    monitor_shares_session = (
+        group_monitor is not None
+        and group_monitor.is_alive()
+        and any(held is client for held in dict(getattr(group_monitor, "clients", {})).values())
+    )
+    if monitor_shares_session:
+        logger.info(
+            "%s execution session kept open: the position-group monitor is still using it.",
+            LIVE_BROKER,
+        )
+    elif client is not None and getattr(client, "is_logged_in", False) is True:
         try:
             client.logout()
             logger.info("%s execution session logged out after flat audit.", LIVE_BROKER)
@@ -20921,6 +21362,29 @@ def main() -> None:
     else:
         logger.info("Monitoring dashboard disabled (DASHBOARD_ENABLED=false).")
 
+    # -------------------------------------------------------------------------
+    # Optional position-group target monitor (real orders on carried positions).
+    # -------------------------------------------------------------------------
+    # Built after Telegram so its alerts have a queue, and started just before
+    # the fetcher: its first ticks simply see no fresh prices yet. A failure here
+    # disables the monitor only -- never the strategies.
+    group_monitor = None
+    if GROUP_MONITOR_ENABLED:
+        try:
+            group_monitor = _build_position_group_monitor(
+                store, trade_event_queue, quote_broker=broker
+            )
+            group_monitor.start()
+            logger.warning(
+                "Position-group monitor ENABLED (%s): groups reaching their target are "
+                "squared off with REAL orders.", GROUP_MONITOR_FILE,
+            )
+        except Exception:  # noqa: BLE001 - an optional monitor must never stop a session
+            group_monitor = None
+            logger.exception("Could not start the position-group monitor; continuing without it.")
+    else:
+        logger.info("Position-group monitor disabled (GROUP_MONITOR_ENABLED=false).")
+
     natural_eod = _start_and_supervise_runtime_threads(
         fetcher,
         telegram_worker,
@@ -20948,6 +21412,7 @@ def main() -> None:
         execution_client,
         trade_event_queue=trade_event_queue,
         natural_eod=natural_eod,
+        group_monitor=group_monitor,
     )
     while not finalization:
         _wait_for_shutdown_account_flat(
@@ -20961,6 +21426,7 @@ def main() -> None:
             execution_client,
             trade_event_queue=trade_event_queue,
             natural_eod=natural_eod,
+            group_monitor=group_monitor,
         )
 
     # Every runner-owned book is proven flat, so open positions must not resume.
@@ -20984,6 +21450,13 @@ def main() -> None:
         session_state, finalization, natural_eod=natural_eod
     )
 
+    # The position-group monitor outlives the strategies (it watches carried
+    # positions until GROUP_MONITOR_STOP_TIME) but needs the fetcher and the
+    # notifier, so it is waited for AFTER the unchanged end-of-day sequence above
+    # and BEFORE they are released -- and before the dashboard, so the page stays
+    # up for as long as anything in this process can still place an order.
+    _wait_for_position_group_monitor(group_monitor, natural_eod=natural_eod)
+
     # Stopped only NOW: the flatten, the broker-confirmed-flat wait, the
     # finalization, the Google Sheet write and mark_clean_shutdown have all
     # already run, so the dashboard cannot have delayed any of them -- and the
@@ -21006,7 +21479,7 @@ def main() -> None:
     if telegram_worker is not None:
         telegram_worker.join(timeout=SHUTDOWN_JOIN_SECONDS)
 
-    supervised_threads = [fetcher, telegram_worker, *workers]
+    supervised_threads = [fetcher, telegram_worker, group_monitor, *workers]
     alive_threads = [
         thread.name for thread in supervised_threads if thread is not None and thread.is_alive()
     ]

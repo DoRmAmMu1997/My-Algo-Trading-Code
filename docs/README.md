@@ -59,7 +59,7 @@ component folder's own `Readme.md`.
 | [0010](adr/0010-tests-in-a-mirrored-tests-tree.md) | Tests consolidated into a mirrored top-level `Tests/` tree |
 | [0011](adr/0011-committed-docs-untracked-superpowers.md) | Committed `docs/` set; Superpowers workspace untracked |
 | [0012](adr/0012-crash-durable-session-state.md) | Per-trade P&L and open positions persisted during the session |
-| [0013](adr/0013-codeql-false-positive-triage.md) | Five CodeQL alerts dismissed as false positives, not patched |
+| [0013](adr/0013-codeql-false-positive-triage.md) | Five CodeQL alerts dismissed as false positives, not patched (addendum: a sixth, Zerodha's mandated login checksum) |
 | [0014](adr/0014-tiered-rename-of-spaced-filenames.md) | Spaced filenames renamed in reviewable tiers, master last (supersedes 0009) |
 | [0015](adr/0015-rolling-relative-strike-expired-options.md) | Expired-options history kept in rolling relative-strike form, expiry date derived |
 | [0016](adr/0016-read-only-loopback-monitoring-dashboard.md) | A read-only loopback dashboard, served by the runner itself |
@@ -68,6 +68,8 @@ component folder's own `Readme.md`.
 | [0019](adr/0019-cpr-ai-trend-day-rider.md) | CPR AI trades the Trend-Day Rider: a backtested gate that Codex may only veto |
 | [0020](adr/0020-a-second-index-on-the-monitoring-chart.md) | The chart gains a NIFTY/BankNIFTY switch, a chart-only indicator menu and hand-drawn S/R: an instrument dimension in the store, the feed-health gate pinned to the primary, browser-side indicator maths kept honest by a node drift test, and drawings in localStorage because the server is GET-only |
 | [0021](adr/0021-dashboard-live-mode-toggle.md) | An opt-in per-strategy LIVE/PAPER toggle on the dashboard: one guarded POST that only queues a request, a runtime twin of the startup live gate, and only the worker's own thread changes its mode, only while flat |
+| [0022](adr/0022-position-group-target-monitor.md) | An opt-in thread squares off groups of hand-carried Zerodha/mStock option-selling legs at a rupee target: an operator-owned groups file, prices from the Dhan feed exempt from the feed-health gate, a bid/ask re-check and a broker-book pre-check before any order, shorts closed first, no blind retries, its own single live switch -- and Zerodha/mStock as ordinary adapters that are also `LIVE_BROKER` choices |
+| [0023](adr/0023-account-audit-tolerates-declared-carried-legs.md) | An opt-in switch lets the flat-account audit excuse carried legs the operator declared in a group of the groups file: exact symbol/NRML/quantity match only, strategies must trade INTRADAY, every failure tolerates nothing, one helper behind all four account checks, and no live entry on a declared contract |
 
 ## Keeping these documents honest
 

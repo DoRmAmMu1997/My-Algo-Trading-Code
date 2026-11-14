@@ -101,6 +101,11 @@ files = [
     "Dependencies/session_state.py",
     "Dependencies/trading_lifecycle.py",
     "Dependencies/dhan_token_setup.py",
+    # The position-group monitor, its file model and its two CLIs.
+    "Dependencies/position_broker_token_setup.py",
+    "Dependencies/position_groups.py",
+    "Dependencies/position_groups_cli.py",
+    "Dependencies/position_group_monitor.py",
     # Added 2026-09-02. Nothing imports this script, so unlike every other
     # module here it was never reached transitively either -- a canary type
     # error planted in it escaped the gate entirely. It decides whether the
@@ -115,6 +120,10 @@ files = [
     "Dependencies/Flattrade API/diagnose_flattrade_symbol.py",
     "Dependencies/Dhan API/dhan_execution.py",
     "Dependencies/Dhan API/diagnose_dhan_symbol.py",
+    "Dependencies/Zerodha API/zerodha_execution.py",
+    "Dependencies/Zerodha API/diagnose_zerodha_symbol.py",
+    "Dependencies/Mstock API/mstock_execution.py",
+    "Dependencies/Mstock API/diagnose_mstock_symbol.py",
     "Signal Generators/ema_trend_strategy_logic.py",
     "Signal Generators/heikin_ashi_strategy_logic.py",
     "Signal Generators/renko_strategy_logic.py",

@@ -3348,6 +3348,8 @@ class TestSelectExecutionClient(unittest.TestCase):
             "shoonya_execution_client": "SHOONYA-CLIENT",
             "flattrade_execution_client": "FLATTRADE-CLIENT",
             "dhan_execution_client": "DHAN-CLIENT",
+            "zerodha_execution_client": "ZERODHA-CLIENT",
+            "mstock_execution_client": "MSTOCK-CLIENT",
         }
         defaults.update(clients)
         with ExitStack() as stack:
@@ -3363,6 +3365,8 @@ class TestSelectExecutionClient(unittest.TestCase):
             "SHOONYA": ("SHOONYA-CLIENT", "NFO"),
             "FLATTRADE": ("FLATTRADE-CLIENT", "NFO"),
             "DHAN": ("DHAN-CLIENT", "NSE_FNO"),
+            "ZERODHA": ("ZERODHA-CLIENT", "NFO"),
+            "MSTOCK": ("MSTOCK-CLIENT", "NFO"),
         }
         for broker, (client, segment) in expected.items():
             with self.subTest(broker=broker), patch.dict(os.environ, {}, clear=False):
@@ -3382,7 +3386,9 @@ class TestSelectExecutionClient(unittest.TestCase):
         self.assertEqual(product, "NORMAL")
 
     def test_unknown_broker_fails_closed(self):
-        for broker in ("ZERODHA", "", "dhann", None):
+        # "ZERODHAA" and "M-STOCK" are near-misses of real choices: a typo must
+        # disable live trading, never fall through to a similarly named broker.
+        for broker in ("UPSTOX", "ZERODHAA", "M-STOCK", "", "dhann", None):
             with self.subTest(broker=broker):
                 self.assertEqual(
                     self._select(broker),
@@ -7315,6 +7321,50 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(fake.calls, [])          # never attempted an order
         self.assertTrue(self.worker.pos.active)   # recorded as paper
 
+    def _carried_symbol(self):
+        """The broker symbol the fake resolves this worker's ATM contract to."""
+        return f"SHOONYA-{master_file.UNDERLYING}-22500-CE"
+
+    def test_entry_on_a_declared_carried_contract_sends_no_order(self):
+        """ADR-0023: the runner never opens exposure on the very contract of a
+        carried leg the account audit excused. Nothing is sent; this one trade
+        falls back to paper, exactly like an unresolvable symbol."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        self.store.declared_carried_symbols = frozenset({self._carried_symbol()})
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        self.assertTrue(ok)
+        self.assertEqual(fake.calls, [])          # never attempted an order
+        self.assertTrue(self.worker.pos.active)   # recorded as paper
+        # A refusal is not an ambiguous order: nothing is frozen.
+        self.assertFalse(self.worker._live_execution_frozen)
+        self.assertFalse(self.store.execution_safety.entry_freeze_snapshot()[0])
+
+    def test_a_declared_carried_leg_on_another_contract_does_not_block_the_entry(self):
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        self.store.declared_carried_symbols = frozenset({"SHOONYA-NIFTY-23000-PE"})
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        self.assertTrue(ok)
+        self.assertEqual(self._sides(fake), [("BUY", 50 * self.worker.lots)])
+
+    def test_a_live_exit_is_never_refused_by_the_carried_leg_guard(self):
+        """The guard stops NEW exposure only. A live position the runner already
+        holds must stay closable even if its contract is declared afterwards."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", fake):
+            self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            self.store.declared_carried_symbols = frozenset({self._carried_symbol()})
+            self.worker.exit_position("TEST_EXIT")
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 50 * self.worker.lots), ("SELL", 50 * self.worker.lots)],
+        )
+        self.assertFalse(self.worker.pos.active)
+
     def test_failed_live_exit_keeps_position_open(self):
         """A failed/unconfirmed LIVE exit must NOT flatten - the real position is
         still open, so we keep it active for retry rather than going flat."""
@@ -9183,6 +9233,19 @@ class TestFlattradeMasterIntegration(unittest.TestCase):
             )
         self.assertIs(client, master_file.flattrade_execution_client)
         self.assertEqual((exchange, product), ("NFO", "NORMAL"))
+
+    def test_master_selector_routes_zerodha_and_mstock(self):
+        for broker, attribute, env_key in (
+            ("ZERODHA", "zerodha_execution_client", "ZERODHA_PRODUCT_TYPE"),
+            ("MSTOCK", "mstock_execution_client", "MSTOCK_PRODUCT_TYPE"),
+        ):
+            with self.subTest(broker=broker), patch.dict(os.environ, {env_key: "NORMAL"}, clear=False):
+                client, exchange, product = master_file._select_execution_client(broker.lower())
+                self.assertIs(client, getattr(master_file, attribute))
+                self.assertIsNotNone(client)
+                self.assertEqual((exchange, product), ("NFO", "NORMAL"))
+                # Selectable as LIVE_BROKER means the whole shared contract.
+                self.assertIsInstance(client, master_file.ExecutionClient)
 
     def test_master_selector_fails_closed_for_unknown_broker(self):
         self.assertTrue(hasattr(master_file, "_select_execution_client"))
@@ -14455,6 +14518,256 @@ class TestSecondaryInstrumentFeed(unittest.TestCase):
         self.assertIn("banknifty", str(wanted[master_file.SECONDARY_INSTRUMENT]).lower())
 
 
+class TestPositionGroupMonitorWiring(unittest.TestCase):
+    """The optional position-group monitor's touch points in the master.
+
+    The monitor itself is tested in Tests/Dependencies/test_position_group_monitor.py;
+    these cases pin how the master hosts it, above all that its watched legs can
+    never reach the feed-health gate that drives the 30-second liquidation.
+    """
+
+    def _sub(self, security_id=49081, *, health=True):
+        return master_file.OptionSubscription(
+            security_id=security_id, exchange_segment="NSE_FNO", trading_symbol="OPT",
+            right="CE", strike=24500.0, expiry=date.today() + timedelta(days=30),
+            affects_feed_health=health,
+        )
+
+    def test_subscription_defaults_to_health_gated(self):
+        sub = master_file.OptionSubscription(
+            security_id=1, exchange_segment="NSE_FNO", trading_symbol="X",
+            right="CE", strike=1.0, expiry=None,
+        )
+        self.assertTrue(sub.affects_feed_health)
+
+    def test_shared_contract_stays_gated_while_a_worker_holds_it(self):
+        store = master_file.SharedMarketDataStore()
+        store.register_option_subscription(self._sub(), owner_id="WORKER")
+        store.register_option_subscription(self._sub(health=False), owner_id="position_group_monitor")
+        (snapshot,) = store.snapshot_option_subscriptions()
+        self.assertTrue(snapshot.affects_feed_health)
+        store.unregister_option_subscription("NSE_FNO", 49081, owner_id="WORKER")
+        (snapshot,) = store.snapshot_option_subscriptions()
+        self.assertFalse(snapshot.affects_feed_health)
+        # Registering the worker again, after the monitor, gates it again.
+        store.register_option_subscription(self._sub(), owner_id="WORKER")
+        (snapshot,) = store.snapshot_option_subscriptions()
+        self.assertTrue(snapshot.affects_feed_health)
+
+    def test_rest_producer_fetches_watched_legs_but_does_not_require_them(self):
+        store = master_file.SharedMarketDataStore()
+        broker = MagicMock()
+        broker.fetch_ltp_map.return_value = {}
+        fetcher = master_file.CentralMarketDataFetcher(
+            store=store, stop_event=threading.Event(), broker=broker
+        )
+        store.register_option_subscription(self._sub(1), owner_id="WORKER")
+        store.register_option_subscription(self._sub(2, health=False), owner_id="position_group_monitor")
+        required = fetcher.refresh_index_and_option_ltps()
+        requested = broker.fetch_ltp_map.call_args[0][0]
+        self.assertCountEqual(requested["NSE_FNO"], [1, 2])
+        self.assertIn(("NSE_FNO", 1), required)
+        self.assertNotIn(("NSE_FNO", 2), required)
+
+    def test_websocket_producer_touches_watched_legs_but_does_not_require_them(self):
+        store = master_file.SharedMarketDataStore()
+        fetcher = master_file.WebSocketMarketDataFetcher(
+            store=store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        store.register_option_subscription(self._sub(2, health=False), owner_id="position_group_monitor")
+        index_key = (master_file.NIFTY_INDEX_EXCHANGE_SEGMENT, master_file.NIFTY_INDEX_SECURITY_ID)
+        store.touch_ltp_freshness = MagicMock()
+        store.record_market_data_refresh = MagicMock(return_value=MagicMock(reasons=[]))
+        fetcher._confirmed_keys = {index_key, ("NSE_FNO", 2)}
+        fetcher._last_packet_monotonic = time.monotonic()
+        fetcher._record_health_if_due()
+        store.touch_ltp_freshness.assert_called_once_with({index_key, ("NSE_FNO", 2)})
+        self.assertEqual(
+            store.record_market_data_refresh.call_args[1]["required_ltp_keys"], {index_key}
+        )
+
+    @staticmethod
+    def _fake_client(*, logs_in, master_loads=True):
+        client = MagicMock()
+        client.ensure_logged_in.return_value = logs_in
+        client.preload_scrip_master.return_value = master_loads
+        client.is_logged_in = logs_in
+        return client
+
+    def _build(self, store, events, broker_clients, quote_broker=None):
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            master_file, "GROUP_MONITOR_STATE_FILE", str(Path(folder) / "s.json")
+        ):
+            return master_file._build_position_group_monitor(
+                store, events, quote_broker=quote_broker, broker_clients=broker_clients
+            )
+
+    def test_builder_logs_in_configured_brokers_and_alerts_on_failure(self):
+        store = master_file.SharedMarketDataStore()
+        events = master_file.queue.Queue()
+        good = self._fake_client(logs_in=True)
+        with patch.dict(os.environ, {"FAKE_API_KEY": "k"}):
+            failed = self._build(store, events, {"FAKE": self._fake_client(logs_in=False)})
+            ok = self._build(store, events, {"FAKE": good})
+        self.assertEqual(dict(failed.clients), {})
+        self.assertEqual(list(ok.clients), ["FAKE"])
+        self.assertEqual(events.get_nowait()["action"], "GROUP_BROKER_LOGIN_FAILED")
+        self.assertTrue(events.empty())
+        # The contract list is fetched at startup, never when a target is hit.
+        good.preload_scrip_master.assert_called_once()
+
+    def test_builder_keeps_a_broker_whose_contract_list_did_not_load(self):
+        # Closing a carried leg needs the position book, not the contract list.
+        client = self._fake_client(logs_in=True, master_loads=False)
+        with patch.dict(os.environ, {"FAKE_API_KEY": "k"}):
+            monitor = self._build(master_file.SharedMarketDataStore(), None, {"FAKE": client})
+        self.assertEqual(list(monitor.clients), ["FAKE"])
+
+    def test_builder_survives_a_login_that_raises(self):
+        client = self._fake_client(logs_in=True)
+        client.ensure_logged_in.side_effect = RuntimeError("sdk blew up")
+        with patch.dict(os.environ, {"FAKE_API_KEY": "k"}):
+            monitor = self._build(master_file.SharedMarketDataStore(), None, {"FAKE": client})
+        self.assertEqual(dict(monitor.clients), {})
+
+    def test_monitor_brokers_are_the_live_broker_singletons(self):
+        # One account, one session: when the monitor's broker is also
+        # LIVE_BROKER they must be the very same client object.
+        clients = master_file._position_group_broker_clients()
+        self.assertIs(clients["ZERODHA"], master_file.zerodha_execution_client)
+        self.assertIs(clients["MSTOCK"], master_file.mstock_execution_client)
+        self.assertIsNotNone(clients["ZERODHA"])
+        self.assertIsNotNone(clients["MSTOCK"])
+
+    def test_builder_reads_the_bid_ask_from_the_dhan_option_chain(self):
+        quote_broker = MagicMock()
+        quote_broker.fetch_option_chain.return_value = {
+            "status": "success",
+            "data": {"oc": {"24500.000000": {"ce": {"top_bid_price": 88.5, "top_ask_price": 90.0}}}},
+        }
+        monitor = self._build(master_file.SharedMarketDataStore(), None, {}, quote_broker)
+        leg = SimpleNamespace(symbol="S", right="CE", strike=24500.0, expiry=date(2031, 1, 30))
+        contract = SimpleNamespace(
+            segment="NSE_FNO", security_id=777, underlying_security_id=13, underlying_segment="IDX_I"
+        )
+        self.assertEqual(monitor._read_quote(leg, contract), (88.5, 90.0))
+        quote_broker.fetch_option_chain.assert_called_once_with(13, "IDX_I", date(2031, 1, 30))
+        # No underlying id (a contract the Dhan list could not place): no quote.
+        orphan = SimpleNamespace(
+            segment="NSE_FNO", security_id=778, underlying_security_id=0, underlying_segment=""
+        )
+        self.assertEqual(monitor._read_quote(leg, orphan), (0.0, 0.0))
+
+    def test_end_of_day_logout_spares_a_session_the_monitor_still_uses(self):
+        shared = MagicMock()
+        shared.is_logged_in = True
+        monitor = MagicMock()
+        monitor.is_alive.return_value = True
+        monitor.clients = {"ZERODHA": shared}
+        store = master_file.SharedMarketDataStore()
+        flat = master_file.StartupExposureAudit(True, (), ())
+        with patch.object(master_file, "_runner_exposure_audit", return_value=flat), patch.object(
+            master_file, "_warn_if_account_not_flat"
+        ), patch.object(master_file, "_refresh_instrument_master_for_next_day"):
+            master_file._finalize_flat_session(
+                [], store, shared, trade_event_queue=None, natural_eod=False, group_monitor=monitor
+            )
+            shared.logout.assert_not_called()
+            # Without a monitor (or once it has stopped) the logout happens as before.
+            master_file._finalize_flat_session(
+                [], store, shared, trade_event_queue=None, natural_eod=False
+            )
+            shared.logout.assert_called_once()
+
+    def test_monitor_sessions_are_logged_out_once_it_has_stopped(self):
+        client = MagicMock()
+        client.is_logged_in = True
+        monitor = MagicMock()
+        monitor.is_alive.side_effect = [True, False, False]
+        monitor.clients = {"ZERODHA": client}
+        master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        client.logout.assert_called_once()
+
+    def test_a_monitor_that_will_not_stop_keeps_its_session(self):
+        # It may be mid-order: pulling the session away could strand an exit.
+        client = MagicMock()
+        client.is_logged_in = True
+        monitor = MagicMock()
+        monitor.is_alive.return_value = True
+        monitor.clients = {"ZERODHA": client}
+        with patch.object(master_file, "GROUP_MONITOR_SHUTDOWN_JOIN_SECONDS", 0.05):
+            master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        client.logout.assert_not_called()
+
+    def test_builder_skips_brokers_without_an_api_key(self):
+        client = self._fake_client(logs_in=True)
+        with patch.dict(os.environ, {"FAKE_API_KEY": ""}):
+            monitor = self._build(master_file.SharedMarketDataStore(), None, {"FAKE": client})
+        client.ensure_logged_in.assert_not_called()
+        self.assertEqual(dict(monitor.clients), {})
+
+    def test_builder_subscribes_legs_exempt_from_feed_health(self):
+        store = master_file.SharedMarketDataStore()
+        monitor = self._build(store, None, {})
+        leg = SimpleNamespace(symbol="S", right="CE", strike=24500.0, expiry=date(2026, 11, 26))
+        contract = SimpleNamespace(segment="NSE_FNO", security_id=777)
+        monitor._subscribe(leg, contract)
+        (sub,) = store.snapshot_option_subscriptions()
+        self.assertEqual(sub.security_id, 777)
+        self.assertFalse(sub.affects_feed_health)
+        store.update_ltp_map({("NSE_FNO", 777): 12.5})
+        self.assertEqual(monitor._read_ltp(contract), 12.5)
+
+    def test_interrupted_session_stops_the_monitor_at_once(self):
+        monitor = MagicMock()
+        monitor.is_alive.side_effect = [True, False, False]
+        master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        monitor.request_stop.assert_called_once()
+        monitor.join.assert_called_once()
+
+    def test_ctrl_c_during_the_final_join_lets_a_square_off_finish(self):
+        monitor = MagicMock()
+        monitor.is_alive.side_effect = [True, True, False, False]
+        monitor.join.side_effect = [KeyboardInterrupt, None]
+        master_file._wait_for_position_group_monitor(monitor, natural_eod=False)
+        self.assertEqual(monitor.join.call_count, 2)
+
+    def test_builder_unsubscribe_releases_the_leg(self):
+        store = master_file.SharedMarketDataStore()
+        monitor = self._build(store, None, {})
+        leg = SimpleNamespace(symbol="S", right="CE", strike=24500.0, expiry=date(2026, 11, 26))
+        contract = SimpleNamespace(segment="NSE_FNO", security_id=777)
+        monitor._subscribe(leg, contract)
+        monitor._unsubscribe(contract)
+        self.assertEqual(store.snapshot_option_subscriptions(), [])
+
+    def test_natural_end_keeps_watching_until_the_stop_time(self):
+        monitor = MagicMock()
+        # Alive until it has been joined twice inside the watch loop, i.e. the
+        # monitor ended on its own while the master was still waiting.
+        monitor.is_alive.side_effect = lambda: monitor.join.call_count < 2
+        before_stop = datetime(2026, 10, 23, 15, 20, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=before_stop):
+            master_file._wait_for_position_group_monitor(monitor, natural_eod=True)
+        self.assertGreaterEqual(monitor.join.call_count, 2)
+        monitor.request_stop.assert_called_once()
+
+    def test_wait_is_a_no_op_without_a_monitor(self):
+        master_file._wait_for_position_group_monitor(None, natural_eod=True)
+
+    def test_group_alerts_render_reason_and_pnl(self):
+        text = master_file.format_trade_message({
+            "action": "GROUP_EXIT_FAILED", "strategy": "Position Groups", "direction": "Nov IC",
+            "reason": "stopped at BUY 75 X: REJECTED", "pnl": 15100.0, "mode": "LIVE", "ts": "t",
+        })
+        self.assertIn("stopped at BUY 75 X", text)
+        self.assertIn("Group P&amp;L", text)
+
+    def test_monitor_is_off_by_default_in_the_template(self):
+        template = (REPO_ROOT / "Dependencies" / "env.example").read_text(encoding="utf-8")
+        self.assertIn("\nGROUP_MONITOR_ENABLED=false", template)
+
+
 class TestDashboardLiveModeToggle(unittest.TestCase):
     """ADR-0021: the dashboard may REQUEST a mode change; only the worker applies it.
 
@@ -14731,3 +15044,295 @@ class TestDashboardLiveModeToggle(unittest.TestCase):
         )
         self.assertEqual(view["requested_mode"], "LIVE")
         self.assertEqual(view["toggle_status"], "PENDING")
+
+
+class TestDeclaredCarriedLegs(unittest.TestCase):
+    """ADR-0023: the account audit may excuse carried legs the operator declared.
+
+    ``LIVE_TOLERATE_DECLARED_CARRIED_LEGS`` lets live trading arm while multi-week
+    option positions sit in the SAME broker account, provided each one is listed
+    inside a group of the position-groups file. These tests pin which legs count
+    as declared, that every failure tolerates nothing, and that all four account
+    checks (startup, dashboard promotion, resume after a freeze, the shutdown
+    warning) go through one helper.
+    """
+
+    CARRIED = "NIFTY25N2724500CE"
+
+    class _Books:
+        """A logged-in broker whose two books are fixed. It can place nothing."""
+
+        is_logged_in = True
+
+        def __init__(self, positions=(), orders=()):
+            self._positions = tuple(positions)
+            self._orders = tuple(orders)
+
+        def list_open_orders(self):
+            return BrokerQueryResult.success(self._orders)
+
+        def list_open_positions(self):
+            return BrokerQueryResult.success(self._positions)
+
+    @classmethod
+    def _position(cls, symbol=None, quantity=-75, product="NRML"):
+        from Dependencies.broker_contract import OpenPosition
+
+        return OpenPosition(symbol or cls.CARRIED, quantity, product)
+
+    @staticmethod
+    def _leg(symbol, *, quantity=-75, product="NRML", **extra):
+        return {
+            "symbol": symbol, "exchange": "NFO", "product": product,
+            "quantity": quantity, "entry_price": 120.5, "underlying": "NIFTY",
+            "expiry": "2025-11-27", "strike": 24500, "right": "CE", **extra,
+        }
+
+    @classmethod
+    def _document_text(cls):
+        """A groups file with one leg of every kind the rule must tell apart."""
+        return json.dumps({
+            "schema_version": 1,
+            "groups": [
+                {
+                    "name": "Zerodha condor", "broker": "ZERODHA", "target": 15000,
+                    "legs": [
+                        cls._leg(cls.CARRIED),                                     # declared
+                        cls._leg("NIFTY25N2725000CE", quantity=75, product="MIS"),  # intraday
+                    ],
+                },
+                {
+                    "name": "mStock strangle", "broker": "MSTOCK", "target": 9000,
+                    "legs": [cls._leg("NIFTY25N2723500PE")],                       # other broker
+                },
+            ],
+            # `algo.py group-legs` parks whatever the broker holds here.
+            "unassigned": [cls._leg("NIFTY25N2723000PE", broker="ZERODHA")],
+        })
+
+    _DEFAULT = object()
+
+    @contextmanager
+    def _switched_on(self, file_text=_DEFAULT, *, broker="ZERODHA", product="INTRADAY"):
+        """Switch the tolerance on against a temporary groups file.
+
+        ``file_text=None`` leaves the file missing.
+        """
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+            path = Path(folder) / "position_groups.json"
+            if file_text is self._DEFAULT:
+                file_text = self._document_text()
+            if file_text is not None:
+                path.write_text(file_text, encoding="utf-8")
+            for name, value in (
+                ("LIVE_TOLERATE_DECLARED_CARRIED_LEGS", True),
+                ("GROUP_MONITOR_FILE", str(path)),
+                ("LIVE_BROKER", broker),
+                ("LIVE_PRODUCT_TYPE", product),
+            ):
+                stack.enter_context(patch.object(master_file, name, value))
+            yield
+
+    # ---- the switch -------------------------------------------------------
+
+    def test_the_switch_ships_off(self):
+        root = Path(master_file.ROOT_DIR)
+        source = (root / "nifty_multi_strategy_master.py").read_text(encoding="utf-8")
+        self.assertIn('_env_bool("LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False)', source)
+        template = (root / "Dependencies" / "env.example").read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in template.splitlines()
+                if line.startswith("LIVE_TOLERATE_DECLARED_CARRIED_LEGS")
+            ],
+            ["LIVE_TOLERATE_DECLARED_CARRIED_LEGS=false"],
+        )
+
+    def test_switch_off_makes_the_historical_audit_call(self):
+        """Off must mean UNCHANGED: the same call, argument for argument."""
+        client = self._Books([self._position()])
+        store = master_file.SharedMarketDataStore()
+        store.declared_carried_symbols = frozenset({"LEFT-OVER"})
+        verdict = master_file.StartupExposureAudit(
+            safe_to_enable_live=True, reasons=(), evidence=("relevant_positions=0",)
+        )
+        with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False), \
+                patch.object(master_file, "audit_startup_exposure", return_value=verdict) as audit:
+            self.assertEqual(master_file._declared_carried_legs(), (None, ""))
+            result = master_file._audit_live_account(client, store)
+        audit.assert_called_once_with(client)
+        self.assertIs(result, verdict)
+        self.assertEqual(store.declared_carried_symbols, frozenset())
+
+    # ---- which legs count as declared ------------------------------------
+
+    def test_only_grouped_carry_legs_of_the_live_broker_are_declared(self):
+        with self._switched_on():
+            declared, note = master_file._declared_carried_legs()
+        self.assertEqual(declared, {(self.CARRIED, "NRML"): -75})
+        self.assertEqual(note, "")
+
+    def test_groups_follow_the_live_broker(self):
+        with self._switched_on(broker="MSTOCK"):
+            declared, _note = master_file._declared_carried_legs()
+        self.assertEqual(declared, {("NIFTY25N2723500PE", "NRML"): -75})
+        with self._switched_on(broker="KOTAK"):
+            self.assertEqual(master_file._declared_carried_legs(), ({}, ""))
+
+    def test_strategies_trading_the_carry_product_tolerate_nothing(self):
+        """A strategy order in NRML would MERGE into the operator's position."""
+        with self._switched_on(product="NORMAL"):
+            self.assertEqual(
+                master_file._declared_carried_legs(),
+                ({}, "declared_legs=product_not_isolated"),
+            )
+
+    def test_an_unreadable_groups_file_tolerates_nothing(self):
+        broken = (
+            "{not json",
+            json.dumps([]),
+            json.dumps({"schema_version": 99, "groups": [], "unassigned": []}),
+        )
+        for text in broken:
+            with self.subTest(text=text), self._switched_on(text):
+                self.assertEqual(
+                    master_file._declared_carried_legs(),
+                    ({}, "declared_legs=unreadable"),
+                )
+
+    def test_a_missing_groups_file_declares_nothing(self):
+        with self._switched_on(None):
+            self.assertEqual(master_file._declared_carried_legs(), ({}, ""))
+
+    # ---- the one account check -------------------------------------------
+
+    def test_a_declared_leg_passes_the_audit_and_is_remembered_for_the_order_path(self):
+        store = master_file.SharedMarketDataStore()
+        client = self._Books([self._position()])
+        with self._switched_on():
+            audit = master_file._audit_live_account(client, store)
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertIn("declared_carried_positions=1", audit.evidence)
+        self.assertEqual(store.declared_carried_symbols, frozenset({self.CARRIED}))
+
+    def test_the_same_books_block_live_with_the_switch_off(self):
+        client = self._Books([self._position()])
+        with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False):
+            audit = master_file._audit_live_account(client)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_an_undeclared_position_beside_a_declared_one_still_blocks_live(self):
+        client = self._Books([self._position(), self._position("NIFTY25N2724000PE")])
+        with self._switched_on():
+            audit = master_file._audit_live_account(client)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_a_leg_that_is_only_unassigned_still_blocks_live(self):
+        """One `group-legs` run must not let a stray position excuse itself."""
+        client = self._Books([self._position("NIFTY25N2723000PE")])
+        with self._switched_on():
+            audit = master_file._audit_live_account(client)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_why_nothing_was_tolerated_reaches_the_evidence(self):
+        store = master_file.SharedMarketDataStore()
+        client = self._Books([self._position()])
+        with self._switched_on(product="NORMAL"):
+            audit = master_file._audit_live_account(client, store)
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertEqual(audit.evidence[-1], "declared_legs=product_not_isolated")
+        self.assertEqual(store.declared_carried_symbols, frozenset())
+
+    # ---- all four decisions use it ---------------------------------------
+
+    @staticmethod
+    def _calls_by_function(called_name):
+        """{function name: [call nodes]} for every call to ``called_name`` in the runner."""
+        import ast
+
+        root = Path(master_file.ROOT_DIR)
+        tree = ast.parse((root / "nifty_multi_strategy_master.py").read_text(encoding="utf-8"))
+        found = {}
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == called_name
+                ):
+                    found.setdefault(function.name, []).append(node)
+        return found
+
+    def test_no_account_audit_in_the_runner_bypasses_the_helper(self):
+        """A fifth call site that forgot the tolerance (or applied its own) fails here."""
+        self.assertEqual(
+            list(self._calls_by_function("audit_startup_exposure")), ["_audit_live_account"]
+        )
+
+    def test_all_four_decisions_reach_the_helper_and_hand_over_the_store(self):
+        """Without the store the order path's collision guard would see no legs."""
+        direct = self._calls_by_function("_audit_live_account")
+        self.assertEqual(
+            set(direct),
+            {
+                "_try_unfreeze_after_flat_reconciliation",   # resume after a freeze
+                "_preload_and_audit_live_account",           # startup + promotion
+                "_advisory_account_audit",                   # shutdown warning
+            },
+        )
+        through_preload = self._calls_by_function("_preload_and_audit_live_account")
+        self.assertEqual(
+            set(through_preload), {"_configure_startup_live_trading", "_live_promotion_refusal"}
+        )
+        for calls in (*direct.values(), *through_preload.values()):
+            for call in calls:
+                self.assertEqual(len(call.args), 2, "client AND store must be passed")
+
+    def test_startup_arms_live_beside_a_declared_leg(self):
+        workers = [TestStartupLiveExposureWiring._Worker("Renko")]
+        store = master_file.SharedMarketDataStore()
+        client = TestStartupLiveExposureWiring._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success((self._position(),)),
+        )
+
+        def live_env(name, default=False):
+            del default
+            return name == "RENKO_LIVE_TRADING"
+
+        with self._switched_on(), patch.object(master_file, "_env_bool", side_effect=live_env):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers, store, master_live=True, client=client
+            )
+        self.assertEqual(live_count, 1)
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertTrue(workers[0].live_trading)
+        self.assertFalse(store.execution_safety.entry_freeze_snapshot()[0])
+        self.assertEqual(store.declared_carried_symbols, frozenset({self.CARRIED}))
+        self.assertEqual(client.mutations, [])
+
+    def test_resume_after_a_freeze_is_not_blocked_by_a_declared_leg(self):
+        store = master_file.SharedMarketDataStore()
+        worker = master_file.AtmSingleLegStrategyWorker(
+            store=store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        client = self._Books([self._position()])
+        with patch.object(master_file, "execution_client", client):
+            with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False):
+                self.assertFalse(worker._try_unfreeze_after_flat_reconciliation())
+            with self._switched_on():
+                self.assertTrue(worker._try_unfreeze_after_flat_reconciliation())
+        self.assertEqual(store.declared_carried_symbols, frozenset({self.CARRIED}))
+
+    def test_the_shutdown_warning_ignores_a_declared_leg(self):
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        client = self._Books([self._position()])
+        with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False):
+            self.assertTrue(master_file._warn_if_account_not_flat(store, client, None))
+        with self._switched_on():
+            self.assertFalse(master_file._warn_if_account_not_flat(store, client, None))

@@ -415,6 +415,101 @@ def test_open_snapshot_types_reuse_contract_invariants() -> None:
         )
 
 
+def test_position_detail_carries_price_and_contract_identity() -> None:
+    contract = _contract_module()
+    detail = contract.PositionDetail(
+        symbol="NIFTY25N2724500CE",
+        exchange="NFO",
+        product_type="NRML",
+        quantity=-75,
+        average_price=120.5,
+        underlying="NIFTY",
+        expiry=date(2025, 11, 27),
+        strike=24500.0,
+        right="CE",
+    )
+    assert detail.quantity == -75
+    with pytest.raises(FrozenInstanceError):
+        detail.quantity = 75  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"quantity": 0}, "never flat"),
+        ({"quantity": True}, "integer"),
+        ({"quantity": 7.5}, "integer"),
+        ({"average_price": -1.0}, "non-negative"),
+        ({"average_price": float("nan")}, "non-negative"),
+        ({"right": "FUT"}, "right"),
+    ],
+)
+def test_position_detail_rejects_impossible_rows(overrides, message) -> None:
+    contract = _contract_module()
+    fields = {"symbol": "X", "exchange": "NFO", "product_type": "NRML", "quantity": 75}
+    fields.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        contract.PositionDetail(**fields)
+
+
+def test_position_detail_client_is_an_execution_client_plus_one_method() -> None:
+    """The monitor's brokers are ordinary adapters that can also describe positions.
+
+    A client offering ONLY ``list_position_details`` (the narrow surface this
+    protocol replaced) must not qualify: without ``cancel_order``,
+    ``list_open_orders`` or ``recover_after_reconciliation`` an order it left
+    hanging could be neither seen nor cleared.
+    """
+
+    contract = _contract_module()
+
+    class NarrowClient:
+        is_logged_in = True
+
+        def ensure_logged_in(self):
+            return True
+
+        def list_position_details(self):
+            return contract.BrokerQueryResult.success([])
+
+        def place_market_order(
+            self, symbol, side, quantity, exchange_segment, product_type, *, order_tag=""
+        ):
+            return None
+
+        def get_order_status(self, order_id, requested_quantity=0):
+            return None
+
+        def logout(self):
+            return {}
+
+    class FullClient(NarrowClient):
+        def preload_scrip_master(self):
+            return True
+
+        def resolve_option_symbol(self, underlying, expiry, option_type, strike):
+            return ""
+
+        def cancel_order(self, order_id, requested_quantity=0):
+            return None
+
+        def list_open_orders(self):
+            return None
+
+        def list_open_positions(self):
+            return None
+
+        def recover_after_reconciliation(self):
+            return True
+
+        def extract_order_id(self, order_response):
+            return ""
+
+    assert not isinstance(NarrowClient(), contract.PositionDetailClient)
+    assert isinstance(FullClient(), contract.PositionDetailClient)
+    assert isinstance(FullClient(), contract.ExecutionClient)
+
+
 def test_indeterminate_query_uses_safe_defaults() -> None:
     contract = _contract_module()
     result = contract.BrokerQueryResult.indeterminate(" ", broker_state=" timed-out ")
@@ -498,6 +593,8 @@ def test_execution_client_protocol_covers_reconciliation_surface() -> None:
         ("Dependencies/Shoonya API", "shoonya_execution"),
         ("Dependencies/Flattrade API", "flattrade_execution"),
         ("Dependencies/Dhan API", "dhan_execution"),
+        ("Dependencies/Zerodha API", "zerodha_execution"),
+        ("Dependencies/Mstock API", "mstock_execution"),
     ],
 )
 def test_adapter_imports_under_its_diagnostic_search_path(

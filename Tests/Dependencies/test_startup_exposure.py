@@ -289,3 +289,129 @@ def test_audit_evidence_is_bounded_and_never_contains_raw_broker_fields() -> Non
     assert all(len(item) <= 64 for item in (*audit.reasons, *audit.evidence))
     assert secret not in repr(audit)
     assert all("\n" not in item and "\t" not in item for item in audit.evidence)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0023: declared carried legs may be tolerated (opt-in, exact match only)
+# ---------------------------------------------------------------------------
+CARRIED = "NIFTY25N2724500CE"
+
+
+def _carried(quantity: int = -75, product: str = "NRML", symbol: str = CARRIED) -> OpenPosition:
+    return OpenPosition(symbol=symbol, quantity=quantity, product_type=product)
+
+
+def _audit_with(positions: list[OpenPosition], tolerated: Any, orders: Any = None):
+    client = _BookClient(
+        orders=BrokerQueryResult.success([]) if orders is None else orders,
+        positions=BrokerQueryResult.success(positions),
+    )
+    return audit_startup_exposure(client, tolerated_positions=tolerated)
+
+
+def test_without_a_tolerance_the_audit_is_exactly_what_it_was() -> None:
+    audit = _audit_with([_carried()], None)
+
+    assert audit.safe_to_enable_live is False
+    # Byte-for-byte the old evidence: no extra field appears unless asked for.
+    assert audit.evidence == ("open_orders=0", "relevant_positions=1")
+
+
+def test_a_declared_leg_is_tolerated_on_an_exact_match() -> None:
+    audit = _audit_with([_carried()], {(CARRIED, "NRML"): -75})
+
+    assert audit == StartupExposureAudit(
+        safe_to_enable_live=True,
+        reasons=(),
+        evidence=("open_orders=0", "relevant_positions=0", "declared_carried_positions=1"),
+    )
+
+
+@pytest.mark.parametrize(
+    "position",
+    [
+        _carried(quantity=-150),  # resized by hand since the file was written
+        _carried(quantity=-74),
+        _carried(quantity=75),  # flipped: long where the file says short
+        _carried(product="MIS"),  # an intraday row is never a carried leg
+        _carried(product=""),  # no product label: cannot be proven carried
+        _carried(symbol="NIFTY25N2724600CE"),  # a contract nobody declared
+        _carried(symbol="BANKNIFTY25N2751000PE"),
+    ],
+)
+def test_anything_short_of_an_exact_match_still_blocks_live(position: OpenPosition) -> None:
+    audit = _audit_with([position], {(CARRIED, "NRML"): -75})
+
+    assert audit.safe_to_enable_live is False
+    assert audit.reasons == ("Broker reported 1 non-flat NIFTY/BANKNIFTY position.",)
+    assert audit.evidence == (
+        "open_orders=0",
+        "relevant_positions=1",
+        "declared_carried_positions=0",
+    )
+
+
+def test_one_declared_leg_excuses_one_broker_row_only() -> None:
+    # Two identical rows mean the account holds twice what the file declares.
+    audit = _audit_with([_carried(), _carried()], {(CARRIED, "NRML"): -75})
+
+    assert audit.safe_to_enable_live is False
+    assert audit.evidence == (
+        "open_orders=0",
+        "relevant_positions=1",
+        "declared_carried_positions=1",
+    )
+
+
+def test_a_declared_leg_does_not_excuse_an_undeclared_one_beside_it() -> None:
+    audit = _audit_with(
+        [_carried(), _carried(symbol="NIFTY25N2723500PE", quantity=50)],
+        {(CARRIED, "NRML"): -75},
+    )
+
+    assert audit.safe_to_enable_live is False
+    assert audit.reasons == ("Broker reported 1 non-flat NIFTY/BANKNIFTY position.",)
+
+
+def test_the_product_label_is_compared_without_regard_to_case_or_padding() -> None:
+    audit = _audit_with([_carried(product=" nrml ")], {(CARRIED, "NRML"): -75})
+
+    assert audit.safe_to_enable_live is True
+
+
+def test_an_empty_tolerance_tolerates_nothing_but_says_it_was_consulted() -> None:
+    audit = _audit_with([_carried()], {})
+
+    assert audit.safe_to_enable_live is False
+    assert audit.evidence == (
+        "open_orders=0",
+        "relevant_positions=1",
+        "declared_carried_positions=0",
+    )
+
+
+def test_tolerated_legs_never_excuse_an_open_order_or_an_unreadable_book() -> None:
+    tolerated = {(CARRIED, "NRML"): -75}
+
+    with_order = _audit_with(
+        [_carried()], tolerated, orders=BrokerQueryResult.success([_open_order(symbol=CARRIED)])
+    )
+    assert with_order.safe_to_enable_live is False
+    assert with_order.reasons == ("Broker reported 1 open order.",)
+
+    unreadable = audit_startup_exposure(
+        _BookClient(
+            orders=BrokerQueryResult.success([]),
+            positions=BrokerQueryResult.indeterminate("down"),
+        ),
+        tolerated_positions=tolerated,
+    )
+    assert unreadable.safe_to_enable_live is False
+    assert unreadable.evidence == ("open_orders=0", "relevant_positions=indeterminate")
+
+
+def test_tolerance_evidence_is_counts_only() -> None:
+    audit = _audit_with([_carried(), _carried(quantity=-150)], {(CARRIED, "NRML"): -75})
+
+    joined = " ".join((*audit.reasons, *audit.evidence))
+    assert CARRIED not in joined and "NRML" not in joined and "75" not in joined

@@ -97,6 +97,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from Dependencies.env_file import replace_env_value  # noqa: E402
 from Dependencies.secret_redaction import redact_payload, redact_text  # noqa: E402
 
 # --- Third-party imports (lazy, with friendly errors) ------------------------
@@ -211,34 +212,9 @@ def _write_access_token_to_env(new_token: str) -> None:
     organization survive every refresh. Important for diffability and
     for the user's own peace of mind.
     """
-    raw = ENV_PATH.read_text(encoding="utf-8")
-    lines = raw.splitlines()
-
-    # Pre-compile the regex once. `^\s*DHAN_ACCESS_TOKEN\s*=.*$` matches a
-    # line that begins (after optional whitespace) with the literal key
-    # `DHAN_ACCESS_TOKEN`, followed by `=` and anything else.
-    pattern = re.compile(r"^\s*DHAN_ACCESS_TOKEN\s*=.*$")
-    replaced = False
-    new_lines = []
-    for line in lines:
-        # We deliberately exclude commented-out lines (those that start with
-        # `#`) so a comment like `# DHAN_ACCESS_TOKEN=old_token_here` is
-        # preserved untouched.
-        if pattern.match(line) and not line.lstrip().startswith("#"):
-            new_lines.append(f"DHAN_ACCESS_TOKEN={new_token}")
-            replaced = True
-        else:
-            new_lines.append(line)
-
-    if not replaced:
-        # Key was missing entirely -> append it at the end of the file.
-        new_lines.append(f"DHAN_ACCESS_TOKEN={new_token}")
-
-    # Preserve trailing newline behaviour for clean diffs in version control.
-    text = "\n".join(new_lines)
-    if raw.endswith("\n") and not text.endswith("\n"):
-        text += "\n"
-    ENV_PATH.write_text(text, encoding="utf-8")
+    # The line-preserving rewrite is shared with position_broker_token_setup.py
+    # (Dependencies/env_file.py); it also refuses a value with a line break.
+    replace_env_value(ENV_PATH, "DHAN_ACCESS_TOKEN", new_token)
 
 
 def _extract_token_id(user_input: str) -> str:
