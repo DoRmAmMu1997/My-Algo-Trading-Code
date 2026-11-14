@@ -1483,6 +1483,20 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   open for the long branch, and no full-body red-to-green reclaim for the short
   branch. Small opposite ticks are acceptable noise; a full-bodied reclaim /
   rejection candle kills the branch for the day.
+- VOLATILE MEANS FAST UP AND FAST DOWN, NOT A WIDE FIRST CANDLE (v6e, operator's
+  call 14 Nov). IH's one check before buying a big shared gap-up at once (11 Nov):
+  "is the market volatile, fast up and fast down? That hits your stop even when
+  the direction is right." If it is not, "there is no fixed entry; take a little
+  risk" and buy. Read his "volatile" as the full-bodied rejection named just
+  above: a move up taken straight back. A first candle that is merely WIDE is not
+  it, and is no reason to wait for a dip on this branch. MEASURED (5-year NIFTY,
+  33 shared gap-ups of 1% or more, long at a fixed minute in the book's shape):
+  +0.60R at 09:16, +0.72R at 09:18 and +0.62R at 09:20 overall; split at the
+  median first-candle range (59.7 points) the long was positive in both groups at
+  every minute tried. The split mostly separates years (range grows with the
+  index), so the range itself carries no signal. 11 Nov: first candle 74 points,
+  no rejection, IH bought at 09:17 and this book at 09:18; both were paid. This
+  relaxes nothing above: SHARED-GAP, GAP SIZE IS A RISK DIAL and RISK still bind.
 - Behavioural confirmation substitutes for the candle rule HERE ONLY: price
   holding above the open / round number without aggressive selling (long branch),
   or failing below the closing point / round number without real recovery (short

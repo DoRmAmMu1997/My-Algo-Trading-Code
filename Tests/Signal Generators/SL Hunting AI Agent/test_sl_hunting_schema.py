@@ -4254,3 +4254,26 @@ def test_v6e_a_notes_branch_named_by_a_level_is_picked_by_the_level():
     classify = _flat_rule(prompt, "CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT, AND SAY WHY")
     assert ("[A note line that names a LEVEL rather than an open type is picked by that level, "
             "not by this word: v6e.]") in classify
+
+
+def test_v6e_volatile_means_fast_up_and_fast_down_not_a_wide_first_candle():
+    """v6e, third part (operator's call, 14 Nov): IH's 11 Nov check before buying a
+    big shared gap-up at once. Pins his test read as the full-bodied rejection, that a
+    wide first candle is no reason to wait, the measurement and its caveat, that it
+    relaxes nothing, and its place inside OPENING DRIVE's conditions, straight after
+    the no-MAJOR-rejection condition.
+    """
+    prompt = build_system_prompt()
+    heading = "VOLATILE MEANS FAST UP AND FAST DOWN, NOT A WIDE FIRST CANDLE"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6e, operator's call 14 Nov).")
+    assert "Read his \"volatile\" as the full-bodied rejection named just above" in rule
+    assert "A first candle that is merely WIDE is not it, and is no reason to wait for a dip on this branch." in rule
+    assert "+0.60R at 09:16, +0.72R at 09:18 and +0.62R at 09:20 overall" in rule
+    assert "the long was positive in both groups at every minute tried" in rule
+    assert "the range itself carries no signal" in rule
+    assert "This relaxes nothing above: SHARED-GAP, GAP SIZE IS A RISK DIAL and RISK still bind." in rule
+    rejection = prompt.index("\n- No MAJOR rejection so far")
+    here = prompt.index("\n- " + heading)
+    assert rejection < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
+    assert "\n- " not in prompt[rejection + 3:here]

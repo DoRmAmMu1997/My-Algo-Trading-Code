@@ -14299,3 +14299,35 @@ flat-open short keeps its ordinary edge.
   - the tool context passes the history to the levels tool.
 - **Prompt:** a wiring test for the level-branch rule.
 - **Mutants:** 11 on the plumbing, all caught.
+
+### v6e, third part: volatile means fast up and fast down (operator, 14 Nov)
+
+The operator asked for the two rules left out above to go in if they do not
+contradict the existing knowledge. The CSVs were topped up through 13 Nov first.
+
+**Added: VOLATILE MEANS FAST UP AND FAST DOWN, NOT A WIDE FIRST CANDLE.** It sits
+in OPENING DRIVE's conditions, straight after "No MAJOR rejection so far". IH's
+11 Nov check ("is the market volatile, fast up and fast down?") is read as that
+full-bodied rejection, and a wide first candle is no reason to wait on this
+branch.
+
+- **The re-run measurement:** 33 shared gap-ups of 1% or more. The long scored
+  +0.60R at 09:16, +0.72R at 09:18 and +0.62R at 09:20, and it was positive on
+  both sides of the median first-candle range at every minute.
+- **Why the range carries no signal:** the split mostly separates years. 15 of
+  the 17 "calm" sessions are from 2021-23 and 14 of the 16 "volatile" ones from
+  2024-26, because candle ranges grow with the index.
+- **No contradiction:** the rule only names a condition the branch already had,
+  and it relaxes nothing.
+
+**Not added: "after a rejection day, a flat open above the resistance is a
+buy".** As an entry rule it contradicts CLOSING-POINT HOLD TEST.
+
+- **What that test says:** after a rejection that did NOT break the closing
+  point, "the continuation DOWN is the trade, not the hunt up". 11 Nov's low,
+  25,095.35, stayed above 9 Nov's close, so on 12 Nov that rule points down,
+  where IH bought.
+- **The 5-year split agrees:** it gave the long no edge above the line.
+- **IH's version is already in:** v6e's note-reading rule picks the BUY branch
+  once price closes above a level the note names, without making it an entry
+  rule.
