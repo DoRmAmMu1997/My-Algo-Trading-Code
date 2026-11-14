@@ -152,8 +152,11 @@ class Harness:
 
     def write(self, document: dict) -> None:
         self.config_path.write_text(json.dumps(document))
-        # Force a visible mtime change even on coarse filesystem clocks.
-        stamp = self.config_path.stat().st_mtime + len(json.dumps(document)) + 1
+        # Force a visible mtime change even on coarse filesystem clocks, and even
+        # when two edits have the same length: every write moves the clock on.
+        previous = getattr(self, "_last_stamp", 0.0)
+        stamp = max(self.config_path.stat().st_mtime, previous) + 10
+        self._last_stamp = stamp
         os.utime(self.config_path, (stamp, stamp))
 
     def set_pnl(self, short_ltp: float, long_ltp: float) -> None:
@@ -388,11 +391,12 @@ def test_crash_mid_exit_comes_back_as_exit_failed(tmp_path: Path) -> None:
     assert restarted.state.status(group) == "EXIT_FAILED"
 
 
-def test_corrupt_state_file_is_moved_aside(tmp_path: Path) -> None:
+def test_corrupt_state_file_is_kept_for_the_operator(tmp_path: Path) -> None:
     h = Harness(tmp_path)
     h.state_path.write_text("{corrupt")
-    h.build()
-    assert (tmp_path / "groups.state.json.unreadable").exists()
+    monitor = h.build()
+    assert monitor.state.unreadable
+    assert h.state_path.read_text() == "{corrupt"
 
 
 def test_invalid_edit_keeps_the_last_good_copy_and_alerts_once(tmp_path: Path) -> None:
@@ -686,3 +690,89 @@ def test_order_tags_differ_between_attempts_on_the_same_group(tmp_path: Path) ->
     tags = [order[5] for order in (*first.broker.orders, *second.broker.orders)]
     assert len(tags) == 4 and len(set(tags)) == 4
     assert all(tag.isalnum() and len(tag) <= 20 for tag in tags)
+
+
+# --- Codex review fixes (2026-11-14) ------------------------------------------------
+def test_an_unreadable_state_file_blocks_every_exit_and_is_kept_in_place(tmp_path: Path) -> None:
+    """Starting empty would re-arm a group already squared off. The broker
+    pre-check cannot always catch that: it accepts a holding LARGER than the
+    group's allocation, so a group taking 150 of 300 units could close twice."""
+
+    h = Harness(tmp_path)
+    h.state_path.write_text("{corrupt")
+    h.broker.holdings = {SHORT_CE: -300, LONG_CE: 300}
+    restarted = h.build()
+    h.set_pnl(1.0, 40.0)
+    for _ in range(6):
+        restarted.tick()
+    assert h.broker.orders == []
+    assert [a["action"] for a in h.alerts] == ["GROUP_STATE_UNREADABLE"]
+    # The operator's evidence stays exactly where it was, untouched.
+    assert h.state_path.read_text() == "{corrupt"
+    assert not (tmp_path / "groups.state.json.unreadable").exists()
+
+
+def test_deleting_the_unreadable_state_file_is_the_explicit_reset(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.state_path.write_text("{corrupt")
+    h.build()
+    h.state_path.unlink()
+    restarted = h.build()
+    h.set_pnl(1.0, 40.0)
+    for _ in range(3):
+        restarted.tick()
+    assert len(h.broker.orders) == 2
+
+
+def test_the_action_window_is_rechecked_after_the_slow_pre_checks(tmp_path: Path) -> None:
+    """Target confirmed at 15:24:50, but the position book answers at 15:26."""
+
+    h = Harness(tmp_path)
+    h.now = datetime(2026, 10, 23, 15, 24, 50)
+    real_book = h.broker.list_position_details
+
+    def slow_book():
+        h.now = datetime(2026, 10, 23, 15, 26)
+        return real_book()
+
+    h.broker.list_position_details = slow_book
+    h.set_pnl(1.0, 40.0)
+    h.ticks(3)
+    assert h.broker.orders == []
+    assert not h.state_path.exists()  # EXITING was never written: nothing was started
+
+
+def _strike_moved(strike: int = 24600) -> dict:
+    return config_document(legs=[leg(SHORT_CE, -150, 100.0, strike), leg(LONG_CE, 150, 40.0, 25000)])
+
+
+def test_correcting_a_legs_strike_re_resolves_its_contract(tmp_path: Path, monkeypatch) -> None:
+    """The fingerprint ignores the pricing fields, so the old Dhan contract used
+    to stay attached for the rest of the session."""
+
+    monkeypatch.setitem(
+        CONTRACTS, ("NSE", "NIFTY", date(2025, 11, 27), 2460000, "CE"), DhanContract("NSE_FNO", 333, 75, 1801)
+    )
+    h = Harness(tmp_path)
+    h.ticks(1)
+    h.write(_strike_moved())
+    h.prices = {111: 1.0, 222: 40.0, 333: 100.0}  # only the OLD contract shows a profit
+    h.ticks(5)
+    assert h.broker.orders == []
+    assert h.live_feed() == {222, 333}
+    h.prices[333] = 1.0
+    h.ticks(3)
+    assert h.actions()[-1] == "GROUP_SQUARED_OFF"
+
+
+def test_a_correction_with_no_contract_unwatches_the_group_but_keeps_its_state(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.set_pnl(1.0, 40.0)
+    h.ticks(3)
+    assert h.state()["status"] == "SQUARED_OFF"
+    h.write(_strike_moved(24700))  # no such Dhan contract
+    h.ticks(1)
+    assert h.actions()[-1] == "GROUP_UNMONITORABLE"
+    assert h.live_feed() == set()
+    assert h.state()["status"] == "SQUARED_OFF"
+    assert len(h.broker.orders) == 2

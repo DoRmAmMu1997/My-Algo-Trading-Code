@@ -92,7 +92,9 @@ It is never watched partially and never guessed.
   wrong guess means "no quote", never an order.
 * **An exit may start only between 09:15 and 15:25 IST.** A group is several
   orders, each of which can take seconds to prove; starting at 15:29 could buy
-  the shorts back and have the hedge sales refused at the close.
+  the shorts back and have the hedge sales refused at the close. The clock is
+  read again after the quote re-check and the position-book query, right
+  before `EXITING` is written, so slow pre-checks cannot start an exit late.
 * **Broker pre-check before any order.** Every leg must still be held with the
   same sign and at least the file's quantity. If not, the group goes to
   `EXIT_FAILED` with **no orders**, because sending the file's orders against a
@@ -110,7 +112,15 @@ It is never watched partially and never guessed.
   therefore reloads as `EXIT_FAILED`, never as a fresh trigger. `SQUARED_OFF`
   and `EXIT_FAILED` are terminal across restarts, keyed by a fingerprint of
   the group's name and exact leg set. Edits to price or target do not re-arm
-  a group.
+  a group. Correcting a leg's underlying, expiry, strike or right keeps the
+  status too, but looks its Dhan contract up again and moves the feed over.
+* **A state file that exists but cannot be read fails closed.** Starting empty
+  would re-arm groups already closed, and the pre-check above accepts a
+  holding larger than the group's share, so it cannot always stop a second
+  exit. The file is left in place, prices are still watched, one
+  `GROUP_STATE_UNREADABLE` alert is sent and **no group is squared off that
+  session**. The operator repairs the file, or deletes it to reset, and
+  restarts.
 * Each order's tag carries the attempt's time (`GM` + fingerprint + `HHMMSS` +
   order number, 19 letters and digits). The tag is how a lost acknowledgement
   is found again in the broker's order book, so a second attempt on the same

@@ -170,7 +170,8 @@ One process, cooperating threads:
   `Dependencies/position_groups.json` (gitignored; `algo.py group-legs` appends broker legs
   to `unassigned`, the runner only reads it); the runner owns `position_groups.state.json`,
   where `SQUARED_OFF`/`EXIT_FAILED` are terminal and `EXITING` reloads as `EXIT_FAILED`
-  (no order is sent unless `EXITING` reached the disk).
+  (no order is sent unless `EXITING` reached the disk); a state file that exists but cannot
+  be read is left in place and blocks EVERY exit for the session (delete it to reset).
   Before any order the broker book must still hold every leg (else NO orders), shorts are
   bought back before longs are sold, an exit may START only 09:15-15:25, and any order not
   proven FILLED stops the group with no retry. Its brokers are the ordinary Zerodha and
