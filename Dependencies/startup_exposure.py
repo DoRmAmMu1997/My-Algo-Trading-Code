@@ -3,12 +3,17 @@
 Live workers must not start until both broker books prove there is no exposure
 that this process could collide with.  This module deliberately performs only
 two reads: it never adopts, cancels, recovers, or flattens broker state.
+
+One opt-in exception (ADR-0023): the caller may pass the carried legs the
+operator has DECLARED, and a position that matches one of them exactly no
+longer counts as exposure.  This module does not know where that list comes
+from and does not read any file; with no list it behaves exactly as before.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from Dependencies.broker_contract import (
@@ -98,12 +103,29 @@ def _pluralized_count(count: int, singular: str, plural: str) -> str:
     return f"Broker reported {count} {noun}."
 
 
-def audit_startup_exposure(execution_client: ExecutionClient) -> StartupExposureAudit:
+def audit_startup_exposure(
+    execution_client: ExecutionClient,
+    *,
+    tolerated_positions: Mapping[tuple[str, str], int] | None = None,
+) -> StartupExposureAudit:
     """Read both broker books and fail closed unless startup is provably safe.
 
     Both queries are always attempted independently.  In particular, an order
     timeout must not hide a position snapshot that could provide additional
     exposure evidence for the operator.
+
+    ``tolerated_positions`` maps ``(symbol, PRODUCT)`` to the signed quantity
+    the operator has declared for a carried leg.  A broker position is excused
+    only when its symbol, its product label and its exact signed quantity all
+    match one entry, and each entry excuses ONE broker row.  A different
+    quantity, the other sign, another product, a missing product label or a
+    second identical row is ordinary exposure and blocks as before.  It never
+    excuses an open order or an unreadable book.
+
+    ``None`` (the default) keeps the historical behaviour and the historical
+    evidence, byte for byte.  Passing a mapping -- even an empty one -- adds a
+    ``declared_carried_positions=<count>`` evidence field, so a reader can tell
+    that declared legs were consulted and how many were excused.
     """
 
     open_orders = _read_typed_book(
@@ -133,12 +155,24 @@ def audit_startup_exposure(execution_client: ExecutionClient) -> StartupExposure
         reasons.append("Open-position query was indeterminate.")
         evidence.append("relevant_positions=indeterminate")
     else:
-        relevant_count = sum(
-            position.quantity != 0
-            and is_relevant_index_symbol(position.symbol)
-            for position in open_positions
-        )
+        # Each declared leg may excuse one row, so the mapping is consumed as
+        # rows match: a second identical row means the account holds more
+        # than the operator declared.
+        unmatched_declared = dict(tolerated_positions or {})
+        relevant_count = 0
+        declared_count = 0
+        for position in open_positions:
+            if position.quantity == 0 or not is_relevant_index_symbol(position.symbol):
+                continue
+            key = (position.symbol.strip(), str(position.product_type).strip().upper())
+            if unmatched_declared.get(key) == position.quantity:
+                del unmatched_declared[key]
+                declared_count += 1
+            else:
+                relevant_count += 1
         evidence.append(f"relevant_positions={relevant_count}")
+        if tolerated_positions is not None:
+            evidence.append(f"declared_carried_positions={declared_count}")
         if relevant_count:
             reasons.append(
                 _pluralized_count(

@@ -318,7 +318,14 @@ Backtest Outputs/                                  # generated CSVs/logs (gitign
   itself and is UNTESTED against a real account: order-details fields go as query and body, a
   terminal history row wins wherever it sits, and an error body on HTTP 200 is not a refusal.
   The startup flat-account audit applies to them like any broker, so `LIVE_BROKER=ZERODHA` will
-  not arm while carried NIFTY/BANKNIFTY positions sit in that same account.
+  not arm while carried NIFTY/BANKNIFTY positions sit in that same account -- unless the
+  operator opts in with `LIVE_TOLERATE_DECLARED_CARRIED_LEGS` (default false, `docs/adr/0023`).
+  Then a broker row is excused ONLY when it exactly matches (symbol, `NRML`, signed quantity) a
+  leg INSIDE A GROUP of the groups file for `LIVE_BROKER` (`unassigned` legs never count), and
+  only while the strategies trade INTRADAY; an unreadable file tolerates nothing and any open
+  order still blocks. `_audit_live_account` is the ONLY caller of `audit_startup_exposure`
+  (startup, dashboard promotion, resume after a freeze, shutdown warning -- a test enforces it),
+  and a live entry on a declared contract is refused and falls back to paper.
 - **Credential-safe logging:** `setup_logging()` installs `install_redaction_filter` on the root
   logger with `environment_secrets(os.environ)` (every `.env` value whose KEY looks sensitive, ≥8
   chars), so **every** record — lazy `%s` args and exception tracebacks included — is scrubbed before

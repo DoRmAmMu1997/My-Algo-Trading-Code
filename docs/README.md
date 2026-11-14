@@ -69,6 +69,7 @@ component folder's own `Readme.md`.
 | [0020](adr/0020-a-second-index-on-the-monitoring-chart.md) | The chart gains a NIFTY/BankNIFTY switch, a chart-only indicator menu and hand-drawn S/R: an instrument dimension in the store, the feed-health gate pinned to the primary, browser-side indicator maths kept honest by a node drift test, and drawings in localStorage because the server is GET-only |
 | [0021](adr/0021-dashboard-live-mode-toggle.md) | An opt-in per-strategy LIVE/PAPER toggle on the dashboard: one guarded POST that only queues a request, a runtime twin of the startup live gate, and only the worker's own thread changes its mode, only while flat |
 | [0022](adr/0022-position-group-target-monitor.md) | An opt-in thread squares off groups of hand-carried Zerodha/mStock option-selling legs at a rupee target: an operator-owned groups file, prices from the Dhan feed exempt from the feed-health gate, a bid/ask re-check and a broker-book pre-check before any order, shorts closed first, no blind retries, its own single live switch -- and Zerodha/mStock as ordinary adapters that are also `LIVE_BROKER` choices |
+| [0023](adr/0023-account-audit-tolerates-declared-carried-legs.md) | An opt-in switch lets the flat-account audit excuse carried legs the operator declared in a group of the groups file: exact symbol/NRML/quantity match only, strategies must trade INTRADAY, every failure tolerates nothing, one helper behind all four account checks, and no live entry on a declared contract |
 
 ## Keeping these documents honest
 

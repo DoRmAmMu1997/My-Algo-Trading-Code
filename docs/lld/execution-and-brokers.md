@@ -117,6 +117,20 @@ The two boundaries intentionally use different scopes:
   separate account-wide audit is advisory because remaining exposure may belong
   to the operator's manual trading.
 
+**Declared carried legs (opt-in, [ADR-0023](../adr/0023-account-audit-tolerates-declared-carried-legs.md)).**
+With `LIVE_TOLERATE_DECLARED_CARRIED_LEGS=true` the audit takes a
+`tolerated_positions` mapping and leaves out a position row whose symbol,
+product and exact signed quantity match an entry. The master builds that
+mapping in `_declared_carried_legs()` from the position-groups file: legs inside
+a group, for `LIVE_BROKER`, product `NRML`, and only while the strategies trade
+INTRADAY. An unreadable file yields an empty mapping, so every failure
+tolerates nothing; any open order still blocks. `_audit_live_account(client,
+store)` is the single caller of `audit_startup_exposure` behind all four
+account checks (startup, dashboard promotion, resume after a freeze, shutdown
+warning). It also records the declared symbols on the store, and
+`_place_real_leg_with_entry_lease` refuses to open exposure on one of them (a
+local `REJECTED`, so that trade falls back to paper). Exits are never refused.
+
 ---
 
 ## 6. Contract resolution — `OptionsContractResolver`

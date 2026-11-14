@@ -178,7 +178,8 @@ is deliberate and unchanged: the startup flat-account audit blocks live
 trading while the selected account holds any NIFTY/BANKNIFTY position, so
 `LIVE_BROKER=ZERODHA` will not arm while carried positions sit in that same
 account. Teaching the audit to ignore legs declared in the groups file would
-be a separate decision.
+be a separate decision -- since taken, as an opt-in switch, in
+[ADR-0023](0023-account-audit-tolerates-declared-carried-legs.md).
 
 The mStock adapter was written from documentation that contradicts itself and
 has not traded against a real account. Each doubt is resolved toward

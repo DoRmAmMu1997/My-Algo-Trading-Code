@@ -7321,6 +7321,50 @@ class TestLiveOrderRouting(unittest.TestCase):
         self.assertEqual(fake.calls, [])          # never attempted an order
         self.assertTrue(self.worker.pos.active)   # recorded as paper
 
+    def _carried_symbol(self):
+        """The broker symbol the fake resolves this worker's ATM contract to."""
+        return f"SHOONYA-{master_file.UNDERLYING}-22500-CE"
+
+    def test_entry_on_a_declared_carried_contract_sends_no_order(self):
+        """ADR-0023: the runner never opens exposure on the very contract of a
+        carried leg the account audit excused. Nothing is sent; this one trade
+        falls back to paper, exactly like an unresolvable symbol."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        self.store.declared_carried_symbols = frozenset({self._carried_symbol()})
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        self.assertTrue(ok)
+        self.assertEqual(fake.calls, [])          # never attempted an order
+        self.assertTrue(self.worker.pos.active)   # recorded as paper
+        # A refusal is not an ambiguous order: nothing is frozen.
+        self.assertFalse(self.worker._live_execution_frozen)
+        self.assertFalse(self.store.execution_safety.entry_freeze_snapshot()[0])
+
+    def test_a_declared_carried_leg_on_another_contract_does_not_block_the_entry(self):
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        self.store.declared_carried_symbols = frozenset({"SHOONYA-NIFTY-23000-PE"})
+        with patch.object(master_file, "execution_client", fake):
+            ok = self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+        self.assertTrue(ok)
+        self.assertEqual(self._sides(fake), [("BUY", 50 * self.worker.lots)])
+
+    def test_a_live_exit_is_never_refused_by_the_carried_leg_guard(self):
+        """The guard stops NEW exposure only. A live position the runner already
+        holds must stay closable even if its contract is declared afterwards."""
+        fake = _FakeShoonya()
+        self.worker.live_trading = True
+        with patch.object(master_file, "execution_client", fake):
+            self.worker.enter_position(direction="LONG", entry_underlying=22500.0)
+            self.store.declared_carried_symbols = frozenset({self._carried_symbol()})
+            self.worker.exit_position("TEST_EXIT")
+        self.assertEqual(
+            self._sides(fake),
+            [("BUY", 50 * self.worker.lots), ("SELL", 50 * self.worker.lots)],
+        )
+        self.assertFalse(self.worker.pos.active)
+
     def test_failed_live_exit_keeps_position_open(self):
         """A failed/unconfirmed LIVE exit must NOT flatten - the real position is
         still open, so we keep it active for retry rather than going flat."""
@@ -15000,3 +15044,295 @@ class TestDashboardLiveModeToggle(unittest.TestCase):
         )
         self.assertEqual(view["requested_mode"], "LIVE")
         self.assertEqual(view["toggle_status"], "PENDING")
+
+
+class TestDeclaredCarriedLegs(unittest.TestCase):
+    """ADR-0023: the account audit may excuse carried legs the operator declared.
+
+    ``LIVE_TOLERATE_DECLARED_CARRIED_LEGS`` lets live trading arm while multi-week
+    option positions sit in the SAME broker account, provided each one is listed
+    inside a group of the position-groups file. These tests pin which legs count
+    as declared, that every failure tolerates nothing, and that all four account
+    checks (startup, dashboard promotion, resume after a freeze, the shutdown
+    warning) go through one helper.
+    """
+
+    CARRIED = "NIFTY25N2724500CE"
+
+    class _Books:
+        """A logged-in broker whose two books are fixed. It can place nothing."""
+
+        is_logged_in = True
+
+        def __init__(self, positions=(), orders=()):
+            self._positions = tuple(positions)
+            self._orders = tuple(orders)
+
+        def list_open_orders(self):
+            return BrokerQueryResult.success(self._orders)
+
+        def list_open_positions(self):
+            return BrokerQueryResult.success(self._positions)
+
+    @classmethod
+    def _position(cls, symbol=None, quantity=-75, product="NRML"):
+        from Dependencies.broker_contract import OpenPosition
+
+        return OpenPosition(symbol or cls.CARRIED, quantity, product)
+
+    @staticmethod
+    def _leg(symbol, *, quantity=-75, product="NRML", **extra):
+        return {
+            "symbol": symbol, "exchange": "NFO", "product": product,
+            "quantity": quantity, "entry_price": 120.5, "underlying": "NIFTY",
+            "expiry": "2025-11-27", "strike": 24500, "right": "CE", **extra,
+        }
+
+    @classmethod
+    def _document_text(cls):
+        """A groups file with one leg of every kind the rule must tell apart."""
+        return json.dumps({
+            "schema_version": 1,
+            "groups": [
+                {
+                    "name": "Zerodha condor", "broker": "ZERODHA", "target": 15000,
+                    "legs": [
+                        cls._leg(cls.CARRIED),                                     # declared
+                        cls._leg("NIFTY25N2725000CE", quantity=75, product="MIS"),  # intraday
+                    ],
+                },
+                {
+                    "name": "mStock strangle", "broker": "MSTOCK", "target": 9000,
+                    "legs": [cls._leg("NIFTY25N2723500PE")],                       # other broker
+                },
+            ],
+            # `algo.py group-legs` parks whatever the broker holds here.
+            "unassigned": [cls._leg("NIFTY25N2723000PE", broker="ZERODHA")],
+        })
+
+    _DEFAULT = object()
+
+    @contextmanager
+    def _switched_on(self, file_text=_DEFAULT, *, broker="ZERODHA", product="INTRADAY"):
+        """Switch the tolerance on against a temporary groups file.
+
+        ``file_text=None`` leaves the file missing.
+        """
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+            path = Path(folder) / "position_groups.json"
+            if file_text is self._DEFAULT:
+                file_text = self._document_text()
+            if file_text is not None:
+                path.write_text(file_text, encoding="utf-8")
+            for name, value in (
+                ("LIVE_TOLERATE_DECLARED_CARRIED_LEGS", True),
+                ("GROUP_MONITOR_FILE", str(path)),
+                ("LIVE_BROKER", broker),
+                ("LIVE_PRODUCT_TYPE", product),
+            ):
+                stack.enter_context(patch.object(master_file, name, value))
+            yield
+
+    # ---- the switch -------------------------------------------------------
+
+    def test_the_switch_ships_off(self):
+        root = Path(master_file.ROOT_DIR)
+        source = (root / "nifty_multi_strategy_master.py").read_text(encoding="utf-8")
+        self.assertIn('_env_bool("LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False)', source)
+        template = (root / "Dependencies" / "env.example").read_text(encoding="utf-8")
+        self.assertEqual(
+            [
+                line
+                for line in template.splitlines()
+                if line.startswith("LIVE_TOLERATE_DECLARED_CARRIED_LEGS")
+            ],
+            ["LIVE_TOLERATE_DECLARED_CARRIED_LEGS=false"],
+        )
+
+    def test_switch_off_makes_the_historical_audit_call(self):
+        """Off must mean UNCHANGED: the same call, argument for argument."""
+        client = self._Books([self._position()])
+        store = master_file.SharedMarketDataStore()
+        store.declared_carried_symbols = frozenset({"LEFT-OVER"})
+        verdict = master_file.StartupExposureAudit(
+            safe_to_enable_live=True, reasons=(), evidence=("relevant_positions=0",)
+        )
+        with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False), \
+                patch.object(master_file, "audit_startup_exposure", return_value=verdict) as audit:
+            self.assertEqual(master_file._declared_carried_legs(), (None, ""))
+            result = master_file._audit_live_account(client, store)
+        audit.assert_called_once_with(client)
+        self.assertIs(result, verdict)
+        self.assertEqual(store.declared_carried_symbols, frozenset())
+
+    # ---- which legs count as declared ------------------------------------
+
+    def test_only_grouped_carry_legs_of_the_live_broker_are_declared(self):
+        with self._switched_on():
+            declared, note = master_file._declared_carried_legs()
+        self.assertEqual(declared, {(self.CARRIED, "NRML"): -75})
+        self.assertEqual(note, "")
+
+    def test_groups_follow_the_live_broker(self):
+        with self._switched_on(broker="MSTOCK"):
+            declared, _note = master_file._declared_carried_legs()
+        self.assertEqual(declared, {("NIFTY25N2723500PE", "NRML"): -75})
+        with self._switched_on(broker="KOTAK"):
+            self.assertEqual(master_file._declared_carried_legs(), ({}, ""))
+
+    def test_strategies_trading_the_carry_product_tolerate_nothing(self):
+        """A strategy order in NRML would MERGE into the operator's position."""
+        with self._switched_on(product="NORMAL"):
+            self.assertEqual(
+                master_file._declared_carried_legs(),
+                ({}, "declared_legs=product_not_isolated"),
+            )
+
+    def test_an_unreadable_groups_file_tolerates_nothing(self):
+        broken = (
+            "{not json",
+            json.dumps([]),
+            json.dumps({"schema_version": 99, "groups": [], "unassigned": []}),
+        )
+        for text in broken:
+            with self.subTest(text=text), self._switched_on(text):
+                self.assertEqual(
+                    master_file._declared_carried_legs(),
+                    ({}, "declared_legs=unreadable"),
+                )
+
+    def test_a_missing_groups_file_declares_nothing(self):
+        with self._switched_on(None):
+            self.assertEqual(master_file._declared_carried_legs(), ({}, ""))
+
+    # ---- the one account check -------------------------------------------
+
+    def test_a_declared_leg_passes_the_audit_and_is_remembered_for_the_order_path(self):
+        store = master_file.SharedMarketDataStore()
+        client = self._Books([self._position()])
+        with self._switched_on():
+            audit = master_file._audit_live_account(client, store)
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertIn("declared_carried_positions=1", audit.evidence)
+        self.assertEqual(store.declared_carried_symbols, frozenset({self.CARRIED}))
+
+    def test_the_same_books_block_live_with_the_switch_off(self):
+        client = self._Books([self._position()])
+        with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False):
+            audit = master_file._audit_live_account(client)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_an_undeclared_position_beside_a_declared_one_still_blocks_live(self):
+        client = self._Books([self._position(), self._position("NIFTY25N2724000PE")])
+        with self._switched_on():
+            audit = master_file._audit_live_account(client)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_a_leg_that_is_only_unassigned_still_blocks_live(self):
+        """One `group-legs` run must not let a stray position excuse itself."""
+        client = self._Books([self._position("NIFTY25N2723000PE")])
+        with self._switched_on():
+            audit = master_file._audit_live_account(client)
+        self.assertFalse(audit.safe_to_enable_live)
+
+    def test_why_nothing_was_tolerated_reaches_the_evidence(self):
+        store = master_file.SharedMarketDataStore()
+        client = self._Books([self._position()])
+        with self._switched_on(product="NORMAL"):
+            audit = master_file._audit_live_account(client, store)
+        self.assertFalse(audit.safe_to_enable_live)
+        self.assertEqual(audit.evidence[-1], "declared_legs=product_not_isolated")
+        self.assertEqual(store.declared_carried_symbols, frozenset())
+
+    # ---- all four decisions use it ---------------------------------------
+
+    @staticmethod
+    def _calls_by_function(called_name):
+        """{function name: [call nodes]} for every call to ``called_name`` in the runner."""
+        import ast
+
+        root = Path(master_file.ROOT_DIR)
+        tree = ast.parse((root / "nifty_multi_strategy_master.py").read_text(encoding="utf-8"))
+        found = {}
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == called_name
+                ):
+                    found.setdefault(function.name, []).append(node)
+        return found
+
+    def test_no_account_audit_in_the_runner_bypasses_the_helper(self):
+        """A fifth call site that forgot the tolerance (or applied its own) fails here."""
+        self.assertEqual(
+            list(self._calls_by_function("audit_startup_exposure")), ["_audit_live_account"]
+        )
+
+    def test_all_four_decisions_reach_the_helper_and_hand_over_the_store(self):
+        """Without the store the order path's collision guard would see no legs."""
+        direct = self._calls_by_function("_audit_live_account")
+        self.assertEqual(
+            set(direct),
+            {
+                "_try_unfreeze_after_flat_reconciliation",   # resume after a freeze
+                "_preload_and_audit_live_account",           # startup + promotion
+                "_advisory_account_audit",                   # shutdown warning
+            },
+        )
+        through_preload = self._calls_by_function("_preload_and_audit_live_account")
+        self.assertEqual(
+            set(through_preload), {"_configure_startup_live_trading", "_live_promotion_refusal"}
+        )
+        for calls in (*direct.values(), *through_preload.values()):
+            for call in calls:
+                self.assertEqual(len(call.args), 2, "client AND store must be passed")
+
+    def test_startup_arms_live_beside_a_declared_leg(self):
+        workers = [TestStartupLiveExposureWiring._Worker("Renko")]
+        store = master_file.SharedMarketDataStore()
+        client = TestStartupLiveExposureWiring._Client(
+            workers,
+            orders=BrokerQueryResult.success(()),
+            positions=BrokerQueryResult.success((self._position(),)),
+        )
+
+        def live_env(name, default=False):
+            del default
+            return name == "RENKO_LIVE_TRADING"
+
+        with self._switched_on(), patch.object(master_file, "_env_bool", side_effect=live_env):
+            live_count, audit = master_file._configure_startup_live_trading(
+                workers, store, master_live=True, client=client
+            )
+        self.assertEqual(live_count, 1)
+        self.assertTrue(audit.safe_to_enable_live)
+        self.assertTrue(workers[0].live_trading)
+        self.assertFalse(store.execution_safety.entry_freeze_snapshot()[0])
+        self.assertEqual(store.declared_carried_symbols, frozenset({self.CARRIED}))
+        self.assertEqual(client.mutations, [])
+
+    def test_resume_after_a_freeze_is_not_blocked_by_a_declared_leg(self):
+        store = master_file.SharedMarketDataStore()
+        worker = master_file.AtmSingleLegStrategyWorker(
+            store=store, stop_event=threading.Event(), broker=MagicMock()
+        )
+        client = self._Books([self._position()])
+        with patch.object(master_file, "execution_client", client):
+            with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False):
+                self.assertFalse(worker._try_unfreeze_after_flat_reconciliation())
+            with self._switched_on():
+                self.assertTrue(worker._try_unfreeze_after_flat_reconciliation())
+        self.assertEqual(store.declared_carried_symbols, frozenset({self.CARRIED}))
+
+    def test_the_shutdown_warning_ignores_a_declared_leg(self):
+        store = master_file.SharedMarketDataStore()
+        store.live_session_started = True
+        client = self._Books([self._position()])
+        with patch.object(master_file, "LIVE_TOLERATE_DECLARED_CARRIED_LEGS", False):
+            self.assertTrue(master_file._warn_if_account_not_flat(store, client, None))
+        with self._switched_on():
+            self.assertFalse(master_file._warn_if_account_not_flat(store, client, None))
