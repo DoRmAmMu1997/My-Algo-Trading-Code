@@ -56,7 +56,6 @@ module is testable without a broker or a feed.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import math
@@ -349,17 +348,29 @@ class GroupStateFile:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.records: dict[str, dict[str, Any]] = {}
+        # True when the file exists but could not be read. Every exit is then
+        # refused for the whole session (see ``PositionGroupMonitor.tick``).
+        self.unreadable = False
         try:
             document = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            records = document.get("groups", {}) if isinstance(document, dict) else {}
+            if not isinstance(document, dict) or not isinstance(document.get("groups", {}), dict):
+                raise ValueError("not a state document")
+            records = document.get("groups", {})
             self.records = {str(k): dict(v) for k, v in records.items() if isinstance(v, dict)}
         except (OSError, ValueError) as exc:
-            # Keep the unreadable copy for the operator and start empty, loudly.
-            # Starting empty cannot re-fire a group that was already closed: the
-            # broker pre-check before any order finds its legs gone and stops it.
-            log.error("Position-group state file %s unreadable (%s); starting empty.", path, exc)
-            with contextlib.suppress(OSError):
-                path.replace(path.with_name(path.name + ".unreadable"))
+            # FAIL CLOSED. Starting empty would re-arm every group that was
+            # already squared off or stopped mid-exit, and the broker pre-check
+            # cannot always catch that: it accepts a holding LARGER than the
+            # group's share, so a group taking 150 of 300 units could close
+            # twice. The file is left exactly where it is -- moving it aside
+            # would make the NEXT start see no file and re-arm everything. The
+            # operator repairs it, or deletes it to reset on purpose, and restarts.
+            self.unreadable = True
+            log.error(
+                "Position-group state file %s unreadable (%s); NO group will be squared "
+                "off this session. Repair it, or delete it to reset, then restart.",
+                path, exc,
+            )
         for record in self.records.values():
             if record.get("status") == EXITING:
                 record["status"] = EXIT_FAILED
@@ -392,6 +403,14 @@ class GroupStateFile:
         """
 
         self.records.pop(group.fingerprint, None)
+
+
+def _pricing_identity(group: Group) -> tuple[tuple[Any, ...], ...]:
+    """The leg fields a Dhan contract is chosen by (the fingerprint omits them)."""
+
+    return tuple(
+        sorted((*leg.key, leg.underlying, leg.expiry, leg.strike, leg.right) for leg in group.legs)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +481,7 @@ class PositionGroupMonitor(threading.Thread):
         # (fingerprint, reason) pairs already alerted as unmonitorable, so a
         # later edit to some OTHER group does not repeat the same alert.
         self._unmonitorable_alerted: set[tuple[str, str]] = set()
+        self._state_unreadable_alerted = False
         self._last_log: datetime | None = None
 
     # -- lifecycle --------------------------------------------------------
@@ -481,6 +501,20 @@ class PositionGroupMonitor(threading.Thread):
     # -- one tick -----------------------------------------------------------
     def tick(self) -> None:
         self._reload_if_changed()
+        if self.state.unreadable:
+            # Prices are still watched and logged; nothing is ever sent.
+            if not self._state_unreadable_alerted:
+                self._state_unreadable_alerted = True
+                self._emit(
+                    "GROUP_STATE_UNREADABLE", "file",
+                    f"{self.state.path.name} could not be read, so it is unknown which "
+                    "groups were already closed; NO group will be squared off this "
+                    "session. Repair the file, or delete it to reset, then restart.",
+                )
+            for watch in self._watches.values():
+                watch.last_pnl = group_pnl(watch.group, self._prices(watch))
+            self._maybe_log(self._now())
+            return
         for watch in list(self._watches.values()):
             if self.state.status(watch.group) != ACTIVE:
                 continue
@@ -605,11 +639,15 @@ class PositionGroupMonitor(threading.Thread):
         watches: dict[str, _Watch] = {}
         for group in config.groups:
             existing = self._watches.get(group.fingerprint)
-            if existing is not None:
+            if existing is not None and _pricing_identity(existing.group) == _pricing_identity(group):
                 # Same legs: keep the streak, take the edited target/booked/prices.
                 existing.group = group
                 watches[group.fingerprint] = existing
                 continue
+            # A new group -- or a known one whose underlying/expiry/strike/right
+            # was corrected. The fingerprint (and so the saved status) ignores
+            # those fields, so a terminal status survives; only the Dhan
+            # contracts are looked up again below and the old ones released.
             if group.broker not in self.clients:
                 self._unmonitorable(
                     group, f"no logged-in {group.broker} client (no API key, or its token expired)"
@@ -646,9 +684,7 @@ class PositionGroupMonitor(threading.Thread):
         # just re-registered would silently unsubscribe it.
         still_used = {contract for watch in watches.values() for contract in watch.contracts.values()}
         released: set[DhanContract] = set()
-        for fingerprint, old in self._watches.items():
-            if fingerprint in watches:
-                continue
+        for old in self._watches.values():
             for contract in old.contracts.values():
                 if contract not in still_used and contract not in released:
                     released.add(contract)
@@ -711,6 +747,17 @@ class PositionGroupMonitor(threading.Thread):
                 "GROUP_EXIT_FAILED", group.name,
                 f"target reached but no exit plan could be built ({exc}); NO orders were sent",
                 pnl=pnl,
+            )
+            return
+
+        # The quote re-check and the position-book query are network calls. A
+        # target confirmed at 15:24:50 can reach this line after 15:25, which
+        # would eat the buffer the exit needs to finish before the close.
+        # Nothing has been sent or written yet, so simply stop here.
+        if not within_action_window(self._now()):
+            log.warning(
+                "Group %r: target confirmed, but the pre-checks finished after the last "
+                "exit start time; no orders sent.", group.name,
             )
             return
 
@@ -781,6 +828,7 @@ class PositionGroupMonitor(threading.Thread):
         failures = {
             "GROUP_EXIT_FAILED", "GROUP_UNMONITORABLE", "GROUP_FILE_INVALID",
             "GROUP_MONITOR_ERROR", "GROUP_QUOTE_UNREADABLE", "GROUP_STATE_UNWRITABLE",
+            "GROUP_STATE_UNREADABLE",
         }
         log_fn = log.error if action in failures else log.warning
         log_fn("%s | %s | %s", action, group_name, reason)
