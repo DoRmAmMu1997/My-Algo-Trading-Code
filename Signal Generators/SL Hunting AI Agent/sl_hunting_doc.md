@@ -14045,3 +14045,140 @@ in brackets.
 - **Three sessions in a row ran without a note:** 9, 11 and 12 Nov. On 12 Nov a
   note written the usual way would have pointed the wrong way (above).
 - **Usage limits again:** 25 decisions on 12 Nov, from 10:05 to the 10:30 cutoff.
+
+## 13 Nov - the agent shorted a flat open against IH a third time; IH's explainer names the run's length (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `iZQWkI8knAE`, uploaded 13 Nov 10:28 IST, 10:07, 77
+  transcript segments, read in full. Clock times come from the taskbar clock in
+  the frame, and his words are my translation of the Hindi auto-transcript.
+- **His note:** `AaVMHfqPR1Y`, "Prediction For 13 NOV 2026", uploaded 12 Nov
+  21:10 IST, 1:56, 14 segments. It was NOT shipped. Its plan is quoted from the
+  transcript; its levels were not checked against frames.
+- **His explainer:** `WKI6fGV8JAs`, "The SL Hunting Trap: How Big Money Fuels the
+  Next Big Move!", uploaded 8 Nov, 11:54, 92 segments, read in full.
+- **This book:** 74 decisions and one trade.
+- **Prices:** Yahoo Finance's public one-minute chart API for 13 Nov. The Dhan
+  token had expired (DH-901), so the CSVs stop at 12 Nov and every measurement
+  below ran on data through 12 Nov.
+
+**No knowledge change.** The measurement below sharpens the 6 Nov candidate
+into one that can be scoped, and it is left for the operator's call.
+
+### The session
+
+12 Nov's 3:15 levels were NIFTY 25,275.40 and BankNIFTY 61,475.10. 13 Nov
+opened FLAT: NIFTY 25,201.90 (-0.29%), BankNIFTY 61,300.55 (-0.28%).
+
+- **09:15-09:22:** sold to 25,077.60. BankNIFTY closed under 61,000 at 09:19.
+- **09:23-09:33:** a recovery to about 25,130, with a lower high at 09:30
+  (25,136.80).
+- **09:34-09:37:** up to 25,193.60. BankNIFTY closed back over 61,000 at 09:36.
+- **Rest of day:** a high of 25,245.50 at 10:49, a low of 25,054.45 at 14:22,
+  and a 3:15 level of 25,140.55 (-0.53%).
+
+IH's unshipped note: BUY on every open. A gap down or a flat open: identify
+buying-side setups, because 12 Nov's buyers "will have booked their targets and
+left", so there are no buyer stops to hunt. A gap up: the same plan, with
+"a little risk, because no one will be selling".
+
+### IH against the agent
+
+| | IH | the agent |
+|---|---|---|
+| read | "Selling has no benefit, because buyers did not hold their positions... the market made a psychological trap, since it has been going up for many days, but a big selling is not possible yet." The 61,000 break "will change a few light buyers' psychology", nothing more | 09:29: "Double top at 25130-25138 (09:19 & 09:26 swing highs) with a confirmed bearish doji rejection (09:27 pattern, confirmed by the 09:28 close at 25111.95 below the doji low)" |
+| entry | **09:32**, as the market began to cover: BankNIFTY 61,000 CE and 61,100 CE x1,170, SENSEX 81,400 CE x900, NIFTY CE x1,430 (its strike was not read) | **09:29:09**, SHORT 25,111.95, stop 25,136, target 25,080, 1 lot |
+| path | "if the market cannot go above the round number, I keep the same loss as the target, about 3 lakh". He held through one retracement after a good profit: "the retracements that come first are better; at target time they hurt you" | stopped **09:34:05** at 25,138.25 (-26.30 pts) |
+| exit | **09:45**: "if we sit greedy and the profit shrinks, then we do not know where to exit" | - |
+| result | **+2,92,261.15** (61,000 CE +61,600.50; 61,100 CE +59,342.90; SENSEX +1,14,903.50; NIFTY +56,414.25) | **-576.00** (-1.09R) |
+
+- **The third short against IH in five sessions, each on a FLAT open, each a
+  confirmed reversal pattern, each stopped:** 6 Nov (09:26), 9 Nov (09:48) and
+  13 Nov (09:29). IH bought all three sessions.
+- **No note was loaded.** IH's note named BUY for every branch, so a shipped
+  note would have named BUY on the agent's FLAT verdict.
+- **In the book's shape IH's minute won.** A NIFTY long at the 09:33 open
+  (25,131.10) reached its 45-point target at 09:36 (+2.81R).
+- **No outage:** all 74 decisions returned.
+
+### IH's explainer (8 Nov): the stage of a run decides who is left to hunt
+
+His claims, in order:
+
+- **Stops belong to retail.** "The operator does not hit the operator's stops."
+  If retail holds no quantity in a move, the market has no one to hunt, and it
+  keeps going slowly.
+- **Early in a run, retail can still be booked.** "When the momentum has just
+  started, the chances of profit booking arise, especially for retail." That is
+  when he will plan a sell against the trend.
+- **Far into a run, retail has already left.** "Retail cannot ride that much
+  momentum; it leaves first." After a gap-up deep in a run "others will not have
+  the courage to buy", so there is no inventory and no profit booking: follow.
+- **His own error, named:** he planned sells on two or three such gap-ups, lost,
+  "and then the psychology became clear".
+
+He gives no number for "early" or "far". The test below uses straight up days.
+
+### Measured (not encoded)
+
+**"Deep in a run, do not sell; early, you may."** Every FLAT open was bucketed
+by how many straight up days preceded it (3:15 level to 3:15 level). NIFTY was
+traded at the open of the given minute in the book's shape. Results are in R,
+with 2021-23 / 2024-26 in brackets.
+
+| straight up days before a FLAT open | n | short 09:17 | short 09:20 | long 09:17 | long 09:20 |
+|---|---|---|---|---|---|
+| any (all FLAT opens) | 934 | +0.14 (+0.24 / +0.07) | +0.18 (+0.21 / +0.16) | -0.14 (-0.20 / -0.10) | -0.18 (-0.17 / -0.18) |
+| 1 | 436 | +0.31 (+0.31 / +0.31) | +0.29 (+0.33 / +0.26) | -0.21 (-0.23 / -0.19) | -0.15 (-0.18 / -0.12) |
+| 2-3 | 190 | +0.18 (+0.26 / +0.13) | +0.23 (+0.11 / +0.32) | -0.28 (-0.28 / -0.29) | -0.20 (-0.19 / -0.21) |
+| 4 or more | 104 | -0.08 (+0.15 / -0.28) | -0.18 (-0.18 / -0.17) | +0.05 (+0.08 / +0.01) | -0.07 (+0.02 / -0.15) |
+
+- **The flat-open short is this data's default edge,** and it holds after one
+  to three up days.
+- **After four or more it is gone:** the 09:20 short scored -0.18R, negative in
+  both halves and in every full year from 2022 to 2025 (-0.16, -0.22, -0.19,
+  -0.36). At 09:22 it was -0.18R as well.
+- **The long does not take its place:** about zero. So IH's "do not sell" holds
+  here; "buy" does not, as a clock-minute rule.
+- **No mirror:** after four or more DOWN days the flat-open short stayed
+  positive (+0.23R at 09:20).
+- **Every session in this stretch sat deep in the bucket.** The 3:15 level rose
+  on each of the six sessions before 6 Nov, and on each of the ten before 13 Nov.
+
+### The 6 Nov candidate, rescoped
+
+- **Evidence now:** three shorts on FLAT opens after six, seven and ten straight
+  up days, all stopped (-1.59R, -0.95R, -1.09R). The five-year table says a
+  short there has had no edge, where elsewhere it has.
+- **A scoped version for the operator's call:** after four or more straight up
+  days (3:15 level to 3:15 level), do not open a SHORT on a FLAT open before
+  10:30. It needs no note, so it would also have covered 9 and 13 Nov, when
+  none was loaded. Its ending line would be the ordinary one: NIFTY trading
+  below yesterday's low.
+- **What it would cost:** nothing measurable at fixed minutes (the short there
+  scored below zero). The agent's pattern shorts are not fixed-minute entries,
+  so the table bounds, rather than measures, what it gives up.
+- **Not encoded.** The operator has made every rule of this kind (v5x, v5z, v6d).
+
+### Already in the corpus
+
+- **"Buyers came, but booked and left; no buyer stops to hunt":** A ONE-WAY DAY
+  LEAVES NOBODY SEATED (v5f), and CLOSING-POINT HOLD TEST: a rejection that did
+  not hold seats nobody.
+- **"With no inventory, go with the market":** THE METHOD IS NOT ALWAYS A FADE
+  (v4o).
+- **"Retail cannot ride that much momentum":** MULTI-DAY ACCUMULATION's "a crowd
+  that only TRICKLED in is not huntable", and CONTEXTUALISE MOMENTUM.
+- **"The sharp fall was a trap to stop others buying early":** THE EARLY
+  RETRACEMENT IS THE TRAP, NOT THE TURN (v4t).
+- **"The retracements that come first are better":** v5y.
+- **"Once you have seen a good profit, book it if it shrinks":** BOOK WHEN THE
+  PROFIT STOPS GROWING (v4f).
+
+### For the operator
+
+- **The Dhan access token has expired** (DH-901). The 1-minute CSVs stop at
+  12 Nov until it is renewed (`python algo.py setup-token`). If the runner's
+  market data uses the same token, it needs renewing before Monday's open.
+- **Four sessions in a row ran without a note:** 9, 11, 12 and 13 Nov.
