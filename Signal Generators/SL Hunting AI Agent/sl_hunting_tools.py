@@ -36,7 +36,7 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -335,6 +335,10 @@ class SLHuntingToolContext:
     # applies depends on the open, which only the model can read), but it can make
     # silently ignoring the note impossible.
     premarket_note_active: bool = False
+    # v6e: earlier sessions' 3:15 levels, (date, level), from the worker's once-per-
+    # session longer NIFTY fetch, so the up-run count can see past the shared 7-day
+    # frame. None means "count from the frame alone".
+    up_run_history: Sequence[tuple[Any, float]] | None = None
     # Set via `expire()` when the agent abandons this bar's SDK call (SLH-001,
     # e.g. a timed-out CLI call). The abandoned agentic loop keeps running on
     # its daemon thread and could otherwise still call the order tool MINUTES
@@ -374,6 +378,7 @@ class SLHuntingToolContext:
         deadline_seconds: float | None = None,
         execution_lock: Any | None = None,
         premarket_note_active: bool = False,
+        up_run_history: Sequence[tuple[Any, float]] | None = None,
     ) -> SLHuntingToolContext:
         """Prepare the per-bar context: clean the candles, cache the last price, attach BNF.
 
@@ -399,6 +404,7 @@ class SLHuntingToolContext:
             last_price=last_price,
             bnf_candles=prepared_bnf,
             premarket_note_active=bool(premarket_note_active),
+            up_run_history=tuple(up_run_history) if up_run_history else None,
             generation=int(generation),
             generation_is_current=generation_is_current,
             deadline_monotonic=(
@@ -412,7 +418,7 @@ class SLHuntingToolContext:
     # --- tool payload builders (plain functions; easy to unit test) ---------
 
     def pivot_and_levels_payload(self) -> dict[str, Any]:
-        return pivot_and_levels(self.candles, self.cfg)
+        return pivot_and_levels(self.candles, self.cfg, up_run_history=self.up_run_history)
 
     def fibo_levels_payload(self) -> dict[str, Any]:
         return fibo_levels(self.candles, self.cfg)

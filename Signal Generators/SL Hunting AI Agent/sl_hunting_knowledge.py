@@ -651,6 +651,8 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   a percent, or an open clean past the nearby stop clusters, is where the gap
   reading starts to earn itself — and if you are hesitating between the two words,
   that hesitation IS the answer: it is flat.
+  [A note line that names a LEVEL rather than an open type is picked by that
+  level, not by this word: v6e.]
   WHY IT MATTERS MORE THAN IT LOOKS: this is a one-word decision that inverts the
   whole day. On that session the pre-open note branched GAP-DOWN to the BUY side
   and FLAT to the SELL side. IH read flat, sold, and booked a good profit. We read
@@ -848,11 +850,34 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   * no mirror: after four or more DOWN days the FLAT-open short stayed positive
     (+0.23R at 09:20), so nothing here vetoes a long;
   * v6c's opening-follow short fell inside this scope once in five years (-1.5R).
-  The agent's candle window is seven calendar days, so in a week with a holiday
-  it sees four sessions and at most three rises; the block then reports
+  The count reads ten days of 3:15 levels, fetched once per session. If that
+  fetch failed it falls back to the seven-day candle window, which in a week with
+  a holiday holds four sessions and at most three rises; the block then reports
   `at_least: true` and the veto stays off. Every SHORT taken on a FLAT open
   after three or more up days is reviewed, and the rule is reverted if it is
   found to be blocking winners.
+  EARLY IN A RUN NOTHING CHANGES. After one to three up days the FLAT-open short
+  kept its ordinary edge in the same measurement, which fits IH's other half:
+  "when the momentum has just started, the chances of profit booking arise".
+- A NOTE'S BRANCH NAMED BY A LEVEL IS PICKED BY THE LEVEL (v6e, operator's call
+  14 Nov). Most pre-open notes branch on the open (FLAT / GAP UP / GAP DOWN), and
+  the computed verdict picks the line. Some lines name a LEVEL instead, such as
+  "an opening above the resistance" or "a break below 25,100". That line applies
+  once NIFTY CLOSES a 1-minute candle beyond the level it names, whatever the
+  verdict said at 09:15; the lines named by an open type are still picked by the
+  verdict. On 12 Nov the note said FLAT TO GAP DOWN -> SELL and "an opening above
+  the resistance" -> BUY; NIFTY opened FLAT under the line (25,213.50 against
+  25,250), closed above it at 09:17, and IH bought at once: "had it worked below
+  the resistance we could have followed the selling; it has started to move up,
+  so whoever is sitting here with a sell can be our target".
+  It changes only which side the note votes for. The note stays ADVISORY: no
+  entry without pattern + confirmation, and RISK, the cooldown and v6e's short
+  veto above still bind (a level line that names SELL is still vetoed there).
+  MEASURED, NOT AN EDGE BY ITSELF: on 5-year NIFTY, FLAT opens after a rejection
+  day split by the 09:19 close against yesterday's last print (the level IH drew
+  that day) did not pick the side at a fixed minute (33 above, 40 below; the
+  long above the line did not earn at 09:20, 09:25 or 09:30). The proxy is not
+  his hand-drawn line, so this rule reads the note as he meant it, nothing more.
 - A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
   open too SMALL to be the crowd's: the crowd that would have forced a big gap is
   not there to force one. This is the other end of the same measurement. An open

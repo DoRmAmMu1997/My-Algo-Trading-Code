@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pandas as pd
 from sl_hunting_executor import StandaloneExecutor
-from sl_hunting_indicators import pivot_and_levels
+from sl_hunting_indicators import pivot_and_levels, session_315_levels
 from sl_hunting_tools import SLHuntingToolContext
 
 # Five sessions before "today" (2026-11-06), Fri 30 Oct to Thu 5 Nov.
@@ -47,7 +47,8 @@ def _today(open_price, minutes=5, low=None):
     return frame
 
 
-def _run(levels, open_price, *, days=None, today_low=None, yesterday_low=None, settlement=None):
+def _run(levels, open_price, *, days=None, today_low=None, yesterday_low=None, settlement=None,
+         history=None):
     days = days or PRIOR_DAYS[-len(levels):]
     sessions = [
         _session(day, lvl,
@@ -56,7 +57,7 @@ def _run(levels, open_price, *, days=None, today_low=None, yesterday_low=None, s
         for i, (day, lvl) in enumerate(zip(days, levels, strict=True))
     ]
     frame = pd.concat([*sessions, _today(open_price, low=today_low)], ignore_index=True)
-    return pivot_and_levels(frame)["up_run"]
+    return pivot_and_levels(frame, up_run_history=history)["up_run"]
 
 
 RISING = [24000.0, 24100.0, 24200.0, 24300.0, 24400.0]   # four rises
@@ -140,3 +141,59 @@ def test_banknifty_levels_leave_the_block_out():
     bnf = ctx.bank_nifty_payload()["pivot_and_levels"]
     assert "up_run" not in bnf
     assert "opening_follow" not in bnf
+
+
+# --------------------------------------------------------------------------
+# The longer history the worker fetches once per session
+# --------------------------------------------------------------------------
+
+def _d(text):
+    return pd.Timestamp(text).date()
+
+
+def test_history_lets_a_holiday_week_see_the_fourth_rise():
+    """13 Nov's case: four sessions in the frame, the fifth only in the history."""
+    history = [(_d("2026-10-30"), 24000.0)]
+    block = _run(RISING[1:], 24420.0, days=PRIOR_DAYS[1:], history=history)
+    assert block["sessions_seen"] == 5
+    assert block["straight_up_days"] == 4
+    assert block["short_veto_active"] is True
+
+
+def test_history_extends_the_count_past_the_frame():
+    history = [(_d("2026-10-28"), 23800.0), (_d("2026-10-29"), 23900.0)]
+    block = _run(RISING, 24420.0, history=history)
+    assert block["straight_up_days"] == 6
+    assert block["sessions_seen"] == 7
+
+
+def test_the_frame_wins_where_both_cover_a_day_and_today_is_never_history():
+    # History claims 2 Nov fell; the frame's own 2 Nov rose, so the count holds.
+    history = [(_d("2026-10-30"), 24000.0), (_d("2026-11-02"), 23000.0), (_d("2026-11-06"), 1.0)]
+    block = _run(RISING, 24420.0, history=history)
+    assert block["straight_up_days"] == 4
+    assert block["sessions_seen"] == 5
+
+
+def test_a_falling_day_in_the_history_stops_the_count():
+    history = [(_d("2026-10-28"), 23700.0), (_d("2026-10-29"), 24500.0)]
+    block = _run(RISING, 24420.0, history=history)
+    assert block["straight_up_days"] == 4
+    assert block["at_least"] is False
+
+
+def test_session_315_levels_reads_every_session_before_settlement():
+    frame = pd.concat([_session("2026-11-04", 24200.0, settlement=24100.0),
+                       _session("2026-11-05", 24300.0)], ignore_index=True)
+    assert session_315_levels(frame) == [(_d("2026-11-04"), 24200.0), (_d("2026-11-05"), 24300.0)]
+    assert session_315_levels(frame.iloc[0:0]) == []
+
+
+def test_the_tool_context_hands_the_history_to_the_levels_tool():
+    frame = pd.concat([_session(d, lvl) for d, lvl in zip(PRIOR_DAYS[1:], RISING[1:], strict=True)]
+                      + [_today(24420.0)], ignore_index=True)
+    plain = SLHuntingToolContext.build(frame, StandaloneExecutor())
+    assert plain.pivot_and_levels_payload()["up_run"]["short_veto_active"] is False
+    ctx = SLHuntingToolContext.build(frame, StandaloneExecutor(),
+                                     up_run_history=[(_d("2026-10-30"), 24000.0)])
+    assert ctx.pivot_and_levels_payload()["up_run"]["short_veto_active"] is True

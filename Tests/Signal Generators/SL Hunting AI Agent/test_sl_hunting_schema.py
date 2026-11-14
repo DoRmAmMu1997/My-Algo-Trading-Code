@@ -4221,3 +4221,36 @@ def test_v6e_deep_in_an_up_run_a_flat_open_is_not_shorted():
     assert ("VETO: while `levels.up_run.short_veto_active` is true, no ENTER_SHORT at all "
             "(v6e: a FLAT open after four or more straight up days).") in flat
     assert "plus NIFTY's v6c `opening_follow` and v6e `up_run` blocks." in flat
+
+
+def test_v6e_a_notes_branch_named_by_a_level_is_picked_by_the_level():
+    """v6e, second part (operator's call, 14 Nov): on 12 Nov IH's note branched on
+    "an opening above the resistance", NIFTY opened FLAT under it and closed above it
+    two minutes later, and IH bought. Pins the trigger (a 1-minute CLOSE beyond the
+    named level), that open-type lines still go by the verdict, that the note stays
+    advisory and v6e's short veto still binds, the measurement that found no
+    fixed-minute edge, the early-run line in v6e, its place right after v6e, and the
+    pointer left in CLASSIFY THE OPEN.
+    """
+    prompt = build_system_prompt()
+    heading = "A NOTE'S BRANCH NAMED BY A LEVEL IS PICKED BY THE LEVEL"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6e, operator's call 14 Nov).")
+    assert ("That line applies once NIFTY CLOSES a 1-minute candle beyond the level it names, "
+            "whatever the verdict said at 09:15; the lines named by an open type are still "
+            "picked by the verdict.") in rule
+    assert "It changes only which side the note votes for. The note stays ADVISORY" in rule
+    assert "no entry without pattern + confirmation" in rule
+    assert "a level line that names SELL is still vetoed there" in rule
+    assert "MEASURED, NOT AN EDGE BY ITSELF" in rule
+    assert "(33 above, 40 below; the long above the line did not earn at 09:20, 09:25 or 09:30)" in rule
+    # Straight after v6e's first part, before v5k.
+    first = prompt.index("\n- DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED")
+    here = prompt.index("\n- " + heading)
+    assert first < here < prompt.index("\n- A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+    assert "\n- " not in prompt[first + 3:here]
+    up_run = _flat_rule(prompt, "DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED")
+    assert "EARLY IN A RUN NOTHING CHANGES. After one to three up days the FLAT-open short" in up_run
+    classify = _flat_rule(prompt, "CLASSIFY THE OPEN BEFORE YOU BRANCH ON IT, AND SAY WHY")
+    assert ("[A note line that names a LEVEL rather than an open type is picked by that level, "
+            "not by this word: v6e.]") in classify

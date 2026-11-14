@@ -14233,3 +14233,69 @@ Each of 10 mutants fails them:
 
 **Review.** Every SHORT on a FLAT open after three or more up days is reviewed,
 and the rule is reverted if it is found to be blocking winners.
+
+### v6e, continued: ten days of history, and the note's level branches (operator, 14 Nov)
+
+**The window, widened for this count only.** The operator chose to widen the
+agent's view to ten days. The shared `INTRADAY_LOOKBACK_DAYS` frame that every
+strategy polls is unchanged. Instead the SL Hunting worker makes ONE extra NIFTY
+fetch per session (`SL_HUNTING_UP_RUN_LOOKBACK_DAYS`, default 10, never below
+the shared window). It reduces that fetch to (date, 3:15 level) pairs for the
+days before today, and passes them through `decide` and the tool context into
+`pivot_and_levels(up_run_history=...)`.
+
+- **Only the levels travel.** The bars never reach the agent, so no other tool
+  changes.
+- **Where both cover a day, the frame wins.** Today is never taken from history.
+- **A failed fetch is not fatal.** The count falls back to the frame alone, with
+  a warning, and the fetch retries no sooner than five minutes later.
+- **The holiday gap is closed.** 13 Nov now reads four or more rises.
+
+**The note's level branches.** v6e gains a second rule: A NOTE'S BRANCH NAMED BY
+A LEVEL IS PICKED BY THE LEVEL. A plan line that names a level rather than an
+open type applies once NIFTY closes a 1-minute candle beyond it. Lines named by
+an open type are still picked by the computed verdict.
+
+- **The case:** 12 Nov, when the note's FLAT branch said SELL and its "opening
+  above the resistance" branch said BUY. NIFTY closed above the line at 09:17,
+  and IH bought.
+- **It changes only the note's vote.** Pattern + confirmation, RISK and v6e's
+  short veto still bind.
+- **The 12 Nov measurement is stated with it:** the line does not pick the side
+  at a fixed minute.
+- **Pointer:** CLASSIFY THE OPEN now points to it.
+- **On the shipping side,** a note's plan line now quotes the level whenever IH
+  states a branch that way.
+
+v6e's first rule also states its other half: after one to three up days the
+flat-open short keeps its ordinary edge.
+
+**Considered and left out:**
+
+- **Extending the veto to gap-ups deep in a run.** After four or more up days the
+  09:17 gap-up short scored -0.44R, but over 17 sessions. It would also contradict
+  BUYER-INVENTORY FADE's gap-up short and IH's own "GAP UP -> SELL" notes.
+- **"Check the open is not volatile"** (9 and 11 Nov): measured, it did not
+  separate the early gap-up long.
+- **"After a rejection day, a flat open above the resistance is a buy"** as an
+  entry rule: measured, no fixed-minute edge. It enters only as the note-reading
+  rule above.
+- **IH's entries before confirmation** (12 Nov): they contradict pattern +
+  confirmation.
+
+**Tests.**
+
+- **Worker:**
+  - one fetch per session over ten days, with today excluded;
+  - the failure fallback and its five-minute wait;
+  - the lookback floor;
+  - the inference pass handing the history to `decide`.
+- **Agent:** `decide` hands the history to the tool context.
+- **Indicators:**
+  - the holiday week now sees the fourth rise;
+  - history extends the count, and a falling day in it stops the count;
+  - the frame wins on overlap;
+  - `session_315_levels` reads the pre-settlement level;
+  - the tool context passes the history to the levels tool.
+- **Prompt:** a wiring test for the level-branch rule.
+- **Mutants:** 11 on the plumbing, all caught.

@@ -29,6 +29,7 @@ oldest → newest. Helper `prepare_candles` normalises this.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import time as dt_time
 from typing import Any, cast
@@ -357,12 +358,28 @@ def _level_315(session: pd.DataFrame) -> float:
     return float((pre if not pre.empty else session)["close"].iloc[-1])
 
 
+def session_315_levels(candles: pd.DataFrame) -> list[tuple[Any, float]]:
+    """Every session's 3:15 level in `candles`, oldest first, as (date, level).
+
+    v6e's history input: the worker fetches a longer NIFTY window once per session
+    and passes these levels in, so the up-run count is not capped by the 7-day frame
+    every strategy shares. Only the levels travel -- never the bars -- so nothing
+    else the agent reads changes.
+    """
+    df = prepare_candles(candles)
+    if df.empty:
+        return []
+    df = df.assign(_date=df["timestamp"].dt.date)
+    return [(day, _level_315(session)) for day, session in df.groupby("_date", sort=True)]
+
+
 def _up_run(
     df: pd.DataFrame,
     dates: list[Any],
     open_classification: dict[str, Any],
     today_df: pd.DataFrame,
     prev_day: dict[str, Any] | None,
+    history: Sequence[tuple[Any, float]] | None = None,
 ) -> dict[str, Any]:
     """v6e: how many straight up days came before today, and is the short vetoed?
 
@@ -373,19 +390,26 @@ def _up_run(
     NIFTY traded below 5 Nov's low.
 
     Counting walks back from yesterday while each session's 3:15 level is above
-    the one before it. It can only see the sessions in the candle window: in a
-    week with a holiday the 7-day window holds four, so at most three rises are
-    visible and the veto cannot fire (13 Nov, after the 10 Nov holiday, read three
-    with `at_least: true`). When every comparison it could make was a rise the
-    true run may be longer, and `at_least` says so. Like the open verdict, the
+    the one before it. From the frame alone it sees only the sessions in the
+    candle window: in a week with a holiday the 7-day window holds four, so at
+    most three rises are visible (13 Nov, after the 10 Nov holiday, would read
+    three with `at_least: true`) -- which is why the worker passes `history`.
+    When every comparison it could make was a rise the true run may be longer,
+    and `at_least` says so. Like the open verdict, the
     model reads this; it does not re-derive it.
+
+    `history` (from `session_315_levels` on a longer fetch) adds sessions OLDER than
+    the frame's first one; where both cover a date, the frame wins. The worker
+    fetches ten days, so a holiday week no longer hides the fourth rise.
     """
-    prior = dates[:-1]
-    if len(prior) < 2 or not open_classification.get("available"):
+    today = dates[-1]
+    by_date = {day: level for day, level in (history or ()) if day < today}
+    by_date.update({day: _level_315(df[df["_date"] == day]) for day in dates[:-1]})
+    if len(by_date) < 2 or not open_classification.get("available"):
         return {"available": False, "straight_up_days": None, "short_veto_active": False,
                 "reason": "fewer than two previous sessions in the candle window"}
 
-    levels = [_level_315(df[df["_date"] == day]) for day in prior]
+    levels = [by_date[day] for day in sorted(by_date)]
     up_days = 0
     while up_days < len(levels) - 1 and levels[-1 - up_days] > levels[-2 - up_days]:
         up_days += 1
@@ -430,6 +454,7 @@ def pivot_and_levels(
     *,
     include_opening_follow: bool = True,
     include_up_run: bool = True,
+    up_run_history: Sequence[tuple[Any, float]] | None = None,
 ) -> dict[str, Any]:
     """Compute the day pivot, previous-day OHLC, today's levels and psych levels.
 
@@ -571,7 +596,7 @@ def pivot_and_levels(
         if include_opening_follow else {}
     ) | (
         # v6e: NIFTY's payload only, for the same reason as v6c -- measured on NIFTY.
-        {"up_run": _up_run(df, dates, open_classification, today_df, prev_day)}
+        {"up_run": _up_run(df, dates, open_classification, today_df, prev_day, up_run_history)}
         if include_up_run else {}
     )
 

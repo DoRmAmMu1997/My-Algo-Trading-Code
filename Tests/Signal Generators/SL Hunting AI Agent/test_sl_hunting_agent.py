@@ -1991,3 +1991,20 @@ def test_slh024_a_worker_without_a_reason_keeps_the_generic_message():
         result = MasterWorkerExecutor(worker).enter("LONG", stop=24950, target=25100, reason="x", price=25000)
         assert result["accepted"] is False
         assert result["reason"].startswith("worker rejected the entry")
+
+
+def test_v6e_decide_hands_the_up_run_history_to_the_tool_context():
+    """v6e: the worker's longer 3:15-level history must reach the levels tool."""
+    from datetime import date
+
+    seen = {}
+
+    async def _runner(prompt, *, system_prompt, model, max_turns, tool_context=None):
+        seen["history"] = tool_context.up_run_history
+        return AgentRunResult(text=json.dumps(
+            {"action": "HOLD", "confidence": 0, "setup": "none", "reasoning": "test"}))
+
+    history = [(date(2026, 11, 5), 24542.45)]
+    SLHuntingAgent(model="test-model", runner=_runner).decide(
+        _candles(), StandaloneExecutor(), up_run_history=history)
+    assert seen["history"] == ((date(2026, 11, 5), 24542.45),)
