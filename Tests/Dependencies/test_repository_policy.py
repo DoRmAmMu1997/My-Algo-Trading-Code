@@ -344,7 +344,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # socket-close edge cases, not the subprocess pipes the SDK reads. Same
     # standing check: on the next session decisions return and "SLHuntingAgent
     # decision latency" has not crept up. If either fails, revert this pin first.
-    assert "claude-agent-sdk==0.2.179" in ai
+    # 0.2.179 -> 0.2.180 (2026-11-17, PR #244). CLI-only: a diff of the installed
+    # package against 0.2.179 shows nothing but the two version strings, and the
+    # bundled CLI moves 2.1.319 -> 2.1.321. The win_amd64 wheel ships
+    # _bundled/claude.exe (`--version` = 2.1.321 on Windows). Same standing check.
+    assert "claude-agent-sdk==0.2.180" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -455,7 +459,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # only gain optional started/completed timestamps. The lockstep CLI,
     # openai-codex-cli-bin 0.167.0, publishes a win_amd64 wheel. Standing check
     # unchanged.
-    assert "openai-codex==0.167.0" in ai
+    # 0.167.0 -> 0.167.2 (2026-11-17, PR #244). The installed Python package is
+    # byte-identical to 0.167.0; only its METADATA moves the lockstep CLI,
+    # openai-codex-cli-bin, to 0.167.2, which publishes a win_amd64 wheel.
+    # Standing check unchanged.
+    assert "openai-codex==0.167.2" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -726,7 +734,10 @@ def test_coverage_config_is_branch_enabled_and_preserves_overall_baseline():
     # Margin ~0.6pp.
     # 74.0 -> 75.0 (2026-11-01, PR #230), at the operator's direction. CI measured
     # 75.1% on PR #230 (c1ee9f2), identically on 3.12, 3.13 and 3.14. Margin ~0.1pp.
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 75.0
+    # 75.0 -> 76.0 (2026-11-17, PR #244), at the operator's direction. CI measured
+    # 76.5% on main (5d95f1c), identically on 3.12, 3.13 and 3.14, after the
+    # position-group monitor and its tests landed. Margin ~0.5pp.
+    assert config["tool"]["coverage"]["report"]["fail_under"] == 76.0
 
 
 def test_mypy_covers_the_complete_identifier_named_cpr_ai_runtime():
