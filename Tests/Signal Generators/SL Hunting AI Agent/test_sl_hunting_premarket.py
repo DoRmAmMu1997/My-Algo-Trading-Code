@@ -228,49 +228,47 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_november_17_intraday_hunter_plan():
-    """Render the November 16 evening forecast: BUY flat to gap up, SELL a gap down.
+def test_shipped_note_matches_november_18_intraday_hunter_plan():
+    """Render the November 17 evening forecast: SELL flat to gap down, BUY a gap up.
 
-    XdvB3ahnXVs was uploaded 16 Nov at 21:10 IST. Its direct Hindi transcript says
-    16 Nov was sideways, "a little up, a little down"; buyers and sellers are both
-    seated, the buyers more, "because the market is already very positive". On a
-    flat to gap-up open the buyers "did not run on the small rejections", so the
-    plan is to go with the market; a gap down raises their risk, so they become the
-    target. IH opens with "tomorrow is the expiry here too" (NIFTY), which the note
-    carries in its context, not as a plan line. The labels were read from the frames
-    at 0:47, 1:20 and 1:47. Every spoken value agrees with its line to within 12
-    points (BankNIFTY's 61,900 is drawn at 61,911.35; the spoken level wins). The
-    auto-transcript garbled BankNIFTY's second support ("6800"); it is drawn at
-    60,801.85 and recorded as 60,800.
+    vvSAwjxxrDQ was uploaded 17 Nov at 21:10 IST. Its direct Hindi transcript says
+    17 Nov's direct positive momentum brought buyers in; NIFTY and Sensex rejected,
+    "but in a market this positive traders do not leave on a rejection". So a flat
+    to gap-down open targets those buyers (SELL), and a gap up, where "the buyers
+    see no danger", goes with the market (BUY). His closing line, "a gap-up that
+    opens above the high is good for us", is a LEVEL condition, so the BUY line
+    quotes it (v6e's note-reading rule). Every level was spoken cleanly; the frames
+    confirmed NIFTY 25,550 / 25,475 (drawn 25,550.45 / 25,475.65), BankNIFTY 61,900
+    (61,903.00) and Sensex 83,200 (83,202.51).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 11, 17))
-    assert "PRE-OPEN ANALYST NOTE for 2026-11-17" in block
-    assert "XdvB3ahnXVs" in block
-    assert "uploaded 2026-11-16" in note.source
-    assert "sideways in all three indices" in note.context
-    assert "the sellers are fewer and the buyers more" in note.context
-    assert "November 17 is NIFTY's expiry" in note.context
-    assert format_premarket_note(note, date(2026, 11, 16)) == ""
-    assert format_premarket_note(note, date(2026, 11, 18)) == ""
+    block = format_premarket_note(note, date(2026, 11, 18))
+    assert "PRE-OPEN ANALYST NOTE for 2026-11-18" in block
+    assert "vvSAwjxxrDQ" in block
+    assert "uploaded 2026-11-17" in note.source
+    assert "direct positive momentum and buyers came in" in note.context
+    assert "traders do not leave on a rejection" in note.context
+    assert format_premarket_note(note, date(2026, 11, 17)) == ""
+    assert format_premarket_note(note, date(2026, 11, 19)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> BUY, WITH THE MARKET"))
-    assert "did not run on the small rejections" in buy
-    assert "buying-side setups" in buy
-    sell = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL"))
-    assert "they become the target" in sell
+    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> SELL"))
+    assert "target the buyers who came in" in sell
     assert "selling-side setups" in sell
+    buy = next(line for line in note.plan if line.startswith("GAP UP -> BUY, WITH THE MARKET"))
+    assert "cannot be targeted" in buy
+    assert "an opening above yesterday's high suits it best" in buy
+    assert "buying-side setups" in buy
     assert len(note.plan) == 2
     assert not any("EXPIR" in line.upper() for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [25380.0, 25475.0], "support": [25150.0, 24975.0]},
-        {"index": "BANKNIFTY", "resistance": [61900.0, 62200.0], "support": [61260.0, 60800.0]},
-        {"index": "SENSEX", "resistance": [82450.0, 82800.0], "support": [81800.0, 81350.0]},
+        {"index": "NIFTY", "resistance": [25475.0, 25550.0], "support": [25300.0, 25200.0]},
+        {"index": "BANKNIFTY", "resistance": [62420.0, 62700.0], "support": [61900.0, 61570.0]},
+        {"index": "SENSEX", "resistance": [82900.0, 83200.0], "support": [82300.0, 81970.0]},
     ]
