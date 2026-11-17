@@ -14331,3 +14331,100 @@ buy".** As an entry rule it contradicts CLOSING-POINT HOLD TEST.
 - **IH's version is already in:** v6e's note-reading rule picks the BUY branch
   once price closes above a level the note names, without making it an entry
   rule.
+
+## 16 Nov - IH sold the top of his range and was stopped out; the agent held (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `casGPMKquUg`, uploaded 16 Nov 10:56 IST, 9:34, 74
+  transcript segments, read in full. Clock times come from the taskbar clock in
+  the frame, and his words are my translation of the Hindi auto-transcript.
+- **His note:** `fLH9iRlxJQI`, "Prediction For 16 NOV 2026", uploaded 15 Nov
+  21:10 IST, 15 segments. It was NOT shipped. Its plan is quoted from the
+  transcript; its levels were not checked against frames.
+- **His Saturday explainer** (`LQGBATpIakA`, "Right Entry in Intraday Trading")
+  is members-only and was not read.
+- **This book:** 74 decisions and no trade.
+- **Prices:** the Dhan one-minute CSVs, topped up through 16 Nov.
+
+**No knowledge change.**
+
+### The session
+
+13 Nov's 3:15 levels were NIFTY 25,139.95 and BankNIFTY 61,042.55. 16 Nov opened
+FLAT: NIFTY 25,206.15 (+0.26%), BankNIFTY 61,225.65 (+0.30%). 13 Nov had closed
+lower, so v6e's up-run count was zero and its veto was off.
+
+- **09:15-09:16:** a run to 25,310.70.
+- **09:17-09:29:** back to 25,208.65.
+- **09:30-09:58:** up to 25,337.60, the day's high. BankNIFTY reached 61,712.80,
+  an all-time high.
+- **Rest of day:** sideways. A low of 25,172.10 at 14:04, and a 3:15 level of
+  25,220.05 (+0.32%), at 0.29 of the range.
+
+IH's unshipped note: SELL on every open (flat, gap up, gap down), because the
+market had risen for many days and "buyers will be seated", so they are the
+target.
+
+### IH against the agent
+
+| | IH | the agent |
+|---|---|---|
+| read | the note's SELL. "A small range for two or three days... at the upper point, selling looks right." No big rejection had come, "so the buyers are seated; nobody sat with a sell". He named the risk: "buying puts near an all-time high is not free of danger" | the first 15 decisions (09:15 to 09:29) were usage-limited. From 09:31: FLAT open, v6c and v6e inactive, "range, not a trend (v5h)", no pattern at a clean level |
+| entry | **09:18**, once the opening run stalled: "while the market moved up sharply we did not touch it". BankNIFTY 61,300 PE and 61,200 PE x1,170, SENSEX 82,000 PE x900, NIFTY 25,250 PE x1,430 | none |
+| path | in profit briefly around 09:27-09:29 (NIFTY 25,208.65), then lost as all three covered: "Nifty and Sensex covered as fast as they fell" | 59 HOLDs |
+| exit | **about 09:44**, at his loss limit: "if the market is going up we cannot sit; don't think 'if not here, it will fall from there'", and "adding quantity in a loss creates the problem" | - |
+| result | **-2,50,168.35** (61,300 PE -64,642.50; 61,200 PE -60,195.75; SENSEX -84,690.00; NIFTY -40,640.10) | **0** |
+
+- **IH lost on his note's side; the agent stayed flat.** This is the case for
+  "your read wins" over a note: no pattern formed at a level, and the agent
+  held.
+- **In the book's shape his minute lost.** A NIFTY short at the 09:18 open
+  (25,225.75) hit the 24-point backstop inside that minute (-1.5R). One at the
+  09:19 open (25,262.25), after the 09:18 candle's rebound, reached its 45-point
+  target at 09:27 (+2.81R). One at 09:20 was out at -0.8R after 15 minutes.
+- **The usage limit cost the opening window.** The first 15 decisions, 09:15 to
+  09:29, returned "Agent usage-limited; holding."
+
+### Measured (not encoded)
+
+**"Sell the upper end of a two-to-three-day range."** The test took every FLAT
+open where the prior three sessions' combined range (09:15-15:14) was no wider
+than 1.5% or 2.0% of price, and split by where the open sat in it. It traded
+NIFTY at the open of the given minute in the book's shape. Results are in R,
+with 2021-23 / 2024-26 in brackets.
+
+| range <= 2.0%, open in its | n | short 09:18 | short 09:20 | short 09:25 | short 09:30 |
+|---|---|---|---|---|---|
+| top quarter (IH's case) | 228 | +0.227 (+0.17 / +0.28) | +0.011 (+0.12 / -0.09) | +0.039 (+0.26 / -0.17) | +0.059 (+0.07 / +0.05) |
+| bottom quarter | 129 | +0.169 (-0.10 / +0.29) | +0.445 (+0.18 / +0.56) | +0.326 (+0.02 / +0.46) | +0.159 (+0.13 / +0.17) |
+
+- **The range top adds nothing to the ordinary FLAT-open short** (+0.14R at 09:17
+  and +0.18R at 09:20 over all 934 FLAT opens, v6e's table). It was no better at
+  09:18 and about zero from 09:20.
+- **The 1.5% version reads the same** (148 top-quarter sessions: +0.148R at
+  09:18, -0.001R at 09:20).
+- **16 Nov's own open was mid-range** (0.41 of a 1.48% range), so the test would
+  not have counted it.
+
+### Already in the corpus
+
+- **"While the market moved up sharply we did not touch it":** A MOVE THAT DENIED
+  YOU ENTRY WAS NOT YOUR MOVE (v4f), and RUNAWAY TREND's "no chase".
+- **"Enter before the breakout; after it, it may go much further":** THE CROWD'S
+  FEAR IS YOUR WINDOW (v4i).
+- **"Don't think 'if not from here, it will fall from there'":** DISCIPLINE IS
+  ASYMMETRIC (v4e), FEAR IS NOT A SIGNAL (v4g), and A BREAKOUT THROUGH THE LEVEL
+  YOUR PREMISE FORBADE ENDS THAT PREMISE.
+- **"Adding quantity in a loss creates the problem":** the AVERAGING TRAP, read
+  from the trapped side.
+- **"You control your loss, not the direction":** PRE-COMMIT THE ADVERSE MOVE
+  YOUR THESIS TOLERATES (v4d) and THE LOSS LIMIT IS A PERMISSION TO WAIT (v4h).
+- **"Inside a range, up from the bottom and down from the top":** IN A RANGE THE
+  CROWD READ CANNOT PAY (v5h), which is why the agent held.
+
+### For the operator
+
+- **No note was loaded on 16 Nov.** IH's note said SELL; he lost on it.
+- **The usage limit took the first 15 decisions,** the window v6c and the
+  OPENING DRIVE branches act in.
