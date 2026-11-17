@@ -14331,3 +14331,267 @@ buy".** As an entry rule it contradicts CLOSING-POINT HOLD TEST.
 - **IH's version is already in:** v6e's note-reading rule picks the BUY branch
   once price closes above a level the note names, without making it an entry
   rule.
+
+## 16 Nov - IH sold the top of his range and was stopped out; the agent held (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `casGPMKquUg`, uploaded 16 Nov 10:56 IST, 9:34, 74
+  transcript segments, read in full. Clock times come from the taskbar clock in
+  the frame, and his words are my translation of the Hindi auto-transcript.
+- **His note:** `fLH9iRlxJQI`, "Prediction For 16 NOV 2026", uploaded 15 Nov
+  21:10 IST, 15 segments. It was NOT shipped. Its plan is quoted from the
+  transcript; its levels were not checked against frames.
+- **His Saturday explainer** (`LQGBATpIakA`, "Right Entry in Intraday Trading")
+  is members-only and was not read.
+- **This book:** 74 decisions and no trade.
+- **Prices:** the Dhan one-minute CSVs, topped up through 16 Nov.
+
+**No knowledge change.**
+
+### The session
+
+13 Nov's 3:15 levels were NIFTY 25,139.95 and BankNIFTY 61,042.55. 16 Nov opened
+FLAT: NIFTY 25,206.15 (+0.26%), BankNIFTY 61,225.65 (+0.30%). 13 Nov had closed
+lower, so v6e's up-run count was zero and its veto was off.
+
+- **09:15-09:16:** a run to 25,310.70.
+- **09:17-09:29:** back to 25,208.65.
+- **09:30-09:58:** up to 25,337.60, the day's high. BankNIFTY reached 61,712.80,
+  an all-time high.
+- **Rest of day:** sideways. A low of 25,172.10 at 14:04, and a 3:15 level of
+  25,220.05 (+0.32%), at 0.29 of the range.
+
+IH's unshipped note: SELL on every open (flat, gap up, gap down), because the
+market had risen for many days and "buyers will be seated", so they are the
+target.
+
+### IH against the agent
+
+| | IH | the agent |
+|---|---|---|
+| read | the note's SELL. "A small range for two or three days... at the upper point, selling looks right." No big rejection had come, "so the buyers are seated; nobody sat with a sell". He named the risk: "buying puts near an all-time high is not free of danger" | the first 15 decisions (09:15 to 09:29) were usage-limited. From 09:31: FLAT open, v6c and v6e inactive, "range, not a trend (v5h)", no pattern at a clean level |
+| entry | **09:18**, once the opening run stalled: "while the market moved up sharply we did not touch it". BankNIFTY 61,300 PE and 61,200 PE x1,170, SENSEX 82,000 PE x900, NIFTY 25,250 PE x1,430 | none |
+| path | in profit briefly around 09:27-09:29 (NIFTY 25,208.65), then lost as all three covered: "Nifty and Sensex covered as fast as they fell" | 59 HOLDs |
+| exit | **about 09:44**, at his loss limit: "if the market is going up we cannot sit; don't think 'if not here, it will fall from there'", and "adding quantity in a loss creates the problem" | - |
+| result | **-2,50,168.35** (61,300 PE -64,642.50; 61,200 PE -60,195.75; SENSEX -84,690.00; NIFTY -40,640.10) | **0** |
+
+- **IH lost on his note's side; the agent stayed flat.** This is the case for
+  "your read wins" over a note: no pattern formed at a level, and the agent
+  held.
+- **In the book's shape his minute lost.** A NIFTY short at the 09:18 open
+  (25,225.75) hit the 24-point backstop inside that minute (-1.5R). One at the
+  09:19 open (25,262.25), after the 09:18 candle's rebound, reached its 45-point
+  target at 09:27 (+2.81R). One at 09:20 was out at -0.8R after 15 minutes.
+- **The usage limit cost the opening window.** The first 15 decisions, 09:15 to
+  09:29, returned "Agent usage-limited; holding."
+
+### Measured (not encoded)
+
+**"Sell the upper end of a two-to-three-day range."** The test took every FLAT
+open where the prior three sessions' combined range (09:15-15:14) was no wider
+than 1.5% or 2.0% of price, and split by where the open sat in it. It traded
+NIFTY at the open of the given minute in the book's shape. Results are in R,
+with 2021-23 / 2024-26 in brackets.
+
+| range <= 2.0%, open in its | n | short 09:18 | short 09:20 | short 09:25 | short 09:30 |
+|---|---|---|---|---|---|
+| top quarter (IH's case) | 228 | +0.227 (+0.17 / +0.28) | +0.011 (+0.12 / -0.09) | +0.039 (+0.26 / -0.17) | +0.059 (+0.07 / +0.05) |
+| bottom quarter | 129 | +0.169 (-0.10 / +0.29) | +0.445 (+0.18 / +0.56) | +0.326 (+0.02 / +0.46) | +0.159 (+0.13 / +0.17) |
+
+- **The range top adds nothing to the ordinary FLAT-open short** (+0.14R at 09:17
+  and +0.18R at 09:20 over all 934 FLAT opens, v6e's table). It was no better at
+  09:18 and about zero from 09:20.
+- **The 1.5% version reads the same** (148 top-quarter sessions: +0.148R at
+  09:18, -0.001R at 09:20).
+- **16 Nov's own open was mid-range** (0.41 of a 1.48% range), so the test would
+  not have counted it.
+
+### Already in the corpus
+
+- **"While the market moved up sharply we did not touch it":** A MOVE THAT DENIED
+  YOU ENTRY WAS NOT YOUR MOVE (v4f), and RUNAWAY TREND's "no chase".
+- **"Enter before the breakout; after it, it may go much further":** THE CROWD'S
+  FEAR IS YOUR WINDOW (v4i).
+- **"Don't think 'if not from here, it will fall from there'":** DISCIPLINE IS
+  ASYMMETRIC (v4e), FEAR IS NOT A SIGNAL (v4g), and A BREAKOUT THROUGH THE LEVEL
+  YOUR PREMISE FORBADE ENDS THAT PREMISE.
+- **"Adding quantity in a loss creates the problem":** the AVERAGING TRAP, read
+  from the trapped side.
+- **"You control your loss, not the direction":** PRE-COMMIT THE ADVERSE MOVE
+  YOUR THESIS TOLERATES (v4d) and THE LOSS LIMIT IS A PERMISSION TO WAIT (v4h).
+- **"Inside a range, up from the bottom and down from the top":** IN A RANGE THE
+  CROWD READ CANNOT PAY (v5h), which is why the agent held.
+
+### For the operator
+
+- **No note was loaded on 16 Nov.** IH's note said SELL; he lost on it.
+- **The usage limit took the first 15 decisions,** the window v6c and the
+  OPENING DRIVE branches act in.
+
+## 17 Nov - IH bought the flat open with the note; the agent was usage-limited all session (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `_UD2fHPtYd4`, uploaded 17 Nov 10:43 IST, 9:48, 82
+  transcript segments, read in full. Clock times come from the taskbar clock in
+  the frame, and his words are my translation of the Hindi auto-transcript.
+- **The note:** the 17 Nov note (`XdvB3ahnXVs`) was SHIPPED, merged at 08:48.
+- **This book:** 75 decisions, every one "Agent usage-limited; holding." No
+  trade.
+- **Prices:** the Dhan one-minute CSVs, topped up through 17 Nov.
+
+**No knowledge change.**
+
+### The session
+
+16 Nov's 3:15 levels were NIFTY 25,220.05 and BankNIFTY 61,413.45. 17 Nov, NIFTY's
+expiry, opened FLAT: NIFTY 25,277.30 (+0.23%), BankNIFTY 61,559.95 (+0.24%). The
+shipped note said FLAT TO GAP UP -> BUY. v6e's up-run count was one (13 Nov had
+closed lower), so its veto was off.
+
+- **09:15-09:18:** up to 25,358.05.
+- **09:19-09:37:** back to 25,292.85.
+- **09:38 on:** up to 25,501.35 at 12:13. The 3:15 level was 25,417.80 (+0.78%).
+  BankNIFTY made a new high, 62,442.20 at 12:31, with a 3:15 level of 62,337.45
+  (+1.50%).
+
+### IH against the agent
+
+| | IH | the agent |
+|---|---|---|
+| read | the note's BUY. "Yesterday's buyers will not cut on a flat or gap-up open... there is no point looking for the opposite trade." His one check is v6e's third rule: "is the market volatile, as fast down as it went up? Then stop." It was not | no read: usage-limited from 09:15:13 to 10:29:17 |
+| entry | **09:29**, after waiting a little: BankNIFTY 61,700 CE and 61,800 CE x1,170, SENSEX 82,200 CE x1,000, NIFTY 17 Nov 25,300 CE x1,430 (expiring that day) | none |
+| path | down **1,33,851.35** at 09:38: "markets without a direction you cannot make money in, like yesterday's". Then all three moved together | - |
+| exit | **09:50**: "yesterday was a loss; today we got a decent profit, so leave. The market may still make a small range" | - |
+| result | **+2,39,109.15** (61,700 CE +78,858.75; 61,800 CE +77,512.75; SENSEX +52,950.75; NIFTY +29,786.90) | **0** |
+
+- **The note and IH agreed.** The note said BUY on a FLAT open, IH bought, and
+  it paid. The agent could not act on it.
+- **In the book's shape his minute lost.** A NIFTY long at the 09:29 open
+  (25,329.70) hit the 24-point backstop at 09:33 (-1.5R). One at the 09:38 open
+  (25,304.35), after the dip had turned, made its 45-point target at 09:45
+  (+2.81R). IH's wider line held through the dip, as on 12 Nov.
+- **The outage was total:** all 75 decisions from 09:15 to the 10:30 cutoff.
+
+### Measured (not encoded)
+
+**IH's 18 Nov note: "a gap-up that opens above the high is good for us."** The
+test took every GAP_UP open (0.5% or more over the 3:15 level) and split it by
+whether NIFTY opened above yesterday's pre-15:15 high. It traded NIFTY long at
+the open of the given minute in the book's shape.
+
+| GAP_UP open | n | long 09:16 | long 09:17 | long 09:20 | long 09:25 |
+|---|---|---|---|---|---|
+| above yesterday's high | 134 | +0.177 (+0.09 / +0.27) | +0.044 (+0.06 / +0.03) | +0.118 (+0.11 / +0.13) | -0.093 |
+| below it | 37 | +0.339 (+0.02 / +0.72) | -0.364 (-0.60 / -0.08) | +0.105 (+0.30 / -0.12) | -0.223 |
+
+- **Above the high the early long was mildly positive in both halves** at 09:16,
+  09:17 and 09:20. Below it the halves disagree.
+- **The edge is small,** about 0.1R, and it fades by 09:25. Recorded, not
+  encoded: the 18 Nov note carries the condition as IH's preference, and v6e's
+  note-reading rule already handles a line that names a level.
+
+### Already in the corpus
+
+- **"Buyers from yesterday will not cut on a flat or gap-up open":** A ONE-WAY
+  DAY LEAVES NOBODY SEATED (v5f) and OPENING DRIVE's gap-up premise.
+- **"Fast up and as fast down: stop":** VOLATILE MEANS FAST UP AND FAST DOWN
+  (v6e, 14 Nov).
+- **"Traders sell because it has risen for five or six days, average, and carry
+  it overnight":** DEEP IN AN UP RUN, A FLAT OPEN IS NOT SHORTED (v6e), and the
+  AVERAGING TRAP.
+- **"A directionless market loses whichever way you take":** IN A RANGE THE
+  CROWD READ CANNOT PAY (v5h).
+- **"When all three indices move together the target is easy":** the
+  triple-index read in BNF_SPECIFIC.
+
+### For the operator
+
+- **The usage limit took the whole session:** 75 of 75 decisions on 17 Nov,
+  after 15 on 16 Nov. The agent could not act on a shipped note that paid.
+
+## November 18 pre-open note
+
+[Prediction For 18 NOV 2026](https://www.youtube.com/watch?v=vvSAwjxxrDQ), uploaded
+2026-11-17 21:10 IST, 1:53, 13 transcript segments, read in full.
+
+**Read.** 17 Nov gave direct positive momentum and buyers came in. NIFTY and
+Sensex rejected, but "in a market this positive traders do not leave on a
+rejection", and they buy again on the recovery.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP DOWN | SELL: target the buyers who came in |
+| GAP UP | BUY, with the market: the buyers see no danger. "A gap-up that opens above the high is good for us" |
+
+- **All three indices get the same plan.**
+- **The gap-up branch names a level** (yesterday's high), so the plan line
+  quotes it. v6e's note-reading rule picks a line named by a level once NIFTY
+  closes beyond it.
+
+**Levels.** Every level was spoken cleanly. The frames at 0:37, 1:10 and 1:44
+confirmed four of them against their drawn lines: NIFTY 25,550 (25,550.45) and
+25,475 (25,475.65), BankNIFTY 61,900 (61,903.00) and Sensex 83,200 (83,202.51).
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 25,475 / 25,550 | 25,300 / 25,200 |
+| BankNIFTY | 62,420 / 62,700 | 61,900 / 61,570 |
+| Sensex | 82,900 / 83,200 | 82,300 / 81,970 |
+
+**How it meets the corpus.**
+
+- **v6e's short veto will be off:** two up days before 18 Nov (16 and 17 Nov),
+  under its four.
+- **v6c's opening follow will not be active.** 17 Nov's 3:15 level, 25,417.80,
+  sat at 0.643 of its range, just under the 2/3 the outer third needs.
+- **v6a does not apply:** NIFTY's 17 Nov contract has expired; 18 Nov is not an
+  expiry day.
+
+The note renders 1,823 characters on November 18 and nothing on any other date.
+`test_shipped_note_matches_november_18_intraday_hunter_plan` pins the date gate,
+the source, both branches with their reasons, the level condition and all twelve
+levels. Each of these 9 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the sell branch turned into BUY;
+* the gap-up branch turned into SELL;
+* the date set to November 17;
+* NIFTY's 25,550 recorded as drawn (25,550.45);
+* the level condition dropped;
+* the sell branch's reason dropped;
+* an expiry line added;
+* BankNIFTY's supports swapped.
+
+## v6f - a gap-up above yesterday's high leans the early long its way (operator's call, 17 Nov)
+
+The operator asked for the 17 Nov measurement above to be encoded despite its
+small size: "You may encode it, even when there is a slight edge".
+
+**The rule** sits in OPENING DRIVE's conditions, straight after v6e's volatility
+rule. On a GAP_UP open above yesterday's high (`today.open` above
+`previous_day_ohlc.high` in the `levels` tool), count it as one more reason for
+the branch's long in the first five minutes.
+
+- **It is a confidence notch, not a trigger.** Every OPENING DRIVE condition
+  still applies, and the first candle must still close.
+- **GAP SIZE IS A RISK DIAL still sets the target,** so an oversized gap is still
+  traded small.
+- **It says nothing about a gap-up below the high,** and it creates no short.
+
+**The evidence, stated in the rule:** 134 sessions above the high scored +0.177R
+at 09:16, +0.044R at 09:17 and +0.118R at 09:20, positive in both halves at all
+three; the 37 below it disagree by half; both are negative by 09:25.
+
+**One difference from the measurement:** the test used yesterday's high before
+15:15, while `previous_day_ohlc.high` spans the whole session. They differ only
+when a settlement print or the 15:29 auction sets the day's high.
+
+**Tests.** `test_v6f_a_gap_up_above_yesterdays_high_leans_the_early_long` pins the
+source fields, the measurement, the notch-not-trigger wording, what still binds,
+what it does not cover, and its place. Each of 3 mutants of the rule text fails
+it: the below-high case claimed, the notch turned into a trigger, and the target
+clause dropped.
