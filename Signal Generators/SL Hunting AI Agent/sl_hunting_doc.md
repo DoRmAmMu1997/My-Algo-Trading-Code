@@ -14565,3 +14565,33 @@ levels. Each of these 9 mutations fails it, and the unmutated note passes:
 * the sell branch's reason dropped;
 * an expiry line added;
 * BankNIFTY's supports swapped.
+
+## v6f - a gap-up above yesterday's high leans the early long its way (operator's call, 17 Nov)
+
+The operator asked for the 17 Nov measurement above to be encoded despite its
+small size: "You may encode it, even when there is a slight edge".
+
+**The rule** sits in OPENING DRIVE's conditions, straight after v6e's volatility
+rule. On a GAP_UP open above yesterday's high (`today.open` above
+`previous_day_ohlc.high` in the `levels` tool), count it as one more reason for
+the branch's long in the first five minutes.
+
+- **It is a confidence notch, not a trigger.** Every OPENING DRIVE condition
+  still applies, and the first candle must still close.
+- **GAP SIZE IS A RISK DIAL still sets the target,** so an oversized gap is still
+  traded small.
+- **It says nothing about a gap-up below the high,** and it creates no short.
+
+**The evidence, stated in the rule:** 134 sessions above the high scored +0.177R
+at 09:16, +0.044R at 09:17 and +0.118R at 09:20, positive in both halves at all
+three; the 37 below it disagree by half; both are negative by 09:25.
+
+**One difference from the measurement:** the test used yesterday's high before
+15:15, while `previous_day_ohlc.high` spans the whole session. They differ only
+when a settlement print or the 15:29 auction sets the day's high.
+
+**Tests.** `test_v6f_a_gap_up_above_yesterdays_high_leans_the_early_long` pins the
+source fields, the measurement, the notch-not-trigger wording, what still binds,
+what it does not cover, and its place. Each of 3 mutants of the rule text fails
+it: the below-high case claimed, the notch turned into a trigger, and the target
+clause dropped.

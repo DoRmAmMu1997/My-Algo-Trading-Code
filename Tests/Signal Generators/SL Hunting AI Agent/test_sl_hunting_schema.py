@@ -4277,3 +4277,28 @@ def test_v6e_volatile_means_fast_up_and_fast_down_not_a_wide_first_candle():
     here = prompt.index("\n- " + heading)
     assert rejection < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
     assert "\n- " not in prompt[rejection + 3:here]
+
+
+def test_v6f_a_gap_up_above_yesterdays_high_leans_the_early_long():
+    """v6f (operator's call, 17 Nov, a slight measured edge): IH's 18 Nov note line
+    "a gap-up that opens above the high is good for us". Pins where it is read from,
+    the measurement, that it is a confidence notch and not a trigger, what still
+    binds, what it does not cover, and its place in OPENING DRIVE straight after the
+    v6e volatility rule.
+    """
+    prompt = build_system_prompt()
+    heading = "A GAP-UP THAT OPENS ABOVE YESTERDAY'S HIGH LEANS THE EARLY LONG ITS WAY"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6f, operator's call 17 Nov, adopted on a slight edge).")
+    assert "today's open (`today.open`) above `previous_day_ohlc.high`" in rule
+    assert ("above yesterday's high (134 sessions) +0.177R at 09:16, +0.044R at 09:17 and "
+            "+0.118R at 09:20, positive in both halves at all three") in rule
+    assert "By 09:25 both are negative." in rule
+    assert "It is a confidence notch, not a trigger" in rule
+    assert "the first candle must still close" in rule
+    assert "GAP SIZE IS A RISK DIAL still sets the target" in rule
+    assert "It says nothing about a gap-up BELOW yesterday's high, and creates no short." in rule
+    volatile = prompt.index("\n- VOLATILE MEANS FAST UP AND FAST DOWN, NOT A WIDE FIRST CANDLE")
+    here = prompt.index("\n- " + heading)
+    assert volatile < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
+    assert "\n- " not in prompt[volatile + 3:here]

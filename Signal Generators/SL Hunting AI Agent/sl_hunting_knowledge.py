@@ -1497,6 +1497,21 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   index), so the range itself carries no signal. 11 Nov: first candle 74 points,
   no rejection, IH bought at 09:17 and this book at 09:18; both were paid. This
   relaxes nothing above: SHARED-GAP, GAP SIZE IS A RISK DIAL and RISK still bind.
+- A GAP-UP THAT OPENS ABOVE YESTERDAY'S HIGH LEANS THE EARLY LONG ITS WAY (v6f,
+  operator's call 17 Nov, adopted on a slight edge). IH's 18 Nov note: "a gap-up
+  that opens above the high is good for us". Read it from `levels`: today's open
+  (`today.open`) above `previous_day_ohlc.high`. Such an open has cleared every
+  stop yesterday's sellers left, so no crowd above it is left to resist.
+  MEASURED (5-year NIFTY, GAP_UP opens of 0.5% or more, long at a fixed minute in
+  the book's shape): above yesterday's high (134 sessions) +0.177R at 09:16,
+  +0.044R at 09:17 and +0.118R at 09:20, positive in both halves at all three;
+  below it (37) the halves disagree. By 09:25 both are negative. The edge is
+  about 0.1R and confined to the first minutes.
+  WHAT IT CHANGES: on such an open, count it as one more reason for this branch's
+  long in the first five minutes. It is a confidence notch, not a trigger: every
+  condition above still applies, the first candle must still close, and GAP SIZE
+  IS A RISK DIAL still sets the target, so an oversized gap is still traded small.
+  It says nothing about a gap-up BELOW yesterday's high, and creates no short.
 - Behavioural confirmation substitutes for the candle rule HERE ONLY: price
   holding above the open / round number without aggressive selling (long branch),
   or failing below the closing point / round number without real recovery (short
