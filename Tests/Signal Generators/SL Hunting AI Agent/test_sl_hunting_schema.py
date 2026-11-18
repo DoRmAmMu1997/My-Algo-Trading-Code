@@ -4302,3 +4302,35 @@ def test_v6f_a_gap_up_above_yesterdays_high_leans_the_early_long():
     here = prompt.index("\n- " + heading)
     assert volatile < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
     assert "\n- " not in prompt[volatile + 3:here]
+
+
+def test_v6g_after_a_selling_day_that_retraced_into_its_middle_a_flat_open_leans_short():
+    """v6g (operator's call, 18 Nov, a measured edge): IH's 19 Nov note followed the
+    selling after a down day that retraced, with nobody seated to hunt. Pins the
+    scope (the 0.5% fall, the third-to-half band with v5x's zone excluded, the low
+    before 14:30, a FLAT verdict), that it is a notch for pattern entries from
+    09:20 and not a trigger, the measurement, the review clause, its place after
+    v6e's note-reading rule, and the pointer left in v5x.
+    """
+    prompt = build_system_prompt()
+    heading = "AFTER A SELLING DAY THAT RETRACED INTO ITS MIDDLE, A FLAT OPEN LEANS SHORT"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6g, operator's call 18 Nov, adopted on a measured edge).")
+    assert "yesterday fell at least 0.5% (3:15 level to 3:15 level)" in rule
+    assert "its 3:15 level sits between ONE THIRD and ONE HALF of its pre-15:15 range" in rule
+    assert "its low came before 14:30" in rule
+    assert "Below a third is v5x's one-way selling day, not this" in rule
+    assert "today's computed verdict is FLAT" in rule
+    assert "a SHORT taken on the ordinary pattern + confirmation, from 09:20, gets one more reason" in rule
+    assert "It is a confidence notch, not a trigger, and it creates no entry by itself." in rule
+    assert "It says nothing about a gap-up or a gap-down open." in rule
+    assert "19 sessions; short +0.532R at 09:20 (+0.61 / +0.45 by half)" in rule
+    assert "+0.989R at 09:30 (+1.62 / +0.29)" in rule
+    assert "every trade that cites (v6g) is reviewed" in rule
+    previous = prompt.index("\n- A NOTE'S BRANCH NAMED BY A LEVEL IS PICKED BY THE LEVEL")
+    here = prompt.index("\n- " + heading)
+    assert previous < here < prompt.index("\n- A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING")
+    assert "\n- " not in prompt[previous + 3:here]
+    v5x = _flat_rule(prompt, "WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET")
+    assert ("[A down day whose 3:15 level sits HIGHER, between a third and a half of its range, "
+            "is v6g's, not this rule's.]") in v5x
