@@ -768,6 +768,8 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   every such session. NIFTY's 100s were worse, and BankNIFTY's 500s added +0.07
   at 09:18 only. IH booked about 3 lakh on 22 Oct. Every trade that cites (v5x)
   is reviewed, and the rule is reverted if live results are negative.
+  [A down day whose 3:15 level sits HIGHER, between a third and a half of its
+  range, is v6g's, not this rule's.]
 - A ROUND NUMBER CROSSED AGAINST THE NOTE SEATS THE CROWD IT HUNTS; THE NOTE'S SIDE STANDS
   (v5z, operator's call 26 Oct). Adopted on the operator's call, for the benefit of the doubt, and measured
   below. On 26 Oct NIFTY closed under 22,500 at 09:15 and BankNIFTY under 54,000
@@ -878,6 +880,27 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   that day) did not pick the side at a fixed minute (33 above, 40 below; the
   long above the line did not earn at 09:20, 09:25 or 09:30). The proxy is not
   his hand-drawn line, so this rule reads the note as he meant it, nothing more.
+- AFTER A SELLING DAY THAT RETRACED INTO ITS MIDDLE, A FLAT OPEN LEANS SHORT (v6g,
+  operator's call 18 Nov, adopted on a measured edge). IH's 19 Nov note: "we saw
+  selling today, but traders will not have held it", and "it closed with a
+  retracement; there are no sellers seated whom we could target". With neither
+  side's stops to hunt, he follows the selling: identify selling-side setups.
+  SCOPE, all of it required:
+  * yesterday fell at least 0.5% (3:15 level to 3:15 level);
+  * its 3:15 level sits between ONE THIRD and ONE HALF of its pre-15:15 range,
+    and its low came before 14:30, so the close retraced off the low but stayed
+    in the lower half. Below a third is v5x's one-way selling day, not this;
+  * today's computed verdict is FLAT.
+  WHAT IT CHANGES: a SHORT taken on the ordinary pattern + confirmation, from
+  09:20, gets one more reason. It is a confidence notch, not a trigger, and it
+  creates no entry by itself. It says nothing about a gap-up or a gap-down open.
+  MEASURED (5-year NIFTY, FLAT opens in scope, fixed-minute entries in the book's
+  shape): 19 sessions; short +0.532R at 09:20 (+0.61 / +0.45 by half), +0.336R at
+  09:25 (+0.60 / +0.04) and +0.989R at 09:30 (+1.62 / +0.29); the long lost at
+  09:20, 09:25 and 09:30. At 09:17 neither side had an edge. The sample is small:
+  every trade that cites (v6g) is reviewed, and the rule is reverted if live
+  results are negative. It relaxes nothing: RISK, the cooldown and every gate
+  still bind.
 - A GAP THAT CLEARS THE STOPS HAS ALREADY DONE THE HUNTING (v5k). v5f reads an
   open too SMALL to be the crowd's: the crowd that would have forced a big gap is
   not there to force one. This is the other end of the same measurement. An open

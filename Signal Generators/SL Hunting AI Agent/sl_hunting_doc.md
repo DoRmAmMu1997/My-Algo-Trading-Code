@@ -14595,3 +14595,150 @@ source fields, the measurement, the notch-not-trigger wording, what still binds,
 what it does not cover, and its place. Each of 3 mutants of the rule text fails
 it: the below-high case claimed, the notch turned into a trigger, and the target
 clause dropped.
+
+## 18 Nov - IH and the agent both sold the flat open with the note (diligence addendum)
+
+**Sources.**
+
+- **IH's live session:** `0Xwxf6FX4Ac`, uploaded 18 Nov 10:30 IST, 9:17, 74
+  transcript segments, read in full. Clock times come from the taskbar clock in
+  the frame, and his words are my translation of the Hindi auto-transcript.
+- **The note:** the 18 Nov note (`vvSAwjxxrDQ`) was SHIPPED.
+- **This book:** 73 decisions and three trades.
+- **Prices:** the Dhan one-minute CSVs, topped up through 18 Nov.
+
+### The session
+
+17 Nov's 3:15 levels were NIFTY 25,417.80 and BankNIFTY 62,337.45. 18 Nov opened
+FLAT: NIFTY 25,323.15 (-0.37%), BankNIFTY 62,204.10 (-0.21%). The note's branch
+was FLAT TO GAP DOWN -> SELL. v6e's up-run count was two (16 and 17 Nov), so its
+veto was off; v6f did not apply (not a gap-up).
+
+- **09:15-09:17:** up to 25,390.80, the day's high.
+- **09:18-09:46:** sold to 25,206.20.
+- **Rest of day:** a low of 25,141.80 at 13:08 and a 3:15 level of 25,220.90
+  (-0.77%), at 0.318 of the range. BankNIFTY's 3:15 level was 61,940.90 (-0.64%).
+
+### IH against the agent
+
+| | IH | the agent |
+|---|---|---|
+| read | the note's SELL: "if it had opened gap-up we would not sell... but it opened flat, so as it starts to fall, whoever sat as buyers on the positive momentum is our target." On a gap-up, "the buyers do not cut until the closing price is crossed" | 09:18, on the note's SELL: a confirmed evening star and bearish engulfing at the pivot/previous close, but "the honest stop... risks Rs.2717/lot, exceeding the Rs.2500 budget, and the order was refused rather than squeezing the stop" |
+| entry | **09:16**: BankNIFTY 62,300 PE and 62,200 PE x1,170, SENSEX 19 Nov 82,500 PE x900, NIFTY Nov 25,350 PE x1,430 | **09:36:00**, SHORT 25,294.65, 2 lots, stop 25,310, target 25,267.30, on a confirmed evening star cross-confirmed by BankNIFTY |
+| path | **+1,81,703.50** at about 09:21, then a give-back: "the effort is when the market takes back a good profit and you stay" | target at **09:40:01** (25,265.45, +29.20 pts) |
+| exit | **09:27**, as the candles turned sharp: "sharp candles make others greedy to sell; book before they join, or the retracement takes the profit" | then two re-entries: 09:51:48 SHORT 25,237.55 (flagged as a same-side re-entry after a win), cut at 09:52:30 on BankNIFTY's played-out hammer and morning star (-27.90 pts); 10:07:53 SHORT 25,287.65 on a double top, cut at 10:11:32 on BankNIFTY's bullish engulfing (-17.25 pts) |
+| result | **+3,67,619.50** (62,300 PE +1,16,707.50; 62,200 PE +1,23,809.90; SENSEX +84,960.00; NIFTY +42,142.10) | **+4,924.75**: +7,680.00 (+1.9R), -1,930.00 (-1.19R), -825.25 (-0.46R) |
+
+- **Both took the note's side.** The note was right, and IH and the agent's
+  first trade were both paid.
+- **The sizing gate kept the agent out of IH's minute.** At 09:18 the honest
+  stop was too wide for the risk budget and the order was refused (SLH-025). In
+  the book's shape a NIFTY short at the 09:16 open (25,367.05) reached its target
+  at 09:26 (+2.81R); one at the 09:36 open made it at 09:41 (+2.81R).
+- **The re-entries gave back a third of the win.** The second short was the
+  same-side re-entry v5m warns about, and both were cut by the index-hierarchy
+  exit when BankNIFTY's reversal played out.
+- **Outage:** 7 decisions from 10:23 to 10:29 were usage-limited. The agent was
+  flat.
+
+### Measured and encoded: v6g
+
+**IH's 19 Nov note: "we saw selling today, but traders will not have held it...
+there are no sellers seated whom we could target".** The test took every FLAT
+open after a day that fell 0.5% or more (3:15 level to 3:15 level), split by where
+that day's 3:15 level sat in its pre-15:15 range, with the low before 14:30. It
+traded NIFTY at the open of the given minute in the book's shape.
+
+| yesterday's 3:15 level in its range | n | short 09:20 | short 09:25 | short 09:30 | long 09:20 |
+|---|---|---|---|---|---|
+| a third to a half (v6g) | 19 | +0.532 (+0.61 / +0.45) | +0.336 (+0.60 / +0.04) | +0.989 (+1.62 / +0.29) | -0.331 |
+| under a third (v5x's zone) | 55 | +0.503 (+0.82 / +0.28) | +0.137 (+0.32 / +0.01) | +0.274 (-0.14 / +0.57) | -0.262 |
+
+- **Above a third, the short was positive in both halves at 09:20, 09:25 and
+  09:30,** and the long lost at all three.
+- **Under a third the short also leaned positive,** but that is v5x's one-way
+  selling day, where v5x allows the BUY side while the round numbers hold. To
+  contradict nothing, v6g covers only the band above it.
+- **Encoded on the operator's standing call** (encode a slight edge if it
+  contradicts nothing): AFTER A SELLING DAY THAT RETRACED INTO ITS MIDDLE, A FLAT
+  OPEN LEANS SHORT. It sits after v6e's note-reading rule, with a pointer in v5x.
+  It is a confidence notch for SHORTs on the ordinary pattern + confirmation from
+  09:20, not a trigger, and it says nothing about gap opens.
+- **IH's gap-up branch measured the other way:** in a wider 0.2-0.5 band, the 11
+  gap-up sessions scored the long +1.20R at 09:20 and the short -0.69R, so v6g
+  does not carry it.
+
+### Already in the corpus
+
+- **"Gap-up buyers do not cut until the closing price is crossed":** CLOSING-PRICE
+  BREAKDOWN IS THE TRIGGER.
+- **"Sell before the breakout; after it there is no point":** THE CROWD'S FEAR IS
+  YOUR WINDOW (v4i).
+- **"Size the target by the move you expect: if 300-400 points can come, 200 is
+  safe":** CROWD SIZE IS THE THIRD TARGET INPUT (v4c) and YOUR ENTRY PRICE IS THE
+  FOURTH TARGET INPUT (v4d).
+- **"Book as the candles turn sharp, before others join":** v4i's "it closes when
+  they join", and A STRAIGHT RUN BOOKS AT ITS TARGET (v5y).
+- **"The effort is in staying when the market takes back profit":** A STALL IS NOT
+  AN EXIT UNTIL TEN CANDLES HAVE SPOKEN (v5w).
+- **"Never take big risk selling in a very positive market":** RISK and VOLATILE-DAY
+  SIZING (v3y).
+
+## November 19 pre-open note
+
+[Prediction For 19 NOV 2026](https://www.youtube.com/watch?v=tVhyDilJG20), uploaded
+2026-11-18 21:10 IST, 1:46, 13 transcript segments, read in full.
+
+**Read.** 18 Nov sold off but closed with a retracement, so "traders will not have
+held" their sells; buyers are few too. Neither side's stops are directly
+available. Sensex expires on 19 Nov.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP DOWN | SELL: follow the selling |
+| GAP UP | SELL, the same plan |
+
+All three indices get the same plan.
+
+**Levels.** The transcript garbled two levels, read from the frames at 1:10 and
+1:39: BankNIFTY's "6214" is drawn at 62,124.05 and NIFTY's "2582" at 25,082.25,
+recorded as 62,124 and 25,082. The frame also confirmed BankNIFTY's spoken 62,300
+(drawn 62,294.45). The rest were spoken cleanly.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 25,320 / 25,400 | 25,082 / 24,976 |
+| BankNIFTY | 62,124 / 62,300 | 61,570 / 61,260 |
+| Sensex | 82,356 / 82,720 | 81,500 / 81,200 |
+
+**How it meets the corpus.** Checked by running `pivot_and_levels` on the CSVs
+with a simulated 19 Nov open:
+
+- **v6c's opening follow WILL be active on a FLAT open, direction SHORT,** for the
+  first two decisions. 18 Nov closed at 0.318 of its range, its low came at 13:08,
+  and it lifted 0.315% off the low (DOWN_STALLED). It agrees with the note.
+- **v5x's scope is also met:** a down day closing in its bottom third. On a FLAT
+  open it allows the BUY side while NIFTY's 25,000 and BankNIFTY's next 500 under
+  the open hold, against the note's SELL. v5z does not settle it: a SELL note
+  after a down day, with an upward cross, is the case v5z leaves to the ordinary
+  method.
+- **v6g does not apply:** 0.318 is under its third.
+- **v6e's veto is off** (no up days), **v6f** needs a gap-up, and **v6a** does not
+  apply: NIFTY does not expire on 19 Nov.
+
+The note renders 1,818 characters on November 19 and nothing on any other date.
+`test_shipped_note_matches_november_19_intraday_hunter_plan` pins the date gate,
+the source, both SELL branches with their reasons, and all twelve levels. Each of
+these 9 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the flat branch turned into BUY;
+* the gap-up branch turned into BUY;
+* the date set to November 18;
+* BankNIFTY's 62,124 recorded as 62,140;
+* NIFTY's 25,082 recorded as 2,582;
+* the flat branch's reason dropped;
+* the expiry moved into a plan line;
+* the expiry dropped from the context.
