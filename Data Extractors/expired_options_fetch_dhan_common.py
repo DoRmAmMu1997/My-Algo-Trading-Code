@@ -786,6 +786,19 @@ def save_manifest(path: Path, manifest: dict[str, Any]) -> None:
         json.dump(manifest, handle, indent=2, sort_keys=True)
         handle.flush()
         os.fsync(handle.fileno())
+
+    # Windows can briefly deny replacement while another process holds a file
+    # handle. Retry the rename of the staged checkpoint and leave the old one
+    # readable until the replacement succeeds.
+    for delay in (0.05, 0.1, 0.2, 0.4, 0.8):
+        try:
+            os.replace(tmp, path)
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in (5, 32):
+                raise
+            time.sleep(delay)
+        else:
+            return
     os.replace(tmp, path)
 
 

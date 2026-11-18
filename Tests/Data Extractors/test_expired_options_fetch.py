@@ -524,6 +524,25 @@ def test_manifest_round_trips_and_treats_damage_as_start_over(tmp_path):
     assert engine.load_manifest(path) == {}
 
 
+def test_manifest_save_recovers_from_a_transient_windows_replace_denial(tmp_path, monkeypatch):
+    path = tmp_path / "_manifest.json"
+    engine.save_manifest(path, {"ATM_CALL": {"rows": 5}})
+    replace = engine.os.replace
+
+    class WindowsReplaceDenied(PermissionError):
+        winerror = 5
+
+    def deny_first_replace(source, destination):
+        monkeypatch.setattr(engine.os, "replace", replace)
+        assert engine.load_manifest(path) == {"ATM_CALL": {"rows": 5}}
+        raise WindowsReplaceDenied("checkpoint temporarily locked")
+
+    monkeypatch.setattr(engine.os, "replace", deny_first_replace)
+    engine.save_manifest(path, {"ATM_CALL": {"rows": 10}})
+
+    assert engine.load_manifest(path) == {"ATM_CALL": {"rows": 10}}
+
+
 # ---------------------------------------------------------------------------
 # Calendar plumbing and verification
 # ---------------------------------------------------------------------------
