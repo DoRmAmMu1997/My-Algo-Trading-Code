@@ -348,7 +348,20 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # package against 0.2.179 shows nothing but the two version strings, and the
     # bundled CLI moves 2.1.319 -> 2.1.321. The win_amd64 wheel ships
     # _bundled/claude.exe (`--version` = 2.1.321 on Windows). Same standing check.
-    assert "claude-agent-sdk==0.2.180" in ai
+    # 0.2.180 -> 0.2.185 (2026-11-24, PR #249), bundled CLI 2.1.321 -> 2.1.328.
+    # A diff of the installed package against 0.2.180 shows three Python changes,
+    # none on a path either agent takes. (1) The CLI version check now reads the
+    # version from the CLI's own init message instead of spawning `claude -v`
+    # (2 s timeout) before each connect -- one subprocess fewer per decision.
+    # (2) The PATH fallback for finding a CLI was rewritten; the bundled CLI is
+    # still tried FIRST, so it only matters if _bundled/claude.exe were missing.
+    # (3) can_use_tool permission updates are sent all-or-nothing; neither agent
+    # sets can_use_tool. Messages also gain optional user_message_uuid(s) fields.
+    # The win_amd64 wheel ships _bundled/claude.exe (`--version` = 2.1.328 on
+    # Windows). Same standing check: on the next session decisions return and
+    # "SLHuntingAgent decision latency" has not crept up. If either fails, revert
+    # this pin first.
+    assert "claude-agent-sdk==0.2.185" in ai
     # 2.13.4 -> 2.13.5 (2026-09-02, PR #151). Patch. Still inside every window
     # that matters: mcp 1.29.1 wants pydantic>=2.11.0,<3.0.0 and openai-codex
     # wants >=2.12, and the strict models both agents rely on are unaffected.
@@ -368,7 +381,11 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # 2.14.2 -> 2.14.3 (2026-11-12, PR #241). Patch. openai-codex 0.167.0 and mcp
     # 2.3.0 both still declare pydantic>=2.12; the whole suite passes on a clean
     # install of this PR's pins.
-    assert "pydantic==2.14.3" in ai
+    # 2.14.3 -> 2.14.4 (2026-11-24, PR #249). Patch: a jiter bump that undoes a
+    # memory regression, JSON-schema and signature fixes, and strict=True now
+    # honoured for complex. openai-codex 0.170.0 and mcp 2.3.0 still declare
+    # pydantic>=2.12; the whole suite passes on a clean install of this PR's pins.
+    assert "pydantic==2.14.4" in ai
     assert all("==" in line for line in ai)
     # The independent CPR Codex agent is an optional, subscription-authenticated
     # runtime and now shares this file. Both AI agents run inside the SAME
@@ -463,7 +480,20 @@ def test_optional_dependency_sets_are_exact_and_kotak_uses_official_tag():
     # byte-identical to 0.167.0; only its METADATA moves the lockstep CLI,
     # openai-codex-cli-bin, to 0.167.2, which publishes a win_amd64 wheel.
     # Standing check unchanged.
-    assert "openai-codex==0.167.2" in ai
+    # 0.167.2 -> 0.170.0 (2026-11-24, PR #249); 0.168.0, 0.169.0 and 0.169.1
+    # came between. Every hand-written module is byte-identical; only the
+    # generated protocol models moved. Same isolated introspection, all surfaces
+    # intact (names, context manager, enum members, thread_start params by name
+    # with no **kwargs, SYNC Thread.run taking approval_mode / output_schema /
+    # effort by name, TurnResult fields), and the four item types the evidence
+    # gate reads keep their `type` literals (mcpToolCall keeps tool/status). The
+    # 0.170.0 CLI removed a legacy sandbox-policy setter from its Config; CPR AI
+    # sets no sandbox key there (it passes Sandbox.read_only to thread_start),
+    # and `codex features list` on 0.170.0 still lists every feature flag
+    # build_isolated_thread_config switches off that 0.167.2 listed. The lockstep
+    # CLI, openai-codex-cli-bin 0.170.0, publishes a win_amd64 wheel. Standing
+    # check unchanged.
+    assert "openai-codex==0.170.0" in ai
     # 1.29.0 -> 1.29.1 (2026-09-01, PR #144). A patch, and it stays inside the
     # window BOTH agents require — claude-agent-sdk declares mcp>=1.23.0,<3.0.0
     # and openai-codex is satisfied too, so the shared single-version constraint
@@ -629,6 +659,12 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # on non-finite input, StringDType hashing, typing fixes and an MSVC
     # workaround. MAT-106's 8-decimal indicator snapshot passed UNCHANGED on it
     # in this PR's own CI, on both 3.12 and 3.13.
+    # numpy 2.5.4 -> 2.5.5 (2026-11-24, PR #249). Patch: crash, leak and
+    # thread-safety fixes plus nanquantile on all-NaN slices, complex sqrt,
+    # np.negative on strided arrays and StringDType casts -- none of which the
+    # repo calls. The one change that can move float results is the bundled
+    # OpenBLAS (0.3.34.106 -> 0.3.34.237); MAT-106's 8-decimal indicator snapshot
+    # passed UNCHANGED on it in this PR's own CI on 3.12, 3.13 and 3.14.
     # pandas 3.0.6 -> 3.1.0 (2026-10-26, PR #224). A MINOR, so its
     # backwards-incompatible list was read against this repo rather than
     # assumed. What has any reach here: numeric input to to_datetime() now
@@ -651,7 +687,7 @@ def test_core_requirements_carry_both_the_runtime_and_the_dev_toolchain():
     # PyArrow ffill/bfill copy-on-write and PyArrow regex whitespace. Nothing in
     # the indicator pipeline moves; MAT-106's snapshot passes unchanged on 3.1.1.
     # pandas-stubs stays 3.1.0.261029: same 3.1 line.
-    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.1", "TA-Lib==0.6.8", "numpy==2.5.4"):
+    for runtime_pin in ("dhanhq==2.3.0", "pandas==3.1.1", "TA-Lib==0.6.8", "numpy==2.5.5"):
         assert runtime_pin in core
     # mypy 1.20.2 -> 2.3.1 (2026-09-02, PR #151): a MAJOR, and the first one
     # admitted by retiring that ignore. It is exactly the case the retirement
