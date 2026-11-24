@@ -126,7 +126,8 @@ POSITION_STATE_DESCRIPTION = (
     "and what it booked. While a NIFTY leg is open it carries `stop_fires`: how "
     "that stop actually triggers (SLH-027), and `contract_expiry` with "
     "`contract_expires_today`: whether the option you hold expires this session "
-    "(v6a)."
+    "(v6a). Flat or not, it carries `nifty_expiry_today` and `nifty_weekly_expiry`: "
+    "whether today is NIFTY's own weekly expiry (v6f, v6h)."
 )
 
 

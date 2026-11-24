@@ -1,43 +1,43 @@
 {
-  "for_date": "2026-11-19",
-  "source": "Intraday Hunter, 'Prediction For 19 NOV 2026' (tVhyDilJG20, uploaded 2026-11-18)",
-  "context": "November 18 sold off but closed with a retracement: traders will not have held their sells, and buyers are few, so neither side's stops can be targeted directly. November 19 is Sensex's expiry.",
+  "for_date": "2026-11-25",
+  "source": "Intraday Hunter, 'Prediction For 25 NOV 2026' (6wXFzHmVxj4, uploaded 2026-11-24)",
+  "context": "November 23 sold off in all three indices after a very positive run. Traders who sold were happy to catch one momentum against the trend and booked it, so there are no sellers left to target.",
   "plan": [
-    "FLAT TO GAP DOWN -> SELL: no seated crowd to hunt on either side, so follow the selling; identify selling-side setups.",
-    "GAP UP -> SELL, THE SAME PLAN: neither buyers' nor sellers' stops are directly available; identify selling-side setups."
+    "FLAT TO GAP UP -> SELL, WITH THE SELLING: the sellers booked and left, so they cannot be targeted; identify selling-side setups.",
+    "GAP DOWN -> NO PLAN: IH sees risk in a gap down after this fall and names no side."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
-        25320,
-        25400
+        25470,
+        25550
       ],
       "support": [
-        25082,
-        24976
+        25260,
+        25200
       ]
     },
     {
       "index": "BANKNIFTY",
       "resistance": [
-        62124,
-        62300
+        63190,
+        63500
       ],
       "support": [
-        61570,
-        61260
+        62050,
+        61800
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        82356,
-        82720
+        83000,
+        83400
       ],
       "support": [
-        81500,
-        81200
+        81930,
+        81690
       ]
     }
   ]

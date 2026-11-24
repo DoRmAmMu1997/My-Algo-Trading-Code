@@ -1535,6 +1535,37 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   condition above still applies, the first candle must still close, and GAP SIZE
   IS A RISK DIAL still sets the target, so an oversized gap is still traded small.
   It says nothing about a gap-up BELOW yesterday's high, and creates no short.
+  NOT ON A NIFTY EXPIRY DAY (narrowed 24 Nov, v6h next): when `position_state`
+  says `nifty_expiry_today`, this notch does not apply. Split by expiry day, the
+  same test gave 102 non-expiry sessions +0.313R / +0.167R / +0.223R at 09:16 /
+  09:17 / 09:20 (positive in both halves at all three) and 32 expiry-day
+  sessions -0.256R / -0.361R / -0.211R.
+- ON A NIFTY EXPIRY DAY, AN OPENING GAP FADES UNLESS A RUN IS BEHIND IT (v6h,
+  operator's standing call, 24 Nov, adopted on a measured edge). IH sold the 23 Nov
+  expiry gap-up near the all-time high: "if it goes straight up on a gap-up, nobody
+  writes calls; only buyers come in, so a rejection becomes possible", "especially
+  as it is expiry". NIFTY gapped +0.56% and closed the day -1.62%.
+  SCOPE, all of it required:
+  * `position_state` says `nifty_expiry_today` (NIFTY's own weekly expiry, read
+    from the option chain; another index's expiry does not count);
+  * today's verdict is GAP_UP or GAP_DOWN;
+  * `levels.up_run.straight_up_days` is 0 or 1.
+  WHAT IT CHANGES: from the first candle's close to 09:30, a trade AGAINST the gap
+  (a SHORT on a gap-up, a LONG on a gap-down) taken on the ordinary pattern +
+  confirmation gets one more reason, and the OPENING DRIVE gap-up long gets none
+  from v6f. It is a confidence notch, not a trigger, and it creates no entry and
+  vetoes none.
+  MEASURED (5-year NIFTY, expiry days, fixed-minute entries in the book's shape):
+  * gap-up (27 sessions): short +0.527R at 09:17, +0.576R at 09:20 (+0.46 / +0.74
+    by half) and +0.731R at 09:30; the long lost at every minute;
+  * gap-down (25): long +0.950R at 09:17 and +0.856R at 09:20 (+0.75 / +0.99);
+    the short lost at 09:17, 09:20 and 09:25;
+  * WITH TWO OR MORE UP DAYS behind a gap-up (12, IH's own 23 Nov case) it did not
+    hold: the long scored +0.454R at 09:20. That is why the run is out of scope,
+    and why 23 Nov itself is not this rule's evidence.
+  Samples are small: every trade that cites (v6h) is reviewed, and the rule is
+  reverted if live results are negative. RISK, the cooldown and every gate still
+  bind; v6a's no-raise still governs an expiry-day position.
 - Behavioural confirmation substitutes for the candle rule HERE ONLY: price
   holding above the open / round number without aggressive selling (long branch),
   or failing below the closing point / round number without real recovery (short

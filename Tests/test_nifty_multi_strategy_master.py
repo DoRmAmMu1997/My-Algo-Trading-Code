@@ -5543,6 +5543,41 @@ class TestSLHuntingBnfMirror(unittest.TestCase):
         self.assertNotIn("contract_expiry", state)
         self.assertNotIn("contract_expires_today", state)
 
+    def test_v6h_position_state_says_whether_today_is_niftys_expiry_even_when_flat(self):
+        """v6h reads the OPENING gap, before any entry, so position_state must say
+        whether today is NIFTY's weekly expiry while flat -- from the resolver's
+        current-week expiry, on the IST date -- and say nothing when it cannot."""
+        worker, _store = self._make_worker()
+        worker.contract_resolver.get_current_week_expiry.return_value = date(2026, 11, 23)
+        executor = master_file.SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(worker)
+        expiry_day = datetime(2026, 11, 23, 9, 16, tzinfo=master_file.IST_TIMEZONE)
+        day_before = datetime(2026, 11, 20, 9, 16, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=expiry_day):
+            state = executor.snapshot()
+        self.assertIs(state["in_position"], False)
+        self.assertEqual(state["nifty_weekly_expiry"], "2026-11-23")
+        self.assertIs(state["nifty_expiry_today"], True)
+        with patch.object(master_file, "_ist_now", return_value=day_before):
+            state = executor.snapshot()
+        self.assertIs(state["nifty_expiry_today"], False)
+        # The resolver failing (no instrument master, say): the keys are absent.
+        worker.contract_resolver.get_current_week_expiry.side_effect = ValueError("no chain")
+        with patch.object(master_file, "_ist_now", return_value=expiry_day):
+            state = executor.snapshot()
+        self.assertNotIn("nifty_expiry_today", state)
+        self.assertNotIn("nifty_weekly_expiry", state)
+
+    def test_v6h_position_state_carries_niftys_expiry_while_in_a_position_too(self):
+        worker, _store = self._slh027_worker()
+        worker.contract_resolver = MagicMock()
+        worker.contract_resolver.get_current_week_expiry.return_value = date(2026, 11, 23)
+        executor = master_file.SL_HUNTING_EXECUTOR_MODULE.MasterWorkerExecutor(worker)
+        expiry_day = datetime(2026, 11, 23, 9, 40, tzinfo=master_file.IST_TIMEZONE)
+        with patch.object(master_file, "_ist_now", return_value=expiry_day):
+            state = executor.snapshot()
+        self.assertIs(state["in_position"], True)
+        self.assertIs(state["nifty_expiry_today"], True)
+
     def test_slh027_a_backstop_multiple_outside_one_to_three_blocks_live(self):
         worker, _store = self._make_worker()
         message = "SL_HUNTING_STOP_BACKSTOP_MULTIPLE must be a number from 1 to 3"

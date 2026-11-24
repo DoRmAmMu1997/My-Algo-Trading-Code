@@ -14742,3 +14742,164 @@ these 9 mutations fails it, and the unmutated note passes:
 * the flat branch's reason dropped;
 * the expiry moved into a plan line;
 * the expiry dropped from the context.
+
+## 20 and 23 Nov - net-new only (the runner did not run either day)
+
+The operator was away and the runner was off on 20 and 23 Nov, so there is no
+trade comparison: only IH's sessions, read for anything net-new. 24 Nov was a
+market holiday (Guru Nanak Jayanti).
+
+**Sources.**
+
+- **IH's live sessions:**
+  - 20 Nov: `Y6e5Jg0wgs8`, 9:20, 74 segments.
+  - 23 Nov: `ciAfKOxPCx4`, 6:33, 50 segments.
+
+  Both were read in full; his words are my translation of the Hindi
+  auto-transcripts.
+- **Prices:** the Dhan one-minute CSVs, topped up through 23 Nov.
+
+### 20 Nov: a gap-down in a strong up-run, bought on recovery, stopped
+
+19 Nov's 3:15 level was 25,503.45, the close of a +1.12% day near its high. 20 Nov
+opened at 25,368.00 (-0.53%). IH waited for the recovery and bought before the
+closing price broke out: "after the breakout, others start buying and the
+retracement grows". The market pulled back first, and he cut at his 3-lakh limit,
+refusing to stretch it: "decide 3 lakh, then 3.5 lakh... that circle is how
+traders get stuck." NIFTY then rallied to close the day at its high (3:15 level
+25,784.75, +1.10%).
+
+His claim was that a gap-down in a market this positive "makes a different
+psychology: it goes neither up nor down". It does not hold:
+
+- **After two or more up days,** gap-downs got bought early: long +0.484R at
+  09:17 and +0.680R at 09:20 (+0.78 / +0.54 by half; 19 sessions).
+- **That is the corpus's existing reading** ("default gap-down logic still looks
+  UP", and v5v's gap-down short after two up days at -0.30R).
+- **Nothing to add.** His loss-discipline points are v4d and v4h.
+
+### 23 Nov: IH sold the expiry gap-up near the all-time high - v6h
+
+23 Nov carried NIFTY's and BankNIFTY's expiry, moved up a day by the holiday.
+NIFTY opened at 25,929.15 (+0.56%) and BankNIFTY at 65,012.05 (+0.58%), both
+above their highs. IH sold at once: "if it goes straight up on a gap-up, nobody
+writes calls; only buyers come in, so a rejection becomes possible", "especially
+as it is expiry". He booked as the first profit began to shrink. NIFTY closed its
+3:15 at 25,367.50 (-1.62%), BankNIFTY at 62,612.60 (-3.13%), both near their lows.
+
+**Measured** (5-year NIFTY, NIFTY expiry days from the expired-options calendar,
+plus 23 Nov; fixed-minute entries in the book's shape):
+
+| expiry-day open, up days behind it | n | against the gap 09:17 | 09:20 | 09:30 | with the gap 09:20 |
+|---|---|---|---|---|---|
+| GAP_UP, 0-1 | 27 | short +0.527 | +0.576 (+0.46 / +0.74) | +0.731 | long -0.413 |
+| GAP_DOWN, 0-1 | 25 | long +0.950 | +0.856 (+0.75 / +0.99) | +0.056 | short -0.687 |
+| GAP_UP, 2 or more | 12 | short -0.107 | -0.281 | +0.217 | long +0.454 |
+
+- **With at most one up day behind it, an expiry-day gap fades in both
+  directions,** positive in both halves at 09:17 and 09:20.
+- **Deep in a run it did not hold.** That is IH's own 23 Nov case (two up days),
+  so 23 Nov is his trade and not this rule's evidence.
+
+**It exposed a flaw in v6f.** v6f's gap-up long above yesterday's high, split by
+expiry day: 102 non-expiry sessions +0.313R / +0.167R / +0.223R at 09:16 / 09:17
+/ 09:20, positive in both halves at all three, and 32 expiry-day sessions
+-0.256R / -0.361R / -0.211R. v6f was the expiry days' casualty, not their cause.
+
+**Encoded** on the operator's standing call (encode a measured edge; rules can
+be reversed):
+
+- **v6h, ON A NIFTY EXPIRY DAY, AN OPENING GAP FADES UNLESS A RUN IS BEHIND IT:**
+  a confidence notch for a pattern + confirmation trade AGAINST the gap until
+  09:30, when NIFTY expires today and `levels.up_run.straight_up_days` is 0 or 1.
+  It creates no entry and vetoes none.
+- **v6f narrowed:** its notch does not apply on a NIFTY expiry day.
+
+**Code.** Until now the agent learned it was an expiry day only from an option it
+held (v6a's `contract_expires_today`). v6h reads the opening, so `position_state`
+now carries `nifty_expiry_today` and `nifty_weekly_expiry` flat or not. They come
+from the worker's `nifty_expiry_state()`, which reads the resolver's current-week
+expiry (the cached option chain the entry path already loads) against the IST
+date. Any failure leaves the keys out.
+
+**Tests.**
+
+- **Master:** two tests (flat and in a position; the expiry day, the day before,
+  and a failing resolver).
+- **Prompt:** a wiring test for v6h, v6f's narrowing and the `position_state`
+  description.
+- **Mutants:** six over the code and rule text, all caught.
+
+### Already in the corpus
+
+- **"Enter before the closing-price breakout; after it the retracement grows":**
+  v4i.
+- **"Decide the loss and keep it; stretching it starts a circle":** PRE-COMMIT THE
+  ADVERSE MOVE (v4d) and THE LOSS LIMIT IS A PERMISSION TO WAIT (v4h).
+- **"If a big loss came before the profit, the trade was wrong anyway":** BEING
+  DIRECTIONALLY RIGHT DOES NOT EARN THE HOLD (v3y).
+- **"Book as soon as a good profit starts shrinking":** BOOK WHEN THE PROFIT STOPS
+  GROWING (v4f).
+
+## November 25 pre-open note
+
+[Prediction For 25 NOV 2026](https://www.youtube.com/watch?v=6wXFzHmVxj4), uploaded
+2026-11-24 21:00 IST, 1:47, 15 transcript segments, read in full.
+
+**Read.** 23 Nov sold off in all three indices after a very positive run. Whoever
+sold was "happy to get one momentum, and that on the opposite side", and booked
+it, so there are no sellers to target.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | SELL, with the selling |
+| GAP DOWN | no plan: "I see some risk in a gap down" |
+
+**Levels.** The transcript garbled three levels, read from the frames at 0:36 and
+1:37:
+
+- **BankNIFTY's "631 190"** is drawn at 63,188.05, recorded as 63,190.
+- **BankNIFTY's "6250"** is drawn at 62,049.40, recorded as 62,050.
+- **NIFTY's "2550"** is drawn at 25,552.25, recorded as 25,550.
+- **Spoken levels that the frames confirmed:**
+  - NIFTY 25,470, drawn at 25,477.70; the spoken level wins.
+  - NIFTY 25,260, drawn at 25,262.00.
+  - BankNIFTY 63,500 (63,504.05) and 61,800 (61,807.65).
+- **Left out:** each chart also carries an unspoken top line (NIFTY 25,701.65,
+  BankNIFTY 64,000.90), which IH did not name.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 25,470 / 25,550 | 25,260 / 25,200 |
+| BankNIFTY | 63,190 / 63,500 | 62,050 / 61,800 |
+| Sensex | 83,000 / 83,400 | 81,930 / 81,690 |
+
+**How it meets the corpus.** Checked by running `pivot_and_levels` on the CSVs
+with a simulated 25 Nov open:
+
+- **v6c's opening follow will NOT be active.** 23 Nov closed at 0.036 of its
+  range, but its low came at 15:12, after 13:30.
+- **v5x's scope is met:** a one-way selling day, closing in its bottom third. On
+  a FLAT open it allows the BUY side while NIFTY's next 500 under the open and
+  BankNIFTY's next 500 hold, against the note's SELL. v5z leaves a SELL note after
+  a down day, with an upward cross, to the ordinary method.
+- **v6e's veto is off** (no up days), **v6g** does not apply (0.036 is under its
+  third), **v6f** would need an open above 25,992.60, and **v6h** and **v6a** do
+  not apply: 25 Nov is not NIFTY's expiry.
+
+The note renders 1,789 characters on November 25 and nothing on any other date.
+`test_shipped_note_matches_november_25_intraday_hunter_plan` pins the date gate,
+the source, both branches with their reasons, and all twelve levels. Each of
+these 9 mutations fails it, and the unmutated note passes:
+
+* a NIFTY level moved by 3 points;
+* the sell branch turned into BUY;
+* the gap-down branch given a SELL side;
+* the date set to November 24;
+* NIFTY's 25,470 recorded as drawn (25,477.70);
+* BankNIFTY's 62,050 recorded as 62,500;
+* the unspoken top line added;
+* the sell branch's reason dropped;
+* an expiry line added.
