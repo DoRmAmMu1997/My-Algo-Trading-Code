@@ -228,38 +228,39 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_november_19_intraday_hunter_plan():
-    """Render the November 18 evening forecast: SELL on every open.
+def test_shipped_note_matches_november_25_intraday_hunter_plan():
+    """Render the November 24 evening forecast: SELL flat to gap up, no plan on a gap down.
 
-    tVhyDilJG20 was uploaded 18 Nov at 21:10 IST. Its direct Hindi transcript says
-    18 Nov sold off but closed with a retracement, so "traders will not have held"
-    their sells; buyers are few too, so neither side's stops are directly available,
-    and the plan is the same on every open: identify selling-side setups. The
-    transcript garbled two levels, read from the frames: BankNIFTY's "6214" is drawn
-    at 62,124.05 and NIFTY's "2582" at 25,082.25, recorded as 62,124 and 25,082.
-    The frame also confirmed BankNIFTY's spoken 62,300 (drawn 62,294.45). Sensex
-    expires on 19 Nov; the note carries that in its context, not as a plan line.
+    6wXFzHmVxj4 was uploaded 24 Nov (a market holiday) at 21:00 IST. Its direct Hindi
+    transcript says 23 Nov sold off in all three indices after a very positive run;
+    whoever sold was "happy to get one momentum, and that on the opposite side", and
+    booked it, so the sellers cannot be targeted: flat to gap up follows the selling.
+    On a gap down IH sees risk and has no plan, recorded as NO PLAN. The transcript
+    garbled three levels, read from the frames: BankNIFTY's "631 190" is drawn at
+    63,188.05 and "6250" at 62,049.40, NIFTY's "2550" at 25,552.25 -- recorded as
+    63,190, 62,050 and 25,550. NIFTY's spoken 25,470 is drawn at 25,477.70; the
+    spoken level wins. The frames also carry an unspoken top line (NIFTY 25,701.65,
+    BankNIFTY 64,000.90), which IH did not name and the note leaves out.
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 11, 19))
-    assert "PRE-OPEN ANALYST NOTE for 2026-11-19" in block
-    assert "tVhyDilJG20" in block
-    assert "uploaded 2026-11-18" in note.source
-    assert "closed with a retracement" in note.context
-    assert "neither side's stops can be targeted directly" in note.context
-    assert "November 19 is Sensex's expiry" in note.context
-    assert format_premarket_note(note, date(2026, 11, 18)) == ""
-    assert format_premarket_note(note, date(2026, 11, 20)) == ""
+    block = format_premarket_note(note, date(2026, 11, 25))
+    assert "PRE-OPEN ANALYST NOTE for 2026-11-25" in block
+    assert "6wXFzHmVxj4" in block
+    assert "uploaded 2026-11-24" in note.source
+    assert "sold off in all three indices after a very positive run" in note.context
+    assert "there are no sellers left to target" in note.context
+    assert format_premarket_note(note, date(2026, 11, 24)) == ""
+    assert format_premarket_note(note, date(2026, 11, 26)) == ""
 
-    flat = next(line for line in note.plan if line.startswith("FLAT TO GAP DOWN -> SELL"))
-    assert "follow the selling" in flat
-    gap_up = next(line for line in note.plan if line.startswith("GAP UP -> SELL, THE SAME PLAN"))
-    assert "neither buyers' nor sellers' stops" in gap_up
-    assert all("selling-side setups" in line for line in note.plan)
+    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> SELL, WITH THE SELLING"))
+    assert "cannot be targeted" in sell
+    assert "selling-side setups" in sell
+    gap_down = next(line for line in note.plan if line.startswith("GAP DOWN -> NO PLAN"))
+    assert "names no side" in gap_down
     assert len(note.plan) == 2
     assert not any("BUY" in line for line in note.plan)
     assert not any("EXPIR" in line.upper() for line in note.plan)
@@ -267,7 +268,7 @@ def test_shipped_note_matches_november_19_intraday_hunter_plan():
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [25320.0, 25400.0], "support": [25082.0, 24976.0]},
-        {"index": "BANKNIFTY", "resistance": [62124.0, 62300.0], "support": [61570.0, 61260.0]},
-        {"index": "SENSEX", "resistance": [82356.0, 82720.0], "support": [81500.0, 81200.0]},
+        {"index": "NIFTY", "resistance": [25470.0, 25550.0], "support": [25260.0, 25200.0]},
+        {"index": "BANKNIFTY", "resistance": [63190.0, 63500.0], "support": [62050.0, 61800.0]},
+        {"index": "SENSEX", "resistance": [83000.0, 83400.0], "support": [81930.0, 81690.0]},
     ]

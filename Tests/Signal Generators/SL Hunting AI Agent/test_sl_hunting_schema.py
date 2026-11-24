@@ -4334,3 +4334,38 @@ def test_v6g_after_a_selling_day_that_retraced_into_its_middle_a_flat_open_leans
     v5x = _flat_rule(prompt, "WHILE THE ROUND NUMBER HOLDS, YESTERDAY'S SELLERS ARE STILL THE TARGET")
     assert ("[A down day whose 3:15 level sits HIGHER, between a third and a half of its range, "
             "is v6g's, not this rule's.]") in v5x
+
+
+def test_v6h_on_a_nifty_expiry_day_an_opening_gap_fades_and_v6f_steps_aside():
+    """v6h (operator's standing call, 24 Nov, a measured edge): on NIFTY's expiry day,
+    with at most one up day behind it, the opening gap fades. Pins the scope (read
+    from position_state's nifty_expiry_today and levels.up_run), that it is a notch
+    against the gap and not a trigger, the measurement including the run that does
+    not hold, the review clause, its place right after v6f, v6f's narrowing, and the
+    position_state description.
+    """
+    from sl_hunting_tools import POSITION_STATE_DESCRIPTION
+
+    prompt = build_system_prompt()
+    heading = "ON A NIFTY EXPIRY DAY, AN OPENING GAP FADES UNLESS A RUN IS BEHIND IT"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6h, operator's standing call, 24 Nov, adopted on a measured edge).")
+    assert "`position_state` says `nifty_expiry_today`" in rule
+    assert "another index's expiry does not count" in rule
+    assert "today's verdict is GAP_UP or GAP_DOWN" in rule
+    assert "`levels.up_run.straight_up_days` is 0 or 1" in rule
+    assert "a trade AGAINST the gap (a SHORT on a gap-up, a LONG on a gap-down)" in rule
+    assert "It is a confidence notch, not a trigger, and it creates no entry and vetoes none." in rule
+    assert "gap-up (27 sessions): short +0.527R at 09:17, +0.576R at 09:20 (+0.46 / +0.74" in rule
+    assert "gap-down (25): long +0.950R at 09:17 and +0.856R at 09:20 (+0.75 / +0.99)" in rule
+    assert "WITH TWO OR MORE UP DAYS behind a gap-up (12, IH's own 23 Nov case) it did not hold" in rule
+    assert "every trade that cites (v6h) is reviewed" in rule
+    v6f = prompt.index("\n- A GAP-UP THAT OPENS ABOVE YESTERDAY'S HIGH LEANS THE EARLY LONG ITS WAY")
+    here = prompt.index("\n- " + heading)
+    assert v6f < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
+    assert "\n- " not in prompt[v6f + 3:here]
+    v6f_rule = _flat_rule(prompt, "A GAP-UP THAT OPENS ABOVE YESTERDAY'S HIGH LEANS THE EARLY LONG ITS WAY")
+    assert ("NOT ON A NIFTY EXPIRY DAY (narrowed 24 Nov, v6h next): when `position_state` says "
+            "`nifty_expiry_today`, this notch does not apply.") in v6f_rule
+    assert "102 non-expiry sessions +0.313R / +0.167R / +0.223R" in v6f_rule
+    assert "`nifty_expiry_today`" in POSITION_STATE_DESCRIPTION

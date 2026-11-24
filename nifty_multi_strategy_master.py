@@ -16702,6 +16702,26 @@ if SL_HUNTING_AVAILABLE:
                 "contract_expires_today": expiry == _ist_now().date(),
             }
 
+        def nifty_expiry_state(self) -> dict[str, Any]:
+            """v6h: is today NIFTY's weekly expiry? Known before any position exists.
+
+            `contract_expiry_state` only answers for an option already held, but v6h
+            reads the OPENING gap, before an entry. This asks the resolver for the
+            first NIFTY expiry on or after today -- the same cached option chain the
+            entry path uses -- and compares it with the IST trading date. Any failure
+            returns {} so the field is simply absent: better silent than wrong.
+            """
+            try:
+                expiry = self.contract_resolver.get_current_week_expiry()
+            except Exception:
+                return {}
+            if not isinstance(expiry, date):
+                return {}
+            return {
+                "nifty_weekly_expiry": expiry.isoformat(),
+                "nifty_expiry_today": expiry == _ist_now().date(),
+            }
+
         def exit_nifty_leg_only(self, reason: str) -> None:
             """Close ONLY the NIFTY leg (premise-invalidation on NIFTY), leaving the
             BankNIFTY mirror running. Sets the suppress flag so after_exit does not

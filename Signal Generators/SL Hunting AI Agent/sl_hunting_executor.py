@@ -796,6 +796,7 @@ class MasterWorkerExecutor:
             last = self._last_closed_trade()
             if last is not None:
                 flat["last_closed_trade_today"] = last
+            self._attach_nifty_expiry(flat)
             return flat
 
         snap: dict[str, Any] = {"in_position": True}
@@ -842,4 +843,19 @@ class MasterWorkerExecutor:
         if callable(leg_getter):
             with contextlib.suppress(Exception):
                 snap["nifty_leg_pnl"] = round(float(leg_getter()), 2)
+        self._attach_nifty_expiry(snap)
         return snap
+
+    def _attach_nifty_expiry(self, snap: dict[str, Any]) -> None:
+        """v6h: copy whether today is NIFTY's weekly expiry, flat or not.
+
+        Only the two known keys are copied; any failure leaves them out.
+        """
+        getter = getattr(self._w, "nifty_expiry_state", None)
+        if not callable(getter):
+            return
+        with contextlib.suppress(Exception):
+            state = getter()
+            for key in ("nifty_weekly_expiry", "nifty_expiry_today"):
+                if key in state:
+                    snap[key] = state[key]
