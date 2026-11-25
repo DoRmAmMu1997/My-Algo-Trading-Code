@@ -20307,14 +20307,23 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         record.get("option_opening_side", "BUY") or "BUY"
     ).strip().upper()
 
+    # Single-leg direction is LONG/SHORT: that is what every `enter_position`
+    # caller writes (BULLISH/BEARISH belongs to the hedged-puts positions, which
+    # resume refuses earlier). A stop or target of 0.0 means the worker does not
+    # use one -- Renko and Heikin-Ashi enter with neither, Supertrend with no
+    # target -- so 0.0 is restored as-is; only a negative or non-finite level is
+    # corrupt. Until 25 Nov 2026 this demanded BULLISH/BEARISH and positive
+    # levels, so no real single-leg position could ever be resumed.
     missing_or_invalid = (
-        direction not in {"BULLISH", "BEARISH"}
+        direction not in {"LONG", "SHORT"}
         or not symbol
         or quantity <= 0
         or entry_trade_price <= 0
         or entry_underlying <= 0
-        or stop_underlying <= 0
-        or target_underlying <= 0
+        or not math.isfinite(stop_underlying)
+        or not math.isfinite(target_underlying)
+        or stop_underlying < 0
+        or target_underlying < 0
         or security_id <= 0
         or not exchange_segment
         or option_right not in {"CE", "PE"}
@@ -20331,24 +20340,33 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         (
             option_opening_side == "BUY"
             and (
-                (direction == "BULLISH" and option_right != "CE")
-                or (direction == "BEARISH" and option_right != "PE")
+                (direction == "LONG" and option_right != "CE")
+                or (direction == "SHORT" and option_right != "PE")
             )
         )
         or (
             option_opening_side == "SELL"
             and (
-                (direction == "BULLISH" and option_right != "PE")
-                or (direction == "BEARISH" and option_right != "CE")
+                (direction == "LONG" and option_right != "PE")
+                or (direction == "SHORT" and option_right != "CE")
             )
         )
     )
+    # Each level that IS set must sit on its own side of the entry.
+    stop_set = stop_underlying > 0
+    target_set = target_underlying > 0
     invalid_geometry = (
-        direction == "BULLISH"
-        and not (stop_underlying < entry_underlying < target_underlying)
+        direction == "LONG"
+        and (
+            (stop_set and not stop_underlying < entry_underlying)
+            or (target_set and not entry_underlying < target_underlying)
+        )
     ) or (
-        direction == "BEARISH"
-        and not (target_underlying < entry_underlying < stop_underlying)
+        direction == "SHORT"
+        and (
+            (stop_set and not entry_underlying < stop_underlying)
+            or (target_set and not target_underlying < entry_underlying)
+        )
     )
     if missing_or_invalid or direction_contract_mismatch or invalid_geometry:
         raise ValueError(
