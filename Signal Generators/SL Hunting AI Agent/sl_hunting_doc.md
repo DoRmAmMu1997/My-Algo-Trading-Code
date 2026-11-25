@@ -14903,3 +14903,127 @@ these 9 mutations fails it, and the unmutated note passes:
 * the unspoken top line added;
 * the sell branch's reason dropped;
 * an expiry line added.
+
+## November 25 live trade and the v6i rule
+
+[Live Bank Nifty Option Trading](https://www.youtube.com/watch?v=ED-nmS4-eJ0), 25 Nov,
+11:15, transcript read in full; the clock and the positions panel read from the
+frames.
+
+**The runner did not trade.** It was restarted five times between 09:04 and
+09:30. In the last run the websocket feed connected at 09:30:47 but published no
+1-minute bar after 09:29, and the newest bar stayed stale until 15:20. Every
+strategy, the agent included, saw a frozen frame. The agent made no decision and
+no trade, so there is nothing to set beside IH's trade. The feed stall is a
+runner defect, not the agent's, and is tracked apart from this note.
+
+**IH's trade.** NIFTY gapped +1.15% (25,366.40 at the 3:15 level to a 25,658.35
+open) the morning after 23 Nov fell from near the all-time high and closed at its
+low; 24 Nov was a market holiday. At 09:23 he bought puts in BankNIFTY, NIFTY and
+Sensex, before any breakout: "the sellers booked and left, so there are no seller
+SLs above; this momentum is just a trap". His exit lines were BankNIFTY 64,000 and
+Sensex 84,000, and "any breakout, small or big, cut at once". The trade first ran
+against him (NIFTY 25,734 to 25,796 by 09:34). He booked at 10:09 because the
+market had started to range between round numbers and premiums would decay:
+about +2.02 lakh in all, BankNIFTY +2.09 lakh, Sensex +568, NIFTY -8,222.
+
+**What the corpus says.** READ THE GAP AGAINST THE PRIOR DAYS already names the
+side: "after a big down day the method SELLS a direct gap-up". It did not name the
+minute. Today's open was GAP_UP below 23 Nov's high (25,992.60), so v6f's long
+lean did not apply; the up-run was 0, so v6e's veto was off; 25 Nov was not
+NIFTY's expiry, so v6h did not apply.
+
+**Measured: the side holds, the minute does not.** 5-year NIFTY, a fall of 1% or
+more at the 3:15 level, then a GAP_UP of 0.5% or more, not an expiry day: 23
+sessions, fixed-minute shorts in the book's shape.
+
+| Short at | All | 2021-23 / 2024-26 |
+|---|---|---|
+| 09:16 | -0.69R | |
+| 09:20 | -0.58R | -0.97 / -0.23 |
+| 09:25 | -0.31R | |
+| 09:30 | +0.72R | +0.61 / +0.81 |
+| 09:35 | +0.78R | +0.50 / +1.03 |
+| 09:30, NIFTY still above the open (17) | +0.92R | +1.01 / +0.82 |
+| 09:35, NIFTY still above the open (17) | +1.40R, 76% winners | +0.67 / +2.44 |
+| 09:35, NIFTY below the open (11, scope incl. expiry) | -0.27R | |
+
+On a gap of 1% or more the 09:20 short lost -1.07R (11). On the five expiry days
+in scope the early short worked (+1.49R at 09:16), which is v6h's finding, so v6i
+leaves expiry days to v6h. Across all 171 gap-ups the 09:30 short scored only
++0.23R: the down day is what makes the fade. Today itself was a loss at both 09:20
+(-1.36R) and 09:30 (-1.07R).
+
+**Encoded: v6i (operator's standing call, net-new rules that do not contradict
+the corpus).** After a 1% down day and a non-expiry GAP_UP, the gap-up short is
+not opened before 09:30; from 09:30 to 09:45, while NIFTY is still above today's
+open, a short on the ordinary pattern + confirmation gets one more reason. It
+creates no entry and no long and relaxes nothing. READ THE GAP AGAINST THE PRIOR
+DAYS points to it. The rule is knowledge-only: the 3:15 move and
+`position_state.nifty_expiry_today` are already in the payload.
+`test_v6i_after_a_down_day_a_gap_up_is_sold_after_its_first_push_not_into_it`
+pins the scope, the veto, the numbers, the placement after v6h and the pointer;
+five rule mutations (the 1% scope, the 09:30 minute, the expiry scope, the
+pointer, "creates no long") all fail it.
+
+### Measured, not encoded
+
+- **"In a positive market a double top works, because nobody sells it":** not
+  measured; it needs a double-top detector the corpus does not have.
+
+### Already in the corpus
+
+- **"Any breakout of the round number, small or big: cut at once":** THE STOP
+  FIRES ON A CLOSE, SO PUT IT WHERE A CLOSE MEANS YOU ARE WRONG (v5x): the stop
+  sits beyond the number and fires on the first close past it.
+- **"In a range, book; sitting lets the premium decay":** BOOK WHEN THE PROFIT
+  STOPS GROWING (v4f).
+
+## November 26 pre-open note
+
+[Prediction For 26 NOV 2026](https://www.youtube.com/watch?v=JmSPjiYb9E4), uploaded
+2026-11-25 about 21:10 IST, 1:47, 14 transcript segments, read in full.
+
+**Read.** The positive momentum met as much selling. The rejection has already
+pushed out the buyers who came in, so no buyer stops are left. Sensex expires on
+26 Nov.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| ANY (gap down, flat, gap up) | BUY: identify buying-side setups |
+| FLAT | same plan; the risk is a small non-directional range |
+
+**Levels.** The transcript garbled two pairs, read from the frames at 0:38 and
+1:32:
+
+- **NIFTY's "2600 26200"** is drawn at 26,000.85 and 26,200.70, recorded as
+  26,000 and 26,200.
+- **Sensex's "8500084 380"** is drawn at 85,009.82 and 84,381.38, recorded as
+  85,000 and 84,380.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 26,000 / 26,200 | 25,630 / 25,480 |
+| BankNIFTY | 64,420 / 65,000 | 63,180 / 62,680 |
+| Sensex | 84,380 / 85,000 | 83,400 / 83,000 |
+
+**How it meets the corpus, by the rules' scopes.** 25 Nov rose 1.68% at the 3:15
+level, so v6i, v6g and v5x (all after a down day) do not apply; v6e's veto needs
+four up days and sees one; 26 Nov is not NIFTY's expiry (Sensex's does not count),
+so v6h and v6a do not apply; v6f leans a gap-up long only on an open above
+25,951.65, which agrees with the note.
+
+`test_shipped_note_matches_november_26_intraday_hunter_plan` pins the date gate,
+the source, both plan lines, the expiry context and all twelve levels. Each of
+these 8 mutations fails it, and the unmutated note passes:
+
+* a NIFTY resistance moved by 3 points;
+* a NIFTY support moved by 30 points;
+* the BUY branch turned into SELL;
+* the date set to November 25;
+* Sensex's 84,380 recorded as drawn (84,381);
+* the flat line's reason dropped;
+* BankNIFTY's resistances swapped;
+* the expiry context dropped.
