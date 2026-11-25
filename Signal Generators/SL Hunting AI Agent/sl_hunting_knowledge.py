@@ -286,7 +286,8 @@ retail's stop-losses sit so you can trade where the operator will hunt them.
     buyers. The herd that takes the bait traps itself, so the recovery back INTO the
     prior trend is the premise — following such a gap blindly is the retail mistake.
     (A gap-up after a selling streak is UNTRUSTWORTHY — it tends to fall back; after
-    a big down day the method SELLS a direct gap-up rather than following it.)
+    a big down day the method SELLS a direct gap-up rather than following it --
+    after its first push, not into it: see v6i in OPENING DRIVE for the timing.)
   * Gap SIZE matters: a SMALL counter-gap inside a trend reads like a flat open
     (keep the with-trend plan); only a gap THROUGH the prior day's extreme flips it.
   * HUGE gap (even WITH the trend): nearby SLs simply do not EXIST on either side —
@@ -1566,6 +1567,36 @@ Conditions (ALL must hold — otherwise this branch simply does not apply):
   Samples are small: every trade that cites (v6h) is reviewed, and the rule is
   reverted if live results are negative. RISK, the cooldown and every gate still
   bind; v6a's no-raise still governs an expiry-day position.
+- AFTER A DOWN DAY, A GAP-UP IS SOLD AFTER ITS FIRST PUSH, NOT INTO IT (v6i,
+  operator's standing call, 25 Nov, adopted on a measured edge). IH sold the
+  25 Nov gap-up the morning after 23 Nov's rejection from the all-time high: "the
+  sellers booked and left, so there are no seller SLs above; this momentum is
+  just a trap". NIFTY gapped +1.15% off a day that fell 1.62%; his 09:23 entry
+  first ran 60 points against him, and he booked at 10:09 with only BankNIFTY's
+  leg in profit. The side was right; the minute was early.
+  SCOPE, all of it required:
+  * yesterday fell at least 1% (3:15 level to 3:15 level);
+  * today's verdict is GAP_UP (0.5% or more);
+  * `position_state` does NOT say `nifty_expiry_today` (v6h governs that day).
+  WHAT IT CHANGES:
+  * BEFORE 09:30, do not open the SHORT that READ THE GAP AGAINST THE PRIOR DAYS
+    names for this open: the first push belongs to the gap's buyers.
+  * FROM 09:30 TO 09:45, while NIFTY is still ABOVE today's open, a SHORT taken on
+    the ordinary pattern + confirmation gets one more reason: the push held, so
+    the trap is set. Once NIFTY has closed below the open the fade has already
+    happened; do not chase it on this rule.
+  It is a confidence notch and a timing veto, not a trigger: it creates no entry,
+  creates no long, and relaxes nothing.
+  MEASURED (5-year NIFTY, scope above, 23 sessions, fixed-minute shorts in the
+  book's shape): -0.69R at 09:16, -0.58R at 09:20 (-0.97 / -0.23 by half),
+  -0.31R at 09:25; +0.72R at 09:30 (+0.61 / +0.81) and +0.78R at 09:35 (+0.50 /
+  +1.03). With NIFTY still above the open: +0.92R at 09:30 (17; +1.01 / +0.82)
+  and +1.40R at 09:35 (17; +0.67 / +2.44, 76% winners); below it at 09:35,
+  -0.27R. On a gap of 1% or more the 09:20 short lost -1.07R (11). On expiry
+  days (5) the early short worked, as v6h says. Across ALL gap-ups the 09:30
+  short scored +0.23R, so the down day is what makes it. Samples are small:
+  every trade that cites (v6i) is reviewed, and the rule is reverted if live
+  results are negative. RISK, the cooldown and every gate still bind.
 - Behavioural confirmation substitutes for the candle rule HERE ONLY: price
   holding above the open / round number without aggressive selling (long branch),
   or failing below the closing point / round number without real recovery (short

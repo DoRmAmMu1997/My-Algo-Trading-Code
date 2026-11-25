@@ -4369,3 +4369,35 @@ def test_v6h_on_a_nifty_expiry_day_an_opening_gap_fades_and_v6f_steps_aside():
             "`nifty_expiry_today`, this notch does not apply.") in v6f_rule
     assert "102 non-expiry sessions +0.313R / +0.167R / +0.223R" in v6f_rule
     assert "`nifty_expiry_today`" in POSITION_STATE_DESCRIPTION
+
+
+def test_v6i_after_a_down_day_a_gap_up_is_sold_after_its_first_push_not_into_it():
+    """v6i (operator's standing call, 25 Nov, a measured edge): after a 1% down day, a
+    non-expiry gap-up is not shorted before 09:30, and a 09:30-09:45 short while NIFTY
+    is still above the open gets one more reason. Pins the scope (v6h keeps expiry
+    days), the timing veto, that it creates no entry and no long, the measurement
+    including the early loss and the all-gap-up baseline, the review clause, its
+    place right after v6h, and the pointer from READ THE GAP AGAINST THE PRIOR DAYS.
+    """
+    prompt = build_system_prompt()
+    heading = "AFTER A DOWN DAY, A GAP-UP IS SOLD AFTER ITS FIRST PUSH, NOT INTO IT"
+    rule = _flat_rule(prompt, heading)
+    assert rule.startswith(f"- {heading} (v6i, operator's standing call, 25 Nov, adopted on a measured edge).")
+    assert "yesterday fell at least 1% (3:15 level to 3:15 level)" in rule
+    assert "today's verdict is GAP_UP (0.5% or more)" in rule
+    assert "`position_state` does NOT say `nifty_expiry_today` (v6h governs that day)" in rule
+    assert "BEFORE 09:30, do not open the SHORT" in rule
+    assert "FROM 09:30 TO 09:45, while NIFTY is still ABOVE today's open" in rule
+    assert "do not chase it on this rule" in rule
+    assert "it creates no entry, creates no long, and relaxes nothing" in rule
+    assert "-0.58R at 09:20 (-0.97 / -0.23 by half)" in rule
+    assert "+0.72R at 09:30 (+0.61 / +0.81)" in rule
+    assert "+1.40R at 09:35 (17; +0.67 / +2.44, 76% winners)" in rule
+    assert "Across ALL gap-ups the 09:30 short scored +0.23R" in rule
+    assert "every trade that cites (v6i) is reviewed" in rule
+    v6h = prompt.index("\n- ON A NIFTY EXPIRY DAY, AN OPENING GAP FADES UNLESS A RUN IS BEHIND IT")
+    here = prompt.index("\n- " + heading)
+    assert v6h < here < prompt.index("\n- Behavioural confirmation substitutes for the candle rule HERE ONLY")
+    assert "\n- " not in prompt[v6h + 3:here]
+    read_gap = _flat_rule(prompt, "READ THE GAP AGAINST THE PRIOR DAYS")
+    assert "after its first push, not into it: see v6i in OPENING DRIVE for the timing." in read_gap
