@@ -1686,6 +1686,39 @@ class TestWebSocketMarketDataFetcher(unittest.TestCase):
         self.assertEqual(self.store.get_ltp_by_secid(*self.index_key), 24334.30)
         self.assertTrue(self.fetcher.aggregator.tick_bars_frame().empty)
 
+    def test_utc_stamped_index_tick_builds_its_ist_bar(self):
+        """25 Nov 2026 reproduction: Dhan's epoch went true-UTC, so dhanhq renders
+        LTT 5h30m behind IST. Before the fix every such tick was rejected and the
+        frame froze for the whole session."""
+        now = datetime(2026, 11, 25, 9, 31, 40)
+        self.fetcher._handle_packet(self._index_tick("25781.90", "04:01:38"), now_ist=now)
+        bars = self.fetcher.aggregator.tick_bars_frame()
+        self.assertEqual(list(bars["timestamp"]), [pd.Timestamp("2026-11-25 09:31:00")])
+        self.assertEqual(bars.iloc[-1]["close"], 25781.90)
+
+    def test_rejected_in_session_index_ticks_warn_once_per_minute(self):
+        """A silent rejection cost all of 25 Nov; it must now reach the log."""
+        now = datetime(2026, 11, 25, 9, 31, 40)
+        bad = self._index_tick("25781.90", "22:01:38")  # neither IST nor UTC reading fits
+        with self.assertLogs(self.fetcher.log, level="WARNING") as captured:
+            self.fetcher._handle_packet(bad, now_ist=now)
+            self.fetcher._handle_packet(bad, now_ist=now)
+        self.assertEqual(len(captured.records), 1)
+        message = captured.records[0].getMessage()
+        self.assertIn("LTT=22:01:38", message)
+        self.assertIn("2026-11-25 09:31:40", message)
+        self.assertTrue(self.fetcher.aggregator.tick_bars_frame().empty)
+        # The LTP cache still takes the price, exactly as before.
+        self.assertEqual(self.store.get_ltp_by_secid(*self.index_key), 25781.90)
+
+    def test_rejected_index_tick_outside_session_stays_quiet(self):
+        """After-hours recomputes are expected rejections, not a feed fault."""
+        with self.assertNoLogs(self.fetcher.log, level="WARNING"):
+            self.fetcher._handle_packet(
+                self._index_tick("25819.25", "13:01:38"),
+                now_ist=datetime(2026, 11, 25, 18, 31, 40),
+            )
+
     def test_minute_rollover_publishes_through_throttle(self):
         self.fetcher._handle_packet(self._index_tick("24238.50", "10:17:33"), now_ist=self.NOW)
         self.fetcher._publish_frame_if_changed()
@@ -12517,9 +12550,11 @@ class TestSessionStatePersistence(unittest.TestCase):
         self.worker.strategy_name = "Renko"
 
     def _open_position(self):
+        # LONG/SHORT is what every single-leg entry path writes (enter_position);
+        # a "BULLISH" fixture here hid the 25 Nov 2026 restore failure.
         return master_file.PaperPosition(
             active=True,
-            direction="BULLISH",
+            direction="LONG",
             symbol="NIFTY-Aug2026-24550-CE",
             quantity=75,
             entry_trade_price=112.35,
@@ -12752,6 +12787,8 @@ class TestSessionStatePersistence(unittest.TestCase):
         invalid_mutations = (
             ("direction", ""),
             ("direction", "SIDEWAYS"),
+            # Hedged positions say BULLISH/BEARISH; no single-leg entry does.
+            ("direction", "BULLISH"),
             ("symbol", ""),
             ("option_exchange_segment", ""),
             ("option_right", "XX"),
@@ -12759,8 +12796,10 @@ class TestSessionStatePersistence(unittest.TestCase):
             ("option_strike", 0),
             ("option_lot_size", 0),
             ("entry_underlying", 0),
-            ("stop_underlying", 0),
-            ("target_underlying", 0),
+            ("stop_underlying", -1.0),
+            ("target_underlying", -1.0),
+            ("stop_underlying", float("nan")),
+            ("target_underlying", float("inf")),
         )
         for key, value in invalid_mutations:
             with self.subTest(key=key, value=value):
@@ -12770,10 +12809,15 @@ class TestSessionStatePersistence(unittest.TestCase):
                     master_file._paper_position_from_record(broken)
 
         for direction, right, stop, target in (
-            ("BULLISH", "CE", 24600.0, 24700.0),
-            ("BEARISH", "PE", 24400.0, 24300.0),
-            ("BULLISH", "PE", 24500.0, 24700.0),
-            ("BEARISH", "CE", 24700.0, 24500.0),
+            ("LONG", "CE", 24600.0, 24700.0),
+            ("SHORT", "PE", 24400.0, 24300.0),
+            ("LONG", "PE", 24500.0, 24700.0),
+            ("SHORT", "CE", 24700.0, 24500.0),
+            # Only a level that is SET is checked, and it still must sit on its side.
+            ("LONG", "CE", 24600.0, 0.0),
+            ("LONG", "CE", 0.0, 24500.0),
+            ("SHORT", "PE", 24500.0, 0.0),
+            ("SHORT", "PE", 0.0, 24600.0),
         ):
             with self.subTest(direction=direction, right=right, stop=stop, target=target):
                 broken = dict(valid)
@@ -12785,6 +12829,57 @@ class TestSessionStatePersistence(unittest.TestCase):
                 )
                 with self.assertRaises(ValueError):
                     master_file._paper_position_from_record(broken)
+
+    def test_the_25_nov_records_that_failed_to_restore_now_rebuild(self):
+        """Reproduction: at 09:28 on 25 Nov 2026 five open paper positions were
+        refused with "incomplete or unsafe persisted position" and those workers
+        started FLAT. The validator demanded BULLISH/BEARISH, which no single-leg
+        worker writes, and a positive target, which Supertrend never sets. These
+        are the records from that log, field for field."""
+        common = {
+            "quantity": 65, "entry_underlying": 25724.75,
+            "option_exchange_segment": "NSE_FNO", "option_expiry": "2026-12-29",
+            "option_lot_size": 65, "option_opening_side": "BUY",
+        }
+        records = {
+            "ML Ensemble": dict(
+                common, direction="SHORT", symbol="NIFTY-Dec2026-25700-PE",
+                entry_trade_price=297.65, stop_underlying=26367.868749999998,
+                target_underlying=24438.512499999997, option_security_id=42751,
+                option_right="PE", option_strike=25700.0,
+            ),
+            "Opening Range Breakout": dict(
+                common, direction="LONG", symbol="NIFTY-Dec2026-25750-CE",
+                entry_trade_price=320.25, stop_underlying=25338.87875,
+                target_underlying=26496.4925, option_security_id=42752,
+                option_right="CE", option_strike=25750.0,
+            ),
+            "Supertrend": dict(
+                common, direction="LONG", symbol="NIFTY-Dec2026-25750-CE",
+                entry_trade_price=320.25, stop_underlying=25517.810616440132,
+                target_underlying=0.0, option_security_id=42752,
+                option_right="CE", option_strike=25750.0,
+            ),
+        }
+        for name, record in records.items():
+            with self.subTest(strategy=name):
+                rebuilt = master_file._paper_position_from_record(json.loads(json.dumps(record)))
+                self.assertTrue(rebuilt.active)
+                self.assertEqual(rebuilt.direction, record["direction"])
+                self.assertEqual(rebuilt.stop_underlying, record["stop_underlying"])
+                self.assertEqual(rebuilt.target_underlying, record["target_underlying"])
+                self.assertEqual(rebuilt.entry_trade_price, record["entry_trade_price"])
+
+    def test_a_position_without_stop_or_target_round_trips_unchanged(self):
+        """Renko and Heikin-Ashi enter with no stop or target (0.0 = none); they
+        exit on their own signals. The restored position must be the same."""
+        original = self._open_position()
+        original.stop_underlying = 0.0
+        original.target_underlying = 0.0
+        record = master_file.serialize_position(original)
+        rebuilt = master_file._paper_position_from_record(json.loads(json.dumps(record)))
+        self.assertEqual(rebuilt.stop_underlying, 0.0)
+        self.assertEqual(rebuilt.target_underlying, 0.0)
 
     def _write_state(
         self, tmpdir, *, live=False, clean=False, session_date=None, marks_lag_seconds=0.0
@@ -13518,7 +13613,7 @@ class TestPaperPositionEntryTimestamp(unittest.TestCase):
     @staticmethod
     def _resumable_record():
         return {
-            "direction": "BULLISH",
+            "direction": "LONG",
             "symbol": "NIFTY-24550-CE",
             "quantity": 75,
             "entry_trade_price": 112.35,

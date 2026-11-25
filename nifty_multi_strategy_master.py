@@ -341,6 +341,8 @@ from Dependencies.startup_exposure import (
 )
 from Dependencies.tick_bar_builder import (
     SEGMENT_NAME_TO_FEED_CODE,
+    SESSION_END,
+    SESSION_FIRST_MINUTE,
     TickBarAggregator,
     divergence_stats,
     merge_official_and_tick_frames,
@@ -4394,6 +4396,8 @@ class WebSocketMarketDataFetcher(threading.Thread):
     RECONNECT_BACKOFF_MAX_SECONDS = 30.0
     # True-up divergence above this many index points logs a WARNING.
     TRUEUP_DIVERGENCE_WARN_POINTS = 1.0
+    # At most one "tick built no bar" warning per this many seconds.
+    REJECTED_TICK_WARN_INTERVAL_SECONDS = 60.0
 
     def __init__(
         self,
@@ -4445,6 +4449,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
         self._last_trueup_wall_minute: pd.Timestamp | None = None
         self._signature_at_last_trueup: int | None = None
         self._warned_unknown_segments: set[str] = set()
+        self._last_rejected_tick_warn_monotonic: float | None = None
         self.last_logged_candle_ts: pd.Timestamp | None = None
 
     # ------------------------------------------------------------------
@@ -4934,8 +4939,35 @@ class WebSocketMarketDataFetcher(threading.Thread):
             and event.security_id == NIFTY_INDEX_SECURITY_ID
         ):
             minute_ts = resolve_tick_minute(event.ltt_raw, now_ist)
-            if minute_ts is not None and self.aggregator.add_tick(minute_ts, event.ltp):
+            if minute_ts is None:
+                self._warn_rejected_index_tick(event.ltt_raw, now_ist)
+            elif self.aggregator.add_tick(minute_ts, event.ltp):
                 self._rollover_pending = True
+
+    def _warn_rejected_index_tick(self, ltt_raw: str | None, now_ist: datetime) -> None:
+        """
+        Log, at most once a minute, an in-session NIFTY tick that built no bar.
+
+        A rejection is normal after hours and for the snapshot Dhan replays on
+        subscribe, but a stream of them in session means the LTT no longer
+        matches the local clock. On 25 Nov 2026 that happened silently all day
+        (Dhan's epoch had switched to true UTC), and the frame froze at 09:29.
+        Diagnostic only: the tick still feeds the LTP cache, and no gate changes.
+        """
+        if not (SESSION_FIRST_MINUTE <= now_ist.time() < SESSION_END):
+            return
+        now_monotonic = time.monotonic()
+        last = self._last_rejected_tick_warn_monotonic
+        if last is not None and now_monotonic - last < self.REJECTED_TICK_WARN_INTERVAL_SECONDS:
+            return
+        self._last_rejected_tick_warn_monotonic = now_monotonic
+        self.log.warning(
+            "NIFTY index tick built no bar | LTT=%s | local IST clock=%s | its "
+            "LTT is not within 90s of the clock in either the IST or the UTC "
+            "reading; if this repeats, check the host clock and the feed's LTT.",
+            ltt_raw,
+            now_ist.strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
 
 # The two market-data producers are siblings, not a hierarchy: both subclass
@@ -20275,14 +20307,23 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         record.get("option_opening_side", "BUY") or "BUY"
     ).strip().upper()
 
+    # Single-leg direction is LONG/SHORT: that is what every `enter_position`
+    # caller writes (BULLISH/BEARISH belongs to the hedged-puts positions, which
+    # resume refuses earlier). A stop or target of 0.0 means the worker does not
+    # use one -- Renko and Heikin-Ashi enter with neither, Supertrend with no
+    # target -- so 0.0 is restored as-is; only a negative or non-finite level is
+    # corrupt. Until 25 Nov 2026 this demanded BULLISH/BEARISH and positive
+    # levels, so no real single-leg position could ever be resumed.
     missing_or_invalid = (
-        direction not in {"BULLISH", "BEARISH"}
+        direction not in {"LONG", "SHORT"}
         or not symbol
         or quantity <= 0
         or entry_trade_price <= 0
         or entry_underlying <= 0
-        or stop_underlying <= 0
-        or target_underlying <= 0
+        or not math.isfinite(stop_underlying)
+        or not math.isfinite(target_underlying)
+        or stop_underlying < 0
+        or target_underlying < 0
         or security_id <= 0
         or not exchange_segment
         or option_right not in {"CE", "PE"}
@@ -20299,24 +20340,33 @@ def _paper_position_from_record(record: dict) -> PaperPosition:
         (
             option_opening_side == "BUY"
             and (
-                (direction == "BULLISH" and option_right != "CE")
-                or (direction == "BEARISH" and option_right != "PE")
+                (direction == "LONG" and option_right != "CE")
+                or (direction == "SHORT" and option_right != "PE")
             )
         )
         or (
             option_opening_side == "SELL"
             and (
-                (direction == "BULLISH" and option_right != "PE")
-                or (direction == "BEARISH" and option_right != "CE")
+                (direction == "LONG" and option_right != "PE")
+                or (direction == "SHORT" and option_right != "CE")
             )
         )
     )
+    # Each level that IS set must sit on its own side of the entry.
+    stop_set = stop_underlying > 0
+    target_set = target_underlying > 0
     invalid_geometry = (
-        direction == "BULLISH"
-        and not (stop_underlying < entry_underlying < target_underlying)
+        direction == "LONG"
+        and (
+            (stop_set and not stop_underlying < entry_underlying)
+            or (target_set and not entry_underlying < target_underlying)
+        )
     ) or (
-        direction == "BEARISH"
-        and not (target_underlying < entry_underlying < stop_underlying)
+        direction == "SHORT"
+        and (
+            (stop_set and not entry_underlying < stop_underlying)
+            or (target_set and not target_underlying < entry_underlying)
+        )
     )
     if missing_or_invalid or direction_contract_mismatch or invalid_geometry:
         raise ValueError(
