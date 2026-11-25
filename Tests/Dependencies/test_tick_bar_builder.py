@@ -207,6 +207,33 @@ class TestResolveTickMinute:
         )
         assert resolve_tick_minute("10:17:00", now, tolerance_seconds=90.0) is None
 
+    # Since about 24 Nov 2026 Dhan's marketfeed carries a TRUE UTC epoch, so
+    # dhanhq's `utc_time` renders LTT as UTC wall time (probe 25 Nov: the
+    # 25,819.25 close re-stamped "13:01:38" = 18:31:38 IST). On 25 Nov every
+    # in-session NIFTY tick was rejected as 5.5h stale and no bar was built.
+    def test_utc_stamped_live_tick_maps_to_its_ist_minute(self):
+        now = datetime(2026, 11, 25, 9, 31, 40)
+        assert resolve_tick_minute("04:01:38", now) == pd.Timestamp("2026-11-25 09:31:00")
+
+    def test_utc_stamped_session_first_and_last_minutes_accepted(self):
+        assert resolve_tick_minute("03:45:00", datetime(2026, 11, 25, 9, 15, 2)) == pd.Timestamp(
+            "2026-11-25 09:15:00"
+        )
+        assert resolve_tick_minute("09:59:58", datetime(2026, 11, 25, 15, 29, 59)) == pd.Timestamp(
+            "2026-11-25 15:29:00"
+        )
+
+    def test_utc_stamped_stale_snapshot_rejected(self):
+        # Yesterday's 15:29:59 IST close replayed on subscribe, in UTC form.
+        assert resolve_tick_minute("09:59:59", datetime(2026, 11, 25, 9, 16, 0)) is None
+
+    def test_utc_stamped_after_hours_recompute_rejected(self):
+        # The exact packet the 25 Nov probe received at 18:31:40 IST.
+        assert resolve_tick_minute("13:01:38", datetime(2026, 11, 25, 18, 31, 40)) is None
+
+    def test_utc_stamped_pre_open_rejected(self):
+        assert resolve_tick_minute("03:44:59", datetime(2026, 11, 25, 9, 15, 1)) is None
+
 
 class TestTickBarAggregator:
     def test_first_tick_opens_bar_and_reports_rollover(self):

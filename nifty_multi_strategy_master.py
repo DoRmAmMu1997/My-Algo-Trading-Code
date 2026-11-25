@@ -341,6 +341,8 @@ from Dependencies.startup_exposure import (
 )
 from Dependencies.tick_bar_builder import (
     SEGMENT_NAME_TO_FEED_CODE,
+    SESSION_END,
+    SESSION_FIRST_MINUTE,
     TickBarAggregator,
     divergence_stats,
     merge_official_and_tick_frames,
@@ -4394,6 +4396,8 @@ class WebSocketMarketDataFetcher(threading.Thread):
     RECONNECT_BACKOFF_MAX_SECONDS = 30.0
     # True-up divergence above this many index points logs a WARNING.
     TRUEUP_DIVERGENCE_WARN_POINTS = 1.0
+    # At most one "tick built no bar" warning per this many seconds.
+    REJECTED_TICK_WARN_INTERVAL_SECONDS = 60.0
 
     def __init__(
         self,
@@ -4445,6 +4449,7 @@ class WebSocketMarketDataFetcher(threading.Thread):
         self._last_trueup_wall_minute: pd.Timestamp | None = None
         self._signature_at_last_trueup: int | None = None
         self._warned_unknown_segments: set[str] = set()
+        self._last_rejected_tick_warn_monotonic: float | None = None
         self.last_logged_candle_ts: pd.Timestamp | None = None
 
     # ------------------------------------------------------------------
@@ -4934,8 +4939,35 @@ class WebSocketMarketDataFetcher(threading.Thread):
             and event.security_id == NIFTY_INDEX_SECURITY_ID
         ):
             minute_ts = resolve_tick_minute(event.ltt_raw, now_ist)
-            if minute_ts is not None and self.aggregator.add_tick(minute_ts, event.ltp):
+            if minute_ts is None:
+                self._warn_rejected_index_tick(event.ltt_raw, now_ist)
+            elif self.aggregator.add_tick(minute_ts, event.ltp):
                 self._rollover_pending = True
+
+    def _warn_rejected_index_tick(self, ltt_raw: str | None, now_ist: datetime) -> None:
+        """
+        Log, at most once a minute, an in-session NIFTY tick that built no bar.
+
+        A rejection is normal after hours and for the snapshot Dhan replays on
+        subscribe, but a stream of them in session means the LTT no longer
+        matches the local clock. On 25 Nov 2026 that happened silently all day
+        (Dhan's epoch had switched to true UTC), and the frame froze at 09:29.
+        Diagnostic only: the tick still feeds the LTP cache, and no gate changes.
+        """
+        if not (SESSION_FIRST_MINUTE <= now_ist.time() < SESSION_END):
+            return
+        now_monotonic = time.monotonic()
+        last = self._last_rejected_tick_warn_monotonic
+        if last is not None and now_monotonic - last < self.REJECTED_TICK_WARN_INTERVAL_SECONDS:
+            return
+        self._last_rejected_tick_warn_monotonic = now_monotonic
+        self.log.warning(
+            "NIFTY index tick built no bar | LTT=%s | local IST clock=%s | its "
+            "LTT is not within 90s of the clock in either the IST or the UTC "
+            "reading; if this repeats, check the host clock and the feed's LTT.",
+            ltt_raw,
+            now_ist.strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
 
 # The two market-data producers are siblings, not a hierarchy: both subclass

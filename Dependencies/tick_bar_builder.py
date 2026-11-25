@@ -26,8 +26,9 @@ offline and audited in isolation:
 
 Packet field names and ``type`` strings match dhanhq 2.2.0's ``marketfeed.py``
 (``'Ticker Data'``, ``'Quote Data'``, ``'Full Data'``, ``'Previous Close'``,
-prices serialised as ``'%.2f'`` strings, ``LTT`` as an IST ``HH:MM:SS``
-time-of-day string).
+prices serialised as ``'%.2f'`` strings, ``LTT`` as an ``HH:MM:SS``
+time-of-day string -- IST until Nov 2026, UTC since; see
+:func:`resolve_tick_minute`).
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import time as dt_time
 
 import pandas as pd
@@ -54,6 +55,10 @@ SEGMENT_NAME_TO_FEED_CODE = {name: code for code, name in SEGMENT_CODE_TO_NAME.i
 # [09:15, 15:30); the last valid 1-minute bucket of a day is 15:29.
 SESSION_FIRST_MINUTE = dt_time(9, 15)
 SESSION_END = dt_time(15, 30)
+
+# IST is UTC+05:30 all year (no DST). Converts an LTT that Dhan stamped in
+# true UTC to IST; see `resolve_tick_minute`.
+_UTC_TO_IST = timedelta(hours=5, minutes=30)
 
 # Packet ``type`` strings that carry a tradeable price (LTP)...
 _PRICE_PACKET_TYPES = frozenset({"Ticker Data", "Quote Data", "Full Data"})
@@ -179,18 +184,30 @@ def resolve_tick_minute(
 
     Rejected ticks return ``None``; callers still use their LTP for the LTP
     cache, they just never become candles.
+
+    TWO LTT CONVENTIONS. dhanhq formats the packet's epoch with
+    ``datetime.fromtimestamp(epoch, timezone.utc)``. Through 19 Nov 2026 Dhan
+    sent an IST-shifted epoch, so that string WAS IST. By 25 Nov it sends a true
+    UTC epoch, so the same string is UTC, 5h30m behind IST (probe 25 Nov 18:31
+    IST: the session's 25,819.25 close re-stamped "13:01:38"). Each reading is
+    tried, and a tick is accepted only if one of them lands within the tolerance of
+    the local IST clock. The two readings are 5.5 hours apart, so at most one can
+    match. The session window is then applied to the matching IST time, so the
+    stale-snapshot and after-hours guards hold in both conventions.
     """
 
     try:
         tick_time = datetime.strptime(str(ltt_raw), "%H:%M:%S").time()
     except ValueError:
         return None
-    candidate = datetime.combine(now_ist.date(), tick_time)
-    if abs((candidate - now_ist).total_seconds()) > tolerance_seconds:
-        return None
-    if tick_time < SESSION_FIRST_MINUTE or tick_time >= SESSION_END:
-        return None
-    return pd.Timestamp(candidate).floor("min")
+    stamped = datetime.combine(now_ist.date(), tick_time)
+    for candidate in (stamped, stamped + _UTC_TO_IST):
+        if abs((candidate - now_ist).total_seconds()) > tolerance_seconds:
+            continue
+        if candidate.time() < SESSION_FIRST_MINUTE or candidate.time() >= SESSION_END:
+            return None
+        return pd.Timestamp(candidate).floor("min")
+    return None
 
 
 class TickBarAggregator:
