@@ -1,17 +1,17 @@
 {
-  "for_date": "2026-11-26",
-  "source": "Intraday Hunter, 'Prediction For 26 NOV 2026' (JmSPjiYb9E4, uploaded 2026-11-25)",
-  "context": "November 25 gapped up and rallied, but the selling came back as fast. The rejection has already pushed out the buyers who came in, so no buyer stops are left to hunt. Sensex expires tomorrow.",
+  "for_date": "2026-11-27",
+  "source": "Intraday Hunter, 'Prediction For 27 NOV 2026' (8pJdKxgHcY0, uploaded 2026-11-26)",
+  "context": "November 26 had little momentum either way, but the market held itself up all day, so buyers are seated in all three indices and can be targeted.",
   "plan": [
-    "ANY OPEN -> BUY: the buyers were already pushed out, so the plan is the same on a gap down, a flat open or a gap up; identify buying-side setups.",
-    "FLAT OPEN IS THE RISK: IH warns a flat open may build a small sideways range with no momentum; same plan, less conviction."
+    "FLAT TO GAP UP -> SELL: target the seated buyers; identify selling-side setups.",
+    "GAP DOWN -> SELL, MORE RISK: IH keeps the same plan of targeting the buyers, but warns the risk is higher."
   ],
   "levels": [
     {
       "index": "NIFTY",
       "resistance": [
         26000,
-        26200
+        26120
       ],
       "support": [
         25630,
@@ -21,23 +21,23 @@
     {
       "index": "BANKNIFTY",
       "resistance": [
-        64420,
-        65000
+        64090,
+        64700
       ],
       "support": [
-        63180,
+        63190,
         62680
       ]
     },
     {
       "index": "SENSEX",
       "resistance": [
-        84380,
-        85000
+        84800,
+        85200
       ],
       "support": [
-        83400,
-        83000
+        83800,
+        83200
       ]
     }
   ]
