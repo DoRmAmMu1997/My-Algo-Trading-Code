@@ -228,44 +228,43 @@ def test_shipped_note_targets_the_next_TRADING_day_not_the_next_calendar_day():
     )
 
 
-def test_shipped_note_matches_november_26_intraday_hunter_plan():
-    """Render the November 25 evening forecast: BUY on any open, flat is the risk.
+def test_shipped_note_matches_november_27_intraday_hunter_plan():
+    """Render the November 26 evening forecast: SELL on any open, a gap down is riskier.
 
-    JmSPjiYb9E4 was uploaded 25 Nov at about 21:10 IST. Its direct Hindi transcript
-    says the positive momentum met as much selling, and the rejection has already
-    pushed out the buyers who came in, so no buyer stops are left; on a gap down, a
-    flat open or a gap up IH identifies buying-side setups. A flat open carries the
-    risk of a small non-directional range. Sensex expires on 26 Nov. The transcript
-    garbled two level pairs, read from the frames: NIFTY's "2600 26200" is drawn at
-    26,000.85 and 26,200.70, Sensex's "8500084 380" at 85,009.82 and 84,381.38 --
-    recorded as 26,000, 26,200, 85,000 and 84,380.
+    8pJdKxgHcY0 was uploaded 26 Nov in the evening. Its direct Hindi transcript says
+    the market showed little momentum either way but held itself up, so buyers are
+    seated in BankNIFTY, Sensex and NIFTY; on a flat open or a gap up IH targets them
+    with selling-side setups, and on a gap down he keeps the same plan with more
+    risk. Every level was spoken clearly; resistances are recorded nearest first
+    (NIFTY "26120 26000" as 26,000 / 26,120, Sensex "85200 84800" as 84,800 /
+    85,200).
     """
     import os
 
     note = load_premarket_note(os.path.join(AGENT_DIR, "premarket_note.json"))
 
     assert note is not None
-    block = format_premarket_note(note, date(2026, 11, 26))
-    assert "PRE-OPEN ANALYST NOTE for 2026-11-26" in block
-    assert "JmSPjiYb9E4" in block
-    assert "uploaded 2026-11-25" in note.source
-    assert "no buyer stops are left to hunt" in note.context
-    assert "Sensex expires tomorrow" in note.context
-    assert format_premarket_note(note, date(2026, 11, 25)) == ""
-    assert format_premarket_note(note, date(2026, 11, 27)) == ""
+    block = format_premarket_note(note, date(2026, 11, 27))
+    assert "PRE-OPEN ANALYST NOTE for 2026-11-27" in block
+    assert "8pJdKxgHcY0" in block
+    assert "uploaded 2026-11-26" in note.source
+    assert "held itself up all day" in note.context
+    assert "buyers are seated" in note.context
+    assert format_premarket_note(note, date(2026, 11, 26)) == ""
+    assert format_premarket_note(note, date(2026, 11, 30)) == ""
 
-    buy = next(line for line in note.plan if line.startswith("ANY OPEN -> BUY"))
-    assert "gap down, a flat open or a gap up" in buy
-    assert "buying-side setups" in buy
-    flat = next(line for line in note.plan if line.startswith("FLAT OPEN IS THE RISK"))
-    assert "sideways range" in flat
+    sell = next(line for line in note.plan if line.startswith("FLAT TO GAP UP -> SELL"))
+    assert "seated buyers" in sell
+    assert "selling-side setups" in sell
+    gap_down = next(line for line in note.plan if line.startswith("GAP DOWN -> SELL, MORE RISK"))
+    assert "risk is higher" in gap_down
     assert len(note.plan) == 2
-    assert not any("SELL" in line for line in note.plan)
+    assert not any("BUY ->" in line or "-> BUY" in line for line in note.plan)
     assert "ADVISORY ONLY" in block
     assert "does NOT satisfy the pattern + confirmation" in block
 
     assert [level.model_dump() for level in note.levels] == [
-        {"index": "NIFTY", "resistance": [26000.0, 26200.0], "support": [25630.0, 25480.0]},
-        {"index": "BANKNIFTY", "resistance": [64420.0, 65000.0], "support": [63180.0, 62680.0]},
-        {"index": "SENSEX", "resistance": [84380.0, 85000.0], "support": [83400.0, 83000.0]},
+        {"index": "NIFTY", "resistance": [26000.0, 26120.0], "support": [25630.0, 25480.0]},
+        {"index": "BANKNIFTY", "resistance": [64090.0, 64700.0], "support": [63190.0, 62680.0]},
+        {"index": "SENSEX", "resistance": [84800.0, 85200.0], "support": [83800.0, 83200.0]},
     ]

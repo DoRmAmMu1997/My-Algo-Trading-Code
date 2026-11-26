@@ -15027,3 +15027,102 @@ these 8 mutations fails it, and the unmutated note passes:
 * the flat line's reason dropped;
 * BankNIFTY's resistances swapped;
 * the expiry context dropped.
+
+## November 26 live trades: the agent and IH
+
+[Live Bank Nifty Option Trading](https://www.youtube.com/watch?v=mM3xdpEEDfk), 26 Nov,
+5:13, transcript read in full; the clock and the positions panel read from the
+frames.
+
+**The feed held.** The first session on the UTC-LTT fix (PR #252) published the
+09:15 bar at 09:15:00 and a frame every minute after it, with no "built no bar"
+warning and no unhealthy-feed line all day.
+
+**The agent: two longs, both at target, +15,239 (paper, with the BankNIFTY
+mirror).** NIFTY opened FLAT (+0.31%) under the note's "BUY on any open", spiked
+to 25,880 and flushed to 25,770. The agent held through the flush (no confirmed
+pattern), then:
+
+| Entry | Setup | Exit | NIFTY leg | BankNIFTY mirror |
+|---|---|---|---|---|
+| 09:29, 25,793 (3 lots) | double bottom + pullback to the pivot, conf 6 | 09:32 target, 25,848 | +4,826 | +7,196 |
+| 09:52, 25,820 (1 lot) | swing-low reversal reclaiming pivot / previous close, conf 5 | 10:18 target, 25,876 | +1,580 | +1,638 |
+
+**IH: one long, late.** He bought calls in BankNIFTY (64,600), Sensex (expiry
+day) and NIFTY at 10:38 and booked at 10:52, +2.78 lakh in all. He said he missed
+the morning's momentum, then followed the buying because "the buyers who came in
+yesterday were pushed out by the rejection, so there are no buyer SLs to target".
+NIFTY ran from about 25,919 at his entry to the day's high of 25,974.95 at 10:55.
+
+**Comparison.** Both read the day the same way, as the note did. The agent took
+the morning's two legs that IH missed; IH took the 10:38 leg, which came after the
+agent's 10:30 cutoff for new entries. Neither lost.
+
+### Measured, not encoded
+
+- **"A pullback near the target is the most dangerous. If the market went straight
+  to the target, book it; if it pulled back first, the target can be stretched":**
+  measured on 5-year NIFTY, both sides, entries at 09:20, 09:30, 09:45, 10:00,
+  10:15 and 10:30 in the book's shape, 1,686 target hits. From the target, holding
+  up to 30 more minutes (out at 90 points, or on a close back at entry + 30)
+  against booking at 45:
+
+  | Before the target | Hits | Hold minus book | 2021-23 / 2024-26 |
+  |---|---|---|---|
+  | no pullback (under 5 points) | 911 | +0.12R | -0.05 / +0.20 |
+  | 5 to 10 points | 368 | +0.21R | -0.10 / +0.36 |
+  | 10 points or more | 407 | +0.00R | -0.27 / +0.09 |
+
+  The direction is the reverse of the claim, and the halves disagree in sign, so
+  there is no rule here. BOOK WHEN THE PROFIT STOPS GROWING (v4f) stays the
+  exit.
+
+### Already in the corpus
+
+- **"Call writers sitting in the range cover on the breakout, so call premiums
+  jump":** A SHARP SPIKE THAT IMMEDIATELY STALLS IS WHERE THE CALLS GOT
+  WRITTEN (v4j).
+- **"The danger is a very volatile market or a huge gap":** VOLATILE MEANS FAST
+  UP AND FAST DOWN (v6e) and the HUGE-gap bullet of READ THE GAP AGAINST THE PRIOR
+  DAYS.
+
+## November 27 pre-open note
+
+[Prediction For 27 NOV 2026](https://www.youtube.com/watch?v=8pJdKxgHcY0), uploaded
+2026-11-26 in the evening, 13 transcript segments, read in full.
+
+**Read.** Little momentum either way on 26 Nov, but the market held itself up all
+day in all three indices, so buyers are seated and can be targeted.
+
+**Plan.**
+
+| Open | Plan |
+|---|---|
+| FLAT TO GAP UP | SELL: target the seated buyers |
+| GAP DOWN | SELL, same plan, with more risk |
+
+**Levels.** All spoken clearly; resistances recorded nearest first.
+
+| Index | Resistance | Support |
+|---|---|---|
+| NIFTY | 26,000 / 26,120 | 25,630 / 25,480 |
+| BankNIFTY | 64,090 / 64,700 | 63,190 / 62,680 |
+| Sensex | 84,800 / 85,200 | 83,800 / 83,200 |
+
+**How it meets the corpus, by the rules' scopes.** 26 Nov rose 0.41% at the 3:15
+level (25,792.10 to 25,897.40) and closed at 0.68 of its range: two straight up
+days, so v6e's veto (four) is off; v6g, v6i and v5x need a down day; 27 Nov is not
+NIFTY's expiry, so v6h and v6a do not apply; v6f leans the early long only on a
+gap-up open above 25,974.95, against the note.
+
+`test_shipped_note_matches_november_27_intraday_hunter_plan` pins the date gate,
+the source, both plan lines, the context and all twelve levels. Each of these 7
+mutations fails it, and the unmutated note passes:
+
+* a NIFTY resistance moved by 3 points;
+* a BankNIFTY support moved by 90 points;
+* the SELL branch turned into BUY;
+* the date set to November 26;
+* the gap-down line's reason dropped;
+* Sensex's resistances swapped;
+* the context's "all day" dropped.
