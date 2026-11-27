@@ -15126,3 +15126,79 @@ mutations fails it, and the unmutated note passes:
 * the gap-down line's reason dropped;
 * Sensex's resistances swapped;
 * the context's "all day" dropped.
+
+## November 27 live trades: the agent and IH
+
+[Live Bank Nifty Option Trading](https://www.youtube.com/watch?v=vTMy_y0BEn8), 27 Nov,
+8:11, transcript read in full; the clock and the positions panel read from the
+frames.
+
+**The day.** NIFTY opened FLAT (-0.22% off 26 Nov's 3:15 level of 25,897.40),
+spiked to 25,909.15 at 09:16, then chopped between about 25,800 and 25,900 until
+10:30. The fall the note expected came after that: NIFTY closed at 25,607.20, near
+its 25,565.90 low at 15:12. The note said SELL on a flat open (buyers seated after
+26 Nov held itself up).
+
+**The agent: four trades, -5,254 (paper, with the BankNIFTY mirror).**
+
+| Entry | Setup | Exit | Basket |
+|---|---|---|---|
+| 09:16 LONG, 25,870 | v6c opening follow (active, LONG), against the note's SELL, conf 7 | 09:19, premise exit after a bearish engulfing | -1,980 |
+| 09:25 SHORT, 25,832 | evening star breakdown, the note's flat SELL, conf 7 | 09:34, stop | -2,153 |
+| 09:43 SHORT, 25,860 | shooting star at a double top, pivot, 50% fibo, conf 6 | 09:48, booked on a pivot reclaim | +548 |
+| 09:54 SHORT, 25,843 | double top, BankNIFTY confirming, conf 5 | 10:00, target zone touched twice, BankNIFTY reversal | -1,669 |
+
+**IH: one short, cut at his limit, about -3.04 lakh.** He bought puts in BankNIFTY
+(63,000, two strikes), Sensex and NIFTY at 09:16 on the flat open, as his note
+said: "it did not give much momentum, but it held itself up, so buyers are seated;
+nobody sold". The trade went into profit, gave it back on a retracement, and
+BankNIFTY broke out; he cut at 09:41 at his 3-lakh limit (BankNIFTY -2.51 lakh,
+Sensex -47,484, NIFTY -5,505). He refused to wait for "if not from here, it will
+fall from there".
+
+**Comparison.** Both sold the note's flat open and both lost in the same
+25,800-25,900 chop; the fall came after 10:30, when both were out (the agent's
+entry cutoff, IH's limit). The agent's first trade went the other way: v6c's
+opening follow fired LONG on 26 Nov's stalled rally, against the note. The note
+was right about the day and wrong about the morning.
+
+### From the Sunday video (22 Nov)
+
+[How Found This Week Best Trades Opportunity](https://www.youtube.com/watch?v=poSiCmlOK9s),
+16:23, public, transcript read in full (127 segments).
+
+- **"After a HUGE up move the buyers booked and left, so follow the buying; after a
+  NORMAL up move the buyers were not fed and are still seated, so a flat to
+  gap-down open can target them; on a gap-up they sit in confidence until the
+  closing price breaks, so go with the market."** Measured, not encoded (below).
+- **"Keep the number of trades small; three or four, then stop":** already in the
+  corpus (YOURS IS AN ACCURACY METHOD, NOT AN R:R METHOD -- SO TAKE FEWER
+  TRADES, v4s, with its second-trade giveback).
+- **"Buyers who just entered wait for their real stop; buyers seated in profit
+  run when the profit shrinks, and that starts the chain reaction":** PROFIT DEPTH
+  SPLITS ONE SIDE INTO TWO COHORTS (AGGREGATE-INVENTORY TEST).
+- **"Across a two-day holiday only buyers carry positions":** EVENT / HOLIDAY
+  PARTICIPATION and WEEKEND / HOLIDAY CARRY-RISK.
+- **"No regret after a stop; do not re-enter because the market then went your
+  way":** NO INSTANT FLIP and v4s.
+
+### Measured, not encoded
+
+**A normal up day does not make the flat open a sell.** 5-year NIFTY, fixed-minute
+trades in the book's shape, by the prior day's 3:15-to-3:15 change:
+
+| Next open, after | Sessions | Short 09:20 | Short 09:30 | Long 09:20 | Long 09:30 |
+|---|---|---|---|---|---|
+| FLAT, normal up day (+0.2% to +1%) | 320 | -0.01R | -0.16R | -0.02R | +0.11R |
+| FLAT, same, closed in its upper half | 271 | -0.08R | -0.10R | -0.01R | +0.06R |
+| FLAT, huge up day (+1% or more) | 78 | +0.02R | -0.01R | -0.03R | +0.06R |
+| FLAT, all sessions | 943 | +0.11R | -0.04R | -0.12R | +0.00R |
+| GAP_DOWN, normal up day | 23 | +0.11R | -0.09R | +0.45R | +0.28R |
+| GAP_UP, normal up day | 49 | -0.02R | -0.41R | +0.14R | +0.24R |
+
+The flat-open short after a normal up day is weaker than the flat-open short in
+general, and the two halves split (+0.05 / -0.05 at 09:20). After a normal up day
+the gap-down was BOUGHT (+0.45R at 09:20, +0.59 / +0.26 by half), which is v5v's
+"gap-downs have tended to be bought", not IH's sell. No rule; a SELL note on a
+flat open after a normal up day carries no measured edge of its own, so the
+ordinary pattern + confirmation still has to carry the trade.
